@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { packagePaths } from './package-paths.mjs';
 
 const root = resolve(import.meta.dirname, '..');
+const rootManifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const manifests = await Promise.all(
   packagePaths.map(async (packagePath) => ({
     packagePath,
@@ -13,8 +14,11 @@ const manifests = await Promise.all(
 const errors = [];
 const versions = new Set(manifests.map(({ manifest }) => manifest.version));
 
-if (versions.size !== 1) {
-  errors.push('Public packages must use one version');
+if (versions.size !== 1 || [...versions][0] !== rootManifest.version) {
+  errors.push('Root and public packages must use one version');
+}
+if (!/^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$/.test(rootManifest.version)) {
+  errors.push('Root version must be a prerelease version');
 }
 
 for (const { packagePath, manifest } of manifests) {
@@ -57,6 +61,36 @@ if (!release.includes('id-token: write') || !release.includes('--provenance')) {
 if (/NODE_AUTH_TOKEN|NPM_TOKEN|npmrc.*_authToken/i.test(release)) {
   errors.push('Release workflow must not use registry credentials');
 }
+if (!release.includes("- 'v*-*'") || !release.includes('--tag next')) {
+  errors.push('Release workflow must publish only prerelease tags to the next dist-tag');
+}
+
+const expectedOrder = [
+  'packages/agent-core',
+  'packages/ext-context',
+  'packages/ext-prewalk',
+  'packages/ext-powerline',
+  'apps/tui',
+];
+if (packagePaths.join('\n') !== expectedOrder.join('\n')) {
+  errors.push('Package order must be Agent Core, extensions, then TUI');
+}
+const publishArtifacts = [
+  'felan-ai-agent-core-${version}.tgz',
+  'felan-ai-ext-context-${version}.tgz',
+  'felan-ai-ext-prewalk-${version}.tgz',
+  'felan-ai-ext-powerline-${version}.tgz',
+  'felan-ai-felan-${version}.tgz',
+];
+let previousArtifact = -1;
+for (const artifact of publishArtifacts) {
+  const artifactIndex = release.indexOf(artifact);
+  if (artifactIndex <= previousArtifact) {
+    errors.push('Release workflow must publish Agent Core, extensions, then TUI');
+    break;
+  }
+  previousArtifact = artifactIndex;
+}
 
 if (errors.length > 0) {
   for (const error of errors) {
@@ -65,4 +99,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`Release metadata valid for ${manifests.length} public packages at ${[...versions][0]}`);
+console.log(`Release metadata valid for ${manifests.length} public packages at ${rootManifest.version}`);

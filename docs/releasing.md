@@ -5,13 +5,25 @@ trusted publishing and provenance. The workflow has an OIDC identity token and
 contains no npm credential. It packs workspace dependencies with pnpm and uses
 an OIDC-capable npm 11 CLI to publish the resulting tarballs.
 
+The current combined S7-S10 prerelease version is `0.1.0-alpha.2`. The root and
+all five public manifests form one fixed version group. Agent Core diagnostics
+report the same package-derived version.
+
 Before a prerelease:
 
 1. Run `pnpm check:packages` to verify each public package name on npmjs.
-2. Run `pnpm verify` on Node.js 22.20.0.
-3. Confirm every package version is the same prerelease version.
-4. Configure each npm package's trusted publisher for this repository and workflow.
-5. Create the matching `v<version>` tag through the normal reviewed release process.
+2. Run `pnpm check:release` to validate the fixed version group, prerelease tag
+   policy, OIDC provenance, and topological pack/publish order.
+3. Run `pnpm check:proposed-version` to confirm the exact proposed version is
+   unused for every public package. This preparation-only check stays outside
+   `pnpm verify`, so ordinary CI remains valid after publication.
+4. Run `pnpm verify` on Node.js 22.20.0. The packed smoke installs with a clean
+   npm configuration, checks exact workspace dependency versions, imports every
+   public package, and runs the `felan` binary without private credentials.
+5. Configure each npm package's trusted publisher for this repository and workflow.
+6. Create the matching prerelease `v<version>` tag through the normal reviewed
+   release process. The workflow publishes in dependency order: Agent Core,
+   extensions, then TUI, all with the npm `next` dist-tag.
 
 Stable publication follows successful prerelease integration with public host and
 private cloud runtime adapters.
