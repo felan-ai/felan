@@ -4,3 +4,8 @@ Copyright (c) 2026 Felan contributors
 This product includes software developed by the Pi project and other open
 source projects listed in the package lockfile. Their license terms remain
 with their respective authors.
+
+@felan-ai/ext-prewalk adapts MIT-licensed portions of packages/pi-prewalk from
+mslavov/pi-extensions at commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
+Copyright (c) 2026 Dimitar Panayotov and Milko Slavov. Package-level attribution
+and license terms are included in packages/ext-prewalk/NOTICE and LICENSE.
