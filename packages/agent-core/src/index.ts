@@ -4,8 +4,10 @@ export type {
   ExecOptions,
   ExecResult,
 } from './runtime.js';
+export { AGENT_CORE_VERSION } from './version.js';
 export { HostAgentRuntime } from './host-agent-runtime.js';
 export type { HostShellOptions } from './host-agent-runtime.js';
+export { createChildSessionTool } from './child-session-tool.js';
 export {
   bindFelanExtension,
   loadFelanExtensions,
