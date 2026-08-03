@@ -18,9 +18,11 @@
     "test:co-install": "node scripts/test-product-coinstall.mjs",
     "pack:all": "node scripts/pack.mjs",
     "check:packages": "node scripts/check-package-availability.mjs",
+    "check:licenses": "node scripts/check-third-party-licenses.mjs",
     "check:proposed-version": "node scripts/check-proposed-version.mjs",
     "check:release": "node scripts/check-release-readiness.mjs",
-    "verify": "pnpm check:release && pnpm build && pnpm type-check && pnpm test && pnpm pack:all && pnpm test:packed-bin"
+    "check:stable-evidence": "node scripts/check-stable-evidence.mjs",
+    "verify": "pnpm check:release && pnpm check:licenses && pnpm build && pnpm type-check && pnpm test && pnpm pack:all && pnpm test:packed-bin"
   },
   "devDependencies": {
     "@types/node": "24.12.4",

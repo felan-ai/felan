@@ -14,15 +14,17 @@ Before a prerelease:
 1. Run `pnpm check:packages` to verify each public package name on npmjs.
 2. Run `pnpm check:release` to validate the fixed version group, prerelease tag
    policy, OIDC provenance, and topological pack/publish order.
-3. Run `pnpm check:proposed-version` to confirm the exact proposed version is
+3. Run `pnpm check:licenses` to reject unknown, private, or non-permissive
+   production dependencies and verify the Pi and TypeBox notices.
+4. Run `pnpm check:proposed-version` to confirm the exact proposed version is
    unused for every public package. This preparation-only check stays outside
    `pnpm verify`, so ordinary CI remains valid after publication.
-4. Run `pnpm verify` on Node.js 22.20.0. The packed smoke installs with a clean
+5. Run `pnpm verify` on Node.js 22.20.0. The packed smoke installs with a clean
    npm configuration, checks exact workspace dependency versions, imports every
    public package through the installed application, constructs a local runtime,
    rejects unlisted packages, and runs the `felan` binary without credentials.
-5. Configure each npm package's trusted publisher for this repository and workflow.
-6. Create the matching prerelease `v<version>` tag through the normal reviewed
+6. Configure each npm package's trusted publisher for this repository and workflow.
+7. Create the matching prerelease `v<version>` tag through the normal reviewed
    release process. The workflow publishes in dependency order: Agent Core,
    extensions, then TUI, all with the npm `next` dist-tag.
 
@@ -51,5 +53,9 @@ locked by the published Pi 0.82.1 shrinkwrap. Pi has no safe compatible npm
 release yet. Stable publication remains blocked by `bugzy-3bfl.16`; the exact
 Pi 0.82.1 pin remains unchanged until a reviewed upstream release is available.
 
-The stable gate also requires the renamed platform CLI publication. The current
-public `@felan-ai/cli@0.1.0` still exposes `felan`, so it is not a valid input.
+The stable gate requires published `@felan-ai/cli@0.2.0`, which exposes only
+`felan-cli`, plus `release-evidence/<stable-version>.json` copied from the
+successful private trusted-candidate record. The evidence binds the exact
+prerelease versions, integrities, public tag and commit, private candidate run,
+and tested private commit. `pnpm check:stable-evidence` revalidates every public
+npm provenance statement before a stable tag can publish to `latest`.

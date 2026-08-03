@@ -61,8 +61,8 @@ function checkPackageMetadata() {
   if (versions.size !== 1 || [...versions][0] !== rootManifest.version) {
     errors.push('Root and public packages must use one version');
   }
-  if (!/^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$/.test(rootManifest.version)) {
-    errors.push('Root version must be a prerelease version');
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(rootManifest.version)) {
+    errors.push('Root version must be exact semver');
   }
 
   for (const { packagePath, manifest } of packages) {
@@ -197,8 +197,15 @@ function checkPinsAndWorkflows() {
   if (/NODE_AUTH_TOKEN|NPM_TOKEN|npmrc.*_authToken/i.test(release)) {
     errors.push('Release workflow must not use registry credentials');
   }
-  if (!release.includes("- 'v*-*'") || !release.includes('--tag next')) {
-    errors.push('Release workflow must publish only prerelease tags to the next dist-tag');
+  for (const requirement of [
+    "- 'v*'",
+    'git merge-base --is-ancestor',
+    'pnpm check:stable-evidence',
+    'pnpm audit:packed',
+    'pnpm test:co-install',
+    'steps.release.outputs.channel',
+  ]) {
+    if (!release.includes(requirement)) errors.push(`Release workflow is missing ${requirement}`);
   }
 
   let previousArtifact = -1;
