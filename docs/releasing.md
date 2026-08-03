@@ -5,7 +5,7 @@ trusted publishing and provenance. The workflow has an OIDC identity token and
 contains no npm credential. It packs workspace dependencies with pnpm and uses
 an OIDC-capable npm 11 CLI to publish the resulting tarballs.
 
-The current combined S7-S10 prerelease version is `0.1.0-alpha.2`. The root and
+The current release-readiness prerelease version is `0.1.0-alpha.3`. The root and
 all five public manifests form one fixed version group. Agent Core diagnostics
 report the same package-derived version.
 

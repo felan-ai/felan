@@ -12,8 +12,8 @@ describe('felan CLI', () => {
     });
 
     expect(exitCode).toBe(0);
-    expect(FELAN_VERSION).toBe('0.1.0-alpha.2');
-    expect(AGENT_CORE_VERSION).toBe('0.1.0-alpha.2');
+    expect(FELAN_VERSION).toBe('0.1.0-alpha.3');
+    expect(AGENT_CORE_VERSION).toBe('0.1.0-alpha.3');
     expect(output).toContain(`Felan version: ${FELAN_VERSION}`);
     expect(output).toContain(`Agent Core version: ${AGENT_CORE_VERSION}`);
     expect(output).toContain('Runtime: host');
