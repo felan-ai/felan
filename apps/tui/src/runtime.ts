@@ -123,7 +123,12 @@ export function createLocalSessionHost(
           ? {}
           : { thinkingLevel: resolvedModel.thinkingLevel }),
       });
-      await created.session.bindExtensions({ mode: 'print' });
+      try {
+        await created.session.bindExtensions({ mode: 'print' });
+      } catch (error) {
+        created.session.dispose();
+        throw error;
+      }
 
       const runChild = async () => {
         let timeout: ReturnType<typeof setTimeout> | undefined;

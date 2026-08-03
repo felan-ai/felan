@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const childRun = vi.hoisted(() => ({
+  bindError: undefined as Error | undefined,
   bindModes: [] as string[],
   prompts: [] as string[],
   disposed: 0,
@@ -22,6 +23,7 @@ vi.mock('@felan-ai/agent-core', async (importOriginal) => {
           messages,
           bindExtensions: async ({ mode }: { mode: string }) => {
             childRun.bindModes.push(mode);
+            if (childRun.bindError) throw childRun.bindError;
           },
           prompt: async (prompt: string) => {
             childRun.prompts.push(prompt);
@@ -52,6 +54,7 @@ import {
 const temporaryPaths: string[] = [];
 
 afterEach(async () => {
+  childRun.bindError = undefined;
   childRun.bindModes = [];
   childRun.prompts = [];
   childRun.disposed = 0;
@@ -100,6 +103,34 @@ describe('local child session host', () => {
     expect(options.host).not.toBe(host);
     expect(childRun.bindModes).toEqual(['print']);
     expect(childRun.prompts).toEqual(['Review the implementation']);
+    expect(childRun.disposed).toBe(1);
+  });
+
+  it('disposes the child session when extension binding fails', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const host = createLocalSessionHost({
+      agentDir,
+      modelRuntime,
+      extensionPackages: [],
+      importExtension: async () => {
+        throw new Error('No extension import expected');
+      },
+    }, cwd);
+    childRun.bindError = new Error('bind failed');
+
+    await expect(host.createChildSession({
+      rootSessionId: 'root-1',
+      parentSessionId: 'parent-1',
+      personaId: 'reviewer',
+      prompt: 'Review the implementation',
+      block: true,
+    })).rejects.toThrow('bind failed');
+
+    expect(childRun.bindModes).toEqual(['print']);
+    expect(childRun.prompts).toEqual([]);
     expect(childRun.disposed).toBe(1);
   });
 });

@@ -38,6 +38,13 @@ describe('local settings', () => {
     expect(settings.getSkillPaths()).toEqual([]);
     expect(settings.getPromptTemplatePaths()).toEqual([]);
     expect(settings.getThemePaths()).toEqual([]);
+    expect(settings.getGlobalSettings().packages).toEqual([]);
+    expect(settings.getProjectSettings().packages).toEqual([]);
+
+    await settings.reload();
+
+    expect(settings.getPackages()).toEqual([]);
+    expect(settings.getGlobalSettings().packages).toEqual([]);
   });
 });
 
