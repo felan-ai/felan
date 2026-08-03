@@ -209,8 +209,11 @@ function formatWithOptionalSymbol(symbol: string, text: string): string {
 }
 
 function formatWorkingTree(details: GitDetails, symbols: PowerlineSymbols): string | undefined {
+  if (details.dirty === undefined) return undefined;
   if (!details.dirty) return symbols.clean || undefined;
-  if (details.changedFiles > 0) return symbols.dirty ? `${symbols.dirty} ${details.changedFiles}` : String(details.changedFiles);
+  if (details.changedFiles !== undefined && details.changedFiles > 0) {
+    return symbols.dirty ? `${symbols.dirty} ${details.changedFiles}` : String(details.changedFiles);
+  }
   return symbols.dirty || undefined;
 }
 
