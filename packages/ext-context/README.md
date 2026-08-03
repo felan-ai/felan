@@ -25,6 +25,17 @@ symlink escapes.
 Use `/progressive-context` to show the nested instruction files loaded in the
 current session.
 
+## Development
+
+Source: `packages/ext-context` in <https://github.com/felan-ai/felan>.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @felan-ai/ext-context build
+pnpm --filter @felan-ai/ext-context test
+```
+
 ## Trigger limitations
 
 - Progressive context affects the model call after a file read or attachment.

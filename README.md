@@ -33,6 +33,8 @@ After installation, run `felan` for the interactive local agent or
 through the TUI and do not require a Felan account.
 
 See [Contributing](CONTRIBUTING.md) and [Release process](docs/releasing.md).
+The release process includes packed clean-install, clean audit, extension
+boundary, and parameterized `felan`/`felan-cli` co-installation gates.
 
 ## License
 

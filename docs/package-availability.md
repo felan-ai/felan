@@ -1,6 +1,7 @@
 # Public package names
 
-The credentials-free `pnpm check:packages` command queries npmjs for:
+The credentials-free `pnpm check:packages` command derives the public package
+names from `scripts/package-paths.mjs` and queries npmjs for:
 
 - `@felan-ai/agent-core`
 - `@felan-ai/ext-context`

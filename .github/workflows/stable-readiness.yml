@@ -1,0 +1,31 @@
+name: Stable release readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli-package:
+        description: Packed tarball URL/path or published @felan-ai/cli spec with the felan-cli binary
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+      - run: pnpm audit:packed
+      - run: pnpm test:co-install -- --cli "$CLI_PACKAGE"
+        env:
+          CLI_PACKAGE: ${{ inputs.cli-package }}

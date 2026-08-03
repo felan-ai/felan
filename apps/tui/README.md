@@ -32,3 +32,14 @@ felan --diagnostics
 ```
 
 Diagnostics include the Felan, Agent Core, Pi, and Node.js versions.
+
+## Development
+
+Source: `apps/tui` in <https://github.com/felan-ai/felan>.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @felan-ai/felan build
+pnpm --filter @felan-ai/felan test
+```

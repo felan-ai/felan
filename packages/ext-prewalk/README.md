@@ -57,6 +57,17 @@ Prewalk uses Pi's namespaced extension flags and does not read a configuration f
 - Session quit, reload, replacement, or fork while the target is active attempts planner restoration as a graceful shutdown backstop.
 - Reaching the automatic continuation limit lets the run settle normally.
 
+## Development
+
+Source: `packages/ext-prewalk` in <https://github.com/felan-ai/felan>.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @felan-ai/ext-prewalk build
+pnpm --filter @felan-ai/ext-prewalk test
+```
+
 ## Attribution
 
 This package adapts the MIT-licensed `packages/pi-prewalk` implementation from `mslavov/pi-extensions` at commit `7e72e509fe45a5a87c4c2e176cb711de994a8c1d`. See [NOTICE](./NOTICE) and [LICENSE](./LICENSE).

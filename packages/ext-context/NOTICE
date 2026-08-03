@@ -1,7 +1,8 @@
 @felan-ai/ext-context
 
-Includes code adapted from pi-progressive-context in the pi-extensions
-repository (git@github.com:mslavov/pi-extensions.git), source commit 9571293.
+Includes code adapted from packages/pi-progressive-context in
+https://github.com/mslavov/pi-extensions at source commit
+9571293d422db11de893fa80ed0fc3e39945c657.
 
 Copyright (c) 2026 Milko Slavov
 Licensed under the MIT License included in this package.

@@ -4,13 +4,18 @@
   "description": "Portable Felan agent contracts and composition",
   "license": "MIT",
   "type": "module",
-  "repository": "github:felan-ai/felan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felan-ai/felan.git",
+    "directory": "packages/agent-core"
+  },
   "engines": {
     "node": ">=22.19.0"
   },
   "files": [
     "dist",
     "LICENSE",
+    "NOTICE",
     "README.md"
   ],
   "exports": {

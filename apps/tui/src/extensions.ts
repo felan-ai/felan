@@ -6,16 +6,11 @@ export const localExtensionPackages = [
   '@felan-ai/ext-powerline',
 ] as const;
 
-const localExtensionImporters: Record<string, () => Promise<unknown>> = {
-  '@felan-ai/ext-prewalk': () => import('@felan-ai/ext-prewalk'),
-  '@felan-ai/ext-context': () => import('@felan-ai/ext-context'),
-  '@felan-ai/ext-powerline': () => import('@felan-ai/ext-powerline'),
-};
+const localExtensionPackageSet: ReadonlySet<string> = new Set(localExtensionPackages);
 
 export const importLocalExtension: ExtensionPackageImporter = async (packageName) => {
-  const importExtension = localExtensionImporters[packageName];
-  if (!importExtension) {
+  if (!localExtensionPackageSet.has(packageName)) {
     throw new Error(`Unknown local extension package: ${packageName}`);
   }
-  return importExtension();
+  return import(packageName);
 };

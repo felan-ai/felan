@@ -14,8 +14,10 @@ describe('local extension importer', () => {
         default: expect.any(Function),
       });
     }
-    await expect(importLocalExtension('@felan-ai/ambient')).rejects.toThrow(
-      'Unknown local extension package: @felan-ai/ambient',
-    );
+    for (const packageName of ['@felan-ai/agent-core', '@felan-ai/ambient']) {
+      await expect(importLocalExtension(packageName)).rejects.toThrow(
+        `Unknown local extension package: ${packageName}`,
+      );
+    }
   });
 });

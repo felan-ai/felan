@@ -1,10 +1,11 @@
-const packageNames = [
-  '@felan-ai/agent-core',
-  '@felan-ai/ext-context',
-  '@felan-ai/ext-prewalk',
-  '@felan-ai/ext-powerline',
-  '@felan-ai/felan',
-];
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { packagePaths } from './package-paths.mjs';
+
+const root = resolve(import.meta.dirname, '..');
+const packageNames = await Promise.all(packagePaths.map(async (packagePath) => (
+  JSON.parse(await readFile(resolve(root, packagePath, 'package.json'), 'utf8')).name
+)));
 
 let failed = false;
 

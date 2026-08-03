@@ -4,7 +4,11 @@
   "description": "Same-session planner-to-implementation model handoff for Felan",
   "license": "MIT",
   "type": "module",
-  "repository": "github:felan-ai/felan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felan-ai/felan.git",
+    "directory": "packages/ext-prewalk"
+  },
   "engines": {
     "node": ">=22.19.0"
   },
