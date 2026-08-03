@@ -1,0 +1,32 @@
+name: Release prerelease packages
+
+on:
+  push:
+    tags:
+      - 'v*-*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+      - run: npm install --global npm@11.19.0
+      - run: test "${GITHUB_REF_NAME#v}" = "$(node -p 'require("./package.json").version')"
+      - run: |
+          for package in .artifacts/*.tgz; do
+            npm publish "$package" --access public --tag next --provenance
+          done

@@ -1,0 +1,38 @@
+{
+  "name": "@felan-ai/felan",
+  "version": "0.1.0-alpha.0",
+  "description": "Local Felan terminal agent",
+  "license": "MIT",
+  "type": "module",
+  "repository": "github:felan-ai/felan",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "@felan-ai/agent-core": "workspace:*",
+    "@felan-ai/ext-context": "workspace:*",
+    "@felan-ai/ext-powerline": "workspace:*",
+    "@felan-ai/ext-prewalk": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
