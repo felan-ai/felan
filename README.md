@@ -6,14 +6,13 @@ shared agent core, first-party Pi extensions, and local terminal application.
 ## Packages
 
 - `@felan-ai/agent-core`: portable runtime contracts, Node.js host runtime, and runtime test kit
-- `@felan-ai/ext-context`: progressive-context extension package
+- `@felan-ai/ext-context`: runtime-portable progressive loading of nested project instructions
 - `@felan-ai/ext-prewalk`: prewalk extension package
 - `@felan-ai/ext-powerline`: terminal powerline extension package
 - `@felan-ai/felan`: account-free local terminal application with the `felan` binary
 
 The local terminal application composes the host runtime and source-controlled
-extension set around Agent Core. The extension packages retain their current
-implementations while their dedicated stories progress.
+extension set around Agent Core.
 
 ## Requirements
 
