@@ -10,6 +10,7 @@ import {
   type SessionManager,
   type SessionStartEvent,
   type SettingsManager,
+  type Skill,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { loadFelanExtensions, type ExtensionPackageImporter } from './extensions.js';
@@ -60,6 +61,7 @@ export interface CreateAgentCoreSessionOptions {
   readonly scopedModels?: CreateAgentSessionOptions['scopedModels'];
   readonly sessionStartEvent?: SessionStartEvent;
   readonly customTools?: readonly ToolDefinition[];
+  readonly skills?: readonly Skill[];
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
 }
@@ -127,6 +129,7 @@ async function composeAgentCoreSession(
     ...(options.extensionFlagValues === undefined
       ? {}
       : { extensionFlagValues: options.extensionFlagValues }),
+    ...(options.skills === undefined ? {} : { skills: options.skills }),
     ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
     ...(options.appendSystemPrompt === undefined
       ? {}

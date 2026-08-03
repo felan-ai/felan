@@ -58,5 +58,6 @@ export type {
   LoadExtensionsResult,
   ResourceLoader,
   SessionStartEvent,
+  Skill,
   ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
