@@ -27,3 +27,7 @@ inactive session, while `createAgentCoreSessionRuntimeFactory` provides the
 typed seam used with Pi's `createAgentSessionRuntime`. Applications retain
 ownership of model credentials, settings, session storage, stream wrappers,
 child-session creation, and presentation listeners.
+
+Applications may pass an explicit `skills` list into session composition.
+Agent Core exposes only that list while project, user, and package skill
+discovery remain disabled.

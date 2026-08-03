@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Skill } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAgentCoreResourceLoader } from '../src/index.js';
 
@@ -51,6 +52,37 @@ describe('Agent Core resource loading', () => {
         },
       }],
     })).rejects.toThrow('<inline:@felan-ai/broken>: initialization failed');
+  });
+
+  it('uses only app-supplied skills while ambient discovery stays disabled', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(cwd, 'SKILL.md'), '---\nname: ambient\ndescription: Ambient\n---\n');
+    const skillPath = join(root, 'selected', 'SKILL.md');
+    const selected: Skill = {
+      name: 'selected',
+      description: 'Selected by the application',
+      filePath: skillPath,
+      baseDir: join(root, 'selected'),
+      sourceInfo: {
+        path: skillPath,
+        source: 'app:selected',
+        scope: 'temporary',
+        origin: 'top-level',
+      },
+      disableModelInvocation: false,
+    };
+
+    const loader = await createAgentCoreResourceLoader({
+      cwd,
+      agentDir,
+      extensionFactories: [],
+      skills: [selected],
+    });
+
+    expect(loader.getSkills()).toEqual({ skills: [selected], diagnostics: [] });
   });
 });
 

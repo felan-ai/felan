@@ -3,6 +3,7 @@ import {
   SettingsManager,
   type InlineExtension,
   type ResourceLoader,
+  type Skill,
 } from '@earendil-works/pi-coding-agent';
 
 export interface CreateAgentCoreResourceLoaderOptions {
@@ -10,6 +11,7 @@ export interface CreateAgentCoreResourceLoaderOptions {
   readonly agentDir: string;
   readonly extensionFactories: readonly InlineExtension[];
   readonly extensionFlagValues?: ReadonlyMap<string, boolean | string>;
+  readonly skills?: readonly Skill[];
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
 }
@@ -17,6 +19,7 @@ export interface CreateAgentCoreResourceLoaderOptions {
 export async function createAgentCoreResourceLoader(
   options: CreateAgentCoreResourceLoaderOptions,
 ): Promise<ResourceLoader> {
+  const skills = options.skills === undefined ? undefined : [...options.skills];
   const resourceSettings = SettingsManager.inMemory({
     packages: [],
     extensions: [],
@@ -38,6 +41,14 @@ export async function createAgentCoreResourceLoader(
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
+    ...(skills === undefined
+      ? {}
+      : {
+          skillsOverride: () => ({
+            skills,
+            diagnostics: [],
+          }),
+        }),
     ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
     ...(options.appendSystemPrompt === undefined
       ? {}

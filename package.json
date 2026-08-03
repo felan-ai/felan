@@ -1,6 +1,6 @@
 {
   "name": "felan",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "Portable Felan agent core, extensions, and local TUI",
   "license": "MIT",
