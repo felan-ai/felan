@@ -9,11 +9,11 @@ export interface GitUpstream {
 export interface GitDetails {
   branch?: string;
   sha?: string;
-  dirty: boolean;
-  changedFiles: number;
+  dirty?: boolean;
+  changedFiles?: number;
   tag?: string;
   timeSinceCommit?: string;
-  stashCount: number;
+  stashCount?: number;
   upstream?: GitUpstream;
   repoName?: string;
   refreshedAt: number;
@@ -73,17 +73,28 @@ export class GitCache {
     if (this.disposed) return;
 
     const parsed = parseGitStatus(status);
+    const statusDetails = parsed === undefined
+      ? {
+          ...(this.details?.branch === undefined ? {} : { branch: this.details.branch }),
+          ...(this.details?.dirty === undefined ? {} : { dirty: this.details.dirty }),
+          ...(this.details?.changedFiles === undefined ? {} : { changedFiles: this.details.changedFiles }),
+          ...(this.details?.stashCount === undefined ? {} : { stashCount: this.details.stashCount }),
+          ...(this.details?.upstream === undefined ? {} : { upstream: this.details.upstream }),
+        }
+      : {
+          ...(parsed.branch === undefined ? {} : { branch: parsed.branch }),
+          dirty: parsed.changedFiles > 0,
+          changedFiles: parsed.changedFiles,
+          stashCount: parsed.stashCount,
+          ...(parsed.upstream === undefined ? {} : { upstream: parsed.upstream }),
+        };
     const commitSeconds = commitTimestamp === undefined ? undefined : Number.parseInt(commitTimestamp, 10);
     const timeSinceCommit = commitSeconds === undefined ? undefined : formatAge(commitSeconds, this.now());
     this.details = {
-      ...(parsed.branch === undefined ? {} : { branch: parsed.branch }),
+      ...statusDetails,
       ...(sha === undefined ? {} : { sha }),
-      dirty: parsed.changedFiles > 0,
-      changedFiles: parsed.changedFiles,
       ...(tag === undefined ? {} : { tag }),
       ...(timeSinceCommit === undefined ? {} : { timeSinceCommit }),
-      stashCount: parsed.stashCount,
-      ...(parsed.upstream === undefined ? {} : { upstream: parsed.upstream }),
       repoName: basename(root),
       refreshedAt: this.now(),
     };
@@ -104,8 +115,8 @@ export async function runGit(
   }
 }
 
-export function parseGitStatus(status: string | undefined): ParsedGitStatus {
-  if (!status) return { changedFiles: 0, stashCount: 0 };
+export function parseGitStatus(status: string | undefined): ParsedGitStatus | undefined {
+  if (!status) return undefined;
   if (status.split('\n').some((line) => line.startsWith('# branch.'))) return parsePorcelainV2(status);
   return parsePorcelainV1(status);
 }

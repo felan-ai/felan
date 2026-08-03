@@ -133,7 +133,7 @@ function renderAlignedLine(
   const left = leftAvailable > 0
     ? ensureWidth(renderStyledSegments(leftSegments, config, palette, mode, symbols), leftAvailable)
     : '';
-  if (!left) return right;
+  if (!left) return ' '.repeat(Math.max(0, width - rightWidth)) + right;
   return ensureWidth(left + ' '.repeat(Math.max(1, width - visibleWidth(left) - rightWidth)) + right, width);
 }
 

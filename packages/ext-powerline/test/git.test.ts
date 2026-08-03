@@ -30,7 +30,7 @@ describe('Git status parsing', () => {
       stashCount: 0,
       upstream: { name: 'origin/main', ahead: 1, behind: 2 },
     });
-    expect(parseGitStatus(undefined)).toEqual({ changedFiles: 0, stashCount: 0 });
+    expect(parseGitStatus(undefined)).toBeUndefined();
   });
 
   it('formats commit age boundaries', () => {
@@ -78,6 +78,66 @@ describe('Git execution and cache', () => {
       branch: 'main', sha: 'abc123', dirty: true, changedFiles: 1, tag: 'v1.0.0', timeSinceCommit: '10s',
       stashCount: 2, upstream: { name: 'origin/main', ahead: 1, behind: 0 }, repoName: 'repo', refreshedAt: 10_000_000,
     });
+  });
+
+  it('retains cached status details when later status probes fail or time out', async () => {
+    let statusAttempt = 0;
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      const key = args.join(' ');
+      if (key === 'status --porcelain=v2 --branch --show-stash') {
+        statusAttempt += 1;
+        if (statusAttempt === 2) return { stdout: '', stderr: 'failed', code: 1, killed: false };
+        if (statusAttempt === 3) return { stdout: '', stderr: '', code: 0, killed: true };
+        return {
+          stdout: '# branch.oid abc123\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +1 -2\n# stash 3\n? new.ts',
+          stderr: '',
+          code: 0,
+          killed: false,
+        };
+      }
+      const stdout = new Map([
+        ['rev-parse --show-toplevel', '/workspace/repo'],
+        ['rev-parse --short HEAD', 'abc123'],
+      ]).get(key);
+      return { stdout: stdout ?? '', stderr: '', code: 0, killed: false };
+    });
+    let now = 1;
+    const cache = new GitCache(
+      { exec } as unknown as Pick<FelanExtensionAPI, 'exec'>,
+      '/workspace/repo',
+      () => now,
+    );
+
+    await cache.refresh();
+    const expectedStatus = {
+      branch: 'main', dirty: true, changedFiles: 1, stashCount: 3,
+      upstream: { name: 'origin/main', ahead: 1, behind: 2 },
+    };
+    expect(cache.get()).toMatchObject(expectedStatus);
+
+    now = 2;
+    await cache.refresh();
+    expect(cache.get()).toMatchObject({ ...expectedStatus, refreshedAt: 2 });
+
+    now = 3;
+    await cache.refresh();
+    expect(cache.get()).toMatchObject({ ...expectedStatus, refreshedAt: 3 });
+  });
+
+  it('omits status details when the initial status probe is unavailable', async () => {
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      const key = args.join(' ');
+      if (key === 'status --porcelain=v2 --branch --show-stash') {
+        return { stdout: '', stderr: '', code: 0, killed: true };
+      }
+      const stdout = key === 'rev-parse --show-toplevel' ? '/workspace/repo' : '';
+      return { stdout, stderr: '', code: 0, killed: false };
+    });
+    const cache = new GitCache({ exec } as unknown as Pick<FelanExtensionAPI, 'exec'>, '/workspace/repo', () => 1);
+
+    await cache.refresh();
+
+    expect(cache.get()).toEqual({ repoName: 'repo', refreshedAt: 1 });
   });
 
   it('clears cached details when the repository probe fails and ignores late results after disposal', async () => {

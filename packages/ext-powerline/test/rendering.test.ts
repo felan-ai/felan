@@ -65,6 +65,21 @@ describe('powerline rendering', () => {
     expect(line).toBe('left           right');
     expect(visibleWidth(line!)).toBe(20);
   });
+
+  it('pads ANSI-colored right-only groups to the terminal width', () => {
+    const config = testConfig({ style: 'minimal', padding: 0 });
+    const [line] = renderFooterLine(
+      [segment('model', '界', 'right')],
+      config,
+      getThemePalette(config),
+      'truecolor',
+      getSymbols('text'),
+      10,
+    );
+
+    expect(line).toMatch(/^ {8}\x1b\[/);
+    expect(visibleWidth(line!)).toBe(10);
+  });
 });
 
 describe('powerline segments', () => {
