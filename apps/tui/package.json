@@ -13,6 +13,9 @@
     "LICENSE",
     "README.md"
   ],
+  "bin": {
+    "felan": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -26,6 +29,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.82.1",
     "@felan-ai/agent-core": "workspace:*",
     "@felan-ai/ext-context": "workspace:*",
     "@felan-ai/ext-powerline": "workspace:*",

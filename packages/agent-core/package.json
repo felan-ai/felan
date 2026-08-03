@@ -30,7 +30,8 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.82.1"
+    "@earendil-works/pi-coding-agent": "0.82.1",
+    "typebox": "1.1.38"
   },
   "publishConfig": {
     "access": "public",

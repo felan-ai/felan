@@ -28,6 +28,11 @@ typed seam used with Pi's `createAgentSessionRuntime`. Applications retain
 ownership of model credentials, settings, session storage, stream wrappers,
 child-session creation, and presentation listeners.
 
+Every composed session includes `spawn_agent`, which maps portable child-agent
+requests onto `AgentSessionHost.createChildSession`. Applications own child
+execution and can run it locally or delegate it to another runtime without
+changing shared agent behavior.
+
 Applications may pass an explicit `skills` list into session composition.
 Agent Core exposes only that list while project, user, and package skill
 discovery remain disabled.

@@ -9,10 +9,11 @@ shared agent core, first-party Pi extensions, and local terminal application.
 - `@felan-ai/ext-context`: progressive-context extension package
 - `@felan-ai/ext-prewalk`: prewalk extension package
 - `@felan-ai/ext-powerline`: terminal powerline extension package
-- `@felan-ai/felan`: local terminal application package
+- `@felan-ai/felan`: account-free local terminal application with the `felan` binary
 
-The extension and terminal packages are compile-safe foundations for their
-respective implementation stories.
+The local terminal application composes the host runtime and source-controlled
+extension set around Agent Core. The extension packages retain their current
+implementations while their dedicated stories progress.
 
 ## Requirements
 
@@ -26,6 +27,10 @@ corepack enable
 pnpm install
 pnpm verify
 ```
+
+After installation, run `felan` for the interactive local agent or
+`felan --diagnostics` for runtime versions. Local model credentials are managed
+through the TUI and do not require a Felan account.
 
 See [Contributing](CONTRIBUTING.md) and [Release process](docs/releasing.md).
 

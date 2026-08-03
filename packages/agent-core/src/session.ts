@@ -14,6 +14,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { loadFelanExtensions, type ExtensionPackageImporter } from './extensions.js';
+import { createChildSessionTool } from './child-session-tool.js';
 import { createAgentCoreResourceLoader } from './resource-loader.js';
 import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
@@ -135,8 +136,9 @@ async function composeAgentCoreSession(
       ? {}
       : { appendSystemPrompt: options.appendSystemPrompt }),
   });
-  const customTools = [
+  const customTools: ToolDefinition<any, any, any>[] = [
     ...createRuntimeCodingTools(options.runtime),
+    createChildSessionTool(options.host),
     ...(options.customTools ?? []),
   ];
   const result = await createAgentSession({
