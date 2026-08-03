@@ -42,6 +42,25 @@ type RecordedToolCall = {
 
 const MUTATION_TOOLS = ['edit', 'write', 'apply_patch'] as const;
 const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+const BEADS_MUTATIONS = new Set([
+  'create',
+  'new',
+  'q',
+  'update',
+  'close',
+  'done',
+  'link',
+  'dep',
+  'reopen',
+  'assign',
+  'priority',
+  'tag',
+  'label',
+  'note',
+  'comment',
+  'edit',
+  'set-state',
+]);
 
 export const MUTATION_TOOL_NAMES: ReadonlySet<string> = new Set(MUTATION_TOOLS);
 
@@ -172,8 +191,81 @@ function isTrackingCall(call: ToolCallSummary, useBeads: boolean): boolean {
   if (call.toolName !== 'bash' && call.toolName !== 'exec_command') return false;
   if (!isRecord(call.input)) return false;
   const command = call.input.command ?? call.input.cmd;
-  return typeof command === 'string'
-    && /(?:^|[;&|({}\s])bd\b(?=[^;&|]*\b(?:create|new|q|update|close|done|link|dep|reopen|assign|priority|tag|label|note|comment|edit|set-state)\b)/.test(command);
+  return typeof command === 'string' && shellCommandSegments(command).some(isBeadsMutationSegment);
+}
+
+function isBeadsMutationSegment(argv: readonly string[]): boolean {
+  const commandIndex = argv.findIndex((argument) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(argument));
+  if (commandIndex === -1 || argv[commandIndex] !== 'bd') return false;
+
+  return BEADS_MUTATIONS.has(argv[commandIndex + 1] ?? '');
+}
+
+function shellCommandSegments(command: string): string[][] {
+  const segments: string[][] = [];
+  let argv: string[] = [];
+  let token = '';
+  let tokenStarted = false;
+  let quote: "'" | '"' | '`' | undefined;
+
+  const finishToken = () => {
+    if (!tokenStarted) return;
+    argv.push(token);
+    token = '';
+    tokenStarted = false;
+  };
+  const finishSegment = () => {
+    finishToken();
+    if (argv.length > 0) segments.push(argv);
+    argv = [];
+  };
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]!;
+
+    if (quote !== undefined) {
+      if (character === quote) {
+        quote = undefined;
+      } else if (character === '\\' && quote !== "'" && index + 1 < command.length) {
+        token += command[index + 1]!;
+        index += 1;
+      } else {
+        token += character;
+      }
+      continue;
+    }
+
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      tokenStarted = true;
+      continue;
+    }
+    if (character === '\\' && index + 1 < command.length) {
+      token += command[index + 1]!;
+      tokenStarted = true;
+      index += 1;
+      continue;
+    }
+    if (character === '#' && !tokenStarted) {
+      while (index + 1 < command.length && command[index + 1] !== '\n') index += 1;
+      continue;
+    }
+    if (character === ';' || character === '&' || character === '|' || character === '\n') {
+      finishSegment();
+      if ((character === '&' || character === '|') && command[index + 1] === character) index += 1;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      finishToken();
+      continue;
+    }
+
+    token += character;
+    tokenStarted = true;
+  }
+
+  finishSegment();
+  return segments;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

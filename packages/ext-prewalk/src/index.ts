@@ -429,7 +429,7 @@ function buildContextMessages(messages: readonly unknown[], phase: PrewalkPhase,
 
 async function hasBeadsWorkspace(pi: FelanExtensionAPI, cwd: string): Promise<boolean> {
   try {
-    const result = await pi.runtime.exec(
+    const result = await pi.exec(
       'bd',
       ['-C', cwd, '--readonly', '--json', 'status', '--no-activity'],
       { timeout: 5_000 },
