@@ -7,6 +7,7 @@ import {
   SessionManager,
   createAgentSessionRuntime,
 } from '@felan-ai/agent-core';
+import { InteractiveMode } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createLocalModelRuntime,
@@ -137,6 +138,59 @@ describe('local Agent Core lifecycle', () => {
     expect(reboundCwds).toEqual([cwdA, cwdA, cwdB, cwdC]);
 
     await runtime.dispose();
+  });
+
+  it('rebinds a replacement session through Pi InteractiveMode command handling', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const createdHostRuntimes: HostAgentRuntime[] = [];
+    const createRuntime = createLocalSessionRuntimeFactory({
+      agentDir,
+      modelRuntime,
+      extensionPackages: [],
+      importExtension: async () => {
+        throw new Error('No extensions should be imported');
+      },
+      runtimeFactory: (runtimeCwd) => {
+        const hostRuntime = new HostAgentRuntime(runtimeCwd);
+        createdHostRuntimes.push(hostRuntime);
+        return hostRuntime;
+      },
+    });
+    const runtime = await createAgentSessionRuntime(createRuntime, {
+      cwd,
+      agentDir,
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+    const initialSession = runtime.session;
+    const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    const mode = new InteractiveMode(runtime);
+
+    try {
+      await (mode as unknown as { handleClearCommand(): Promise<void> }).handleClearCommand();
+
+      expect(runtime.session).not.toBe(initialSession);
+      expect(runtime.services.agentDir).toBe(agentDir);
+      expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.cwd)).toEqual([cwd, cwd]);
+      expect((runtime.session as unknown as { _extensionMode?: string })._extensionMode).toBe('tui');
+      expect(runtime.session.agent.state.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+        'read',
+        'bash',
+        'spawn_agent',
+      ]));
+    } finally {
+      mode.stop();
+      await runtime.dispose();
+      if (previousPiAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+      }
+    }
   });
 });
 

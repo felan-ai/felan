@@ -13,10 +13,11 @@
     "build": "pnpm -r --if-present build",
     "type-check": "pnpm -r --if-present type-check",
     "test": "pnpm -r --if-present test",
+    "test:packed-bin": "node scripts/test-packed-bin.mjs",
     "pack:all": "node scripts/pack.mjs",
     "check:packages": "node scripts/check-package-availability.mjs",
     "check:release": "node scripts/check-release-readiness.mjs",
-    "verify": "pnpm check:release && pnpm build && pnpm type-check && pnpm test && pnpm pack:all"
+    "verify": "pnpm check:release && pnpm build && pnpm type-check && pnpm test && pnpm pack:all && pnpm test:packed-bin"
   },
   "devDependencies": {
     "@types/node": "24.12.4",
