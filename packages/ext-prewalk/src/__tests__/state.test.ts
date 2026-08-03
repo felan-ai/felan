@@ -106,9 +106,16 @@ describe('todo_write validation', () => {
 });
 
 describe('turn reduction', () => {
-  it('accepts a successful Beads update as the tracking gate', () => {
+  it.each([
+    "bd create --title 'Implement parser' --type task",
+    'bd update FEL-9 --status in_progress',
+    'cd repo && bd update FEL-9 --status in_progress',
+    'cd repo; bd close FEL-9',
+    'cd repo\nbd reopen FEL-9',
+    'MODE=local bd comment FEL-9 "Implementation started"',
+  ])('accepts a successful direct or chained Beads mutation: %s', (command) => {
     let state = createRunState();
-    state = beadsCall(state, 'beads', "bd create --title 'Implement parser' --type task");
+    state = beadsCall(state, 'beads', command);
     state = call(state, 'mutation', 'edit');
 
     expect(reduceTurn(state, [ok('beads'), ok('mutation')]).shouldHandoff).toBe(true);
@@ -133,6 +140,24 @@ describe('turn reduction', () => {
     state = call(state, 'mutation', 'edit');
 
     expect(reduceTurn(state, [ok('status'), ok('git'), ok('mutation')]).shouldHandoff).toBe(false);
+  });
+
+  it.each([
+    'echo bd update FEL-9 --status in_progress',
+    'echo "bd update FEL-9 --status in_progress"',
+    "printf '%s\\n' 'bd update FEL-9 --status in_progress'",
+    "git commit -m 'bd update FEL-9'",
+    "message='bd update FEL-9' && echo \"$message\"",
+    ": 'bd update FEL-9 --status in_progress'",
+    'bd status --format update',
+    '# bd update FEL-9 --status in_progress',
+    'echo done # bd update FEL-9 --status in_progress',
+  ])('does not treat Beads command text as tracking: %s', (command) => {
+    let state = createRunState();
+    state = beadsCall(state, 'beads-text', command);
+    state = call(state, 'mutation', 'edit');
+
+    expect(reduceTurn(state, [ok('beads-text'), ok('mutation')]).shouldHandoff).toBe(false);
   });
 
   it('hands off after an open gate and a successful mutation', () => {

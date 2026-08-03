@@ -142,9 +142,11 @@ function createHarness(
   });
   const sendMessage = vi.fn();
   const sendUserMessage = vi.fn();
-  const rawPiExec = vi.fn(async () => {
-    throw new Error('Pi host exec must not be used');
-  });
+  const facadeExec = vi.fn((
+    command: string,
+    args: string[],
+    execOptions?: Parameters<TestAgentRuntime['exec']>[2],
+  ) => runtime.exec(command, args, execOptions));
 
   const pi = {
     runtime,
@@ -160,7 +162,7 @@ function createHarness(
     }),
     getFlag: vi.fn((name: string) => flags.get(name)),
     getActiveTools: vi.fn(() => options.activeTools ?? ['read', 'bash', 'todo_write', 'edit', 'write']),
-    exec: rawPiExec,
+    exec: facadeExec,
     getThinkingLevel: vi.fn(() => thinkingLevel),
     setThinkingLevel,
     setModel,
@@ -176,7 +178,7 @@ function createHarness(
     ui,
     runtime,
     registeredFlags,
-    rawPiExec,
+    facadeExec,
     emit,
     command: commands.get('prewalk'),
     setModel,
@@ -356,13 +358,17 @@ describe('runtime routing and host/cloud parity', () => {
       await harness.command.handler('', harness.ctx);
 
       expect(harness.runtime.kind).toBe(runtimeKind);
+      expect(harness.facadeExec).toHaveBeenCalledWith(
+        'bd',
+        ['-C', '/workspace', '--readonly', '--json', 'status', '--no-activity'],
+        { timeout: 5_000 },
+      );
       expect(harness.runtime.execCalls).toEqual([{
         command: 'bd',
         args: ['-C', '/workspace', '--readonly', '--json', 'status', '--no-activity'],
         options: { timeout: 5_000 },
       }]);
       expect(harness.runtime.shellCalls).toEqual([]);
-      expect(harness.rawPiExec).not.toHaveBeenCalled();
       expect(harness.ui.notify).toHaveBeenCalledWith(expect.stringContaining('armed with Beads'), 'info');
     },
   );
