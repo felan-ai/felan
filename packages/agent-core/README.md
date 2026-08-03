@@ -36,3 +36,14 @@ changing shared agent behavior.
 Applications may pass an explicit `skills` list into session composition.
 Agent Core exposes only that list while project, user, and package skill
 discovery remain disabled.
+
+## Development
+
+Source: `packages/agent-core` in <https://github.com/felan-ai/felan>.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @felan-ai/agent-core build
+pnpm --filter @felan-ai/agent-core test
+```

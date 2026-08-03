@@ -1,16 +1,30 @@
 Felan
 Copyright (c) 2026 Felan contributors
 
-This product includes software developed by the Pi project and other open
-source projects listed in the package lockfile. Their license terms remain
-with their respective authors.
+This product uses Pi 0.82.1 from https://github.com/earendil-works/pi,
+licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
+
+@felan-ai/agent-core uses TypeBox 1.1.38 from
+https://github.com/sinclairzx81/typebox, licensed under the MIT License.
+Copyright (c) 2017-2026 Haydn Paterson.
+
+Other third-party runtime dependencies are identified by exact version and
+integrity in pnpm-lock.yaml and retain their respective license terms.
+
+@felan-ai/ext-context adapts MIT-licensed portions of
+packages/pi-progressive-context from https://github.com/mslavov/pi-extensions
+at commit 9571293d422db11de893fa80ed0fc3e39945c657.
+Copyright (c) 2026 Milko Slavov.
 
 @felan-ai/ext-prewalk adapts MIT-licensed portions of packages/pi-prewalk from
 mslavov/pi-extensions at commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
 Copyright (c) 2026 Dimitar Panayotov and Milko Slavov. Package-level attribution
 and license terms are included in packages/ext-prewalk/NOTICE and LICENSE.
 
-@felan-ai/ext-powerline contains code adapted from the MIT-licensed
-pi-powerline source by Milko Slavov. The source credits the MIT-licensed
-marckrenn/pi-sub packages/sub-core for subscription provider and usage logic;
-Felan excludes its credential loading and subscription network implementation.
+@felan-ai/ext-powerline adapts MIT-licensed portions of packages/pi-powerline
+from https://github.com/mslavov/pi-extensions at commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d. Copyright (c) 2026 Milko Slavov.
+That source credits the MIT-licensed packages/sub-core from
+https://github.com/marckrenn/pi-sub for subscription provider and usage logic.
+Copyright (c) 2026 Marc Krenn. Felan excludes its credential loading and
+subscription network implementation.

@@ -4,13 +4,18 @@
   "description": "Local Felan terminal agent",
   "license": "MIT",
   "type": "module",
-  "repository": "github:felan-ai/felan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felan-ai/felan.git",
+    "directory": "apps/tui"
+  },
   "engines": {
     "node": ">=22.19.0"
   },
   "files": [
     "dist",
     "LICENSE",
+    "NOTICE",
     "README.md"
   ],
   "bin": {

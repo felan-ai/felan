@@ -43,7 +43,11 @@ private environment conventions.
 
 ## Development
 
+Source: `packages/ext-powerline` in <https://github.com/felan-ai/felan>.
+
 ```sh
+corepack enable
+pnpm install --frozen-lockfile
 pnpm --filter @felan-ai/ext-powerline build
 pnpm --filter @felan-ai/ext-powerline type-check
 pnpm --filter @felan-ai/ext-powerline test

@@ -1,7 +1,8 @@
 @felan-ai/ext-prewalk
 
 This package includes adapted portions of packages/pi-prewalk from
-mslavov/pi-extensions at commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
+https://github.com/mslavov/pi-extensions at commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
 
 Copyright (c) 2026 Dimitar Panayotov
 Copyright (c) 2026 Milko Slavov

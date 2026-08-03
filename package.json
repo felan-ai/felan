@@ -14,6 +14,8 @@
     "type-check": "pnpm -r --if-present type-check",
     "test": "pnpm -r --if-present test",
     "test:packed-bin": "node scripts/test-packed-bin.mjs",
+    "audit:packed": "node scripts/test-packed-bin.mjs --audit",
+    "test:co-install": "node scripts/test-product-coinstall.mjs",
     "pack:all": "node scripts/pack.mjs",
     "check:packages": "node scripts/check-package-availability.mjs",
     "check:proposed-version": "node scripts/check-proposed-version.mjs",
