@@ -1,0 +1,10 @@
+@felan-ai/ext-powerline
+
+Portions of this package are adapted from the MIT-licensed pi-powerline source
+by Milko Slavov.
+
+The pi-powerline source credits marckrenn/pi-sub packages/sub-core, licensed
+under the MIT License, for subscription provider and usage logic. Felan does
+not include the credential loading or subscription network implementation.
+
+All adaptations remain available under the MIT License in LICENSE.

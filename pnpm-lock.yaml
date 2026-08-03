@@ -59,6 +59,9 @@ importers:
 
   packages/ext-powerline:
     dependencies:
+      '@earendil-works/pi-tui':
+        specifier: 0.82.1
+        version: 0.82.1
       '@felan-ai/agent-core':
         specifier: workspace:*
         version: link:../agent-core

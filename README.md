@@ -8,11 +8,12 @@ shared agent core, first-party Pi extensions, and local terminal application.
 - `@felan-ai/agent-core`: portable runtime contracts, Node.js host runtime, and runtime test kit
 - `@felan-ai/ext-context`: runtime-portable progressive loading of nested project instructions
 - `@felan-ai/ext-prewalk`: prewalk extension package
-- `@felan-ai/ext-powerline`: terminal powerline extension package
+- `@felan-ai/ext-powerline`: ANSI-aware local TUI footer with cached Git, model, session, context, and extension status segments
 - `@felan-ai/felan`: account-free local terminal application with the `felan` binary
 
 The local terminal application composes the host runtime and source-controlled
-extension set around Agent Core.
+extension set around Agent Core. `@felan-ai/ext-powerline` is enabled by default
+only in the local TUI and remains inert in headless modes.
 
 ## Requirements
 
