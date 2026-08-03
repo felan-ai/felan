@@ -8,7 +8,7 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "files": ["dist", "LICENSE", "README.md"],
+  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -22,6 +22,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
+    "@earendil-works/pi-tui": "0.82.1",
     "@felan-ai/agent-core": "workspace:*"
   },
   "publishConfig": {

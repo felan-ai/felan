@@ -9,3 +9,8 @@ with their respective authors.
 mslavov/pi-extensions at commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
 Copyright (c) 2026 Dimitar Panayotov and Milko Slavov. Package-level attribution
 and license terms are included in packages/ext-prewalk/NOTICE and LICENSE.
+
+@felan-ai/ext-powerline contains code adapted from the MIT-licensed
+pi-powerline source by Milko Slavov. The source credits the MIT-licensed
+marckrenn/pi-sub packages/sub-core for subscription provider and usage logic;
+Felan excludes its credential loading and subscription network implementation.

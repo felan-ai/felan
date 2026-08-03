@@ -21,7 +21,9 @@ not an isolation boundary.
 Only the source-controlled Felan extension package list is imported. Ambient Pi
 packages, extensions, skills, prompts, themes, and context files remain filtered;
 inline Felan extensions can still provide shared tools, prompts, interaction,
-and subagent behavior. Agent Core's `spawn_agent` tool delegates child creation
+and subagent behavior. The default local list includes `@felan-ai/ext-powerline`
+for an ANSI-aware footer; it is a direct TUI dependency and is not part of any
+cloud composition. Agent Core's `spawn_agent` tool delegates child creation
 through the portable host contract; local children run as in-process Agent Core
 sessions on fresh host runtimes without Felan cloud services.
 
