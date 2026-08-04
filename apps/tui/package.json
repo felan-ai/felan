@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0",
   "description": "Local Felan terminal agent",
   "license": "MIT",
   "type": "module",
@@ -28,14 +28,15 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.83.0",
     "@felan-ai/agent-core": "workspace:*",
+    "@felan-ai/ext-subagents": "workspace:*",
     "@felan-ai/ext-context": "workspace:*",
     "@felan-ai/ext-powerline": "workspace:*",
     "@felan-ai/ext-prewalk": "workspace:*"

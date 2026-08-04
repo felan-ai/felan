@@ -1,5 +1,9 @@
 import { InteractiveMode } from '@earendil-works/pi-coding-agent';
-import { createLocalFelanRuntime, type CreateLocalFelanRuntimeOptions } from './runtime.js';
+import {
+  createLocalFelanRuntime,
+  type CreateLocalFelanRuntimeOptions,
+} from './runtime.js';
+import { attachLocalSubagentPresenter } from './subagents/presenter.js';
 
 export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly initialMessage?: string;
@@ -16,7 +20,15 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
       ...(options.initialMessage === undefined ? {} : { initialMessage: options.initialMessage }),
       ...(options.verbose === undefined ? {} : { verbose: options.verbose }),
     });
-    await mode.run();
+    const detachPresenter = attachLocalSubagentPresenter(
+      runtime,
+      mode as unknown as Parameters<typeof attachLocalSubagentPresenter>[1],
+    );
+    try {
+      await mode.run();
+    } finally {
+      detachPresenter();
+    }
   } finally {
     try {
       await runtime.dispose();

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,19 +8,174 @@ import {
   createAgentSessionRuntime,
 } from '@felan-ai/agent-core';
 import { InteractiveMode } from '@earendil-works/pi-coding-agent';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const modelScope = vi.hoisted(() => ({ resolutions: 0 }));
+
+vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@earendil-works/pi-coding-agent')>();
+  return {
+    ...original,
+    resolveModelScopeWithDiagnostics: async (...args: Parameters<typeof original.resolveModelScopeWithDiagnostics>) => {
+      modelScope.resolutions += 1;
+      return original.resolveModelScopeWithDiagnostics(...args);
+    },
+  };
+});
+
 import {
+  createLocalFelanRuntime,
   createLocalModelRuntime,
   createLocalSessionRuntimeFactory,
 } from '../src/runtime.js';
+import { attachLocalSubagentPresenter } from '../src/subagents/presenter.js';
 
 const temporaryPaths: string[] = [];
 
 afterEach(async () => {
+  modelScope.resolutions = 0;
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
 describe('local Agent Core lifecycle', () => {
+  it('resolves configured model scope once per session', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      enabledModels: ['missing-model'],
+    }));
+
+    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
+      agentDir,
+      modelRuntime: await createLocalModelRuntime(agentDir),
+      extensionPackages: [],
+      importExtension: async () => {
+        throw new Error('No extensions should be imported');
+      },
+    }), {
+      cwd,
+      agentDir,
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+
+    expect(modelScope.resolutions).toBe(1);
+
+    await runtime.dispose();
+  });
+
+  it('awaits the local subagent host before Pi runtime disposal', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir });
+    const host = runtime.localSubagentHost;
+    const order: string[] = [];
+    const shutdown = host.shutdown.bind(host);
+    host.shutdown = async () => {
+      order.push('host');
+      await shutdown();
+    };
+    const disposeSession = runtime.session.dispose.bind(runtime.session);
+    runtime.session.dispose = () => {
+      order.push('pi');
+      disposeSession();
+    };
+
+    await runtime.dispose();
+
+    expect(order).toEqual(['host', 'pi']);
+  });
+
+  it('disposes Pi when local subagent shutdown fails', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir });
+    const host = runtime.localSubagentHost;
+    host.shutdown = async () => {
+      throw new Error('shutdown failed');
+    };
+    const disposeSession = runtime.session.dispose.bind(runtime.session);
+    const observedDispose = vi.fn(() => disposeSession());
+    runtime.session.dispose = observedDispose;
+
+    await expect(runtime.dispose()).rejects.toThrow('shutdown failed');
+
+    expect(observedDispose).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the active host and presenter subscription when session replacement is cancelled', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    const sessionDir = join(root, 'sessions');
+    await Promise.all([cwd, agentDir, sessionDir].map((path) => mkdir(path, { recursive: true })));
+    const sessionManager = SessionManager.create(cwd, sessionDir);
+    const entryId = sessionManager.appendMessage({
+      role: 'user', content: 'initial prompt', timestamp: Date.now(),
+    });
+    sessionManager.appendMessage(completedAssistantMessage('initial response'));
+    const runtime = await createLocalFelanRuntime({
+      cwd,
+      agentDir,
+      sessionDir,
+      sessionManager,
+    });
+    const host = runtime.localSubagentHost;
+    const shutdown = vi.spyOn(host, 'shutdown');
+    const subscribe = host.subscribe.bind(host);
+    let subscriptions = 0;
+    let detaches = 0;
+    host.subscribe = (listener) => {
+      subscriptions += 1;
+      const detach = subscribe(listener);
+      return () => {
+        detaches += 1;
+        detach();
+      };
+    };
+    const detachPresenter = attachLocalSubagentPresenter(runtime, {
+      setExtensionStatus: vi.fn(),
+    });
+    const runner = runtime.session.extensionRunner as unknown as {
+      hasHandlers(event: string): boolean;
+      emit(event: { type: string }): Promise<{ cancel?: boolean } | undefined>;
+    };
+    const hasHandlers = runner.hasHandlers.bind(runner);
+    const emit = runner.emit.bind(runner);
+    const beforeEvents: string[] = [];
+    const hasHandlersSpy = vi.spyOn(runner, 'hasHandlers').mockImplementation((event) => (
+      event === 'session_before_switch' || event === 'session_before_fork' || hasHandlers(event)
+    ));
+    const emitSpy = vi.spyOn(runner, 'emit').mockImplementation(async (event) => {
+      if (event.type === 'session_before_switch' || event.type === 'session_before_fork') {
+        beforeEvents.push(event.type);
+        return { cancel: true };
+      }
+      return emit(event);
+    });
+
+    await expect(runtime.newSession()).resolves.toEqual({ cancelled: true });
+    await expect(runtime.fork(entryId, { position: 'at' })).resolves.toEqual({ cancelled: true });
+
+    expect(beforeEvents).toEqual(['session_before_switch', 'session_before_fork']);
+    expect(runtime.localSubagentHost).toBe(host);
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(subscriptions).toBe(1);
+    expect(detaches).toBe(0);
+
+    emitSpy.mockRestore();
+    hasHandlersSpy.mockRestore();
+    detachPresenter();
+    expect(detaches).toBe(1);
+    await runtime.dispose();
+    expect(shutdown).toHaveBeenCalledOnce();
+  });
+
   it('recreates cwd-bound host runtime and services for fork, new, resume, and import', async () => {
     const root = await temporaryDirectory();
     const cwdA = join(root, 'workspace-a');
@@ -94,7 +249,6 @@ describe('local Agent Core lifecycle', () => {
       'grep',
       'find',
       'ls',
-      'spawn_agent',
     ]);
 
     await runtime.fork(entryId, { position: 'at' });
@@ -140,6 +294,90 @@ describe('local Agent Core lifecycle', () => {
     await runtime.dispose();
   });
 
+  it('rebinds subagent presentation after every session replacement', async () => {
+    const root = await temporaryDirectory();
+    const cwdA = join(root, 'workspace-a');
+    const cwdB = join(root, 'workspace-b');
+    const cwdC = join(root, 'workspace-c');
+    const agentDir = join(root, 'agent');
+    const sessionDir = join(root, 'sessions');
+    const importDir = join(root, 'imports');
+    await Promise.all([cwdA, cwdB, cwdC, agentDir, sessionDir, importDir].map(
+      (path) => mkdir(path, { recursive: true }),
+    ));
+    const initialSessionManager = SessionManager.create(cwdA, sessionDir);
+    const entryId = initialSessionManager.appendMessage({
+      role: 'user', content: 'initial prompt', timestamp: Date.now(),
+    });
+    initialSessionManager.appendMessage(completedAssistantMessage('initial response'));
+    const runtime = await createLocalFelanRuntime({
+      cwd: cwdA,
+      agentDir,
+      sessionDir,
+      sessionManager: initialSessionManager,
+    });
+    const hosts: typeof runtime.localSubagentHost[] = [];
+    const subscriptions = new Map<typeof runtime.localSubagentHost, number>();
+    const detaches = new Map<typeof runtime.localSubagentHost, number>();
+    const observeHost = (host: typeof runtime.localSubagentHost) => {
+      const subscribe = host.subscribe.bind(host);
+      host.subscribe = (listener) => {
+        subscriptions.set(host, (subscriptions.get(host) ?? 0) + 1);
+        const detach = subscribe(listener);
+        return () => {
+          detaches.set(host, (detaches.get(host) ?? 0) + 1);
+          detach();
+        };
+      };
+      hosts.push(host);
+    };
+    observeHost(runtime.localSubagentHost);
+    const detachHostChanges = runtime.subscribeLocalSubagentHost(observeHost);
+    const setExtensionStatus = vi.fn();
+    const detachPresenter = attachLocalSubagentPresenter(runtime, { setExtensionStatus });
+    const shutdowns: typeof hosts = [];
+    const observeShutdown = () => {
+      const host = runtime.localSubagentHost;
+      const shutdown = host.shutdown.bind(host);
+      host.shutdown = async () => {
+        shutdowns.push(host);
+        await shutdown();
+      };
+    };
+
+    observeShutdown();
+    await runtime.fork(entryId, { position: 'at' });
+    expect(shutdowns).toEqual([hosts[0]]);
+
+    observeShutdown();
+    await runtime.newSession();
+    expect(shutdowns).toEqual(hosts.slice(0, 2));
+
+    const resumedSession = SessionManager.create(cwdB, sessionDir);
+    resumedSession.appendMessage({ role: 'user', content: 'resume', timestamp: Date.now() });
+    resumedSession.appendMessage(completedAssistantMessage('resumed'));
+    observeShutdown();
+    await runtime.switchSession(resumedSession.getSessionFile()!);
+    expect(shutdowns).toEqual(hosts.slice(0, 3));
+
+    const importedSession = SessionManager.create(cwdC, importDir);
+    importedSession.appendMessage({ role: 'user', content: 'imported', timestamp: Date.now() });
+    importedSession.appendMessage(completedAssistantMessage('imported'));
+    observeShutdown();
+    await runtime.importFromJsonl(importedSession.getSessionFile()!);
+    expect(shutdowns).toEqual(hosts.slice(0, 4));
+    expect(hosts).toHaveLength(5);
+    expect(new Set(hosts)).toHaveLength(5);
+    expect(hosts.map((host) => subscriptions.get(host))).toEqual([1, 1, 1, 1, 1]);
+    expect(hosts.map((host) => detaches.get(host) ?? 0)).toEqual([1, 1, 1, 1, 0]);
+
+    detachPresenter();
+    detachHostChanges();
+    expect(hosts.map((host) => detaches.get(host))).toEqual([1, 1, 1, 1, 1]);
+    expect(setExtensionStatus).toHaveBeenLastCalledWith('felan-subagents', undefined);
+    await runtime.dispose();
+  });
+
   it('rebinds a replacement session through Pi InteractiveMode command handling', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -180,8 +418,8 @@ describe('local Agent Core lifecycle', () => {
       expect(runtime.session.agent.state.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
         'read',
         'bash',
-        'spawn_agent',
       ]));
+      expect(runtime.session.agent.state.tools.map((tool) => tool.name)).not.toContain('spawn_agent');
     } finally {
       mode.stop();
       await runtime.dispose();

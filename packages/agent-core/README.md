@@ -18,20 +18,14 @@ Host mode runs with the current user's filesystem and process permissions. It
 provides workspace path containment, but no OS isolation or sandbox boundary.
 Run untrusted workloads in an isolated runtime instead.
 
-The `@felan-ai/agent-core/runtime-test-kit` export provides a framework-neutral
-runtime conformance runner, reusable fixtures, and `TestAgentRuntime`.
-
-The package also composes Pi 0.82.1 sessions with inline-only Felan extensions
+The package also composes Pi 0.83.0 sessions with inline-only Felan extensions
 and runtime-backed coding tools. `createAgentCoreSession` returns a headless,
 inactive session, while `createAgentCoreSessionRuntimeFactory` provides the
 typed seam used with Pi's `createAgentSessionRuntime`. Applications retain
 ownership of model credentials, settings, session storage, stream wrappers,
-child-session creation, and presentation listeners.
-
-Every composed session includes `spawn_agent`, which maps portable child-agent
-requests onto `AgentSessionHost.createChildSession`. Applications own child
-execution and can run it locally or delegate it to another runtime without
-changing shared agent behavior.
+feature extensions, and presentation listeners. `FelanExtensionAPI` adds only
+the selected `AgentRuntime` to Pi's extension API; feature-specific contracts
+remain in their owning extension packages.
 
 Applications may pass an explicit `skills` list into session composition.
 Agent Core exposes only that list while project, user, and package skill

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/agent-core",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0",
   "description": "Portable Felan agent contracts and composition",
   "license": "MIT",
   "type": "module",
@@ -22,21 +22,16 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./runtime-test-kit": {
-      "types": "./dist/runtime-test-kit.d.ts",
-      "import": "./dist/runtime-test-kit.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.82.1",
-    "typebox": "1.1.38"
+    "@earendil-works/pi-coding-agent": "0.83.0"
   },
   "publishConfig": {
     "access": "public",

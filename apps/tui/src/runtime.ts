@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -6,20 +6,46 @@ import {
   HostAgentRuntime,
   ModelRuntime,
   SessionManager,
-  createAgentCoreSession,
   createAgentCoreSessionRuntimeFactory,
   createAgentSessionRuntime,
   type AgentRuntime,
-  type AgentSessionHost,
+  type AgentSessionServices,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionPackageImporter,
 } from '@felan-ai/agent-core';
+import { bindSubagentSession } from '@felan-ai/ext-subagents';
 import {
-  resolveCliModel,
   resolveModelScopeWithDiagnostics,
+  type AgentSessionRuntime,
 } from '@earendil-works/pi-coding-agent';
-import { importLocalExtension, localExtensionPackages } from './extensions.js';
+import {
+  createLocalExtensionImporter,
+  importLocalExtension,
+  localExtensionPackages,
+} from './extensions.js';
 import { createLocalSettingsManager } from './settings.js';
+import {
+  LocalSubagentHost,
+  type LocalSubagentSettings,
+} from './subagents/host.js';
+
+const localSubagentHost = Symbol('localSubagentHost');
+const localSubagentShutdown = Symbol('localSubagentShutdown');
+
+interface LocalSubagentShutdownState {
+  failed: boolean;
+  error?: unknown;
+}
+
+type LocalServices = AgentSessionServices & {
+  [localSubagentHost]?: LocalSubagentHost;
+  [localSubagentShutdown]?: LocalSubagentShutdownState;
+};
+
+export type LocalFelanRuntime = AgentSessionRuntime & {
+  readonly localSubagentHost: LocalSubagentHost;
+  subscribeLocalSubagentHost(listener: (host: LocalSubagentHost) => void): () => void;
+};
 
 export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly agentDir: string;
@@ -27,6 +53,7 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly extensionPackages?: readonly string[];
   readonly importExtension?: ExtensionPackageImporter;
   readonly runtimeFactory?: (cwd: string) => AgentRuntime;
+  readonly subagentSettings?: LocalSubagentSettings;
 }
 
 export interface CreateLocalFelanRuntimeOptions {
@@ -37,6 +64,7 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly modelRuntime?: ModelRuntime;
   readonly sessionDir?: string;
   readonly runtimeFactory?: (cwd: string) => AgentRuntime;
+  readonly subagentSettings?: LocalSubagentSettings;
 }
 
 export function getLocalAgentDir(): string {
@@ -46,19 +74,46 @@ export function getLocalAgentDir(): string {
 export function createLocalSessionRuntimeFactory(
   options: CreateLocalSessionRuntimeFactoryOptions,
 ): CreateAgentSessionRuntimeFactory {
-  const createCoreRuntime = createAgentCoreSessionRuntimeFactory(async ({ cwd }) => {
+  const sessions = new WeakMap<SessionManager, {
+    host: LocalSubagentHost;
+    modelScope: Awaited<ReturnType<typeof resolveModelScopeWithDiagnostics>>;
+    shutdownState: LocalSubagentShutdownState;
+  }>();
+  const createCoreRuntime = createAgentCoreSessionRuntimeFactory(async ({ cwd, sessionManager }) => {
     const settingsManager = createLocalSettingsManager(cwd, options.agentDir);
     const modelPatterns = settingsManager.getEnabledModels();
     const modelScope = modelPatterns && modelPatterns.length > 0
       ? await resolveModelScopeWithDiagnostics(modelPatterns, options.modelRuntime)
       : { scopedModels: [], diagnostics: [] };
+    const extensionPackages = options.extensionPackages ?? localExtensionPackages;
+    const importExtension = options.importExtension ?? importLocalExtension;
+    const host = await LocalSubagentHost.create({
+      sessionId: sessionManager.getSessionId(),
+      cwd,
+      agentDir: options.agentDir,
+      modelRuntime: options.modelRuntime,
+      settingsManager,
+      extensionPackages,
+      importExtension,
+      ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
+      ...(options.subagentSettings === undefined ? {} : { settings: options.subagentSettings }),
+    });
+    const shutdownState: LocalSubagentShutdownState = { failed: false };
+    const shutdownHost = async () => {
+      try {
+        await host.shutdown();
+      } catch (error) {
+        shutdownState.failed = true;
+        shutdownState.error = error;
+        throw error;
+      }
+    };
+    sessions.set(sessionManager, { host, modelScope, shutdownState });
 
     return {
-      applicationKind: 'tui',
       runtime: options.runtimeFactory?.(cwd) ?? new HostAgentRuntime(cwd),
-      host: createLocalSessionHost(options, cwd),
-      extensionPackages: options.extensionPackages ?? localExtensionPackages,
-      importExtension: options.importExtension ?? importLocalExtension,
+      extensionPackages,
+      importExtension: createLocalExtensionImporter(host, importExtension, shutdownHost),
       modelRuntime: options.modelRuntime,
       settingsManager,
       ...(modelScope.scopedModels.length === 0 ? {} : { scopedModels: modelScope.scopedModels }),
@@ -67,11 +122,11 @@ export function createLocalSessionRuntimeFactory(
 
   return async (request) => {
     const result = await createCoreRuntime(request);
+    const { host, modelScope, shutdownState } = sessions.get(request.sessionManager)!;
+    bindSubagentSession({ host, session: result.session });
+    Object.defineProperty(result.services, localSubagentHost, { value: host });
+    Object.defineProperty(result.services, localSubagentShutdown, { value: shutdownState });
     const settingsErrors = result.services.settingsManager.drainErrors();
-    const modelPatterns = result.services.settingsManager.getEnabledModels();
-    const modelScope = modelPatterns && modelPatterns.length > 0
-      ? await resolveModelScopeWithDiagnostics(modelPatterns, options.modelRuntime)
-      : { diagnostics: [] };
 
     return {
       ...result,
@@ -88,118 +143,6 @@ export function createLocalSessionRuntimeFactory(
   };
 }
 
-export function createLocalSessionHost(
-  options: CreateLocalSessionRuntimeFactoryOptions,
-  cwd: string,
-): AgentSessionHost {
-  return {
-    createChildSession: async (request) => {
-      const sessionManager = SessionManager.inMemory(cwd);
-      const childSessionId = sessionManager.getSessionId();
-      const resolvedModel = request.model
-        ? resolveCliModel({ cliModel: request.model, modelRuntime: options.modelRuntime })
-        : undefined;
-      if (resolvedModel?.error) {
-        return {
-          ok: false,
-          sessionId: childSessionId,
-          status: 'failed',
-          error: resolvedModel.error,
-        };
-      }
-
-      const created = await createAgentCoreSession({
-        applicationKind: 'tui',
-        runtime: options.runtimeFactory?.(cwd) ?? new HostAgentRuntime(cwd),
-        host: createLocalSessionHost(options, cwd),
-        extensionPackages: options.extensionPackages ?? localExtensionPackages,
-        importExtension: options.importExtension ?? importLocalExtension,
-        modelRuntime: options.modelRuntime,
-        settingsManager: createLocalSettingsManager(cwd, options.agentDir),
-        sessionManager,
-        appendSystemPrompt: [`You are the ${request.personaId} child agent.`],
-        ...(resolvedModel?.model === undefined ? {} : { model: resolvedModel.model }),
-        ...(resolvedModel?.thinkingLevel === undefined
-          ? {}
-          : { thinkingLevel: resolvedModel.thinkingLevel }),
-      });
-      try {
-        await created.session.bindExtensions({ mode: 'print' });
-      } catch (error) {
-        created.session.dispose();
-        throw error;
-      }
-
-      const runChild = async () => {
-        let timeout: ReturnType<typeof setTimeout> | undefined;
-        if (request.timeoutMinutes) {
-          timeout = setTimeout(() => void created.session.abort(), request.timeoutMinutes * 60_000);
-          timeout.unref();
-        }
-
-        try {
-          await created.session.prompt(request.prompt);
-          let assistant: Extract<(typeof created.session.messages)[number], { role: 'assistant' }> | undefined;
-          for (let index = created.session.messages.length - 1; index >= 0; index -= 1) {
-            const message = created.session.messages[index];
-            if (message?.role === 'assistant') {
-              assistant = message;
-              break;
-            }
-          }
-          if (!assistant) {
-            return {
-              ok: false,
-              sessionId: childSessionId,
-              status: 'failed' as const,
-              error: 'Child session completed without an assistant response',
-            };
-          }
-          if (assistant.stopReason === 'error' || assistant.stopReason === 'aborted') {
-            return {
-              ok: false,
-              sessionId: childSessionId,
-              status: 'failed' as const,
-              error: assistant.errorMessage ?? `Child session ${assistant.stopReason}`,
-            };
-          }
-          const result = assistant.content
-            .filter((part) => part.type === 'text')
-            .map((part) => part.text)
-            .join('\n');
-          return {
-            ok: true,
-            sessionId: childSessionId,
-            status: 'completed' as const,
-            result,
-          };
-        } catch (error) {
-          return {
-            ok: false,
-            sessionId: childSessionId,
-            status: 'failed' as const,
-            error: error instanceof Error ? error.message : String(error),
-          };
-        } finally {
-          if (timeout) clearTimeout(timeout);
-          created.session.dispose();
-        }
-      };
-
-      if (!request.block) {
-        void runChild();
-        return {
-          ok: true,
-          sessionId: childSessionId,
-          status: 'running',
-          message: 'Child session started',
-        };
-      }
-      return runChild();
-    },
-  };
-}
-
 export async function createLocalModelRuntime(agentDir: string): Promise<ModelRuntime> {
   return ModelRuntime.create({
     authPath: join(agentDir, 'auth.json'),
@@ -209,7 +152,7 @@ export async function createLocalModelRuntime(agentDir: string): Promise<ModelRu
 
 export async function createLocalFelanRuntime(
   options: CreateLocalFelanRuntimeOptions = {},
-) {
+): Promise<LocalFelanRuntime> {
   const cwd = resolve(options.cwd ?? process.cwd());
   const agentDir = resolve(options.agentDir ?? getLocalAgentDir());
   await mkdir(agentDir, { recursive: true });
@@ -223,12 +166,118 @@ export async function createLocalFelanRuntime(
   const createRuntime = createLocalSessionRuntimeFactory({
     agentDir,
     modelRuntime,
+    subagentSettings: options.subagentSettings ?? await loadLocalSubagentSettings(agentDir),
     ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
   });
 
-  return createAgentSessionRuntime(createRuntime, {
+  const runtime = await createAgentSessionRuntime(createRuntime, {
     cwd: sessionManager.getCwd(),
     agentDir,
     sessionManager,
   });
+  return installLocalSubagentLifecycle(runtime);
+}
+
+function getRuntimeLocalSubagentHost(runtime: { readonly services: AgentSessionServices }): LocalSubagentHost {
+  const host = (runtime.services as LocalServices)[localSubagentHost];
+  if (!host) throw new Error('Local subagent host is unavailable');
+  return host;
+}
+
+function getRuntimeLocalSubagentShutdown(
+  runtime: { readonly services: AgentSessionServices },
+): LocalSubagentShutdownState {
+  const state = (runtime.services as LocalServices)[localSubagentShutdown];
+  if (!state) throw new Error('Local subagent shutdown state is unavailable');
+  return state;
+}
+
+function installLocalSubagentLifecycle(runtime: AgentSessionRuntime): LocalFelanRuntime {
+  const listeners = new Set<(host: LocalSubagentHost) => void>();
+  const localRuntime = runtime as LocalFelanRuntime;
+  Object.defineProperties(localRuntime, {
+    localSubagentHost: { get: () => getRuntimeLocalSubagentHost(runtime) },
+    subscribeLocalSubagentHost: {
+      value: (listener: (host: LocalSubagentHost) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+  });
+  const notifyHostReplacement = () => {
+    const host = localRuntime.localSubagentHost;
+    for (const listener of listeners) listener(host);
+  };
+  const dispose = runtime.dispose.bind(runtime);
+  runtime.dispose = async () => {
+    const shutdownState = getRuntimeLocalSubagentShutdown(runtime);
+    const session = runtime.session;
+    const sessionDispose = session.dispose;
+    let piDisposalStarted = false;
+    const observedDispose = () => {
+      piDisposalStarted = true;
+      sessionDispose.call(session);
+    };
+    session.dispose = observedDispose;
+    let disposeFailed = false;
+    let disposeError: unknown;
+    try {
+      await dispose();
+    } catch (error) {
+      disposeFailed = true;
+      disposeError = error;
+      if (!piDisposalStarted) {
+        try {
+          observedDispose();
+        } catch (fallbackError) {
+          throw new AggregateError(
+            [error, fallbackError],
+            'Local runtime shutdown and Pi disposal both failed',
+          );
+        }
+      }
+    } finally {
+      if (session.dispose === observedDispose) session.dispose = sessionDispose;
+    }
+    if (disposeFailed) throw disposeError;
+    if (shutdownState.failed) throw shutdownState.error;
+  };
+  const switchSession = runtime.switchSession.bind(runtime);
+  runtime.switchSession = async (...args: Parameters<AgentSessionRuntime['switchSession']>) => {
+    const result = await switchSession(...args);
+    if (!result.cancelled) notifyHostReplacement();
+    return result;
+  };
+  const newSession = runtime.newSession.bind(runtime);
+  runtime.newSession = async (...args: Parameters<AgentSessionRuntime['newSession']>) => {
+    const result = await newSession(...args);
+    if (!result.cancelled) notifyHostReplacement();
+    return result;
+  };
+  const fork = runtime.fork.bind(runtime);
+  runtime.fork = async (...args: Parameters<AgentSessionRuntime['fork']>) => {
+    const result = await fork(...args);
+    if (!result.cancelled) notifyHostReplacement();
+    return result;
+  };
+  const importFromJsonl = runtime.importFromJsonl.bind(runtime);
+  runtime.importFromJsonl = async (...args: Parameters<AgentSessionRuntime['importFromJsonl']>) => {
+    const result = await importFromJsonl(...args);
+    if (!result.cancelled) notifyHostReplacement();
+    return result;
+  };
+  return localRuntime;
+}
+
+async function loadLocalSubagentSettings(agentDir: string): Promise<LocalSubagentSettings> {
+  try {
+    const settings = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8')) as {
+      felanSubagents?: LocalSubagentSettings;
+    };
+    return settings.felanSubagents ?? {};
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return {};
+    if (error instanceof SyntaxError) return {};
+    throw error;
+  }
 }

@@ -67,8 +67,13 @@ describe('interactive application', () => {
     expect(interactive.toolNames).toEqual(expect.arrayContaining([
       'read',
       'bash',
-      'spawn_agent',
+      'Agent',
+      'list_subagents',
+      'get_subagent_result',
+      'steer_subagent',
+      'cancel_subagent',
     ]));
+    expect(interactive.toolNames).not.toContain('spawn_agent');
   });
 
   it('disposes the runtime when InteractiveMode construction fails', async () => {

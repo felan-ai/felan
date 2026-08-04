@@ -5,7 +5,7 @@ import {
   loadFelanExtensions,
   type FelanExtensionAPI,
 } from '../src/index.js';
-import { TestAgentRuntime } from '../src/test-agent-runtime.js';
+import { TestAgentRuntime } from './test-agent-runtime.js';
 
 describe('Felan extension bridge', () => {
   it('preserves Pi method receivers, exposes the runtime, and routes exec through it', async () => {

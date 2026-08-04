@@ -62,7 +62,11 @@ export async function loadFelanExtensions(
       throw new Error(`${packageName} must default-export a Felan extension`);
     }
 
-    extensions.push(bindFelanExtension(packageName, defaultExport as FelanExtension, runtime));
+    extensions.push(bindFelanExtension(
+      packageName,
+      defaultExport as FelanExtension,
+      runtime,
+    ));
   }
 
   return extensions;

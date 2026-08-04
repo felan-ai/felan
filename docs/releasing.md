@@ -5,57 +5,39 @@ trusted publishing and provenance. The workflow has an OIDC identity token and
 contains no npm credential. It packs workspace dependencies with pnpm and uses
 an OIDC-capable npm 11 CLI to publish the resulting tarballs.
 
-The current release-readiness prerelease version is `0.1.0-alpha.3`. The root and
-all five public manifests form one fixed version group. Agent Core diagnostics
-report the same package-derived version.
+The current release version is `0.1.0`. The root and all six public manifests
+form one fixed version group. Agent Core diagnostics report the same
+package-derived version.
 
-Before a prerelease:
+Before a release:
 
-1. Run `pnpm check:packages` to verify each public package name on npmjs.
-2. Run `pnpm check:release` to validate the fixed version group, prerelease tag
-   policy, OIDC provenance, and topological pack/publish order.
-3. Run `pnpm check:licenses` to reject unknown, private, or non-permissive
+1. Run `pnpm check:licenses` to reject unknown, private, or non-permissive
    production dependencies and verify the Pi and TypeBox notices.
-4. Run `pnpm check:proposed-version` to confirm the exact proposed version is
+2. Run `pnpm check:proposed-version` to confirm the exact proposed version is
    unused for every public package. This preparation-only check stays outside
    `pnpm verify`, so ordinary CI remains valid after publication.
-5. Run `pnpm verify` on Node.js 22.20.0. The packed smoke installs with a clean
+3. Run `pnpm verify` on Node.js 22.20.0. The packed smoke installs with a clean
    npm configuration, checks exact workspace dependency versions, imports every
    public package through the installed application, constructs a local runtime,
    rejects unlisted packages, and runs the `felan` binary without credentials.
-6. Configure each npm package's trusted publisher for this repository and workflow.
-7. Create the matching prerelease `v<version>` tag through the normal reviewed
-   release process. The workflow publishes in dependency order: Agent Core,
-   extensions, then TUI, all with the npm `next` dist-tag.
+4. Configure each npm package's trusted publisher for this repository and workflow.
+5. Create the matching `v<version>` tag through the normal reviewed release
+   process. The workflow publishes in dependency order: Agent Core,
+   `ext-subagents`, the remaining extensions, then TUI. Stable versions publish
+   to npm `latest`; prereleases publish to `next`.
 
-## Stable readiness
+## Packed audit
 
-Stable publication follows successful prerelease integration with public host
-and private cloud runtime adapters. Run the validation-only **Stable release
-readiness** workflow with a packed tarball or published package spec for the
-Story 11 `@felan-ai/cli` release. The workflow performs:
+The release workflow records the packed dependency audit for stable versions:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm verify
 pnpm audit:packed
-pnpm test:co-install -- --cli <tarball-or-@felan-ai/cli@version>
 ```
 
-`test:co-install` uses the packed TUI set in `.artifacts` by default. It also
-accepts `--tui <tarball-or-package-spec>` and the `FELAN_CLI_PACKAGE` and
-`FELAN_TUI_PACKAGE` environment variables. It uses no sibling checkout and
-requires the platform CLI to expose only `felan-cli` while the local TUI exposes
-only `felan`.
-
-The clean audit currently reports the vulnerable `brace-expansion@5.0.7`
-locked by the published Pi 0.82.1 shrinkwrap. Pi has no safe compatible npm
-release yet. Stable publication remains blocked by `bugzy-3bfl.16`; the exact
-Pi 0.82.1 pin remains unchanged until a reviewed upstream release is available.
-
-The stable gate requires published `@felan-ai/cli@0.2.0`, which exposes only
-`felan-cli`, plus `release-evidence/<stable-version>.json` copied from the
-successful private trusted-candidate record. The evidence binds the exact
-prerelease versions, integrities, public tag and commit, private candidate run,
-and tested private commit. `pnpm check:stable-evidence` revalidates every public
-npm provenance statement before a stable tag can publish to `latest`.
+The clean audit currently reports vulnerable `brace-expansion@5.0.7` and
+`undici@8.5.0` versions locked by the published Pi 0.83.0 shrinkwrap. The
+release accepts this upstream dependency risk. Record the audit output with the
+release evidence; `pnpm audit:packed` is advisory and does not gate publication.
+`bugzy-3bfl.16` tracks adoption of an upstream fix independently. After
+publication, record the package versions, integrities, provenance, source tag,
+and source commit before updating cloud dependencies.

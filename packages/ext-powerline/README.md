@@ -1,6 +1,6 @@
 # @felan-ai/ext-powerline
 
-Default local TUI footer extension for Felan, targeting Pi 0.82.1.
+Default local TUI footer extension for Felan, targeting Pi 0.83.0.
 
 The footer displays:
 

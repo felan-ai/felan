@@ -1,10 +1,10 @@
 Felan
 Copyright (c) 2026 Felan contributors
 
-This product uses Pi 0.82.1 from https://github.com/earendil-works/pi,
+This product uses Pi 0.83.0 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 
-@felan-ai/agent-core uses TypeBox 1.1.38 from
+@felan-ai/ext-subagents uses TypeBox 1.1.38 from
 https://github.com/sinclairzx81/typebox, licensed under the MIT License.
 Copyright (c) 2017-2026 Haydn Paterson.
 
@@ -28,3 +28,8 @@ That source credits the MIT-licensed packages/sub-core from
 https://github.com/marckrenn/pi-sub for subscription provider and usage logic.
 Copyright (c) 2026 Marc Krenn. Felan excludes its credential loading and
 subscription network implementation.
+
+@felan-ai/ext-subagents was designed with reference to the MIT-licensed
+pi-subagents project at commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
+Felan implements its own contracts, tools, local manager, and persistence; no
+source code was copied.

@@ -1,9 +1,11 @@
 import type {
+  AgentRuntime,
   ExtensionContext,
   FelanExtensionAPI,
   AgentRuntimeKind,
+  ExecOptions,
+  ExecResult,
 } from '@felan-ai/agent-core';
-import { TestAgentRuntime } from '@felan-ai/agent-core/runtime-test-kit';
 import { describe, expect, it, vi } from 'vitest';
 import prewalkExtension from '../index.js';
 import {
@@ -14,6 +16,47 @@ import {
 } from '../prompts.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => any;
+
+class ProbeRuntime implements AgentRuntime {
+  readonly cwd = '/workspace';
+  readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
+  readonly shellCalls: Array<{ command: string; options?: Parameters<AgentRuntime['shell']>[1] }> = [];
+
+  constructor(
+    readonly kind: AgentRuntimeKind,
+    private readonly execute: () => ExecResult,
+  ) {}
+
+  async exec(command: string, args: readonly string[], options?: ExecOptions): Promise<ExecResult> {
+    this.execCalls.push(options ? { command, args: [...args], options } : { command, args: [...args] });
+    return this.execute();
+  }
+
+  async shell(command: string, options?: Parameters<AgentRuntime['shell']>[1]): Promise<ExecResult> {
+    this.shellCalls.push(options ? { command, options } : { command });
+    return { stdout: '', stderr: '', code: 0, killed: false };
+  }
+
+  async readFile(): Promise<Uint8Array> {
+    throw new Error('readFile is unavailable in this test runtime');
+  }
+
+  async writeFile(): Promise<void> {
+    throw new Error('writeFile is unavailable in this test runtime');
+  }
+
+  async listFiles(): Promise<string[]> {
+    throw new Error('listFiles is unavailable in this test runtime');
+  }
+
+  async mkdir(): Promise<void> {
+    throw new Error('mkdir is unavailable in this test runtime');
+  }
+
+  async remove(): Promise<void> {
+    throw new Error('remove is unavailable in this test runtime');
+  }
+}
 
 const plannerModel = { provider: 'openai-codex', id: 'gpt-5.6-sol', name: 'Sol' } as any;
 const targetModel = { provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'Luna' } as any;
@@ -86,9 +129,7 @@ function createHarness(
   let authenticated = options.authenticated ?? true;
   let idle = options.idle ?? true;
 
-  const runtime = new TestAgentRuntime('/workspace', {
-    ...(options.runtimeKind === undefined ? {} : { kind: options.runtimeKind }),
-    exec: () => {
+  const runtime = new ProbeRuntime(options.runtimeKind ?? 'host', () => {
       if (options.probeThrows) throw new Error('bd unavailable');
       return {
         stdout: options.beads ? '{}' : '',
@@ -96,7 +137,6 @@ function createHarness(
         code: options.beads ? 0 : 1,
         killed: false,
       };
-    },
   });
   const ui = {
     notify: vi.fn(),
@@ -145,7 +185,7 @@ function createHarness(
   const facadeExec = vi.fn((
     command: string,
     args: string[],
-    execOptions?: Parameters<TestAgentRuntime['exec']>[2],
+    execOptions?: Parameters<AgentRuntime['exec']>[2],
   ) => runtime.exec(command, args, execOptions));
 
   const pi = {
