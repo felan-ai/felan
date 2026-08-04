@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-context",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0",
   "description": "Progressive-context extension for Felan",
   "license": "MIT",
   "type": "module",

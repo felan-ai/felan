@@ -21,11 +21,29 @@ not an isolation boundary.
 Only the source-controlled Felan extension package list is imported. Ambient Pi
 packages, extensions, skills, prompts, themes, and context files remain filtered;
 inline Felan extensions can still provide shared tools, prompts, interaction,
-and subagent behavior. The default local list includes `@felan-ai/ext-powerline`
-for an ANSI-aware footer; it is a direct TUI dependency and is not part of any
-cloud composition. Agent Core's `spawn_agent` tool delegates child creation
-through the portable host contract; local children run as in-process Agent Core
-sessions on fresh host runtimes without Felan cloud services.
+and subagent behavior. The application explicitly configures
+`@felan-ai/ext-subagents` with its session-bound local host; the extension provides `Agent`, `list_subagents`,
+`get_subagent_result`, `steer_subagent`, and `cancel_subagent`. A root-scoped
+local host tracks foreground and background runs, persists the latest child session
+metadata, delivers completion notices, supports bounded nesting, and uses the
+application's current workspace. The TUI status line shows active/recent child
+state, and runtime shutdown awaits active-child cancellation before Pi teardown.
+Completed-child continuation uses the same child ID and Pi session file while
+replacing the latest result. The default list also
+includes `@felan-ai/ext-powerline` for an ANSI-aware footer; it is a direct TUI
+dependency and is not part of cloud composition.
+
+Local agent definitions are loaded only from bundled Felan definitions,
+`$FELAN_AGENT_DIR/agents/*.md`, and `<workspace>/.felan/agents/*.md`, with
+project definitions taking precedence. Pi ambient agent discovery remains
+disabled. Local subagent concurrency defaults to four and depth defaults to
+three; set `felanSubagents.concurrency` and `felanSubagents.maxDepth` in the
+Felan settings file to configure those bounded values.
+
+Local model selectors are deterministic and support explicit inheritance or an
+exact authenticated `provider/model`; exact selectors never fall back. Requested
+thinking levels are checked against that resolved model and unsupported levels
+return `unsupported_thinking` instead of being silently clamped.
 
 ```sh
 felan --diagnostics

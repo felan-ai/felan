@@ -2,11 +2,12 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type {
+  AgentRuntime,
+  AgentRuntimeKind,
   ExtensionContext,
   FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import { HostAgentRuntime } from '@felan-ai/agent-core';
-import { TestAgentRuntime } from '@felan-ai/agent-core/runtime-test-kit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import contextExtension from '../src/index.js';
 
@@ -20,12 +21,45 @@ type ContextMessage = {
   readonly display?: boolean;
 };
 
-class RecordingRuntime extends TestAgentRuntime {
+class RecordingRuntime implements AgentRuntime {
   readonly readPaths: string[] = [];
 
-  override async readFile(path: string): Promise<Uint8Array> {
+  constructor(
+    private readonly runtime: HostAgentRuntime,
+    readonly kind: AgentRuntimeKind = 'host',
+  ) {}
+
+  get cwd(): string {
+    return this.runtime.cwd;
+  }
+
+  exec(...args: Parameters<AgentRuntime['exec']>): ReturnType<AgentRuntime['exec']> {
+    return this.runtime.exec(...args);
+  }
+
+  shell(...args: Parameters<AgentRuntime['shell']>): ReturnType<AgentRuntime['shell']> {
+    return this.runtime.shell(...args);
+  }
+
+  async readFile(path: string): Promise<Uint8Array> {
     this.readPaths.push(path);
-    return super.readFile(path);
+    return this.runtime.readFile(path);
+  }
+
+  writeFile(...args: Parameters<AgentRuntime['writeFile']>): ReturnType<AgentRuntime['writeFile']> {
+    return this.runtime.writeFile(...args);
+  }
+
+  listFiles(...args: Parameters<AgentRuntime['listFiles']>): ReturnType<AgentRuntime['listFiles']> {
+    return this.runtime.listFiles(...args);
+  }
+
+  mkdir(...args: Parameters<AgentRuntime['mkdir']>): ReturnType<AgentRuntime['mkdir']> {
+    return this.runtime.mkdir(...args);
+  }
+
+  remove(...args: Parameters<AgentRuntime['remove']>): ReturnType<AgentRuntime['remove']> {
+    return this.runtime.remove(...args);
   }
 }
 
@@ -36,7 +70,7 @@ class ExtensionHarness {
   readonly notifications: Array<[string, string]> = [];
   readonly ctx: ExtensionContext;
 
-  private constructor(readonly runtime: TestAgentRuntime | HostAgentRuntime, cwd: string) {
+  private constructor(readonly runtime: AgentRuntime, cwd: string) {
     const ui = {
       setStatus: (key: string, value: string | undefined) => this.statuses.push([key, value]),
       notify: (message: string, level: string) => this.notifications.push([message, level]),
@@ -49,11 +83,12 @@ class ExtensionHarness {
   }
 
   static async create(
-    runtime: TestAgentRuntime | HostAgentRuntime = new TestAgentRuntime('/workspace'),
+    runtime?: AgentRuntime,
   ): Promise<ExtensionHarness> {
-    const harness = new ExtensionHarness(runtime, runtime.cwd);
+    const selectedRuntime = runtime ?? await testRuntime();
+    const harness = new ExtensionHarness(selectedRuntime, selectedRuntime.cwd);
     const pi = {
-      runtime,
+      runtime: selectedRuntime,
       on: (event: string, handler: EventHandler) => {
         const handlers = harness.handlers.get(event) ?? [];
         handlers.push(handler);
@@ -111,7 +146,7 @@ afterEach(async () => {
 
 describe('@felan-ai/ext-context', () => {
   it('injects newly discovered instructions only on the next context event and resets on session start', async () => {
-    const runtime = new TestAgentRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'nested/AGENTS.md', 'Nested instructions');
     await put(runtime, 'nested/file.ts', 'export {};');
     const harness = await ExtensionHarness.create(runtime);
@@ -141,7 +176,7 @@ describe('@felan-ai/ext-context', () => {
   });
 
   it('ignores failed and non-read tool results', async () => {
-    const runtime = new TestAgentRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'nested/AGENTS.md', 'Nested instructions');
     await put(runtime, 'nested/file.ts', 'export {};');
     const harness = await ExtensionHarness.create(runtime);
@@ -161,7 +196,7 @@ describe('@felan-ai/ext-context', () => {
   });
 
   it('decodes CLI file block names and accepts the leading @ form', async () => {
-    const runtime = new TestAgentRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'nested/AGENTS.md', 'Ampersand path instructions');
     await put(runtime, 'nested/a&b.ts', 'export {};');
     const harness = await ExtensionHarness.create(runtime);
@@ -172,7 +207,7 @@ describe('@felan-ai/ext-context', () => {
   });
 
   it('walks nested directories in cwd-to-file order while skipping cwd instructions', async () => {
-    const runtime = new TestAgentRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'AGENTS.md', 'Cwd instructions');
     await put(runtime, 'one/AGENTS.md', 'One instructions');
     await put(runtime, 'one/two/CLAUDE.md', 'Two instructions');
@@ -187,7 +222,7 @@ describe('@felan-ai/ext-context', () => {
   });
 
   it('loads at most one file per directory with AGENTS.md precedence', async () => {
-    const runtime = new RecordingRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'nested/AGENTS.md', 'Agents wins');
     await put(runtime, 'nested/CLAUDE.md', 'Claude fallback');
     await put(runtime, 'nested/file.ts', 'export {};');
@@ -198,11 +233,11 @@ describe('@felan-ai/ext-context', () => {
     const content = (await harness.context()).at(-1)?.content ?? '';
     expect(content).toContain('Agents wins');
     expect(content).not.toContain('Claude fallback');
-    expect(runtime.readPaths).not.toContain(resolve('/workspace/nested/CLAUDE.md'));
+    expect(runtime.readPaths).not.toContain(resolve(runtime.cwd, 'nested/CLAUDE.md'));
   });
 
   it('uses CLAUDE.md as the fallback and decodes bytes with TextDecoder', async () => {
-    const runtime = new TestAgentRuntime('/workspace');
+    const runtime = await testRuntime();
     await runtime.mkdir('nested', { recursive: true });
     await runtime.writeFile('nested/CLAUDE.md', new Uint8Array([0x66, 0x6f, 0x80]));
     await runtime.writeFile('nested/file.ts', new TextEncoder().encode('export {};'));
@@ -214,21 +249,21 @@ describe('@felan-ai/ext-context', () => {
   });
 
   it('deduplicates normalized observed paths and loaded files for the session', async () => {
-    const runtime = new RecordingRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'nested/deep/AGENTS.md', 'Deep instructions');
     await put(runtime, 'nested/deep/file.ts', 'export {};');
     const harness = await ExtensionHarness.create(runtime);
 
     await harness.successfulRead('nested/./deep/../deep/file.ts');
-    await harness.successfulRead('/workspace/nested/deep/file.ts');
+    await harness.successfulRead(resolve(runtime.cwd, 'nested/deep/file.ts'));
 
     const content = (await harness.context()).at(-1)?.content ?? '';
     expect(content.match(/Deep instructions/g)).toHaveLength(1);
-    expect(runtime.readPaths.filter((path) => path === resolve('/workspace/nested/deep/AGENTS.md'))).toHaveLength(1);
+    expect(runtime.readPaths.filter((path) => path === resolve(runtime.cwd, 'nested/deep/AGENTS.md'))).toHaveLength(1);
   });
 
   it('rejects lexical traversal and absolute paths outside the session cwd', async () => {
-    const runtime = new RecordingRuntime('/workspace');
+    const runtime = await testRuntime();
     const harness = await ExtensionHarness.create(runtime);
 
     await harness.input('<file name="../outside/file.ts">outside</file>');
@@ -239,9 +274,11 @@ describe('@felan-ai/ext-context', () => {
   });
 
   it('rejects symlink escapes before loading instructions from an apparent parent', async () => {
-    const runtime = new TestAgentRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'scope/AGENTS.md', 'Must not escape');
-    runtime.addSymlink('scope/escape', '/outside');
+    const outside = await temporaryDirectory();
+    await writeFile(join(outside, 'file.ts'), 'outside');
+    await symlink(outside, join(runtime.cwd, 'scope', 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
     const harness = await ExtensionHarness.create(runtime);
 
     await harness.input('<file name="scope/escape/file.ts">outside</file>');
@@ -250,7 +287,7 @@ describe('@felan-ai/ext-context', () => {
   });
 
   it('treats read failures as nonfatal and never retries processed directories', async () => {
-    const runtime = new RecordingRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'nested/first.ts', 'first');
     await put(runtime, 'nested/second.ts', 'second');
     const harness = await ExtensionHarness.create(runtime);
@@ -260,12 +297,12 @@ describe('@felan-ai/ext-context', () => {
     await harness.successfulRead('nested/second.ts');
 
     expect(await harness.context()).toEqual([]);
-    expect(runtime.readPaths.filter((path) => path === resolve('/workspace/nested/AGENTS.md'))).toHaveLength(1);
-    expect(runtime.readPaths.filter((path) => path === resolve('/workspace/nested/CLAUDE.md'))).toHaveLength(1);
+    expect(runtime.readPaths.filter((path) => path === resolve(runtime.cwd, 'nested/AGENTS.md'))).toHaveLength(1);
+    expect(runtime.readPaths.filter((path) => path === resolve(runtime.cwd, 'nested/CLAUDE.md'))).toHaveLength(1);
   });
 
   it('retains discovered state across compaction', async () => {
-    const runtime = new TestAgentRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'nested/AGENTS.md', 'Persistent instructions');
     await put(runtime, 'nested/file.ts', 'export {};');
     const harness = await ExtensionHarness.create(runtime);
@@ -281,7 +318,7 @@ describe('@felan-ai/ext-context', () => {
   });
 
   it('reports empty and loaded state through /progressive-context', async () => {
-    const runtime = new TestAgentRuntime('/workspace');
+    const runtime = await testRuntime();
     await put(runtime, 'nested/AGENTS.md', 'Nested instructions');
     await put(runtime, 'nested/file.ts', 'export {};');
     const harness = await ExtensionHarness.create(runtime);
@@ -291,11 +328,11 @@ describe('@felan-ai/ext-context', () => {
 
     await harness.successfulRead('nested/file.ts');
     await harness.runCommand();
-    expect(harness.notifications.at(-1)?.[0]).toContain('/workspace/nested/AGENTS.md');
+    expect(harness.notifications.at(-1)?.[0]).toContain(resolve(runtime.cwd, 'nested/AGENTS.md'));
   });
 
   it.each(['host', 'daytona'] as const)('has identical behavior for %s runtime kind', async (kind) => {
-    const runtime = new TestAgentRuntime('/workspace', { kind });
+    const runtime = await testRuntime(kind);
     await put(runtime, 'nested/AGENTS.md', 'Portable instructions');
     await put(runtime, 'nested/file.ts', 'export {};');
     const harness = await ExtensionHarness.create(runtime);
@@ -325,9 +362,13 @@ describe('@felan-ai/ext-context', () => {
   });
 });
 
-async function put(runtime: TestAgentRuntime, path: string, content: string): Promise<void> {
+async function put(runtime: AgentRuntime, path: string, content: string): Promise<void> {
   await runtime.mkdir(dirname(path), { recursive: true });
   await runtime.writeFile(path, new TextEncoder().encode(content));
+}
+
+async function testRuntime(kind: AgentRuntimeKind = 'host'): Promise<RecordingRuntime> {
+  return new RecordingRuntime(new HostAgentRuntime(await temporaryDirectory()), kind);
 }
 
 async function temporaryDirectory(): Promise<string> {

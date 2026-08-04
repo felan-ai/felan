@@ -3,20 +3,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   ModelRuntime,
+  AgentSession,
   SessionManager,
   SettingsManager,
   createAgentSessionRuntime,
-  type AgentSessionHost,
   type FelanExtension,
   type StreamFunction,
 } from '../src/index.js';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createAgentCoreSession,
   createAgentCoreSessionRuntimeFactory,
   createRuntimeCodingTools,
 } from '../src/index.js';
-import { TestAgentRuntime } from '../src/test-agent-runtime.js';
+import { TestAgentRuntime } from './test-agent-runtime.js';
 
 const temporaryPaths: string[] = [];
 
@@ -50,22 +50,27 @@ describe('Agent Core session composition', () => {
     const runtime = new TestAgentRuntime(cwd);
     const order: string[] = [];
     let wrappedInvocations = 0;
-    const extension: FelanExtension = () => {
+    let streamWrapped = false;
+    const extension: FelanExtension = (pi) => {
       order.push('extension factory');
+      pi.on('session_start', () => {
+        expect(streamWrapped).toBe(true);
+        order.push('session start');
+      });
     };
-    const host = createHost((original) => {
+    const wrapStreamFunction = (original: StreamFunction) => {
       order.push('stream wrapped');
+      streamWrapped = true;
       return ((model, context, options) => {
         wrappedInvocations += 1;
         return original(model, context, options);
       }) satisfies StreamFunction;
-    });
+    };
     const appTool = { ...createRuntimeCodingTools(runtime)[0]!, name: 'app-tool', label: 'app-tool' };
 
     const result = await createAgentCoreSession({
-      applicationKind: 'cloud',
       runtime,
-      host,
+      wrapStreamFunction,
       extensionPackages: ['@felan-ai/listed'],
       importExtension: async (packageName) => {
         order.push(`import ${packageName}`);
@@ -106,10 +111,18 @@ describe('Agent Core session composition', () => {
     expect((globalThis as { ambientSessionExtension?: boolean }).ambientSessionExtension).toBeUndefined();
     await expect(fileExists(installMarker)).resolves.toBe(false);
 
+    await result.session.bindExtensions({ mode: 'print' });
+    expect(order).toEqual([
+      'import @felan-ai/listed',
+      'extension factory',
+      'stream wrapped',
+      'session start',
+    ]);
+
     result.session.dispose();
   });
 
-  it('provides a Pi 0.82.1 CreateAgentSessionRuntimeFactory seam', async () => {
+  it('provides a Pi 0.83.0 CreateAgentSessionRuntimeFactory seam', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent-dir');
@@ -119,9 +132,7 @@ describe('Agent Core session composition', () => {
     const factory = createAgentCoreSessionRuntimeFactory(async (request) => {
       requests.push(request.cwd);
       return {
-        applicationKind: 'tui',
         runtime: new TestAgentRuntime(request.cwd),
-        host: createHost(),
         extensionPackages: [],
         importExtension: async () => {
           throw new Error('No extension package should be imported');
@@ -148,40 +159,56 @@ describe('Agent Core session composition', () => {
     await runtime.dispose();
   });
 
-  it('keeps portable child request and result semantics on the host boundary', async () => {
-    const host = createHost();
-    const metadata = { lane: 'research', attempt: 2 } as const;
-    const result = await host.createChildSession({
-      rootSessionId: 'root',
-      parentSessionId: 'parent',
-      personaId: 'reviewer',
-      prompt: 'Review the implementation',
-      block: true,
-      model: 'provider/model',
-      timeoutMinutes: 15,
-      metadata,
+  it('wraps streaming before returning the session', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const sessionManager = SessionManager.inMemory(cwd);
+    const order: string[] = [];
+
+    const result = await createAgentCoreSession({
+      runtime: new TestAgentRuntime(cwd),
+      wrapStreamFunction: (stream) => {
+        order.push('stream wrapped');
+        return stream;
+      },
+      extensionPackages: [],
+      importExtension: async () => ({}),
+      modelRuntime: await createModelRuntime(agentDir),
+      settingsManager: SettingsManager.inMemory(),
+      sessionManager,
     });
 
-    expect(result).toEqual({
-      ok: true,
-      sessionId: 'child-session',
-      status: 'completed',
-      result: 'done',
-    });
+    expect(order).toEqual(['stream wrapped']);
+    result.session.dispose();
+  });
+
+  it('disposes partial Pi sessions when the stream wrapper throws', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const modelRuntime = await createModelRuntime(agentDir);
+    const dispose = vi.spyOn(AgentSession.prototype, 'dispose');
+    const wrappingSession = SessionManager.inMemory(cwd);
+
+    await expect(createAgentCoreSession({
+      runtime: new TestAgentRuntime(cwd),
+      wrapStreamFunction: () => {
+        throw new Error('stream wrapper failed');
+      },
+      extensionPackages: [],
+      importExtension: async () => ({}),
+      modelRuntime,
+      settingsManager: SettingsManager.inMemory(),
+      sessionManager: wrappingSession,
+    })).rejects.toThrow('stream wrapper failed');
+
+    expect(dispose).toHaveBeenCalledOnce();
+    dispose.mockRestore();
   });
 });
-
-function createHost(wrapStreamFunction?: (original: StreamFunction) => StreamFunction): AgentSessionHost {
-  return {
-    ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
-    createChildSession: async () => ({
-      ok: true,
-      sessionId: 'child-session',
-      status: 'completed',
-      result: 'done',
-    }),
-  };
-}
 
 async function createModelRuntime(agentDir: string): Promise<ModelRuntime> {
   return ModelRuntime.create({

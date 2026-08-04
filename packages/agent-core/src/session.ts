@@ -14,42 +14,15 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { loadFelanExtensions, type ExtensionPackageImporter } from './extensions.js';
-import { createChildSessionTool } from './child-session-tool.js';
 import { createAgentCoreResourceLoader } from './resource-loader.js';
 import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
 
 export type StreamFunction = AgentSession['agent']['streamFunction'];
 
-export interface AgentSessionHost {
-  wrapStreamFunction?(original: StreamFunction): StreamFunction;
-  createChildSession(request: AgentChildSessionRequest): Promise<AgentChildSessionResult>;
-}
-
-export interface AgentChildSessionRequest {
-  readonly rootSessionId: string;
-  readonly parentSessionId: string;
-  readonly personaId: string;
-  readonly prompt: string;
-  readonly block: boolean;
-  readonly model?: string;
-  readonly timeoutMinutes?: number;
-  readonly metadata?: Readonly<Record<string, unknown>>;
-}
-
-export interface AgentChildSessionResult {
-  readonly ok: boolean;
-  readonly sessionId: string;
-  readonly status: 'running' | 'queued' | 'completed' | 'failed';
-  readonly result?: string;
-  readonly error?: string;
-  readonly message?: string;
-}
-
 export interface CreateAgentCoreSessionOptions {
-  readonly applicationKind: 'cloud' | 'tui';
   readonly runtime: AgentRuntime;
-  readonly host: AgentSessionHost;
+  readonly wrapStreamFunction?: (original: StreamFunction) => StreamFunction;
   readonly extensionPackages: readonly string[];
   readonly importExtension: ExtensionPackageImporter;
   readonly extensionFlagValues?: ReadonlyMap<string, boolean | string>;
@@ -138,7 +111,6 @@ async function composeAgentCoreSession(
   });
   const customTools: ToolDefinition<any, any, any>[] = [
     ...createRuntimeCodingTools(options.runtime),
-    createChildSessionTool(options.host),
     ...(options.customTools ?? []),
   ];
   const result = await createAgentSession({
@@ -158,12 +130,13 @@ async function composeAgentCoreSession(
       : { sessionStartEvent: options.sessionStartEvent }),
   });
 
-  if (options.host.wrapStreamFunction) {
-    const wrapped = options.host.wrapStreamFunction(result.session.agent.streamFunction);
-    if (typeof wrapped !== 'function') {
-      throw new Error('AgentSessionHost.wrapStreamFunction must return a stream function');
+  try {
+    if (options.wrapStreamFunction) {
+      result.session.agent.streamFunction = options.wrapStreamFunction(result.session.agent.streamFunction);
     }
-    result.session.agent.streamFunction = wrapped;
+  } catch (error) {
+    result.session.dispose();
+    throw error;
   }
 
   return {

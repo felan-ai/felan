@@ -2,10 +2,6 @@
 
 Copyright (c) 2026 Felan contributors
 
-This package uses @earendil-works/pi-coding-agent 0.82.1 and its Pi runtime
+This package uses @earendil-works/pi-coding-agent 0.83.0 and its Pi runtime
 packages from https://github.com/earendil-works/pi, licensed under the MIT
 License. Copyright (c) 2025 Mario Zechner.
-
-This package uses TypeBox 1.1.38 from
-https://github.com/sinclairzx81/typebox, licensed under the MIT License.
-Copyright (c) 2017-2026 Haydn Paterson.

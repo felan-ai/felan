@@ -35,18 +35,22 @@ for (const [license, entries] of Object.entries(inventory)) {
 }
 
 for (const required of [
-  '@earendil-works/pi-agent-core@0.82.1',
-  '@earendil-works/pi-ai@0.82.1',
-  '@earendil-works/pi-coding-agent@0.82.1',
-  '@earendil-works/pi-tui@0.82.1',
+  '@earendil-works/pi-agent-core@0.83.0',
+  '@earendil-works/pi-ai@0.83.0',
+  '@earendil-works/pi-coding-agent@0.83.0',
+  '@earendil-works/pi-tui@0.83.0',
   'typebox@1.1.38',
 ]) {
   if (!packages.includes(required)) errors.push(`Production license inventory is missing ${required}`);
 }
 
 const notice = readFileSync(resolve(root, 'NOTICE'), 'utf8');
-for (const requiredNotice of ['Pi 0.82.1', 'TypeBox 1.1.38']) {
+for (const requiredNotice of ['Pi 0.83.0', 'TypeBox 1.1.38']) {
   if (!notice.includes(requiredNotice)) errors.push(`NOTICE is missing ${requiredNotice}`);
+}
+const subagentsNotice = readFileSync(resolve(root, 'packages/ext-subagents/NOTICE'), 'utf8');
+if (!subagentsNotice.includes('TypeBox 1.1.38')) {
+  errors.push('packages/ext-subagents/NOTICE is missing TypeBox 1.1.38');
 }
 
 if (errors.length > 0) {

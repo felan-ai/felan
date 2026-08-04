@@ -66,17 +66,22 @@ try {
   ], cleanEnvironment);
 
   for (const sourcePackage of sourcePackages) validateInstalledPackage(sourcePackage);
+  assertPackedToolBoundary();
 
   run(process.execPath, [
     '--input-type=module',
     '--eval',
     `
-      const packageNames = ${JSON.stringify([...packageNames, '@felan-ai/agent-core/runtime-test-kit'])};
+      const packageNames = ${JSON.stringify(packageNames)};
       await Promise.all(packageNames.map((name) => import(name)));
       const app = await import('@felan-ai/felan');
       for (const packageName of app.localExtensionPackages) {
         const extension = await app.importLocalExtension(packageName);
-        if (typeof extension.default !== 'function') throw new Error(packageName + ' has no extension factory');
+        if (packageName === '@felan-ai/ext-subagents') {
+          if (typeof extension.createSubagentsExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
+        } else if (typeof extension.default !== 'function') {
+          throw new Error(packageName + ' has no extension factory');
+        }
       }
       for (const packageName of ['@felan-ai/agent-core', '@felan-ai/unlisted-extension']) {
         try {
@@ -85,6 +90,33 @@ try {
         } catch (error) {
           if (!String(error).includes('Unknown local extension package')) throw error;
         }
+      }
+      const subagents = await import('@felan-ai/ext-subagents');
+      const canonicalTools = [];
+      const host = {
+          descriptors: [{
+            id: 'general',
+            description: 'General agent',
+            allowNesting: true,
+          }],
+          policy: {
+            maxPromptBytes: 1024,
+            maxDescriptionBytes: 128,
+            maxSteerBytes: 1024,
+          },
+        };
+      subagents.createSubagentsExtension(host)({
+        registerTool: (tool) => canonicalTools.push(tool.name),
+      });
+      const expectedTools = [
+        'Agent',
+        'list_subagents',
+        'get_subagent_result',
+        'steer_subagent',
+        'cancel_subagent',
+      ];
+      if (JSON.stringify(canonicalTools) !== JSON.stringify(expectedTools)) {
+        throw new Error('Packed subagent extension tools differ from the canonical five: ' + canonicalTools.join(', '));
       }
       const runtime = await app.createLocalFelanRuntime({
         cwd: process.env.PACKED_SMOKE_WORKSPACE,
@@ -98,7 +130,7 @@ try {
   for (const expected of [
     `Felan version: ${proposedVersion}`,
     `Agent Core version: ${proposedVersion}`,
-    'Pi version: 0.82.1',
+    'Pi version: 0.83.0',
     'Runtime: host',
     'Credentials: local',
   ]) {
@@ -124,6 +156,43 @@ try {
   }
 } finally {
   rmSync(installDir, { recursive: true, force: true });
+}
+
+function assertPackedToolBoundary() {
+  const forbidden = [
+    'spawn_agent',
+    'sessions_spawn',
+    'sessions_list',
+    'sessions_kill',
+    'sessions_steer',
+    'createLocalSessionHost',
+    'supportedIsolation',
+    'defaultIsolation',
+    'SubagentIsolation',
+    'unsupported_isolation',
+    'createLocalWorktree',
+    'worktreePath',
+    'worktreeBranch',
+  ];
+  for (const sourcePackage of sourcePackages) {
+    const dist = join(installDir, 'node_modules', ...sourcePackage.name.split('/'), 'dist');
+    for (const path of filesBelow(dist)) {
+      if (path.replaceAll('\\', '/').includes('/subagents/worktree.')) {
+        throw new Error(`${sourcePackage.name} packed dist contains a subagent worktree module`);
+      }
+      const content = readFileSync(path, 'utf8');
+      for (const name of forbidden) {
+        if (content.includes(name)) throw new Error(`${sourcePackage.name} packed dist contains ${name}`);
+      }
+    }
+  }
+}
+
+function filesBelow(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? filesBelow(path) : entry.isFile() ? [path] : [];
+  });
 }
 
 function validateInstalledPackage(sourcePackage) {

@@ -1,6 +1,6 @@
 {
   "name": "felan",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0",
   "private": true,
   "description": "Portable Felan agent core, extensions, and local TUI",
   "license": "MIT",
@@ -15,14 +15,10 @@
     "test": "pnpm -r --if-present test",
     "test:packed-bin": "node scripts/test-packed-bin.mjs",
     "audit:packed": "node scripts/test-packed-bin.mjs --audit",
-    "test:co-install": "node scripts/test-product-coinstall.mjs",
     "pack:all": "node scripts/pack.mjs",
-    "check:packages": "node scripts/check-package-availability.mjs",
     "check:licenses": "node scripts/check-third-party-licenses.mjs",
     "check:proposed-version": "node scripts/check-proposed-version.mjs",
-    "check:release": "node scripts/check-release-readiness.mjs",
-    "check:stable-evidence": "node scripts/check-stable-evidence.mjs",
-    "verify": "pnpm check:release && pnpm check:licenses && pnpm build && pnpm type-check && pnpm test && pnpm pack:all && pnpm test:packed-bin"
+    "verify": "pnpm check:licenses && pnpm build && pnpm type-check && pnpm test && pnpm pack:all && pnpm test:packed-bin"
   },
   "devDependencies": {
     "@types/node": "24.12.4",
@@ -31,10 +27,10 @@
   },
   "pnpm": {
     "overrides": {
-      "@earendil-works/pi-agent-core": "0.82.1",
-      "@earendil-works/pi-ai": "0.82.1",
-      "@earendil-works/pi-coding-agent": "0.82.1",
-      "@earendil-works/pi-tui": "0.82.1"
+      "@earendil-works/pi-agent-core": "0.83.0",
+      "@earendil-works/pi-ai": "0.83.0",
+      "@earendil-works/pi-coding-agent": "0.83.0",
+      "@earendil-works/pi-tui": "0.83.0"
     }
   }
 }

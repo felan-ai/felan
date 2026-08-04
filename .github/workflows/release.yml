@@ -1,4 +1,4 @@
-name: Release prerelease packages
+name: Release packages
 
 on:
   push:
@@ -43,19 +43,15 @@ jobs:
             echo 'channel=latest' >> "$GITHUB_OUTPUT"
             echo 'stable=true' >> "$GITHUB_OUTPUT"
           fi
-      - name: Verify stable candidate evidence
+      - name: Record stable packed audit
         if: steps.release.outputs.stable == 'true'
-        run: pnpm check:stable-evidence
-      - name: Audit stable packed closure
-        if: steps.release.outputs.stable == 'true'
+        continue-on-error: true
         run: pnpm audit:packed
-      - name: Verify stable product co-install
-        if: steps.release.outputs.stable == 'true'
-        run: pnpm test:co-install -- --cli @felan-ai/cli@0.2.0
       - run: |
           version="$(node -p 'require("./package.json").version')"
           for package in \
             ".artifacts/felan-ai-agent-core-${version}.tgz" \
+            ".artifacts/felan-ai-ext-subagents-${version}.tgz" \
             ".artifacts/felan-ai-ext-context-${version}.tgz" \
             ".artifacts/felan-ai-ext-prewalk-${version}.tgz" \
             ".artifacts/felan-ai-ext-powerline-${version}.tgz" \

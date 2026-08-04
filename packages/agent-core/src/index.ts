@@ -7,7 +7,6 @@ export type {
 export { AGENT_CORE_VERSION } from './version.js';
 export { HostAgentRuntime } from './host-agent-runtime.js';
 export type { HostShellOptions } from './host-agent-runtime.js';
-export { createChildSessionTool } from './child-session-tool.js';
 export {
   bindFelanExtension,
   loadFelanExtensions,
@@ -26,16 +25,12 @@ export {
   createAgentCoreSessionRuntimeFactory,
 } from './session.js';
 export type {
-  AgentChildSessionRequest,
-  AgentChildSessionResult,
   AgentCoreSessionRuntimeFactoryOptions,
   AgentCoreSessionRuntimeFactoryRequest,
   AgentCoreSessionRuntimeOptionsFactory,
-  AgentSessionHost,
   CreateAgentCoreSessionOptions,
   StreamFunction,
 } from './session.js';
-
 export {
   AgentSession,
   ModelRuntime,

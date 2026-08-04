@@ -6,6 +6,6 @@ This package composes the MIT-licensed @felan-ai/agent-core and Felan extension
 packages listed in package.json. Their package-level LICENSE and NOTICE files
 contain the applicable attribution and source provenance.
 
-The terminal application uses @earendil-works/pi-coding-agent 0.82.1 from
+The terminal application uses @earendil-works/pi-coding-agent 0.83.0 from
 https://github.com/earendil-works/pi, licensed under the MIT License.
 Copyright (c) 2025 Mario Zechner.

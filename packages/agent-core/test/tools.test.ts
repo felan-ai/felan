@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it } from 'vitest';
 import { createRuntimeCodingTools } from '../src/index.js';
-import { TestAgentRuntime } from '../src/test-agent-runtime.js';
+import { TestAgentRuntime } from './test-agent-runtime.js';
 
 const context = {} as ExtensionContext;
 

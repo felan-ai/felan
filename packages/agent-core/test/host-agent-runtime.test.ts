@@ -3,10 +3,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HostAgentRuntime } from '../src/index.js';
-import {
-  createNodeRuntimeConformanceFixtures,
-  runRuntimeConformance,
-} from '../src/runtime-test-kit.js';
 
 const temporaryPaths: string[] = [];
 
@@ -15,18 +11,45 @@ afterEach(async () => {
 });
 
 describe('HostAgentRuntime', () => {
-  it('passes the shared Node runtime conformance suite', async () => {
-    await runRuntimeConformance(
-      {
-        createRuntime: async () => new HostAgentRuntime(await createTemporaryDirectory('workspace')),
-        createSymlinkEscape: async (_runtime, linkPath) => {
-          const outside = await createTemporaryDirectory('outside');
-          await writeFile(join(outside, 'secret'), 'outside');
-          await symlink(outside, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
-        },
-      },
-      createNodeRuntimeConformanceFixtures(process.execPath),
+  it('keeps cwd immutable and rejects escaping execution paths', async () => {
+    const workspace = await createTemporaryDirectory('workspace');
+    const runtime = new HostAgentRuntime(workspace);
+
+    expect(Reflect.set(runtime, 'cwd', join(workspace, 'other'))).toBe(false);
+    expect(runtime.cwd).toBe(workspace);
+    await expect(runtime.exec(process.execPath, ['--version'], { cwd: '..' })).rejects.toThrow(
+      'escapes runtime cwd',
     );
+  });
+
+  it('preserves literal argv boundaries and nonzero results', async () => {
+    const runtime = new HostAgentRuntime(await createTemporaryDirectory('workspace'));
+    const args = ['plain', 'two words', '"quoted"', "'single'", '$HOME', 'semi;colon', '', '--flag=value'];
+    const literal = await runtime.exec(process.execPath, [
+      '-e',
+      'process.stdout.write(JSON.stringify(process.argv.slice(1)))',
+      '--',
+      ...args,
+    ]);
+    expect(literal).toMatchObject({ stdout: JSON.stringify(args), code: 0, killed: false });
+
+    const failure = await runtime.exec(process.execPath, [
+      '-e',
+      "process.stderr.write('expected failure'); process.exit(17)",
+    ]);
+    expect(failure).toMatchObject({ stderr: 'expected failure', code: 17, killed: false });
+  });
+
+  it('kills execution on timeout', async () => {
+    const runtime = new HostAgentRuntime(await createTemporaryDirectory('workspace'));
+    const result = await runtime.exec(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)'],
+      { timeout: 20 },
+    );
+
+    expect(result.killed).toBe(true);
+    expect(result.code).not.toBe(0);
   });
 
   it('rejects lexical and symlink escapes across operations', async () => {
