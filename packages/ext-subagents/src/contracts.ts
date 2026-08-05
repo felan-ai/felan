@@ -27,7 +27,6 @@ export interface SubagentSpawnRequest {
   readonly type: string;
   readonly description: string;
   readonly prompt: string;
-  readonly runInBackground: boolean;
   readonly model?: string;
   readonly thinking?: SubagentThinking;
   readonly maxTurns?: number;
@@ -48,7 +47,6 @@ export type SubagentErrorCode =
   | 'invalid_request'
   | 'unsupported_model'
   | 'unsupported_thinking'
-  | 'capacity_unavailable'
   | 'depth_exceeded'
   | 'turn_limit_reached'
   | 'not_found'
@@ -128,11 +126,6 @@ export interface SubagentHost {
 
   getResult(
     agentId: string,
-    options: {
-      readonly wait: boolean;
-      readonly timeoutSeconds?: number;
-    },
-    signal?: AbortSignal,
   ): Promise<SubagentHostResult<SubagentRecord>>;
 
   steer(

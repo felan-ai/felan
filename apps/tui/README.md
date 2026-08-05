@@ -63,7 +63,7 @@ prompt/context files stay outside local composition.
 When enabled, `@felan-ai/ext-subagents` uses the session-bound local host and
 provides `Agent`, `list_subagents`,
 `get_subagent_result`, `steer_subagent`, and `cancel_subagent`. A root-scoped
-local host tracks foreground and background runs, persists the latest child session
+local host queues every run asynchronously, persists the latest child session
 metadata, delivers completion notices, supports bounded nesting, and uses the
 application's current workspace. The TUI status line shows active/recent child
 state, and runtime shutdown awaits active-child cancellation before Pi teardown.

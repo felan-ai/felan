@@ -38,17 +38,20 @@ describe('LocalSubagentHost', () => {
       return { result: `done: ${input.initialMessage}`, sessionFile: retainedSession };
     };
     const { host } = await harness({ runner, root });
+    host.attachParent(parentPort([]));
 
-    const spawned = await host.spawn(request({ runInBackground: false }));
-    expect(spawned).toMatchObject({ ok: true, value: { status: 'completed' } });
+    const spawned = await host.spawn(request());
+    expect(spawned).toMatchObject({ ok: true, value: { status: 'queued' } });
     if (!spawned.ok) return;
+    await expect(waitForResult(host, spawned.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed', result: 'done: Review this' },
+    });
     expect(sessionIds).toEqual([spawned.value.agentId]);
 
     const continued = await host.steer(spawned.value.agentId, 'continue');
     expect(continued).toMatchObject({ ok: true, value: { agentId: spawned.value.agentId } });
-    const result = await host.getResult(spawned.value.agentId, {
-      wait: true, timeoutSeconds: 2,
-    });
+    const result = await waitForResult(host, spawned.value.agentId);
     expect(result).toMatchObject({
       ok: true,
       value: { status: 'completed', agentId: spawned.value.agentId, result: 'done: continue' },
@@ -69,8 +72,9 @@ describe('LocalSubagentHost', () => {
         return { result: 'original result', sessionFile: retainedSession };
       },
     });
-    const spawned = await host.spawn(request({ runInBackground: false }));
+    const spawned = await host.spawn(request());
     if (!spawned.ok) return;
+    await waitForResult(host, spawned.value.agentId);
 
     const validHeader = sessionHeader(root, spawned.value.agentId);
     for (const contents of [
@@ -95,14 +99,14 @@ describe('LocalSubagentHost', () => {
     await expect(host.steer(spawned.value.agentId, 'continue')).resolves.toMatchObject({
       ok: false, error: { code: 'not_steerable' },
     });
-    await expect(host.getResult(spawned.value.agentId, { wait: false })).resolves.toMatchObject({
+    await expect(host.getResult(spawned.value.agentId)).resolves.toMatchObject({
       ok: true,
       value: { status: 'completed', result: 'original result' },
     });
     expect(runs).toBe(1);
   });
 
-  it('bounds background concurrency, queues work, and delivers completion once', async () => {
+  it('bounds asynchronous concurrency, queues work, and delivers completion once', async () => {
     const releases: Array<() => void> = [];
     const runner: LocalSubagentRunner = async (input) => {
       input.onReady({ steer: async () => {}, cancel: async () => {} });
@@ -126,13 +130,13 @@ describe('LocalSubagentHost', () => {
 
     releases.shift()!();
     if (!first.ok) return;
-    await host.getResult(first.value.agentId, { wait: true, timeoutSeconds: 2 });
+    await waitForResult(host, first.value.agentId);
     await settle();
     expect(notices).toHaveLength(1);
-    await host.getResult(first.value.agentId, { wait: false });
+    await host.getResult(first.value.agentId);
     expect(notices).toHaveLength(1);
     releases.shift()!();
-    if (second.ok) await host.getResult(second.value.agentId, { wait: true, timeoutSeconds: 2 });
+    if (second.ok) await waitForResult(host, second.value.agentId);
     await host.shutdown();
   });
 
@@ -148,7 +152,7 @@ describe('LocalSubagentHost', () => {
     const spawned = await host.spawn(request());
     if (!spawned.ok) return;
     await settle();
-    await expect(childHost!.getResult(spawned.value.agentId, { wait: false })).resolves.toMatchObject({
+    await expect(childHost!.getResult(spawned.value.agentId)).resolves.toMatchObject({
       ok: false, error: { code: 'not_child' },
     });
     const cancelled = await host.cancel(spawned.value.agentId, 'stop');
@@ -172,7 +176,7 @@ describe('LocalSubagentHost', () => {
     const notices: SubagentCompletionNotice[] = [];
     second.host.attachParent(parentPort(notices));
 
-    await expect(second.host.getResult(spawned.value.agentId, { wait: false })).resolves.toMatchObject({
+    await expect(second.host.getResult(spawned.value.agentId)).resolves.toMatchObject({
       ok: true,
       value: {
         status: 'cancelled',
@@ -213,16 +217,16 @@ describe('LocalSubagentHost', () => {
     } as unknown as ModelRuntime;
     const { host } = await harness({ runner, modelRuntime });
 
-    await host.spawn(request({
-      runInBackground: false,
+    const high = await host.spawn(request({
       model: 'reasoning-provider/reasoning-model',
       thinking: 'high',
     }));
-    await host.spawn(request({
-      runInBackground: false,
+    const max = await host.spawn(request({
       model: 'reasoning-provider/reasoning-model',
       thinking: 'max',
     }));
+    if (high.ok) await waitForResult(host, high.value.agentId);
+    if (max.ok) await waitForResult(host, max.value.agentId);
 
     expect(selected).toEqual([
       'reasoning-provider/reasoning-model',
@@ -248,29 +252,34 @@ describe('LocalSubagentHost', () => {
     });
   });
 
-  it('reserves foreground capacity before concurrent startup can pass admission', async () => {
-    const releases: Array<() => void> = [];
+  it('admits work asynchronously while all execution slots are occupied', async () => {
+    let releaseFirst!: () => void;
     const runner: LocalSubagentRunner = async (input) => {
       input.onReady({ steer: async () => {}, cancel: async () => {} });
-      await new Promise<void>((resolve) => releases.push(resolve));
+      if (input.request.description === 'first') {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
       return { result: 'done' };
     };
     const { host } = await harness({ runner, concurrency: 1 });
 
-    const first = host.spawn(request({ runInBackground: false }));
+    const first = await host.spawn(request({ description: 'first' }));
+    const second = await host.spawn(request({ description: 'second' }));
+    expect(first).toMatchObject({ ok: true, value: { status: 'queued' } });
+    expect(second).toMatchObject({ ok: true, value: { status: 'queued' } });
     await settle();
-    await expect(host.spawn(request({
-      runInBackground: false,
-      description: 'second',
-    }))).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'capacity_unavailable' },
+    await expect(host.list({ includeDescendants: false })).resolves.toMatchObject({
+      ok: true,
+      value: [{ status: 'running' }, { status: 'queued' }],
     });
-    releases.shift()!();
-    await expect(first).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
+    releaseFirst();
+    if (first.ok) await waitForResult(host, first.value.agentId);
+    if (second.ok) await waitForResult(host, second.value.agentId);
   });
 
-  it('removes pre-acceptance aborts and leaves accepted background work independent', async () => {
+  it('removes pre-acceptance aborts and leaves accepted asynchronous work independent', async () => {
     let releaseSnapshot!: () => void;
     let snapshotStarted!: () => void;
     const snapshotStart = new Promise<void>((resolve) => {
@@ -313,10 +322,7 @@ describe('LocalSubagentHost', () => {
         throw new Error('secret provider context failure');
       },
     });
-    await expect(host.spawn(request({
-      inheritContext: true,
-      runInBackground: false,
-    }))).resolves.toMatchObject({
+    await expect(host.spawn(request({ inheritContext: true }))).resolves.toMatchObject({
       ok: false,
       error: { code: 'parent_unavailable', message: 'Parent context could not be captured' },
     });
@@ -332,16 +338,16 @@ describe('LocalSubagentHost', () => {
     await settle();
     releaseRun();
     if (accepted.ok) {
-      await expect(host.getResult(accepted.value.agentId, {
-        wait: true,
-        timeoutSeconds: 2,
-      })).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
+      await expect(waitForResult(host, accepted.value.agentId)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'completed' },
+      });
     }
     await settle();
     await host.shutdown();
   });
 
-  it('waits for timeout cancellation and reports max-turn termination', async () => {
+  it('reports timeout cancellation and max-turn termination', async () => {
     let cancelled = 0;
     const timeoutRunner: LocalSubagentRunner = async (input) => {
       input.onReady({
@@ -356,10 +362,10 @@ describe('LocalSubagentHost', () => {
     const timeoutHarness = await harness({ runner: timeoutRunner });
     const timed = await timeoutHarness.host.spawn(request({ timeoutSeconds: 1 }));
     if (timed.ok) {
-      await expect(timeoutHarness.host.getResult(timed.value.agentId, {
-        wait: true,
-        timeoutSeconds: 2,
-      })).resolves.toMatchObject({ ok: true, value: { status: 'timed_out' } });
+      await expect(waitForResult(timeoutHarness.host, timed.value.agentId)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'timed_out' },
+      });
     }
     expect(cancelled).toBe(1);
 
@@ -369,70 +375,34 @@ describe('LocalSubagentHost', () => {
         return { turnLimitReached: true };
       },
     });
-    await expect(turns.host.spawn(request({
-      runInBackground: false,
-      maxTurns: 1,
-    }))).resolves.toMatchObject({
-      ok: true,
-      value: { status: 'cancelled', error: { code: 'turn_limit_reached' } },
-    });
+    const limited = await turns.host.spawn(request({ maxTurns: 1 }));
+    if (limited.ok) {
+      await expect(waitForResult(turns.host, limited.value.agentId)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'cancelled', error: { code: 'turn_limit_reached' } },
+      });
+    }
   });
 
-  it('awaits live foreground abort before returning its terminal record', async () => {
-    let cancellationFinished = false;
+  it('returns the latest active record without waiting for completion', async () => {
+    const started = deferred();
+    const release = deferred();
     const runner: LocalSubagentRunner = async (input) => {
-      input.onReady({
-        steer: async () => {},
-        cancel: async () => {
-          await settle();
-          cancellationFinished = true;
-        },
-      });
-      await aborted(input.signal);
-      return {};
+      await input.onReady({ steer: async () => {}, cancel: async () => {} });
+      started.resolve();
+      await release.promise;
+      return { result: 'done' };
     };
     const { host } = await harness({ runner });
-    const controller = new AbortController();
-    const running = host.spawn(request({ runInBackground: false }), controller.signal);
-    await settle();
-    controller.abort();
-
-    await expect(running).resolves.toMatchObject({ ok: true, value: { status: 'cancelled' } });
-    expect(cancellationFinished).toBe(true);
-  });
-
-  it('closes the foreground abort window at listener installation', async () => {
-    let cancellationFinished = false;
-    let abortedAtRegistration = false;
-    const signal = {
-      get aborted() {
-        return abortedAtRegistration;
-      },
-      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
-        if (type !== 'abort') return;
-        abortedAtRegistration = true;
-        if (typeof listener === 'function') listener(new Event('abort'));
-        else listener.handleEvent(new Event('abort'));
-      },
-      removeEventListener() {},
-    } as unknown as AbortSignal;
-    const runner: LocalSubagentRunner = async (input) => {
-      await input.onReady({
-        steer: async () => {},
-        cancel: async () => {
-          cancellationFinished = true;
-        },
-      });
-      await aborted(input.signal);
-      return {};
-    };
-    const { host } = await harness({ runner });
-
-    await expect(host.spawn(request({ runInBackground: false }), signal)).resolves.toMatchObject({
+    const spawned = await host.spawn(request());
+    if (!spawned.ok) return;
+    await started.promise;
+    await expect(host.getResult(spawned.value.agentId)).resolves.toMatchObject({
       ok: true,
-      value: { status: 'cancelled' },
+      value: { status: 'running' },
     });
-    expect(cancellationFinished).toBe(true);
+    release.resolve();
+    await waitForResult(host, spawned.value.agentId);
   });
 
   it('steers queued and running jobs at their safe delivery boundaries', async () => {
@@ -463,7 +433,7 @@ describe('LocalSubagentHost', () => {
     await host.steer(second.value.agentId, 'queued guidance');
     expect(runningSteers).toEqual(['running guidance']);
     releaseFirst();
-    await host.getResult(second.value.agentId, { wait: true, timeoutSeconds: 2 });
+    await waitForResult(host, second.value.agentId);
     expect(started.at(-1)).toContain('queued guidance');
   });
 
@@ -511,7 +481,8 @@ describe('LocalSubagentHost', () => {
       },
     });
 
-    await host.spawn(request({ type: 'general', runInBackground: false }));
+    const parent = await host.spawn(request({ type: 'general' }));
+    if (parent.ok) await waitForResult(host, parent.value.agentId);
 
     expect(nested).toMatchObject({ ok: false, error: { code: 'depth_exceeded' } });
     expect(host.policy).toEqual({
@@ -590,7 +561,7 @@ describe('LocalSubagentHost', () => {
     });
     const spawned = await host.spawn(request());
     if (!spawned.ok) return;
-    await host.getResult(spawned.value.agentId, { wait: true, timeoutSeconds: 2 });
+    await waitForResult(host, spawned.value.agentId);
     await settle();
     expect(delivered.length).toBeGreaterThanOrEqual(2);
     expect(new Set(delivered.map((notice) => notice.deliveryId)).size).toBe(1);
@@ -624,7 +595,7 @@ describe('LocalSubagentHost', () => {
     });
     const spawned = await host.spawn(request());
     if (!spawned.ok) return;
-    await host.getResult(spawned.value.agentId, { wait: true, timeoutSeconds: 2 });
+    await waitForResult(host, spawned.value.agentId);
     await started;
 
     let steeringSettled = false;
@@ -644,7 +615,7 @@ describe('LocalSubagentHost', () => {
       ok: false,
       error: { code: 'not_steerable', message: expect.stringContaining('pending delivery') },
     });
-    await expect(host.getResult(spawned.value.agentId, { wait: false })).resolves.toMatchObject({
+    await expect(host.getResult(spawned.value.agentId)).resolves.toMatchObject({
       ok: true,
       value: { status: 'completed', result: 'original result' },
     });
@@ -696,7 +667,7 @@ describe('LocalSubagentHost', () => {
     });
     const spawned = await host.spawn(request());
     if (!spawned.ok) return;
-    await host.getResult(spawned.value.agentId, { wait: true, timeoutSeconds: 2 });
+    await waitForResult(host, spawned.value.agentId);
     await deliveryStarted.promise;
 
     const first = host.steer(spawned.value.agentId, 'first guidance');
@@ -719,10 +690,10 @@ describe('LocalSubagentHost', () => {
     expect(guidance.match(/second guidance/g)).toHaveLength(1);
 
     releaseContinuation.resolve();
-    await expect(host.getResult(spawned.value.agentId, {
-      wait: true,
-      timeoutSeconds: 2,
-    })).resolves.toMatchObject({ ok: true, value: { status: 'completed', result: 'continued result' } });
+    await expect(waitForResult(host, spawned.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed', result: 'continued result' },
+    });
     await host.shutdown();
   });
 
@@ -738,10 +709,11 @@ describe('LocalSubagentHost', () => {
       return { result: full, sessionFile: manager.getSessionFile() };
     };
     const { host } = await harness({ runner, root });
-    const spawned = await host.spawn(request({ runInBackground: false }));
+    const spawned = await host.spawn(request());
     if (!spawned.ok) return;
-    expect(spawned.value.result).toBe(full);
-    const retained = await host.getResult(spawned.value.agentId, { wait: false });
+    const completed = await waitForResult(host, spawned.value.agentId);
+    expect(completed).toMatchObject({ ok: true, value: { result: full } });
+    const retained = await host.getResult(spawned.value.agentId);
     expect(retained).toMatchObject({ ok: true, value: { result: full } });
   });
 
@@ -770,7 +742,7 @@ describe('LocalSubagentHost', () => {
     await shutdown;
     const second = await harness({ runner, root });
     if (spawned.ok) {
-      await expect(second.host.getResult(spawned.value.agentId, { wait: false })).resolves.toMatchObject({
+      await expect(second.host.getResult(spawned.value.agentId)).resolves.toMatchObject({
         ok: true,
         value: { status: 'cancelled', error: { message: 'Local host exited' } },
       });
@@ -811,7 +783,6 @@ function request(overrides: Partial<SubagentSpawnRequest> = {}): SubagentSpawnRe
     type: 'reviewer',
     description: 'review',
     prompt: 'Review this',
-    runInBackground: true,
     inheritContext: false,
     ...overrides,
   };
@@ -869,6 +840,18 @@ async function temporaryDirectory(): Promise<string> {
 
 async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 20));
+}
+
+async function waitForResult(host: SubagentHost, agentId: string) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const result = await host.getResult(agentId);
+    if (
+      !result.ok
+      || ['completed', 'failed', 'timed_out', 'cancelled'].includes(result.value.status)
+    ) return result;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Subagent did not finish: ${agentId}`);
 }
 
 async function aborted(signal: AbortSignal): Promise<void> {

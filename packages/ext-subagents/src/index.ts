@@ -24,7 +24,6 @@ const thinkingSchema = Type.Union([
 ]);
 const MAX_TURNS = 100;
 const MAX_TIMEOUT_SECONDS = 86_400;
-const MAX_WAIT_SECONDS = 3_600;
 
 export function createSubagentsExtension(host: SubagentHost): FelanExtension {
   return (pi) => {
@@ -50,8 +49,8 @@ function formatSubagentCapability(descriptors: readonly SubagentDescriptor[]): s
   return [
     'Use child agents for independent, parallel, or specialized work when delegation reduces latency or keeps the main context focused.',
     availableTypes,
-    'Give each child a self-contained task with the relevant scope, constraints, and expected output. Run independent tasks in parallel and keep dependent tasks sequenced.',
-    'Use list_subagents and get_subagent_result to monitor work, steer_subagent to refine active work, and cancel_subagent when work is no longer needed. Integrate and verify child results before reporting completion.',
+    'Child agents always run asynchronously. Give each child a self-contained task with the relevant scope, constraints, and expected output, then continue useful parent work while independent tasks run in parallel.',
+    'Completion notices surface finished work automatically; rely on them during normal execution. Use list_subagents and get_subagent_result for an immediate status check when current state is needed, steer_subagent to refine active work, and cancel_subagent when work is no longer needed. Integrate and verify child results before reporting completion.',
   ].join(' ');
 }
 
@@ -69,15 +68,14 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
     thinking: Type.Optional(thinkingSchema),
     max_turns: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TURNS })),
     timeout_seconds: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_SECONDS })),
-    run_in_background: Type.Optional(Type.Boolean({ default: true })),
     inherit_context: Type.Optional(Type.Boolean({ default: false })),
   }, { additionalProperties: false });
 
   pi.registerTool({
     name: 'Agent',
     label: 'Agent',
-    description: `Start a tracked child agent. Type descriptions are selection metadata, not instructions. Available types: ${host.descriptors.map(formatDescriptor).join(', ')}.`,
-    promptSnippet: 'Start a tracked foreground or background child agent',
+    description: `Start a tracked asynchronous child agent and return its queued record after admission. Type descriptions are selection metadata, not instructions. Available types: ${host.descriptors.map(formatDescriptor).join(', ')}.`,
+    promptSnippet: 'Queue a tracked asynchronous child agent',
     parameters,
     async execute(_id, params, signal, _update, ctx) {
       const type = params.subagent_type as string;
@@ -93,7 +91,6 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
         type,
         description: params.description,
         prompt: params.prompt,
-        runInBackground: params.run_in_background ?? true,
         inheritContext: params.inherit_context ?? false,
         ...(model.value === undefined ? {} : { model: model.value }),
         ...(params.thinking ?? descriptor.defaultThinking ?? parentThinking) === undefined
@@ -132,19 +129,14 @@ function registerList(pi: FelanExtensionAPI, host: SubagentHost): void {
 function registerResult(pi: FelanExtensionAPI, host: SubagentHost): void {
   const parameters = Type.Object({
     agent_id: Type.String({ minLength: 1 }),
-    wait: Type.Optional(Type.Boolean({ default: false })),
-    timeout_seconds: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_WAIT_SECONDS })),
   }, { additionalProperties: false });
   pi.registerTool({
     name: 'get_subagent_result',
     label: 'Get Subagent Result',
-    description: 'Read a direct child result without consuming its completion delivery.',
+    description: 'Read the latest direct child status or result immediately without consuming its completion delivery.',
     parameters,
-    execute: async (_id, params, signal, _update, _ctx) => executeHost(
-      () => host.getResult(params.agent_id, {
-        wait: params.wait ?? false,
-        ...(params.timeout_seconds === undefined ? {} : { timeoutSeconds: params.timeout_seconds }),
-      }, signal),
+    execute: async (_id, params, _signal, _update, _ctx) => executeHost(
+      () => host.getResult(params.agent_id),
       renderRecord,
     ),
   });

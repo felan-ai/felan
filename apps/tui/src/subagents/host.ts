@@ -93,7 +93,6 @@ interface Job {
   readonly child: MutableChild;
   readonly controller: AbortController;
   readonly initialMessage: string;
-  readonly waiters: Array<() => void>;
   queuedMessages: string[];
   control?: LocalSubagentControl;
   runPromise?: Promise<void>;
@@ -134,12 +133,8 @@ export class LocalSubagentHost implements SubagentHost {
     return this.#manager.list(this.#sessionId, options);
   }
 
-  getResult(
-    agentId: string,
-    options: { readonly wait: boolean; readonly timeoutSeconds?: number },
-    signal?: AbortSignal,
-  ) {
-    return this.#manager.getResult(this.#sessionId, agentId, options, signal);
+  getResult(agentId: string) {
+    return this.#manager.getResult(this.#sessionId, agentId);
   }
 
   steer(agentId: string, message: string) {
@@ -290,10 +285,6 @@ export class LocalSubagentManager {
       ) {
         return failure('depth_exceeded', `${parent.record.type} does not allow nested subagents`);
       }
-      if (!request.runInBackground && this.#active >= this.#concurrency) {
-        return failure('capacity_unavailable', 'Foreground capacity is unavailable; retry in background');
-      }
-
       let initialMessage: string;
       try {
         initialMessage = await this.#initialMessage(parentSessionId, normalizedRequest);
@@ -318,14 +309,10 @@ export class LocalSubagentManager {
         record,
         request: normalizedRequest,
         depth: context.depth + 1,
-        ...(request.runInBackground ? { deliveryId: randomUUID() } : {}),
+        deliveryId: randomUUID(),
         completionPending: false,
       };
       const job = this.#job(child, initialMessage);
-      if (!request.runInBackground) {
-        job.slotHeld = true;
-        this.#active += 1;
-      }
       this.#children.set(agentId, child);
       this.#jobs.set(agentId, job);
       try {
@@ -333,19 +320,11 @@ export class LocalSubagentManager {
       } catch {
         this.#children.delete(agentId);
         this.#jobs.delete(agentId);
-        if (job.slotHeld) {
-          job.slotHeld = false;
-          this.#active -= 1;
-        }
         return failure('host_unavailable', 'Local subagent startup could not be persisted');
       }
       if (signal?.aborted) {
         this.#children.delete(agentId);
         this.#jobs.delete(agentId);
-        if (job.slotHeld) {
-          job.slotHeld = false;
-          this.#active -= 1;
-        }
         await this.#persist();
         return failure('invalid_request', 'Subagent startup was aborted');
       }
@@ -354,26 +333,10 @@ export class LocalSubagentManager {
     });
     if (!admitted.ok) return admitted;
     const { child, job } = admitted.value;
-
-    if (request.runInBackground) {
-      const queued = cloneRecord(child.record);
-      this.#queue.push(job);
-      this.#drain();
-      return success(queued);
-    }
-
-    const abortForeground = () => {
-      this.#cancelTree(child.record.agentId, 'Subagent was cancelled').catch(() => {});
-    };
-    const running = this.#start(job);
-    signal?.addEventListener('abort', abortForeground, { once: true });
-    if (signal?.aborted) abortForeground();
-    try {
-      await running;
-    } finally {
-      signal?.removeEventListener('abort', abortForeground);
-    }
-    return success(await this.#resultRecord(child));
+    const queued = cloneRecord(child.record);
+    this.#queue.push(job);
+    this.#drain();
+    return success(queued);
   }
 
   async list(
@@ -406,19 +369,10 @@ export class LocalSubagentManager {
   async getResult(
     parentSessionId: string,
     agentId: string,
-    options: { readonly wait: boolean; readonly timeoutSeconds?: number },
-    signal?: AbortSignal,
   ): Promise<SubagentHostResult<SubagentRecord>> {
     const authorized = await this.#serializeControl(async () => this.#directChild(parentSessionId, agentId));
     if (!authorized.ok) return authorized;
-    let child = authorized.value;
-    if (options.wait && !isTerminal(child.record.status)) {
-      await this.#wait(agentId, options.timeoutSeconds ?? 3_600, signal);
-      const refreshed = await this.#serializeControl(async () => this.#directChild(parentSessionId, agentId));
-      if (!refreshed.ok) return refreshed;
-      child = refreshed.value;
-    }
-    return success(await this.#resultRecord(child));
+    return success(await this.#resultRecord(authorized.value));
   }
 
   async steer(
@@ -562,7 +516,6 @@ export class LocalSubagentManager {
       child,
       controller: new AbortController(),
       initialMessage,
-      waiters: [],
       queuedMessages: [],
       slotHeld: false,
     };
@@ -576,11 +529,6 @@ export class LocalSubagentManager {
         await this.#beginRun(job);
       }
     }).catch(() => {});
-  }
-
-  async #start(job: Job): Promise<void> {
-    await this.#serializeControl(() => this.#beginRun(job));
-    await job.runPromise;
   }
 
   async #beginRun(job: Job): Promise<void> {
@@ -674,7 +622,6 @@ export class LocalSubagentManager {
         this.#jobs.delete(child.record.agentId);
         if (child.deliveryId) child.completionPending = true;
         await this.#persist();
-        this.#notify(job);
         this.#emit();
       });
       if (child.deliveryId) await this.#deliver(child, child.deliveryId);
@@ -905,7 +852,6 @@ export class LocalSubagentManager {
         if (child.deliveryId) child.completionPending = true;
         this.#jobs.delete(agentId);
         await this.#persist();
-        if (job) this.#notify(job);
         this.#emit();
         return { descendants, cleanup: Promise.resolve(), deliveryId: child.deliveryId };
       }
@@ -923,26 +869,6 @@ export class LocalSubagentManager {
       if (child) await this.#deliver(child, cancellation.deliveryId);
       this.#drain();
     }
-  }
-
-  async #wait(agentId: string, timeoutSeconds: number | undefined, signal?: AbortSignal): Promise<void> {
-    const job = this.#jobs.get(agentId);
-    if (!job || isTerminal(job.child.record.status) || signal?.aborted) return;
-    await new Promise<void>((resolve) => {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      const finish = () => {
-        if (timeout) clearTimeout(timeout);
-        signal?.removeEventListener('abort', finish);
-        resolve();
-      };
-      job.waiters.push(finish);
-      signal?.addEventListener('abort', finish, { once: true });
-      if (timeoutSeconds) timeout = setTimeout(finish, timeoutSeconds * 1_000);
-    });
-  }
-
-  #notify(job: Job): void {
-    for (const waiter of job.waiters.splice(0)) waiter();
   }
 
   async #deliver(child: MutableChild, deliveryId: string): Promise<void> {

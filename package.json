@@ -1,6 +1,6 @@
 {
   "name": "felan",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Portable Felan agent core, extensions, and local TUI",
   "license": "MIT",
@@ -18,6 +18,7 @@
     "pack:all": "node scripts/pack.mjs",
     "check:licenses": "node scripts/check-third-party-licenses.mjs",
     "check:proposed-version": "node scripts/check-proposed-version.mjs",
+    "select:release-packages": "node scripts/check-proposed-version.mjs --select-unpublished",
     "verify": "pnpm check:licenses && pnpm build && pnpm type-check && pnpm test && pnpm pack:all && pnpm test:packed-bin"
   },
   "devDependencies": {

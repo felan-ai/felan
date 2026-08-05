@@ -12,6 +12,10 @@ execution, latest records, continuation, persistence, completion delivery, and p
 Agent Core remains unaware of subagents and provides only generic runtime,
 session, coding-tool, and extension composition.
 
+All child launches are asynchronous and return after admission. Result reads
+return the latest record immediately, while completion notices surface finished
+work to the parent session.
+
 During initialization the extension registers a `subagents` capability with
 generic delegation and control guidance plus the current host's available agent
 types and descriptions. The contribution is present only when this extension is

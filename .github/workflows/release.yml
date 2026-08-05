@@ -2,8 +2,12 @@ name: Release packages
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+
+concurrency:
+  group: release-packages
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -15,8 +19,6 @@ jobs:
     environment: npm
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.5
@@ -24,38 +26,34 @@ jobs:
         with:
           node-version: 22.20.0
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm verify
-      - run: pnpm check:proposed-version
-      - run: npm install --global npm@11.19.0
-      - name: Verify release identity
+      - name: Select unpublished package versions
         id: release
-        run: |
-          set -euo pipefail
-          version=$(node -p 'require("./package.json").version')
-          test "${GITHUB_REF_NAME#v}" = "$version"
-          git fetch origin main
-          git merge-base --is-ancestor "$(git rev-parse "$GITHUB_SHA^{commit}")" origin/main
-          if [[ "$version" == *-* ]]; then
-            echo 'channel=next' >> "$GITHUB_OUTPUT"
-            echo 'stable=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'channel=latest' >> "$GITHUB_OUTPUT"
-            echo 'stable=true' >> "$GITHUB_OUTPUT"
-          fi
+        run: pnpm select:release-packages
+      - if: steps.release.outputs.has_packages == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.release.outputs.has_packages == 'true'
+        run: pnpm verify
+      - if: steps.release.outputs.has_packages == 'true'
+        run: npm install --global npm@11.19.0
       - name: Record stable packed audit
-        if: steps.release.outputs.stable == 'true'
+        if: steps.release.outputs.has_packages == 'true' && steps.release.outputs.has_stable == 'true'
         continue-on-error: true
         run: pnpm audit:packed
-      - run: |
-          version="$(node -p 'require("./package.json").version')"
-          for package in \
-            ".artifacts/felan-ai-agent-core-${version}.tgz" \
-            ".artifacts/felan-ai-ext-subagents-${version}.tgz" \
-            ".artifacts/felan-ai-ext-context-${version}.tgz" \
-            ".artifacts/felan-ai-ext-prewalk-${version}.tgz" \
-            ".artifacts/felan-ai-ext-powerline-${version}.tgz" \
-            ".artifacts/felan-ai-felan-${version}.tgz"
+      - name: Publish package versions
+        if: steps.release.outputs.has_packages == 'true'
+        env:
+          PACKAGE_PATHS: ${{ steps.release.outputs.package_paths }}
+        run: |
+          set -euo pipefail
+          for package_path in $PACKAGE_PATHS
           do
-            npm publish "$package" --access public --tag "${{ steps.release.outputs.channel }}" --provenance
+            package_name="$(node -p "require('./${package_path}/package.json').name")"
+            version="$(node -p "require('./${package_path}/package.json').version")"
+            artifact="${package_name#@}"
+            artifact=".artifacts/${artifact/\//-}-${version}.tgz"
+            channel=latest
+            if [[ "$version" == *-* ]]; then
+              channel=next
+            fi
+            npm publish "$artifact" --access public --tag "$channel" --provenance
           done

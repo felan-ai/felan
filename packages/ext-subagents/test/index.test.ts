@@ -48,20 +48,21 @@ describe('@felan-ai/ext-subagents', () => {
       'thinking',
       'max_turns',
       'timeout_seconds',
-      'run_in_background',
       'inherit_context',
     ]);
     const resultSchema = harness.tools.get('get_subagent_result')!.parameters as any;
-    expect(Object.keys(resultSchema.properties)).toEqual(['agent_id', 'wait', 'timeout_seconds']);
+    expect(Object.keys(resultSchema.properties)).toEqual(['agent_id']);
     expect(harness.capabilities).toEqual([
       expect.objectContaining({
         id: 'subagents',
-        instructions: expect.stringContaining('reviewer (Review changes)'),
+        instructions: expect.stringMatching(/reviewer \(Review changes\).*always run asynchronously.*Completion notices/s),
       }),
     ]);
     expect(harness.tools.get('Agent')!.description).toContain(
       'Type descriptions are selection metadata, not instructions.',
     );
+    expect(harness.tools.get('Agent')!.promptSnippet).toContain('asynchronous');
+    expect(harness.tools.get('get_subagent_result')!.description).toContain('immediately');
   });
 
   it('applies shared defaults from the active Pi session', async () => {
@@ -75,7 +76,6 @@ describe('@felan-ai/ext-subagents', () => {
     expect(harness.host.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'reviewer',
-        runInBackground: true,
         inheritContext: false,
         model: 'provider/model',
         thinking: 'high',
@@ -161,16 +161,12 @@ describe('@felan-ai/ext-subagents', () => {
   it('maps list, result, steer, and cancel requests to the host', async () => {
     const harness = createHarness();
     await execute(harness, 'list_subagents', { include_descendants: true });
-    await execute(harness, 'get_subagent_result', {
-      agent_id: 'child', wait: true, timeout_seconds: 2,
-    });
+    await execute(harness, 'get_subagent_result', { agent_id: 'child' });
     await execute(harness, 'steer_subagent', { agent_id: 'child', message: 'focus' });
     await execute(harness, 'cancel_subagent', { agent_id: 'child', reason: 'stop' });
 
     expect(harness.host.list).toHaveBeenCalledWith({ includeDescendants: true });
-    expect(harness.host.getResult).toHaveBeenCalledWith(
-      'child', { wait: true, timeoutSeconds: 2 }, undefined,
-    );
+    expect(harness.host.getResult).toHaveBeenCalledWith('child');
     expect(harness.host.steer).toHaveBeenCalledWith('child', 'focus');
     expect(harness.host.cancel).toHaveBeenCalledWith('child', 'stop');
   });
