@@ -57,6 +57,7 @@ describe('LocalSubagentHost', () => {
       value: { status: 'completed', agentId: spawned.value.agentId, result: 'done: continue' },
     });
     expect(sessionFiles).toEqual([undefined, retainedSession]);
+    await host.shutdown();
   });
 
   it('rejects unavailable or invalid retained Pi sessions before changing the latest record', async () => {
