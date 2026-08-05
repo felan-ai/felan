@@ -36,10 +36,15 @@ export type {
 } from './session.js';
 export {
   AgentSession,
+  CURRENT_SESSION_VERSION,
+  DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
   SettingsManager,
   createAgentSessionRuntime,
+  defineTool,
+  getAgentDir,
+  loadSkillsFromDir,
 } from '@earendil-works/pi-coding-agent';
 export type {
   AgentSessionEvent,
@@ -56,8 +61,31 @@ export type {
   ExtensionFactory,
   InlineExtension,
   LoadExtensionsResult,
+  ResourceDiagnostic,
   ResourceLoader,
+  SessionContext,
   SessionStartEvent,
   Skill,
   ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
+export {
+  InMemoryCredentialStore,
+  createAssistantMessageEventStream,
+  getSupportedThinkingLevels,
+  isContextOverflow,
+  lazyStream,
+  uuidv7,
+} from '@earendil-works/pi-ai';
+export type {
+  Api,
+  AssistantMessage,
+  AssistantMessageEvent,
+  AssistantMessageEventStream,
+  Context,
+  Credential,
+  CredentialInfo,
+  CredentialStore,
+  Model,
+  SimpleStreamOptions,
+} from '@earendil-works/pi-ai';
+export { builtinProviders } from '@earendil-works/pi-ai/providers/all';

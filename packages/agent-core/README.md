@@ -27,6 +27,12 @@ feature extensions, and presentation listeners. `FelanExtensionAPI` adds only
 the selected `AgentRuntime` and application agent directory to Pi's extension
 API; feature-specific contracts remain in their owning extension packages.
 
+Agent Core owns the exact Pi dependency versions used by its consumers. Its
+public entry point exposes the Pi model, credential, streaming, session,
+resource, skill, and tool symbols needed to compose Felan applications, so
+consumers import those symbols from `@felan-ai/agent-core` without declaring
+Pi packages directly.
+
 Agent Core owns the runtime-neutral Felan base system prompt. Every composed
 session uses this prompt; consumers extend it with `appendSystemPrompt` and
 cannot replace it. Inline extensions can contribute model-facing behavior

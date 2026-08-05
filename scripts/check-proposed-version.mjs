@@ -3,19 +3,12 @@ import { resolve } from 'node:path';
 import { packagePaths } from './package-paths.mjs';
 
 const root = resolve(import.meta.dirname, '..');
-const rootManifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const selectUnpublished = process.argv.includes('--select-unpublished');
 const unpublished = [];
 let failed = false;
 
 for (const packagePath of packagePaths) {
   const manifest = JSON.parse(await readFile(resolve(root, packagePath, 'package.json'), 'utf8'));
-  if (manifest.version !== rootManifest.version) {
-    console.error(`${manifest.name}: version ${manifest.version} differs from proposed ${rootManifest.version}`);
-    failed = true;
-    continue;
-  }
-
   const url = `https://registry.npmjs.org/${encodeURIComponent(manifest.name)}/${encodeURIComponent(manifest.version)}`;
   const response = await fetch(url);
   if (response.status === 404) {
@@ -24,12 +17,8 @@ for (const packagePath of packagePaths) {
     continue;
   }
   if (response.ok) {
-    const message = `${manifest.name}@${manifest.version}: already published`;
-    if (selectUnpublished) {
-      console.log(`${message}; skipping`);
-      continue;
-    }
-    console.error(message);
+    console.log(`${manifest.name}@${manifest.version}: already published; skipping`);
+    continue;
   } else {
     console.error(`${manifest.name}@${manifest.version}: registry returned HTTP ${response.status}`);
   }

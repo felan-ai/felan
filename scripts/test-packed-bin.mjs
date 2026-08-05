@@ -22,11 +22,13 @@ const agentDir = join(cleanHome, '.felan');
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const binDirectory = join(installDir, 'node_modules', '.bin');
 const felan = join(binDirectory, process.platform === 'win32' ? 'felan.cmd' : 'felan');
-const proposedVersion = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version;
 const sourcePackages = packagePaths.map((packagePath) => JSON.parse(
   readFileSync(resolve(root, packagePath, 'package.json'), 'utf8'),
 ));
+const sourcePackagesByName = new Map(sourcePackages.map((manifest) => [manifest.name, manifest]));
 const packageNames = sourcePackages.map(({ name }) => name);
+const agentCoreVersion = sourcePackagesByName.get('@felan-ai/agent-core').version;
+const felanVersion = sourcePackagesByName.get('@felan-ai/felan').version;
 const audit = process.argv.includes('--audit');
 const cleanEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => (
@@ -146,8 +148,8 @@ try {
 
   const diagnostics = run(felan, ['--diagnostics'], cleanEnvironment);
   for (const expected of [
-    `Felan version: ${proposedVersion}`,
-    `Agent Core version: ${proposedVersion}`,
+    `Felan version: ${felanVersion}`,
+    `Agent Core version: ${agentCoreVersion}`,
     'Pi version: 0.83.0',
     'Runtime: host',
     'Credentials: local',
@@ -161,7 +163,7 @@ try {
     throw new Error('Packed felan --help did not start the local TUI CLI');
   }
   const versionResult = run(felan, ['--version'], cleanEnvironment);
-  if (versionResult.stdout.trim() !== proposedVersion) {
+  if (versionResult.stdout.trim() !== felanVersion) {
     throw new Error(`Packed felan --version reported ${JSON.stringify(versionResult.stdout.trim())}`);
   }
   const authPath = join(agentDir, 'auth.json');
@@ -216,8 +218,8 @@ function filesBelow(directory) {
 function validateInstalledPackage(sourcePackage) {
   const packageRoot = join(installDir, 'node_modules', ...sourcePackage.name.split('/'));
   const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
-  if (manifest.version !== proposedVersion) {
-    throw new Error(`${manifest.name} packed version is ${manifest.version}, expected ${proposedVersion}`);
+  if (manifest.version !== sourcePackage.version) {
+    throw new Error(`${manifest.name} packed version is ${manifest.version}, expected ${sourcePackage.version}`);
   }
   if (
     manifest.repository?.url !== 'git+https://github.com/felan-ai/felan.git'
@@ -234,14 +236,15 @@ function validateInstalledPackage(sourcePackage) {
     throw new Error(`${manifest.name} packed artifact is missing dist`);
   }
   for (const entry of readdirSync(packageRoot)) {
-    if (!['dist', 'LICENSE', 'NOTICE', 'README.md', 'package.json'].includes(entry)) {
+    if (!['dist', 'LICENSE', 'NOTICE', 'README.md', 'node_modules', 'package.json'].includes(entry)) {
       throw new Error(`${manifest.name} packed unexpected top-level entry ${entry}`);
     }
   }
 
   for (const [dependency, version] of Object.entries(manifest.dependencies ?? {})) {
-    if (dependency.startsWith('@felan-ai/') && version !== proposedVersion) {
-      throw new Error(`${manifest.name} packed dependency ${dependency} is ${version}, expected ${proposedVersion}`);
+    const sourceDependency = sourcePackagesByName.get(dependency);
+    if (sourceDependency && version !== sourceDependency.version) {
+      throw new Error(`${manifest.name} packed dependency ${dependency} is ${version}, expected ${sourceDependency.version}`);
     }
     if (dependency.startsWith('@felan-cloud/')) {
       throw new Error(`${manifest.name} packed private dependency ${dependency}`);

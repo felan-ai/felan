@@ -47,6 +47,9 @@ importers:
 
   packages/agent-core:
     dependencies:
+      '@earendil-works/pi-ai':
+        specifier: 0.83.0
+        version: 0.83.0(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
         specifier: 0.83.0
         version: 0.83.0(ws@8.21.1)(zod@4.4.3)
