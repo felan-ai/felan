@@ -5,14 +5,16 @@ import {
   type ResourceLoader,
   type Skill,
 } from '@earendil-works/pi-coding-agent';
+import { collectCapabilities, formatCapabilitiesSection } from './capabilities.js';
+import { FELAN_BASE_SYSTEM_PROMPT } from './system-prompt.js';
 
 export interface CreateAgentCoreResourceLoaderOptions {
   readonly cwd: string;
   readonly agentDir: string;
   readonly extensionFactories: readonly InlineExtension[];
   readonly extensionFlagValues?: ReadonlyMap<string, boolean | string>;
+  readonly skillPaths?: readonly string[];
   readonly skills?: readonly Skill[];
-  readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
 }
 
@@ -20,6 +22,7 @@ export async function createAgentCoreResourceLoader(
   options: CreateAgentCoreResourceLoaderOptions,
 ): Promise<ResourceLoader> {
   const skills = options.skills === undefined ? undefined : [...options.skills];
+  const consumerAppends = (options.appendSystemPrompt ?? []).filter((prompt) => prompt.trim().length > 0);
   const resourceSettings = SettingsManager.inMemory({
     packages: [],
     extensions: [],
@@ -32,7 +35,7 @@ export async function createAgentCoreResourceLoader(
     agentDir: options.agentDir,
     settingsManager: resourceSettings,
     additionalExtensionPaths: [],
-    additionalSkillPaths: [],
+    additionalSkillPaths: [...(options.skillPaths ?? [])],
     additionalPromptTemplatePaths: [],
     additionalThemePaths: [],
     extensionFactories: [...options.extensionFactories],
@@ -41,6 +44,8 @@ export async function createAgentCoreResourceLoader(
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
+    systemPrompt: FELAN_BASE_SYSTEM_PROMPT,
+    appendSystemPrompt: [],
     ...(skills === undefined
       ? {}
       : {
@@ -49,10 +54,11 @@ export async function createAgentCoreResourceLoader(
             diagnostics: [],
           }),
         }),
-    ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
-    ...(options.appendSystemPrompt === undefined
-      ? {}
-      : { appendSystemPrompt: [...options.appendSystemPrompt] }),
+    systemPromptOverride: () => FELAN_BASE_SYSTEM_PROMPT,
+    appendSystemPromptOverride: () => {
+      const capabilities = formatCapabilitiesSection(collectCapabilities(options.extensionFactories));
+      return [...(capabilities === undefined ? [] : [capabilities]), ...consumerAppends];
+    },
   });
 
   await loader.reload();

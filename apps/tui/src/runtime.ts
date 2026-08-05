@@ -1,4 +1,5 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -21,9 +22,10 @@ import {
 import {
   createLocalExtensionImporter,
   importLocalExtension,
-  localExtensionPackages,
+  resolveBuiltinExtensionPackages,
 } from './extensions.js';
-import { createLocalSettingsManager } from './settings.js';
+import { createLocalSettingsManager, getFelanSettings } from './settings.js';
+import { loadLocalAppendSystemPrompt } from './system-prompt.js';
 import {
   LocalSubagentHost,
   type LocalSubagentSettings,
@@ -53,6 +55,7 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly extensionPackages?: readonly string[];
   readonly importExtension?: ExtensionPackageImporter;
   readonly runtimeFactory?: (cwd: string) => AgentRuntime;
+  readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
 }
 
@@ -64,11 +67,19 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly modelRuntime?: ModelRuntime;
   readonly sessionDir?: string;
   readonly runtimeFactory?: (cwd: string) => AgentRuntime;
+  readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
 }
 
 export function getLocalAgentDir(): string {
-  return resolve(process.env.FELAN_AGENT_DIR ?? join(homedir(), '.felan', 'agent'));
+  return resolve(process.env.FELAN_AGENT_DIR ?? join(homedir(), '.felan'));
+}
+
+export function getLocalSkillPaths(cwd: string, homeDir: string = homedir()): readonly string[] {
+  return [...new Set([
+    resolve(cwd, '.agents', 'skills'),
+    resolve(homeDir, '.agents', 'skills'),
+  ])].filter((path) => existsSync(path));
 }
 
 export function createLocalSessionRuntimeFactory(
@@ -81,12 +92,17 @@ export function createLocalSessionRuntimeFactory(
   }>();
   const createCoreRuntime = createAgentCoreSessionRuntimeFactory(async ({ cwd, sessionManager }) => {
     const settingsManager = createLocalSettingsManager(cwd, options.agentDir);
+    const felanSettings = getFelanSettings(settingsManager);
     const modelPatterns = settingsManager.getEnabledModels();
     const modelScope = modelPatterns && modelPatterns.length > 0
       ? await resolveModelScopeWithDiagnostics(modelPatterns, options.modelRuntime)
       : { scopedModels: [], diagnostics: [] };
-    const extensionPackages = options.extensionPackages ?? localExtensionPackages;
+    const extensionPackages = options.extensionPackages
+      ?? resolveBuiltinExtensionPackages(felanSettings.builtinExtensions);
     const importExtension = options.importExtension ?? importLocalExtension;
+    const skillPaths = options.skillPaths ?? getLocalSkillPaths(cwd);
+    const subagentSettings = options.subagentSettings ?? felanSettings.felanSubagents;
+    const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
     const host = await LocalSubagentHost.create({
       sessionId: sessionManager.getSessionId(),
       cwd,
@@ -95,8 +111,9 @@ export function createLocalSessionRuntimeFactory(
       settingsManager,
       extensionPackages,
       importExtension,
+      skillPaths,
       ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
-      ...(options.subagentSettings === undefined ? {} : { settings: options.subagentSettings }),
+      ...(subagentSettings === undefined ? {} : { settings: subagentSettings }),
     });
     const shutdownState: LocalSubagentShutdownState = { failed: false };
     const shutdownHost = async () => {
@@ -116,6 +133,8 @@ export function createLocalSessionRuntimeFactory(
       importExtension: createLocalExtensionImporter(host, importExtension, shutdownHost),
       modelRuntime: options.modelRuntime,
       settingsManager,
+      skillPaths,
+      ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt: [appendSystemPrompt] }),
       ...(modelScope.scopedModels.length === 0 ? {} : { scopedModels: modelScope.scopedModels }),
     };
   });
@@ -158,7 +177,7 @@ export async function createLocalFelanRuntime(
   await mkdir(agentDir, { recursive: true });
   const modelRuntime = options.modelRuntime ?? await createLocalModelRuntime(agentDir);
   const startupSettings = createLocalSettingsManager(cwd, agentDir);
-  const sessionDir = options.sessionDir ?? startupSettings.getSessionDir();
+  const sessionDir = options.sessionDir ?? startupSettings.getSessionDir() ?? join(agentDir, 'sessions');
   const sessionManager = options.sessionManager
     ?? (options.continueRecent
       ? SessionManager.continueRecent(cwd, sessionDir)
@@ -166,8 +185,9 @@ export async function createLocalFelanRuntime(
   const createRuntime = createLocalSessionRuntimeFactory({
     agentDir,
     modelRuntime,
-    subagentSettings: options.subagentSettings ?? await loadLocalSubagentSettings(agentDir),
     ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
+    ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
+    ...(options.subagentSettings === undefined ? {} : { subagentSettings: options.subagentSettings }),
   });
 
   const runtime = await createAgentSessionRuntime(createRuntime, {
@@ -267,17 +287,4 @@ function installLocalSubagentLifecycle(runtime: AgentSessionRuntime): LocalFelan
     return result;
   };
   return localRuntime;
-}
-
-async function loadLocalSubagentSettings(agentDir: string): Promise<LocalSubagentSettings> {
-  try {
-    const settings = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8')) as {
-      felanSubagents?: LocalSubagentSettings;
-    };
-    return settings.felanSubagents ?? {};
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return {};
-    if (error instanceof SyntaxError) return {};
-    throw error;
-  }
 }

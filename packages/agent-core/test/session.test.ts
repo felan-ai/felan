@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   ModelRuntime,
   AgentSession,
+  FELAN_BASE_SYSTEM_PROMPT,
   SessionManager,
   SettingsManager,
   createAgentSessionRuntime,
@@ -52,6 +53,8 @@ describe('Agent Core session composition', () => {
     let wrappedInvocations = 0;
     let streamWrapped = false;
     const extension: FelanExtension = (pi) => {
+      expect(pi.agentDir).toBe(agentDir);
+      pi.registerCapability({ id: 'test-capability', instructions: 'Capability instructions' });
       order.push('extension factory');
       pi.on('session_start', () => {
         expect(streamWrapped).toBe(true);
@@ -81,7 +84,7 @@ describe('Agent Core session composition', () => {
       sessionManager,
       agentDir,
       customTools: [appTool],
-      systemPrompt: 'Portable system prompt',
+      appendSystemPrompt: ['Child persona instructions'],
     });
 
     expect(order).toEqual([
@@ -110,6 +113,16 @@ describe('Agent Core session composition', () => {
     ]));
     expect((globalThis as { ambientSessionExtension?: boolean }).ambientSessionExtension).toBeUndefined();
     await expect(fileExists(installMarker)).resolves.toBe(false);
+    const systemPrompt = result.session.systemPrompt;
+    expect(systemPrompt.startsWith(FELAN_BASE_SYSTEM_PROMPT)).toBe(true);
+    expect(systemPrompt).not.toContain('operating inside pi');
+    expect(systemPrompt.indexOf('## Enabled capabilities')).toBeGreaterThan(-1);
+    expect(systemPrompt.indexOf('Capability instructions')).toBeLessThan(
+      systemPrompt.indexOf('Child persona instructions'),
+    );
+    expect(systemPrompt.indexOf('Child persona instructions')).toBeLessThan(
+      systemPrompt.indexOf('Current working directory:'),
+    );
 
     await result.session.bindExtensions({ mode: 'print' });
     expect(order).toEqual([

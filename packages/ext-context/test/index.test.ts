@@ -64,6 +64,7 @@ class RecordingRuntime implements AgentRuntime {
 }
 
 class ExtensionHarness {
+  readonly capabilities: Array<{ id: string; instructions: string }> = [];
   readonly handlers = new Map<string, EventHandler[]>();
   readonly commands = new Map<string, CommandHandler>();
   readonly statuses: Array<[string, string | undefined]> = [];
@@ -89,6 +90,9 @@ class ExtensionHarness {
     const harness = new ExtensionHarness(selectedRuntime, selectedRuntime.cwd);
     const pi = {
       runtime: selectedRuntime,
+      registerCapability: (capability: { id: string; instructions: string }) => {
+        harness.capabilities.push(capability);
+      },
       on: (event: string, handler: EventHandler) => {
         const handlers = harness.handlers.get(event) ?? [];
         handlers.push(handler);
@@ -145,6 +149,14 @@ afterEach(async () => {
 });
 
 describe('@felan-ai/ext-context', () => {
+  it('registers progressive context guidance', async () => {
+    const harness = await ExtensionHarness.create();
+
+    expect(harness.capabilities).toEqual([
+      expect.objectContaining({ id: 'progressive-context' }),
+    ]);
+  });
+
   it('injects newly discovered instructions only on the next context event and resets on session start', async () => {
     const runtime = await testRuntime();
     await put(runtime, 'nested/AGENTS.md', 'Nested instructions');

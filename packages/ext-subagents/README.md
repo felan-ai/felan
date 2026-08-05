@@ -12,6 +12,11 @@ execution, latest records, continuation, persistence, completion delivery, and p
 Agent Core remains unaware of subagents and provides only generic runtime,
 session, coding-tool, and extension composition.
 
+During initialization the extension registers a `subagents` capability with
+generic delegation and control guidance plus the current host's available agent
+types and descriptions. The contribution is present only when this extension is
+loaded.
+
 Ambient Pi agent and extension discovery is outside this package and remains
 disabled by Felan applications.
 

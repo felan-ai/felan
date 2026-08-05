@@ -36,6 +36,10 @@ Tool-call order controls the handoff even when tools execute in parallel: a succ
 
 The handoff does not fork, summarize, or replace the session. Planning guidance and implementation guidance are transient context messages; user messages, assistant responses, task-tracking results, mutations, and verification results remain in one trajectory.
 
+The extension also registers concise static `prewalk` capability guidance
+during initialization. Phase-specific planning and implementation instructions
+remain transient context messages.
+
 ## Flags
 
 Prewalk uses Pi's namespaced extension flags and does not read a configuration file.

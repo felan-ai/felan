@@ -11,7 +11,7 @@ export interface ThemePalette {
   colors: Record<ThemeColorKey, ColorPair>;
 }
 
-const THEMES: Record<PowerlineConfig['theme'], ThemePalette> = {
+const THEMES: Record<Exclude<PowerlineConfig['theme'], 'custom'>, ThemePalette> = {
   dark: makeTheme({
     directory: ['#f8fafc', '#2563eb'], git: ['#052e16', '#22c55e'], model: ['#ffffff', '#7c3aed'],
     session: ['#111827', '#f59e0b'], context: ['#ecfeff', '#0891b2'], status: ['#f8fafc', '#334155'],
@@ -66,6 +66,14 @@ export function resolveColorMode(compatibility: ColorCompatibility): ColorMode {
 }
 
 export function getThemePalette(config: PowerlineConfig): ThemePalette {
+  if (config.theme === 'custom') {
+    return {
+      colors: {
+        ...THEMES.dark.colors,
+        ...config.colors?.custom,
+      },
+    };
+  }
   return THEMES[config.theme];
 }
 

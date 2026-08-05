@@ -21,14 +21,20 @@ The extension installs its footer on `session_start` only when `ctx.mode` is
 branch changes, and removes and disposes the footer on `session_shutdown`.
 Headless Pi modes perform no footer or Git work.
 
-## Display flags
+## Configuration
 
-Configuration is inert for the process lifetime. These Pi flags are read when
-the TUI footer is installed:
+The extension reads `$FELAN_AGENT_DIR/powerline.json`, which defaults to
+`~/.felan/powerline.json`, when it initializes. It accepts the compatible Pi
+powerline fields for display layout, supported segments, and custom colors.
+Segments that depend on subscriptions, credentials, or private services remain
+excluded.
+
+Configuration is inert for the process lifetime. These Pi flags override the
+file when the TUI footer is installed:
 
 | Flag | Supported values | Default |
 | --- | --- | --- |
-| `--felan-powerline-theme` | `dark`, `light`, `nord`, `tokyo-night`, `rose-pine`, `gruvbox` | `dark` |
+| `--felan-powerline-theme` | `dark`, `light`, `nord`, `tokyo-night`, `rose-pine`, `gruvbox`, `custom` | `dark` |
 | `--felan-powerline-style` | `minimal`, `powerline`, `capsule` | `powerline` |
 | `--felan-powerline-charset` | `text`, `unicode` | `text` |
 | `--felan-powerline-color` | `auto`, `none`, `ansi`, `ansi256`, `truecolor` | `auto` |
@@ -37,9 +43,9 @@ the TUI footer is installed:
 | `--felan-powerline-session-type` | `tokens`, `cost`, `both`, `breakdown` | `tokens` |
 | `--felan-powerline-context-style` | `text`, `bar`, `blocks`, `blocks-line`, `dots` | `bar` |
 
-The portable subset does not read or watch configuration files, inspect private
-authentication files or JWTs, call subscription services, or depend on tmux or
-private environment conventions.
+The portable subset reads this single configuration file. It does not watch
+files, inspect private authentication files or JWTs, call subscription
+services, or depend on tmux or private environment conventions.
 
 ## Development
 

@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  FELAN_BASE_SYSTEM_PROMPT,
   AGENT_CORE_VERSION,
   HostAgentRuntime,
   SessionManager,
@@ -27,6 +28,7 @@ import {
   createLocalFelanRuntime,
   createLocalModelRuntime,
   createLocalSessionRuntimeFactory,
+  getLocalSkillPaths,
 } from '../src/runtime.js';
 import { attachLocalSubagentPresenter } from '../src/subagents/presenter.js';
 
@@ -38,6 +40,62 @@ afterEach(async () => {
 });
 
 describe('local Agent Core lifecycle', () => {
+  it('uses the Felan root for sessions and loads only configured built-ins and .agents skills', async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, 'home');
+    const cwd = join(root, 'workspace');
+    const agentDir = join(home, '.felan');
+    const projectSkills = join(cwd, '.agents', 'skills');
+    const userSkills = join(home, '.agents', 'skills');
+    const ignoredSkills = join(agentDir, 'skills');
+    await Promise.all([
+      mkdir(join(cwd, '.pi'), { recursive: true }),
+      mkdir(join(projectSkills, 'project-skill'), { recursive: true }),
+      mkdir(join(userSkills, 'user-skill'), { recursive: true }),
+      mkdir(join(ignoredSkills, 'ignored-skill'), { recursive: true }),
+      mkdir(agentDir, { recursive: true }),
+    ]);
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      builtinExtensions: {
+        subagents: false,
+        prewalk: false,
+        context: false,
+        powerline: false,
+      },
+    }));
+    await writeFile(join(agentDir, 'APPEND_SYSTEM.md'), 'Local application instructions');
+    await writeFile(join(cwd, '.pi', 'APPEND_SYSTEM.md'), 'Ignored project append');
+    await writeFile(join(projectSkills, 'project-skill', 'SKILL.md'), skill('project-skill'));
+    await writeFile(join(userSkills, 'user-skill', 'SKILL.md'), skill('user-skill'));
+    await writeFile(join(ignoredSkills, 'ignored-skill', 'SKILL.md'), skill('ignored-skill'));
+    const skillPaths = getLocalSkillPaths(cwd, home);
+
+    expect(skillPaths).toEqual([projectSkills, userSkills]);
+
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir, skillPaths });
+
+    expect(runtime.session.sessionManager.getSessionDir()).toBe(join(agentDir, 'sessions'));
+    expect(runtime.services.resourceLoader.getExtensions().extensions).toEqual([]);
+    expect(runtime.services.resourceLoader.getSkills().skills.map(({ name }) => name)).toEqual([
+      'project-skill',
+      'user-skill',
+    ]);
+    expect(runtime.session.agent.state.tools.map(({ name }) => name)).not.toContain('Agent');
+    const systemPrompt = runtime.session.systemPrompt;
+    expect(systemPrompt.startsWith(FELAN_BASE_SYSTEM_PROMPT)).toBe(true);
+    expect(systemPrompt).toContain('Local application instructions');
+    expect(systemPrompt).not.toContain('Ignored project append');
+    expect(systemPrompt).not.toContain('## Enabled capabilities');
+    expect(systemPrompt.indexOf('Local application instructions')).toBeLessThan(
+      systemPrompt.indexOf('<available_skills>'),
+    );
+    expect(systemPrompt.indexOf('<available_skills>')).toBeLessThan(
+      systemPrompt.indexOf('Current working directory:'),
+    );
+
+    await runtime.dispose();
+  });
+
   it('resolves configured model scope once per session', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -456,4 +514,8 @@ function completedAssistantMessage(text: string) {
     stopReason: 'stop' as const,
     timestamp: Date.now(),
   };
+}
+
+function skill(name: string): string {
+  return `---\nname: ${name}\ndescription: ${name}\n---\n`;
 }

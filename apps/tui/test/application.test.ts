@@ -7,6 +7,8 @@ const interactive = vi.hoisted(() => ({
   agentDirs: [] as Array<string | undefined>,
   constructorError: undefined as Error | undefined,
   disposals: 0,
+  piTelemetry: [] as Array<string | undefined>,
+  piVersionChecks: [] as Array<string | undefined>,
   runError: undefined as Error | undefined,
   runs: 0,
   toolNames: [] as string[],
@@ -19,6 +21,8 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
     InteractiveMode: class {
       constructor(private runtime: InstanceType<typeof original.AgentSessionRuntime>) {
         interactive.agentDirs.push(process.env.PI_CODING_AGENT_DIR);
+        interactive.piTelemetry.push(process.env.PI_TELEMETRY);
+        interactive.piVersionChecks.push(process.env.PI_SKIP_VERSION_CHECK);
         const dispose = runtime.dispose.bind(runtime);
         runtime.dispose = async () => {
           interactive.disposals += 1;
@@ -44,6 +48,8 @@ afterEach(async () => {
   interactive.agentDirs = [];
   interactive.constructorError = undefined;
   interactive.disposals = 0;
+  interactive.piTelemetry = [];
+  interactive.piVersionChecks = [];
   interactive.runError = undefined;
   interactive.runs = 0;
   interactive.toolNames = [];
@@ -56,14 +62,20 @@ describe('interactive application', () => {
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent');
     const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousPiSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+    const previousPiTelemetry = process.env.PI_TELEMETRY;
     await mkdir(cwd, { recursive: true });
 
     await runLocalFelan({ cwd, agentDir });
 
     expect(interactive.runs).toBe(1);
     expect(interactive.agentDirs).toEqual([agentDir]);
+    expect(interactive.piVersionChecks).toEqual(['1']);
+    expect(interactive.piTelemetry).toEqual(['0']);
     expect(interactive.disposals).toBe(1);
     expect(process.env.PI_CODING_AGENT_DIR).toBe(previousPiAgentDir);
+    expect(process.env.PI_SKIP_VERSION_CHECK).toBe(previousPiSkipVersionCheck);
+    expect(process.env.PI_TELEMETRY).toBe(previousPiTelemetry);
     expect(interactive.toolNames).toEqual(expect.arrayContaining([
       'read',
       'bash',

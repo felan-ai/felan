@@ -54,6 +54,11 @@ const RESTORE_PLANNER_FLAG = 'prewalk-restore-planner';
 const HEADLESS_TASK_MESSAGE_TYPE = 'pi-prewalk-task';
 
 const prewalkExtension: FelanExtension = (pi): void => {
+  pi.registerCapability({
+    id: 'prewalk',
+    instructions: 'Prewalk can coordinate a same-session planning-to-implementation handoff when the user invokes /prewalk. During an active run, follow the phase-specific planning, task-tracking, implementation, and verification guidance injected into the conversation.',
+  });
+
   pi.registerFlag(TARGET_MODEL_FLAG, {
     description: 'Model used to implement a planned Prewalk task (provider/model-id)',
     type: 'string',

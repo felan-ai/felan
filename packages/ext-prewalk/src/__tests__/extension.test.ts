@@ -123,6 +123,7 @@ function createHarness(
   const commands = new Map<string, any>();
   const flags = new Map(Object.entries(options.flags ?? {}));
   const registeredFlags = new Map<string, any>();
+  const capabilities: Array<{ id: string; instructions: string }> = [];
   const models = options.models ?? [plannerModel, targetModel, alternateTarget, externalModel];
   let currentModel = plannerModel;
   let thinkingLevel = 'max';
@@ -190,6 +191,7 @@ function createHarness(
 
   const pi = {
     runtime,
+    registerCapability: (capability: { id: string; instructions: string }) => capabilities.push(capability),
     on: vi.fn((event: string, handler: Handler) => {
       const eventHandlers = handlers.get(event) ?? [];
       eventHandlers.push(handler);
@@ -218,6 +220,7 @@ function createHarness(
     ui,
     runtime,
     registeredFlags,
+    capabilities,
     facadeExec,
     emit,
     command: commands.get('prewalk'),
@@ -293,6 +296,14 @@ async function contextMessages(harness: ReturnType<typeof createHarness>, messag
 }
 
 describe('flags and commands', () => {
+  it('registers static Prewalk guidance', () => {
+    const harness = createHarness();
+
+    expect(harness.capabilities).toEqual([
+      expect.objectContaining({ id: 'prewalk' }),
+    ]);
+  });
+
   it('registers namespaced Pi flags with defaults', () => {
     const harness = createHarness();
 

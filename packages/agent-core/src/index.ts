@@ -11,6 +11,9 @@ export {
   bindFelanExtension,
   loadFelanExtensions,
 } from './extensions.js';
+export { formatCapabilitiesSection } from './capabilities.js';
+export type { FelanCapability, RegisteredFelanCapability } from './capabilities.js';
+export { FELAN_BASE_SYSTEM_PROMPT } from './system-prompt.js';
 export type {
   ExtensionPackageImporter,
   FelanExtension,

@@ -24,12 +24,38 @@ inactive session, while `createAgentCoreSessionRuntimeFactory` provides the
 typed seam used with Pi's `createAgentSessionRuntime`. Applications retain
 ownership of model credentials, settings, session storage, stream wrappers,
 feature extensions, and presentation listeners. `FelanExtensionAPI` adds only
-the selected `AgentRuntime` to Pi's extension API; feature-specific contracts
-remain in their owning extension packages.
+the selected `AgentRuntime` and application agent directory to Pi's extension
+API; feature-specific contracts remain in their owning extension packages.
 
-Applications may pass an explicit `skills` list into session composition.
-Agent Core exposes only that list while project, user, and package skill
-discovery remain disabled.
+Agent Core owns the runtime-neutral Felan base system prompt. Every composed
+session uses this prompt; consumers extend it with `appendSystemPrompt` and
+cannot replace it. Inline extensions can contribute model-facing behavior
+during initialization:
+
+```ts
+const extension: FelanExtension = (pi) => {
+  pi.registerCapability({
+    id: 'review',
+    instructions: 'Review changed code and report concrete findings.',
+  });
+};
+```
+
+Capability IDs and instructions are validated, duplicate IDs report both
+extension sources, and contributions retain extension load and registration
+order across resource reloads. Agent Core renders enabled capabilities as one
+section after the base prompt. Consumer appends follow that section, then Pi
+adds explicit skills and the current working directory.
+
+Tool definitions sent with the model request remain the authoritative tool
+inventory. The Felan-owned prompt intentionally does not render Pi's default
+`promptSnippet` or `promptGuidelines` sections; extensions use named
+capabilities for multi-tool workflow guidance.
+
+Applications may pass explicit `skills` or `skillPaths` into session
+composition. Agent Core exposes only those resources while ambient project,
+user, and package skill discovery remains disabled. Ambient system prompt,
+append prompt, and context discovery are also disabled.
 
 ## Development
 

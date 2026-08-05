@@ -4,6 +4,7 @@ import {
   createLocalExtensionImporter,
   importLocalExtension,
   localExtensionPackages,
+  resolveBuiltinExtensionPackages,
 } from '../src/extensions.js';
 
 describe('local extension importer', () => {
@@ -38,6 +39,23 @@ describe('local extension importer', () => {
     await expect(importer('@felan-ai/ext-subagents')).resolves.toMatchObject({
       default: expect.any(Function),
     });
+  });
+
+  it('enables only configured built-in extensions', () => {
+    expect(resolveBuiltinExtensionPackages({
+      subagents: false,
+      powerline: false,
+    })).toEqual([
+      '@felan-ai/ext-prewalk',
+      '@felan-ai/ext-context',
+    ]);
+
+    expect(() => resolveBuiltinExtensionPackages({ ambient: true })).toThrow(
+      'Unknown built-in extension: ambient',
+    );
+    expect(() => resolveBuiltinExtensionPackages({ prewalk: 'yes' })).toThrow(
+      'Built-in extension prewalk must be a boolean',
+    );
   });
 });
 

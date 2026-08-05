@@ -2,12 +2,19 @@ export { runLocalFelan } from './application.js';
 export type { RunLocalFelanOptions } from './application.js';
 export { runCli } from './cli-main.js';
 export type { CliDependencies } from './cli-main.js';
-export { importLocalExtension, localExtensionPackages } from './extensions.js';
+export {
+  builtinExtensionPackages,
+  importLocalExtension,
+  localExtensionPackages,
+  resolveBuiltinExtensionPackages,
+} from './extensions.js';
+export type { BuiltinExtensionName, BuiltinExtensionSettings } from './extensions.js';
 export {
   createLocalFelanRuntime,
   createLocalModelRuntime,
   createLocalSessionRuntimeFactory,
   getLocalAgentDir,
+  getLocalSkillPaths,
 } from './runtime.js';
 export { LocalSubagentHost } from './subagents/host.js';
 export type {
@@ -20,5 +27,10 @@ export type {
   CreateLocalSessionRuntimeFactoryOptions,
   LocalFelanRuntime,
 } from './runtime.js';
-export { createLocalSettingsManager } from './settings.js';
+export { createLocalSettingsManager, getFelanSettings } from './settings.js';
+export type { FelanSettings } from './settings.js';
+export {
+  LOCAL_APPEND_SYSTEM_PROMPT_FILENAME,
+  loadLocalAppendSystemPrompt,
+} from './system-prompt.js';
 export { FELAN_VERSION } from './version.js';

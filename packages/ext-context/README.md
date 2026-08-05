@@ -25,6 +25,10 @@ symlink escapes.
 Use `/progressive-context` to show the nested instruction files loaded in the
 current session.
 
+The extension registers concise static `progressive-context` capability
+guidance during initialization. Discovered nested instructions remain transient
+session context and continue to update as relevant files are observed.
+
 ## Development
 
 Source: `packages/ext-context` in <https://github.com/felan-ai/felan>.

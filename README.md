@@ -14,7 +14,14 @@ shared agent core, first-party Pi extensions, and local terminal application.
 
 The local terminal application composes the host runtime and source-controlled
 extension set around Agent Core. `@felan-ai/ext-powerline` is enabled by default
-only in the local TUI and remains inert in headless modes.
+only in the local TUI and remains inert in headless modes. Felan settings and
+state live under `~/.felan`; built-in extensions are configurable there, while
+external extensions remain disabled.
+
+Agent Core owns Felan's base system prompt and assembles enabled extension
+capabilities before application appends, explicit Agent Skills, and the current
+working directory. The local application supports one optional
+`$FELAN_AGENT_DIR/APPEND_SYSTEM.md` append file.
 
 ## Requirements
 

@@ -23,6 +23,7 @@ import {
 } from '@felan-ai/ext-subagents';
 import { CURRENT_SESSION_VERSION } from '@earendil-works/pi-coding-agent';
 import { createLocalExtensionImporter } from '../extensions.js';
+import { loadLocalChildSystemPromptAppends } from '../system-prompt.js';
 import { discoverLocalSubagents, type LocalSubagentDefinition } from './catalog.js';
 import { LocalSubagentStore, type LocalStoredChild } from './store.js';
 
@@ -44,6 +45,7 @@ export interface CreateLocalSubagentHostOptions {
   readonly settingsManager: SettingsManager;
   readonly extensionPackages: readonly string[];
   readonly importExtension: ExtensionPackageImporter;
+  readonly skillPaths?: readonly string[];
   readonly runtimeFactory?: (cwd: string) => AgentRuntime;
   readonly settings?: LocalSubagentSettings;
   readonly runChild?: LocalSubagentRunner;
@@ -712,6 +714,10 @@ export class LocalSubagentManager {
       ? this.#options.extensionPackages
       : this.#options.extensionPackages.filter((packageName) => packageName !== EXT_SUBAGENTS);
     if (input.signal.aborted) return {};
+    const appendSystemPrompt = await loadLocalChildSystemPromptAppends(
+      this.#options.agentDir,
+      input.definition.prompt,
+    );
     const created = await createAgentCoreSession({
       runtime: this.#options.runtimeFactory?.(input.cwd) ?? new HostAgentRuntime(input.cwd),
       extensionPackages,
@@ -719,7 +725,8 @@ export class LocalSubagentManager {
       modelRuntime: this.#options.modelRuntime,
       settingsManager: this.#options.settingsManager,
       sessionManager,
-      appendSystemPrompt: [input.definition.prompt],
+      appendSystemPrompt,
+      ...(this.#options.skillPaths === undefined ? {} : { skillPaths: this.#options.skillPaths }),
       ...(model === undefined ? {} : { model }),
       ...(input.request.thinking === undefined ? {} : { thinkingLevel: input.request.thinking }),
     });

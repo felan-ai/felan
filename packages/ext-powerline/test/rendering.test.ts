@@ -8,6 +8,18 @@ import { renderSegments, sanitizePlainText, type FooterDataLike, type RenderedSe
 import { getSymbols } from '../src/symbols.js';
 
 describe('powerline rendering', () => {
+  it('uses custom colors with built-in fallbacks', () => {
+    const config: PowerlineConfig = {
+      ...testConfig({}),
+      theme: 'custom',
+      colors: { custom: { directory: { fg: '#ffffff', bg: '#123456' } } },
+    };
+
+    const palette = getThemePalette(config);
+    expect(palette.colors.directory).toEqual({ fg: '#ffffff', bg: '#123456' });
+    expect(palette.colors.git).toBeDefined();
+  });
+
   it('renders minimal, powerline, and capsule styles with both charsets', () => {
     const segments = [segment('directory', 'one'), segment('git', 'two')];
     const expected = {

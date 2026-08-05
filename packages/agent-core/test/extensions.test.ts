@@ -8,7 +8,7 @@ import {
 import { TestAgentRuntime } from './test-agent-runtime.js';
 
 describe('Felan extension bridge', () => {
-  it('preserves Pi method receivers, exposes the runtime, and routes exec through it', async () => {
+  it('preserves Pi method receivers, exposes Felan context, and routes exec through it', async () => {
     const runtime = new TestAgentRuntime('/workspace', {
       exec: ({ command, args }) => ({
         stdout: JSON.stringify({ command, args }),
@@ -24,18 +24,23 @@ describe('Felan extension bridge', () => {
       },
     } as unknown as ExtensionAPI;
     let receivedRuntime;
+    let receivedAgentDir;
     let receiverValue;
     let execOutput;
+    let lateRegister: FelanExtensionAPI['registerCapability'] | undefined;
     const inline = bindFelanExtension('@felan-ai/test-extension', async (felanPi) => {
       receivedRuntime = felanPi.runtime;
+      receivedAgentDir = felanPi.agentDir;
+      lateRegister = felanPi.registerCapability;
       const detachedGetFlag = felanPi.getFlag;
       receiverValue = detachedGetFlag('test');
       execOutput = await felanPi.exec('literal-command', ['two words', '$HOME', ';']);
-    }, runtime);
+    }, runtime, '/agent');
 
     await inlineFactory(inline)(pi);
 
     expect(receivedRuntime).toBe(runtime);
+    expect(receivedAgentDir).toBe('/agent');
     expect(receiverValue).toBe('pi receiver');
     expect(JSON.parse(execOutput!.stdout)).toEqual({
       command: 'literal-command',
@@ -45,6 +50,9 @@ describe('Felan extension bridge', () => {
       command: 'literal-command',
       args: ['two words', '$HOME', ';'],
     });
+    expect(() => lateRegister!({ id: 'late', instructions: 'Too late' })).toThrow(
+      'Capability registration from @felan-ai/test-extension is only available during initialization',
+    );
   });
 
   it('imports packages sequentially and retains package names on inline factories', async () => {

@@ -89,6 +89,7 @@ function extensionHarness() {
     registerFlag: (name: string, options: { default?: boolean | string }) => flags.set(name, options),
     getFlag: (name: string) => flags.get(name)?.default,
     exec,
+    agentDir: '/agent',
     runtime: {},
   } as unknown as FelanExtensionAPI;
   return {

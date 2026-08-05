@@ -19,6 +19,11 @@ const CUSTOM_TYPE = 'pi-progressive-context';
 const decoder = new TextDecoder();
 
 const contextExtension: FelanExtension = (pi) => {
+  pi.registerCapability({
+    id: 'progressive-context',
+    instructions: 'Nested project instructions are discovered progressively when files under their directories are read or attached. Apply loaded instructions to their scoped paths, prefer the most specific applicable guidance, and retain them for subsequent work in those paths.',
+  });
+
   const state: State = {
     loadedContextFiles: new Map(),
     processedDirs: new Set(),

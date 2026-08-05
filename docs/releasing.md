@@ -5,7 +5,7 @@ trusted publishing and provenance. The workflow has an OIDC identity token and
 contains no npm credential. It packs workspace dependencies with pnpm and uses
 an OIDC-capable npm 11 CLI to publish the resulting tarballs.
 
-The current release version is `0.1.0`. The root and all six public manifests
+The current release version is `0.2.0`. The root and all six public manifests
 form one fixed version group. Agent Core diagnostics report the same
 package-derived version.
 

@@ -8,9 +8,16 @@ npx @felan-ai/felan
 ```
 
 The package exposes the `felan` binary. It stores model credentials, settings,
-and sessions under `~/.felan/agent` by default; set `FELAN_AGENT_DIR` to select
-another local directory. Use `/login` inside the TUI to configure provider-owned
-model credentials without a Felan account.
+sessions, agents, and runtime state under `~/.felan` by default; set
+`FELAN_AGENT_DIR` to select another directory. Use `/login` inside the TUI to
+configure provider-owned model credentials without a Felan account. Felan reads
+global settings from `~/.felan/settings.json` and does not load Pi project
+settings. Pi project trust does not apply to Felan's fixed resource policy, so
+Felan starts without a project trust prompt.
+
+Felan suppresses Pi's version notification, bundled changelog, package update
+notifications, and install/update telemetry. Update behavior is owned by the
+Felan application.
 
 Each session uses a cwd-bound `HostAgentRuntime`. Pi's session runtime recreates
 the host runtime, filtered settings, resources, and session composition for
@@ -18,11 +25,43 @@ new, resume, fork, clone, and import flows, then rebinds the active interactive
 UI. Host mode uses the current user's filesystem and process permissions and is
 not an isolation boundary.
 
-Only the source-controlled Felan extension package list is imported. Ambient Pi
-packages, extensions, skills, prompts, themes, and context files remain filtered;
-inline Felan extensions can still provide shared tools, prompts, interaction,
-and subagent behavior. The application explicitly configures
-`@felan-ai/ext-subagents` with its session-bound local host; the extension provides `Agent`, `list_subagents`,
+Only source-controlled built-in Felan extensions can be imported. External
+packages, extensions, configured skill paths, prompts, themes, and Pi context
+files remain filtered. Agent Skills are loaded from `~/.agents/skills` and
+`<workspace>/.agents/skills` and are shared with local subagents.
+The built-in powerline reads `~/.felan/powerline.json` (or
+`$FELAN_AGENT_DIR/powerline.json`) once when it initializes.
+
+All built-in extensions are enabled by default. Toggle them in
+`~/.felan/settings.json`:
+
+```json
+{
+  "builtinExtensions": {
+    "subagents": true,
+    "prewalk": true,
+    "context": true,
+    "powerline": false
+  }
+}
+```
+
+## System prompt append
+
+The TUI reads one optional `$FELAN_AGENT_DIR/APPEND_SYSTEM.md` file when each
+session is constructed (`~/.felan/APPEND_SYSTEM.md` by default). Missing and
+blank files add nothing; other read failures stop session construction with the
+filesystem error. The file extends Agent Core's Felan prompt after enabled
+extension capabilities. Child persona instructions follow this application
+append. Explicit Agent Skills and the current working directory are added last.
+
+System prompt inputs are limited to Agent Core, enabled capabilities, the
+single application append above, explicit Agent Skills, and the current working
+directory. Pi `SYSTEM.md`, project `APPEND_SYSTEM.md`, and project
+prompt/context files stay outside local composition.
+
+When enabled, `@felan-ai/ext-subagents` uses the session-bound local host and
+provides `Agent`, `list_subagents`,
 `get_subagent_result`, `steer_subagent`, and `cancel_subagent`. A root-scoped
 local host tracks foreground and background runs, persists the latest child session
 metadata, delivers completion notices, supports bounded nesting, and uses the
@@ -34,7 +73,8 @@ includes `@felan-ai/ext-powerline` for an ANSI-aware footer; it is a direct TUI
 dependency and is not part of cloud composition.
 
 Local agent definitions are loaded only from bundled Felan definitions,
-`$FELAN_AGENT_DIR/agents/*.md`, and `<workspace>/.felan/agents/*.md`, with
+`~/.felan/agents/*.md` (or `$FELAN_AGENT_DIR/agents/*.md`), and
+`<workspace>/.felan/agents/*.md`, with
 project definitions taking precedence. Pi ambient agent discovery remains
 disabled. Local subagent concurrency defaults to four and depth defaults to
 three; set `felanSubagents.concurrency` and `felanSubagents.maxDepth` in the

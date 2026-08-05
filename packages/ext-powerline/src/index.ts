@@ -1,17 +1,25 @@
 import type { ExtensionContext, FelanExtension } from '@felan-ai/agent-core';
-import { configFromFlags, registerPowerlineFlags } from './config.js';
+import { configFromFlags, loadPowerlineConfig, registerPowerlineFlags } from './config.js';
 import { PowerlineFooter } from './footer.js';
 
 const powerlineExtension: FelanExtension = (pi) => {
   let footer: PowerlineFooter | undefined;
+  const loadedConfig = loadPowerlineConfig(pi.agentDir);
 
-  registerPowerlineFlags(pi);
+  registerPowerlineFlags(pi, loadedConfig.config);
 
   function installFooter(ctx: ExtensionContext): void {
     if (ctx.mode !== 'tui') return;
+    if (loadedConfig.warning) ctx.ui.notify(loadedConfig.warning, 'warning');
     footer?.dispose();
     ctx.ui.setFooter((tui, _theme, footerData) => {
-      footer = new PowerlineFooter({ pi, ctx, tui, footerData, config: configFromFlags(pi) });
+      footer = new PowerlineFooter({
+        pi,
+        ctx,
+        tui,
+        footerData,
+        config: configFromFlags(pi, loadedConfig.config),
+      });
       return footer;
     });
   }
@@ -38,7 +46,12 @@ const powerlineExtension: FelanExtension = (pi) => {
 };
 
 export default powerlineExtension;
-export { POWERLINE_FLAGS, configFromFlags } from './config.js';
+export {
+  POWERLINE_CONFIG_FILENAME,
+  POWERLINE_FLAGS,
+  configFromFlags,
+  loadPowerlineConfig,
+} from './config.js';
 export { PowerlineFooter, renderFooterLine, renderStyledSegments } from './footer.js';
 export { GitCache, formatAge, parseGitStatus, runGit } from './git.js';
 export { formatTokens, renderSegments, sanitizePlainText } from './segments.js';

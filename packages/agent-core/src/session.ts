@@ -35,8 +35,8 @@ export interface CreateAgentCoreSessionOptions {
   readonly scopedModels?: CreateAgentSessionOptions['scopedModels'];
   readonly sessionStartEvent?: SessionStartEvent;
   readonly customTools?: readonly ToolDefinition[];
+  readonly skillPaths?: readonly string[];
   readonly skills?: readonly Skill[];
-  readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
 }
 
@@ -90,12 +90,13 @@ interface AgentCoreSessionComposition {
 async function composeAgentCoreSession(
   options: CreateAgentCoreSessionOptions,
 ): Promise<AgentCoreSessionComposition> {
+  const agentDir = options.agentDir ?? options.runtime.cwd;
   const extensionFactories = await loadFelanExtensions(
     options.extensionPackages,
     options.importExtension,
     options.runtime,
+    agentDir,
   );
-  const agentDir = options.agentDir ?? options.runtime.cwd;
   const resourceLoader = await createAgentCoreResourceLoader({
     cwd: options.runtime.cwd,
     agentDir,
@@ -103,8 +104,8 @@ async function composeAgentCoreSession(
     ...(options.extensionFlagValues === undefined
       ? {}
       : { extensionFlagValues: options.extensionFlagValues }),
+    ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
-    ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
     ...(options.appendSystemPrompt === undefined
       ? {}
       : { appendSystemPrompt: options.appendSystemPrompt }),

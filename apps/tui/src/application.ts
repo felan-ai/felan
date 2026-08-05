@@ -13,7 +13,11 @@ export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
 export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise<void> {
   const runtime = await createLocalFelanRuntime(options);
   const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const previousPiSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+  const previousPiTelemetry = process.env.PI_TELEMETRY;
   process.env.PI_CODING_AGENT_DIR = runtime.services.agentDir;
+  process.env.PI_SKIP_VERSION_CHECK = '1';
+  process.env.PI_TELEMETRY = '0';
 
   try {
     const mode = new InteractiveMode(runtime, {
@@ -37,6 +41,16 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
         delete process.env.PI_CODING_AGENT_DIR;
       } else {
         process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+      }
+      if (previousPiSkipVersionCheck === undefined) {
+        delete process.env.PI_SKIP_VERSION_CHECK;
+      } else {
+        process.env.PI_SKIP_VERSION_CHECK = previousPiSkipVersionCheck;
+      }
+      if (previousPiTelemetry === undefined) {
+        delete process.env.PI_TELEMETRY;
+      } else {
+        process.env.PI_TELEMETRY = previousPiTelemetry;
       }
     }
   }

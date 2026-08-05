@@ -3,9 +3,16 @@ import type {
   InlineExtension,
 } from '@earendil-works/pi-coding-agent';
 import type { AgentRuntime } from './runtime.js';
+import {
+  associateCapabilityCollector,
+  CapabilityCollector,
+  type FelanCapability,
+} from './capabilities.js';
 
 export interface FelanExtensionAPI extends ExtensionAPI {
+  readonly agentDir: string;
   readonly runtime: AgentRuntime;
+  registerCapability(capability: FelanCapability): void;
 }
 
 export type FelanExtension = (
@@ -20,20 +27,62 @@ export function bindFelanExtension(
   packageName: string,
   extension: FelanExtension,
   runtime: AgentRuntime,
+  agentDir: string = runtime.cwd,
 ): InlineExtension {
-  return {
+  return bindFelanExtensionWithCapabilities(
+    packageName,
+    extension,
+    runtime,
+    agentDir,
+    new CapabilityCollector(),
+    true,
+  );
+}
+
+function bindFelanExtensionWithCapabilities(
+  packageName: string,
+  extension: FelanExtension,
+  runtime: AgentRuntime,
+  agentDir: string,
+  capabilityCollector: CapabilityCollector,
+  resetCapabilities: boolean,
+): InlineExtension {
+  const inline: InlineExtension = {
     name: packageName,
-    factory: (pi) => extension(createFelanExtensionAPI(pi, runtime)),
+    factory: async (pi) => {
+      if (resetCapabilities) capabilityCollector.beginLoad();
+      let initializing = true;
+      const registerCapability = (capability: FelanCapability): void => {
+        if (!initializing) {
+          throw new Error(`Capability registration from ${packageName} is only available during initialization`);
+        }
+        capabilityCollector.register(packageName, capability);
+      };
+      try {
+        await extension(createFelanExtensionAPI(
+          pi,
+          runtime,
+          agentDir,
+          registerCapability,
+        ));
+      } finally {
+        initializing = false;
+      }
+    },
   };
+  associateCapabilityCollector(inline, capabilityCollector);
+  return inline;
 }
 
 export async function loadFelanExtensions(
   packageNames: readonly string[],
   importExtension: ExtensionPackageImporter,
   runtime: AgentRuntime,
+  agentDir: string = runtime.cwd,
 ): Promise<InlineExtension[]> {
   const seen = new Set<string>();
   const extensions: InlineExtension[] = [];
+  const capabilityCollector = new CapabilityCollector();
 
   for (const packageName of packageNames) {
     if (seen.has(packageName)) {
@@ -62,10 +111,13 @@ export async function loadFelanExtensions(
       throw new Error(`${packageName} must default-export a Felan extension`);
     }
 
-    extensions.push(bindFelanExtension(
+    extensions.push(bindFelanExtensionWithCapabilities(
       packageName,
       defaultExport as FelanExtension,
       runtime,
+      agentDir,
+      capabilityCollector,
+      extensions.length === 0,
     ));
   }
 
@@ -75,12 +127,18 @@ export async function loadFelanExtensions(
 function createFelanExtensionAPI(
   pi: ExtensionAPI,
   runtime: AgentRuntime,
+  agentDir: string,
+  registerCapability: (capability: FelanCapability) => void,
 ): FelanExtensionAPI {
   const boundMethods = new Map<PropertyKey, unknown>();
 
   return new Proxy(pi as FelanExtensionAPI, {
     get(target, property) {
+      if (property === 'agentDir') return agentDir;
       if (property === 'runtime') return runtime;
+      if (property === 'registerCapability') {
+        return registerCapability;
+      }
       if (property === 'exec') {
         return (
           command: string,
@@ -98,7 +156,7 @@ function createFelanExtensionAPI(
       return boundMethods.get(property);
     },
     set(target, property, value) {
-      if (property === 'runtime') return false;
+      if (property === 'agentDir' || property === 'runtime' || property === 'registerCapability') return false;
       return Reflect.set(target, property, value, target);
     },
   });

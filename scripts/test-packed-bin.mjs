@@ -18,7 +18,7 @@ const installDir = mkdtempSync(join(tmpdir(), 'felan-packed-bin-'));
 const cleanHome = join(installDir, 'home');
 const cacheDir = join(installDir, 'npm-cache');
 const workspace = join(installDir, 'workspace');
-const agentDir = join(cleanHome, '.felan', 'agent');
+const agentDir = join(cleanHome, '.felan');
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const binDirectory = join(installDir, 'node_modules', '.bin');
 const felan = join(binDirectory, process.platform === 'win32' ? 'felan.cmd' : 'felan');
@@ -93,6 +93,7 @@ try {
       }
       const subagents = await import('@felan-ai/ext-subagents');
       const canonicalTools = [];
+      const canonicalCapabilities = [];
       const host = {
           descriptors: [{
             id: 'general',
@@ -106,6 +107,7 @@ try {
           },
         };
       subagents.createSubagentsExtension(host)({
+        registerCapability: (capability) => canonicalCapabilities.push(capability.id),
         registerTool: (tool) => canonicalTools.push(tool.name),
       });
       const expectedTools = [
@@ -118,10 +120,26 @@ try {
       if (JSON.stringify(canonicalTools) !== JSON.stringify(expectedTools)) {
         throw new Error('Packed subagent extension tools differ from the canonical five: ' + canonicalTools.join(', '));
       }
+      if (JSON.stringify(canonicalCapabilities) !== JSON.stringify(['subagents'])) {
+        throw new Error('Packed subagent extension capability is unavailable');
+      }
       const runtime = await app.createLocalFelanRuntime({
         cwd: process.env.PACKED_SMOKE_WORKSPACE,
         agentDir: process.env.FELAN_AGENT_DIR,
       });
+      const prompt = runtime.session.systemPrompt;
+      if (!prompt.startsWith('You are Felan, an AI software development lifecycle (SDLC) and coding agent.')) {
+        throw new Error('Packed runtime did not use the Agent Core base prompt');
+      }
+      if (prompt.includes('operating inside pi')) {
+        throw new Error('Packed runtime retained the Pi base prompt');
+      }
+      const capabilityPositions = ['### subagents', '### prewalk', '### progressive-context']
+        .map((heading) => prompt.indexOf(heading));
+      if (capabilityPositions.some((position) => position < 0)
+        || capabilityPositions.some((position, index) => index > 0 && position <= capabilityPositions[index - 1])) {
+        throw new Error('Packed runtime capability order is incorrect');
+      }
       await runtime.dispose();
     `,
   ], cleanEnvironment);
