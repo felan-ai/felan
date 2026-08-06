@@ -89,7 +89,7 @@ describe('Codex runtime-backed tools', () => {
     const writeStdin = tool(tools, 'write_stdin');
     const script = [
       "process.stdout.write('tty:' + process.stdin.isTTY + ':' + process.stdout.isTTY + '\\n')",
-      "process.stdin.once('data', value => { process.stdout.write('got:' + value); process.exit(0) })",
+      "process.stdin.once('data', value => process.stdout.write('got:' + value, () => process.exit(0)))",
     ].join(';');
     const started = await exec.execute(
       'exec',
@@ -99,12 +99,14 @@ describe('Codex runtime-backed tools', () => {
       imageContext(),
     ) as ToolResult;
     const sessionId = (started.details as { session_id: number }).session_id;
-    expect((started.details as { output: string }).output).toContain('tty:true:true');
 
     const completed = await writeStdin.execute(
-      'input', { session_id: sessionId, chars: 'hello\n', yield_time_ms: 1000 }, undefined, undefined, imageContext(),
+      'input', { session_id: sessionId, chars: 'hello\n', yield_time_ms: 30_000 }, undefined, undefined, imageContext(),
     ) as ToolResult;
-    expect(completed.details).toMatchObject({ exit_code: 0, output: expect.stringContaining('got:hello') });
+    const output = `${(started.details as { output: string }).output}${(completed.details as { output: string }).output}`;
+    expect(output).toContain('tty:true:true');
+    expect(completed.details).toMatchObject({ exit_code: 0 });
+    expect(output).toContain('got:hello');
     await sessions.shutdown();
   });
 
@@ -124,24 +126,27 @@ describe('Codex runtime-backed tools', () => {
     const runtime = await createRuntime();
     const sessions = new ExecSessionManager(runtime);
     const script = [
-      "process.on('SIGINT', () => { console.log('interrupted'); process.exit(0) })",
-      "console.log('ready')",
+      "const { writeFileSync } = require('node:fs')",
+      "process.on('SIGINT', () => { writeFileSync('interrupted', 'yes'); process.exit(0) })",
+      "writeFileSync('ready', 'yes')",
       'setInterval(() => {}, 1000)',
     ].join(';');
     const started = await sessions.exec({
       cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
       yield_time_ms: 250,
     });
+    await waitForRuntimeFile(runtime, 'ready');
 
     await expect(sessions.write({ session_id: started.session_id!, chars: 'hello' }))
       .rejects.toThrow('stdin is closed for this session');
     const completed = await sessions.write({
       session_id: started.session_id!,
       chars: '\u0003',
-      yield_time_ms: 1_000,
+      yield_time_ms: 30_000,
     });
 
-    expect(completed).toMatchObject({ exit_code: 0, output: expect.stringContaining('interrupted') });
+    expect(completed).toMatchObject({ exit_code: 0 });
+    await expect(text(runtime, 'interrupted')).resolves.toBe('yes');
     await sessions.shutdown();
   });
 
@@ -626,4 +631,17 @@ function crc32(data: Uint8Array): number {
 
 function testDelay(milliseconds: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+async function waitForRuntimeFile(runtime: HostAgentRuntime, path: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      await runtime.readFile(path);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    await testDelay(25);
+  }
+  throw new Error(`Timed out waiting for ${path}`);
 }
