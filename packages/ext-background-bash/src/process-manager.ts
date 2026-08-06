@@ -13,7 +13,7 @@ export interface WaitBackgroundBashResult {
 }
 
 const WAIT_POLL_MS = 500;
-const PID_STARTUP_GRACE_MS = 5_000;
+const PROCESS_STATUS_GRACE_MS = 5_000;
 const encoder = new TextEncoder();
 
 export class BackgroundBashManager {
@@ -143,7 +143,7 @@ export class BackgroundBashManager {
 
     const pid = job.status.pid ?? job.meta.pid;
     const now = Date.now();
-    if (!pid && now - job.status.startedAt <= PID_STARTUP_GRACE_MS) return job;
+    if (now - job.status.startedAt <= PROCESS_STATUS_GRACE_MS) return job;
     if (pid && await this.#isJobProcessAlive(job, pid)) return job;
 
     return await this.#store.markStatus(job.meta.id, {
@@ -188,7 +188,9 @@ export class BackgroundBashManager {
   }
 
   #sendSignal(pid: number, signal: NodeJS.Signals) {
-    return this.runtime.exec('kill', [`-${signal.slice(3)}`, String(pid)], { cwd: this.runtime.cwd });
+    return this.runtime.exec('kill', [`-${signal.slice(3)}`, '--', String(pid)], {
+      cwd: this.runtime.cwd,
+    });
   }
 }
 

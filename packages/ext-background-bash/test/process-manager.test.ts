@@ -78,10 +78,16 @@ async function readPid(runtime: HostAgentRuntime, path: string): Promise<number>
 }
 
 async function waitForProcessExit(runtime: HostAgentRuntime, pid: number): Promise<void> {
+  let processInfo = '';
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const result = await runtime.exec('kill', ['-0', String(pid)]);
-    if (result.code !== 0) return;
+    const result = await runtime.exec(
+      'ps',
+      ['-o', 'stat=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'command=', '-p', String(pid)],
+    );
+    processInfo = result.stdout.trim();
+    const state = processInfo.match(/^(\S+)/u)?.[1] ?? '';
+    if (result.code !== 0 || state === '' || state.startsWith('Z')) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Descendant process ${pid} is still running`);
+  throw new Error(`Descendant process ${pid} is still running: ${processInfo}`);
 }
