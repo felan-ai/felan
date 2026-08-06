@@ -7,6 +7,7 @@ shared agent core, first-party Pi extensions, and local terminal application.
 
 - `@felan-ai/agent-core`: portable runtime contracts, Node.js host runtime, and generic session composition
 - `@felan-ai/ext-subagents`: canonical tracked subagent tools over an application-owned host
+- `@felan-ai/ext-tasks`: dependency-aware task tracking shared by a root session and its subagents
 - `@felan-ai/ext-context`: runtime-portable progressive loading of nested project instructions
 - `@felan-ai/ext-prewalk`: prewalk extension package
 - `@felan-ai/ext-background-bash`: runtime-portable detached Bash processes for non-OpenAI models

@@ -47,6 +47,9 @@ importers:
       '@felan-ai/ext-subagents':
         specifier: workspace:*
         version: link:../../packages/ext-subagents
+      '@felan-ai/ext-tasks':
+        specifier: workspace:*
+        version: link:../../packages/ext-tasks
 
   packages/agent-core:
     dependencies:
@@ -94,6 +97,19 @@ importers:
 
   packages/ext-subagents:
     dependencies:
+      typebox:
+        specifier: 1.1.38
+        version: 1.1.38
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-tasks:
+    dependencies:
+      '@earendil-works/pi-tui':
+        specifier: 0.83.0
+        version: 0.83.0
       typebox:
         specifier: 1.1.38
         version: 1.1.38

@@ -47,6 +47,7 @@ All built-in extensions are enabled by default. Toggle them in
 {
   "builtinExtensions": {
     "subagents": true,
+    "tasks": true,
     "prewalk": true,
     "context": true,
     "backgroundBash": true,
@@ -54,6 +55,12 @@ All built-in extensions are enabled by default. Toggle them in
   }
 }
 ```
+
+`tasks` provides `TaskCreate`, `TaskUpdate`, `TaskList`, and `TaskGet` over one
+dependency-aware graph shared by the root session and every nested subagent.
+Task state lives under
+`$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>/tasks`. Use `/tasks`
+or `Ctrl+Shift+T` to inspect list, detail, and graph views.
 
 `backgroundBash` augments `bash` with detached processes for models outside the
 `openai` and `openai-codex` providers. Logs and process metadata live under

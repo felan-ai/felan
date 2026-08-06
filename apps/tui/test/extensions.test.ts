@@ -11,6 +11,7 @@ describe('local extension importer', () => {
   it('imports only the source-controlled package list', async () => {
     expect(localExtensionPackages).toEqual([
       '@felan-ai/ext-subagents',
+      '@felan-ai/ext-tasks',
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',
       '@felan-ai/ext-background-bash',
@@ -45,6 +46,7 @@ describe('local extension importer', () => {
   it('enables only configured built-in extensions', () => {
     expect(resolveBuiltinExtensionPackages({
       subagents: false,
+      tasks: false,
       backgroundBash: false,
       powerline: false,
     })).toEqual([

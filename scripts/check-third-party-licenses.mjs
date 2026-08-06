@@ -56,6 +56,10 @@ const backgroundBashNotice = readFileSync(resolve(root, 'packages/ext-background
 if (!backgroundBashNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-background-bash/NOTICE is missing TypeBox 1.1.38');
 }
+const tasksNotice = readFileSync(resolve(root, 'packages/ext-tasks/NOTICE'), 'utf8');
+if (!tasksNotice.includes('TypeBox 1.1.38')) {
+  errors.push('packages/ext-tasks/NOTICE is missing TypeBox 1.1.38');
+}
 
 if (errors.length > 0) {
   for (const error of errors) console.error(error);

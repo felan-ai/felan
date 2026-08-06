@@ -59,6 +59,7 @@ describe('local Agent Core lifecycle', () => {
     await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
       builtinExtensions: {
         subagents: false,
+        tasks: false,
         prewalk: false,
         context: false,
         backgroundBash: false,

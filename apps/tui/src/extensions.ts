@@ -7,6 +7,7 @@ import {
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const builtinExtensionPackages = {
   subagents: subagentsExtensionPackage,
+  tasks: '@felan-ai/ext-tasks',
   prewalk: '@felan-ai/ext-prewalk',
   context: '@felan-ai/ext-context',
   backgroundBash: '@felan-ai/ext-background-bash',

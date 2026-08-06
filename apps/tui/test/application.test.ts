@@ -84,6 +84,10 @@ describe('interactive application', () => {
       'get_subagent_result',
       'steer_subagent',
       'cancel_subagent',
+      'TaskCreate',
+      'TaskUpdate',
+      'TaskList',
+      'TaskGet',
     ]));
     expect(interactive.toolNames).not.toContain('spawn_agent');
   });

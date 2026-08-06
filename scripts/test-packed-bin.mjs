@@ -129,6 +129,24 @@ try {
       if (JSON.stringify(canonicalCapabilities) !== JSON.stringify(['subagents'])) {
         throw new Error('Packed subagent extension capability is unavailable');
       }
+      const tasks = await import('@felan-ai/ext-tasks');
+      const taskTools = [];
+      const taskCapabilities = [];
+      tasks.default({
+        runtime: {
+          kind: 'packed-test',
+          storage: () => ({ root: '/tmp/felan-packed-tasks' }),
+        },
+        registerCapability: (capability) => taskCapabilities.push(capability.id),
+        registerTool: (tool) => taskTools.push(tool.name),
+        on: () => {},
+      });
+      if (JSON.stringify(taskTools) !== JSON.stringify(['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet'])) {
+        throw new Error('Packed task extension tools differ from the canonical four: ' + taskTools.join(', '));
+      }
+      if (JSON.stringify(taskCapabilities) !== JSON.stringify(['tasks'])) {
+        throw new Error('Packed task extension capability is unavailable');
+      }
       const runtime = await app.createLocalFelanRuntime({
         cwd: process.env.PACKED_SMOKE_WORKSPACE,
         agentDir: process.env.FELAN_AGENT_DIR,
@@ -140,7 +158,7 @@ try {
       if (prompt.includes('operating inside pi')) {
         throw new Error('Packed runtime retained the Pi base prompt');
       }
-      const capabilityPositions = ['### subagents', '### prewalk', '### progressive-context']
+      const capabilityPositions = ['### subagents', '### tasks', '### prewalk', '### progressive-context']
         .map((heading) => prompt.indexOf(heading));
       if (capabilityPositions.some((position) => position < 0)
         || capabilityPositions.some((position, index) => index > 0 && position <= capabilityPositions[index - 1])) {
