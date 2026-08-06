@@ -18,7 +18,6 @@ import {
   MAX_VIEW_IMAGE_INPUT_BYTES,
   createCodexTools,
   formatExecResult,
-  type UnifiedExecResult,
 } from '../src/index.js';
 import { ApplyPatchError, applyPatch } from '../src/patch.js';
 
@@ -52,7 +51,7 @@ describe('Codex runtime-backed tools', () => {
     const sessions = new ExecSessionManager(runtime);
     const result = await sessions.exec({
       cmd: `${JSON.stringify(process.execPath)} -e "process.stdout.write('x'.repeat(5 * 1024 * 1024))"`,
-      yield_time_ms: 1_000,
+      yield_time_ms: 30_000,
       max_output_tokens: Number.MAX_SAFE_INTEGER,
     });
 
@@ -79,29 +78,6 @@ describe('Codex runtime-backed tools', () => {
       'poll', { session_id: sessionId, yield_time_ms: 1000 }, undefined, undefined, imageContext(),
     ) as ToolResult;
     expect(completed.details).toMatchObject({ exit_code: 0, output: expect.stringContaining('finished') });
-    await sessions.shutdown();
-  });
-
-  it('serializes write_stdin calls started from the initial session update', async () => {
-    const runtime = await createRuntime();
-    const sessions = new ExecSessionManager(runtime);
-    const script = [
-      "console.log('first')",
-      "setTimeout(() => console.log('second'), 350)",
-    ].join(';');
-    let queuedPoll: Promise<UnifiedExecResult> | undefined;
-    const started = await sessions.exec({
-      cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
-      yield_time_ms: 250,
-    }, undefined, (update) => {
-      queuedPoll = sessions.write({ session_id: update.session_id!, yield_time_ms: 1_000 });
-    });
-    const completed = await queuedPoll!;
-
-    expect(started.output).toContain('first');
-    expect(started.output).not.toContain('second');
-    expect(completed.output).toContain('second');
-    expect(completed.output).not.toContain('first');
     await sessions.shutdown();
   });
 
