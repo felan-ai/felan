@@ -26,6 +26,10 @@ describe('subagent session binding', () => {
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('delivered');
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('delivered');
     expect(harness.sendCustomMessage).toHaveBeenCalledOnce();
+    expect(harness.sendCustomMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ customType: 'felan-subagent-completion' }),
+      { triggerTurn: true, deliverAs: 'steer' },
+    );
 
     harness.session.dispose();
     harness.session.dispose();
@@ -34,7 +38,7 @@ describe('subagent session binding', () => {
     expect(harness.dispose).toHaveBeenCalledOnce();
   });
 
-  it('keeps streaming delivery queued until the parent settles', async () => {
+  it('keeps streaming delivery queued until the current turn boundary', async () => {
     const harness = sessionHarness(true);
     let parentPort: SubagentParentPort | undefined;
     bindSubagentSession({

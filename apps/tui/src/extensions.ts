@@ -9,6 +9,7 @@ export const builtinExtensionPackages = {
   subagents: subagentsExtensionPackage,
   prewalk: '@felan-ai/ext-prewalk',
   context: '@felan-ai/ext-context',
+  backgroundBash: '@felan-ai/ext-background-bash',
   powerline: '@felan-ai/ext-powerline',
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);

@@ -54,7 +54,7 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly modelRuntime: ModelRuntime;
   readonly extensionPackages?: readonly string[];
   readonly importExtension?: ExtensionPackageImporter;
-  readonly runtimeFactory?: (cwd: string) => AgentRuntime;
+  readonly runtimeFactory?: (cwd: string, storageRoot: string) => AgentRuntime;
   readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
 }
@@ -66,7 +66,7 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly sessionManager?: SessionManager;
   readonly modelRuntime?: ModelRuntime;
   readonly sessionDir?: string;
-  readonly runtimeFactory?: (cwd: string) => AgentRuntime;
+  readonly runtimeFactory?: (cwd: string, storageRoot: string) => AgentRuntime;
   readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
 }
@@ -128,7 +128,8 @@ export function createLocalSessionRuntimeFactory(
     sessions.set(sessionManager, { host, modelScope, shutdownState });
 
     return {
-      runtime: options.runtimeFactory?.(cwd) ?? new HostAgentRuntime(cwd),
+      runtime: options.runtimeFactory?.(cwd, options.agentDir)
+        ?? new HostAgentRuntime(cwd, { storageRoot: options.agentDir }),
       extensionPackages,
       importExtension: createLocalExtensionImporter(host, importExtension, shutdownHost),
       modelRuntime: options.modelRuntime,

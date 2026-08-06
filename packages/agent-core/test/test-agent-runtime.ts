@@ -1,5 +1,11 @@
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
-import type { AgentRuntime, AgentRuntimeKind, ExecOptions, ExecResult } from '../src/runtime.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeKind,
+  AgentRuntimeStorage,
+  ExecOptions,
+  ExecResult,
+} from '../src/runtime.js';
 
 type TestShellOptions = ExecOptions & {
   env?: Readonly<Record<string, string>>;
@@ -39,6 +45,7 @@ export class TestAgentRuntime implements AgentRuntime {
 
   readonly execCalls: TestExecCall[] = [];
   readonly shellCalls: TestShellCall[] = [];
+  readonly storage: AgentRuntimeStorage;
 
   constructor(cwd = '/workspace', options: TestAgentRuntimeOptions = {}) {
     this.#cwd = resolve(cwd);
@@ -46,6 +53,16 @@ export class TestAgentRuntime implements AgentRuntime {
     this.#execHandler = options.exec ?? successResult;
     this.#shellHandler = options.shell ?? successResult;
     this.#directories.add(this.#cwd);
+    const storageRoot = resolve(this.#cwd, '.runtime-storage');
+    this.#directories.add(storageRoot);
+    this.storage = {
+      root: storageRoot,
+      readFile: (path) => this.readFile(path),
+      writeFile: (path, content) => this.writeFile(path, content),
+      listFiles: (path, storageOptions) => this.listFiles(path, storageOptions),
+      mkdir: (path, storageOptions) => this.mkdir(path, storageOptions),
+      remove: (path, storageOptions) => this.remove(path, storageOptions),
+    };
   }
 
   get cwd(): string {

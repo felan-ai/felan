@@ -18,7 +18,7 @@ describe('HostAgentRuntime', () => {
     expect(Reflect.set(runtime, 'cwd', join(workspace, 'other'))).toBe(false);
     expect(runtime.cwd).toBe(workspace);
     await expect(runtime.exec(process.execPath, ['--version'], { cwd: '..' })).rejects.toThrow(
-      'escapes runtime cwd',
+      'escapes runtime root',
     );
   });
 
@@ -59,20 +59,38 @@ describe('HostAgentRuntime', () => {
     await writeFile(join(outside, 'secret'), 'outside');
     await symlink(outside, join(workspace, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
 
-    await expect(runtime.readFile('../outside')).rejects.toThrow('escapes runtime cwd');
-    await expect(runtime.readFile(resolve(outside, 'secret'))).rejects.toThrow('escapes runtime cwd');
+    await expect(runtime.readFile('../outside')).rejects.toThrow('escapes runtime root');
+    await expect(runtime.readFile(resolve(outside, 'secret'))).rejects.toThrow('escapes runtime root');
     await expect(runtime.readFile('bad\0path')).rejects.toThrow('NUL');
-    await expect(runtime.readFile('escape/secret')).rejects.toThrow('escapes runtime cwd');
-    await expect(runtime.writeFile('escape/new', new Uint8Array([1]))).rejects.toThrow('escapes runtime cwd');
-    await expect(runtime.listFiles('escape')).rejects.toThrow('escapes runtime cwd');
-    await expect(runtime.mkdir('escape/new')).rejects.toThrow('escapes runtime cwd');
-    await expect(runtime.remove('escape', { recursive: true })).rejects.toThrow('escapes runtime cwd');
+    await expect(runtime.readFile('escape/secret')).rejects.toThrow('escapes runtime root');
+    await expect(runtime.writeFile('escape/new', new Uint8Array([1]))).rejects.toThrow('escapes runtime root');
+    await expect(runtime.listFiles('escape')).rejects.toThrow('escapes runtime root');
+    await expect(runtime.mkdir('escape/new')).rejects.toThrow('escapes runtime root');
+    await expect(runtime.remove('escape', { recursive: true })).rejects.toThrow('escapes runtime root');
     await expect(runtime.exec(process.execPath, ['--version'], { cwd: 'escape' })).rejects.toThrow(
-      'escapes runtime cwd',
+      'escapes runtime root',
     );
     await expect(runtime.remove(workspace, { recursive: true })).rejects.toThrow(
-      'runtime cwd cannot be removed',
+      'runtime root cannot be removed',
     );
+  });
+
+  it('isolates persistent storage from the workspace filesystem', async () => {
+    const workspace = await createTemporaryDirectory('workspace');
+    const storageRoot = await createTemporaryDirectory('storage');
+    const runtime = new HostAgentRuntime(workspace, { storageRoot });
+    const content = new Uint8Array([1, 2, 3]);
+
+    expect(runtime.storage.root).toBe(storageRoot);
+    expect(Reflect.set(runtime, 'storage', {})).toBe(false);
+    await runtime.storage.mkdir('background-bash', { recursive: true });
+    await runtime.storage.writeFile('background-bash/state.bin', content);
+
+    await expect(runtime.storage.readFile('background-bash/state.bin')).resolves.toEqual(content);
+    await expect(runtime.readFile(resolve(storageRoot, 'background-bash/state.bin')))
+      .rejects.toThrow('escapes runtime root');
+    await expect(runtime.storage.readFile(resolve(workspace, 'workspace.bin')))
+      .rejects.toThrow('escapes runtime root');
   });
 
   it('supports binary file IO, listing, mkdir, and removal', async () => {

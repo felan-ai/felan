@@ -13,6 +13,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-subagents',
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',
+      '@felan-ai/ext-background-bash',
       '@felan-ai/ext-powerline',
     ]);
 
@@ -44,6 +45,7 @@ describe('local extension importer', () => {
   it('enables only configured built-in extensions', () => {
     expect(resolveBuiltinExtensionPackages({
       subagents: false,
+      backgroundBash: false,
       powerline: false,
     })).toEqual([
       '@felan-ai/ext-prewalk',

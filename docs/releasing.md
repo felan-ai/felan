@@ -36,6 +36,22 @@ Before a release:
    prereleases publish to `next`. No Git tag is required. Reruns skip versions
    already published by a partially successful attempt.
 
+For a new package, npm requires the package to exist before its trusted
+publisher can be configured. Publish the verified tarball once with an
+authenticated npm 11 CLI, then create the trust relationship before pushing the
+release commit:
+
+```sh
+npm publish .artifacts/<package>-<version>.tgz --access public --provenance=false
+npm trust github <package-name> \
+  --repository felan-ai/felan \
+  --file release.yml \
+  --environment npm \
+  --allow-publish
+```
+
+All subsequent versions publish from GitHub Actions with provenance.
+
 ## Packed audit
 
 The release workflow records the packed dependency audit for stable versions:

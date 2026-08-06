@@ -33,6 +33,10 @@ class RecordingRuntime implements AgentRuntime {
     return this.runtime.cwd;
   }
 
+  get storage(): AgentRuntime['storage'] {
+    return this.runtime.storage;
+  }
+
   exec(...args: Parameters<AgentRuntime['exec']>): ReturnType<AgentRuntime['exec']> {
     return this.runtime.exec(...args);
   }

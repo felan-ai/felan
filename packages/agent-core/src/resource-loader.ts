@@ -8,6 +8,9 @@ import {
 import { collectCapabilities, formatCapabilitiesSection } from './capabilities.js';
 import { FELAN_BASE_SYSTEM_PROMPT } from './system-prompt.js';
 
+export const runtimeToolsExtensionName = '@felan-ai/agent-core/runtime-tools';
+const runtimeToolsExtensionPath = `<inline:${runtimeToolsExtensionName}>`;
+
 export interface CreateAgentCoreResourceLoaderOptions {
   readonly cwd: string;
   readonly agentDir: string;
@@ -63,6 +66,10 @@ export async function createAgentCoreResourceLoader(
 
   await loader.reload();
   const extensionsResult = loader.getExtensions();
+  const actionableErrors = extensionsResult.errors.filter(({ path, error }) => (
+    path !== runtimeToolsExtensionPath || !error.startsWith('Tool "')
+  ));
+  extensionsResult.errors.splice(0, extensionsResult.errors.length, ...actionableErrors);
   if (extensionsResult.errors.length > 0) {
     const first = extensionsResult.errors[0]!;
     throw new Error(`${first.path}: ${first.error}`);

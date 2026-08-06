@@ -1,12 +1,13 @@
 export type {
   AgentRuntime,
   AgentRuntimeKind,
+  AgentRuntimeStorage,
   ExecOptions,
   ExecResult,
 } from './runtime.js';
 export { AGENT_CORE_VERSION } from './version.js';
 export { HostAgentRuntime } from './host-agent-runtime.js';
-export type { HostShellOptions } from './host-agent-runtime.js';
+export type { HostAgentRuntimeOptions, HostShellOptions } from './host-agent-runtime.js';
 export {
   bindFelanExtension,
   loadFelanExtensions,
@@ -70,6 +71,7 @@ export type {
 } from '@earendil-works/pi-coding-agent';
 export {
   InMemoryCredentialStore,
+  StringEnum,
   createAssistantMessageEventStream,
   getSupportedThinkingLevels,
   isContextOverflow,

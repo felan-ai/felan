@@ -133,7 +133,7 @@ function createParentPort(
             },
             {
               triggerTurn: true,
-              deliverAs: 'followUp',
+              deliverAs: 'steer',
             },
           );
           if (session.isStreaming) return 'queued';

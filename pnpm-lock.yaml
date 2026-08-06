@@ -32,6 +32,9 @@ importers:
       '@felan-ai/agent-core':
         specifier: workspace:*
         version: link:../../packages/agent-core
+      '@felan-ai/ext-background-bash':
+        specifier: workspace:*
+        version: link:../../packages/ext-background-bash
       '@felan-ai/ext-context':
         specifier: workspace:*
         version: link:../../packages/ext-context
@@ -53,6 +56,18 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.83.0
         version: 0.83.0(ws@8.21.1)(zod@4.4.3)
+
+  packages/ext-background-bash:
+    dependencies:
+      '@earendil-works/pi-tui':
+        specifier: 0.83.0
+        version: 0.83.0
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+      typebox:
+        specifier: 1.1.38
+        version: 1.1.38
 
   packages/ext-context:
     dependencies:

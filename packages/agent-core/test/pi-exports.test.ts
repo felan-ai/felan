@@ -59,6 +59,7 @@ describe('Agent Core Pi exports', () => {
 
     for (const name of [
       'InMemoryCredentialStore',
+      'StringEnum',
       'createAssistantMessageEventStream',
       'getSupportedThinkingLevels',
       'isContextOverflow',

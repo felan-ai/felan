@@ -6,6 +6,7 @@ import {
   type CreateAgentSessionResult,
   type CreateAgentSessionRuntimeFactory,
   type CreateAgentSessionRuntimeResult,
+  type InlineExtension,
   type ModelRuntime,
   type SessionManager,
   type SessionStartEvent,
@@ -14,7 +15,10 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { loadFelanExtensions, type ExtensionPackageImporter } from './extensions.js';
-import { createAgentCoreResourceLoader } from './resource-loader.js';
+import {
+  createAgentCoreResourceLoader,
+  runtimeToolsExtensionName,
+} from './resource-loader.js';
 import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
 
@@ -91,12 +95,16 @@ async function composeAgentCoreSession(
   options: CreateAgentCoreSessionOptions,
 ): Promise<AgentCoreSessionComposition> {
   const agentDir = options.agentDir ?? options.runtime.cwd;
-  const extensionFactories = await loadFelanExtensions(
+  const featureExtensions = await loadFelanExtensions(
     options.extensionPackages,
     options.importExtension,
     options.runtime,
     agentDir,
   );
+  const extensionFactories = [
+    ...featureExtensions,
+    createRuntimeToolsExtension(options.runtime),
+  ];
   const resourceLoader = await createAgentCoreResourceLoader({
     cwd: options.runtime.cwd,
     agentDir,
@@ -110,16 +118,12 @@ async function composeAgentCoreSession(
       ? {}
       : { appendSystemPrompt: options.appendSystemPrompt }),
   });
-  const customTools: ToolDefinition<any, any, any>[] = [
-    ...createRuntimeCodingTools(options.runtime),
-    ...(options.customTools ?? []),
-  ];
   const result = await createAgentSession({
     cwd: options.runtime.cwd,
     agentDir,
     modelRuntime: options.modelRuntime,
     noTools: 'builtin',
-    customTools,
+    ...(options.customTools === undefined ? {} : { customTools: [...options.customTools] }),
     resourceLoader,
     sessionManager: options.sessionManager,
     settingsManager: options.settingsManager,
@@ -149,6 +153,16 @@ async function composeAgentCoreSession(
       settingsManager: options.settingsManager,
       resourceLoader,
       diagnostics: [],
+    },
+  };
+}
+
+function createRuntimeToolsExtension(runtime: AgentRuntime): InlineExtension {
+  return {
+    name: runtimeToolsExtensionName,
+    hidden: true,
+    factory: (pi) => {
+      for (const tool of createRuntimeCodingTools(runtime)) pi.registerTool(tool);
     },
   };
 }

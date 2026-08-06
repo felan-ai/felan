@@ -46,7 +46,7 @@ export interface CreateLocalSubagentHostOptions {
   readonly extensionPackages: readonly string[];
   readonly importExtension: ExtensionPackageImporter;
   readonly skillPaths?: readonly string[];
-  readonly runtimeFactory?: (cwd: string) => AgentRuntime;
+  readonly runtimeFactory?: (cwd: string, storageRoot: string) => AgentRuntime;
   readonly settings?: LocalSubagentSettings;
   readonly runChild?: LocalSubagentRunner;
 }
@@ -666,7 +666,8 @@ export class LocalSubagentManager {
       input.definition.prompt,
     );
     const created = await createAgentCoreSession({
-      runtime: this.#options.runtimeFactory?.(input.cwd) ?? new HostAgentRuntime(input.cwd),
+      runtime: this.#options.runtimeFactory?.(input.cwd, this.#options.agentDir)
+        ?? new HostAgentRuntime(input.cwd, { storageRoot: this.#options.agentDir }),
       extensionPackages,
       importExtension: createLocalExtensionImporter(input.subagents, this.#options.importExtension),
       modelRuntime: this.#options.modelRuntime,

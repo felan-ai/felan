@@ -19,6 +19,14 @@ type Handler = (event: any, ctx: ExtensionContext) => any;
 
 class ProbeRuntime implements AgentRuntime {
   readonly cwd = '/workspace';
+  readonly storage: AgentRuntime['storage'] = {
+    root: '/storage',
+    readFile: async () => { throw new Error('storage readFile is unavailable in this test runtime'); },
+    writeFile: async () => { throw new Error('storage writeFile is unavailable in this test runtime'); },
+    listFiles: async () => { throw new Error('storage listFiles is unavailable in this test runtime'); },
+    mkdir: async () => { throw new Error('storage mkdir is unavailable in this test runtime'); },
+    remove: async () => { throw new Error('storage remove is unavailable in this test runtime'); },
+  };
   readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly shellCalls: Array<{ command: string; options?: Parameters<AgentRuntime['shell']>[1] }> = [];
 

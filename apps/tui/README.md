@@ -41,10 +41,16 @@ All built-in extensions are enabled by default. Toggle them in
     "subagents": true,
     "prewalk": true,
     "context": true,
+    "backgroundBash": true,
     "powerline": false
   }
 }
 ```
+
+`backgroundBash` augments `bash` with detached processes for models outside the
+`openai` and `openai-codex` providers. Logs and process metadata live under
+`$FELAN_AGENT_DIR/background-bash/<workspace-key>/jobs`. Use `/background-bash`
+or `Ctrl+Shift+J` to inspect them.
 
 ## System prompt append
 

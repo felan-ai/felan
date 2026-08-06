@@ -14,6 +14,11 @@ Use `exec(command, args)` for literal argument boundaries and `shell(command)`
 only when shell parsing is intentional. File reads and writes use
 `Uint8Array` so binary content is preserved.
 
+Every `AgentRuntime` also exposes an isolated persistent `storage` filesystem.
+Local consumers select it with `new HostAgentRuntime(cwd, { storageRoot })`;
+cloud adapters map it to their durable state root. Workspace tools remain
+confined to `cwd`, while extension state uses `runtime.storage`.
+
 Host mode runs with the current user's filesystem and process permissions. It
 provides workspace path containment, but no OS isolation or sandbox boundary.
 Run untrusted workloads in an isolated runtime instead.
@@ -26,6 +31,9 @@ ownership of model credentials, settings, session storage, stream wrappers,
 feature extensions, and presentation listeners. `FelanExtensionAPI` adds only
 the selected `AgentRuntime` and application agent directory to Pi's extension
 API; feature-specific contracts remain in their owning extension packages.
+Runtime-backed coding tools are installed during composition as hidden fallback
+extension tools, so feature extensions can override standard tool names while
+explicit application `customTools` retain final precedence.
 
 Agent Core owns the exact Pi dependency versions used by its consumers. Its
 public entry point exposes the Pi model, credential, streaming, session,

@@ -100,6 +100,25 @@ describe('Agent Core session composition', () => {
     expect(wrappedInvocations).toBe(0);
     expect(result.extensionsResult.extensions.map((loaded) => loaded.path)).toEqual([
       '<inline:@felan-ai/listed>',
+      '<inline:@felan-ai/agent-core/runtime-tools>',
+    ]);
+    expect(result.session.agent.state.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      'read',
+      'bash',
+      'edit',
+      'write',
+      'grep',
+      'find',
+      'ls',
+      'app-tool',
+    ]));
+
+    await result.session.bindExtensions({ mode: 'print' });
+    expect(order).toEqual([
+      'import @felan-ai/listed',
+      'extension factory',
+      'stream wrapped',
+      'session start',
     ]);
     expect(result.session.agent.state.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
       'read',
@@ -124,13 +143,54 @@ describe('Agent Core session composition', () => {
       systemPrompt.indexOf('Current working directory:'),
     );
 
+    result.session.dispose();
+  });
+
+  it('lets feature extensions override runtime-backed coding tools', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const runtime = new TestAgentRuntime(cwd);
+    const runtimeBash = createRuntimeCodingTools(runtime).find((tool) => tool.name === 'bash')!;
+    const execute = vi.fn(async () => ({
+      content: [{ type: 'text' as const, text: 'feature bash executed' }],
+      details: undefined,
+    }));
+    const extension: FelanExtension = (pi) => {
+      pi.registerTool({
+        ...runtimeBash,
+        description: 'Feature-owned bash override before activation',
+        execute,
+      });
+      pi.on('session_start', () => {
+        pi.registerTool({
+          ...runtimeBash,
+          description: 'Feature-owned bash override',
+          execute,
+        });
+      });
+    };
+    const result = await createAgentCoreSession({
+      runtime,
+      extensionPackages: ['@felan-ai/bash-feature'],
+      importExtension: async () => ({ default: extension }),
+      modelRuntime: await createModelRuntime(agentDir),
+      settingsManager: SettingsManager.inMemory(),
+      sessionManager: SessionManager.inMemory(cwd),
+      agentDir,
+    });
+
+    expect(result.session.agent.state.tools.find((tool) => tool.name === 'bash')?.description)
+      .toBe('Feature-owned bash override before activation');
     await result.session.bindExtensions({ mode: 'print' });
-    expect(order).toEqual([
-      'import @felan-ai/listed',
-      'extension factory',
-      'stream wrapped',
-      'session start',
-    ]);
+    const bash = result.session.agent.state.tools.find((tool) => tool.name === 'bash')!;
+    expect(bash.description).toBe('Feature-owned bash override');
+    await expect(bash.execute('call', { command: 'echo ignored' })).resolves.toMatchObject({
+      content: [{ type: 'text', text: 'feature bash executed' }],
+    });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(runtime.shellCalls).toEqual([]);
 
     result.session.dispose();
   });

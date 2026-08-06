@@ -60,6 +60,7 @@ describe('local Agent Core lifecycle', () => {
         subagents: false,
         prewalk: false,
         context: false,
+        backgroundBash: false,
         powerline: false,
       },
     }));
@@ -75,7 +76,8 @@ describe('local Agent Core lifecycle', () => {
     const runtime = await createLocalFelanRuntime({ cwd, agentDir, skillPaths });
 
     expect(runtime.session.sessionManager.getSessionDir()).toBe(join(agentDir, 'sessions'));
-    expect(runtime.services.resourceLoader.getExtensions().extensions).toEqual([]);
+    expect(runtime.services.resourceLoader.getExtensions().extensions.filter((extension) => !extension.hidden))
+      .toEqual([]);
     expect(runtime.services.resourceLoader.getSkills().skills.map(({ name }) => name)).toEqual([
       'project-skill',
       'user-skill',
@@ -255,8 +257,8 @@ describe('local Agent Core lifecycle', () => {
       importExtension: async () => {
         throw new Error('No extensions should be imported');
       },
-      runtimeFactory: (cwd) => {
-        const hostRuntime = new HostAgentRuntime(cwd);
+      runtimeFactory: (cwd, storageRoot) => {
+        const hostRuntime = new HostAgentRuntime(cwd, { storageRoot });
         createdHostRuntimes.push(hostRuntime);
         return hostRuntime;
       },
@@ -347,6 +349,8 @@ describe('local Agent Core lifecycle', () => {
       cwdB,
       cwdC,
     ]);
+    expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage.root))
+      .toEqual(Array(5).fill(agentDir));
     expect(reboundCwds).toEqual([cwdA, cwdA, cwdB, cwdC]);
 
     await runtime.dispose();
@@ -450,8 +454,8 @@ describe('local Agent Core lifecycle', () => {
       importExtension: async () => {
         throw new Error('No extensions should be imported');
       },
-      runtimeFactory: (runtimeCwd) => {
-        const hostRuntime = new HostAgentRuntime(runtimeCwd);
+      runtimeFactory: (runtimeCwd, storageRoot) => {
+        const hostRuntime = new HostAgentRuntime(runtimeCwd, { storageRoot });
         createdHostRuntimes.push(hostRuntime);
         return hostRuntime;
       },
@@ -472,6 +476,8 @@ describe('local Agent Core lifecycle', () => {
       expect(runtime.session).not.toBe(initialSession);
       expect(runtime.services.agentDir).toBe(agentDir);
       expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.cwd)).toEqual([cwd, cwd]);
+      expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage.root))
+        .toEqual([agentDir, agentDir]);
       expect((runtime.session as unknown as { _extensionMode?: string })._extensionMode).toBe('tui');
       expect(runtime.session.agent.state.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
         'read',

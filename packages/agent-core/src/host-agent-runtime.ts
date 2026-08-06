@@ -10,20 +10,31 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { AgentRuntime, ExecOptions, ExecResult } from './runtime.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeStorage,
+  ExecOptions,
+  ExecResult,
+} from './runtime.js';
 
 export type HostShellOptions = ExecOptions & {
   env?: Readonly<Record<string, string>>;
 };
 
+export interface HostAgentRuntimeOptions {
+  readonly storageRoot?: string;
+}
+
 export class HostAgentRuntime implements AgentRuntime {
   readonly #cwd: string;
+  readonly #storage: AgentRuntimeStorage;
 
-  constructor(cwd = process.cwd()) {
+  constructor(cwd = process.cwd(), options: HostAgentRuntimeOptions = {}) {
     if (cwd.includes('\0')) {
       throw new Error('Runtime cwd cannot contain NUL bytes');
     }
     this.#cwd = resolve(cwd);
+    this.#storage = createHostStorage(options.storageRoot ?? this.#cwd);
   }
 
   get kind(): 'host' {
@@ -34,36 +45,40 @@ export class HostAgentRuntime implements AgentRuntime {
     return this.#cwd;
   }
 
+  get storage(): AgentRuntimeStorage {
+    return this.#storage;
+  }
+
   async exec(
     command: string,
     args: readonly string[],
     options?: ExecOptions,
   ): Promise<ExecResult> {
     const literalArgs = [...args];
-    const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
+    const cwd = await resolveContainedPath(this.#cwd, options?.cwd ?? this.#cwd);
     return this.#spawn(command, literalArgs, cwd, options, false);
   }
 
   async shell(command: string, options?: HostShellOptions): Promise<ExecResult> {
     const env = options?.env ? { ...options.env } : undefined;
-    const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
+    const cwd = await resolveContainedPath(this.#cwd, options?.cwd ?? this.#cwd);
     return this.#spawn(command, [], cwd, options, true, env);
   }
 
   async readFile(path: string): Promise<Uint8Array> {
-    const resolvedPath = await this.#resolvePath(path);
+    const resolvedPath = await resolveContainedPath(this.#cwd, path);
     const content = await readFile(resolvedPath);
     return new Uint8Array(content);
   }
 
   async writeFile(path: string, content: Uint8Array): Promise<void> {
     const copiedContent = content.slice();
-    const resolvedPath = await this.#resolvePath(path);
+    const resolvedPath = await resolveContainedPath(this.#cwd, path);
     await writeFile(resolvedPath, copiedContent);
   }
 
   async listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]> {
-    const resolvedPath = await this.#resolvePath(path);
+    const resolvedPath = await resolveContainedPath(this.#cwd, path);
     const entries = await readdir(resolvedPath, {
       recursive: options?.recursive ?? false,
       withFileTypes: true,
@@ -76,68 +91,13 @@ export class HostAgentRuntime implements AgentRuntime {
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-    const resolvedPath = await this.#resolvePath(path);
+    const resolvedPath = await resolveContainedPath(this.#cwd, path);
     await mkdir(resolvedPath, { recursive: options?.recursive ?? false });
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
-    const resolvedPath = await this.#resolvePath(path, false);
+    const resolvedPath = await resolveContainedPath(this.#cwd, path, false);
     await rm(resolvedPath, { recursive: options?.recursive ?? false });
-  }
-
-  async #resolvePath(path: string, allowRoot = true): Promise<string> {
-    if (path.includes('\0')) {
-      throw new Error('Paths cannot contain NUL bytes');
-    }
-
-    const resolvedPath = isAbsolute(path) ? resolve(path) : resolve(this.#cwd, path);
-    this.#assertContained(this.#cwd, resolvedPath, allowRoot);
-
-    const resolvedRoot = await realpath(this.#cwd);
-    const segments = relative(this.#cwd, resolvedPath).split(sep).filter(Boolean);
-    let current = resolvedRoot;
-
-    for (let index = 0; index < segments.length; index += 1) {
-      const candidate = join(current, segments[index]!);
-      try {
-        const stats = await lstat(candidate);
-        if (stats.isSymbolicLink()) {
-          const target = await readlink(candidate);
-          const resolvedTarget = resolve(current, target);
-          this.#assertContained(resolvedRoot, resolvedTarget, allowRoot);
-          try {
-            current = await realpath(candidate);
-          } catch (error) {
-            if (!isMissingPathError(error)) throw error;
-            current = resolvedTarget;
-          }
-          this.#assertContained(resolvedRoot, current, allowRoot);
-        } else {
-          current = candidate;
-        }
-      } catch (error) {
-        if (!isMissingPathError(error)) throw error;
-        current = resolve(current, ...segments.slice(index));
-        this.#assertContained(resolvedRoot, current, allowRoot);
-        break;
-      }
-    }
-
-    this.#assertContained(resolvedRoot, current, allowRoot);
-    return resolvedPath;
-  }
-
-  #assertContained(root: string, path: string, allowRoot: boolean): void {
-    const relativePath = relative(root, path);
-    const contained = relativePath === ''
-      || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath));
-
-    if (!contained) {
-      throw new Error(`Path escapes runtime cwd: ${path}`);
-    }
-    if (!allowRoot && relativePath === '') {
-      throw new Error('The runtime cwd cannot be removed');
-    }
   }
 
   async #spawn(
@@ -206,6 +166,92 @@ export class HostAgentRuntime implements AgentRuntime {
       }
     });
   }
+}
+
+function createHostStorage(root: string): AgentRuntimeStorage {
+  if (root.includes('\0')) throw new Error('Runtime storage root cannot contain NUL bytes');
+  const storageRoot = resolve(root);
+  return {
+    root: storageRoot,
+    async readFile(path) {
+      const content = await readFile(await resolveContainedPath(storageRoot, path));
+      return new Uint8Array(content);
+    },
+    async writeFile(path, content) {
+      const copiedContent = content.slice();
+      await writeFile(await resolveContainedPath(storageRoot, path), copiedContent);
+    },
+    async listFiles(path, options) {
+      const resolvedPath = await resolveContainedPath(storageRoot, path);
+      const entries = await readdir(resolvedPath, {
+        recursive: options?.recursive ?? false,
+        withFileTypes: true,
+      });
+      return entries
+        .filter((entry) => entry.isFile())
+        .map((entry) => relative(resolvedPath, resolve(entry.parentPath, entry.name)))
+        .sort();
+    },
+    async mkdir(path, options) {
+      await mkdir(await resolveContainedPath(storageRoot, path), {
+        recursive: options?.recursive ?? false,
+      });
+    },
+    async remove(path, options) {
+      await rm(await resolveContainedPath(storageRoot, path, false), {
+        recursive: options?.recursive ?? false,
+      });
+    },
+  };
+}
+
+async function resolveContainedPath(root: string, path: string, allowRoot = true): Promise<string> {
+  if (path.includes('\0')) throw new Error('Paths cannot contain NUL bytes');
+
+  const resolvedPath = isAbsolute(path) ? resolve(path) : resolve(root, path);
+  assertContained(root, resolvedPath, allowRoot);
+
+  const resolvedRoot = await realpath(root);
+  const segments = relative(root, resolvedPath).split(sep).filter(Boolean);
+  let current = resolvedRoot;
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const candidate = join(current, segments[index]!);
+    try {
+      const stats = await lstat(candidate);
+      if (stats.isSymbolicLink()) {
+        const target = await readlink(candidate);
+        const resolvedTarget = resolve(current, target);
+        assertContained(resolvedRoot, resolvedTarget, allowRoot);
+        try {
+          current = await realpath(candidate);
+        } catch (error) {
+          if (!isMissingPathError(error)) throw error;
+          current = resolvedTarget;
+        }
+        assertContained(resolvedRoot, current, allowRoot);
+      } else {
+        current = candidate;
+      }
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+      current = resolve(current, ...segments.slice(index));
+      assertContained(resolvedRoot, current, allowRoot);
+      break;
+    }
+  }
+
+  assertContained(resolvedRoot, current, allowRoot);
+  return resolvedPath;
+}
+
+function assertContained(root: string, path: string, allowRoot: boolean): void {
+  const relativePath = relative(root, path);
+  const contained = relativePath === ''
+    || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath));
+
+  if (!contained) throw new Error(`Path escapes runtime root: ${path}`);
+  if (!allowRoot && relativePath === '') throw new Error('The runtime root cannot be removed');
 }
 
 function isMissingPathError(error: unknown): boolean {

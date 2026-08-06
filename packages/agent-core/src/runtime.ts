@@ -4,9 +4,20 @@ export type { ExecOptions, ExecResult } from '@earendil-works/pi-coding-agent';
 
 export type AgentRuntimeKind = 'host' | 'docker' | 'daytona';
 
+export interface AgentRuntimeStorage {
+  readonly root: string;
+
+  readFile(path: string): Promise<Uint8Array>;
+  writeFile(path: string, content: Uint8Array): Promise<void>;
+  listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]>;
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+  remove(path: string, options?: { recursive?: boolean }): Promise<void>;
+}
+
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
+  readonly storage: AgentRuntimeStorage;
 
   exec(
     command: string,

@@ -14,7 +14,8 @@ session, coding-tool, and extension composition.
 
 All child launches are asynchronous and return after admission. Result reads
 return the latest record immediately, while completion notices surface finished
-work to the parent session.
+work to the parent session. Notices steer active parent work at the next
+model-call boundary and trigger a turn when the parent is idle.
 
 During initialization the extension registers a `subagents` capability with
 generic delegation and control guidance plus the current host's available agent
