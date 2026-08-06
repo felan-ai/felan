@@ -6,6 +6,40 @@ export type AgentRuntimeKind = 'host' | 'docker' | 'daytona';
 
 export type AgentRuntimeStorageScope = 'session' | 'agent';
 
+export interface AgentRuntimeProcessReadOptions {
+  readonly waitMs?: number;
+  readonly maxBytes?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface AgentRuntimeProcessSnapshot {
+  readonly output: Uint8Array;
+  readonly nextOffset: number;
+  readonly running: boolean;
+  readonly exitCode?: number;
+}
+
+export interface AgentRuntimeProcess {
+  readonly pid: number | undefined;
+
+  read(afterOffset: number, options?: AgentRuntimeProcessReadOptions): Promise<AgentRuntimeProcessSnapshot>;
+  write(content: Uint8Array): Promise<void>;
+  terminate(): Promise<void>;
+  dispose(): Promise<void>;
+}
+
+export interface AgentRuntimeShellProcessOptions {
+  readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly shell?: string;
+  readonly login?: boolean;
+  readonly stdin?: boolean;
+}
+
+export interface AgentRuntimeProcesses {
+  startShell(command: string, options?: AgentRuntimeShellProcessOptions): Promise<AgentRuntimeProcess>;
+}
+
 export interface AgentRuntimeStorage {
   readonly root: string;
 
@@ -19,6 +53,7 @@ export interface AgentRuntimeStorage {
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
+  readonly processes?: AgentRuntimeProcesses;
 
   storage(scope?: AgentRuntimeStorageScope): AgentRuntimeStorage;
 
@@ -38,4 +73,6 @@ export interface AgentRuntime {
   listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
+
+  readAgentFile?(path: string): Promise<Uint8Array>;
 }

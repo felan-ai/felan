@@ -5,6 +5,7 @@ export const packagePaths = [
   'packages/ext-context',
   'packages/ext-prewalk',
   'packages/ext-background-bash',
+  'packages/ext-codex',
   'packages/ext-powerline',
   'apps/tui',
 ];

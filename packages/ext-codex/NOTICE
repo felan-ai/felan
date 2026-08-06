@@ -1,0 +1,18 @@
+@felan-ai/ext-codex
+
+Includes selected code and behavior adapted from
+@howaboua/pi-codex-conversion 3.0.8,
+https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-codex-conversion.
+
+Copyright (c) 2026 Umberto B.
+Licensed under the MIT License included in this package.
+
+Adapted portions include structured tool schemas and output conventions,
+patch parsing and matching, model activation policy, OpenAI request options,
+and cached WebSocket transport selection. Felan implements process and file
+operations against AgentRuntime and uses Pi 0.83.0's native OpenAI Codex
+transport for connection reuse and cached continuation.
+
+This package uses TypeBox 1.1.38 from
+https://github.com/sinclairzx81/typebox, licensed under the MIT License.
+Copyright (c) 2017-2026 Haydn Paterson.

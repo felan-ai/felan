@@ -141,7 +141,7 @@ export function createLocalSessionRuntimeFactory(
 
     return {
       runtime: options.runtimeFactory?.(runtimeRequest)
-        ?? new HostAgentRuntime(cwd, runtimeRequest),
+        ?? new HostAgentRuntime(cwd, { ...runtimeRequest, agentDir: options.agentDir }),
       extensionPackages,
       importExtension: createLocalExtensionImporter(host, importExtension, shutdownHost),
       modelRuntime: options.modelRuntime,

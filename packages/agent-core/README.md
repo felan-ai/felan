@@ -8,6 +8,7 @@ import { HostAgentRuntime } from '@felan-ai/agent-core';
 const runtime = new HostAgentRuntime(process.cwd(), {
   sessionStorageRoot: '/var/lib/felan/sessions/current',
   agentStorageRoot: '/var/lib/felan/agent',
+  agentDir: '/etc/felan',
 });
 const result = await runtime.exec('node', ['--version']);
 ```
@@ -29,6 +30,13 @@ Host consumers provide exact `sessionStorageRoot` and `agentStorageRoot` paths;
 each storage handle preserves binary content, rejects lexical and symlink
 escapes, and cannot remove its root. Ordinary writes, mutations, and execution
 working directories remain confined to `cwd`.
+
+Host runtimes expose optional persistent process operations for extensions that
+need incremental output and stdin. `startShell()` keeps process ownership in
+the runtime adapter and returns a bounded polling handle with write, terminate,
+and dispose operations. The optional `readAgentFile()` boundary reads only
+inside the configured `agentDir`; ordinary runtime file operations retain their
+workspace and session-storage boundaries.
 
 Host mode runs with the current user's filesystem and process permissions. It
 provides workspace path containment, but no OS isolation or sandbox boundary.

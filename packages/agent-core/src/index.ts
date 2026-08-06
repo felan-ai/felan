@@ -1,6 +1,11 @@
 export type {
   AgentRuntime,
   AgentRuntimeKind,
+  AgentRuntimeProcess,
+  AgentRuntimeProcesses,
+  AgentRuntimeProcessReadOptions,
+  AgentRuntimeProcessSnapshot,
+  AgentRuntimeShellProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
   ExecOptions,
@@ -89,6 +94,8 @@ export type {
   CredentialInfo,
   CredentialStore,
   Model,
+  Provider,
   SimpleStreamOptions,
+  Transport,
 } from '@earendil-works/pi-ai';
 export { builtinProviders } from '@earendil-works/pi-ai/providers/all';

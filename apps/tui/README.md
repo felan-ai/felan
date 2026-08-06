@@ -51,6 +51,7 @@ All built-in extensions are enabled by default. Toggle them in
     "prewalk": true,
     "context": true,
     "backgroundBash": true,
+    "codex": true,
     "powerline": false
   }
 }
@@ -66,6 +67,12 @@ or `Ctrl+Shift+T` to inspect list, detail, and graph views.
 `openai` and `openai-codex` providers. Logs and process metadata live under
 `$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>/background-bash/<workspace-key>/jobs`.
 Use `/background-bash` or `Ctrl+Shift+J` to inspect them.
+
+`codex` activates `exec_command`, `write_stdin`, `apply_patch`, and
+`view_image` for GPT models on the exact `openai` and `openai-codex` providers.
+It restores the ordinary coding tools when another model is selected. Optional
+request controls live in `$FELAN_AGENT_DIR/codex.json`; see the extension
+package README for the three supported fields.
 
 ## System prompt append
 

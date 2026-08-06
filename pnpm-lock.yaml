@@ -35,6 +35,9 @@ importers:
       '@felan-ai/ext-background-bash':
         specifier: workspace:*
         version: link:../../packages/ext-background-bash
+      '@felan-ai/ext-codex':
+        specifier: workspace:*
+        version: link:../../packages/ext-codex
       '@felan-ai/ext-context':
         specifier: workspace:*
         version: link:../../packages/ext-context
@@ -65,6 +68,16 @@ importers:
       '@earendil-works/pi-tui':
         specifier: 0.83.0
         version: 0.83.0
+      typebox:
+        specifier: 1.1.38
+        version: 1.1.38
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-codex:
+    dependencies:
       typebox:
         specifier: 1.1.38
         version: 1.1.38

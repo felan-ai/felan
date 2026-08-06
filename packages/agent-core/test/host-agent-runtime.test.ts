@@ -152,6 +152,39 @@ describe('HostAgentRuntime', () => {
     expect(result.killed).toBe(false);
   });
 
+  it('reads only files inside its configured agent directory', async () => {
+    const workspace = await createTemporaryDirectory('workspace');
+    const storageRoot = await createTemporaryDirectory('storage');
+    const agentDir = await createTemporaryDirectory('agent-dir');
+    const runtime = new HostAgentRuntime(workspace, {
+      sessionStorageRoot: storageRoot,
+      agentStorageRoot: join(storageRoot, 'agent'),
+      agentDir,
+    });
+    await mkdir(join(storageRoot, 'agent'), { recursive: true });
+    await writeFile(join(agentDir, 'codex.json'), '{"fast":true}');
+
+    await expect(runtime.readAgentFile('codex.json'))
+      .resolves.toEqual(new TextEncoder().encode('{"fast":true}'));
+    await expect(runtime.readAgentFile('../secret')).rejects.toThrow('escapes runtime root');
+  });
+
+  it('supports persistent shell polling, input, and cleanup', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const script = "process.stdin.once('data', value => { process.stdout.write('got:' + value); process.exit(0) })";
+    const processHandle = await runtime.processes.startShell(
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      { stdin: true },
+    );
+    const pid = processHandle.pid!;
+    await processHandle.write(new TextEncoder().encode('input\n'));
+    const snapshot = await processHandle.read(0, { waitMs: 1_000 });
+
+    expect(new TextDecoder().decode(snapshot.output)).toContain('got:input');
+    await processHandle.dispose();
+    await expect(waitForProcessExit(pid)).resolves.toBeUndefined();
+  });
+
   it.skipIf(process.platform === 'win32')('kills the spawned process group on cancellation', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const controller = new AbortController();
