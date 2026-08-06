@@ -12,7 +12,7 @@ import type {
   SubagentParentPort,
   SubagentSpawnRequest,
 } from '@felan-ai/ext-subagents';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LocalSubagentHost,
   type LocalSubagentRunner,
@@ -566,8 +566,7 @@ describe('LocalSubagentHost', () => {
     const spawned = await host.spawn(request());
     if (!spawned.ok) return;
     await waitForResult(host, spawned.value.agentId);
-    await settle();
-    expect(delivered.length).toBeGreaterThanOrEqual(2);
+    await vi.waitFor(() => expect(delivered.length).toBeGreaterThanOrEqual(2));
     expect(new Set(delivered.map((notice) => notice.deliveryId)).size).toBe(1);
   });
 
