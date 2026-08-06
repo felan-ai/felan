@@ -14,6 +14,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-tasks',
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',
+      '@felan-ai/ext-web-access',
       '@felan-ai/ext-background-bash',
       '@felan-ai/ext-powerline',
     ]);
@@ -47,6 +48,7 @@ describe('local extension importer', () => {
     expect(resolveBuiltinExtensionPackages({
       subagents: false,
       tasks: false,
+      webAccess: false,
       backgroundBash: false,
       powerline: false,
     })).toEqual([

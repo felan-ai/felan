@@ -16,6 +16,7 @@ const inventory = JSON.parse(result.stdout);
 const allowedLicenses = new Set([
   '0BSD',
   'Apache-2.0',
+  'BSD-2-Clause',
   'BSD-3-Clause',
   'BlueOak-1.0.0',
   'ISC',
@@ -59,6 +60,17 @@ if (!backgroundBashNotice.includes('TypeBox 1.1.38')) {
 const tasksNotice = readFileSync(resolve(root, 'packages/ext-tasks/NOTICE'), 'utf8');
 if (!tasksNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-tasks/NOTICE is missing TypeBox 1.1.38');
+}
+const webAccessNotice = readFileSync(resolve(root, 'packages/ext-web-access/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'pi-web-access 0.18.0',
+  'd2aab00dcf0547572276d9de4bc4a2a49d640e13',
+  'TypeBox 1.1.38',
+  'undici 8.5.0',
+]) {
+  if (!webAccessNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-web-access/NOTICE is missing ${requiredNotice}`);
+  }
 }
 
 if (errors.length > 0) {

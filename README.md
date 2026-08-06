@@ -11,6 +11,7 @@ shared agent core, first-party Pi extensions, and local terminal application.
 - `@felan-ai/ext-context`: runtime-portable progressive loading of nested project instructions
 - `@felan-ai/ext-prewalk`: prewalk extension package
 - `@felan-ai/ext-background-bash`: runtime-portable detached Bash processes for non-OpenAI models
+- `@felan-ai/ext-web-access`: bounded web research with explicit untrusted-content boundaries
 - `@felan-ai/ext-powerline`: ANSI-aware local TUI footer with cached Git, model, session, context, and extension status segments
 - `@felan-ai/felan`: account-free local terminal application with the `felan` binary
 

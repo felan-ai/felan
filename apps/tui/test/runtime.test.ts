@@ -62,6 +62,7 @@ describe('local Agent Core lifecycle', () => {
         tasks: false,
         prewalk: false,
         context: false,
+        webAccess: false,
         backgroundBash: false,
         powerline: false,
       },

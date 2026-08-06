@@ -10,6 +10,7 @@ export const builtinExtensionPackages = {
   tasks: '@felan-ai/ext-tasks',
   prewalk: '@felan-ai/ext-prewalk',
   context: '@felan-ai/ext-context',
+  webAccess: '@felan-ai/ext-web-access',
   backgroundBash: '@felan-ai/ext-background-bash',
   powerline: '@felan-ai/ext-powerline',
 } as const;

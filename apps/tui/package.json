@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Local Felan terminal agent",
   "license": "MIT",
   "type": "module",
@@ -41,7 +41,8 @@
     "@felan-ai/ext-tasks": "workspace:*",
     "@felan-ai/ext-context": "workspace:*",
     "@felan-ai/ext-powerline": "workspace:*",
-    "@felan-ai/ext-prewalk": "workspace:*"
+    "@felan-ai/ext-prewalk": "workspace:*",
+    "@felan-ai/ext-web-access": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

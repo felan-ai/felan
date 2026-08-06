@@ -50,6 +50,7 @@ All built-in extensions are enabled by default. Toggle them in
     "tasks": true,
     "prewalk": true,
     "context": true,
+    "webAccess": true,
     "backgroundBash": true,
     "powerline": false
   }
@@ -61,6 +62,13 @@ dependency-aware graph shared by the root session and every nested subagent.
 Task state lives under
 `$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>/tasks`. Use `/tasks`
 or `Ctrl+Shift+T` to inspect list, detail, and graph views.
+
+`webAccess` provides bounded web search, source verification, readable URL
+fetching, and stored-content retrieval. Search supports OpenAI/Codex, Exa,
+Brave, and self-hosted SearXNG. Configure providers in
+`$FELAN_AGENT_DIR/web-search.json`. Model-facing web content is explicitly
+encoded as untrusted external data; private and reserved network targets are
+blocked by default.
 
 `backgroundBash` augments `bash` with detached processes for models outside the
 `openai` and `openai-codex` providers. Logs and process metadata live under

@@ -147,6 +147,22 @@ try {
       if (JSON.stringify(taskCapabilities) !== JSON.stringify(['tasks'])) {
         throw new Error('Packed task extension capability is unavailable');
       }
+      const webAccess = await import('@felan-ai/ext-web-access');
+      const webAccessTools = [];
+      const webAccessCapabilities = [];
+      webAccess.default({
+        appendEntry: () => {},
+        registerCapability: (capability) => webAccessCapabilities.push(capability.id),
+        registerTool: (tool) => webAccessTools.push(tool.name),
+        on: () => {},
+      });
+      const expectedWebAccessTools = ['web_search', 'source_check', 'fetch_content', 'get_search_content'];
+      if (JSON.stringify(webAccessTools) !== JSON.stringify(expectedWebAccessTools)) {
+        throw new Error('Packed web access extension tools differ from the canonical four: ' + webAccessTools.join(', '));
+      }
+      if (JSON.stringify(webAccessCapabilities) !== JSON.stringify(['web-access'])) {
+        throw new Error('Packed web access extension capability is unavailable');
+      }
       const runtime = await app.createLocalFelanRuntime({
         cwd: process.env.PACKED_SMOKE_WORKSPACE,
         agentDir: process.env.FELAN_AGENT_DIR,
@@ -158,7 +174,7 @@ try {
       if (prompt.includes('operating inside pi')) {
         throw new Error('Packed runtime retained the Pi base prompt');
       }
-      const capabilityPositions = ['### subagents', '### tasks', '### prewalk', '### progressive-context']
+      const capabilityPositions = ['### subagents', '### tasks', '### prewalk', '### progressive-context', '### web-access']
         .map((heading) => prompt.indexOf(heading));
       if (capabilityPositions.some((position) => position < 0)
         || capabilityPositions.some((position, index) => index > 0 && position <= capabilityPositions[index - 1])) {
