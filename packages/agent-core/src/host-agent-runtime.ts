@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import {
   lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   readlink,
@@ -12,6 +13,8 @@ import {
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
   AgentRuntime,
+  AgentRuntimeFileReadOptions,
+  AgentRuntimeFileWriteOptions,
   AgentRuntimeProcess,
   AgentRuntimeProcesses,
   AgentRuntimeProcessReadOptions,
@@ -87,21 +90,27 @@ export class HostAgentRuntime implements AgentRuntime {
     return this.#spawn(command, [], cwd, options, true, env);
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array> {
     const resolvedPath = await resolveReadablePath(
       this.#cwd,
       this.#sessionStorageRoot,
       this.#agentStorageRoot,
       path,
     );
-    const content = await readFile(resolvedPath);
+    const content = options?.maxBytes === undefined
+      ? await readFile(resolvedPath)
+      : await readBoundedFile(resolvedPath, options.maxBytes);
     return new Uint8Array(content);
   }
 
-  async writeFile(path: string, content: Uint8Array): Promise<void> {
+  async writeFile(
+    path: string,
+    content: Uint8Array,
+    options?: AgentRuntimeFileWriteOptions,
+  ): Promise<void> {
     const copiedContent = content.slice();
     const resolvedPath = await resolveContainedPath(this.#cwd, path);
-    await writeFile(resolvedPath, copiedContent);
+    await writeFile(resolvedPath, copiedContent, options?.exclusive ? { flag: 'wx' } : undefined);
   }
 
   async listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]> {
@@ -133,7 +142,9 @@ export class HostAgentRuntime implements AgentRuntime {
   }
 
   async readAgentFile(path: string): Promise<Uint8Array> {
-    if (!this.#agentDir) throw new Error('Runtime agent directory is unavailable');
+    if (!this.#agentDir) {
+      throw Object.assign(new Error('Runtime agent directory is unavailable'), { code: 'ENOENT' });
+    }
     const content = await readFile(await resolveContainedPath(this.#agentDir, path));
     return new Uint8Array(content);
   }
@@ -525,4 +536,25 @@ function isNoSuchProcessError(error: unknown): boolean {
 
 function killedResult(): ExecResult {
   return { stdout: '', stderr: '', code: 143, killed: true };
+}
+
+async function readBoundedFile(path: string, maxBytes: number): Promise<Buffer> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new Error('maxBytes must be a non-negative safe integer');
+  }
+  const handle = await open(path, 'r');
+  try {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total <= maxBytes) {
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1 - total));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) return Buffer.concat(chunks, total);
+      chunks.push(chunk.subarray(0, bytesRead));
+      total += bytesRead;
+    }
+    throw new Error(`File exceeds maximum size of ${maxBytes} bytes`);
+  } finally {
+    await handle.close();
+  }
 }

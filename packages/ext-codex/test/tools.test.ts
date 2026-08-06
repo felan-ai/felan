@@ -3,13 +3,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   HostAgentRuntime,
+  type AgentRuntime,
   type Api,
   type ExtensionContext,
   type Model,
   type ToolDefinition,
 } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ExecSessionManager, createCodexTools } from '../src/index.js';
+import {
+  ExecSessionManager,
+  MAX_VIEW_IMAGE_INPUT_BYTES,
+  createCodexTools,
+} from '../src/index.js';
+import { ApplyPatchError, applyPatch } from '../src/patch.js';
 
 const temporaryPaths: string[] = [];
 
@@ -80,6 +86,38 @@ describe('Codex runtime-backed tools', () => {
     await sessions.shutdown();
   });
 
+  it('decodes UTF-8 incrementally across polls', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const script = "process.stdout.write(Buffer.from([0xe2,0x82])); setTimeout(() => process.stdout.write(Buffer.from([0xac,0x0a])), 400)";
+    const started = await sessions.exec({
+      cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      yield_time_ms: 250,
+    });
+
+    expect(started.output).toBe('');
+    const completed = await sessions.write({ session_id: started.session_id!, yield_time_ms: 1_000 });
+    expect(completed).toMatchObject({ output: '€\n', exit_code: 0 });
+    await sessions.shutdown();
+  });
+
+  it('strips split terminal control sequences while preserving tabs and newlines', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const first = JSON.stringify('safe\t\n\u001b]0;injected');
+    const second = JSON.stringify('\u0007\u001b[31mred\u001b[0m\u001bPsecret\u001b\\\u0000done\n');
+    const script = `process.stdout.write(${first}); setTimeout(() => process.stdout.write(${second}), 400)`;
+    const started = await sessions.exec({
+      cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      yield_time_ms: 250,
+    });
+
+    expect(started.output).toBe('safe\t\n');
+    const completed = await sessions.write({ session_id: started.session_id!, yield_time_ms: 1_000 });
+    expect(completed.output).toBe('reddone\n');
+    await sessions.shutdown();
+  });
+
   it('applies add, update, and delete sections through AgentRuntime', async () => {
     const runtime = await createRuntime();
     const sessions = new ExecSessionManager(runtime);
@@ -108,19 +146,86 @@ describe('Codex runtime-backed tools', () => {
     await sessions.shutdown();
   });
 
-  it('returns image content and rejects unsupported models or non-images', async () => {
+  it('uses exclusive creation for concurrent Add File patches', async () => {
+    const runtime = await createRuntime();
+    const patch = `*** Begin Patch
+*** Add File: race.txt
++winner
+*** End Patch`;
+
+    const results = await Promise.allSettled([
+      applyPatch(runtime, patch),
+      applyPatch(runtime, patch),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    await expect(text(runtime, 'race.txt')).resolves.toBe('winner\n');
+  });
+
+  it('rolls back a move destination when source removal fails', async () => {
+    const host = await createRuntime();
+    await host.writeFile('source.txt', new TextEncoder().encode('before\n'));
+    const runtime = runtimeWithRemoveFailures(host, false);
+
+    await expect(applyPatch(runtime, movePatch())).rejects.toMatchObject({
+      result: { changedFiles: [], createdFiles: [], deletedFiles: [] },
+    });
+    await expect(text(host, 'source.txt')).resolves.toBe('before\n');
+    await expect(host.readFile('destination.txt')).rejects.toThrow();
+  });
+
+  it('reports the destination when move rollback also fails', async () => {
+    const host = await createRuntime();
+    await host.writeFile('source.txt', new TextEncoder().encode('before\n'));
+    const runtime = runtimeWithRemoveFailures(host, true);
+
+    let failure: unknown;
+    try {
+      await applyPatch(runtime, movePatch());
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ApplyPatchError);
+    expect((failure as ApplyPatchError).result).toMatchObject({
+      changedFiles: ['destination.txt'],
+      createdFiles: ['destination.txt'],
+      deletedFiles: [],
+    });
+    await expect(text(host, 'source.txt')).resolves.toBe('before\n');
+    await expect(text(host, 'destination.txt')).resolves.toBe('after\n');
+  });
+
+  it('returns validated image content with dimensions and rejects unsupported models', async () => {
     const runtime = await createRuntime();
     const sessions = new ExecSessionManager(runtime);
     const view = tool(createCodexTools(runtime, sessions), 'view_image');
-    await runtime.writeFile('pixel.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    await runtime.writeFile('pixel.png', VALID_PNG);
     await runtime.writeFile('plain.txt', new TextEncoder().encode('text'));
 
     const result = await view.execute('view', { path: '@pixel.png' }, undefined, undefined, imageContext()) as ToolResult;
     expect(result.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' });
+    expect(result.details).toMatchObject({
+      originalWidth: 1, originalHeight: 1, width: 1, height: 1, wasResized: false,
+    });
     await expect(view.execute('view', { path: 'pixel.png' }, undefined, undefined, textContext()))
       .rejects.toThrow('does not support image input');
     await expect(view.execute('view', { path: 'plain.txt' }, undefined, undefined, imageContext()))
       .rejects.toThrow('expected a PNG, JPEG, GIF, or WebP image');
+    await sessions.shutdown();
+  });
+
+  it('rejects malformed and valid oversized images', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const view = tool(createCodexTools(runtime, sessions), 'view_image');
+    await runtime.writeFile('malformed.png', VALID_PNG.subarray(0, 40));
+    await runtime.writeFile('oversized.png', oversizedValidPng());
+
+    await expect(view.execute('view', { path: 'malformed.png' }, undefined, undefined, imageContext()))
+      .rejects.toThrow('could not decode or resize');
+    await expect(view.execute('view', { path: 'oversized.png' }, undefined, undefined, imageContext()))
+      .rejects.toThrow(`exceeds maximum size of ${MAX_VIEW_IMAGE_INPUT_BYTES} bytes`);
     await sessions.shutdown();
   });
 
@@ -160,7 +265,33 @@ describe('Codex runtime-backed tools', () => {
     await expect(execution).rejects.toThrow('exec_command aborted');
     await sessions.shutdown();
   });
+
+  it('disposes an active session when write_stdin is aborted', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const started = await sessions.exec({
+      cmd: `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`,
+      tty: true,
+      yield_time_ms: 250,
+    });
+    const controller = new AbortController();
+    const writing = sessions.write(
+      { session_id: started.session_id!, yield_time_ms: 30_000 },
+      controller.signal,
+    );
+    setTimeout(() => controller.abort(), 50);
+
+    await expect(writing).rejects.toThrow('write_stdin aborted');
+    await expect(sessions.write({ session_id: started.session_id! }))
+      .rejects.toThrow('Unknown process id');
+    await sessions.shutdown();
+  });
 });
+
+const VALID_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
 
 interface ToolResult {
   content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
@@ -205,4 +336,64 @@ function textContext(): ExtensionContext {
 
 async function text(runtime: HostAgentRuntime, path: string): Promise<string> {
   return new TextDecoder().decode(await runtime.readFile(path));
+}
+
+function movePatch(): string {
+  return `*** Begin Patch
+*** Update File: source.txt
+*** Move to: destination.txt
+@@
+-before
++after
+*** End Patch`;
+}
+
+function runtimeWithRemoveFailures(host: HostAgentRuntime, failRollback: boolean): AgentRuntime {
+  return {
+    kind: host.kind,
+    cwd: host.cwd,
+    processes: host.processes,
+    storage: (scope) => host.storage(scope),
+    exec: (command, args, options) => host.exec(command, args, options),
+    shell: (command, options) => host.shell(command, options),
+    readFile: (path, options) => host.readFile(path, options),
+    writeFile: (path, content, options) => host.writeFile(path, content, options),
+    listFiles: (path, options) => host.listFiles(path, options),
+    mkdir: (path, options) => host.mkdir(path, options),
+    remove: async (path, options) => {
+      if (path === 'source.txt' || (failRollback && path === 'destination.txt')) {
+        throw new Error(`injected remove failure: ${path}`);
+      }
+      await host.remove(path, options);
+    },
+    readAgentFile: (path) => host.readAgentFile(path),
+  };
+}
+
+function oversizedValidPng(): Uint8Array {
+  const iendOffset = VALID_PNG.length - 12;
+  const text = Buffer.alloc(MAX_VIEW_IMAGE_INPUT_BYTES, 0x61);
+  Buffer.from('Comment\0').copy(text);
+  const type = Buffer.from('tEXt');
+  const chunk = Buffer.alloc(12 + text.length);
+  chunk.writeUInt32BE(text.length, 0);
+  type.copy(chunk, 4);
+  text.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(Buffer.concat([type, text])), 8 + text.length);
+  return Buffer.concat([
+    VALID_PNG.subarray(0, iendOffset),
+    chunk,
+    VALID_PNG.subarray(iendOffset),
+  ]);
+}
+
+function crc32(data: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }

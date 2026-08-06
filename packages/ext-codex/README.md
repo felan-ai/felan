@@ -19,16 +19,26 @@ Optional settings live at `$FELAN_AGENT_DIR/codex.json`:
 }
 ```
 
-`fast` and `verbosity` modify eligible OpenAI Responses payloads. For the
-OpenAI Codex provider, `forceCachedWebSockets` upgrades an explicit
-`websocket` preference to Pi's native `websocket-cached` transport. Explicit
-`sse` and `auto` remain unchanged. Pi owns connection reuse, SSE fallback,
-cached continuation, and session cleanup. Cached transports are prewarmed once
-per session and model with a native `generate: false` request before the first
-real stream.
+`fast` and `verbosity` modify eligible OpenAI Responses requests through a
+session-scoped stream wrapper and the provider-request event. For the OpenAI
+Codex provider, `forceCachedWebSockets` upgrades an explicit `websocket`
+preference to Pi's native `websocket-cached` transport. Explicit `sse` and
+`auto` remain unchanged. Pi owns connection reuse, SSE fallback, cached
+continuation, and session cleanup. The extension does not register or replace
+providers.
+
+`view_image` is active only when the selected model declares image input. Raw
+image reads are limited to 20 MiB, then Pi decodes and resizes supported images
+to at most 2000×2000 with a base64 payload below 4 MiB. Malformed,
+unsupported, and unresizable images are rejected.
+
+`tty: true` keeps a stdin pipe open for `write_stdin`; it does not allocate an
+operating-system PTY or emulate terminal behavior. Process output is decoded
+incrementally and terminal control sequences are removed before tool text is
+returned to the model.
 
 The extension excludes web access, image generation, Code Mode/Responses
-Lite, prompt replacement, compaction, voice, custom tools, and UI controls.
+Lite, prompt replacement, compaction, voice, and UI widgets.
 
 ## Development
 

@@ -3,6 +3,7 @@ import type { AgentRuntime } from '@felan-ai/agent-core';
 
 export interface LocalAgentRuntimeFactoryRequest {
   readonly cwd: string;
+  readonly agentDir: string;
   readonly rootSessionId: string;
   readonly sessionStorageRoot: string;
   readonly agentStorageRoot: string;
@@ -19,6 +20,7 @@ export function createLocalAgentRuntimeFactoryRequest(
 ): LocalAgentRuntimeFactoryRequest {
   return {
     cwd,
+    agentDir,
     rootSessionId,
     sessionStorageRoot: join(
       agentDir,

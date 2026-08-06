@@ -52,14 +52,28 @@ describe('Codex extension activation', () => {
     ]);
   });
 
-  it('unregisters its provider and shuts down cleanly', async () => {
+  it('activates view_image only for models with image input', async () => {
     const harness = createHarness();
     await codexExtension(harness.pi);
-    expect(harness.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: 'openai-codex' }));
+    await harness.emit('session_start', {}, {
+      mode: 'print',
+      model: { ...model('openai', 'gpt-5.4'), input: ['text'] },
+    } as ExtensionContext);
+
+    expect(harness.activeTools).not.toContain('view_image');
+    expect(harness.activeTools).toEqual(expect.arrayContaining([
+      'exec_command', 'write_stdin', 'apply_patch',
+    ]));
+  });
+
+  it('does not register or unregister shared providers', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    expect(harness.registerProvider).not.toHaveBeenCalled();
 
     await harness.emit('session_shutdown', {}, context('openai', 'gpt-5.4'));
 
-    expect(harness.unregisterProvider).toHaveBeenCalledWith('openai-codex');
+    expect(harness.unregisterProvider).not.toHaveBeenCalled();
   });
 });
 

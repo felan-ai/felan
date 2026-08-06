@@ -15,6 +15,7 @@ import type {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LocalSubagentHost,
+  readOnlyToolNames,
   type LocalSubagentRunner,
 } from '../src/subagents/host.js';
 
@@ -25,6 +26,14 @@ afterEach(async () => {
 });
 
 describe('LocalSubagentHost', () => {
+  it('keeps safe inspection tools and removes mutation/process tools for read-only GPT children', () => {
+    expect(readOnlyToolNames([
+      'grep', 'find', 'ls', 'view_image', 'exec_command', 'write_stdin', 'apply_patch',
+    ])).toEqual(['read', 'grep', 'find', 'ls', 'view_image']);
+    expect(readOnlyToolNames(['read', 'bash', 'edit', 'write', 'grep']))
+      .toEqual(['read', 'grep']);
+  });
+
   it('continues one child with the same agent ID, session file, and latest result', async () => {
     const sessionIds: string[] = [];
     const sessionFiles: Array<string | undefined> = [];

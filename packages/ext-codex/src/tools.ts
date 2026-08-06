@@ -1,7 +1,8 @@
-import type {
-  AgentRuntime,
-  ExtensionAPI,
-  ToolDefinition,
+import {
+  resizeImage,
+  type AgentRuntime,
+  type ExtensionAPI,
+  type ToolDefinition,
 } from '@felan-ai/agent-core';
 import { Type, type Static } from 'typebox';
 import { ExecSessionManager, formatExecResult } from './exec-session-manager.js';
@@ -12,7 +13,7 @@ const ExecCommandParams = Type.Object({
   cmd: Type.String({ description: 'Raw command string interpreted by the current shell; do not quote the entire command' }),
   workdir: Type.Optional(Type.String({ description: 'Cwd' })),
   shell: Type.Optional(Type.String()),
-  tty: Type.Optional(Type.Boolean({ description: 'Keep stdin open for input or interruption' })),
+  tty: Type.Optional(Type.Boolean({ description: 'Keep the stdin pipe open for input or interruption; this is not an OS PTY' })),
   yield_time_ms: Type.Optional(Type.Number({ description: 'Wait ms' })),
   max_output_tokens: Type.Optional(Type.Number({ description: 'Truncate' })),
   login: Type.Optional(Type.Boolean({ description: 'Login shell' })),
@@ -46,6 +47,10 @@ export const CODEX_TOOL_NAMES = [
   'apply_patch',
   'view_image',
 ] as const;
+
+export const MAX_VIEW_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
+const MAX_VIEW_IMAGE_BASE64_BYTES = 4 * 1024 * 1024;
+const MAX_VIEW_IMAGE_DIMENSION = 2_000;
 
 export function createCodexTools(
   runtime: AgentRuntime,
@@ -132,13 +137,28 @@ export function createCodexTools(
       }
       if (signal?.aborted) throw new Error('view_image aborted');
       const path = params.path.startsWith('@') ? params.path.slice(1) : params.path;
-      const data = await runtime.readFile(path);
+      const data = await runtime.readFile(path, { maxBytes: MAX_VIEW_IMAGE_INPUT_BYTES });
       if (signal?.aborted) throw new Error('view_image aborted');
       const mimeType = detectImageMimeType(data);
       if (!mimeType) throw new Error('view_image expected a PNG, JPEG, GIF, or WebP image');
+      const resized = await resizeImage(data, mimeType, {
+        maxWidth: MAX_VIEW_IMAGE_DIMENSION,
+        maxHeight: MAX_VIEW_IMAGE_DIMENSION,
+        maxBytes: MAX_VIEW_IMAGE_BASE64_BYTES,
+      });
+      if (!resized) {
+        throw new Error('view_image could not decode or resize the image within safety limits');
+      }
       return {
-        content: [{ type: 'image', data: Buffer.from(data).toString('base64'), mimeType }],
-        details: { path },
+        content: [{ type: 'image', data: resized.data, mimeType: resized.mimeType }],
+        details: {
+          path,
+          originalWidth: resized.originalWidth,
+          originalHeight: resized.originalHeight,
+          width: resized.width,
+          height: resized.height,
+          wasResized: resized.wasResized,
+        },
       };
     },
   };

@@ -1,5 +1,5 @@
-import { dirname } from 'node:path';
-import type { AgentRuntime } from '@felan-ai/agent-core';
+import { dirname, resolve } from 'node:path';
+import { withFileMutationQueue, type AgentRuntime } from '@felan-ai/agent-core';
 
 interface Chunk {
   origIndex: number;
@@ -48,38 +48,8 @@ export async function applyPatch(
   for (const action of actions) {
     if (signal?.aborted) throw new Error('apply_patch aborted');
     try {
-      if (action.type === 'add') {
-        if (await pathExists(runtime, action.path)) throw new Error(`File already exists: ${action.path}`);
-        await runtime.mkdir(dirname(action.path), { recursive: true });
-        await runtime.writeFile(action.path, encoder.encode(action.newFile ?? ''));
-        result.createdFiles.push(action.path);
-        result.changedFiles.push(action.path);
-        continue;
-      }
-      if (action.type === 'delete') {
-        await requireFile(runtime, action.path);
-        await runtime.remove(action.path);
-        result.deletedFiles.push(action.path);
-        result.changedFiles.push(action.path);
-        continue;
-      }
-
-      const original = decoder.decode(await requireFile(runtime, action.path));
-      const state: ParserState = { lines: action.lines!, index: 0, fuzz: 0 };
-      const chunks = parseUpdateChunks(state, original, action.path);
-      const updated = applyChunks(original, chunks);
-      const destination = action.movePath ?? action.path;
-      if (action.movePath && await pathExists(runtime, destination)) {
-        throw new Error(`File already exists: ${destination}`);
-      }
-      await runtime.mkdir(dirname(destination), { recursive: true });
-      await runtime.writeFile(destination, encoder.encode(updated));
-      if (action.movePath) {
-        await runtime.remove(action.path);
-        result.movedFiles.push(`${action.path} -> ${destination}`);
-      }
-      result.changedFiles.push(destination);
-      result.fuzz += state.fuzz;
+      const touchedPaths = action.movePath ? [action.path, action.movePath] : [action.path];
+      await withMutationQueues(runtime, touchedPaths, () => applyAction(runtime, action, result));
     } catch (error) {
       const partial = result.changedFiles.length > 0;
       const message = `apply_patch ${partial ? 'partially failed' : 'failed'} while patching ${action.path}: ${errorMessage(error)}`;
@@ -87,6 +57,105 @@ export async function applyPatch(
     }
   }
   return result;
+}
+
+async function applyAction(
+  runtime: AgentRuntime,
+  action: PatchAction,
+  result: ApplyPatchResult,
+): Promise<void> {
+  if (action.type === 'add') {
+    await runtime.mkdir(dirname(action.path), { recursive: true });
+    await runtime.writeFile(action.path, encoder.encode(action.newFile ?? ''), { exclusive: true });
+    result.createdFiles.push(action.path);
+    result.changedFiles.push(action.path);
+    return;
+  }
+  if (action.type === 'delete') {
+    await requireFile(runtime, action.path);
+    await runtime.remove(action.path);
+    result.deletedFiles.push(action.path);
+    result.changedFiles.push(action.path);
+    return;
+  }
+
+  const originalBytes = await requireFile(runtime, action.path);
+  const original = decoder.decode(originalBytes);
+  const state: ParserState = { lines: action.lines!, index: 0, fuzz: 0 };
+  const chunks = parseUpdateChunks(state, original, action.path);
+  const updated = applyChunks(original, chunks);
+  const destination = action.movePath ?? action.path;
+  await runtime.mkdir(dirname(destination), { recursive: true });
+  if (!action.movePath) {
+    await runtime.writeFile(destination, encoder.encode(updated));
+    result.changedFiles.push(destination);
+    result.fuzz += state.fuzz;
+    return;
+  }
+
+  await runtime.writeFile(destination, encoder.encode(updated), { exclusive: true });
+  try {
+    await runtime.remove(action.path);
+  } catch (removeError) {
+    const rollbackErrors: unknown[] = [];
+    try {
+      await runtime.remove(destination);
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+    try {
+      if (!await pathExists(runtime, action.path)) {
+        await runtime.writeFile(action.path, originalBytes, { exclusive: true });
+      }
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+    if (rollbackErrors.length > 0) {
+      await recordPartialMove(runtime, action.path, destination, result);
+      throw new AggregateError(
+        [removeError, ...rollbackErrors],
+        `Failed to remove ${action.path} and rollback ${destination}`,
+      );
+    }
+    throw new Error(`Failed to remove move source ${action.path}: ${errorMessage(removeError)}`, {
+      cause: removeError,
+    });
+  }
+  result.movedFiles.push(`${action.path} -> ${destination}`);
+  result.changedFiles.push(destination);
+  result.fuzz += state.fuzz;
+}
+
+async function withMutationQueues<T>(
+  runtime: AgentRuntime,
+  paths: readonly string[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  const absolutePaths = [...new Set(paths.map((path) => resolve(runtime.cwd, path)))].sort();
+  const acquire = (index: number): Promise<T> => index === absolutePaths.length
+    ? operation()
+    : withFileMutationQueue(absolutePaths[index]!, () => acquire(index + 1));
+  return acquire(0);
+}
+
+async function recordPartialMove(
+  runtime: AgentRuntime,
+  source: string,
+  destination: string,
+  result: ApplyPatchResult,
+): Promise<void> {
+  if (await pathExists(runtime, destination)) {
+    pushUnique(result.createdFiles, destination);
+    pushUnique(result.changedFiles, destination);
+  }
+  if (!await pathExists(runtime, source)) {
+    pushUnique(result.deletedFiles, source);
+    pushUnique(result.changedFiles, source);
+  }
+}
+
+function pushUnique(values: string[], value: string): void {
+  if (!values.includes(value)) values.push(value);
 }
 
 export class ApplyPatchError extends Error {
@@ -126,6 +195,9 @@ function parsePatchActions(text: string): PatchAction[] {
     let movePath: string | undefined;
     if (type === 'update' && lines[index]?.startsWith('*** Move to: ')) {
       movePath = normalizePatchPath(lines[index]!.slice('*** Move to: '.length));
+      if (!movePath) throw new Error('Move destination cannot be empty');
+      if (seen.has(movePath)) throw new Error(`Duplicate patch path: ${movePath}`);
+      seen.add(movePath);
       index += 1;
     }
     const body: string[] = [];
@@ -300,9 +372,14 @@ async function pathExists(runtime: AgentRuntime, path: string): Promise<boolean>
   try {
     await runtime.readFile(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isMissingFile(error)) return false;
+    throw error;
   }
+}
+
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
 function errorMessage(error: unknown): string {

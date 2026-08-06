@@ -139,6 +139,29 @@ describe('HostAgentRuntime', () => {
     await expect(runtime.readFile('nested/top.bin')).rejects.toThrow();
   });
 
+  it('bounds file reads without relying on a separate size check', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    await runtime.writeFile('bounded.bin', new Uint8Array([1, 2, 3, 4]));
+
+    await expect(runtime.readFile('bounded.bin', { maxBytes: 4 }))
+      .resolves.toEqual(new Uint8Array([1, 2, 3, 4]));
+    await expect(runtime.readFile('bounded.bin', { maxBytes: 3 }))
+      .rejects.toThrow('exceeds maximum size of 3 bytes');
+  });
+
+  it('supports exclusive file creation', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    await runtime.writeFile('exclusive.txt', new TextEncoder().encode('first'), { exclusive: true });
+
+    await expect(runtime.writeFile(
+      'exclusive.txt',
+      new TextEncoder().encode('second'),
+      { exclusive: true },
+    )).rejects.toMatchObject({ code: 'EEXIST' });
+    await expect(runtime.readFile('exclusive.txt'))
+      .resolves.toEqual(new TextEncoder().encode('first'));
+  });
+
   it('uses a shell only through the explicit shell method', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const variable = 'literal value; $HOME';
@@ -167,6 +190,12 @@ describe('HostAgentRuntime', () => {
     await expect(runtime.readAgentFile('codex.json'))
       .resolves.toEqual(new TextEncoder().encode('{"fast":true}'));
     await expect(runtime.readAgentFile('../secret')).rejects.toThrow('escapes runtime root');
+  });
+
+  it('reports an unconfigured agent directory as an absent agent file', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+
+    await expect(runtime.readAgentFile('codex.json')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('supports persistent shell polling, input, and cleanup', async () => {

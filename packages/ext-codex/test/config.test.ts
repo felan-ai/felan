@@ -1,4 +1,4 @@
-import type { AgentRuntime } from '@felan-ai/agent-core';
+import { HostAgentRuntime, type AgentRuntime } from '@felan-ai/agent-core';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CODEX_CONFIG,
@@ -10,6 +10,21 @@ describe('Codex configuration', () => {
   it('uses minimal defaults when codex.json is absent', async () => {
     await expect(readCodexConfig(runtimeWithConfig(undefined), '/agent'))
       .resolves.toEqual(DEFAULT_CODEX_CONFIG);
+  });
+
+  it('uses defaults for runtimes without agent-file support', async () => {
+    const { readAgentFile: _readAgentFile, ...runtime } = runtimeWithConfig(undefined);
+
+    await expect(readCodexConfig(runtime, '/agent')).resolves.toEqual(DEFAULT_CODEX_CONFIG);
+  });
+
+  it('uses defaults for a HostAgentRuntime without agentDir', async () => {
+    const runtime = new HostAgentRuntime('/workspace', {
+      sessionStorageRoot: '/session-storage',
+      agentStorageRoot: '/agent-storage',
+    });
+
+    await expect(readCodexConfig(runtime, '/agent')).resolves.toEqual(DEFAULT_CODEX_CONFIG);
   });
 
   it('loads all supported settings', async () => {

@@ -2,14 +2,15 @@ import {
   type Api,
   type AssistantMessageEventStream,
   type Model,
-  type Provider,
+  type StreamFunction,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyCodexRequestOptions,
+  createCodexStreamFunctionWrapper,
   resolveCodexTransport,
+  resolveCodexStreamOptions,
   supportsCodexModel,
-  wrapOpenAICodexProvider,
 } from '../src/index.js';
 
 describe('Codex model policy', () => {
@@ -67,53 +68,71 @@ describe('OpenAI Codex transport policy', () => {
     expect(resolveCodexTransport(transport, force)).toBe(expected);
   });
 
-  it('prewarms and delegates to Pi native streams with upgraded options', async () => {
-    const endedStream = () => {
-      return {
-        async *[Symbol.asyncIterator]() {},
-      } as unknown as AssistantMessageEventStream;
-    };
-    const nativeStream = vi.fn((..._args: unknown[]) => endedStream());
-    const nativeSimple = vi.fn((..._args: unknown[]) => endedStream());
-    const native = {
-      id: 'openai-codex',
-      name: 'OpenAI Codex',
-      auth: {} as Provider['auth'],
-      getModels: () => [],
-      stream: nativeStream,
-      streamSimple: nativeSimple,
-    } as unknown as Provider;
-    const wrapped = wrapOpenAICodexProvider(native, {
+  it('sets native options only for eligible requests', () => {
+    const config = { fast: true, verbosity: 'high', forceCachedWebSockets: true } as const;
+    expect(resolveCodexStreamOptions(
+      responseModel('openai-codex', 'gpt-5.3-codex', 'openai-codex-responses'),
+      { transport: 'websocket', sessionId: 'session-1' },
+      config,
+    )).toMatchObject({
+      transport: 'websocket-cached',
+      sessionId: 'session-1',
+      serviceTier: 'priority',
+      textVerbosity: 'high',
+    });
+    expect(resolveCodexStreamOptions(
+      responseModel('openai', 'gpt-5.4', 'openai-responses'),
+      { transport: 'websocket' },
+      config,
+    )).toEqual({ transport: 'websocket', serviceTier: 'priority' });
+    const ineligible = { transport: 'websocket' as const };
+    expect(resolveCodexStreamOptions(
+      responseModel('custom', 'gpt-5.4', 'openai-responses'),
+      ineligible,
+      config,
+    )).toBe(ineligible);
+    expect(resolveCodexStreamOptions(
+      responseModel('openai-codex', 'gpt-5.3-codex', 'openai-completions'),
+      { transport: 'auto' },
+      config,
+    )).toEqual({ transport: 'auto' });
+  });
+
+  it('wraps each session independently without extra provider calls', () => {
+    const first = vi.fn<StreamFunction>(() => endedStream());
+    const second = vi.fn<StreamFunction>(() => endedStream());
+    const firstWrapped = createCodexStreamFunctionWrapper({
+      fast: true,
+      verbosity: 'high',
+      forceCachedWebSockets: true,
+    })(first);
+    const secondWrapped = createCodexStreamFunctionWrapper({
       fast: false,
       verbosity: 'low',
-      forceCachedWebSockets: true,
+      forceCachedWebSockets: false,
+    })(second);
+    const model = responseModel('openai-codex', 'gpt-5.3-codex', 'openai-codex-responses');
+
+    firstWrapped(model, { messages: [] }, { transport: 'websocket' });
+    secondWrapped(model, { messages: [] }, { transport: 'websocket' });
+    firstWrapped(model, { messages: [] }, { transport: 'sse' });
+
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(first.mock.calls[0]?.[2]).toMatchObject({
+      transport: 'websocket-cached', serviceTier: 'priority', textVerbosity: 'high',
     });
-
-    for await (const _event of wrapped.stream(
-      { id: 'gpt-5.3-codex' } as Model<Api>,
-      { messages: [] },
-      { transport: 'websocket', sessionId: 'session-1' } as never,
-    )) {}
-    for await (const _event of wrapped.streamSimple(
-      { id: 'gpt-5.3-codex' } as Model<Api>,
-      { messages: [] },
-      { transport: 'auto', sessionId: 'session-1' },
-    )) {}
-
-    expect(nativeStream.mock.calls[0]?.[2]).toMatchObject({ transport: 'websocket-cached' });
-    const prewarmPayload = await (nativeStream.mock.calls[0]?.[2] as {
-      onPayload: (payload: unknown, model: Model<Api>) => Promise<unknown>;
-    }).onPayload({ input: [] }, {} as Model<Api>);
-    expect(prewarmPayload).toEqual({ input: [], generate: false });
-    expect(nativeStream.mock.calls[1]?.[2]).toMatchObject({ transport: 'websocket-cached' });
-    expect(nativeSimple.mock.calls[0]?.[2]).toMatchObject({ transport: 'auto' });
-
-    for await (const _event of wrapped.stream(
-      { id: 'gpt-5.3-codex' } as Model<Api>,
-      { messages: [] },
-      { transport: 'sse', sessionId: 'session-2' } as never,
-    )) {}
-    expect(nativeStream).toHaveBeenCalledTimes(3);
-    expect(nativeStream.mock.calls[2]?.[2]).toMatchObject({ transport: 'sse' });
+    expect(first.mock.calls[1]?.[2]).toMatchObject({ transport: 'sse' });
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(second.mock.calls[0]?.[2]).toMatchObject({
+      transport: 'websocket', textVerbosity: 'low',
+    });
   });
 });
+
+function responseModel(provider: string, id: string, api: string): Model<Api> {
+  return { provider, id, api } as Model<Api>;
+}
+
+function endedStream(): AssistantMessageEventStream {
+  return { async *[Symbol.asyncIterator]() {} } as unknown as AssistantMessageEventStream;
+}

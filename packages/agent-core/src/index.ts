@@ -1,5 +1,7 @@
 export type {
   AgentRuntime,
+  AgentRuntimeFileReadOptions,
+  AgentRuntimeFileWriteOptions,
   AgentRuntimeKind,
   AgentRuntimeProcess,
   AgentRuntimeProcesses,
@@ -52,6 +54,8 @@ export {
   defineTool,
   getAgentDir,
   loadSkillsFromDir,
+  resizeImage,
+  withFileMutationQueue,
 } from '@earendil-works/pi-coding-agent';
 export type {
   AgentSessionEvent,
@@ -70,6 +74,7 @@ export type {
   LoadExtensionsResult,
   ResourceDiagnostic,
   ResourceLoader,
+  ResizedImage,
   SessionContext,
   SessionStartEvent,
   Skill,

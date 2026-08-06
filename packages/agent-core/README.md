@@ -16,7 +16,8 @@ const result = await runtime.exec('node', ['--version']);
 `HostAgentRuntime` roots file and process operations at its immutable `cwd`.
 Use `exec(command, args)` for literal argument boundaries and `shell(command)`
 only when shell parsing is intentional. File reads and writes use
-`Uint8Array` so binary content is preserved.
+`Uint8Array` so binary content is preserved. Reads accept a `maxBytes` bound,
+and writes support exclusive creation for race-safe new files.
 
 Every `AgentRuntime` exposes scoped storage through `storage(scope)`. The
 default `storage()` handle is identical to `storage('session')` and belongs to
@@ -34,7 +35,8 @@ working directories remain confined to `cwd`.
 Host runtimes expose optional persistent process operations for extensions that
 need incremental output and stdin. `startShell()` keeps process ownership in
 the runtime adapter and returns a bounded polling handle with write, terminate,
-and dispose operations. The optional `readAgentFile()` boundary reads only
+and dispose operations. Host stdin support is a pipe, not an operating-system
+PTY. The optional `readAgentFile()` boundary reads only
 inside the configured `agentDir`; ordinary runtime file operations retain their
 workspace and session-storage boundaries.
 

@@ -18,6 +18,7 @@ import {
   resolveModelScopeWithDiagnostics,
   type AgentSessionRuntime,
 } from '@earendil-works/pi-coding-agent';
+import { createLocalCodexStreamFunctionWrapper } from './codex.js';
 import {
   createLocalExtensionImporter,
   importLocalExtension,
@@ -115,6 +116,13 @@ export function createLocalSessionRuntimeFactory(
     const skillPaths = options.skillPaths ?? getLocalSkillPaths(cwd);
     const subagentSettings = options.subagentSettings ?? felanSettings.felanSubagents;
     const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
+    const runtime = options.runtimeFactory?.(runtimeRequest)
+      ?? new HostAgentRuntime(cwd, runtimeRequest);
+    const wrapStreamFunction = await createLocalCodexStreamFunctionWrapper(
+      extensionPackages,
+      runtime,
+      options.agentDir,
+    );
     const host = await LocalSubagentHost.create({
       sessionId: sessionManager.getSessionId(),
       cwd,
@@ -140,8 +148,8 @@ export function createLocalSessionRuntimeFactory(
     sessions.set(sessionManager, { host, modelScope, shutdownState });
 
     return {
-      runtime: options.runtimeFactory?.(runtimeRequest)
-        ?? new HostAgentRuntime(cwd, { ...runtimeRequest, agentDir: options.agentDir }),
+      runtime,
+      ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
       importExtension: createLocalExtensionImporter(host, importExtension, shutdownHost),
       modelRuntime: options.modelRuntime,

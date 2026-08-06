@@ -50,6 +50,14 @@ export interface AgentRuntimeStorage {
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 }
 
+export interface AgentRuntimeFileReadOptions {
+  readonly maxBytes?: number;
+}
+
+export interface AgentRuntimeFileWriteOptions {
+  readonly exclusive?: boolean;
+}
+
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
@@ -68,8 +76,12 @@ export interface AgentRuntime {
     options?: ExecOptions & { env?: Readonly<Record<string, string>> },
   ): Promise<ExecResult>;
 
-  readFile(path: string): Promise<Uint8Array>;
-  writeFile(path: string, content: Uint8Array): Promise<void>;
+  readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array>;
+  writeFile(
+    path: string,
+    content: Uint8Array,
+    options?: AgentRuntimeFileWriteOptions,
+  ): Promise<void>;
   listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
