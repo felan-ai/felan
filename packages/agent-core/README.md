@@ -45,7 +45,7 @@ Host mode runs with the current user's filesystem and process permissions. It
 provides workspace path containment, but no OS isolation or sandbox boundary.
 Run untrusted workloads in an isolated runtime instead.
 
-The package also composes Pi 0.83.0 sessions with inline-only Felan extensions
+The package also composes Pi 0.84.0 sessions with inline-only Felan extensions
 and runtime-backed coding tools. `createAgentCoreSession` returns a headless,
 inactive session, while `createAgentCoreSessionRuntimeFactory` provides the
 typed seam used with Pi's `createAgentSessionRuntime`. Applications retain

@@ -10,7 +10,7 @@ Licensed under the MIT License included in this package.
 Adapted portions include structured tool schemas and output conventions,
 patch parsing and matching, model activation policy, OpenAI request options,
 and cached WebSocket transport selection. Felan implements process and file
-operations against AgentRuntime and uses Pi 0.83.0's native OpenAI Codex
+operations against AgentRuntime and uses Pi 0.84.0's native OpenAI Codex
 transport for connection reuse and cached continuation.
 
 This package uses TypeBox 1.1.38 from

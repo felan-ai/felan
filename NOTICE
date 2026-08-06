@@ -1,7 +1,7 @@
 Felan
 Copyright (c) 2026 Felan contributors
 
-This product uses Pi 0.83.0 from https://github.com/earendil-works/pi,
+This product uses Pi 0.84.0 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 
 @felan-ai/ext-subagents, @felan-ai/ext-tasks, @felan-ai/ext-background-bash,

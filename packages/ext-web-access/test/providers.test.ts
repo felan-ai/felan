@@ -47,8 +47,12 @@ describe('search providers and routing', () => {
   });
 
   it('reuses Pi OpenAI-Codex auth before config or environment credentials', async () => {
-    const getApiKeyAndHeaders = vi.fn(async () => ({ ok: true as const, apiKey: codexToken(), headers: { 'x-pi-auth': 'yes' } }));
-    const fetchMock = vi.fn(async (_input: string | URL | Request) => jsonResponse({
+    const getApiKeyAndHeaders = vi.fn(async () => ({
+      ok: true as const,
+      apiKey: codexToken(),
+      headers: { 'x-pi-auth': 'yes', 'x-pi-removed': null },
+    }));
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => jsonResponse({
       output: [{
         type: 'message',
         content: [{
@@ -70,6 +74,9 @@ describe('search providers and routing', () => {
     expect(getApiKeyAndHeaders).toHaveBeenCalledOnce();
     expect(env.runtime.exec).not.toHaveBeenCalled();
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://chatgpt.com/backend-api/codex/responses');
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('x-pi-auth')).toBe('yes');
+    expect(headers.has('x-pi-removed')).toBe(false);
   });
 
   it('does not reuse registry credentials from an overridden OpenAI endpoint', async () => {

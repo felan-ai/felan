@@ -11,7 +11,7 @@ Runtime dependencies include:
 - promise.try 2.0.1, MIT License
 - Turndown 7.2.0, MIT License
 - TypeBox 1.1.38, MIT License
-- undici 8.5.0, MIT License
+- undici 8.10.0, MIT License
 - unpdf 1.6.2, MIT License
 
 The full license text for this package is in LICENSE. Dependency license texts

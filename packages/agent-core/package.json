@@ -31,8 +31,8 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.83.0",
-    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-ai": "0.84.0",
+    "@earendil-works/pi-coding-agent": "0.84.0",
     "@lydell/node-pty": "1.2.0-beta.14"
   },
   "publishConfig": {

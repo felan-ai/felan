@@ -10,7 +10,7 @@ describe('@felan-ai/ext-web-access package boundary', () => {
     const notice = await readFile(join(packageRoot, 'NOTICE'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-web-access',
-      version: '0.1.0',
+      version: '0.1.1',
       license: 'MIT',
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
       peerDependencies: { '@felan-ai/agent-core': '^0.4.0' },
@@ -20,7 +20,7 @@ describe('@felan-ai/ext-web-access package boundary', () => {
     for (const version of Object.values(manifest.dependencies) as string[]) expect(version).not.toMatch(/^[~^*]/u);
     expect(notice).toContain('pi-web-access 0.18.0');
     expect(notice).toContain('d2aab00dcf0547572276d9de4bc4a2a49d640e13');
-    expect(notice).toContain('undici 8.5.0');
+    expect(notice).toContain('undici 8.10.0');
     expect(notice).toContain('unpdf 1.6.2');
   });
 

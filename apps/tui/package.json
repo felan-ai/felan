@@ -34,7 +34,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-coding-agent": "0.84.0",
     "@felan-ai/agent-core": "workspace:*",
     "@felan-ai/ext-background-bash": "workspace:*",
     "@felan-ai/ext-codex": "workspace:*",

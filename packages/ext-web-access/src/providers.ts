@@ -141,7 +141,9 @@ async function resolveOpenAIAuth(environment: ProviderEnvironment, signal?: Abor
         return {
           provider,
           apiKey: auth.apiKey,
-          headers: auth.headers ?? {},
+          headers: Object.fromEntries(
+            Object.entries(auth.headers ?? {}).filter((entry): entry is [string, string] => entry[1] !== null),
+          ),
           model: modelOverride ?? model.id,
         };
       }

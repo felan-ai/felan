@@ -36,10 +36,10 @@ for (const [license, entries] of Object.entries(inventory)) {
 }
 
 for (const required of [
-  '@earendil-works/pi-agent-core@0.83.0',
-  '@earendil-works/pi-ai@0.83.0',
-  '@earendil-works/pi-coding-agent@0.83.0',
-  '@earendil-works/pi-tui@0.83.0',
+  '@earendil-works/pi-agent-core@0.84.0',
+  '@earendil-works/pi-ai@0.84.0',
+  '@earendil-works/pi-coding-agent@0.84.0',
+  '@earendil-works/pi-tui@0.84.0',
   '@lydell/node-pty@1.2.0-beta.14',
   'typebox@1.1.38',
 ]) {
@@ -47,7 +47,7 @@ for (const required of [
 }
 
 const notice = readFileSync(resolve(root, 'NOTICE'), 'utf8');
-for (const requiredNotice of ['Pi 0.83.0', '@lydell/node-pty 1.2.0-beta.14', 'TypeBox 1.1.38']) {
+for (const requiredNotice of ['Pi 0.84.0', '@lydell/node-pty 1.2.0-beta.14', 'TypeBox 1.1.38']) {
   if (!notice.includes(requiredNotice)) errors.push(`NOTICE is missing ${requiredNotice}`);
 }
 const agentCoreNotice = readFileSync(resolve(root, 'packages/agent-core/NOTICE'), 'utf8');
@@ -77,7 +77,7 @@ for (const requiredNotice of [
   'pi-web-access 0.18.0',
   'd2aab00dcf0547572276d9de4bc4a2a49d640e13',
   'TypeBox 1.1.38',
-  'undici 8.5.0',
+  'undici 8.10.0',
 ]) {
   if (!webAccessNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-web-access/NOTICE is missing ${requiredNotice}`);

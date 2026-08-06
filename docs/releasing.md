@@ -205,10 +205,9 @@ The release workflow records the packed dependency audit for stable versions:
 pnpm audit:packed
 ```
 
-The clean audit currently reports vulnerable `brace-expansion@5.0.7` and
-`undici@8.5.0` versions locked by the published Pi 0.83.0 shrinkwrap. The
-release accepts this upstream dependency risk. Record the audit output with the
-release evidence; `pnpm audit:packed` is advisory and does not gate publication.
-`bugzy-3bfl.16` tracks adoption of an upstream fix independently. After
-publication, record the package versions, integrities, provenance, and source
-commit before updating cloud dependencies.
+The packed audit evaluates the exact dependencies installed from the generated
+tarballs, including upstream shrinkwrap and extension runtime dependencies.
+Record the audit output with the release evidence; `pnpm audit:packed` is
+advisory and does not gate publication. After publication, record the package
+versions, integrities, provenance, and source commit before updating cloud
+dependencies.
