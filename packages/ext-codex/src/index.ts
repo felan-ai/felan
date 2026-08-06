@@ -22,7 +22,7 @@ const codexExtension: FelanExtension = async (pi) => {
   const synchronizeTools = (model: Model<Api> | undefined) => {
     const current = pi.getActiveTools();
     ordinaryTools ??= current.filter((name) => !CODEX_TOOL_NAME_SET.has(name));
-    if (supportsCodexModel(model)) {
+    if (supportsCodexModel(model) && pi.runtime.processes) {
       pi.setActiveTools([
         ...current.filter((name) => !REPLACED_TOOL_NAMES.has(name) && !CODEX_TOOL_NAME_SET.has(name)),
         ...CODEX_TOOL_NAMES.filter((name) => name !== 'view_image' || supportsImageInput(model)),

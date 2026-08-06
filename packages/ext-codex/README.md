@@ -5,9 +5,11 @@ coding models. It activates only when the selected model ID is GPT-family and
 the provider is exactly `openai` or `openai-codex`.
 
 Active mode replaces `read`, `bash`, `edit`, and `write` with
-`exec_command`, `write_stdin`, `apply_patch`, and `view_image`. Other Felan
-tools remain active. Switching to another model restores the ordinary tools.
-All shell and filesystem operations use the current `AgentRuntime`.
+`exec_command`, `write_stdin`, and `apply_patch`; image-capable models also get
+`view_image`. Other Felan tools remain active. Switching to another model
+restores the ordinary tools. All shell and filesystem operations use the
+current `AgentRuntime`.
+Runtimes without persistent-process support keep Felan's ordinary coding tools.
 
 Optional settings live at `$FELAN_AGENT_DIR/codex.json`:
 

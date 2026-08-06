@@ -29,7 +29,7 @@ export function resolveCodexStreamOptions(
 ): SimpleStreamOptions | undefined {
   if (!supportsCodexModel(model)) return options;
 
-  const transport = model.provider === 'openai-codex'
+  const transport = model.provider === 'openai-codex' && model.api === 'openai-codex-responses'
     ? resolveCodexTransport(options?.transport, config.forceCachedWebSockets)
     : options?.transport;
   const responses = supportsCodexResponsesRequest(model);

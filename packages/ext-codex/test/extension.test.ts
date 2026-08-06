@@ -52,6 +52,16 @@ describe('Codex extension activation', () => {
     ]);
   });
 
+  it('keeps ordinary tools when the runtime lacks persistent-process support', async () => {
+    const harness = createHarness(false);
+    await codexExtension(harness.pi);
+    await harness.emit('session_start', {}, context('openai-codex', 'gpt-5.3-codex'));
+
+    expect(harness.activeTools).toEqual([
+      'read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate',
+    ]);
+  });
+
   it('activates view_image only for models with image input', async () => {
     const harness = createHarness();
     await codexExtension(harness.pi);
@@ -77,14 +87,14 @@ describe('Codex extension activation', () => {
   });
 });
 
-function createHarness() {
+function createHarness(processSupport = true) {
   const handlers = new Map<string, Handler[]>();
   const activeTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate'];
   const registerTool = vi.fn();
   const registerProvider = vi.fn();
   const unregisterProvider = vi.fn();
   const pi = {
-    runtime: unusedRuntime(),
+    runtime: unusedRuntime(processSupport),
     agentDir: '/agent',
     registerCapability: vi.fn(),
     registerTool,
@@ -118,11 +128,12 @@ function model(provider: string, id: string): Model<Api> {
   return { provider, id, api: 'openai-responses', input: ['text', 'image'] } as Model<Api>;
 }
 
-function unusedRuntime(): AgentRuntime {
+function unusedRuntime(processSupport: boolean): AgentRuntime {
   const unused = async (): Promise<never> => { throw new Error('unused'); };
   return {
     kind: 'host',
     cwd: '/workspace',
+    ...(processSupport ? { processes: { startShell: unused } } : {}),
     storage: () => ({ root: '/storage', readFile: unused, writeFile: unused, listFiles: unused, mkdir: unused, remove: unused }),
     exec: unused,
     shell: unused,

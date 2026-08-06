@@ -93,9 +93,9 @@ describe('OpenAI Codex transport policy', () => {
     )).toBe(ineligible);
     expect(resolveCodexStreamOptions(
       responseModel('openai-codex', 'gpt-5.3-codex', 'openai-completions'),
-      { transport: 'auto' },
+      { transport: 'websocket' },
       config,
-    )).toEqual({ transport: 'auto' });
+    )).toEqual({ transport: 'websocket' });
   });
 
   it('wraps each session independently without extra provider calls', () => {

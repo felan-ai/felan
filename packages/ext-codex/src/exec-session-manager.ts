@@ -40,6 +40,7 @@ const DEFAULT_EXEC_YIELD_MS = 10_000;
 const DEFAULT_WRITE_YIELD_MS = 1_000;
 const MAX_YIELD_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
+const MAX_RETAINED_OUTPUT_CHARS = 4 * 1024 * 1024;
 const COMPLETED_HISTORY_LIMIT = 32;
 
 export class ExecSessionManager {
@@ -79,9 +80,10 @@ export class ExecSessionManager {
     signal?.addEventListener('abort', abort, { once: true });
     try {
       const snapshot = await readFor(
-        process,
+        session,
         0,
         clampYield(input.yield_time_ms, DEFAULT_EXEC_YIELD_MS),
+        input.max_output_tokens,
         signal,
       );
       if (signal?.aborted) {
@@ -90,7 +92,7 @@ export class ExecSessionManager {
         throw new Error('exec_command aborted');
       }
       session.offset = snapshot.nextOffset;
-      const result = resultFromSnapshot(session, snapshot, startedAt, input.max_output_tokens);
+      const result = resultFromRead(session, snapshot, startedAt, input.max_output_tokens);
       if (!snapshot.running) await this.#complete(session, result);
       return result;
     } catch (error) {
@@ -131,9 +133,10 @@ export class ExecSessionManager {
       }
       onUpdate?.(this.#emptyResult(session, startedAt));
       const snapshot = await readFor(
-        session.process,
+        session,
         session.offset,
         clampYield(input.yield_time_ms, DEFAULT_WRITE_YIELD_MS),
+        input.max_output_tokens,
         signal,
       );
       if (signal?.aborted) {
@@ -141,7 +144,7 @@ export class ExecSessionManager {
         throw new Error('write_stdin aborted');
       }
       session.offset = snapshot.nextOffset;
-      const result = resultFromSnapshot(session, snapshot, startedAt, input.max_output_tokens);
+      const result = resultFromRead(session, snapshot, startedAt, input.max_output_tokens);
       if (!snapshot.running) await this.#complete(session, result);
       return result;
     } catch (error) {
@@ -208,82 +211,105 @@ export function formatExecResult(result: UnifiedExecResult, command?: string): s
   return sections.join('\n');
 }
 
-function resultFromSnapshot(
+interface ProcessReadResult {
+  readonly output: string;
+  readonly originalCharCount: number;
+  readonly nextOffset: number;
+  readonly running: boolean;
+  readonly exitCode?: number;
+}
+
+function resultFromRead(
   session: ExecSession,
-  snapshot: Awaited<ReturnType<AgentRuntimeProcess['read']>>,
+  read: ProcessReadResult,
   startedAt: number,
   maxOutputTokens?: number,
 ): UnifiedExecResult {
-  const decoded = session.decoder.decode(snapshot.output, { stream: snapshot.running });
-  const output = session.sanitizer.write(decoded, !snapshot.running);
-  const truncated = truncateOutput(output, maxOutputTokens);
+  const truncated = truncateOutput(read.output, maxOutputTokens, read.originalCharCount);
   return {
     chunk_id: chunkId(),
     wall_time_seconds: (Date.now() - startedAt) / 1_000,
     ...truncated,
-    ...(snapshot.running ? { session_id: session.id } : { exit_code: snapshot.exitCode ?? 1 }),
+    ...(read.running ? { session_id: session.id } : { exit_code: read.exitCode ?? 1 }),
   };
 }
 
 async function readFor(
-  process: AgentRuntimeProcess,
+  session: ExecSession,
   afterOffset: number,
   waitMs: number,
+  maxOutputTokens?: number,
   signal?: AbortSignal,
-): Promise<Awaited<ReturnType<AgentRuntimeProcess['read']>>> {
+): Promise<ProcessReadResult> {
   const deadline = Date.now() + waitMs;
-  const chunks: Uint8Array[] = [];
+  const maxChars = maxCharsForTokens(maxOutputTokens);
+  let output = '';
+  let originalCharCount = 0;
   let offset = afterOffset;
-  let snapshot = await process.read(offset);
-  let collected = false;
-  while (snapshot.running && !signal?.aborted) {
-    if (snapshot.output.length > 0) chunks.push(snapshot.output);
-    collected = true;
+  let snapshot = await session.process.read(offset);
+  while (true) {
+    const decoded = session.decoder.decode(snapshot.output, { stream: snapshot.running });
+    const sanitized = session.sanitizer.write(decoded, !snapshot.running);
+    originalCharCount += sanitized.length;
+    output = tail(`${output}${sanitized}`, maxChars);
     offset = snapshot.nextOffset;
+    if (!snapshot.running || signal?.aborted) break;
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
-    snapshot = await process.read(offset, {
+    snapshot = await session.process.read(offset, {
       waitMs: remaining,
       ...(signal === undefined ? {} : { signal }),
     });
-    collected = false;
     if (snapshot.output.length === 0 && snapshot.running) break;
   }
-  if (!collected && snapshot.output.length > 0) chunks.push(snapshot.output);
   return {
-    ...snapshot,
-    output: concatBytes(chunks),
+    output,
+    originalCharCount,
     nextOffset: snapshot.nextOffset,
+    running: snapshot.running,
+    ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }),
   };
-}
-
-function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
-  const size = chunks.reduce((total, chunk) => total + chunk.length, 0);
-  const result = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return result;
 }
 
 function truncateResult(result: UnifiedExecResult, maxOutputTokens?: number): UnifiedExecResult {
-  return { ...result, ...truncateOutput(result.output, maxOutputTokens) };
+  const originalCharCount = result.original_token_count === undefined
+    ? result.output.length
+    : result.original_token_count * 4;
+  return { ...result, ...truncateOutput(result.output, maxOutputTokens, originalCharCount) };
 }
 
-function truncateOutput(output: string, maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS): {
+function truncateOutput(
+  output: string,
+  maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
+  originalCharCount = output.length,
+): {
   output: string;
   original_token_count?: number;
 } {
-  const maxChars = Math.max(256, maxOutputTokens * 4);
+  const maxChars = maxCharsForTokens(maxOutputTokens);
+  const originalTokenCount = Math.ceil(Math.max(output.length, originalCharCount) / 4);
   if (output.length <= maxChars) {
-    return output ? { output, original_token_count: Math.ceil(output.length / 4) } : { output };
+    return output || originalCharCount > 0
+      ? { output, original_token_count: originalTokenCount }
+      : { output };
   }
   return {
-    output: output.slice(-maxChars),
-    original_token_count: Math.ceil(output.length / 4),
+    output: tail(output, maxChars),
+    original_token_count: originalTokenCount,
   };
+}
+
+function maxCharsForTokens(maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS): number {
+  const requested = Number.isFinite(maxOutputTokens)
+    ? Math.max(256, Math.floor(maxOutputTokens * 4))
+    : DEFAULT_MAX_OUTPUT_TOKENS * 4;
+  return Math.min(MAX_RETAINED_OUTPUT_CHARS, requested);
+}
+
+function tail(output: string, maxChars: number): string {
+  let start = Math.max(0, output.length - maxChars);
+  if (start > 0 && /[\uDC00-\uDFFF]/u.test(output[start]!)) start += 1;
+  return output.slice(start);
 }
 
 function clampYield(value: number | undefined, fallback: number): number {

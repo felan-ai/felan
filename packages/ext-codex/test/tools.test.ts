@@ -42,6 +42,20 @@ describe('Codex runtime-backed tools', () => {
     await sessions.shutdown();
   });
 
+  it('enforces a fixed retained-output ceiling even when a larger limit is requested', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const result = await sessions.exec({
+      cmd: `${JSON.stringify(process.execPath)} -e "process.stdout.write('x'.repeat(5 * 1024 * 1024))"`,
+      yield_time_ms: 1_000,
+      max_output_tokens: Number.MAX_SAFE_INTEGER,
+    });
+
+    expect(result.output).toHaveLength(4 * 1024 * 1024);
+    expect(result.original_token_count).toBe(5 * 1024 * 1024 / 4);
+    await sessions.shutdown();
+  });
+
   it('returns persistent sessions and polls them through write_stdin', async () => {
     const runtime = await createRuntime();
     const sessions = new ExecSessionManager(runtime);

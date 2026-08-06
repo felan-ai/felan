@@ -38,25 +38,29 @@ export async function applyPatch(
   signal?: AbortSignal,
 ): Promise<ApplyPatchResult> {
   const actions = parsePatchActions(patchText);
-  const result: ApplyPatchResult = {
-    changedFiles: [],
-    createdFiles: [],
-    deletedFiles: [],
-    movedFiles: [],
-    fuzz: 0,
-  };
-  for (const action of actions) {
-    if (signal?.aborted) throw new Error('apply_patch aborted');
-    try {
-      const touchedPaths = action.movePath ? [action.path, action.movePath] : [action.path];
-      await withMutationQueues(runtime, touchedPaths, () => applyAction(runtime, action, result));
-    } catch (error) {
-      const partial = result.changedFiles.length > 0;
-      const message = `apply_patch ${partial ? 'partially failed' : 'failed'} while patching ${action.path}: ${errorMessage(error)}`;
-      throw new ApplyPatchError(message, result, action.path);
+  const touchedPaths = actions.flatMap((action) => (
+    action.movePath ? [action.path, action.movePath] : [action.path]
+  ));
+  return withMutationQueues(runtime, touchedPaths, async () => {
+    const result: ApplyPatchResult = {
+      changedFiles: [],
+      createdFiles: [],
+      deletedFiles: [],
+      movedFiles: [],
+      fuzz: 0,
+    };
+    for (const action of actions) {
+      if (signal?.aborted) throw new Error('apply_patch aborted');
+      try {
+        await applyAction(runtime, action, result);
+      } catch (error) {
+        const partial = result.changedFiles.length > 0;
+        const message = `apply_patch ${partial ? 'partially failed' : 'failed'} while patching ${action.path}: ${errorMessage(error)}`;
+        throw new ApplyPatchError(message, result, action.path);
+      }
     }
-  }
-  return result;
+    return result;
+  });
 }
 
 async function applyAction(
