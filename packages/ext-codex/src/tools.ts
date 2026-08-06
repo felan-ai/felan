@@ -13,17 +13,17 @@ const ExecCommandParams = Type.Object({
   cmd: Type.String({ description: 'Raw command string interpreted by the current shell; do not quote the entire command' }),
   workdir: Type.Optional(Type.String({ description: 'Cwd' })),
   shell: Type.Optional(Type.String()),
-  tty: Type.Optional(Type.Boolean({ description: 'Keep the stdin pipe open for input or interruption; this is not an OS PTY' })),
-  yield_time_ms: Type.Optional(Type.Number({ description: 'Wait ms' })),
-  max_output_tokens: Type.Optional(Type.Number({ description: 'Truncate' })),
+  tty: Type.Optional(Type.Boolean({ description: 'Run the command in a real PTY for ongoing interaction' })),
+  yield_time_ms: Type.Optional(Type.Number({ description: 'Wait before yielding output. Defaults to 10000 ms and clamps to 250-30000 ms; Windows uses a 10000 ms minimum.' })),
+  max_output_tokens: Type.Optional(Type.Number({ description: 'Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.' })),
   login: Type.Optional(Type.Boolean({ description: 'Login shell' })),
 }, { additionalProperties: false });
 
 const WriteStdinParams = Type.Object({
   session_id: Type.Number({ description: 'Session ID' }),
-  chars: Type.Optional(Type.String({ description: 'Input. Empty polls' })),
-  yield_time_ms: Type.Optional(Type.Number({ description: 'Wait ms' })),
-  max_output_tokens: Type.Optional(Type.Number({ description: 'Truncate' })),
+  chars: Type.Optional(Type.String({ description: 'Bytes to write to stdin. Defaults to empty, which polls without writing.' })),
+  yield_time_ms: Type.Optional(Type.Number({ description: 'Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default.' })),
+  max_output_tokens: Type.Optional(Type.Number({ description: 'Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.' })),
 }, { additionalProperties: false });
 
 const ApplyPatchParams = Type.Object({
@@ -59,19 +59,19 @@ export function createCodexTools(
   const execCommand: ToolDefinition<typeof ExecCommandParams> = {
     name: 'exec_command',
     label: 'exec_command',
-    description: 'Run shell commands; may return session_id',
-    promptSnippet: 'Run shell commands; use tty=true for input and write_stdin to poll or interact',
+    description: 'Runs a command, returning output or a session ID for ongoing interaction.',
+    promptSnippet: 'Run commands; use tty=true for a PTY and write_stdin to poll or interact',
     parameters: ExecCommandParams,
     prepareArguments: (args: unknown) => prepareExecArguments(args) as ExecCommandParams,
     async execute(_toolCallId, params, signal, onUpdate) {
       const result = await sessions.exec(params, signal, onUpdate
         ? (partial) => onUpdate({
-          content: [{ type: 'text', text: formatExecResult(partial, params.cmd) }],
+          content: [{ type: 'text', text: formatExecResult(partial) }],
           details: partial,
         })
         : undefined);
       return {
-        content: [{ type: 'text', text: formatExecResult(result, params.cmd) }],
+        content: [{ type: 'text', text: formatExecResult(result) }],
         details: result,
       };
     },
@@ -80,19 +80,18 @@ export function createCodexTools(
   const writeStdin: ToolDefinition<typeof WriteStdinParams> = {
     name: 'write_stdin',
     label: 'write_stdin',
-    description: 'Write or poll a persistent exec_command session',
+    description: 'Writes characters to an existing exec_command session and returns recent output.',
     promptSnippet: 'Write to or poll a running exec_command session',
     parameters: WriteStdinParams,
     async execute(_toolCallId, params, signal, onUpdate) {
-      const command = sessions.getSessionCommand(params.session_id);
       const result = await sessions.write(params, signal, onUpdate
         ? (partial) => onUpdate({
-          content: [{ type: 'text', text: formatExecResult(partial, command) }],
+          content: [{ type: 'text', text: formatExecResult(partial) }],
           details: partial,
         })
         : undefined);
       return {
-        content: [{ type: 'text', text: formatExecResult(result, command) }],
+        content: [{ type: 'text', text: formatExecResult(result) }],
         details: result,
       };
     },

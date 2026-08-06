@@ -24,6 +24,7 @@ export interface AgentRuntimeProcess {
 
   read(afterOffset: number, options?: AgentRuntimeProcessReadOptions): Promise<AgentRuntimeProcessSnapshot>;
   write(content: Uint8Array): Promise<void>;
+  interrupt?(): Promise<void>;
   terminate(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -38,6 +39,13 @@ export interface AgentRuntimeShellProcessOptions {
 
 export interface AgentRuntimeProcesses {
   startShell(command: string, options?: AgentRuntimeShellProcessOptions): Promise<AgentRuntimeProcess>;
+}
+
+export interface AgentRuntimeTerminals {
+  startShell(
+    command: string,
+    options?: AgentRuntimeShellProcessOptions,
+  ): Promise<AgentRuntimeProcess>;
 }
 
 export interface AgentRuntimeStorage {
@@ -62,6 +70,7 @@ export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
   readonly processes?: AgentRuntimeProcesses;
+  readonly terminals?: AgentRuntimeTerminals;
 
   storage(scope?: AgentRuntimeStorageScope): AgentRuntimeStorage;
 

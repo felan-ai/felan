@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import type { AgentRuntime, AgentRuntimeProcess } from '@felan-ai/agent-core';
 
 export interface ExecCommandInput {
@@ -29,24 +29,31 @@ export interface UnifiedExecResult {
 
 interface ExecSession {
   readonly id: number;
-  readonly command: string;
   readonly process: AgentRuntimeProcess;
+  readonly tty: boolean;
   readonly decoder: TextDecoder;
   readonly sanitizer: TerminalSanitizer;
+  interactionTail: Promise<void>;
   offset: number;
+  pendingOutput: string;
+  pendingOriginalCharCount: number;
 }
 
 const DEFAULT_EXEC_YIELD_MS = 10_000;
-const DEFAULT_WRITE_YIELD_MS = 1_000;
+const DEFAULT_WRITE_YIELD_MS = 250;
+const MIN_YIELD_MS = 250;
+const MIN_EMPTY_POLL_YIELD_MS = 5_000;
 const MAX_YIELD_MS = 30_000;
+const MAX_EMPTY_POLL_YIELD_MS = 300_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
 const MAX_RETAINED_OUTPUT_CHARS = 4 * 1024 * 1024;
 const COMPLETED_HISTORY_LIMIT = 32;
+const SESSION_ID_MIN = 1_000;
+const SESSION_ID_MAX_EXCLUSIVE = 100_000;
 
 export class ExecSessionManager {
   readonly #sessions = new Map<number, ExecSession>();
   readonly #completed = new Map<number, UnifiedExecResult>();
-  #nextId = 1;
 
   constructor(private readonly runtime: AgentRuntime) {}
 
@@ -59,50 +66,50 @@ export class ExecSessionManager {
     if (!processes) throw new Error('exec_command requires runtime process support');
     if (signal?.aborted) throw new Error('exec_command aborted');
     const startedAt = Date.now();
-    const process = await processes.startShell(input.cmd, {
+    const processOptions = {
       ...(input.workdir === undefined ? {} : { cwd: input.workdir }),
       ...(input.shell === undefined ? {} : { shell: input.shell }),
       ...(input.login === undefined ? {} : { login: input.login }),
-      stdin: input.tty === true,
-    });
+    };
+    const process = input.tty === true
+      ? await this.#startTerminal(input.cmd, processOptions)
+      : await processes.startShell(input.cmd, processOptions);
     const session: ExecSession = {
-      id: this.#nextId++,
-      command: input.cmd,
+      id: this.#allocateSessionId(),
       process,
+      tty: input.tty === true,
       decoder: new TextDecoder(),
       sanitizer: new TerminalSanitizer(),
+      interactionTail: Promise.resolve(),
       offset: 0,
+      pendingOutput: '',
+      pendingOriginalCharCount: 0,
     };
     this.#sessions.set(session.id, session);
-    onUpdate?.(this.#emptyResult(session, startedAt));
-
-    const abort = () => void process.terminate();
-    signal?.addEventListener('abort', abort, { once: true });
     try {
-      const snapshot = await readFor(
-        session,
-        0,
-        clampYield(input.yield_time_ms, DEFAULT_EXEC_YIELD_MS),
-        input.max_output_tokens,
-        signal,
-      );
-      if (signal?.aborted) {
-        this.#sessions.delete(session.id);
-        await process.dispose();
-        throw new Error('exec_command aborted');
-      }
-      session.offset = snapshot.nextOffset;
-      const result = resultFromRead(session, snapshot, startedAt, input.max_output_tokens);
-      if (!snapshot.running) await this.#complete(session, result);
-      return result;
+      return await this.#withInteraction(session, async () => {
+        onUpdate?.(this.#emptyResult(session, startedAt));
+        const snapshot = await readFor(
+          session,
+          0,
+          execYield(input.yield_time_ms),
+          input.max_output_tokens,
+          signal,
+        );
+        session.offset = snapshot.nextOffset;
+        if (signal?.aborted) {
+          await this.#preserveAbortedRead(session, snapshot, startedAt);
+          throw new Error(`exec_command aborted; process continues as session ${session.id}`);
+        }
+        const result = this.#consumeRead(session, snapshot, startedAt, input.max_output_tokens);
+        if (!snapshot.running) await this.#complete(session, result);
+        return result;
+      });
     } catch (error) {
-      if (signal?.aborted && this.#sessions.has(session.id)) {
-        await this.#discard(session);
-        throw new Error('exec_command aborted', { cause: error });
+      if (signal?.aborted && !String(error).includes(`session ${session.id}`)) {
+        throw new Error(`exec_command aborted; process continues as session ${session.id}`, { cause: error });
       }
       throw error;
-    } finally {
-      signal?.removeEventListener('abort', abort);
     }
   }
 
@@ -112,61 +119,51 @@ export class ExecSessionManager {
     onUpdate?: (result: UnifiedExecResult) => void,
   ): Promise<UnifiedExecResult> {
     const session = this.#sessions.get(input.session_id);
-    if (signal?.aborted) {
-      if (session) await this.#discard(session);
-      throw new Error('write_stdin aborted');
-    }
     if (!session) {
-      const completed = this.#completed.get(input.session_id);
-      if (completed && !(input.chars ?? '')) return truncateResult(completed, input.max_output_tokens);
-      if (completed) throw new Error(`Process id ${input.session_id} already exited; cannot write stdin`);
-      throw new Error(`Unknown process id ${input.session_id}`);
+      return this.#completedResult(input);
     }
     const startedAt = Date.now();
-    const abort = () => void session.process.terminate();
-    signal?.addEventListener('abort', abort, { once: true });
     try {
-      if (input.chars) await session.process.write(new TextEncoder().encode(input.chars));
-      if (signal?.aborted) {
-        await this.#discard(session);
-        throw new Error('write_stdin aborted');
-      }
-      onUpdate?.(this.#emptyResult(session, startedAt));
-      const snapshot = await readFor(
-        session,
-        session.offset,
-        clampYield(input.yield_time_ms, DEFAULT_WRITE_YIELD_MS),
-        input.max_output_tokens,
-        signal,
-      );
-      if (signal?.aborted) {
-        await this.#discard(session);
-        throw new Error('write_stdin aborted');
-      }
-      session.offset = snapshot.nextOffset;
-      const result = resultFromRead(session, snapshot, startedAt, input.max_output_tokens);
-      if (!snapshot.running) await this.#complete(session, result);
-      return result;
+      return await this.#withInteraction(session, async () => {
+        if (this.#sessions.get(input.session_id) !== session) return this.#completedResult(input);
+        const chars = input.chars ?? '';
+        if (chars) {
+          this.#validateInput(session, chars);
+          await this.#writeInput(session, chars);
+        }
+        if (signal?.aborted) {
+          throw new Error(`write_stdin aborted; session ${session.id} remains available`);
+        }
+        onUpdate?.(this.#emptyResult(session, startedAt));
+        const snapshot = await readFor(
+          session,
+          session.offset,
+          writeYield(chars, input.yield_time_ms),
+          input.max_output_tokens,
+          signal,
+        );
+        session.offset = snapshot.nextOffset;
+        if (signal?.aborted) {
+          await this.#preserveAbortedRead(session, snapshot, startedAt);
+          throw new Error(`write_stdin aborted; session ${session.id} remains available`);
+        }
+        const result = this.#consumeRead(session, snapshot, startedAt, input.max_output_tokens);
+        if (!snapshot.running) await this.#complete(session, result);
+        return result;
+      });
     } catch (error) {
-      if (signal?.aborted && this.#sessions.has(session.id)) {
-        await this.#discard(session);
-        throw new Error('write_stdin aborted', { cause: error });
+      if (signal?.aborted && !String(error).includes(`session ${session.id}`)) {
+        throw new Error(`write_stdin aborted; session ${session.id} remains available`, { cause: error });
       }
       throw error;
-    } finally {
-      signal?.removeEventListener('abort', abort);
     }
-  }
-
-  getSessionCommand(sessionId: number): string | undefined {
-    return this.#sessions.get(sessionId)?.command;
   }
 
   async shutdown(): Promise<void> {
     const sessions = [...this.#sessions.values()];
     this.#sessions.clear();
     this.#completed.clear();
-    await Promise.all(sessions.map((session) => session.process.dispose()));
+    await Promise.allSettled(sessions.map((session) => session.process.dispose()));
   }
 
   #emptyResult(session: ExecSession, startedAt: number): UnifiedExecResult {
@@ -179,7 +176,7 @@ export class ExecSessionManager {
   }
 
   async #complete(session: ExecSession, result: UnifiedExecResult): Promise<void> {
-    this.#sessions.delete(session.id);
+    if (this.#sessions.get(session.id) === session) this.#sessions.delete(session.id);
     this.#completed.set(session.id, result);
     while (this.#completed.size > COMPLETED_HISTORY_LIMIT) {
       const oldest = this.#completed.keys().next().value as number | undefined;
@@ -189,20 +186,110 @@ export class ExecSessionManager {
     await session.process.dispose();
   }
 
-  async #discard(session: ExecSession): Promise<void> {
-    this.#sessions.delete(session.id);
-    await session.process.dispose();
+  async #startTerminal(
+    command: string,
+    options: Parameters<NonNullable<AgentRuntime['processes']>['startShell']>[1],
+  ): Promise<AgentRuntimeProcess> {
+    if (!this.runtime.terminals) {
+      throw new Error('exec_command with tty=true requires runtime terminal support');
+    }
+    return this.runtime.terminals.startShell(command, options);
   }
+
+  async #writeInput(session: ExecSession, chars: string): Promise<void> {
+    if (session.tty) {
+      await session.process.write(new TextEncoder().encode(chars));
+      await delay(100);
+      return;
+    }
+    await session.process.interrupt!();
+  }
+
+  #validateInput(session: ExecSession, chars: string): void {
+    if (session.tty) return;
+    if (chars !== '\u0003') {
+      throw new Error('stdin is closed for this session; rerun exec_command with tty=true to keep stdin open');
+    }
+    if (!session.process.interrupt) throw new Error('Runtime process interruption is unavailable');
+  }
+
+  #completedResult(input: WriteStdinInput): UnifiedExecResult {
+    const completed = this.#completed.get(input.session_id);
+    if (completed && !(input.chars ?? '')) return truncateResult(completed, input.max_output_tokens);
+    if (completed) throw new Error(`Process id ${input.session_id} already exited; cannot write stdin`);
+    throw new Error(`Unknown process id ${input.session_id}`);
+  }
+
+  #consumeRead(
+    session: ExecSession,
+    read: ProcessReadResult,
+    startedAt: number,
+    maxOutputTokens?: number,
+  ): UnifiedExecResult {
+    const output = `${session.pendingOutput}${read.output}`;
+    const originalCharCount = session.pendingOriginalCharCount + read.originalCharCount;
+    session.pendingOutput = '';
+    session.pendingOriginalCharCount = 0;
+    return resultFromRead(
+      session,
+      { ...read, output, originalCharCount },
+      startedAt,
+      maxOutputTokens,
+    );
+  }
+
+  async #preserveAbortedRead(
+    session: ExecSession,
+    read: ProcessReadResult,
+    startedAt: number,
+  ): Promise<void> {
+    const combined = `${session.pendingOutput}${read.output}`;
+    session.pendingOutput = tail(combined, MAX_RETAINED_OUTPUT_CHARS);
+    session.pendingOriginalCharCount += read.originalCharCount;
+    if (!read.running) {
+      const result = this.#consumeRead(
+        session,
+        { ...read, output: '', originalCharCount: 0 },
+        startedAt,
+        MAX_RETAINED_OUTPUT_CHARS / 4,
+      );
+      await this.#complete(session, result);
+    }
+  }
+
+  async #withInteraction<T>(
+    session: ExecSession,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = session.interactionTail;
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+    session.interactionTail = previous.then(() => gate);
+    try {
+      await previous;
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  #allocateSessionId(): number {
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      const id = randomInt(SESSION_ID_MIN, SESSION_ID_MAX_EXCLUSIVE);
+      if (!this.#sessions.has(id) && !this.#completed.has(id)) return id;
+    }
+    throw new Error('Unable to allocate a unified exec session id');
+  }
+
 }
 
-export function formatExecResult(result: UnifiedExecResult, command?: string): string {
+export function formatExecResult(result: UnifiedExecResult): string {
   const sections: string[] = [];
-  if (command) sections.push(`Command: ${command}`);
   sections.push(`Chunk ID: ${result.chunk_id}`);
   sections.push(`Wall time: ${result.wall_time_seconds.toFixed(4)} seconds`);
   if (result.exit_code !== undefined) sections.push(`Process exited with code ${result.exit_code}`);
   if (result.session_id !== undefined) {
-    sections.push(`Session ${result.session_id} still running. Resume near completion with write_stdin and an appropriate yield_time_ms`);
+    sections.push(`Process running with session ID ${result.session_id}`);
   }
   if (result.original_token_count !== undefined) {
     sections.push(`Original token count: ${result.original_token_count}`);
@@ -312,12 +399,29 @@ function tail(output: string, maxChars: number): string {
   return output.slice(start);
 }
 
-function clampYield(value: number | undefined, fallback: number): number {
-  return Math.min(MAX_YIELD_MS, Math.max(250, value ?? fallback));
+function execYield(value: number | undefined): number {
+  const minimum = process.platform === 'win32' ? DEFAULT_EXEC_YIELD_MS : MIN_YIELD_MS;
+  return clampYield(value ?? DEFAULT_EXEC_YIELD_MS, minimum, MAX_YIELD_MS);
+}
+
+function writeYield(chars: string, value: number | undefined): number {
+  const requested = value ?? DEFAULT_WRITE_YIELD_MS;
+  return chars
+    ? clampYield(requested, MIN_YIELD_MS, MAX_YIELD_MS)
+    : clampYield(requested, MIN_EMPTY_POLL_YIELD_MS, MAX_EMPTY_POLL_YIELD_MS);
+}
+
+function clampYield(value: number, minimum: number, maximum: number): number {
+  if (!Number.isFinite(value)) return minimum;
+  return Math.min(maximum, Math.max(minimum, Math.floor(value)));
 }
 
 function chunkId(): string {
   return randomBytes(3).toString('hex');
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 type TerminalState =

@@ -214,6 +214,83 @@ describe('HostAgentRuntime', () => {
     await expect(waitForProcessExit(pid)).resolves.toBeUndefined();
   });
 
+  it('provides a real PTY with terminal input', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const script = [
+      "process.stdout.write('tty:' + process.stdin.isTTY + ':' + process.stdout.isTTY + '\\n')",
+      "process.stdin.once('data', value => { process.stdout.write('got:' + value); process.exit(0) })",
+    ].join(';');
+    const terminal = await runtime.terminals!.startShell(
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+    );
+    const ready = await terminal.read(0, { waitMs: 1_000 });
+    expect(new TextDecoder().decode(ready.output)).toContain('tty:true:true');
+    await terminal.write(new TextEncoder().encode('hello\n'));
+    const chunks: Uint8Array[] = [];
+    let offset = ready.nextOffset;
+    let completed = await terminal.read(offset, { waitMs: 1_000 });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      chunks.push(completed.output);
+      offset = completed.nextOffset;
+      if (!completed.running) break;
+      completed = await terminal.read(offset, { waitMs: 1_000 });
+    }
+    const output = new TextDecoder().decode(Buffer.concat(chunks));
+
+    expect(output).toContain('got:hello');
+    expect(completed).toMatchObject({ running: false, exitCode: 0 });
+    await terminal.dispose();
+  });
+
+  it.skipIf(process.platform === 'win32')('interrupts a pipe-backed process group with SIGINT', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const script = [
+      "process.on('SIGINT', () => { console.log('interrupted'); process.exit(0) })",
+      "console.log('ready')",
+      'setInterval(() => {}, 1000)',
+    ].join(';');
+    const processHandle = await runtime.processes.startShell(
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+    );
+    const ready = await processHandle.read(0, { waitMs: 1_000 });
+    expect(new TextDecoder().decode(ready.output)).toContain('ready');
+
+    await processHandle.interrupt!();
+    const interrupted = await processHandle.read(ready.nextOffset, { waitMs: 1_000 });
+    const completed = interrupted.running
+      ? await processHandle.read(interrupted.nextOffset, { waitMs: 1_000 })
+      : interrupted;
+
+    expect(new TextDecoder().decode(interrupted.output)).toContain('interrupted');
+    expect(completed).toMatchObject({ running: false, exitCode: 0 });
+    await processHandle.dispose();
+  });
+
+  it.skipIf(process.platform === 'win32')('reports PTY Ctrl-C as exit code 130', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const terminal = await runtime.terminals!.startShell(
+      `${JSON.stringify(process.execPath)} -e "console.log('ready'); setInterval(() => {}, 1000)"`,
+    );
+    const ready = await terminal.read(0, { waitMs: 1_000 });
+    expect(new TextDecoder().decode(ready.output)).toContain('ready');
+
+    await terminal.write(new Uint8Array([3]));
+    let completed = await terminal.read(ready.nextOffset, { waitMs: 1_000 });
+    for (let attempt = 0; completed.running && attempt < 5; attempt += 1) {
+      completed = await terminal.read(completed.nextOffset, { waitMs: 1_000 });
+    }
+
+    expect(completed).toMatchObject({ running: false, exitCode: 130 });
+    await terminal.dispose();
+  });
+
+  it('enforces cwd containment for terminal processes', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+
+    await expect(runtime.terminals!.startShell('pwd', { cwd: '..' }))
+      .rejects.toThrow('escapes runtime root');
+  });
+
   it.skipIf(process.platform === 'win32')('kills the spawned process group on cancellation', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const controller = new AbortController();

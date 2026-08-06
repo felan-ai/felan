@@ -65,6 +65,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.83.0
         version: 0.83.0(ws@8.21.1)(zod@4.4.3)
+      '@lydell/node-pty':
+        specifier: 1.2.0-beta.14
+        version: 1.2.0-beta.14
 
   packages/ext-background-bash:
     dependencies:
@@ -318,6 +321,39 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+
+  '@lydell/node-pty-darwin-arm64@1.2.0-beta.14':
+    resolution: {integrity: sha512-C0Zxnl8rTrW/ngu1CKb1NoIiBxoCDL+9SpFSkOaV5MytE7pFN/qTVDFtuIOruE1SL6v17A71jI9bpUIBHn6jJA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@lydell/node-pty-darwin-x64@1.2.0-beta.14':
+    resolution: {integrity: sha512-P77aRx2TzjmlX6D3XUjTEi4rxvjkJA8VIBwUwe23pphg5DKdc9/g5Y+IsN3KX3lmNmKFVTBIbKcNkl+n8Cgwiw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@lydell/node-pty-linux-arm64@1.2.0-beta.14':
+    resolution: {integrity: sha512-xZclf3acgWmHi7VMZeVBUJRyJQf78pjCkeBf3ofT/5Xvn5QkRICCZJXtcg1f2lJoCtdF1OWHkeddmJgVDOSv6Q==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@lydell/node-pty-linux-x64@1.2.0-beta.14':
+    resolution: {integrity: sha512-ijTyPgkECpLkrBqs/uuasaXgjv/lQf+5am19ywF6SQ6PsreHZgT36h2j5cdFTN551KHFEDMl6fCgMPDxEEyqxg==}
+    cpu: [x64]
+    os: [linux]
+
+  '@lydell/node-pty-win32-arm64@1.2.0-beta.14':
+    resolution: {integrity: sha512-yw1R4qPtspu0w2p4YhoYuznfQQsdHrVtQnKVDKYTjyuqzF720JZyIdfTRQ0Fl8ChcNesLIrq1kIBfkDPy7CXgg==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@lydell/node-pty-win32-x64@1.2.0-beta.14':
+    resolution: {integrity: sha512-aenTbinERVvWgCQkFwqj9SOR+t/1ZVJ8RqMAk6nB9Lh7oiuRCDzVfs0fNhHRw7JtURZ4jG4i51jou0uXg2yrIw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@lydell/node-pty@1.2.0-beta.14':
+    resolution: {integrity: sha512-RjQis46eBwL9xyDvfXqVsNS2JZ5zQQK/QAYsNE5j8sYPTf4/OpG5Ghm92WGn+w4Rsk3LTpj2adpaZM9Cb8rzDA==}
 
   '@mariozechner/clipboard-darwin-arm64@0.3.9':
     resolution: {integrity: sha512-BfgV7vCEWZwJwZJw03r6bP5+tf0iI/ANuQYCxi9RNn7FrWB3yzGuMKCrNLRl6V761vXRdL8+OqZ0wd4TqlsNOQ==}
@@ -1912,6 +1948,33 @@ snapshots:
       - utf-8-validate
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
+
+  '@lydell/node-pty-darwin-arm64@1.2.0-beta.14':
+    optional: true
+
+  '@lydell/node-pty-darwin-x64@1.2.0-beta.14':
+    optional: true
+
+  '@lydell/node-pty-linux-arm64@1.2.0-beta.14':
+    optional: true
+
+  '@lydell/node-pty-linux-x64@1.2.0-beta.14':
+    optional: true
+
+  '@lydell/node-pty-win32-arm64@1.2.0-beta.14':
+    optional: true
+
+  '@lydell/node-pty-win32-x64@1.2.0-beta.14':
+    optional: true
+
+  '@lydell/node-pty@1.2.0-beta.14':
+    optionalDependencies:
+      '@lydell/node-pty-darwin-arm64': 1.2.0-beta.14
+      '@lydell/node-pty-darwin-x64': 1.2.0-beta.14
+      '@lydell/node-pty-linux-arm64': 1.2.0-beta.14
+      '@lydell/node-pty-linux-x64': 1.2.0-beta.14
+      '@lydell/node-pty-win32-arm64': 1.2.0-beta.14
+      '@lydell/node-pty-win32-x64': 1.2.0-beta.14
 
   '@mariozechner/clipboard-darwin-arm64@0.3.9':
     optional: true

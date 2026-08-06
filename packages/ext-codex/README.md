@@ -34,13 +34,23 @@ image reads are limited to 20 MiB, then Pi decodes and resizes supported images
 to at most 2000×2000 with a base64 payload below 4 MiB. Malformed,
 unsupported, and unresizable images are rejected.
 
-`tty: true` keeps a stdin pipe open for `write_stdin`; it does not allocate an
-operating-system PTY or emulate terminal behavior. Process output is decoded
-incrementally and terminal control sequences are removed before tool text is
-returned to the model.
+`tty: true` allocates a real operating-system PTY through the runtime terminal
+capability. `write_stdin` sends terminal input; for non-TTY sessions, the exact
+Ctrl-C byte interrupts the process group and other input is rejected. Process
+output is decoded incrementally and terminal control sequences are removed
+before tool text is returned to the model.
 
-The extension excludes web access, image generation, Code Mode/Responses
-Lite, prompt replacement, compaction, voice, and UI widgets.
+Initial commands wait 250-30000 ms and default to 10000 ms; Windows uses a
+10000 ms minimum. Non-empty `write_stdin` calls wait 250-30000 ms and default
+to 250 ms; empty polls wait 5000-300000 ms and default to 5000 ms.
+Interactions targeting one session are serialized. Cancelling a tool wait
+leaves its process available for a later `write_stdin` call, while session
+shutdown terminates all remaining processes. Sessions are in-memory and do
+not survive application restart.
+
+The extension excludes restart-durable jobs, web access, image generation,
+Code Mode/Responses Lite, prompt replacement, compaction, voice, and UI
+widgets.
 
 ## Development
 

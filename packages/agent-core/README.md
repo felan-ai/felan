@@ -35,10 +35,11 @@ working directories remain confined to `cwd`.
 Host runtimes expose optional persistent process operations for extensions that
 need incremental output and stdin. `startShell()` keeps process ownership in
 the runtime adapter and returns a bounded polling handle with write, terminate,
-and dispose operations. Host stdin support is a pipe, not an operating-system
-PTY. The optional `readAgentFile()` boundary reads only
-inside the configured `agentDir`; ordinary runtime file operations retain their
-workspace and session-storage boundaries.
+interrupt, and dispose operations. The separate optional `terminals` capability
+allocates a real operating-system PTY with terminal input; adapters without PTY
+support omit that capability. The optional `readAgentFile()`
+boundary reads only inside the configured `agentDir`; ordinary runtime file
+operations retain their workspace and session-storage boundaries.
 
 Host mode runs with the current user's filesystem and process permissions. It
 provides workspace path containment, but no OS isolation or sandbox boundary.

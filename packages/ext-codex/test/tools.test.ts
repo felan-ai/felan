@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import {
   HostAgentRuntime,
   type AgentRuntime,
+  type AgentRuntimeProcess,
+  type AgentRuntimeProcessReadOptions,
+  type AgentRuntimeProcessSnapshot,
   type Api,
   type ExtensionContext,
   type Model,
@@ -14,6 +17,8 @@ import {
   ExecSessionManager,
   MAX_VIEW_IMAGE_INPUT_BYTES,
   createCodexTools,
+  formatExecResult,
+  type UnifiedExecResult,
 } from '../src/index.js';
 import { ApplyPatchError, applyPatch } from '../src/patch.js';
 
@@ -77,13 +82,39 @@ describe('Codex runtime-backed tools', () => {
     await sessions.shutdown();
   });
 
+  it('serializes write_stdin calls started from the initial session update', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const script = [
+      "console.log('first')",
+      "setTimeout(() => console.log('second'), 350)",
+    ].join(';');
+    let queuedPoll: Promise<UnifiedExecResult> | undefined;
+    const started = await sessions.exec({
+      cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      yield_time_ms: 250,
+    }, undefined, (update) => {
+      queuedPoll = sessions.write({ session_id: update.session_id!, yield_time_ms: 1_000 });
+    });
+    const completed = await queuedPoll!;
+
+    expect(started.output).toContain('first');
+    expect(started.output).not.toContain('second');
+    expect(completed.output).toContain('second');
+    expect(completed.output).not.toContain('first');
+    await sessions.shutdown();
+  });
+
   it('writes input to tty-enabled sessions', async () => {
     const runtime = await createRuntime();
     const sessions = new ExecSessionManager(runtime);
     const tools = createCodexTools(runtime, sessions);
     const exec = tool(tools, 'exec_command');
     const writeStdin = tool(tools, 'write_stdin');
-    const script = "process.stdin.once('data', value => { process.stdout.write('got:' + value); process.exit(0) })";
+    const script = [
+      "process.stdout.write('tty:' + process.stdin.isTTY + ':' + process.stdout.isTTY + '\\n')",
+      "process.stdin.once('data', value => { process.stdout.write('got:' + value); process.exit(0) })",
+    ].join(';');
     const started = await exec.execute(
       'exec',
       { cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`, tty: true, yield_time_ms: 250 },
@@ -92,11 +123,49 @@ describe('Codex runtime-backed tools', () => {
       imageContext(),
     ) as ToolResult;
     const sessionId = (started.details as { session_id: number }).session_id;
+    expect((started.details as { output: string }).output).toContain('tty:true:true');
 
     const completed = await writeStdin.execute(
       'input', { session_id: sessionId, chars: 'hello\n', yield_time_ms: 1000 }, undefined, undefined, imageContext(),
     ) as ToolResult;
     expect(completed.details).toMatchObject({ exit_code: 0, output: expect.stringContaining('got:hello') });
+    await sessions.shutdown();
+  });
+
+  it('rejects tty mode when the runtime has no terminal capability', async () => {
+    const host = await createRuntime();
+    const runtime = runtimeWithoutTerminals(host);
+    const sessions = new ExecSessionManager(runtime);
+
+    await expect(sessions.exec({ cmd: 'echo tty', tty: true, yield_time_ms: 250 }))
+      .rejects.toThrow('requires runtime terminal support');
+    await expect(sessions.exec({ cmd: 'echo pipe', yield_time_ms: 1_000 }))
+      .resolves.toMatchObject({ exit_code: 0, output: expect.stringContaining('pipe') });
+    await sessions.shutdown();
+  });
+
+  it.skipIf(process.platform === 'win32')('uses Ctrl-C to interrupt non-tty process groups', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const script = [
+      "process.on('SIGINT', () => { console.log('interrupted'); process.exit(0) })",
+      "console.log('ready')",
+      'setInterval(() => {}, 1000)',
+    ].join(';');
+    const started = await sessions.exec({
+      cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      yield_time_ms: 250,
+    });
+
+    await expect(sessions.write({ session_id: started.session_id!, chars: 'hello' }))
+      .rejects.toThrow('stdin is closed for this session');
+    const completed = await sessions.write({
+      session_id: started.session_id!,
+      chars: '\u0003',
+      yield_time_ms: 1_000,
+    });
+
+    expect(completed).toMatchObject({ exit_code: 0, output: expect.stringContaining('interrupted') });
     await sessions.shutdown();
   });
 
@@ -130,6 +199,62 @@ describe('Codex runtime-backed tools', () => {
     const completed = await sessions.write({ session_id: started.session_id!, yield_time_ms: 1_000 });
     expect(completed.output).toBe('reddone\n');
     await sessions.shutdown();
+  });
+
+  it('uses Codex wait bounds and serializes interactions per session', async () => {
+    const fake = fakeRuntime(20);
+    const sessions = new ExecSessionManager(fake.runtime);
+    const started = await sessions.exec({ cmd: 'interactive', tty: true, yield_time_ms: 1 });
+    const terminal = fake.terminals[0]!;
+    expect(terminal.waits.at(-1)).toBeGreaterThanOrEqual(240);
+    expect(terminal.waits.at(-1)).toBeLessThanOrEqual(250);
+
+    await sessions.write({ session_id: started.session_id! });
+    expect(terminal.waits.at(-1)).toBeGreaterThanOrEqual(4_990);
+    expect(terminal.waits.at(-1)).toBeLessThanOrEqual(5_000);
+    await sessions.write({ session_id: started.session_id!, yield_time_ms: 999_999 });
+    expect(terminal.waits.at(-1)).toBeGreaterThanOrEqual(299_990);
+    expect(terminal.waits.at(-1)).toBeLessThanOrEqual(300_000);
+
+    await Promise.all([
+      sessions.write({ session_id: started.session_id!, chars: 'first' }),
+      sessions.write({ session_id: started.session_id!, chars: 'second' }),
+    ]);
+    expect(terminal.waits.filter((wait) => wait > 0).slice(-2)
+      .every((wait) => wait >= 240 && wait <= 250)).toBe(true);
+    expect(terminal.maxConcurrentWrites).toBe(1);
+    await sessions.shutdown();
+  });
+
+  it('uses bounded random session ids', async () => {
+    const fake = fakeRuntime();
+    const sessions = new ExecSessionManager(fake.runtime);
+    const sessionIds: number[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const result = await sessions.exec({ cmd: `process-${index}`, yield_time_ms: 250 });
+      sessionIds.push(result.session_id!);
+    }
+
+    expect(new Set(sessionIds).size).toBe(3);
+    expect(sessionIds.every((id) => id >= 1_000 && id < 100_000)).toBe(true);
+    await sessions.shutdown();
+  });
+
+  it('formats unified exec results with the Codex-trained headings', () => {
+    expect(formatExecResult({
+      chunk_id: 'abc123',
+      wall_time_seconds: 1.25,
+      output: 'ready',
+      session_id: 4321,
+      original_token_count: 2,
+    })).toBe([
+      'Chunk ID: abc123',
+      'Wall time: 1.2500 seconds',
+      'Process running with session ID 4321',
+      'Original token count: 2',
+      'Output:',
+      'ready',
+    ].join('\n'));
   });
 
   it('applies add, update, and delete sections through AgentRuntime', async () => {
@@ -262,30 +387,33 @@ describe('Codex runtime-backed tools', () => {
       .rejects.toThrow('Unknown process id');
   });
 
-  it('aborts and terminates an executing command', async () => {
+  it('preserves an executing command when its initial wait is aborted', async () => {
     const runtime = await createRuntime();
     const sessions = new ExecSessionManager(runtime);
-    const exec = tool(createCodexTools(runtime, sessions), 'exec_command');
     const controller = new AbortController();
-    const execution = exec.execute(
-      'exec',
-      { cmd: `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`, yield_time_ms: 30_000 },
+    let sessionId: number | undefined;
+    const execution = sessions.exec(
+      {
+        cmd: `${JSON.stringify(process.execPath)} -e "setTimeout(() => console.log('finished'), 350)"`,
+        yield_time_ms: 30_000,
+      },
       controller.signal,
-      undefined,
-      imageContext(),
+      (update) => { sessionId = update.session_id; },
     );
     setTimeout(() => controller.abort(), 50);
 
-    await expect(execution).rejects.toThrow('exec_command aborted');
+    await expect(execution).rejects.toThrow('process continues as session');
+    expect(sessionId).toBeTypeOf('number');
+    const completed = await sessions.write({ session_id: sessionId!, yield_time_ms: 1_000 });
+    expect(completed).toMatchObject({ exit_code: 0, output: expect.stringContaining('finished') });
     await sessions.shutdown();
   });
 
-  it('disposes an active session when write_stdin is aborted', async () => {
+  it('preserves an active session when write_stdin is aborted', async () => {
     const runtime = await createRuntime();
     const sessions = new ExecSessionManager(runtime);
     const started = await sessions.exec({
-      cmd: `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`,
-      tty: true,
+      cmd: `${JSON.stringify(process.execPath)} -e "setTimeout(() => console.log('finished'), 600)"`,
       yield_time_ms: 250,
     });
     const controller = new AbortController();
@@ -295,9 +423,9 @@ describe('Codex runtime-backed tools', () => {
     );
     setTimeout(() => controller.abort(), 50);
 
-    await expect(writing).rejects.toThrow('write_stdin aborted');
-    await expect(sessions.write({ session_id: started.session_id! }))
-      .rejects.toThrow('Unknown process id');
+    await expect(writing).rejects.toThrow('session');
+    const completed = await sessions.write({ session_id: started.session_id!, yield_time_ms: 1_000 });
+    expect(completed).toMatchObject({ exit_code: 0, output: expect.stringContaining('finished') });
     await sessions.shutdown();
   });
 });
@@ -318,6 +446,97 @@ function tool(tools: ToolDefinition<any, any, any>[], name: string): ToolDefinit
   return found;
 }
 
+class FakeProcess implements AgentRuntimeProcess {
+  readonly pid: number;
+  readonly waits: number[] = [];
+  readonly writes: string[] = [];
+  disposed = false;
+  maxConcurrentWrites = 0;
+  #activeWrites = 0;
+  #running = true;
+
+  constructor(pid: number, private readonly writeDelayMs: number) {
+    this.pid = pid;
+  }
+
+  async read(
+    afterOffset: number,
+    options?: AgentRuntimeProcessReadOptions,
+  ): Promise<AgentRuntimeProcessSnapshot> {
+    this.waits.push(options?.waitMs ?? 0);
+    return { output: new Uint8Array(), nextOffset: afterOffset, running: this.#running };
+  }
+
+  async write(content: Uint8Array): Promise<void> {
+    this.#activeWrites += 1;
+    this.maxConcurrentWrites = Math.max(this.maxConcurrentWrites, this.#activeWrites);
+    try {
+      this.writes.push(new TextDecoder().decode(content));
+      if (this.writeDelayMs > 0) await testDelay(this.writeDelayMs);
+    } finally {
+      this.#activeWrites -= 1;
+    }
+  }
+
+  async interrupt(): Promise<void> {}
+
+  async terminate(): Promise<void> {
+    this.#running = false;
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    await this.terminate();
+  }
+}
+
+class FakeTerminal extends FakeProcess {}
+
+function fakeRuntime(writeDelayMs = 0): {
+  runtime: AgentRuntime;
+  processes: FakeProcess[];
+  terminals: FakeTerminal[];
+} {
+  const processes: FakeProcess[] = [];
+  const terminals: FakeTerminal[] = [];
+  let nextPid = 10_000;
+  const unavailable = async (): Promise<never> => { throw new Error('unavailable'); };
+  const runtime: AgentRuntime = {
+    kind: 'host',
+    cwd: '/workspace',
+    processes: {
+      async startShell() {
+        const handle = new FakeProcess(nextPid++, writeDelayMs);
+        processes.push(handle);
+        return handle;
+      },
+    },
+    terminals: {
+      async startShell() {
+        const handle = new FakeTerminal(nextPid++, writeDelayMs);
+        terminals.push(handle);
+        return handle;
+      },
+    },
+    storage: () => ({
+      root: '/storage',
+      readFile: unavailable,
+      writeFile: unavailable,
+      listFiles: unavailable,
+      mkdir: unavailable,
+      remove: unavailable,
+    }),
+    exec: unavailable,
+    shell: unavailable,
+    readFile: unavailable,
+    writeFile: unavailable,
+    listFiles: unavailable,
+    mkdir: unavailable,
+    remove: unavailable,
+  };
+  return { runtime, processes, terminals };
+}
+
 async function createRuntime(): Promise<HostAgentRuntime> {
   const root = await mkdtemp(join(tmpdir(), 'felan-codex-tools-'));
   temporaryPaths.push(root);
@@ -328,6 +547,23 @@ async function createRuntime(): Promise<HostAgentRuntime> {
   await Promise.all([cwd, sessionStorageRoot, agentStorageRoot, agentDir]
     .map((path) => mkdir(path, { recursive: true })));
   return new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot, agentDir });
+}
+
+function runtimeWithoutTerminals(host: HostAgentRuntime): AgentRuntime {
+  return {
+    kind: host.kind,
+    cwd: host.cwd,
+    processes: host.processes,
+    storage: (scope) => host.storage(scope),
+    exec: (command, args, options) => host.exec(command, args, options),
+    shell: (command, options) => host.shell(command, options),
+    readFile: (path, options) => host.readFile(path, options),
+    writeFile: (path, content, options) => host.writeFile(path, content, options),
+    listFiles: (path, options) => host.listFiles(path, options),
+    mkdir: (path, options) => host.mkdir(path, options),
+    remove: (path, options) => host.remove(path, options),
+    readAgentFile: (path) => host.readAgentFile(path),
+  };
 }
 
 function imageContext(): ExtensionContext {
@@ -410,4 +646,8 @@ function crc32(data: Uint8Array): number {
     }
   }
   return (crc ^ 0xffffffff) >>> 0;
+}
+
+function testDelay(milliseconds: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }

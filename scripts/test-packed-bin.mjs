@@ -164,6 +164,37 @@ try {
       if (JSON.stringify(webAccessCapabilities) !== JSON.stringify(['web-access'])) {
         throw new Error('Packed web access extension capability is unavailable');
       }
+      const core = await import('@felan-ai/agent-core');
+      const fs = await import('node:fs/promises');
+      const ptySessionStorage = process.env.PACKED_SMOKE_WORKSPACE + '/.pty-session';
+      const ptyAgentStorage = process.env.PACKED_SMOKE_WORKSPACE + '/.pty-agent';
+      await Promise.all([
+        fs.mkdir(ptySessionStorage, { recursive: true }),
+        fs.mkdir(ptyAgentStorage, { recursive: true }),
+      ]);
+      const ptyRuntime = new core.HostAgentRuntime(process.env.PACKED_SMOKE_WORKSPACE, {
+        sessionStorageRoot: ptySessionStorage,
+        agentStorageRoot: ptyAgentStorage,
+      });
+      if (!ptyRuntime.terminals) throw new Error('Packed HostAgentRuntime has no PTY capability');
+      const ptyScript = "process.stdout.write('packed-pty:' + process.stdout.isTTY)";
+      const terminal = await ptyRuntime.terminals.startShell(
+        JSON.stringify(process.execPath) + ' -e ' + JSON.stringify(ptyScript),
+        { login: false },
+      );
+      let terminalOffset = 0;
+      let terminalOutput = '';
+      let terminalSnapshot;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        terminalSnapshot = await terminal.read(terminalOffset, { waitMs: 1000 });
+        terminalOffset = terminalSnapshot.nextOffset;
+        terminalOutput += new TextDecoder().decode(terminalSnapshot.output);
+        if (!terminalSnapshot.running) break;
+      }
+      await terminal.dispose();
+      if (!terminalOutput.includes('packed-pty:true') || terminalSnapshot?.running !== false) {
+        throw new Error('Packed HostAgentRuntime PTY smoke failed: ' + terminalOutput);
+      }
       const runtime = await app.createLocalFelanRuntime({
         cwd: process.env.PACKED_SMOKE_WORKSPACE,
         agentDir: process.env.FELAN_AGENT_DIR,

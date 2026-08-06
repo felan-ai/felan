@@ -10,6 +10,7 @@ export type {
   AgentRuntimeShellProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
+  AgentRuntimeTerminals,
   ExecOptions,
   ExecResult,
 } from './runtime.js';

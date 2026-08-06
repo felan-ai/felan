@@ -10,7 +10,9 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
+import { constants as osConstants } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import type { IDisposable, IPty } from '@lydell/node-pty';
 import type {
   AgentRuntime,
   AgentRuntimeFileReadOptions,
@@ -22,6 +24,7 @@ import type {
   AgentRuntimeShellProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
+  AgentRuntimeTerminals,
   ExecOptions,
   ExecResult,
 } from './runtime.js';
@@ -44,6 +47,7 @@ export class HostAgentRuntime implements AgentRuntime {
   readonly #agentStorageRoot: string;
   readonly #agentDir: string | undefined;
   readonly processes: AgentRuntimeProcesses;
+  readonly terminals: AgentRuntimeTerminals;
 
   constructor(cwd: string, options: HostAgentRuntimeOptions) {
     if (cwd.includes('\0')) {
@@ -57,6 +61,9 @@ export class HostAgentRuntime implements AgentRuntime {
     this.#agentStorage = createHostStorage(this.#agentStorageRoot);
     this.processes = {
       startShell: async (command, processOptions) => this.#startShellProcess(command, processOptions),
+    };
+    this.terminals = {
+      startShell: async (command, terminalOptions) => this.#startShellTerminal(command, terminalOptions),
     };
   }
 
@@ -166,6 +173,26 @@ export class HostAgentRuntime implements AgentRuntime {
     return new HostRuntimeProcess(child);
   }
 
+  async #startShellTerminal(
+    command: string,
+    options?: AgentRuntimeShellProcessOptions,
+  ): Promise<AgentRuntimeProcess> {
+    const cwd = await resolveContainedPath(this.#cwd, options?.cwd ?? this.#cwd);
+    const shell = options?.shell ?? defaultShell();
+    const args = shellArguments(shell, command, options?.login ?? true);
+    const env = terminalEnvironment(options?.env);
+    const pty = await loadPty();
+    const terminal = pty.spawn(shell, args, {
+      cwd,
+      env,
+      name: env.TERM ?? 'xterm-256color',
+      cols: 80,
+      rows: 24,
+      encoding: null,
+    });
+    return new HostRuntimeTerminal(terminal);
+  }
+
   async #spawn(
     command: string,
     args: string[],
@@ -236,30 +263,176 @@ export class HostAgentRuntime implements AgentRuntime {
 
 const MAX_PROCESS_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-class HostRuntimeProcess implements AgentRuntimeProcess {
-  readonly #child: ChildProcess;
-  readonly #listeners = new Set<() => void>();
-  #buffer = Buffer.alloc(0);
-  #bufferStartOffset = 0;
-  #running = true;
-  #exitCode: number | undefined;
+abstract class HostBufferedProcess implements AgentRuntimeProcess {
+  readonly #output = new HostProcessOutput();
   #disposed = false;
   #termination: Promise<void> | undefined;
 
+  abstract get pid(): number | undefined;
+
+  abstract write(content: Uint8Array): Promise<void>;
+
+  read(
+    afterOffset: number,
+    options?: AgentRuntimeProcessReadOptions,
+  ): Promise<AgentRuntimeProcessSnapshot> {
+    return this.#output.read(afterOffset, options);
+  }
+
+  async interrupt(): Promise<void> {
+    if (!this.#output.running) return;
+    await this.sendSignal('SIGINT');
+  }
+
+  terminate(): Promise<void> {
+    this.#termination ??= this.#terminate();
+    return this.#termination;
+  }
+
+  async dispose(): Promise<void> {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    try {
+      await this.terminate();
+    } finally {
+      this.#output.dispose();
+      this.onDispose();
+    }
+  }
+
+  protected get running(): boolean {
+    return this.#output.running;
+  }
+
+  protected appendOutput(chunk: Uint8Array): void {
+    this.#output.append(chunk);
+  }
+
+  protected complete(exitCode: number): void {
+    this.#output.complete(exitCode);
+  }
+
+  protected abstract sendSignal(signal: NodeJS.Signals): void | Promise<void>;
+
+  protected onDispose(): void {}
+
+  async #terminate(): Promise<void> {
+    if (!this.#output.running) return;
+    try {
+      await this.sendSignal('SIGTERM');
+    } catch (error) {
+      if (this.#output.running) throw error;
+    }
+    const deadline = Date.now() + 1_000;
+    while (this.#output.running && Date.now() < deadline) {
+      await this.#output.wait(Math.min(50, deadline - Date.now()));
+    }
+    if (!this.#output.running) return;
+    try {
+      await this.sendSignal('SIGKILL');
+    } catch (error) {
+      if (this.#output.running) throw error;
+    }
+    const forceDeadline = Date.now() + 1_000;
+    while (this.#output.running && Date.now() < forceDeadline) {
+      await this.#output.wait(Math.min(50, forceDeadline - Date.now()));
+    }
+  }
+}
+
+class HostRuntimeProcess extends HostBufferedProcess {
+  readonly #child: ChildProcess;
+
   constructor(child: ChildProcess) {
+    super();
     this.#child = child;
-    child.stdout?.on('data', (chunk: Uint8Array) => this.#append(chunk));
-    child.stderr?.on('data', (chunk: Uint8Array) => this.#append(chunk));
-    child.once('error', (error) => this.#append(Buffer.from(`${error.message}\n`)));
+    child.stdout?.on('data', (chunk: Uint8Array) => this.appendOutput(chunk));
+    child.stderr?.on('data', (chunk: Uint8Array) => this.appendOutput(chunk));
+    child.once('error', (error) => this.appendOutput(Buffer.from(`${error.message}\n`)));
     child.once('close', (code, signal) => {
-      this.#running = false;
-      this.#exitCode = code ?? signalExitCode(signal);
-      this.#notify();
+      this.complete(code ?? signalExitCode(signal));
     });
   }
 
   get pid(): number | undefined {
     return this.#child.pid;
+  }
+
+  async write(content: Uint8Array): Promise<void> {
+    if (!this.running) throw new Error('Process has exited');
+    if (!this.#child.stdin) throw new Error('Process stdin is closed');
+    await new Promise<void>((resolveWrite, rejectWrite) => {
+      this.#child.stdin!.write(content, (error) => {
+        if (error) rejectWrite(error);
+        else resolveWrite();
+      });
+    });
+  }
+
+  protected sendSignal(signal: NodeJS.Signals): void {
+    if (signal === 'SIGINT' && process.platform === 'win32') {
+      killChild(this.#child, 'SIGTERM');
+      return;
+    }
+    killChild(this.#child, signal);
+  }
+}
+
+class HostRuntimeTerminal extends HostBufferedProcess {
+  readonly #terminal: IPty;
+  readonly #dataSubscription: IDisposable;
+  readonly #exitSubscription: IDisposable;
+
+  constructor(terminal: IPty) {
+    super();
+    this.#terminal = terminal;
+    this.#dataSubscription = terminal.onData((data) => {
+      const raw = data as unknown;
+      this.appendOutput(typeof raw === 'string' ? Buffer.from(raw) : new Uint8Array(raw as Buffer));
+    });
+    this.#exitSubscription = terminal.onExit(({ exitCode, signal }) => {
+      this.complete(signal ? 128 + signal : exitCode);
+    });
+  }
+
+  get pid(): number {
+    return this.#terminal.pid;
+  }
+
+  async write(content: Uint8Array): Promise<void> {
+    if (!this.running) throw new Error('Process has exited');
+    this.#terminal.write(Buffer.from(content));
+  }
+
+  protected sendSignal(signal: NodeJS.Signals): void {
+    if (process.platform === 'win32') {
+      if (signal === 'SIGINT') this.#terminal.write('\u0003');
+      else this.#terminal.kill();
+      return;
+    }
+    try {
+      process.kill(-this.#terminal.pid, signal);
+    } catch (error) {
+      if (!isNoSuchProcessError(error)) throw error;
+      if (this.running) this.#terminal.kill(signal);
+    }
+  }
+
+  protected override onDispose(): void {
+    this.#dataSubscription.dispose();
+    this.#exitSubscription.dispose();
+  }
+}
+
+class HostProcessOutput {
+  readonly #listeners = new Set<() => void>();
+  #buffer = Buffer.alloc(0);
+  #bufferStartOffset = 0;
+  #running = true;
+  #exitCode: number | undefined;
+
+  get running(): boolean {
+    return this.#running;
   }
 
   async read(
@@ -268,7 +441,7 @@ class HostRuntimeProcess implements AgentRuntimeProcess {
   ): Promise<AgentRuntimeProcessSnapshot> {
     const hasOutput = afterOffset < this.#bufferStartOffset + this.#buffer.length;
     if (!hasOutput && this.#running && (options?.waitMs ?? 0) > 0) {
-      await this.#wait(options!.waitMs!, options?.signal);
+      await this.wait(options!.waitMs!, options?.signal);
     }
     const bufferEndOffset = this.#bufferStartOffset + this.#buffer.length;
     const boundedAfter = Math.max(afterOffset, this.#bufferStartOffset);
@@ -284,46 +457,7 @@ class HostRuntimeProcess implements AgentRuntimeProcess {
     };
   }
 
-  async write(content: Uint8Array): Promise<void> {
-    if (!this.#running) throw new Error('Process has exited');
-    if (!this.#child.stdin) throw new Error('Process stdin is closed');
-    await new Promise<void>((resolveWrite, rejectWrite) => {
-      this.#child.stdin!.write(content, (error) => {
-        if (error) rejectWrite(error);
-        else resolveWrite();
-      });
-    });
-  }
-
-  terminate(): Promise<void> {
-    this.#termination ??= this.#terminate();
-    return this.#termination;
-  }
-
-  async #terminate(): Promise<void> {
-    if (!this.#running) return;
-    killChild(this.#child, 'SIGTERM');
-    const deadline = Date.now() + 1_000;
-    while (this.#running && Date.now() < deadline) {
-      await this.#wait(Math.min(50, deadline - Date.now()));
-    }
-    if (this.#running) {
-      killChild(this.#child, 'SIGKILL');
-      const forceDeadline = Date.now() + 1_000;
-      while (this.#running && Date.now() < forceDeadline) {
-        await this.#wait(Math.min(50, forceDeadline - Date.now()));
-      }
-    }
-  }
-
-  async dispose(): Promise<void> {
-    if (this.#disposed) return;
-    this.#disposed = true;
-    await this.terminate();
-    this.#listeners.clear();
-  }
-
-  #append(chunk: Uint8Array): void {
+  append(chunk: Uint8Array): void {
     this.#buffer = Buffer.concat([this.#buffer, chunk]);
     if (this.#buffer.length > MAX_PROCESS_OUTPUT_BYTES) {
       const removed = this.#buffer.length - MAX_PROCESS_OUTPUT_BYTES;
@@ -333,11 +467,18 @@ class HostRuntimeProcess implements AgentRuntimeProcess {
     this.#notify();
   }
 
-  #notify(): void {
-    for (const listener of this.#listeners) listener();
+  complete(exitCode: number): void {
+    if (!this.#running) return;
+    this.#running = false;
+    this.#exitCode = exitCode;
+    this.#notify();
   }
 
-  #wait(waitMs: number, signal?: AbortSignal): Promise<boolean> {
+  dispose(): void {
+    this.#listeners.clear();
+  }
+
+  wait(waitMs: number, signal?: AbortSignal): Promise<boolean> {
     if (signal?.aborted || !this.#running) return Promise.resolve(!this.#running);
     return new Promise((resolveWait) => {
       let settled = false;
@@ -354,6 +495,10 @@ class HostRuntimeProcess implements AgentRuntimeProcess {
       this.#listeners.add(finish);
       signal?.addEventListener('abort', finish, { once: true });
     });
+  }
+
+  #notify(): void {
+    for (const listener of this.#listeners) listener();
   }
 }
 
@@ -392,6 +537,21 @@ function createHostStorage(root: string): AgentRuntimeStorage {
   };
 }
 
+let ptyModule: Promise<typeof import('@lydell/node-pty')> | undefined;
+
+function loadPty(): Promise<typeof import('@lydell/node-pty')> {
+  ptyModule ??= import('@lydell/node-pty');
+  return ptyModule;
+}
+
+function terminalEnvironment(overrides?: Readonly<Record<string, string>>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[name] = value;
+  }
+  return { ...env, ...overrides };
+}
+
 function defaultShell(): string {
   if (process.platform === 'win32') return process.env.ComSpec ?? 'cmd.exe';
   return process.env.SHELL ?? '/bin/sh';
@@ -405,9 +565,8 @@ function shellArguments(shell: string, command: string, login: boolean): string[
 }
 
 function signalExitCode(signal: NodeJS.Signals | null): number {
-  if (signal === 'SIGKILL') return 137;
-  if (signal === 'SIGINT') return 130;
-  return signal ? 143 : 1;
+  if (!signal) return 1;
+  return 128 + (osConstants.signals[signal] ?? 15);
 }
 
 function resolveStorageRoot(root: string): string {
