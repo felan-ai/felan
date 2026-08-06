@@ -1,6 +1,13 @@
 export type {
   AgentRuntime,
+  AgentRuntimeFileReadOptions,
+  AgentRuntimeFileWriteOptions,
   AgentRuntimeKind,
+  AgentRuntimeProcess,
+  AgentRuntimeProcesses,
+  AgentRuntimeProcessReadOptions,
+  AgentRuntimeProcessSnapshot,
+  AgentRuntimeShellProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
   ExecOptions,
@@ -47,6 +54,8 @@ export {
   defineTool,
   getAgentDir,
   loadSkillsFromDir,
+  resizeImage,
+  withFileMutationQueue,
 } from '@earendil-works/pi-coding-agent';
 export type {
   AgentSessionEvent,
@@ -65,6 +74,7 @@ export type {
   LoadExtensionsResult,
   ResourceDiagnostic,
   ResourceLoader,
+  ResizedImage,
   SessionContext,
   SessionStartEvent,
   Skill,
@@ -89,6 +99,8 @@ export type {
   CredentialInfo,
   CredentialStore,
   Model,
+  Provider,
   SimpleStreamOptions,
+  Transport,
 } from '@earendil-works/pi-ai';
 export { builtinProviders } from '@earendil-works/pi-ai/providers/all';

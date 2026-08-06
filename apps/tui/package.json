@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Local Felan terminal agent",
   "license": "MIT",
   "type": "module",
@@ -37,6 +37,7 @@
     "@earendil-works/pi-coding-agent": "0.83.0",
     "@felan-ai/agent-core": "workspace:*",
     "@felan-ai/ext-background-bash": "workspace:*",
+    "@felan-ai/ext-codex": "workspace:*",
     "@felan-ai/ext-subagents": "workspace:*",
     "@felan-ai/ext-tasks": "workspace:*",
     "@felan-ai/ext-context": "workspace:*",

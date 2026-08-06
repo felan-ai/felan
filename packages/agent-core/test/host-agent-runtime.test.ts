@@ -139,6 +139,29 @@ describe('HostAgentRuntime', () => {
     await expect(runtime.readFile('nested/top.bin')).rejects.toThrow();
   });
 
+  it('bounds file reads without relying on a separate size check', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    await runtime.writeFile('bounded.bin', new Uint8Array([1, 2, 3, 4]));
+
+    await expect(runtime.readFile('bounded.bin', { maxBytes: 4 }))
+      .resolves.toEqual(new Uint8Array([1, 2, 3, 4]));
+    await expect(runtime.readFile('bounded.bin', { maxBytes: 3 }))
+      .rejects.toThrow('exceeds maximum size of 3 bytes');
+  });
+
+  it('supports exclusive file creation', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    await runtime.writeFile('exclusive.txt', new TextEncoder().encode('first'), { exclusive: true });
+
+    await expect(runtime.writeFile(
+      'exclusive.txt',
+      new TextEncoder().encode('second'),
+      { exclusive: true },
+    )).rejects.toMatchObject({ code: 'EEXIST' });
+    await expect(runtime.readFile('exclusive.txt'))
+      .resolves.toEqual(new TextEncoder().encode('first'));
+  });
+
   it('uses a shell only through the explicit shell method', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const variable = 'literal value; $HOME';
@@ -150,6 +173,45 @@ describe('HostAgentRuntime', () => {
     expect(result.stdout.trim()).toBe(variable);
     expect(result.code).toBe(0);
     expect(result.killed).toBe(false);
+  });
+
+  it('reads only files inside its configured agent directory', async () => {
+    const workspace = await createTemporaryDirectory('workspace');
+    const storageRoot = await createTemporaryDirectory('storage');
+    const agentDir = await createTemporaryDirectory('agent-dir');
+    const runtime = new HostAgentRuntime(workspace, {
+      sessionStorageRoot: storageRoot,
+      agentStorageRoot: join(storageRoot, 'agent'),
+      agentDir,
+    });
+    await mkdir(join(storageRoot, 'agent'), { recursive: true });
+    await writeFile(join(agentDir, 'codex.json'), '{"fast":true}');
+
+    await expect(runtime.readAgentFile('codex.json'))
+      .resolves.toEqual(new TextEncoder().encode('{"fast":true}'));
+    await expect(runtime.readAgentFile('../secret')).rejects.toThrow('escapes runtime root');
+  });
+
+  it('reports an unconfigured agent directory as an absent agent file', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+
+    await expect(runtime.readAgentFile('codex.json')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('supports persistent shell polling, input, and cleanup', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const script = "process.stdin.once('data', value => { process.stdout.write('got:' + value); process.exit(0) })";
+    const processHandle = await runtime.processes.startShell(
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      { stdin: true },
+    );
+    const pid = processHandle.pid!;
+    await processHandle.write(new TextEncoder().encode('input\n'));
+    const snapshot = await processHandle.read(0, { waitMs: 1_000 });
+
+    expect(new TextDecoder().decode(snapshot.output)).toContain('got:input');
+    await processHandle.dispose();
+    await expect(waitForProcessExit(pid)).resolves.toBeUndefined();
   });
 
   it.skipIf(process.platform === 'win32')('kills the spawned process group on cancellation', async () => {

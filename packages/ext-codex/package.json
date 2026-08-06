@@ -1,23 +1,18 @@
 {
-  "name": "@felan-ai/agent-core",
-  "version": "0.4.1",
-  "description": "Portable Felan agent contracts and composition",
+  "name": "@felan-ai/ext-codex",
+  "version": "0.1.0",
+  "description": "Codex-compatible structured tools and OpenAI request controls for Felan",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felan-ai/felan.git",
-    "directory": "packages/agent-core"
+    "directory": "packages/ext-codex"
   },
   "engines": {
     "node": ">=22.19.0"
   },
-  "files": [
-    "dist",
-    "LICENSE",
-    "NOTICE",
-    "README.md"
-  ],
+  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -31,8 +26,13 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.83.0",
-    "@earendil-works/pi-coding-agent": "0.83.0"
+    "typebox": "1.1.38"
+  },
+  "peerDependencies": {
+    "@felan-ai/agent-core": "^0.4.1"
+  },
+  "devDependencies": {
+    "@felan-ai/agent-core": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

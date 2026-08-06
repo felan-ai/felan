@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import {
   lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   readlink,
@@ -12,6 +13,13 @@ import {
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
   AgentRuntime,
+  AgentRuntimeFileReadOptions,
+  AgentRuntimeFileWriteOptions,
+  AgentRuntimeProcess,
+  AgentRuntimeProcesses,
+  AgentRuntimeProcessReadOptions,
+  AgentRuntimeProcessSnapshot,
+  AgentRuntimeShellProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
   ExecOptions,
@@ -25,6 +33,7 @@ export type HostShellOptions = ExecOptions & {
 export interface HostAgentRuntimeOptions {
   readonly sessionStorageRoot: string;
   readonly agentStorageRoot: string;
+  readonly agentDir?: string;
 }
 
 export class HostAgentRuntime implements AgentRuntime {
@@ -33,6 +42,8 @@ export class HostAgentRuntime implements AgentRuntime {
   readonly #agentStorage: AgentRuntimeStorage;
   readonly #sessionStorageRoot: string;
   readonly #agentStorageRoot: string;
+  readonly #agentDir: string | undefined;
+  readonly processes: AgentRuntimeProcesses;
 
   constructor(cwd: string, options: HostAgentRuntimeOptions) {
     if (cwd.includes('\0')) {
@@ -41,8 +52,12 @@ export class HostAgentRuntime implements AgentRuntime {
     this.#cwd = resolve(cwd);
     this.#sessionStorageRoot = resolveStorageRoot(options.sessionStorageRoot);
     this.#agentStorageRoot = resolveStorageRoot(options.agentStorageRoot);
+    this.#agentDir = options.agentDir === undefined ? undefined : resolveStorageRoot(options.agentDir);
     this.#sessionStorage = createHostStorage(this.#sessionStorageRoot);
     this.#agentStorage = createHostStorage(this.#agentStorageRoot);
+    this.processes = {
+      startShell: async (command, processOptions) => this.#startShellProcess(command, processOptions),
+    };
   }
 
   get kind(): 'host' {
@@ -75,21 +90,27 @@ export class HostAgentRuntime implements AgentRuntime {
     return this.#spawn(command, [], cwd, options, true, env);
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array> {
     const resolvedPath = await resolveReadablePath(
       this.#cwd,
       this.#sessionStorageRoot,
       this.#agentStorageRoot,
       path,
     );
-    const content = await readFile(resolvedPath);
+    const content = options?.maxBytes === undefined
+      ? await readFile(resolvedPath)
+      : await readBoundedFile(resolvedPath, options.maxBytes);
     return new Uint8Array(content);
   }
 
-  async writeFile(path: string, content: Uint8Array): Promise<void> {
+  async writeFile(
+    path: string,
+    content: Uint8Array,
+    options?: AgentRuntimeFileWriteOptions,
+  ): Promise<void> {
     const copiedContent = content.slice();
     const resolvedPath = await resolveContainedPath(this.#cwd, path);
-    await writeFile(resolvedPath, copiedContent);
+    await writeFile(resolvedPath, copiedContent, options?.exclusive ? { flag: 'wx' } : undefined);
   }
 
   async listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]> {
@@ -118,6 +139,31 @@ export class HostAgentRuntime implements AgentRuntime {
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     const resolvedPath = await resolveContainedPath(this.#cwd, path, false);
     await rm(resolvedPath, { recursive: options?.recursive ?? false });
+  }
+
+  async readAgentFile(path: string): Promise<Uint8Array> {
+    if (!this.#agentDir) {
+      throw Object.assign(new Error('Runtime agent directory is unavailable'), { code: 'ENOENT' });
+    }
+    const content = await readFile(await resolveContainedPath(this.#agentDir, path));
+    return new Uint8Array(content);
+  }
+
+  async #startShellProcess(
+    command: string,
+    options?: AgentRuntimeShellProcessOptions,
+  ): Promise<AgentRuntimeProcess> {
+    const cwd = await resolveContainedPath(this.#cwd, options?.cwd ?? this.#cwd);
+    const shell = options?.shell ?? defaultShell();
+    const args = shellArguments(shell, command, options?.login ?? true);
+    const child = spawn(shell, args, {
+      cwd,
+      detached: process.platform !== 'win32',
+      env: options?.env ? { ...process.env, ...options.env } : process.env,
+      stdio: [options?.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    return new HostRuntimeProcess(child);
   }
 
   async #spawn(
@@ -188,6 +234,129 @@ export class HostAgentRuntime implements AgentRuntime {
   }
 }
 
+const MAX_PROCESS_OUTPUT_BYTES = 8 * 1024 * 1024;
+
+class HostRuntimeProcess implements AgentRuntimeProcess {
+  readonly #child: ChildProcess;
+  readonly #listeners = new Set<() => void>();
+  #buffer = Buffer.alloc(0);
+  #bufferStartOffset = 0;
+  #running = true;
+  #exitCode: number | undefined;
+  #disposed = false;
+  #termination: Promise<void> | undefined;
+
+  constructor(child: ChildProcess) {
+    this.#child = child;
+    child.stdout?.on('data', (chunk: Uint8Array) => this.#append(chunk));
+    child.stderr?.on('data', (chunk: Uint8Array) => this.#append(chunk));
+    child.once('error', (error) => this.#append(Buffer.from(`${error.message}\n`)));
+    child.once('close', (code, signal) => {
+      this.#running = false;
+      this.#exitCode = code ?? signalExitCode(signal);
+      this.#notify();
+    });
+  }
+
+  get pid(): number | undefined {
+    return this.#child.pid;
+  }
+
+  async read(
+    afterOffset: number,
+    options?: AgentRuntimeProcessReadOptions,
+  ): Promise<AgentRuntimeProcessSnapshot> {
+    const hasOutput = afterOffset < this.#bufferStartOffset + this.#buffer.length;
+    if (!hasOutput && this.#running && (options?.waitMs ?? 0) > 0) {
+      await this.#wait(options!.waitMs!, options?.signal);
+    }
+    const bufferEndOffset = this.#bufferStartOffset + this.#buffer.length;
+    const boundedAfter = Math.max(afterOffset, this.#bufferStartOffset);
+    let output = this.#buffer.subarray(boundedAfter - this.#bufferStartOffset);
+    if (options?.maxBytes !== undefined && output.length > options.maxBytes) {
+      output = output.subarray(output.length - options.maxBytes);
+    }
+    return {
+      output: new Uint8Array(output),
+      nextOffset: bufferEndOffset,
+      running: this.#running,
+      ...(this.#exitCode === undefined ? {} : { exitCode: this.#exitCode }),
+    };
+  }
+
+  async write(content: Uint8Array): Promise<void> {
+    if (!this.#running) throw new Error('Process has exited');
+    if (!this.#child.stdin) throw new Error('Process stdin is closed');
+    await new Promise<void>((resolveWrite, rejectWrite) => {
+      this.#child.stdin!.write(content, (error) => {
+        if (error) rejectWrite(error);
+        else resolveWrite();
+      });
+    });
+  }
+
+  terminate(): Promise<void> {
+    this.#termination ??= this.#terminate();
+    return this.#termination;
+  }
+
+  async #terminate(): Promise<void> {
+    if (!this.#running) return;
+    killChild(this.#child, 'SIGTERM');
+    const deadline = Date.now() + 1_000;
+    while (this.#running && Date.now() < deadline) {
+      await this.#wait(Math.min(50, deadline - Date.now()));
+    }
+    if (this.#running) {
+      killChild(this.#child, 'SIGKILL');
+      const forceDeadline = Date.now() + 1_000;
+      while (this.#running && Date.now() < forceDeadline) {
+        await this.#wait(Math.min(50, forceDeadline - Date.now()));
+      }
+    }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    await this.terminate();
+    this.#listeners.clear();
+  }
+
+  #append(chunk: Uint8Array): void {
+    this.#buffer = Buffer.concat([this.#buffer, chunk]);
+    if (this.#buffer.length > MAX_PROCESS_OUTPUT_BYTES) {
+      const removed = this.#buffer.length - MAX_PROCESS_OUTPUT_BYTES;
+      this.#buffer = this.#buffer.subarray(removed);
+      this.#bufferStartOffset += removed;
+    }
+    this.#notify();
+  }
+
+  #notify(): void {
+    for (const listener of this.#listeners) listener();
+  }
+
+  #wait(waitMs: number, signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted || !this.#running) return Promise.resolve(!this.#running);
+    return new Promise((resolveWait) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        signal?.removeEventListener('abort', finish);
+        this.#listeners.delete(finish);
+        resolveWait(!this.#running);
+      };
+      const timeout = setTimeout(finish, waitMs);
+      timeout.unref?.();
+      this.#listeners.add(finish);
+      signal?.addEventListener('abort', finish, { once: true });
+    });
+  }
+}
+
 function createHostStorage(root: string): AgentRuntimeStorage {
   return {
     root,
@@ -221,6 +390,24 @@ function createHostStorage(root: string): AgentRuntimeStorage {
       });
     },
   };
+}
+
+function defaultShell(): string {
+  if (process.platform === 'win32') return process.env.ComSpec ?? 'cmd.exe';
+  return process.env.SHELL ?? '/bin/sh';
+}
+
+function shellArguments(shell: string, command: string, login: boolean): string[] {
+  if (process.platform === 'win32' && /(?:^|[\\/])cmd(?:\.exe)?$/iu.test(shell)) {
+    return ['/d', '/s', '/c', command];
+  }
+  return login ? ['-l', '-c', command] : ['-c', command];
+}
+
+function signalExitCode(signal: NodeJS.Signals | null): number {
+  if (signal === 'SIGKILL') return 137;
+  if (signal === 'SIGINT') return 130;
+  return signal ? 143 : 1;
 }
 
 function resolveStorageRoot(root: string): string {
@@ -349,4 +536,25 @@ function isNoSuchProcessError(error: unknown): boolean {
 
 function killedResult(): ExecResult {
   return { stdout: '', stderr: '', code: 143, killed: true };
+}
+
+async function readBoundedFile(path: string, maxBytes: number): Promise<Buffer> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new Error('maxBytes must be a non-negative safe integer');
+  }
+  const handle = await open(path, 'r');
+  try {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total <= maxBytes) {
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1 - total));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) return Buffer.concat(chunks, total);
+      chunks.push(chunk.subarray(0, bytesRead));
+      total += bytesRead;
+    }
+    throw new Error(`File exceeds maximum size of ${maxBytes} bytes`);
+  } finally {
+    await handle.close();
+  }
 }

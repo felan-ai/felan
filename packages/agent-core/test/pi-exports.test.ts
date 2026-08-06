@@ -53,6 +53,8 @@ describe('Agent Core Pi exports', () => {
       'defineTool',
       'getAgentDir',
       'loadSkillsFromDir',
+      'resizeImage',
+      'withFileMutationQueue',
     ] as const) {
       expect(agentCore[name]).toBe(piCodingAgent[name]);
     }

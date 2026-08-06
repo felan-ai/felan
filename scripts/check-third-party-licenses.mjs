@@ -57,6 +57,12 @@ const backgroundBashNotice = readFileSync(resolve(root, 'packages/ext-background
 if (!backgroundBashNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-background-bash/NOTICE is missing TypeBox 1.1.38');
 }
+const codexNotice = readFileSync(resolve(root, 'packages/ext-codex/NOTICE'), 'utf8');
+for (const requiredNotice of ['@howaboua/pi-codex-conversion 3.0.8', 'TypeBox 1.1.38']) {
+  if (!codexNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-codex/NOTICE is missing ${requiredNotice}`);
+  }
+}
 const tasksNotice = readFileSync(resolve(root, 'packages/ext-tasks/NOTICE'), 'utf8');
 if (!tasksNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-tasks/NOTICE is missing TypeBox 1.1.38');

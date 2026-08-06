@@ -22,6 +22,7 @@ import {
 } from '@felan-ai/ext-subagents';
 import { CURRENT_SESSION_VERSION } from '@earendil-works/pi-coding-agent';
 import { createLocalExtensionImporter } from '../extensions.js';
+import { createLocalCodexStreamFunctionWrapper } from '../codex.js';
 import {
   createLocalAgentRuntimeFactoryRequest,
   type LocalAgentRuntimeFactory,
@@ -679,9 +680,16 @@ export class LocalSubagentManager {
       this.#options.agentDir,
       input.definition.prompt,
     );
+    const runtime = this.#options.runtimeFactory?.(runtimeRequest)
+      ?? new HostAgentRuntime(input.cwd, runtimeRequest);
+    const wrapStreamFunction = await createLocalCodexStreamFunctionWrapper(
+      extensionPackages,
+      runtime,
+      this.#options.agentDir,
+    );
     const created = await createAgentCoreSession({
-      runtime: this.#options.runtimeFactory?.(runtimeRequest)
-        ?? new HostAgentRuntime(input.cwd, runtimeRequest),
+      runtime,
+      ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
       importExtension: createLocalExtensionImporter(input.subagents, this.#options.importExtension),
       modelRuntime: this.#options.modelRuntime,
@@ -695,12 +703,10 @@ export class LocalSubagentManager {
     bindSubagentSession({ host: input.subagents, session: created.session });
     try {
       if (input.signal.aborted) return sessionFileOutcome(created.session.sessionFile);
-      if (input.definition.capability === 'read-only') {
-        created.session.setActiveToolsByName(
-          created.session.getActiveToolNames().filter((name) => !['bash', 'edit', 'write'].includes(name)),
-        );
-      }
       await created.session.bindExtensions({ mode: 'print' });
+      if (input.definition.capability === 'read-only') {
+        created.session.setActiveToolsByName(readOnlyToolNames(created.session.getActiveToolNames()));
+      }
       if (input.signal.aborted) return sessionFileOutcome(created.session.sessionFile);
 
       let turns = 0;
@@ -967,6 +973,13 @@ export class LocalSubagentManager {
       return record;
     }
   }
+}
+
+export function readOnlyToolNames(activeToolNames: readonly string[]): string[] {
+  const blocked = new Set(['bash', 'edit', 'write', 'exec_command', 'write_stdin', 'apply_patch']);
+  const safe = activeToolNames.filter((name) => !blocked.has(name));
+  if (!safe.includes('read')) safe.unshift('read');
+  return safe;
 }
 
 function completionNotice(record: SubagentRecord, deliveryId: string): SubagentCompletionNotice {

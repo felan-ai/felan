@@ -64,6 +64,7 @@ describe('local Agent Core lifecycle', () => {
         context: false,
         webAccess: false,
         backgroundBash: false,
+        codex: false,
         powerline: false,
       },
     }));
@@ -360,6 +361,8 @@ describe('local Agent Core lifecycle', () => {
       cwdC,
     ]);
     expect(runtimeRequests.map(({ rootSessionId }) => rootSessionId)).toEqual(activeSessionIds);
+    expect(runtimeRequests.map(({ agentDir: requestAgentDir }) => requestAgentDir))
+      .toEqual(Array(5).fill(agentDir));
     expect(new Set(activeSessionIds).size).toBe(5);
     expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage().root)).toEqual(
       activeSessionIds.map((sessionId) => join(

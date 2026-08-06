@@ -12,6 +12,7 @@ export const builtinExtensionPackages = {
   context: '@felan-ai/ext-context',
   webAccess: '@felan-ai/ext-web-access',
   backgroundBash: '@felan-ai/ext-background-bash',
+  codex: '@felan-ai/ext-codex',
   powerline: '@felan-ai/ext-powerline',
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);

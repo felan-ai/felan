@@ -5,7 +5,7 @@ This product uses Pi 0.83.0 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 
 @felan-ai/ext-subagents, @felan-ai/ext-tasks, @felan-ai/ext-background-bash,
-and @felan-ai/ext-web-access use TypeBox 1.1.38 from
+@felan-ai/ext-web-access, and @felan-ai/ext-codex use TypeBox 1.1.38 from
 https://github.com/sinclairzx81/typebox, licensed under the MIT License.
 Copyright (c) 2017-2026 Haydn Paterson.
 
@@ -28,6 +28,12 @@ from https://github.com/nicobailon/pi-web-access at npm gitHead
 d2aab00dcf0547572276d9de4bc4a2a49d640e13. Copyright (c) 2025 Nico Bailon.
 Package-level dependency attribution and license terms are included in
 packages/ext-web-access/NOTICE and LICENSE.
+
+@felan-ai/ext-codex adapts selected MIT-licensed portions and behavior from
+@howaboua/pi-codex-conversion 3.0.8 from
+https://github.com/IgorWarzocha/howaboua-pi-stuff.
+Copyright (c) 2026 Umberto B. Package-level attribution and license terms are
+included in packages/ext-codex/NOTICE and LICENSE.
 
 @felan-ai/ext-prewalk adapts MIT-licensed portions of packages/pi-prewalk from
 mslavov/pi-extensions at commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.

@@ -1,6 +1,8 @@
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type {
   AgentRuntime,
+  AgentRuntimeFileReadOptions,
+  AgentRuntimeFileWriteOptions,
   AgentRuntimeKind,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
@@ -95,16 +97,26 @@ export class TestAgentRuntime implements AgentRuntime {
     return this.#run(() => this.#shellHandler(call), normalizedOptions);
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array> {
     const content = this.#files.get(this.#resolvePath(path));
     if (!content) throw new Error(`File does not exist: ${path}`);
+    if (options?.maxBytes !== undefined && content.byteLength > options.maxBytes) {
+      throw new Error(`File exceeds maximum size of ${options.maxBytes} bytes`);
+    }
     return content.slice();
   }
 
-  async writeFile(path: string, content: Uint8Array): Promise<void> {
+  async writeFile(
+    path: string,
+    content: Uint8Array,
+    options?: AgentRuntimeFileWriteOptions,
+  ): Promise<void> {
     const resolvedPath = this.#resolvePath(path, false);
     if (!this.#directories.has(dirname(resolvedPath))) {
       throw new Error(`Parent directory does not exist: ${path}`);
+    }
+    if (options?.exclusive && this.#files.has(resolvedPath)) {
+      throw Object.assign(new Error(`File already exists: ${path}`), { code: 'EEXIST' });
     }
     this.#files.set(resolvedPath, content.slice());
   }

@@ -16,6 +16,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-context',
       '@felan-ai/ext-web-access',
       '@felan-ai/ext-background-bash',
+      '@felan-ai/ext-codex',
       '@felan-ai/ext-powerline',
     ]);
 
@@ -50,6 +51,7 @@ describe('local extension importer', () => {
       tasks: false,
       webAccess: false,
       backgroundBash: false,
+      codex: false,
       powerline: false,
     })).toEqual([
       '@felan-ai/ext-prewalk',
