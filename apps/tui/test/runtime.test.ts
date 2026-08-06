@@ -30,6 +30,7 @@ import {
   createLocalSessionRuntimeFactory,
   getLocalSkillPaths,
 } from '../src/runtime.js';
+import type { LocalAgentRuntimeFactoryRequest } from '../src/runtime-factory.js';
 import { attachLocalSubagentPresenter } from '../src/subagents/presenter.js';
 
 const temporaryPaths: string[] = [];
@@ -249,6 +250,7 @@ describe('local Agent Core lifecycle', () => {
     ));
 
     const createdHostRuntimes: HostAgentRuntime[] = [];
+    const runtimeRequests: LocalAgentRuntimeFactoryRequest[] = [];
     const modelRuntime = await createLocalModelRuntime(agentDir);
     const createRuntime = createLocalSessionRuntimeFactory({
       agentDir,
@@ -257,8 +259,9 @@ describe('local Agent Core lifecycle', () => {
       importExtension: async () => {
         throw new Error('No extensions should be imported');
       },
-      runtimeFactory: (cwd, storageRoot) => {
-        const hostRuntime = new HostAgentRuntime(cwd, { storageRoot });
+      runtimeFactory: (request) => {
+        runtimeRequests.push(request);
+        const hostRuntime = new HostAgentRuntime(request.cwd, request);
         createdHostRuntimes.push(hostRuntime);
         return hostRuntime;
       },
@@ -291,6 +294,7 @@ describe('local Agent Core lifecycle', () => {
       agentDir,
       sessionManager: initialSessionManager,
     });
+    const activeSessionIds = [runtime.session.sessionManager.getSessionId()];
     const reboundCwds: string[] = [];
     runtime.setRebindSession(async (session) => {
       reboundCwds.push(session.sessionManager.getCwd());
@@ -312,11 +316,13 @@ describe('local Agent Core lifecycle', () => {
     ]);
 
     await runtime.fork(entryId, { position: 'at' });
+    activeSessionIds.push(runtime.session.sessionManager.getSessionId());
     const forkServices = runtime.services;
     expect(forkServices).not.toBe(initialServices);
     expect(runtime.cwd).toBe(cwdA);
 
     await runtime.newSession();
+    activeSessionIds.push(runtime.session.sessionManager.getSessionId());
     const newServices = runtime.services;
     expect(newServices).not.toBe(forkServices);
     expect(runtime.cwd).toBe(cwdA);
@@ -327,6 +333,7 @@ describe('local Agent Core lifecycle', () => {
     const resumedPath = resumedSession.getSessionFile();
     expect(resumedPath).toBeDefined();
     await runtime.switchSession(resumedPath!);
+    activeSessionIds.push(runtime.session.sessionManager.getSessionId());
     const resumedServices = runtime.services;
     expect(resumedServices).not.toBe(newServices);
     expect(runtime.cwd).toBe(cwdB);
@@ -337,6 +344,7 @@ describe('local Agent Core lifecycle', () => {
     const importPath = importedSession.getSessionFile();
     expect(importPath).toBeDefined();
     await runtime.importFromJsonl(importPath!);
+    activeSessionIds.push(runtime.session.sessionManager.getSessionId());
     expect(runtime.services).not.toBe(resumedServices);
     expect(runtime.cwd).toBe(cwdC);
 
@@ -349,8 +357,18 @@ describe('local Agent Core lifecycle', () => {
       cwdB,
       cwdC,
     ]);
-    expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage.root))
-      .toEqual(Array(5).fill(agentDir));
+    expect(runtimeRequests.map(({ rootSessionId }) => rootSessionId)).toEqual(activeSessionIds);
+    expect(new Set(activeSessionIds).size).toBe(5);
+    expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage().root)).toEqual(
+      activeSessionIds.map((sessionId) => join(
+        agentDir,
+        'storage',
+        'sessions',
+        encodeURIComponent(sessionId),
+      )),
+    );
+    expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage('agent').root))
+      .toEqual(Array(5).fill(join(agentDir, 'storage', 'agent')));
     expect(reboundCwds).toEqual([cwdA, cwdA, cwdB, cwdC]);
 
     await runtime.dispose();
@@ -447,6 +465,7 @@ describe('local Agent Core lifecycle', () => {
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
     const modelRuntime = await createLocalModelRuntime(agentDir);
     const createdHostRuntimes: HostAgentRuntime[] = [];
+    const runtimeRequests: LocalAgentRuntimeFactoryRequest[] = [];
     const createRuntime = createLocalSessionRuntimeFactory({
       agentDir,
       modelRuntime,
@@ -454,8 +473,9 @@ describe('local Agent Core lifecycle', () => {
       importExtension: async () => {
         throw new Error('No extensions should be imported');
       },
-      runtimeFactory: (runtimeCwd, storageRoot) => {
-        const hostRuntime = new HostAgentRuntime(runtimeCwd, { storageRoot });
+      runtimeFactory: (request) => {
+        runtimeRequests.push(request);
+        const hostRuntime = new HostAgentRuntime(request.cwd, request);
         createdHostRuntimes.push(hostRuntime);
         return hostRuntime;
       },
@@ -476,8 +496,12 @@ describe('local Agent Core lifecycle', () => {
       expect(runtime.session).not.toBe(initialSession);
       expect(runtime.services.agentDir).toBe(agentDir);
       expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.cwd)).toEqual([cwd, cwd]);
-      expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage.root))
-        .toEqual([agentDir, agentDir]);
+      expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage().root))
+        .toEqual(runtimeRequests.map(({ sessionStorageRoot }) => sessionStorageRoot));
+      expect(runtimeRequests.map(({ rootSessionId }) => rootSessionId)).toEqual([
+        runtimeRequests[0]!.rootSessionId,
+        runtime.session.sessionManager.getSessionId(),
+      ]);
       expect((runtime.session as unknown as { _extensionMode?: string })._extensionMode).toBe('tui');
       expect(runtime.session.agent.state.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
         'read',

@@ -5,6 +5,12 @@ has no release version. Bump only packages whose published contents or
 dependency manifests changed; leave every unchanged package at its published
 version.
 
+Extensions declare `@felan-ai/agent-core` as a compatible-minor peer dependency
+and use `workspace:*` only as a development dependency. Agent Core patch
+releases within that peer range do not require extension releases. Publish a
+new extension version when its implementation, published manifest, or Agent
+Core peer range changes.
+
 Packages publish automatically from `main` with npm trusted publishing and
 provenance. The release workflow has an OIDC identity token and contains no npm
 credential. It packs workspace dependencies with pnpm and uses an OIDC-capable
@@ -14,9 +20,9 @@ Before a release:
 
 1. Run `pnpm check:licenses` to reject unknown, private, or non-permissive
    production dependencies and verify the Pi and TypeBox notices.
-2. Update the version in each changed public package manifest. If a package
-   must consume a new exact version of another workspace package, update and
-   version that dependent package too.
+2. Update the version in each changed public package manifest. Applications
+   consuming exact workspace package versions update with those dependencies.
+   Extensions update when Agent Core leaves their declared peer range.
 3. Run `pnpm check:proposed-version`. It reports unpublished package versions
    as available and skips unchanged versions already present on npm. Confirm
    that every intended package appears as available.

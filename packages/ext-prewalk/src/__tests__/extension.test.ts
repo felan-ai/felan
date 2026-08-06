@@ -19,7 +19,7 @@ type Handler = (event: any, ctx: ExtensionContext) => any;
 
 class ProbeRuntime implements AgentRuntime {
   readonly cwd = '/workspace';
-  readonly storage: AgentRuntime['storage'] = {
+  readonly #storage: ReturnType<AgentRuntime['storage']> = {
     root: '/storage',
     readFile: async () => { throw new Error('storage readFile is unavailable in this test runtime'); },
     writeFile: async () => { throw new Error('storage writeFile is unavailable in this test runtime'); },
@@ -34,6 +34,10 @@ class ProbeRuntime implements AgentRuntime {
     readonly kind: AgentRuntimeKind,
     private readonly execute: () => ExecResult,
   ) {}
+
+  storage(): ReturnType<AgentRuntime['storage']> {
+    return this.#storage;
+  }
 
   async exec(command: string, args: readonly string[], options?: ExecOptions): Promise<ExecResult> {
     this.execCalls.push(options ? { command, args: [...args], options } : { command, args: [...args] });

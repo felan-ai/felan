@@ -3,6 +3,7 @@ import type {
   AgentRuntime,
   AgentRuntimeKind,
   AgentRuntimeStorage,
+  AgentRuntimeStorageScope,
   ExecOptions,
   ExecResult,
 } from '../src/runtime.js';
@@ -45,7 +46,7 @@ export class TestAgentRuntime implements AgentRuntime {
 
   readonly execCalls: TestExecCall[] = [];
   readonly shellCalls: TestShellCall[] = [];
-  readonly storage: AgentRuntimeStorage;
+  readonly #storage: Record<AgentRuntimeStorageScope, AgentRuntimeStorage>;
 
   constructor(cwd = '/workspace', options: TestAgentRuntimeOptions = {}) {
     this.#cwd = resolve(cwd);
@@ -53,15 +54,14 @@ export class TestAgentRuntime implements AgentRuntime {
     this.#execHandler = options.exec ?? successResult;
     this.#shellHandler = options.shell ?? successResult;
     this.#directories.add(this.#cwd);
-    const storageRoot = resolve(this.#cwd, '.runtime-storage');
-    this.#directories.add(storageRoot);
-    this.storage = {
-      root: storageRoot,
-      readFile: (path) => this.readFile(path),
-      writeFile: (path, content) => this.writeFile(path, content),
-      listFiles: (path, storageOptions) => this.listFiles(path, storageOptions),
-      mkdir: (path, storageOptions) => this.mkdir(path, storageOptions),
-      remove: (path, storageOptions) => this.remove(path, storageOptions),
+    const sessionStorageRoot = resolve(this.#cwd, '.runtime-storage', 'session');
+    const agentStorageRoot = resolve(this.#cwd, '.runtime-storage', 'agent');
+    this.#directories.add(dirname(sessionStorageRoot));
+    this.#directories.add(sessionStorageRoot);
+    this.#directories.add(agentStorageRoot);
+    this.#storage = {
+      session: this.#createStorage(sessionStorageRoot),
+      agent: this.#createStorage(agentStorageRoot),
     };
   }
 
@@ -71,6 +71,10 @@ export class TestAgentRuntime implements AgentRuntime {
 
   get kind(): AgentRuntimeKind {
     return this.#kind;
+  }
+
+  storage(scope: AgentRuntimeStorageScope = 'session'): AgentRuntimeStorage {
+    return this.#storage[scope];
   }
 
   async exec(command: string, args: readonly string[], options?: ExecOptions): Promise<ExecResult> {
@@ -148,6 +152,79 @@ export class TestAgentRuntime implements AgentRuntime {
         this.#directories.delete(entry);
       }
     }
+  }
+
+  #createStorage(root: string): AgentRuntimeStorage {
+    return {
+      root,
+      readFile: async (path) => {
+        const content = this.#files.get(this.#resolveStoragePath(root, path));
+        if (!content) throw new Error(`File does not exist: ${path}`);
+        return content.slice();
+      },
+      writeFile: async (path, content) => {
+        const resolvedPath = this.#resolveStoragePath(root, path);
+        if (!this.#directories.has(dirname(resolvedPath))) {
+          throw new Error(`Parent directory does not exist: ${path}`);
+        }
+        this.#files.set(resolvedPath, content.slice());
+      },
+      listFiles: async (path, options) => {
+        const resolvedPath = this.#resolveStoragePath(root, path);
+        if (!this.#directories.has(resolvedPath)) throw new Error(`Directory does not exist: ${path}`);
+        const prefix = `${resolvedPath}${sep}`;
+        return [...this.#files.keys()]
+          .filter((filePath) => filePath.startsWith(prefix))
+          .map((filePath) => relative(resolvedPath, filePath))
+          .filter((filePath) => options?.recursive || !filePath.includes(sep))
+          .sort();
+      },
+      mkdir: async (path, options) => {
+        const resolvedPath = this.#resolveStoragePath(root, path);
+        if (options?.recursive) {
+          let current = resolvedPath;
+          const pending: string[] = [];
+          while (current !== root && !this.#directories.has(current)) {
+            pending.push(current);
+            current = dirname(current);
+          }
+          for (const directory of pending.reverse()) this.#directories.add(directory);
+          return;
+        }
+        if (!this.#directories.has(dirname(resolvedPath))) {
+          throw new Error(`Parent directory does not exist: ${path}`);
+        }
+        this.#directories.add(resolvedPath);
+      },
+      remove: async (path, options) => {
+        const resolvedPath = this.#resolveStoragePath(root, path, false);
+        const prefix = `${resolvedPath}${sep}`;
+        const descendants = [...this.#files.keys(), ...this.#directories]
+          .filter((entry) => entry.startsWith(prefix));
+        if (descendants.length > 0 && !options?.recursive) {
+          throw new Error(`Directory is not empty: ${path}`);
+        }
+        this.#files.delete(resolvedPath);
+        this.#directories.delete(resolvedPath);
+        if (options?.recursive) {
+          for (const entry of descendants) {
+            this.#files.delete(entry);
+            this.#directories.delete(entry);
+          }
+        }
+      },
+    };
+  }
+
+  #resolveStoragePath(root: string, path: string, allowRoot = true): string {
+    if (path.includes('\0')) throw new Error('Paths cannot contain NUL bytes');
+    const resolvedPath = isAbsolute(path) ? resolve(path) : resolve(root, path);
+    const relativePath = relative(root, resolvedPath);
+    const contained = relativePath === ''
+      || (!relativePath.startsWith(`..${sep}`) && relativePath !== '..' && !isAbsolute(relativePath));
+    if (!contained) throw new Error(`Path escapes runtime storage: ${path}`);
+    if (!allowRoot && relativePath === '') throw new Error('The runtime storage root cannot be removed');
+    return resolvedPath;
   }
 
   #normalizeExecOptions(options?: ExecOptions): ExecOptions | undefined {

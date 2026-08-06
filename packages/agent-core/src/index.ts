@@ -2,6 +2,7 @@ export type {
   AgentRuntime,
   AgentRuntimeKind,
   AgentRuntimeStorage,
+  AgentRuntimeStorageScope,
   ExecOptions,
   ExecResult,
 } from './runtime.js';

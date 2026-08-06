@@ -4,6 +4,8 @@ export type { ExecOptions, ExecResult } from '@earendil-works/pi-coding-agent';
 
 export type AgentRuntimeKind = 'host' | 'docker' | 'daytona';
 
+export type AgentRuntimeStorageScope = 'session' | 'agent';
+
 export interface AgentRuntimeStorage {
   readonly root: string;
 
@@ -17,7 +19,8 @@ export interface AgentRuntimeStorage {
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
-  readonly storage: AgentRuntimeStorage;
+
+  storage(scope?: AgentRuntimeStorageScope): AgentRuntimeStorage;
 
   exec(
     command: string,

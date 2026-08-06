@@ -24,6 +24,11 @@ capabilities before application appends, explicit Agent Skills, and the current
 working directory. The local application supports one optional
 `$FELAN_AGENT_DIR/APPEND_SYSTEM.md` append file.
 
+Extensions consume one app-provided Agent Core instance through a
+compatible-minor peer dependency. Their workspace development dependency keeps
+source builds and tests on the repository's current Core version without
+installing a second runtime copy in packed applications.
+
 ## Requirements
 
 - Node.js 22.20.0 for development and CI; packages support Node.js >=22.19.0

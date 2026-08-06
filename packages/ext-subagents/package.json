@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-subagents",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Portable Felan subagent tools",
   "license": "MIT",
   "type": "module",
@@ -26,8 +26,13 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@felan-ai/agent-core": "workspace:*",
     "typebox": "1.1.38"
+  },
+  "peerDependencies": {
+    "@felan-ai/agent-core": "^0.4.0"
+  },
+  "devDependencies": {
+    "@felan-ai/agent-core": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

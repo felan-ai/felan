@@ -287,7 +287,7 @@ const backgroundBashExtension: FelanExtension = (pi) => {
         'Background Bash completion messages arrive automatically; continue useful work instead of polling when the current task does not need to block.',
         'After starting Background Bash, inspect output with read_background_bash; do not use wait_background_bash just to read output.',
         'Use wait_background_bash only when you need to wait for the process to finish or check whether it has finished.',
-        'Use list_background_bash to discover detached Bash processes started by any Felan session in the same workspace.',
+        'Use list_background_bash to discover detached Bash processes started in this root session and workspace, including its subagents.',
       ],
       parameters: BashParams,
       async execute(toolCallId, params: BashParams, signal, onUpdate, ctx) {
@@ -350,7 +350,7 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     pi.registerTool({
       name: 'list_background_bash',
       label: 'List Background Bash',
-      description: 'List detached Bash processes started in this workspace, including processes started by other Felan sessions.',
+      description: 'List detached Bash processes started in this root session and workspace, including processes started by its subagents.',
       promptSnippet: 'List workspace Background Bash processes and their status',
       parameters: ListBackgroundBashParams,
       async execute(_toolCallId, params: ListBackgroundBashParams, _signal, _onUpdate, ctx) {

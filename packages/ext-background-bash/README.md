@@ -3,15 +3,17 @@
 Detached project-local Bash execution for Felan sessions. The extension augments
 `bash` with `background: true` and adds tools to list, wait for, and stop processes.
 Output and process metadata live under
-`<runtime-storage>/background-bash/<workspace-key>/jobs`. Local Felan maps
-`<runtime-storage>` to `$FELAN_AGENT_DIR` (`~/.felan` by default), while cloud
-adapters map it to their durable state root.
+`<session-storage>/background-bash/<workspace-key>/jobs`. Local Felan maps
+`<session-storage>` to
+`$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>`, while cloud
+adapters map it to their root-session state path.
 
 The implementation routes filesystem and process operations through the active
 `AgentRuntime`. Background launch uses a detached POSIX shell runner. Host,
 Docker, and Daytona runtimes need `nohup`, `ps`, and either `setsid` or shell job
-control so each process receives an isolated process group. `runtime.storage.root`
-must be durable and visible in the same filesystem namespace as `runtime.shell`.
+control so each process receives an isolated process group. The extension
+captures `runtime.storage('session')` once; that handle must be
+durable and visible in the same filesystem namespace as `runtime.shell`.
 
 The extension activates for selected models outside the OpenAI provider family.
 Providers `openai` and `openai-codex` are reserved for a separate background Bash

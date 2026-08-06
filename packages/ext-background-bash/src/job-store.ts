@@ -121,8 +121,11 @@ export class BackgroundBashJobStore {
   readonly jobsDir: string;
   readonly #storage: AgentRuntimeStorage;
 
-  constructor(private readonly runtime: AgentRuntime) {
-    this.#storage = runtime.storage;
+  constructor(
+    private readonly runtime: AgentRuntime,
+    storage: AgentRuntimeStorage,
+  ) {
+    this.#storage = storage;
     this.rootDir = getBackgroundBashRoot(this.#storage.root, runtime.cwd);
     this.jobsDir = getBackgroundBashJobsDir(this.#storage.root, runtime.cwd);
   }

@@ -9,7 +9,6 @@ import {
   SessionManager,
   createAgentCoreSessionRuntimeFactory,
   createAgentSessionRuntime,
-  type AgentRuntime,
   type AgentSessionServices,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionPackageImporter,
@@ -26,6 +25,10 @@ import {
 } from './extensions.js';
 import { createLocalSettingsManager, getFelanSettings } from './settings.js';
 import { loadLocalAppendSystemPrompt } from './system-prompt.js';
+import {
+  createLocalAgentRuntimeFactoryRequest,
+  type LocalAgentRuntimeFactory,
+} from './runtime-factory.js';
 import {
   LocalSubagentHost,
   type LocalSubagentSettings,
@@ -54,7 +57,7 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly modelRuntime: ModelRuntime;
   readonly extensionPackages?: readonly string[];
   readonly importExtension?: ExtensionPackageImporter;
-  readonly runtimeFactory?: (cwd: string, storageRoot: string) => AgentRuntime;
+  readonly runtimeFactory?: LocalAgentRuntimeFactory;
   readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
 }
@@ -66,7 +69,7 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly sessionManager?: SessionManager;
   readonly modelRuntime?: ModelRuntime;
   readonly sessionDir?: string;
-  readonly runtimeFactory?: (cwd: string, storageRoot: string) => AgentRuntime;
+  readonly runtimeFactory?: LocalAgentRuntimeFactory;
   readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
 }
@@ -91,6 +94,15 @@ export function createLocalSessionRuntimeFactory(
     shutdownState: LocalSubagentShutdownState;
   }>();
   const createCoreRuntime = createAgentCoreSessionRuntimeFactory(async ({ cwd, sessionManager }) => {
+    const runtimeRequest = createLocalAgentRuntimeFactoryRequest(
+      cwd,
+      options.agentDir,
+      sessionManager.getSessionId(),
+    );
+    await Promise.all([
+      mkdir(runtimeRequest.sessionStorageRoot, { recursive: true }),
+      mkdir(runtimeRequest.agentStorageRoot, { recursive: true }),
+    ]);
     const settingsManager = createLocalSettingsManager(cwd, options.agentDir);
     const felanSettings = getFelanSettings(settingsManager);
     const modelPatterns = settingsManager.getEnabledModels();
@@ -128,8 +140,8 @@ export function createLocalSessionRuntimeFactory(
     sessions.set(sessionManager, { host, modelScope, shutdownState });
 
     return {
-      runtime: options.runtimeFactory?.(cwd, options.agentDir)
-        ?? new HostAgentRuntime(cwd, { storageRoot: options.agentDir }),
+      runtime: options.runtimeFactory?.(runtimeRequest)
+        ?? new HostAgentRuntime(cwd, runtimeRequest),
       extensionPackages,
       importExtension: createLocalExtensionImporter(host, importExtension, shutdownHost),
       modelRuntime: options.modelRuntime,

@@ -62,15 +62,16 @@ importers:
       '@earendil-works/pi-tui':
         specifier: 0.83.0
         version: 0.83.0
-      '@felan-ai/agent-core':
-        specifier: workspace:*
-        version: link:../agent-core
       typebox:
         specifier: 1.1.38
         version: 1.1.38
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
 
   packages/ext-context:
-    dependencies:
+    devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*
         version: link:../agent-core
@@ -80,24 +81,26 @@ importers:
       '@earendil-works/pi-tui':
         specifier: 0.83.0
         version: 0.83.0
+    devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*
         version: link:../agent-core
 
   packages/ext-prewalk:
-    dependencies:
+    devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*
         version: link:../agent-core
 
   packages/ext-subagents:
     dependencies:
-      '@felan-ai/agent-core':
-        specifier: workspace:*
-        version: link:../agent-core
       typebox:
         specifier: 1.1.38
         version: 1.1.38
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
 
 packages:
 

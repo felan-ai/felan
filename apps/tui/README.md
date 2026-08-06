@@ -25,6 +25,14 @@ new, resume, fork, clone, and import flows, then rebinds the active interactive
 UI. Host mode uses the current user's filesystem and process permissions and is
 not an isolation boundary.
 
+Root sessions store extension state under
+`$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>`. Every nested
+subagent shares its root session's storage path, and ordinary runtime reads can
+inspect files there. Longer-retention agent state uses
+`$FELAN_AGENT_DIR/storage/agent`, which ordinary runtime file operations cannot
+read or list. The rest of `$FELAN_AGENT_DIR` is not added to the runtime's
+ordinary readable paths.
+
 Only source-controlled built-in Felan extensions can be imported. External
 packages, extensions, configured skill paths, prompts, themes, and Pi context
 files remain filtered. Agent Skills are loaded from `~/.agents/skills` and
@@ -49,8 +57,8 @@ All built-in extensions are enabled by default. Toggle them in
 
 `backgroundBash` augments `bash` with detached processes for models outside the
 `openai` and `openai-codex` providers. Logs and process metadata live under
-`$FELAN_AGENT_DIR/background-bash/<workspace-key>/jobs`. Use `/background-bash`
-or `Ctrl+Shift+J` to inspect them.
+`$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>/background-bash/<workspace-key>/jobs`.
+Use `/background-bash` or `Ctrl+Shift+J` to inspect them.
 
 ## System prompt append
 

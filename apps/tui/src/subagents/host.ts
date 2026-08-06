@@ -4,7 +4,6 @@ import {
   HostAgentRuntime,
   SessionManager,
   createAgentCoreSession,
-  type AgentRuntime,
   type ExtensionPackageImporter,
   type ModelRuntime,
   type SettingsManager,
@@ -23,6 +22,10 @@ import {
 } from '@felan-ai/ext-subagents';
 import { CURRENT_SESSION_VERSION } from '@earendil-works/pi-coding-agent';
 import { createLocalExtensionImporter } from '../extensions.js';
+import {
+  createLocalAgentRuntimeFactoryRequest,
+  type LocalAgentRuntimeFactory,
+} from '../runtime-factory.js';
 import { loadLocalChildSystemPromptAppends } from '../system-prompt.js';
 import { discoverLocalSubagents, type LocalSubagentDefinition } from './catalog.js';
 import { LocalSubagentStore, type LocalStoredChild } from './store.js';
@@ -46,13 +49,14 @@ export interface CreateLocalSubagentHostOptions {
   readonly extensionPackages: readonly string[];
   readonly importExtension: ExtensionPackageImporter;
   readonly skillPaths?: readonly string[];
-  readonly runtimeFactory?: (cwd: string, storageRoot: string) => AgentRuntime;
+  readonly runtimeFactory?: LocalAgentRuntimeFactory;
   readonly settings?: LocalSubagentSettings;
   readonly runChild?: LocalSubagentRunner;
 }
 
 export interface LocalSubagentRunInput {
   readonly sessionId: string;
+  readonly rootSessionId: string;
   readonly depth: number;
   readonly subagents: SubagentHost;
   readonly request: SubagentSpawnRequest;
@@ -573,6 +577,7 @@ export class LocalSubagentManager {
         const queuedAtStart = job.queuedMessages.splice(0);
         outcome = await runner({
           sessionId: child.record.agentId,
+          rootSessionId: child.record.rootSessionId,
           depth: child.depth,
           subagents: new LocalSubagentHost(this, child.record.agentId),
           request: child.request,
@@ -647,7 +652,16 @@ export class LocalSubagentManager {
   }
 
   async #runAgentCore(input: LocalSubagentRunInput): Promise<LocalSubagentRunOutcome> {
-    await mkdir(this.#store.sessionDirectory(), { recursive: true });
+    const runtimeRequest = createLocalAgentRuntimeFactoryRequest(
+      input.cwd,
+      this.#options.agentDir,
+      input.rootSessionId,
+    );
+    await Promise.all([
+      mkdir(this.#store.sessionDirectory(), { recursive: true }),
+      mkdir(runtimeRequest.sessionStorageRoot, { recursive: true }),
+      mkdir(runtimeRequest.agentStorageRoot, { recursive: true }),
+    ]);
     if (input.signal.aborted) return {};
     const sessionManager = input.sessionFile
       ? SessionManager.open(input.sessionFile, this.#store.sessionDirectory(), input.cwd)
@@ -666,8 +680,8 @@ export class LocalSubagentManager {
       input.definition.prompt,
     );
     const created = await createAgentCoreSession({
-      runtime: this.#options.runtimeFactory?.(input.cwd, this.#options.agentDir)
-        ?? new HostAgentRuntime(input.cwd, { storageRoot: this.#options.agentDir }),
+      runtime: this.#options.runtimeFactory?.(runtimeRequest)
+        ?? new HostAgentRuntime(input.cwd, runtimeRequest),
       extensionPackages,
       importExtension: createLocalExtensionImporter(input.subagents, this.#options.importExtension),
       modelRuntime: this.#options.modelRuntime,

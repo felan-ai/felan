@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-context",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Progressive-context extension for Felan",
   "license": "MIT",
   "type": "module",
@@ -25,7 +25,10 @@
     "test": "vitest run",
     "prepack": "pnpm build"
   },
-  "dependencies": {
+  "peerDependencies": {
+    "@felan-ai/agent-core": "^0.4.0"
+  },
+  "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"
   },
   "publishConfig": {

@@ -440,11 +440,13 @@ describe('LocalSubagentHost', () => {
 
   it('shares one nested manager, preserves the root session, and cancels a real descendant', async () => {
     let descendantId: string | undefined;
+    const rootSessionIds: string[] = [];
     let descendantStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       descendantStarted = resolve;
     });
     const runner: LocalSubagentRunner = async (input) => {
+      rootSessionIds.push(input.rootSessionId);
       input.onReady({ steer: async () => {}, cancel: async () => {} });
       if (input.request.description === 'parent') {
         const child = await input.subagents.spawn(request({ description: 'descendant' }));
@@ -469,6 +471,7 @@ describe('LocalSubagentHost', () => {
         expect.objectContaining({ agentId: descendantId, rootSessionId: 'root', parentSessionId: parent.value.agentId, status: 'cancelled' }),
       ]),
     });
+    expect(rootSessionIds).toEqual(['root', 'root']);
   });
 
   it('enforces configured nesting depth without exposing it through host policy', async () => {

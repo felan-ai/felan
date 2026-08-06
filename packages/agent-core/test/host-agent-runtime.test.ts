@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,7 +13,7 @@ afterEach(async () => {
 describe('HostAgentRuntime', () => {
   it('keeps cwd immutable and rejects escaping execution paths', async () => {
     const workspace = await createTemporaryDirectory('workspace');
-    const runtime = new HostAgentRuntime(workspace);
+    const runtime = await createHostRuntime(workspace);
 
     expect(Reflect.set(runtime, 'cwd', join(workspace, 'other'))).toBe(false);
     expect(runtime.cwd).toBe(workspace);
@@ -23,7 +23,7 @@ describe('HostAgentRuntime', () => {
   });
 
   it('preserves literal argv boundaries and nonzero results', async () => {
-    const runtime = new HostAgentRuntime(await createTemporaryDirectory('workspace'));
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const args = ['plain', 'two words', '"quoted"', "'single'", '$HOME', 'semi;colon', '', '--flag=value'];
     const literal = await runtime.exec(process.execPath, [
       '-e',
@@ -41,7 +41,7 @@ describe('HostAgentRuntime', () => {
   });
 
   it('kills execution on timeout', async () => {
-    const runtime = new HostAgentRuntime(await createTemporaryDirectory('workspace'));
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const result = await runtime.exec(
       process.execPath,
       ['-e', 'setInterval(() => {}, 1000)'],
@@ -55,7 +55,7 @@ describe('HostAgentRuntime', () => {
   it('rejects lexical and symlink escapes across operations', async () => {
     const workspace = await createTemporaryDirectory('workspace');
     const outside = await createTemporaryDirectory('outside');
-    const runtime = new HostAgentRuntime(workspace);
+    const runtime = await createHostRuntime(workspace);
     await writeFile(join(outside, 'secret'), 'outside');
     await symlink(outside, join(workspace, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
 
@@ -75,26 +75,54 @@ describe('HostAgentRuntime', () => {
     );
   });
 
-  it('isolates persistent storage from the workspace filesystem', async () => {
+  it('provides stable session and agent storage handles with session as the default', async () => {
     const workspace = await createTemporaryDirectory('workspace');
-    const storageRoot = await createTemporaryDirectory('storage');
-    const runtime = new HostAgentRuntime(workspace, { storageRoot });
+    const sessionStorageRoot = await createTemporaryDirectory('session-storage');
+    const agentStorageRoot = await createTemporaryDirectory('agent-storage');
+    const outside = await createTemporaryDirectory('outside-storage');
+    const runtime = new HostAgentRuntime(workspace, { sessionStorageRoot, agentStorageRoot });
     const content = new Uint8Array([1, 2, 3]);
+    const sessionStorage = runtime.storage();
+    const agentStorage = runtime.storage('agent');
 
-    expect(runtime.storage.root).toBe(storageRoot);
-    expect(Reflect.set(runtime, 'storage', {})).toBe(false);
-    await runtime.storage.mkdir('background-bash', { recursive: true });
-    await runtime.storage.writeFile('background-bash/state.bin', content);
+    expect(sessionStorage).toBe(runtime.storage('session'));
+    expect(sessionStorage.root).toBe(sessionStorageRoot);
+    expect(agentStorage.root).toBe(agentStorageRoot);
+    expect(() => runtime.storage('other' as never)).toThrow(
+      'Unsupported runtime storage scope: other',
+    );
+    await sessionStorage.mkdir('background-bash', { recursive: true });
+    await sessionStorage.writeFile('background-bash/state.bin', content);
+    await agentStorage.writeFile('state.bin', content);
+    await writeFile(join(outside, 'secret.bin'), content);
+    await symlink(
+      outside,
+      join(sessionStorageRoot, 'escape'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
 
-    await expect(runtime.storage.readFile('background-bash/state.bin')).resolves.toEqual(content);
-    await expect(runtime.readFile(resolve(storageRoot, 'background-bash/state.bin')))
+    await expect(sessionStorage.readFile('background-bash/state.bin')).resolves.toEqual(content);
+    await expect(runtime.readFile(resolve(sessionStorageRoot, 'background-bash/state.bin')))
+      .resolves.toEqual(content);
+    await expect(runtime.listFiles(sessionStorageRoot, { recursive: true }))
+      .resolves.toEqual([join('background-bash', 'state.bin')]);
+    await expect(runtime.readFile(resolve(agentStorageRoot, 'state.bin')))
+      .rejects.toThrow('agent storage');
+    await expect(runtime.listFiles(agentStorageRoot)).rejects.toThrow('agent storage');
+    await expect(runtime.writeFile(resolve(sessionStorageRoot, 'ordinary.bin'), content))
       .rejects.toThrow('escapes runtime root');
-    await expect(runtime.storage.readFile(resolve(workspace, 'workspace.bin')))
+    await expect(sessionStorage.readFile(resolve(workspace, 'workspace.bin')))
       .rejects.toThrow('escapes runtime root');
+    await expect(sessionStorage.readFile('escape/secret.bin'))
+      .rejects.toThrow('escapes runtime root');
+    await expect(sessionStorage.remove(sessionStorageRoot, { recursive: true }))
+      .rejects.toThrow('runtime root cannot be removed');
+    await expect(agentStorage.remove(agentStorageRoot, { recursive: true }))
+      .rejects.toThrow('runtime root cannot be removed');
   });
 
   it('supports binary file IO, listing, mkdir, and removal', async () => {
-    const runtime = new HostAgentRuntime(await createTemporaryDirectory('workspace'));
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const binary = new Uint8Array([0, 255, 128, 13, 10]);
     await runtime.mkdir('nested/deep', { recursive: true });
     await runtime.writeFile('nested/top.bin', binary);
@@ -112,7 +140,7 @@ describe('HostAgentRuntime', () => {
   });
 
   it('uses a shell only through the explicit shell method', async () => {
-    const runtime = new HostAgentRuntime(await createTemporaryDirectory('workspace'));
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const variable = 'literal value; $HOME';
     const command = process.platform === 'win32'
       ? 'echo %HOST_RUNTIME_LITERAL%'
@@ -125,7 +153,7 @@ describe('HostAgentRuntime', () => {
   });
 
   it.skipIf(process.platform === 'win32')('kills the spawned process group on cancellation', async () => {
-    const runtime = new HostAgentRuntime(await createTemporaryDirectory('workspace'));
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const controller = new AbortController();
     const script = [
       "const { spawn } = require('node:child_process');",
@@ -148,6 +176,17 @@ async function createTemporaryDirectory(name: string): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), `felan-${name}-`));
   temporaryPaths.push(path);
   return realpath(path);
+}
+
+async function createHostRuntime(cwd: string): Promise<HostAgentRuntime> {
+  const storageRoot = await createTemporaryDirectory('storage');
+  const sessionStorageRoot = join(storageRoot, 'session');
+  const agentStorageRoot = join(storageRoot, 'agent');
+  await Promise.all([
+    mkdir(sessionStorageRoot, { recursive: true }),
+    mkdir(agentStorageRoot, { recursive: true }),
+  ]);
+  return new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot });
 }
 
 async function waitForFile(runtime: HostAgentRuntime, path: string): Promise<Uint8Array> {

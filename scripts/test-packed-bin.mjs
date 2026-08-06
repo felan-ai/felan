@@ -2,13 +2,14 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { packagePaths } from './package-paths.mjs';
 
@@ -28,6 +29,8 @@ const sourcePackages = packagePaths.map((packagePath) => JSON.parse(
 const sourcePackagesByName = new Map(sourcePackages.map((manifest) => [manifest.name, manifest]));
 const packageNames = sourcePackages.map(({ name }) => name);
 const agentCoreVersion = sourcePackagesByName.get('@felan-ai/agent-core').version;
+const [agentCoreMajor, agentCoreMinor] = agentCoreVersion.split('.');
+const agentCorePeerRange = `^${agentCoreMajor}.${agentCoreMinor}.0`;
 const felanVersion = sourcePackagesByName.get('@felan-ai/felan').version;
 const audit = process.argv.includes('--audit');
 const cleanEnvironment = Object.fromEntries(
@@ -68,6 +71,7 @@ try {
   ], cleanEnvironment);
 
   for (const sourcePackage of sourcePackages) validateInstalledPackage(sourcePackage);
+  assertSingleAgentCoreInstallation();
   assertPackedToolBoundary();
 
   run(process.execPath, [
@@ -208,6 +212,21 @@ function assertPackedToolBoundary() {
   }
 }
 
+function assertSingleAgentCoreInstallation() {
+  const installedRoots = new Set(readdirSync(installDir, {
+    recursive: true,
+    withFileTypes: true,
+  }).filter((entry) => (
+    entry.isDirectory()
+    && entry.name === 'agent-core'
+    && basename(entry.parentPath) === '@felan-ai'
+    && basename(dirname(entry.parentPath)) === 'node_modules'
+  )).map((entry) => realpathSync(join(entry.parentPath, entry.name))));
+  if (installedRoots.size !== 1) {
+    throw new Error(`Packed install resolved ${installedRoots.size} Agent Core copies`);
+  }
+}
+
 function filesBelow(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
@@ -251,6 +270,18 @@ function validateInstalledPackage(sourcePackage) {
     }
     if (/workspace:|^(?:file|link|portal|git|git\+|https?|github|bitbucket):|^\.{0,2}\//.test(version)) {
       throw new Error(`${manifest.name} packed non-registry dependency ${dependency}@${version}`);
+    }
+  }
+
+  if (manifest.name.startsWith('@felan-ai/ext-')) {
+    if (manifest.dependencies?.['@felan-ai/agent-core'] !== undefined) {
+      throw new Error(`${manifest.name} packed Agent Core as a direct dependency`);
+    }
+    const peerRange = manifest.peerDependencies?.['@felan-ai/agent-core'];
+    if (peerRange !== agentCorePeerRange) {
+      throw new Error(
+        `${manifest.name} Agent Core peer is ${peerRange}, expected ${agentCorePeerRange}`,
+      );
     }
   }
 

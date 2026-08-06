@@ -13,6 +13,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
   AgentRuntime,
   AgentRuntimeStorage,
+  AgentRuntimeStorageScope,
   ExecOptions,
   ExecResult,
 } from './runtime.js';
@@ -22,19 +23,26 @@ export type HostShellOptions = ExecOptions & {
 };
 
 export interface HostAgentRuntimeOptions {
-  readonly storageRoot?: string;
+  readonly sessionStorageRoot: string;
+  readonly agentStorageRoot: string;
 }
 
 export class HostAgentRuntime implements AgentRuntime {
   readonly #cwd: string;
-  readonly #storage: AgentRuntimeStorage;
+  readonly #sessionStorage: AgentRuntimeStorage;
+  readonly #agentStorage: AgentRuntimeStorage;
+  readonly #sessionStorageRoot: string;
+  readonly #agentStorageRoot: string;
 
-  constructor(cwd = process.cwd(), options: HostAgentRuntimeOptions = {}) {
+  constructor(cwd: string, options: HostAgentRuntimeOptions) {
     if (cwd.includes('\0')) {
       throw new Error('Runtime cwd cannot contain NUL bytes');
     }
     this.#cwd = resolve(cwd);
-    this.#storage = createHostStorage(options.storageRoot ?? this.#cwd);
+    this.#sessionStorageRoot = resolveStorageRoot(options.sessionStorageRoot);
+    this.#agentStorageRoot = resolveStorageRoot(options.agentStorageRoot);
+    this.#sessionStorage = createHostStorage(this.#sessionStorageRoot);
+    this.#agentStorage = createHostStorage(this.#agentStorageRoot);
   }
 
   get kind(): 'host' {
@@ -45,8 +53,10 @@ export class HostAgentRuntime implements AgentRuntime {
     return this.#cwd;
   }
 
-  get storage(): AgentRuntimeStorage {
-    return this.#storage;
+  storage(scope: AgentRuntimeStorageScope = 'session'): AgentRuntimeStorage {
+    if (scope === 'session') return this.#sessionStorage;
+    if (scope === 'agent') return this.#agentStorage;
+    throw new Error(`Unsupported runtime storage scope: ${String(scope)}`);
   }
 
   async exec(
@@ -66,7 +76,12 @@ export class HostAgentRuntime implements AgentRuntime {
   }
 
   async readFile(path: string): Promise<Uint8Array> {
-    const resolvedPath = await resolveContainedPath(this.#cwd, path);
+    const resolvedPath = await resolveReadablePath(
+      this.#cwd,
+      this.#sessionStorageRoot,
+      this.#agentStorageRoot,
+      path,
+    );
     const content = await readFile(resolvedPath);
     return new Uint8Array(content);
   }
@@ -78,7 +93,12 @@ export class HostAgentRuntime implements AgentRuntime {
   }
 
   async listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]> {
-    const resolvedPath = await resolveContainedPath(this.#cwd, path);
+    const resolvedPath = await resolveReadablePath(
+      this.#cwd,
+      this.#sessionStorageRoot,
+      this.#agentStorageRoot,
+      path,
+    );
     const entries = await readdir(resolvedPath, {
       recursive: options?.recursive ?? false,
       withFileTypes: true,
@@ -169,20 +189,18 @@ export class HostAgentRuntime implements AgentRuntime {
 }
 
 function createHostStorage(root: string): AgentRuntimeStorage {
-  if (root.includes('\0')) throw new Error('Runtime storage root cannot contain NUL bytes');
-  const storageRoot = resolve(root);
   return {
-    root: storageRoot,
+    root,
     async readFile(path) {
-      const content = await readFile(await resolveContainedPath(storageRoot, path));
+      const content = await readFile(await resolveContainedPath(root, path));
       return new Uint8Array(content);
     },
     async writeFile(path, content) {
       const copiedContent = content.slice();
-      await writeFile(await resolveContainedPath(storageRoot, path), copiedContent);
+      await writeFile(await resolveContainedPath(root, path), copiedContent);
     },
     async listFiles(path, options) {
-      const resolvedPath = await resolveContainedPath(storageRoot, path);
+      const resolvedPath = await resolveContainedPath(root, path);
       const entries = await readdir(resolvedPath, {
         recursive: options?.recursive ?? false,
         withFileTypes: true,
@@ -193,25 +211,59 @@ function createHostStorage(root: string): AgentRuntimeStorage {
         .sort();
     },
     async mkdir(path, options) {
-      await mkdir(await resolveContainedPath(storageRoot, path), {
+      await mkdir(await resolveContainedPath(root, path), {
         recursive: options?.recursive ?? false,
       });
     },
     async remove(path, options) {
-      await rm(await resolveContainedPath(storageRoot, path, false), {
+      await rm(await resolveContainedPath(root, path, false), {
         recursive: options?.recursive ?? false,
       });
     },
   };
 }
 
-async function resolveContainedPath(root: string, path: string, allowRoot = true): Promise<string> {
+function resolveStorageRoot(root: string): string {
+  if (root.includes('\0')) throw new Error('Runtime storage root cannot contain NUL bytes');
+  return resolve(root);
+}
+
+async function resolveReadablePath(
+  cwd: string,
+  sessionStorageRoot: string,
+  agentStorageRoot: string,
+  path: string,
+): Promise<string> {
+  if (path.includes('\0')) throw new Error('Paths cannot contain NUL bytes');
+  const resolvedPath = isAbsolute(path) ? resolve(path) : resolve(cwd, path);
+  if (isContained(agentStorageRoot, resolvedPath)) {
+    throw new Error(`Path is inside agent storage: ${resolvedPath}`);
+  }
+  if (isContained(cwd, resolvedPath)) {
+    return resolveContainedPath(cwd, resolvedPath, true, agentStorageRoot);
+  }
+  if (isContained(sessionStorageRoot, resolvedPath)) {
+    return resolveContainedPath(sessionStorageRoot, resolvedPath, true, agentStorageRoot);
+  }
+  throw new Error(`Path escapes runtime root: ${resolvedPath}`);
+}
+
+async function resolveContainedPath(
+  root: string,
+  path: string,
+  allowRoot = true,
+  excludedRoot?: string,
+): Promise<string> {
   if (path.includes('\0')) throw new Error('Paths cannot contain NUL bytes');
 
   const resolvedPath = isAbsolute(path) ? resolve(path) : resolve(root, path);
   assertContained(root, resolvedPath, allowRoot);
+  if (excludedRoot && isContained(excludedRoot, resolvedPath)) {
+    throw new Error(`Path is inside agent storage: ${resolvedPath}`);
+  }
 
   const resolvedRoot = await realpath(root);
+  const resolvedExcludedRoot = excludedRoot === undefined ? undefined : await realpath(excludedRoot);
   const segments = relative(root, resolvedPath).split(sep).filter(Boolean);
   let current = resolvedRoot;
 
@@ -230,6 +282,9 @@ async function resolveContainedPath(root: string, path: string, allowRoot = true
           current = resolvedTarget;
         }
         assertContained(resolvedRoot, current, allowRoot);
+        if (resolvedExcludedRoot && isContained(resolvedExcludedRoot, current)) {
+          throw new Error(`Path is inside agent storage: ${current}`);
+        }
       } else {
         current = candidate;
       }
@@ -242,16 +297,22 @@ async function resolveContainedPath(root: string, path: string, allowRoot = true
   }
 
   assertContained(resolvedRoot, current, allowRoot);
+  if (resolvedExcludedRoot && isContained(resolvedExcludedRoot, current)) {
+    throw new Error(`Path is inside agent storage: ${current}`);
+  }
   return resolvedPath;
 }
 
 function assertContained(root: string, path: string, allowRoot: boolean): void {
   const relativePath = relative(root, path);
-  const contained = relativePath === ''
-    || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath));
-
-  if (!contained) throw new Error(`Path escapes runtime root: ${path}`);
+  if (!isContained(root, path)) throw new Error(`Path escapes runtime root: ${path}`);
   if (!allowRoot && relativePath === '') throw new Error('The runtime root cannot be removed');
+}
+
+function isContained(root: string, path: string): boolean {
+  const relativePath = relative(root, path);
+  return relativePath === ''
+    || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath));
 }
 
 function isMissingPathError(error: unknown): boolean {

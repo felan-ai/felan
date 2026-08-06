@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { HostAgentRuntime } from '@felan-ai/agent-core';
+import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeStorageScope } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { getBackgroundBashJobsDir } from '../src/job-store.js';
 import { BackgroundBashManager } from '../src/process-manager.js';
@@ -24,16 +24,18 @@ describe('BackgroundBashManager', () => {
   });
 
   it('starts, persists, waits for, and tails a detached process through runtime storage', async () => {
-    const { manager, runtime } = await createManager();
+    const { manager, runtime, storageScopes } = await createManager();
     const started = await manager.start("printf 'first\\nsecond\\n'");
 
     const result = await manager.wait(started.meta.id, 10);
 
     expect(result.timedOut).toBe(false);
     expect(result.job.status).toMatchObject({ status: 'completed', exitCode: 0 });
-    expect(started.meta.logPath).toContain(join(runtime.storage.root, 'background-bash'));
+    expect(started.meta.logPath).toContain(join(runtime.storage('session').root, 'background-bash'));
     expect(started.meta.logPath).not.toContain(`${join('.pi', 'background-bash')}`);
-    await expect(runtime.readFile(started.meta.logPath)).rejects.toThrow('escapes runtime root');
+    await expect(runtime.readFile(started.meta.logPath)).resolves.toContain(102);
+    await expect(runtime.readFile(started.meta.infoPath)).resolves.toContain(123);
+    expect(storageScopes).toEqual(['session']);
     await expect(manager.tail(started.meta.id)).resolves.toContain('first\nsecond');
     await expect(manager.list('completed')).resolves.toHaveLength(1);
   });
@@ -56,14 +58,33 @@ describe('BackgroundBashManager', () => {
 async function createManager(): Promise<{
   manager: BackgroundBashManager;
   runtime: HostAgentRuntime;
+  storageScopes: AgentRuntimeStorageScope[];
 }> {
   const root = await mkdtemp(join(tmpdir(), 'felan-background-bash-'));
   temporaryPaths.push(root);
   const cwd = join(root, 'workspace');
-  const storageRoot = join(root, 'felan-state');
-  await Promise.all([cwd, storageRoot].map((path) => mkdir(path, { recursive: true })));
-  const runtime = new HostAgentRuntime(cwd, { storageRoot });
-  return { manager: new BackgroundBashManager(runtime), runtime };
+  const sessionStorageRoot = join(root, 'session-storage');
+  const agentStorageRoot = join(root, 'agent-storage');
+  await Promise.all([cwd, sessionStorageRoot, agentStorageRoot]
+    .map((path) => mkdir(path, { recursive: true })));
+  const runtime = new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot });
+  const storageScopes: AgentRuntimeStorageScope[] = [];
+  const observedRuntime: AgentRuntime = {
+    kind: runtime.kind,
+    cwd: runtime.cwd,
+    storage(scope = 'session') {
+      storageScopes.push(scope);
+      return runtime.storage(scope);
+    },
+    exec: runtime.exec.bind(runtime),
+    shell: runtime.shell.bind(runtime),
+    readFile: runtime.readFile.bind(runtime),
+    writeFile: runtime.writeFile.bind(runtime),
+    listFiles: runtime.listFiles.bind(runtime),
+    mkdir: runtime.mkdir.bind(runtime),
+    remove: runtime.remove.bind(runtime),
+  };
+  return { manager: new BackgroundBashManager(observedRuntime), runtime, storageScopes };
 }
 
 async function readPid(runtime: HostAgentRuntime, path: string): Promise<number> {

@@ -5,7 +5,10 @@ Portable Felan agent contracts and the Node.js host runtime.
 ```ts
 import { HostAgentRuntime } from '@felan-ai/agent-core';
 
-const runtime = new HostAgentRuntime(process.cwd());
+const runtime = new HostAgentRuntime(process.cwd(), {
+  sessionStorageRoot: '/var/lib/felan/sessions/current',
+  agentStorageRoot: '/var/lib/felan/agent',
+});
 const result = await runtime.exec('node', ['--version']);
 ```
 
@@ -14,10 +17,18 @@ Use `exec(command, args)` for literal argument boundaries and `shell(command)`
 only when shell parsing is intentional. File reads and writes use
 `Uint8Array` so binary content is preserved.
 
-Every `AgentRuntime` also exposes an isolated persistent `storage` filesystem.
-Local consumers select it with `new HostAgentRuntime(cwd, { storageRoot })`;
-cloud adapters map it to their durable state root. Workspace tools remain
-confined to `cwd`, while extension state uses `runtime.storage`.
+Every `AgentRuntime` exposes scoped storage through `storage(scope)`. The
+default `storage()` handle is identical to `storage('session')` and belongs to
+one root session plus all of its subagents. Session storage is readable through
+ordinary runtime reads and shares a filesystem namespace with `shell`, allowing
+tools to return absolute output paths that regular agents can inspect.
+
+`storage('agent')` holds longer-retention extension state owned by the runtime
+host. It is intentionally excluded from ordinary runtime reads and listings.
+Host consumers provide exact `sessionStorageRoot` and `agentStorageRoot` paths;
+each storage handle preserves binary content, rejects lexical and symlink
+escapes, and cannot remove its root. Ordinary writes, mutations, and execution
+working directories remain confined to `cwd`.
 
 Host mode runs with the current user's filesystem and process permissions. It
 provides workspace path containment, but no OS isolation or sandbox boundary.

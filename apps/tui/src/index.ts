@@ -27,6 +27,10 @@ export type {
   CreateLocalSessionRuntimeFactoryOptions,
   LocalFelanRuntime,
 } from './runtime.js';
+export type {
+  LocalAgentRuntimeFactory,
+  LocalAgentRuntimeFactoryRequest,
+} from './runtime-factory.js';
 export { createLocalSettingsManager, getFelanSettings } from './settings.js';
 export type { FelanSettings } from './settings.js';
 export {

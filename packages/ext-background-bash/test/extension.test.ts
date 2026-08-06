@@ -215,9 +215,11 @@ async function createHostRuntime(): Promise<HostAgentRuntime> {
   const root = await mkdtemp(join(tmpdir(), 'felan-background-extension-'));
   temporaryPaths.push(root);
   const cwd = join(root, 'workspace');
-  const storageRoot = join(root, 'felan-state');
-  await Promise.all([cwd, storageRoot].map((path) => mkdir(path, { recursive: true })));
-  return new HostAgentRuntime(cwd, { storageRoot });
+  const sessionStorageRoot = join(root, 'session-storage');
+  const agentStorageRoot = join(root, 'agent-storage');
+  await Promise.all([cwd, sessionStorageRoot, agentStorageRoot]
+    .map((path) => mkdir(path, { recursive: true })));
+  return new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot });
 }
 
 function registeredTool(harness: ReturnType<typeof createHarness>, name: string) {
@@ -256,14 +258,14 @@ function unusedRuntime(): AgentRuntime {
   return {
     kind: 'host',
     cwd: '/workspace',
-    storage: {
+    storage: () => ({
       root: '/storage',
       readFile: unused,
       writeFile: unused,
       listFiles: unused,
       mkdir: unused,
       remove: unused,
-    },
+    }),
     exec: unused,
     shell: unused,
     readFile: unused,

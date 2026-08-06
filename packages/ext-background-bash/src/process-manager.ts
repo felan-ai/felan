@@ -1,4 +1,4 @@
-import type { AgentRuntime } from '@felan-ai/agent-core';
+import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
 import { createOutputLog, readLogTail } from './logs.js';
 import {
   BackgroundBashJobStore,
@@ -18,16 +18,18 @@ const encoder = new TextEncoder();
 
 export class BackgroundBashManager {
   readonly #store: BackgroundBashJobStore;
+  readonly #storage: AgentRuntimeStorage;
 
   constructor(private readonly runtime: AgentRuntime) {
-    this.#store = new BackgroundBashJobStore(runtime);
+    this.#storage = runtime.storage('session');
+    this.#store = new BackgroundBashJobStore(runtime, this.#storage);
   }
 
   async start(command: string): Promise<BackgroundBashJob> {
     let job = await this.#store.createJob(command);
-    await createOutputLog(this.runtime.storage, job.meta.logPath);
-    await this.runtime.storage.writeFile(job.meta.commandPath, encoder.encode(`${command}\n`));
-    await this.runtime.storage.writeFile(job.meta.runnerPath, encoder.encode(createRunnerScript(job)));
+    await createOutputLog(this.#storage, job.meta.logPath);
+    await this.#storage.writeFile(job.meta.commandPath, encoder.encode(`${command}\n`));
+    await this.#storage.writeFile(job.meta.runnerPath, encoder.encode(createRunnerScript(job)));
 
     try {
       const launch = await this.runtime.shell(createLaunchCommand(
@@ -135,7 +137,7 @@ export class BackgroundBashManager {
 
   async tail(id: string, lines = 80): Promise<string> {
     const job = await this.get(id);
-    return readLogTail(this.runtime.storage, job.meta.logPath, lines);
+    return readLogTail(this.#storage, job.meta.logPath, lines);
   }
 
   async #normalizeJob(job: BackgroundBashJob): Promise<BackgroundBashJob> {

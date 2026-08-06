@@ -33,8 +33,8 @@ class RecordingRuntime implements AgentRuntime {
     return this.runtime.cwd;
   }
 
-  get storage(): AgentRuntime['storage'] {
-    return this.runtime.storage;
+  storage(...args: Parameters<AgentRuntime['storage']>): ReturnType<AgentRuntime['storage']> {
+    return this.runtime.storage(...args);
   }
 
   exec(...args: Parameters<AgentRuntime['exec']>): ReturnType<AgentRuntime['exec']> {
@@ -370,7 +370,7 @@ describe('@felan-ai/ext-context', () => {
     await writeFile(join(workspace, 'scope', 'AGENTS.md'), 'Must remain unloaded');
     await writeFile(join(outside, 'file.ts'), 'outside');
     await symlink(outside, join(workspace, 'scope', 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
-    const harness = await ExtensionHarness.create(new HostAgentRuntime(workspace));
+    const harness = await ExtensionHarness.create(await hostRuntime(workspace));
 
     await harness.successfulRead('scope/escape/file.ts');
 
@@ -384,7 +384,17 @@ async function put(runtime: AgentRuntime, path: string, content: string): Promis
 }
 
 async function testRuntime(kind: AgentRuntimeKind = 'host'): Promise<RecordingRuntime> {
-  return new RecordingRuntime(new HostAgentRuntime(await temporaryDirectory()), kind);
+  return new RecordingRuntime(await hostRuntime(await temporaryDirectory()), kind);
+}
+
+async function hostRuntime(cwd: string): Promise<HostAgentRuntime> {
+  const sessionStorageRoot = join(cwd, '.runtime-storage', 'session');
+  const agentStorageRoot = join(cwd, '.runtime-storage', 'agent');
+  await Promise.all([
+    mkdir(sessionStorageRoot, { recursive: true }),
+    mkdir(agentStorageRoot, { recursive: true }),
+  ]);
+  return new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot });
 }
 
 async function temporaryDirectory(): Promise<string> {
