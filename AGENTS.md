@@ -6,3 +6,4 @@
 - Keep pinned `@earendil-works/pi-*` versions aligned; `agent-core/src/index.ts` is the shared Pi composition surface.
 - Extensions consume `@felan-ai/agent-core` through a compatible-minor peer dependency and use `workspace:*` only as a development dependency.
 - Run each changed workspace's `build`, `type-check`, and `test`; run `pnpm verify` for cross-package or release-facing changes.
+- Follow `docs/releasing.md` for every package release. New npm packages require its manual `0.0.0` bootstrap and trusted-publisher setup before the intended version publishes from CI.
