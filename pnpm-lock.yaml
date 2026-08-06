@@ -84,6 +84,9 @@ importers:
 
   packages/ext-codex:
     dependencies:
+      '@earendil-works/pi-tui':
+        specifier: 0.84.0
+        version: 0.84.0
       typebox:
         specifier: 1.1.38
         version: 1.1.38

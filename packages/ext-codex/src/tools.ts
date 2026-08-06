@@ -4,6 +4,7 @@ import {
   type ExtensionAPI,
   type ToolDefinition,
 } from '@felan-ai/agent-core';
+import { Text } from '@earendil-works/pi-tui';
 import { Type, type Static } from 'typebox';
 import { ExecSessionManager, formatExecResult } from './exec-session-manager.js';
 import { ApplyPatchError, applyPatch } from './patch.js';
@@ -75,6 +76,10 @@ export function createCodexTools(
         details: result,
       };
     },
+    renderCall(params, theme, context) {
+      const title = context.isError ? 'Command failed' : context.isPartial ? 'Running' : 'Ran';
+      return renderFriendlyCall(theme, title, params.cmd, context.isError);
+    },
   };
 
   const writeStdin: ToolDefinition<typeof WriteStdinParams> = {
@@ -94,6 +99,15 @@ export function createCodexTools(
         content: [{ type: 'text', text: formatExecResult(result) }],
         details: result,
       };
+    },
+    renderCall(params, theme, context) {
+      const interacted = typeof params.chars === 'string' && params.chars.length > 0;
+      let title: string;
+      if (context.isError) title = 'Terminal interaction failed';
+      else if (interacted) {
+        title = context.isPartial ? 'Interacting with background terminal' : 'Interacted with background terminal';
+      } else title = context.isPartial ? 'Waiting for background terminal' : 'Waited for background terminal';
+      return renderFriendlyCall(theme, title, `#${params.session_id}`, context.isError, interacted ? '↳' : '•');
     },
   };
 
@@ -120,6 +134,10 @@ export function createCodexTools(
           details: { status: 'partial_failure', result: error.result, failedPath: error.failedPath },
         };
       }
+    },
+    renderCall(_params, theme, context) {
+      const title = context.isError ? 'Patch failed' : context.isPartial ? 'Patching' : 'Patched';
+      return renderFriendlyCall(theme, title, undefined, context.isError);
     },
   };
 
@@ -159,6 +177,11 @@ export function createCodexTools(
           wasResized: resized.wasResized,
         },
       };
+    },
+    renderCall(params, theme, context) {
+      const title = context.isError ? 'Image view failed' : context.isPartial ? 'Viewing image' : 'Viewed image';
+      const path = params.path.startsWith('@') ? params.path.slice(1) : params.path;
+      return renderFriendlyCall(theme, title, path, context.isError);
     },
   };
 
@@ -225,6 +248,30 @@ function formatPatchSuccess(result: Awaited<ReturnType<typeof applyPatch>>): str
     `Moved files: ${result.movedFiles.length}`,
     `Fuzz: ${result.fuzz}`,
   ].join('\n');
+}
+
+interface FriendlyRenderTheme {
+  fg(role: 'dim' | 'muted' | 'error', text: string): string;
+  bold(text: string): string;
+}
+
+function renderFriendlyCall(
+  theme: FriendlyRenderTheme,
+  title: string,
+  detail: string | undefined,
+  isError: boolean,
+  marker = '•',
+): Text {
+  const heading = theme.bold(title);
+  const styledHeading = isError ? theme.fg('error', heading) : heading;
+  const preview = detail === undefined ? '' : formatPreview(detail);
+  const suffix = preview ? `${theme.fg('dim', ' · ')}${theme.fg('muted', preview)}` : '';
+  return new Text(`${theme.fg('dim', marker)} ${styledHeading}${suffix}`, 0, 0);
+}
+
+function formatPreview(value: string): string {
+  const singleLine = value.replace(/\s+/g, ' ').trim();
+  return singleLine.length <= 100 ? singleLine : `${singleLine.slice(0, 97)}...`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

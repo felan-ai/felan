@@ -28,6 +28,43 @@ afterEach(async () => {
 });
 
 describe('Codex runtime-backed tools', () => {
+  it('renders friendly TUI labels without changing tool names or result rendering', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const tools = createCodexTools(runtime, sessions);
+
+    expect(tools.map((candidate) => candidate.name)).toEqual([
+      'exec_command',
+      'write_stdin',
+      'apply_patch',
+      'view_image',
+    ]);
+    expect(tools.every((candidate) => candidate.renderResult === undefined)).toBe(true);
+
+    const exec = tool(tools, 'exec_command');
+    expect(renderedCall(exec, { cmd: 'printf   ok\nnext' }, true)).toBe('• Running · printf ok next');
+    expect(renderedCall(exec, { cmd: 'printf ok' }, false)).toBe('• Ran · printf ok');
+    expect(renderedCall(exec, { cmd: 'false' }, false, true)).toBe('• Command failed · false');
+
+    const writeStdin = tool(tools, 'write_stdin');
+    expect(renderedCall(writeStdin, { session_id: 1234 }, true))
+      .toBe('• Waiting for background terminal · #1234');
+    expect(renderedCall(writeStdin, { session_id: 1234 }, false))
+      .toBe('• Waited for background terminal · #1234');
+    expect(renderedCall(writeStdin, { session_id: 1234, chars: 'hello\n' }, true))
+      .toBe('↳ Interacting with background terminal · #1234');
+
+    const patch = tool(tools, 'apply_patch');
+    expect(renderedCall(patch, { input: '' }, true)).toBe('• Patching');
+    expect(renderedCall(patch, { input: '' }, false)).toBe('• Patched');
+
+    const viewImage = tool(tools, 'view_image');
+    expect(renderedCall(viewImage, { path: '@image.png' }, true)).toBe('• Viewing image · image.png');
+    expect(renderedCall(viewImage, { path: '@image.png' }, false)).toBe('• Viewed image · image.png');
+
+    await sessions.shutdown();
+  });
+
   it('executes foreground commands and bounds returned output', async () => {
     const runtime = await createRuntime();
     const sessions = new ExecSessionManager(runtime);
@@ -425,6 +462,22 @@ function tool(tools: ToolDefinition<any, any, any>[], name: string): ToolDefinit
   const found = tools.find((candidate) => candidate.name === name);
   if (!found) throw new Error(`Tool not found: ${name}`);
   return found;
+}
+
+function renderedCall(
+  definition: ToolDefinition<any, any, any>,
+  args: Record<string, unknown>,
+  isPartial: boolean,
+  isError = false,
+): string {
+  const renderCall = definition.renderCall;
+  if (!renderCall) throw new Error(`Tool has no call renderer: ${definition.name}`);
+  const theme = {
+    fg: (_role: string, text: string) => text,
+    bold: (text: string) => text,
+  } as Parameters<typeof renderCall>[1];
+  const context = { isPartial, isError } as Parameters<typeof renderCall>[2];
+  return renderCall(args, theme, context).render(200).map((line) => line.trimEnd()).join('\n');
 }
 
 class FakeProcess implements AgentRuntimeProcess {
