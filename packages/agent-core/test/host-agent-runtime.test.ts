@@ -57,7 +57,11 @@ describe('HostAgentRuntime', () => {
     const outside = await createTemporaryDirectory('outside');
     const runtime = await createHostRuntime(workspace);
     await writeFile(join(outside, 'secret'), 'outside');
-    await symlink(outside, join(workspace, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+    await symlink(
+      outside,
+      join(workspace, 'escape'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
 
     await expect(runtime.readFile('../outside')).rejects.toThrow('escapes runtime root');
     await expect(runtime.readFile(resolve(outside, 'secret'))).rejects.toThrow('escapes runtime root');
@@ -73,6 +77,61 @@ describe('HostAgentRuntime', () => {
     await expect(runtime.remove(workspace, { recursive: true })).rejects.toThrow(
       'runtime root cannot be removed',
     );
+  });
+
+  it('allows host filesystem paths and process working directories when configured', async () => {
+    const root = await createTemporaryDirectory('host-access');
+    const workspace = join(root, 'workspace');
+    const outside = join(root, 'outside');
+    const sessionStorageRoot = join(root, 'session-storage');
+    const agentStorageRoot = join(root, 'agent-storage');
+    await Promise.all([
+      mkdir(workspace),
+      mkdir(outside),
+      mkdir(sessionStorageRoot),
+      mkdir(agentStorageRoot),
+    ]);
+    const runtime = new HostAgentRuntime(workspace, {
+      sessionStorageRoot,
+      agentStorageRoot,
+      pathAccess: 'host',
+    });
+    const content = new TextEncoder().encode('outside');
+    await writeFile(join(outside, 'secret.txt'), content);
+    await runtime.storage('agent').writeFile('state.bin', content);
+    await symlink(outside, join(workspace, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+
+    await expect(runtime.readFile('../outside/secret.txt')).resolves.toEqual(content);
+    await expect(runtime.readFile('escape/secret.txt')).resolves.toEqual(content);
+    await expect(runtime.readFile(join(agentStorageRoot, 'state.bin'))).resolves.toEqual(content);
+    await runtime.writeFile('../outside/written.txt', content);
+    await runtime.mkdir('../outside/nested');
+    await expect(runtime.listFiles('../outside')).resolves.toEqual(['secret.txt', 'written.txt']);
+    await expect(runtime.readFile('bad\0path')).rejects.toThrow('NUL');
+
+    const execution = await runtime.exec(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.cwd())'],
+      { cwd: '../outside' },
+    );
+    expect(resolve(execution.stdout)).toBe(outside);
+
+    const command = [
+      JSON.stringify(process.execPath),
+      '-e',
+      JSON.stringify('process.stdout.write(process.cwd())'),
+    ].join(' ');
+    const processHandle = await runtime.processes.startShell(command, { cwd: '../outside' });
+    const processOutput = await processHandle.read(0, { waitMs: 1_000 });
+    expect(resolve(new TextDecoder().decode(processOutput.output))).toBe(outside);
+    await processHandle.dispose();
+
+    const terminal = await runtime.terminals!.startShell(command, { cwd: '../outside' });
+    const terminalOutput = await terminal.read(0, { waitMs: 1_000 });
+    expect(new TextDecoder().decode(terminalOutput.output)).toContain(outside);
+    await terminal.dispose();
+
+    await runtime.remove('../outside/nested', { recursive: true });
   });
 
   it('provides stable session and agent storage handles with session as the default', async () => {

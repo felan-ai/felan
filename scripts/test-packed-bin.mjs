@@ -86,6 +86,8 @@ try {
         const extension = await app.importLocalExtension(packageName);
         if (packageName === '@felan-ai/ext-subagents') {
           if (typeof extension.createSubagentsExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
+        } else if (packageName === '@felan-ai/ext-ask-user') {
+          if (typeof extension.createAskUserExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (typeof extension.default !== 'function') {
           throw new Error(packageName + ' has no extension factory');
         }
@@ -129,6 +131,20 @@ try {
       }
       if (JSON.stringify(canonicalCapabilities) !== JSON.stringify(['subagents'])) {
         throw new Error('Packed subagent extension capability is unavailable');
+      }
+      const askUser = await import('@felan-ai/ext-ask-user');
+      const askUserTui = await import('@felan-ai/ext-ask-user/tui');
+      const askUserTools = [];
+      const askUserCapabilities = [];
+      askUser.createAskUserExtension(askUserTui.createTuiAskUserHost())({
+        registerCapability: (capability) => askUserCapabilities.push(capability.id),
+        registerTool: (tool) => askUserTools.push(tool.name),
+      });
+      if (JSON.stringify(askUserTools) !== JSON.stringify(['ask_user'])) {
+        throw new Error('Packed ask-user extension tool is unavailable');
+      }
+      if (JSON.stringify(askUserCapabilities) !== JSON.stringify(['ask-user'])) {
+        throw new Error('Packed ask-user extension capability is unavailable');
       }
       const tasks = await import('@felan-ai/ext-tasks');
       const taskTools = [];
@@ -206,7 +222,7 @@ try {
       if (prompt.includes('operating inside pi')) {
         throw new Error('Packed runtime retained the Pi base prompt');
       }
-      const capabilityPositions = ['### subagents', '### tasks', '### prewalk', '### progressive-context', '### web-access']
+      const capabilityPositions = ['### subagents', '### ask-user', '### tasks', '### prewalk', '### progressive-context', '### web-access']
         .map((heading) => prompt.indexOf(heading));
       if (capabilityPositions.some((position) => position < 0)
         || capabilityPositions.some((position, index) => index > 0 && position <= capabilityPositions[index - 1])) {

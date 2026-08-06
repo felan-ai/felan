@@ -7,6 +7,7 @@ export interface LocalAgentRuntimeFactoryRequest {
   readonly rootSessionId: string;
   readonly sessionStorageRoot: string;
   readonly agentStorageRoot: string;
+  readonly pathAccess: 'host';
 }
 
 export type LocalAgentRuntimeFactory = (
@@ -22,6 +23,7 @@ export function createLocalAgentRuntimeFactoryRequest(
     cwd,
     agentDir,
     rootSessionId,
+    pathAccess: 'host',
     sessionStorageRoot: join(
       agentDir,
       'storage',

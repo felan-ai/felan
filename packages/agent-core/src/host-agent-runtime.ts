@@ -37,6 +37,7 @@ export interface HostAgentRuntimeOptions {
   readonly sessionStorageRoot: string;
   readonly agentStorageRoot: string;
   readonly agentDir?: string;
+  readonly pathAccess?: 'workspace' | 'host';
 }
 
 export class HostAgentRuntime implements AgentRuntime {
@@ -46,6 +47,7 @@ export class HostAgentRuntime implements AgentRuntime {
   readonly #sessionStorageRoot: string;
   readonly #agentStorageRoot: string;
   readonly #agentDir: string | undefined;
+  readonly #pathAccess: 'workspace' | 'host';
   readonly processes: AgentRuntimeProcesses;
   readonly terminals: AgentRuntimeTerminals;
 
@@ -57,6 +59,7 @@ export class HostAgentRuntime implements AgentRuntime {
     this.#sessionStorageRoot = resolveStorageRoot(options.sessionStorageRoot);
     this.#agentStorageRoot = resolveStorageRoot(options.agentStorageRoot);
     this.#agentDir = options.agentDir === undefined ? undefined : resolveStorageRoot(options.agentDir);
+    this.#pathAccess = options.pathAccess ?? 'workspace';
     this.#sessionStorage = createHostStorage(this.#sessionStorageRoot);
     this.#agentStorage = createHostStorage(this.#agentStorageRoot);
     this.processes = {
@@ -87,23 +90,25 @@ export class HostAgentRuntime implements AgentRuntime {
     options?: ExecOptions,
   ): Promise<ExecResult> {
     const literalArgs = [...args];
-    const cwd = await resolveContainedPath(this.#cwd, options?.cwd ?? this.#cwd);
+    const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
     return this.#spawn(command, literalArgs, cwd, options, false);
   }
 
   async shell(command: string, options?: HostShellOptions): Promise<ExecResult> {
     const env = options?.env ? { ...options.env } : undefined;
-    const cwd = await resolveContainedPath(this.#cwd, options?.cwd ?? this.#cwd);
+    const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
     return this.#spawn(command, [], cwd, options, true, env);
   }
 
   async readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array> {
-    const resolvedPath = await resolveReadablePath(
-      this.#cwd,
-      this.#sessionStorageRoot,
-      this.#agentStorageRoot,
-      path,
-    );
+    const resolvedPath = this.#pathAccess === 'host'
+      ? resolveHostPath(this.#cwd, path)
+      : await resolveReadablePath(
+          this.#cwd,
+          this.#sessionStorageRoot,
+          this.#agentStorageRoot,
+          path,
+        );
     const content = options?.maxBytes === undefined
       ? await readFile(resolvedPath)
       : await readBoundedFile(resolvedPath, options.maxBytes);
@@ -116,17 +121,19 @@ export class HostAgentRuntime implements AgentRuntime {
     options?: AgentRuntimeFileWriteOptions,
   ): Promise<void> {
     const copiedContent = content.slice();
-    const resolvedPath = await resolveContainedPath(this.#cwd, path);
+    const resolvedPath = await this.#resolvePath(path);
     await writeFile(resolvedPath, copiedContent, options?.exclusive ? { flag: 'wx' } : undefined);
   }
 
   async listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]> {
-    const resolvedPath = await resolveReadablePath(
-      this.#cwd,
-      this.#sessionStorageRoot,
-      this.#agentStorageRoot,
-      path,
-    );
+    const resolvedPath = this.#pathAccess === 'host'
+      ? resolveHostPath(this.#cwd, path)
+      : await resolveReadablePath(
+          this.#cwd,
+          this.#sessionStorageRoot,
+          this.#agentStorageRoot,
+          path,
+        );
     const entries = await readdir(resolvedPath, {
       recursive: options?.recursive ?? false,
       withFileTypes: true,
@@ -139,12 +146,12 @@ export class HostAgentRuntime implements AgentRuntime {
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-    const resolvedPath = await resolveContainedPath(this.#cwd, path);
+    const resolvedPath = await this.#resolvePath(path);
     await mkdir(resolvedPath, { recursive: options?.recursive ?? false });
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
-    const resolvedPath = await resolveContainedPath(this.#cwd, path, false);
+    const resolvedPath = await this.#resolvePath(path, false);
     await rm(resolvedPath, { recursive: options?.recursive ?? false });
   }
 
@@ -160,7 +167,7 @@ export class HostAgentRuntime implements AgentRuntime {
     command: string,
     options?: AgentRuntimeShellProcessOptions,
   ): Promise<AgentRuntimeProcess> {
-    const cwd = await resolveContainedPath(this.#cwd, options?.cwd ?? this.#cwd);
+    const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
     const shell = options?.shell ?? defaultShell();
     const args = shellArguments(shell, command, options?.login ?? true);
     const child = spawn(shell, args, {
@@ -177,7 +184,7 @@ export class HostAgentRuntime implements AgentRuntime {
     command: string,
     options?: AgentRuntimeShellProcessOptions,
   ): Promise<AgentRuntimeProcess> {
-    const cwd = await resolveContainedPath(this.#cwd, options?.cwd ?? this.#cwd);
+    const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
     const shell = options?.shell ?? defaultShell();
     const args = shellArguments(shell, command, options?.login ?? true);
     const env = terminalEnvironment(options?.env);
@@ -191,6 +198,12 @@ export class HostAgentRuntime implements AgentRuntime {
       encoding: null,
     });
     return new HostRuntimeTerminal(terminal);
+  }
+
+  async #resolvePath(path: string, allowRoot = true): Promise<string> {
+    return this.#pathAccess === 'host'
+      ? resolveHostPath(this.#cwd, path)
+      : resolveContainedPath(this.#cwd, path, allowRoot);
   }
 
   async #spawn(
@@ -572,6 +585,11 @@ function signalExitCode(signal: NodeJS.Signals | null): number {
 function resolveStorageRoot(root: string): string {
   if (root.includes('\0')) throw new Error('Runtime storage root cannot contain NUL bytes');
   return resolve(root);
+}
+
+function resolveHostPath(cwd: string, path: string): string {
+  if (path.includes('\0')) throw new Error('Paths cannot contain NUL bytes');
+  return resolve(cwd, path);
 }
 
 async function resolveReadablePath(

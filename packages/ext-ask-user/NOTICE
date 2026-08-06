@@ -1,0 +1,13 @@
+@felan-ai/ext-ask-user includes adapted source from packages/pi-ask-user in
+https://github.com/mslavov/pi-extensions at source commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
+
+That package originates from pi-ask-user by Enzo Lucchesi:
+https://github.com/edlsh/pi-ask-user
+
+The source is MIT licensed. Its license and copyright notice are preserved in
+LICENSE.
+
+The adapted local interface targets Pi-TUI 0.84.0. Tool schemas use TypeBox 1.1.38.
+The original global Symbol bridge is replaced by the explicit
+AskUserHost contract.

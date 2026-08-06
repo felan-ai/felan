@@ -58,6 +58,18 @@ const subagentsNotice = readFileSync(resolve(root, 'packages/ext-subagents/NOTIC
 if (!subagentsNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-subagents/NOTICE is missing TypeBox 1.1.38');
 }
+const askUserNotice = readFileSync(resolve(root, 'packages/ext-ask-user/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'https://github.com/mslavov/pi-extensions',
+  'https://github.com/edlsh/pi-ask-user',
+  '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
+  'Pi-TUI 0.84.0',
+  'TypeBox 1.1.38',
+]) {
+  if (!askUserNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-ask-user/NOTICE is missing ${requiredNotice}`);
+  }
+}
 const backgroundBashNotice = readFileSync(resolve(root, 'packages/ext-background-bash/NOTICE'), 'utf8');
 if (!backgroundBashNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-background-bash/NOTICE is missing TypeBox 1.1.38');

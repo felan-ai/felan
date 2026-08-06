@@ -59,6 +59,7 @@ describe('local Agent Core lifecycle', () => {
     await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
       builtinExtensions: {
         subagents: false,
+        askUser: false,
         tasks: false,
         prewalk: false,
         context: false,
@@ -240,7 +241,7 @@ describe('local Agent Core lifecycle', () => {
     expect(shutdown).toHaveBeenCalledOnce();
   });
 
-  it('recreates cwd-bound host runtime and services for fork, new, resume, and import', async () => {
+  it('recreates host runtime and services for fork, new, resume, and import', async () => {
     const root = await temporaryDirectory();
     const cwdA = join(root, 'workspace-a');
     const cwdB = join(root, 'workspace-b');
@@ -363,6 +364,8 @@ describe('local Agent Core lifecycle', () => {
     expect(runtimeRequests.map(({ rootSessionId }) => rootSessionId)).toEqual(activeSessionIds);
     expect(runtimeRequests.map(({ agentDir: requestAgentDir }) => requestAgentDir))
       .toEqual(Array(5).fill(agentDir));
+    expect(runtimeRequests.map(({ pathAccess }) => pathAccess))
+      .toEqual(Array(5).fill('host'));
     expect(new Set(activeSessionIds).size).toBe(5);
     expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage().root)).toEqual(
       activeSessionIds.map((sessionId) => join(

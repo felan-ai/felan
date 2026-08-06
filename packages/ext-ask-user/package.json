@@ -1,27 +1,26 @@
 {
-  "name": "@felan-ai/agent-core",
-  "version": "0.4.2",
-  "description": "Portable Felan agent contracts and composition",
+  "name": "@felan-ai/ext-ask-user",
+  "version": "0.1.0",
+  "description": "Portable Felan ask-user extension with a rich Pi TUI adapter",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felan-ai/felan.git",
-    "directory": "packages/agent-core"
+    "directory": "packages/ext-ask-user"
   },
   "engines": {
     "node": ">=22.19.0"
   },
-  "files": [
-    "dist",
-    "LICENSE",
-    "NOTICE",
-    "README.md"
-  ],
+  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
     }
   },
   "scripts": {
@@ -31,9 +30,14 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.0",
-    "@earendil-works/pi-coding-agent": "0.84.0",
-    "@lydell/node-pty": "1.2.0-beta.14"
+    "@earendil-works/pi-tui": "0.84.0",
+    "typebox": "1.1.38"
+  },
+  "peerDependencies": {
+    "@felan-ai/agent-core": "^0.4.0"
+  },
+  "devDependencies": {
+    "@felan-ai/agent-core": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

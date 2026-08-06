@@ -1,12 +1,16 @@
 import type { ExtensionPackageImporter } from '@felan-ai/agent-core';
+import { createAskUserExtension } from '@felan-ai/ext-ask-user';
+import { createTuiAskUserHost } from '@felan-ai/ext-ask-user/tui';
 import {
   createSubagentsExtension,
   type SubagentHost,
 } from '@felan-ai/ext-subagents';
 
+export const askUserExtensionPackage = '@felan-ai/ext-ask-user';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const builtinExtensionPackages = {
   subagents: subagentsExtensionPackage,
+  askUser: askUserExtensionPackage,
   tasks: '@felan-ai/ext-tasks',
   prewalk: '@felan-ai/ext-prewalk',
   context: '@felan-ai/ext-context',
@@ -49,6 +53,9 @@ export function createLocalExtensionImporter(
   shutdownHost?: () => Promise<void>,
 ): ExtensionPackageImporter {
   return async (packageName) => {
+    if (packageName === askUserExtensionPackage) {
+      return { default: createAskUserExtension(createTuiAskUserHost()) };
+    }
     if (packageName === subagentsExtensionPackage) {
       const subagents = createSubagentsExtension(host);
       return {

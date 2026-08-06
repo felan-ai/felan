@@ -9,15 +9,18 @@ const runtime = new HostAgentRuntime(process.cwd(), {
   sessionStorageRoot: '/var/lib/felan/sessions/current',
   agentStorageRoot: '/var/lib/felan/agent',
   agentDir: '/etc/felan',
+  pathAccess: 'host',
 });
 const result = await runtime.exec('node', ['--version']);
 ```
 
-`HostAgentRuntime` roots file and process operations at its immutable `cwd`.
-Use `exec(command, args)` for literal argument boundaries and `shell(command)`
-only when shell parsing is intentional. File reads and writes use
-`Uint8Array` so binary content is preserved. Reads accept a `maxBytes` bound,
-and writes support exclusive creation for race-safe new files.
+`HostAgentRuntime` uses its immutable `cwd` to resolve relative paths. The
+default `pathAccess: 'workspace'` contains ordinary file operations and process
+working directories to that cwd. `pathAccess: 'host'` permits any path
+available to the current user. Use `exec(command, args)` for literal argument
+boundaries and `shell(command)` only when shell parsing is intentional. File
+reads and writes use `Uint8Array` so binary content is preserved. Reads accept a
+`maxBytes` bound, and writes support exclusive creation for race-safe new files.
 
 Every `AgentRuntime` exposes scoped storage through `storage(scope)`. The
 default `storage()` handle is identical to `storage('session')` and belongs to
@@ -26,11 +29,11 @@ ordinary runtime reads and shares a filesystem namespace with `shell`, allowing
 tools to return absolute output paths that regular agents can inspect.
 
 `storage('agent')` holds longer-retention extension state owned by the runtime
-host. It is intentionally excluded from ordinary runtime reads and listings.
-Host consumers provide exact `sessionStorageRoot` and `agentStorageRoot` paths;
-each storage handle preserves binary content, rejects lexical and symlink
-escapes, and cannot remove its root. Ordinary writes, mutations, and execution
-working directories remain confined to `cwd`.
+host. Host consumers provide exact `sessionStorageRoot` and `agentStorageRoot`
+paths; each storage handle preserves binary content, rejects lexical and
+symlink escapes, and cannot remove its root. Workspace path access excludes
+agent storage, while host path access lets ordinary operations inspect both
+storage scopes.
 
 Host runtimes expose optional persistent process operations for extensions that
 need incremental output and stdin. `startShell()` keeps process ownership in
@@ -39,11 +42,11 @@ interrupt, and dispose operations. The separate optional `terminals` capability
 allocates a real operating-system PTY with terminal input; adapters without PTY
 support omit that capability. The optional `readAgentFile()`
 boundary reads only inside the configured `agentDir`; ordinary runtime file
-operations retain their workspace and session-storage boundaries.
+operations follow the configured path access mode.
 
 Host mode runs with the current user's filesystem and process permissions. It
-provides workspace path containment, but no OS isolation or sandbox boundary.
-Run untrusted workloads in an isolated runtime instead.
+does not provide OS isolation or a sandbox boundary. Run untrusted workloads in
+an isolated runtime instead.
 
 The package also composes Pi 0.84.0 sessions with inline-only Felan extensions
 and runtime-backed coding tools. `createAgentCoreSession` returns a headless,

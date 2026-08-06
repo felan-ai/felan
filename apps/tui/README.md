@@ -19,19 +19,19 @@ Felan suppresses Pi's version notification, bundled changelog, package update
 notifications, and install/update telemetry. Update behavior is owned by the
 Felan application.
 
-Each session uses a cwd-bound `HostAgentRuntime`. Pi's session runtime recreates
-the host runtime, filtered settings, resources, and session composition for
-new, resume, fork, clone, and import flows, then rebinds the active interactive
-UI. Host mode uses the current user's filesystem and process permissions and is
-not an isolation boundary.
+Each session uses a `HostAgentRuntime` with host path access. Its cwd resolves
+relative paths, while file operations and process working directories can use
+any path available to the current user. Pi's session runtime recreates the host
+runtime, filtered settings, resources, and session composition for new, resume,
+fork, clone, and import flows, then rebinds the active interactive UI. Host mode
+is not an isolation boundary.
 
 Root sessions store extension state under
 `$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>`. Every nested
-subagent shares its root session's storage path, and ordinary runtime reads can
-inspect files there. Longer-retention agent state uses
-`$FELAN_AGENT_DIR/storage/agent`, which ordinary runtime file operations cannot
-read or list. The rest of `$FELAN_AGENT_DIR` is not added to the runtime's
-ordinary readable paths.
+subagent shares its root session's storage path. Longer-retention agent state
+uses `$FELAN_AGENT_DIR/storage/agent`. Storage handles remain scoped to their
+declared roots, while ordinary runtime file operations can access these and
+other host paths directly.
 
 Only source-controlled built-in Felan extensions can be imported. External
 packages, extensions, configured skill paths, prompts, themes, and Pi context
@@ -47,6 +47,7 @@ All built-in extensions are enabled by default. Toggle them in
 {
   "builtinExtensions": {
     "subagents": true,
+    "askUser": true,
     "tasks": true,
     "prewalk": true,
     "context": true,
@@ -57,6 +58,10 @@ All built-in extensions are enabled by default. Toggle them in
   }
 }
 ```
+
+`askUser` provides the sequential `ask_user` tool. The local host presents
+single questions or 1-4 question wizards as searchable overlays or inline
+dialogs, with multi-select, freeform answers, and optional comments.
 
 `tasks` provides `TaskCreate`, `TaskUpdate`, `TaskList`, and `TaskGet` over one
 dependency-aware graph shared by the root session and every nested subagent.

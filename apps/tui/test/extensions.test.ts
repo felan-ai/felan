@@ -11,6 +11,7 @@ describe('local extension importer', () => {
   it('imports only the source-controlled package list', async () => {
     expect(localExtensionPackages).toEqual([
       '@felan-ai/ext-subagents',
+      '@felan-ai/ext-ask-user',
       '@felan-ai/ext-tasks',
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',
@@ -24,6 +25,8 @@ describe('local extension importer', () => {
       const imported = await importLocalExtension(packageName);
       if (packageName === '@felan-ai/ext-subagents') {
         expect(imported).toMatchObject({ createSubagentsExtension: expect.any(Function) });
+      } else if (packageName === '@felan-ai/ext-ask-user') {
+        expect(imported).toMatchObject({ createAskUserExtension: expect.any(Function) });
       } else {
         expect(imported).toMatchObject({ default: expect.any(Function) });
       }
@@ -45,9 +48,20 @@ describe('local extension importer', () => {
     });
   });
 
+  it('creates the TUI ask-user extension without invoking the generic importer', async () => {
+    const importer = createLocalExtensionImporter(testSubagentHost(), async () => {
+      throw new Error('The generic importer must not load the ask-user extension');
+    });
+
+    await expect(importer('@felan-ai/ext-ask-user')).resolves.toMatchObject({
+      default: expect.any(Function),
+    });
+  });
+
   it('enables only configured built-in extensions', () => {
     expect(resolveBuiltinExtensionPackages({
       subagents: false,
+      askUser: false,
       tasks: false,
       webAccess: false,
       backgroundBash: false,
