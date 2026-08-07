@@ -7,9 +7,10 @@ const packageRoot = resolve(import.meta.dirname, '..');
 describe('@felan-ai/ext-mcp package boundary', () => {
   it('publishes a host-injected portable package with pinned dependencies', async () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+    const managerSource = await readFile(join(packageRoot, 'src', 'manager.ts'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-mcp',
-      version: '0.1.0',
+      version: '0.1.1',
       license: 'MIT',
       dependencies: {
         '@modelcontextprotocol/client': '2.0.0',
@@ -18,6 +19,7 @@ describe('@felan-ai/ext-mcp package boundary', () => {
       peerDependencies: { '@felan-ai/agent-core': '^0.4.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
     });
+    expect(managerSource).toContain(`version: '${manifest.version}'`);
   });
 
   it('keeps local OAuth and ambient config behavior outside the portable source', async () => {

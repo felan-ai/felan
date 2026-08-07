@@ -142,6 +142,7 @@ export class McpManager {
 
   async connect(serverName: string, signal?: AbortSignal): Promise<McpConnection> {
     this.#assertOpen();
+    signal?.throwIfAborted();
     const server = this.server(serverName);
     const state = this.#states.get(serverName)!;
     if (state.connection) return state.connection;
@@ -241,7 +242,7 @@ export async function connectMcpServer(
 
   for (const kind of kinds) {
     signal.throwIfAborted();
-    const client = new Client({ name: 'felan-mcp', version: '0.1.0' });
+    const client = new Client({ name: 'felan-mcp', version: '0.1.1' });
     const transport: Transport = kind === 'streamable-http'
       ? new StreamableHTTPClientTransport(new URL(server.url), {
         authProvider: provider,

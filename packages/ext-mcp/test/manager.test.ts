@@ -44,6 +44,7 @@ describe('MCP manager', () => {
     expect(factory).toHaveBeenCalledOnce();
     expect(factory.mock.calls[0]?.[3]).toBe(fetchFn);
     expect(listTools).toHaveBeenCalledTimes(2);
+    expect(manager.statuses()).toEqual([{ server: 'docs', status: 'connected', toolCount: 2 }]);
 
     await expect(manager.callTool('docs', 'first', { query: 'x' })).resolves.toMatchObject({
       content: [{ type: 'text', text: 'ok' }],
@@ -66,6 +67,74 @@ describe('MCP manager', () => {
 
     await expect(manager.listTools('docs')).rejects.toBeInstanceOf(McpAuthenticationRequiredError);
     expect(manager.statuses()).toEqual([{ server: 'docs', status: 'needs-auth', toolCount: 0 }]);
+  });
+
+  it('records non-authentication connection failures without exposing their message in status', async () => {
+    const manager = new McpManager(
+      [server],
+      oauthSession(),
+      new AbortController().signal,
+      async () => {
+        throw new Error('remote leaked-secret');
+      },
+    );
+
+    await expect(manager.listTools('docs')).rejects.toThrow('remote leaked-secret');
+    expect(manager.statuses()).toEqual([{ server: 'docs', status: 'failed', toolCount: 0 }]);
+  });
+
+  it('rejects an already-aborted request before starting a connection', async () => {
+    const factory = vi.fn<McpConnectionFactory>();
+    const manager = new McpManager(
+      [server],
+      oauthSession(),
+      new AbortController().signal,
+      factory,
+    );
+    const controller = new AbortController();
+    controller.abort(new Error('connect cancelled'));
+
+    await expect(manager.listTools('docs', controller.signal)).rejects.toThrow('connect cancelled');
+    expect(factory).not.toHaveBeenCalled();
+    expect(manager.statuses()).toEqual([{ server: 'docs', status: 'disconnected', toolCount: 0 }]);
+  });
+
+  it('opens a fresh connection after an explicit server close', async () => {
+    const firstClose = vi.fn(async () => {});
+    const secondClose = vi.fn(async () => {});
+    const factory = vi.fn<McpConnectionFactory>()
+      .mockResolvedValueOnce(connection({
+        close: firstClose,
+        callTool: vi.fn(),
+        listTools: vi.fn(async () => ({
+          tools: [{ name: 'first', inputSchema: { type: 'object' as const } }],
+        })),
+      }))
+      .mockResolvedValueOnce(connection({
+        close: secondClose,
+        callTool: vi.fn(),
+        listTools: vi.fn(async () => ({
+          tools: [{ name: 'second', inputSchema: { type: 'object' as const } }],
+        })),
+      }));
+    const manager = new McpManager(
+      [server],
+      oauthSession(),
+      new AbortController().signal,
+      factory,
+    );
+
+    await expect(manager.listTools('docs')).resolves.toMatchObject([{ name: 'first' }]);
+    await manager.closeServer('docs');
+    expect(manager.statuses()).toEqual([{ server: 'docs', status: 'disconnected', toolCount: 0 }]);
+    expect(firstClose).toHaveBeenCalledOnce();
+
+    await expect(manager.listTools('docs')).resolves.toMatchObject([{ name: 'second' }]);
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(manager.statuses()).toEqual([{ server: 'docs', status: 'connected', toolCount: 1 }]);
+
+    await manager.close();
+    expect(secondClose).toHaveBeenCalledOnce();
   });
 
   it('fences and closes a connection that completes after shutdown begins', async () => {

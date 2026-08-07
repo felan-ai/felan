@@ -1,12 +1,29 @@
 # `@felan-ai/ext-mcp`
 
 Portable OAuth-only remote MCP support for Felan. The package registers one
-token-efficient `mcp` gateway for status, discovery, calls, authentication, and
-logout. It also registers `/mcp` for interactive status, tool listing,
-reconnection, authentication, and logout. The command remains available with
-an empty config so consumers can
-show setup guidance. The package intentionally does not load ambient MCP files,
-launch browsers, or store credentials.
+token-efficient `mcp` gateway for status, reconnection, discovery, calls,
+authentication, and logout. It also registers `/mcp` for interactive status,
+tool listing, reconnection, authentication, and logout. The command remains
+available with an empty config so consumers can show setup guidance. The
+package intentionally does not load ambient MCP files, launch browsers, or
+store credentials.
+
+The model-facing gateway exposes `status`, `reconnect`, `list`, `search`,
+`describe`, `call`, `authenticate`, and `logout`. Its capability and tool
+description identify the validated configured server names. Connections are
+session-scoped and lazy: `disconnected` means there is no live transport in the
+current session; it does not indicate whether the consumer's OAuth host has
+credentials available or persists them. Discovery and call actions connect
+automatically, while `reconnect` explicitly replaces a live connection or
+connects a disconnected server:
+
+```ts
+mcp({ action: 'reconnect', server: 'docs' });
+```
+
+If reconnecting reports `needs-auth`, use the model-facing `authenticate`
+action. For other failures, retry once and then inspect the consumer-owned MCP
+configuration and network policy rather than starting OAuth unnecessarily.
 
 ## Consumer-owned OAuth
 

@@ -119,8 +119,11 @@ Run `/mcp` to inspect configured servers, list tools, reconnect, authenticate,
 or log out. `/mcp auth [server]` opens a server picker when its argument is
 omitted. Configuration is loaded at startup;
 run `/reload` after editing either file. The model uses the `mcp` gateway tool
-for search, describe, and remote tool calls. The local host follows the upstream
-adapter's browser + PKCE loopback flow and stores tokens and dynamic-client
+for status, explicit reconnects, search, describe, and remote tool calls. A
+`disconnected` status only means that the current session has no live transport;
+model discovery and call actions reconnect lazily with stored credentials. The
+local host follows the upstream adapter's browser + PKCE loopback flow and
+stores tokens and dynamic-client
 credentials in the OS credential store, bound to the Felan agent directory,
 server name, server URL, OAuth client/redirect/scope profile, and
 authorization-server issuer. It fails closed when that store is unavailable.
