@@ -11,6 +11,7 @@ const interactive = vi.hoisted(() => ({
   piVersionChecks: [] as Array<string | undefined>,
   runError: undefined as Error | undefined,
   runs: 0,
+  toolRenderShells: [] as Array<string | undefined>,
   toolNames: [] as string[],
 }));
 
@@ -33,6 +34,7 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
 
       async run() {
         interactive.runs += 1;
+        interactive.toolRenderShells.push(this.runtime.session.getToolDefinition('read')?.renderShell);
         interactive.toolNames = this.runtime.session.agent.state.tools.map((tool) => tool.name);
         if (interactive.runError) throw interactive.runError;
       }
@@ -52,6 +54,7 @@ afterEach(async () => {
   interactive.piVersionChecks = [];
   interactive.runError = undefined;
   interactive.runs = 0;
+  interactive.toolRenderShells = [];
   interactive.toolNames = [];
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
@@ -73,6 +76,7 @@ describe('interactive application', () => {
     expect(interactive.piVersionChecks).toEqual(['1']);
     expect(interactive.piTelemetry).toEqual(['0']);
     expect(interactive.disposals).toBe(1);
+    expect(interactive.toolRenderShells).toEqual(['self']);
     expect(process.env.PI_CODING_AGENT_DIR).toBe(previousPiAgentDir);
     expect(process.env.PI_SKIP_VERSION_CHECK).toBe(previousPiSkipVersionCheck);
     expect(process.env.PI_TELEMETRY).toBe(previousPiTelemetry);

@@ -3,6 +3,7 @@ import {
   createLocalFelanRuntime,
   type CreateLocalFelanRuntimeOptions,
 } from './runtime.js';
+import { createToolActivityRuntimeView } from './tool-activity/runtime-view.js';
 
 export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly initialMessage?: string;
@@ -19,7 +20,7 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
   process.env.PI_TELEMETRY = '0';
 
   try {
-    const mode = new InteractiveMode(runtime, {
+    const mode = new InteractiveMode(createToolActivityRuntimeView(runtime), {
       ...(options.initialMessage === undefined ? {} : { initialMessage: options.initialMessage }),
       ...(options.verbose === undefined ? {} : { verbose: options.verbose }),
     });

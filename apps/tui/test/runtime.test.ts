@@ -31,6 +31,7 @@ import {
   getLocalSkillPaths,
 } from '../src/runtime.js';
 import type { LocalAgentRuntimeFactoryRequest } from '../src/runtime-factory.js';
+import { createToolActivityRuntimeView } from '../src/tool-activity/runtime-view.js';
 
 const temporaryPaths: string[] = [];
 
@@ -128,6 +129,26 @@ describe('local Agent Core lifecycle', () => {
 
     expect(modelScope.resolutions).toBe(1);
 
+    await runtime.dispose();
+  });
+
+  it('reloads the local tool display mode before rebuilding presentation definitions', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir });
+    const runtimeView = createToolActivityRuntimeView(runtime);
+
+    expect(runtimeView.session.getToolDefinition('read')).not.toBe(runtime.session.getToolDefinition('read'));
+
+    await runtime.session.bindExtensions({ mode: 'print' });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      felanTui: { toolDisplay: 'full' },
+    }));
+    await runtime.session.reload();
+
+    expect(runtimeView.session.getToolDefinition('read')).toBe(runtime.session.getToolDefinition('read'));
     await runtime.dispose();
   });
 
@@ -461,7 +482,8 @@ describe('local Agent Core lifecycle', () => {
     const initialSession = runtime.session;
     const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    const mode = new InteractiveMode(runtime);
+    const runtimeView = createToolActivityRuntimeView(runtime);
+    const mode = new InteractiveMode(runtimeView);
 
     try {
       await (mode as unknown as { handleClearCommand(): Promise<void> }).handleClearCommand();
@@ -481,6 +503,7 @@ describe('local Agent Core lifecycle', () => {
         'bash',
       ]));
       expect(runtime.session.agent.state.tools.map((tool) => tool.name)).not.toContain('spawn_agent');
+      expect(runtimeView.session.getToolDefinition('read')?.renderShell).toBe('self');
     } finally {
       mode.stop();
       await runtime.dispose();

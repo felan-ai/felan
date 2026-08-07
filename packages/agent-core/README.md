@@ -56,6 +56,9 @@ ownership of model credentials, settings, session storage, stream wrappers,
 feature extensions, and presentation listeners. `FelanExtensionAPI` adds only
 the selected `AgentRuntime` and application agent directory to Pi's extension
 API; feature-specific contracts remain in their owning extension packages.
+Applications may also pass adapter-neutral `inlineExtensions` directly into
+session composition for host-owned integration such as presentation controls;
+these remain opt-in and are not discovered from ambient configuration.
 Runtime-backed coding tools are installed during composition as hidden fallback
 extension tools, so feature extensions can override standard tool names while
 explicit application `customTools` retain final precedence.

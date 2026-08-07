@@ -9,6 +9,7 @@ import {
   SettingsManager,
   createAgentSessionRuntime,
   type FelanExtension,
+  type InlineExtension,
   type StreamFunction,
 } from '../src/index.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -69,6 +70,13 @@ describe('Agent Core session composition', () => {
         return original(model, context, options);
       }) satisfies StreamFunction;
     };
+    const inlineExtension: InlineExtension = {
+      name: '@felan-ai/test-inline',
+      hidden: true,
+      factory: () => {
+        order.push('inline extension factory');
+      },
+    };
     const appTool = { ...createRuntimeCodingTools(runtime)[0]!, name: 'app-tool', label: 'app-tool' };
 
     const result = await createAgentCoreSession({
@@ -83,6 +91,7 @@ describe('Agent Core session composition', () => {
       settingsManager: appSettings,
       sessionManager,
       agentDir,
+      inlineExtensions: [inlineExtension],
       customTools: [appTool],
       appendSystemPrompt: ['Child persona instructions'],
     });
@@ -90,6 +99,7 @@ describe('Agent Core session composition', () => {
     expect(order).toEqual([
       'import @felan-ai/listed',
       'extension factory',
+      'inline extension factory',
       'stream wrapped',
     ]);
     expect(result.session.settingsManager).toBe(appSettings);
@@ -97,9 +107,12 @@ describe('Agent Core session composition', () => {
     expect(result.session.modelRuntime).toBe(modelRuntime);
     expect(result.session.agent.state.isStreaming).toBe(false);
     expect(result.session.agent.state.messages).toEqual([]);
+    expect(result.session.resourceLoader.getExtensions().extensions)
+      .toContainEqual(expect.objectContaining({ path: '<inline:@felan-ai/test-inline>', hidden: true }));
     expect(wrappedInvocations).toBe(0);
     expect(result.extensionsResult.extensions.map((loaded) => loaded.path)).toEqual([
       '<inline:@felan-ai/listed>',
+      '<inline:@felan-ai/test-inline>',
       '<inline:@felan-ai/agent-core/runtime-tools>',
     ]);
     expect(result.session.agent.state.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
@@ -117,6 +130,7 @@ describe('Agent Core session composition', () => {
     expect(order).toEqual([
       'import @felan-ai/listed',
       'extension factory',
+      'inline extension factory',
       'stream wrapped',
       'session start',
     ]);

@@ -38,6 +38,7 @@ export interface CreateAgentCoreSessionOptions {
   readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
   readonly scopedModels?: CreateAgentSessionOptions['scopedModels'];
   readonly sessionStartEvent?: SessionStartEvent;
+  readonly inlineExtensions?: readonly InlineExtension[];
   readonly customTools?: readonly ToolDefinition[];
   readonly skillPaths?: readonly string[];
   readonly skills?: readonly Skill[];
@@ -103,6 +104,7 @@ async function composeAgentCoreSession(
   );
   const extensionFactories = [
     ...featureExtensions,
+    ...(options.inlineExtensions ?? []),
     createRuntimeToolsExtension(options.runtime),
   ];
   const resourceLoader = await createAgentCoreResourceLoader({

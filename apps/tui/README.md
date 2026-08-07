@@ -63,6 +63,21 @@ All built-in extensions are enabled by default. Toggle them in
 }
 ```
 
+The local transcript groups adjacent tool calls by default. Press `Ctrl+O` to
+switch between group summaries and bounded per-call previews. Use `/tools` or
+`Alt+T` to inspect the complete arguments and result for one call. To restore
+Pi's original ungrouped rendering, set:
+
+```json
+{
+  "felanTui": {
+    "toolDisplay": "full"
+  }
+}
+```
+
+Supported values are `grouped` and `full`; `grouped` is the default.
+
 `askUser` provides the sequential `ask_user` tool. The local host presents
 single questions or 1-4 question wizards as searchable overlays or inline
 dialogs, with multi-select, freeform answers, and optional comments.

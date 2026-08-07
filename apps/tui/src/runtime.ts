@@ -24,7 +24,11 @@ import {
   importLocalExtension,
   resolveBuiltinExtensionPackages,
 } from './extensions.js';
-import { createLocalSettingsManager, getFelanSettings } from './settings.js';
+import {
+  createLocalSettingsManager,
+  getFelanSettings,
+  getLocalToolDisplayMode,
+} from './settings.js';
 import { loadLocalAppendSystemPrompt } from './system-prompt.js';
 import {
   createLocalAgentRuntimeFactoryRequest,
@@ -34,6 +38,9 @@ import {
   LocalSubagentHost,
   type LocalSubagentSettings,
 } from './subagents/host.js';
+import { createToolActivityExtension } from './tool-activity/extension.js';
+import { registerToolActivitySession } from './tool-activity/runtime-view.js';
+import { ToolActivityState } from './tool-activity/state.js';
 
 const localSubagentHost = Symbol('localSubagentHost');
 const localSubagentShutdown = Symbol('localSubagentShutdown');
@@ -93,6 +100,7 @@ export function createLocalSessionRuntimeFactory(
     host: LocalSubagentHost;
     modelScope: Awaited<ReturnType<typeof resolveModelScopeWithDiagnostics>>;
     shutdownState: LocalSubagentShutdownState;
+    toolActivityState: ToolActivityState;
   }>();
   const createCoreRuntime = createAgentCoreSessionRuntimeFactory(async ({ cwd, sessionManager }) => {
     const runtimeRequest = createLocalAgentRuntimeFactoryRequest(
@@ -106,6 +114,12 @@ export function createLocalSessionRuntimeFactory(
     ]);
     const settingsManager = createLocalSettingsManager(cwd, options.agentDir);
     const felanSettings = getFelanSettings(settingsManager);
+    const toolActivityState = new ToolActivityState(getLocalToolDisplayMode(settingsManager));
+    const reloadSettings = settingsManager.reload.bind(settingsManager);
+    settingsManager.reload = async () => {
+      await reloadSettings();
+      toolActivityState.setMode(getLocalToolDisplayMode(settingsManager));
+    };
     const modelPatterns = settingsManager.getEnabledModels();
     const modelScope = modelPatterns && modelPatterns.length > 0
       ? await resolveModelScopeWithDiagnostics(modelPatterns, options.modelRuntime)
@@ -145,7 +159,12 @@ export function createLocalSessionRuntimeFactory(
         throw error;
       }
     };
-    sessions.set(sessionManager, { host, modelScope, shutdownState });
+    sessions.set(sessionManager, {
+      host,
+      modelScope,
+      shutdownState,
+      toolActivityState,
+    });
 
     return {
       runtime,
@@ -160,6 +179,7 @@ export function createLocalSessionRuntimeFactory(
       modelRuntime: options.modelRuntime,
       settingsManager,
       skillPaths,
+      inlineExtensions: [createToolActivityExtension(toolActivityState)],
       ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt: [appendSystemPrompt] }),
       ...(modelScope.scopedModels.length === 0 ? {} : { scopedModels: modelScope.scopedModels }),
     };
@@ -167,7 +187,14 @@ export function createLocalSessionRuntimeFactory(
 
   return async (request) => {
     const result = await createCoreRuntime(request);
-    const { host, modelScope, shutdownState } = sessions.get(request.sessionManager)!;
+    const {
+      host,
+      modelScope,
+      shutdownState,
+      toolActivityState,
+    } = sessions.get(request.sessionManager)!;
+    toolActivityState.attach(result.session);
+    registerToolActivitySession(result.session, toolActivityState);
     bindSubagentSession({ host, session: result.session });
     Object.defineProperty(result.services, localSubagentHost, { value: host });
     Object.defineProperty(result.services, localSubagentShutdown, { value: shutdownState });

@@ -1,9 +1,14 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { SettingsManager } from '@felan-ai/agent-core';
 import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createLocalSettingsManager, getFelanSettings } from '../src/settings.js';
+import {
+  createLocalSettingsManager,
+  getFelanSettings,
+  getLocalToolDisplayMode,
+} from '../src/settings.js';
 
 const temporaryPaths: string[] = [];
 
@@ -24,6 +29,7 @@ describe('local settings', () => {
       defaultModel: 'test-model',
       builtinExtensions: { prewalk: false },
       felanSubagents: { concurrency: 2 },
+      felanTui: { toolDisplay: 'full' },
       packages: ['npm:untrusted-package'],
       extensions: ['/tmp/untrusted-extension.ts'],
       skills: ['/tmp/untrusted-skill'],
@@ -53,7 +59,9 @@ describe('local settings', () => {
     expect(getFelanSettings(settings)).toMatchObject({
       builtinExtensions: { prewalk: false },
       felanSubagents: { concurrency: 2 },
+      felanTui: { toolDisplay: 'full' },
     });
+    expect(getLocalToolDisplayMode(settings)).toBe('full');
 
     await settings.reload();
 
@@ -65,7 +73,19 @@ describe('local settings', () => {
     expect(settings.getLastChangelogVersion()).toBe(PI_VERSION);
     expect(settings.getGlobalSettings().packages).toEqual([]);
   });
+
+  it('defaults to grouped tool display and rejects invalid values', () => {
+    expect(getLocalToolDisplayMode(settingsWith({}))).toBe('grouped');
+    expect(() => getLocalToolDisplayMode(settingsWith({ felanTui: 'grouped' })))
+      .toThrow('felanTui must be an object');
+    expect(() => getLocalToolDisplayMode(settingsWith({ felanTui: { toolDisplay: 'compact' } })))
+      .toThrow('felanTui.toolDisplay must be "grouped" or "full"');
+  });
 });
+
+function settingsWith(settings: Record<string, unknown>): SettingsManager {
+  return { getGlobalSettings: () => settings } as unknown as SettingsManager;
+}
 
 async function temporaryDirectory(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), 'felan-tui-settings-'));

@@ -6,7 +6,14 @@ import type { LocalSubagentSettings } from './subagents/host.js';
 export interface FelanSettings {
   readonly builtinExtensions?: BuiltinExtensionSettings;
   readonly felanSubagents?: LocalSubagentSettings;
+  readonly felanTui?: FelanTuiSettings;
 }
+
+export interface FelanTuiSettings {
+  readonly toolDisplay?: LocalToolDisplayMode;
+}
+
+export type LocalToolDisplayMode = 'grouped' | 'full';
 
 export function createLocalSettingsManager(cwd: string, agentDir: string): SettingsManager {
   const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
@@ -47,4 +54,20 @@ export function createLocalSettingsManager(cwd: string, agentDir: string): Setti
 
 export function getFelanSettings(settingsManager: SettingsManager): FelanSettings {
   return settingsManager.getGlobalSettings() as FelanSettings;
+}
+
+export function getLocalToolDisplayMode(settingsManager: SettingsManager): LocalToolDisplayMode {
+  const rawSettings = settingsManager.getGlobalSettings() as Record<string, unknown>;
+  const rawTui = rawSettings.felanTui;
+  if (rawTui === undefined) return 'grouped';
+  if (!isRecord(rawTui)) throw new Error('felanTui must be an object');
+
+  const mode = rawTui.toolDisplay;
+  if (mode === undefined) return 'grouped';
+  if (mode === 'grouped' || mode === 'full') return mode;
+  throw new Error('felanTui.toolDisplay must be "grouped" or "full"');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
