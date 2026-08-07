@@ -67,6 +67,37 @@ describe('powerline lifecycle', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
+  it('renders injected rows after the configured status lines', async () => {
+    const harness = extensionHarness();
+    createPowerlineExtension(undefined, {
+      footerRows: () => ['agent rail'],
+    })(harness.pi);
+    const ctx = extensionContext('tui');
+
+    await harness.emit('session_start', {}, ctx.value);
+    const factory = ctx.setFooter.mock.calls[0]![0] as (
+      tui: TUI,
+      theme: unknown,
+      data: FooterDataLike,
+    ) => Component & { dispose(): void };
+    const footer = factory(
+      { requestRender: vi.fn() } as unknown as TUI,
+      {},
+      {
+        getGitBranch: () => null,
+        getExtensionStatuses: () => new Map(),
+        getAvailableProviderCount: () => 1,
+        onBranchChange: () => vi.fn(),
+      },
+    );
+
+    const lines = footer.render(80);
+
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.at(-1)).toBe('agent rail');
+    await harness.emit('session_shutdown', {}, ctx.value);
+  });
+
   it('registers lifecycle handlers and all namespaced flags at initialization', () => {
     const harness = extensionHarness();
     powerlineExtension(harness.pi);

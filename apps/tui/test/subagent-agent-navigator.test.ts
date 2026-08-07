@@ -1,0 +1,315 @@
+import {
+  initTheme,
+  type AgentSession,
+  type KeybindingsManager,
+  type Theme,
+} from '@earendil-works/pi-coding-agent';
+import {
+  KeybindingsManager as TuiKeybindingsManager,
+  TUI_KEYBINDINGS,
+  setKeybindings,
+  visibleWidth,
+} from '@earendil-works/pi-tui';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  AgentNavigator,
+  AgentRailEditor,
+  registerLocalSubagentNavigator,
+  type AgentRailRenderer,
+  type LocalSubagentNavigatorHost,
+} from '../src/subagents/agent-navigator.js';
+import type { LocalSubagentView } from '../src/subagents/host.js';
+
+const theme = {
+  fg: (_color: string, text: string) => text,
+  bold: (text: string) => text,
+} as Theme;
+
+beforeAll(() => {
+  initTheme('dark', false);
+  setKeybindings(new TuiKeybindingsManager(TUI_KEYBINDINGS));
+});
+
+describe('AgentNavigator', () => {
+  it('fills the terminal with a width-safe transcript and bounded agent rail', () => {
+    const records = Array.from({ length: 7 }, (_, index) => record(
+      `agent-${index + 1}`,
+      index === 0 ? 'running' : 'completed',
+    ));
+    const harness = createHarness(records, 12, 48);
+
+    const lines = harness.navigator.render(48);
+    const output = lines.join('\n');
+
+    expect(lines).toHaveLength(12);
+    expect(lines.every((line) => visibleWidth(line) === 48)).toBe(true);
+    expect(output).toContain('Viewing reviewer');
+    expect(output).toMatch(/[↑↓]\d/);
+    harness.navigator.dispose();
+  });
+
+  it('switches between subagents and sends steering input to the selection', async () => {
+    const first = record('agent-1', 'running', { type: 'reviewer' });
+    const second = record('agent-2', 'running', { type: 'developer' });
+    const harness = createHarness([first, second]);
+
+    harness.navigator.handleInput('\x1b[B');
+    expect(harness.navigator.render(80).join('\n')).toContain('Viewing developer');
+    harness.navigator.handleInput('\r');
+    for (const character of 'focus here') harness.navigator.handleInput(character);
+    harness.navigator.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(harness.host.steer).toHaveBeenCalledWith(second.agentId, 'focus here');
+    });
+    harness.navigator.dispose();
+  });
+
+  it('renders live child-session events', () => {
+    let listener!: (event: unknown) => void;
+    const session = sessionWithMessages(
+      [{ role: 'user', content: 'initial activity', timestamp: 1 }],
+      (next) => {
+        listener = next;
+      },
+    );
+    const harness = createHarness([record('agent-1', 'running', { session })]);
+    harness.tui.requestRender.mockClear();
+
+    listener({
+      type: 'message_start',
+      message: { role: 'user', content: 'live activity', timestamp: 2 },
+    });
+
+    expect(harness.tui.requestRender).toHaveBeenCalled();
+    expect(harness.navigator.render(80).join('\n')).toContain('live activity');
+    harness.navigator.dispose();
+  });
+
+  it('closes without stopping the selected subagent', () => {
+    const harness = createHarness([record('agent-1')]);
+
+    harness.navigator.handleInput('\x1b');
+
+    expect(harness.done).toHaveBeenCalledOnce();
+    expect(harness.host.cancel).not.toHaveBeenCalled();
+    harness.navigator.dispose();
+  });
+});
+
+describe('AgentRailEditor', () => {
+  it('shows only active subagents and moves focus through the rail from prompt history', () => {
+    const records = [
+      record('agent-1', 'running', { type: 'explore' }),
+      record('agent-2', 'queued', { type: 'developer' }),
+      record('agent-3', 'completed', { type: 'finished' }),
+    ];
+    const host = navigatorHost(() => records);
+    const tui = {
+      terminal: { rows: 20, columns: 80 },
+      requestRender: vi.fn(),
+    };
+    const opened = vi.fn();
+    const keybindings = new TuiKeybindingsManager(TUI_KEYBINDINGS);
+    const editor = new AgentRailEditor(
+      tui as never,
+      { borderColor: (text: string) => text, selectList: {} } as never,
+      keybindings as unknown as KeybindingsManager,
+      host,
+      () => theme,
+      opened,
+    );
+    editor.focused = true;
+    editor.addToHistory('previous prompt');
+
+    editor.handleInput('\x1b[A');
+    expect(editor.getText()).toBe('previous prompt');
+    editor.handleInput('\x1b[B');
+    expect(editor.getText()).toBe('');
+    editor.handleInput('\x1b[B');
+
+    let output = editor.render(80).join('\n');
+    expect(output).toContain('› ● explore');
+    expect(output).toContain('◦ developer');
+    expect(output).not.toContain('finished');
+    expect(output).not.toContain('\x1b[7m');
+
+    editor.handleInput('\x1b[B');
+    editor.handleInput('\r');
+    expect(opened).toHaveBeenCalledWith('agent-2');
+
+    editor.handleInput('\x1b[A');
+    editor.handleInput('\x1b[A');
+    output = editor.render(80).join('\n');
+    expect(output).not.toContain('›');
+    editor.handleInput('\x1b[A');
+    expect(editor.getText()).toBe('previous prompt');
+  });
+
+  it('uses the full row width for live activity', () => {
+    const activity = `Reviewing ${'detailed output '.repeat(4)}VISIBLE-END`;
+    const startedAt = new Date().toISOString();
+    const host = navigatorHost(() => [record('agent-1', 'running', {
+      type: 'explore',
+      createdAt: startedAt,
+      startedAt,
+      session: sessionWithStreamingText(activity),
+    })]);
+    const editor = new AgentRailEditor(
+      { terminal: { rows: 20, columns: 120 }, requestRender: vi.fn() } as never,
+      { borderColor: (text: string) => text, selectList: {} } as never,
+      new TuiKeybindingsManager(TUI_KEYBINDINGS) as unknown as KeybindingsManager,
+      host,
+      () => theme,
+      vi.fn(),
+    );
+
+    const [row] = editor.renderRail(120);
+
+    expect(row).toContain('VISIBLE-END');
+    expect(visibleWidth(row!)).toBe(120);
+  });
+});
+
+describe('registerLocalSubagentNavigator', () => {
+  it('registers TUI controls and exposes the rail separately from the editor', () => {
+    const commands = new Map<string, unknown>();
+    const shortcuts: unknown[] = [];
+    const handlers = new Map<string, Array<(event: unknown, context: unknown) => void>>();
+    const pi = {
+      on: vi.fn((event: string, handler: (event: unknown, context: unknown) => void) => {
+        const registered = handlers.get(event) ?? [];
+        registered.push(handler);
+        handlers.set(event, registered);
+      }),
+      registerCommand: vi.fn((name, command) => commands.set(name, command)),
+      registerShortcut: vi.fn((shortcut, definition) => shortcuts.push([shortcut, definition])),
+    };
+    const host = navigatorHost(() => [record('agent-1')]);
+    let editor: AgentRailEditor | undefined;
+    let railRenderer: AgentRailRenderer | undefined;
+    const setEditorComponent = vi.fn((factory) => {
+      editor = factory(
+        { terminal: { rows: 20, columns: 80 }, requestRender: vi.fn() },
+        { borderColor: (text: string) => text, selectList: {} },
+        new TuiKeybindingsManager(TUI_KEYBINDINGS),
+      );
+    });
+    registerLocalSubagentNavigator(pi as never, host, {
+      renderRailInEditor: () => false,
+      onRailRendererChange: (renderer) => {
+        railRenderer = renderer;
+      },
+    });
+    const context = { mode: 'tui', ui: { setEditorComponent, theme } };
+
+    handlers.get('session_start')![0]!({}, { mode: 'print' });
+    expect(commands.size).toBe(0);
+    handlers.get('session_start')![0]!({}, context);
+
+    expect(commands.has('agents')).toBe(true);
+    expect(shortcuts).toHaveLength(1);
+    expect(setEditorComponent).toHaveBeenCalledOnce();
+    expect(editor?.render(80).join('\n')).not.toContain('reviewer');
+    expect(railRenderer?.(80).join('\n')).toContain('reviewer');
+    handlers.get('session_shutdown')![0]!({}, context);
+    expect(railRenderer).toBeUndefined();
+  });
+});
+
+function createHarness(initialRecords: LocalSubagentView[], rows = 14, columns = 80) {
+  let records = initialRecords;
+  const tui = {
+    terminal: { rows, columns },
+    requestRender: vi.fn(),
+  };
+  const host = navigatorHost(() => records);
+  const done = vi.fn();
+  const navigator = new AgentNavigator(
+    tui as never,
+    host,
+    theme,
+    { matches: () => false } as unknown as KeybindingsManager,
+    done,
+  );
+  navigator.focused = true;
+  return {
+    navigator,
+    tui,
+    host,
+    done,
+    setRecords(next: LocalSubagentView[]) {
+      records = next;
+    },
+  };
+}
+
+function navigatorHost(records: () => LocalSubagentView[]): LocalSubagentNavigatorHost {
+  return {
+    listLocalSubagents: vi.fn(() => records()),
+    getLocalSubagent: vi.fn((agentId: string) => (
+      records().find((candidate) => candidate.agentId === agentId)
+    )),
+    steer: vi.fn(async (agentId: string) => ({
+      ok: true as const,
+      value: records().find((candidate) => candidate.agentId === agentId)!,
+    })),
+    cancel: vi.fn(async (agentId: string) => ({
+      ok: true as const,
+      value: records().find((candidate) => candidate.agentId === agentId)!,
+    })),
+  };
+}
+
+function record(
+  agentId: string,
+  status: LocalSubagentView['status'] = 'running',
+  overrides: Partial<LocalSubagentView> = {},
+): LocalSubagentView {
+  return {
+    agentId,
+    parentSessionId: 'root',
+    rootSessionId: 'root',
+    type: 'reviewer',
+    description: `agent ${agentId}`,
+    status,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    startedAt: '2026-01-01T00:00:01.000Z',
+    ...overrides,
+  };
+}
+
+function sessionWithMessages(
+  messages: unknown[],
+  capture: (listener: (event: unknown) => void) => void,
+): AgentSession {
+  return {
+    messages,
+    state: { streamingMessage: undefined, pendingToolCalls: new Set() },
+    subscribe: vi.fn((listener: (event: unknown) => void) => {
+      capture(listener);
+      return vi.fn();
+    }),
+    settingsManager: {
+      getHideThinkingBlock: vi.fn(() => false),
+      setHideThinkingBlock: vi.fn(),
+      getShowImages: vi.fn(() => false),
+      getImageWidthCells: vi.fn(() => 40),
+    },
+    sessionManager: { getCwd: vi.fn(() => process.cwd()) },
+    getToolDefinition: vi.fn(),
+  } as unknown as AgentSession;
+}
+
+function sessionWithStreamingText(text: string): AgentSession {
+  return {
+    messages: [],
+    state: {
+      streamingMessage: {
+        role: 'assistant',
+        content: [{ type: 'text', text }],
+      },
+      pendingToolCalls: new Set(),
+    },
+  } as unknown as AgentSession;
+}

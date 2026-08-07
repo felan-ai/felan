@@ -20,7 +20,10 @@ import {
   type SubagentSpawnRequest,
   type SubagentStatus,
 } from '@felan-ai/ext-subagents';
-import { CURRENT_SESSION_VERSION } from '@earendil-works/pi-coding-agent';
+import {
+  CURRENT_SESSION_VERSION,
+  type AgentSession,
+} from '@earendil-works/pi-coding-agent';
 import { createLocalExtensionImporter } from '../extensions.js';
 import { createLocalCodexStreamFunctionWrapper } from '../codex.js';
 import {
@@ -39,7 +42,9 @@ export interface LocalSubagentSettings {
   readonly maxDepth?: number;
 }
 
-export type LocalSubagentView = SubagentRecord;
+export interface LocalSubagentView extends SubagentRecord {
+  readonly session?: AgentSession;
+}
 
 export interface CreateLocalSubagentHostOptions {
   readonly sessionId: string;
@@ -59,7 +64,7 @@ export interface LocalSubagentRunInput {
   readonly sessionId: string;
   readonly rootSessionId: string;
   readonly depth: number;
-  readonly subagents: SubagentHost;
+  readonly subagents: LocalSubagentHost;
   readonly request: SubagentSpawnRequest;
   readonly definition: LocalSubagentDefinition;
   readonly sessionFile?: string;
@@ -89,6 +94,7 @@ interface MutableChild {
   record: SubagentRecord;
   readonly request: SubagentSpawnRequest;
   readonly depth: number;
+  session?: AgentSession;
   sessionFile?: string;
   deliveryId?: string;
   completionPending: boolean;
@@ -140,6 +146,14 @@ export class LocalSubagentHost implements SubagentHost {
 
   getResult(agentId: string) {
     return this.#manager.getResult(this.#sessionId, agentId);
+  }
+
+  listLocalSubagents(): readonly LocalSubagentView[] {
+    return this.#manager.listLocalSubagents(this.#sessionId);
+  }
+
+  getLocalSubagent(agentId: string): LocalSubagentView | undefined {
+    return this.#manager.getLocalSubagent(this.#sessionId, agentId);
   }
 
   steer(agentId: string, message: string) {
@@ -380,6 +394,18 @@ export class LocalSubagentManager {
     return success(await this.#resultRecord(authorized.value));
   }
 
+  listLocalSubagents(parentSessionId: string): readonly LocalSubagentView[] {
+    return this.#latestChildren()
+      .filter((child) => child.record.parentSessionId === parentSessionId)
+      .map(localView)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }
+
+  getLocalSubagent(parentSessionId: string, agentId: string): LocalSubagentView | undefined {
+    return this.listLocalSubagents(parentSessionId)
+      .find((child) => child.agentId === agentId);
+  }
+
   async steer(
     parentSessionId: string,
     agentId: string,
@@ -574,9 +600,8 @@ export class LocalSubagentManager {
 
       const definition = this.definitions.get(child.record.type)!;
       if (!job.controller.signal.aborted) {
-        const runner = this.#options.runChild ?? ((input) => this.#runAgentCore(input));
         const queuedAtStart = job.queuedMessages.splice(0);
-        outcome = await runner({
+        const input: LocalSubagentRunInput = {
           sessionId: child.record.agentId,
           rootSessionId: child.record.rootSessionId,
           depth: child.depth,
@@ -595,7 +620,13 @@ export class LocalSubagentManager {
             for (const message of pending) await control.steer(message);
           },
           ...(child.sessionFile === undefined ? {} : { sessionFile: child.sessionFile }),
-        });
+        };
+        outcome = this.#options.runChild
+          ? await this.#options.runChild(input)
+          : await this.#runAgentCore(input, (session) => {
+            child.session = session;
+            this.#emit();
+          });
       }
       await job.cancelPromise;
       outcome ??= {};
@@ -652,7 +683,10 @@ export class LocalSubagentManager {
     job.cancelPromise = job.control.cancel().catch(() => {});
   }
 
-  async #runAgentCore(input: LocalSubagentRunInput): Promise<LocalSubagentRunOutcome> {
+  async #runAgentCore(
+    input: LocalSubagentRunInput,
+    onSession: (session: AgentSession) => void,
+  ): Promise<LocalSubagentRunOutcome> {
     const runtimeRequest = createLocalAgentRuntimeFactoryRequest(
       input.cwd,
       this.#options.agentDir,
@@ -704,6 +738,7 @@ export class LocalSubagentManager {
       ...(model === undefined ? {} : { model }),
       ...(input.request.thinking === undefined ? {} : { thinkingLevel: input.request.thinking }),
     });
+    onSession(created.session);
     bindSubagentSession({ host: input.subagents, session: created.session });
     try {
       if (input.signal.aborted) return sessionFileOutcome(created.session.sessionFile);
@@ -1028,7 +1063,10 @@ function cloneRecord(record: SubagentRecord): SubagentRecord {
 }
 
 function localView(child: MutableChild): LocalSubagentView {
-  return cloneRecord(child.record);
+  return {
+    ...cloneRecord(child.record),
+    ...(child.session === undefined ? {} : { session: child.session }),
+  };
 }
 
 function fromStored(stored: LocalStoredChild): MutableChild {
@@ -1036,7 +1074,14 @@ function fromStored(stored: LocalStoredChild): MutableChild {
 }
 
 function toStored(child: MutableChild): LocalStoredChild {
-  return structuredClone(child);
+  return structuredClone({
+    record: child.record,
+    request: child.request,
+    depth: child.depth,
+    ...(child.sessionFile === undefined ? {} : { sessionFile: child.sessionFile }),
+    ...(child.deliveryId === undefined ? {} : { deliveryId: child.deliveryId }),
+    completionPending: child.completionPending,
+  });
 }
 
 function boundedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number): number {

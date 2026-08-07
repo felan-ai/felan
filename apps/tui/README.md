@@ -154,8 +154,14 @@ provides `Agent`, `list_subagents`,
 `get_subagent_result`, `steer_subagent`, and `cancel_subagent`. A root-scoped
 local host queues every run asynchronously, persists the latest child session
 metadata, delivers completion notices, supports bounded nesting, and uses the
-application's current workspace. The TUI status line shows active/recent child
-state, and runtime shutdown awaits active-child cancellation before Pi teardown.
+application's current workspace. The TUI shows each queued or running direct
+child in a full-width interactive rail beneath the powerline status rows, or
+beneath the editor when powerline is disabled. Press Down at the editor's newest
+prompt to enter the rail, use Up/Down to select a child, press Up on the first
+child to return to the editor, and press Enter to open that child in the agent
+navigator. Use `/agents` or `Alt+A` to open the navigator directly, follow live
+transcripts, send steering messages, or stop active work.
+Runtime shutdown awaits active-child cancellation before Pi teardown.
 Completed-child continuation uses the same child ID and Pi session file while
 replacing the latest result. The default list also
 includes `@felan-ai/ext-powerline` for an ANSI-aware footer with subscription

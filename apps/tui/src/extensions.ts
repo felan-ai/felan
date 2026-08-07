@@ -8,6 +8,11 @@ import {
 } from '@felan-ai/ext-subagents';
 import { createLocalMcpExtension } from './mcp/index.js';
 import { createLocalSubscriptionUsageHost } from './powerline.js';
+import {
+  registerLocalSubagentNavigator,
+  type AgentRailRenderer,
+  type LocalSubagentNavigatorHost,
+} from './subagents/agent-navigator.js';
 
 export const askUserExtensionPackage = '@felan-ai/ext-ask-user';
 export const mcpExtensionPackage = '@felan-ai/ext-mcp';
@@ -54,12 +59,16 @@ export const importLocalExtension: ExtensionPackageImporter = async (packageName
 };
 
 export function createLocalExtensionImporter(
-  host: SubagentHost,
+  host: SubagentHost & LocalSubagentNavigatorHost,
   modelRuntime: ModelRuntime,
   importExtension: ExtensionPackageImporter = importLocalExtension,
   shutdownHost?: () => Promise<void>,
 ): ExtensionPackageImporter {
-  const powerline = createPowerlineExtension(createLocalSubscriptionUsageHost(modelRuntime));
+  let powerlineLoaded = false;
+  let agentRailRenderer: AgentRailRenderer | undefined;
+  const powerline = createPowerlineExtension(createLocalSubscriptionUsageHost(modelRuntime), {
+    footerRows: (width) => agentRailRenderer?.(width) ?? [],
+  });
   return async (packageName) => {
     if (packageName === askUserExtensionPackage) {
       return { default: createAskUserExtension(createTuiAskUserHost()) };
@@ -72,6 +81,12 @@ export function createLocalExtensionImporter(
       return {
         default: ((pi) => {
           subagents(pi);
+          registerLocalSubagentNavigator(pi, host, {
+            renderRailInEditor: () => !powerlineLoaded,
+            onRailRendererChange: (renderer) => {
+              agentRailRenderer = renderer;
+            },
+          });
           if (shutdownHost) {
             pi.on('session_shutdown', async (event) => {
               if (event.reason !== 'reload') await shutdownHost();
@@ -81,6 +96,7 @@ export function createLocalExtensionImporter(
       };
     }
     if (packageName === powerlineExtensionPackage) {
+      powerlineLoaded = true;
       return { default: powerline };
     }
     return importExtension(packageName);

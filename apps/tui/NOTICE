@@ -6,8 +6,9 @@ This package composes the MIT-licensed @felan-ai/agent-core and Felan extension
 packages listed in package.json. Their package-level LICENSE and NOTICE files
 contain the applicable attribution and source provenance.
 
-The terminal application uses @earendil-works/pi-coding-agent 0.84.0 from
-https://github.com/earendil-works/pi, licensed under the MIT License.
+The terminal application uses @earendil-works/pi-coding-agent and
+@earendil-works/pi-tui 0.84.0 from https://github.com/earendil-works/pi,
+licensed under the MIT License.
 Copyright (c) 2025 Mario Zechner.
 
 The local powerline subscription host adapts provider request behavior from
@@ -16,6 +17,12 @@ packages/pi-powerline in https://github.com/mslavov/pi-extensions at commit
 That source credits the MIT-licensed packages/sub-core from
 https://github.com/marckrenn/pi-sub for subscription provider and usage logic.
 Copyright (c) 2026 Marc Krenn.
+
+The local subagent navigator adapts the MIT-licensed agent navigator and
+transcript components from packages/pi-subagents in
+https://github.com/mslavov/pi-extensions at commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d. Copyright (c) 2026 tintinweb.
+Modifications copyright (c) 2026 Milko Slavov.
 
 The local MCP OAuth host uses @napi-rs/keyring 1.3.0 from
 https://github.com/Brooooooklyn/keyring-node, licensed under the MIT License.

@@ -415,6 +415,35 @@ describe('LocalSubagentHost', () => {
     await waitForResult(host, spawned.value.agentId);
   });
 
+  it('provides synchronous direct-child views for the TUI navigator', async () => {
+    const release = deferred();
+    const { host } = await harness({
+      runner: async (input) => {
+        await input.onReady({ steer: async () => {}, cancel: async () => {} });
+        await release.promise;
+        return { result: 'done' };
+      },
+    });
+    const spawned = await host.spawn(request({ description: 'visible child' }));
+    if (!spawned.ok) return;
+    await settle();
+
+    expect(host.listLocalSubagents()).toEqual([
+      expect.objectContaining({
+        agentId: spawned.value.agentId,
+        description: 'visible child',
+        status: 'running',
+      }),
+    ]);
+    expect(host.getLocalSubagent(spawned.value.agentId)).toMatchObject({
+      agentId: spawned.value.agentId,
+      status: 'running',
+    });
+
+    release.resolve();
+    await waitForResult(host, spawned.value.agentId);
+  });
+
   it('steers queued and running jobs at their safe delivery boundaries', async () => {
     const runningSteers: string[] = [];
     const started: string[] = [];

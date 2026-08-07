@@ -15,6 +15,8 @@ import { renderSegments, type FooterDataLike, type RenderedSegment } from './seg
 import type { SubscriptionState } from './subscription.js';
 import { getSymbols, type PowerlineSymbols } from './symbols.js';
 
+export type FooterRowsRenderer = (width: number) => readonly string[];
+
 export interface PowerlineFooterOptions {
   pi: FelanExtensionAPI;
   ctx: ExtensionContext;
@@ -22,6 +24,7 @@ export interface PowerlineFooterOptions {
   footerData: FooterDataLike;
   config: PowerlineConfig;
   subscription: SubscriptionState;
+  footerRows?: FooterRowsRenderer;
 }
 
 export class PowerlineFooter implements Component {
@@ -69,7 +72,9 @@ export class PowerlineFooter implements Component {
       if (segments.length > 0) lines.push(...renderFooterLine(segments, config, palette, mode, symbols, safeWidth));
     }
 
-    return (lines.length > 0 ? lines : ['']).map((line) => ensureWidth(line, safeWidth));
+    const footerLines = lines.length > 0 ? lines : [''];
+    const extraRows = this.options.footerRows?.(safeWidth) ?? [];
+    return [...footerLines, ...extraRows].map((line) => ensureWidth(line, safeWidth));
   }
 
   private refreshGit(): void {

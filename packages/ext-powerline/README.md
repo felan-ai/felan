@@ -54,6 +54,9 @@ Consumers enable subscription usage with
 provider detection, response parsing, caching, throttling, and rendering; the
 host owns credential access and provider requests.
 
+Hosts can supply `options.footerRows` as the second argument to append
+width-aware rows after the configured powerline status lines.
+
 Felan's local TUI supplies a host backed by `ModelRuntime`. It uses the active
 provider's Felan OAuth credential and fixed Codex or Anthropic usage endpoints.
 The extension package does not inspect authentication files, receive stored

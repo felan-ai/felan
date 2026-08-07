@@ -7,6 +7,7 @@ import {
   localExtensionPackages,
   resolveBuiltinExtensionPackages,
 } from '../src/extensions.js';
+import type { LocalSubagentNavigatorHost } from '../src/subagents/agent-navigator.js';
 
 describe('local extension importer', () => {
   it('imports only the source-controlled package list', async () => {
@@ -106,7 +107,7 @@ describe('local extension importer', () => {
   });
 });
 
-function testSubagentHost(): SubagentHost {
+function testSubagentHost(): SubagentHost & LocalSubagentNavigatorHost {
   return {
     descriptors: [{
       id: 'developer',
@@ -122,6 +123,8 @@ function testSubagentHost(): SubagentHost {
     spawn: async () => ({ ok: false, error: { code: 'host_unavailable', message: 'unused' } }),
     list: async () => ({ ok: true, value: [] }),
     getResult: async () => ({ ok: false, error: { code: 'not_found', message: 'unused' } }),
+    listLocalSubagents: () => [],
+    getLocalSubagent: () => undefined,
     steer: async () => ({ ok: false, error: { code: 'not_found', message: 'unused' } }),
     cancel: async () => ({ ok: false, error: { code: 'not_found', message: 'unused' } }),
   };

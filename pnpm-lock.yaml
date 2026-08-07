@@ -29,6 +29,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.84.0
         version: 0.84.0(ws@8.21.1)(zod@4.4.3)
+      '@earendil-works/pi-tui':
+        specifier: 0.84.0
+        version: 0.84.0
       '@felan-ai/agent-core':
         specifier: workspace:*
         version: link:../../packages/agent-core

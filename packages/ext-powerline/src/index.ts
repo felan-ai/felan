@@ -1,6 +1,6 @@
 import type { ExtensionContext, FelanExtension } from '@felan-ai/agent-core';
 import { configFromFlags, loadPowerlineConfig, registerPowerlineFlags } from './config.js';
-import { PowerlineFooter } from './footer.js';
+import { PowerlineFooter, type FooterRowsRenderer } from './footer.js';
 import {
   createSubscriptionController,
   type SubscriptionRefreshOptions,
@@ -10,7 +10,14 @@ import {
 
 const SUBSCRIPTION_REFRESH_TIMER_MS = 60_000;
 
-export function createPowerlineExtension(subscriptionHost?: SubscriptionUsageHost): FelanExtension {
+export interface PowerlineExtensionOptions {
+  readonly footerRows?: FooterRowsRenderer;
+}
+
+export function createPowerlineExtension(
+  subscriptionHost?: SubscriptionUsageHost,
+  options: PowerlineExtensionOptions = {},
+): FelanExtension {
   return (pi) => {
     let footer: PowerlineFooter | undefined;
     let subscriptionContext: ExtensionContext | undefined;
@@ -37,6 +44,7 @@ export function createPowerlineExtension(subscriptionHost?: SubscriptionUsageHos
           footerData,
           config: configFromFlags(pi, loadedConfig.config),
           subscription: subscription?.state ?? emptySubscription,
+          ...(options.footerRows === undefined ? {} : { footerRows: options.footerRows }),
         });
         return footer;
       });
@@ -112,6 +120,7 @@ export {
   loadPowerlineConfig,
 } from './config.js';
 export { PowerlineFooter, renderFooterLine, renderStyledSegments } from './footer.js';
+export type { FooterRowsRenderer } from './footer.js';
 export { GitCache, formatAge, parseGitStatus, runGit } from './git.js';
 export { formatTokens, renderSegments, sanitizePlainText } from './segments.js';
 export {

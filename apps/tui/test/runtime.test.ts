@@ -31,7 +31,6 @@ import {
   getLocalSkillPaths,
 } from '../src/runtime.js';
 import type { LocalAgentRuntimeFactoryRequest } from '../src/runtime-factory.js';
-import { attachLocalSubagentPresenter } from '../src/subagents/presenter.js';
 
 const temporaryPaths: string[] = [];
 
@@ -174,7 +173,7 @@ describe('local Agent Core lifecycle', () => {
     expect(observedDispose).toHaveBeenCalledOnce();
   });
 
-  it('keeps the active host and presenter subscription when session replacement is cancelled', async () => {
+  it('keeps the active host when session replacement is cancelled', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent');
@@ -193,20 +192,6 @@ describe('local Agent Core lifecycle', () => {
     });
     const host = runtime.localSubagentHost;
     const shutdown = vi.spyOn(host, 'shutdown');
-    const subscribe = host.subscribe.bind(host);
-    let subscriptions = 0;
-    let detaches = 0;
-    host.subscribe = (listener) => {
-      subscriptions += 1;
-      const detach = subscribe(listener);
-      return () => {
-        detaches += 1;
-        detach();
-      };
-    };
-    const detachPresenter = attachLocalSubagentPresenter(runtime, {
-      setExtensionStatus: vi.fn(),
-    });
     const runner = runtime.session.extensionRunner as unknown as {
       hasHandlers(event: string): boolean;
       emit(event: { type: string }): Promise<{ cancel?: boolean } | undefined>;
@@ -231,13 +216,9 @@ describe('local Agent Core lifecycle', () => {
     expect(beforeEvents).toEqual(['session_before_switch', 'session_before_fork']);
     expect(runtime.localSubagentHost).toBe(host);
     expect(shutdown).not.toHaveBeenCalled();
-    expect(subscriptions).toBe(1);
-    expect(detaches).toBe(0);
 
     emitSpy.mockRestore();
     hasHandlersSpy.mockRestore();
-    detachPresenter();
-    expect(detaches).toBe(1);
     await runtime.dispose();
     expect(shutdown).toHaveBeenCalledOnce();
   });
@@ -383,7 +364,7 @@ describe('local Agent Core lifecycle', () => {
     await runtime.dispose();
   });
 
-  it('rebinds subagent presentation after every session replacement', async () => {
+  it('notifies local host subscribers after every session replacement', async () => {
     const root = await temporaryDirectory();
     const cwdA = join(root, 'workspace-a');
     const cwdB = join(root, 'workspace-b');
@@ -406,24 +387,11 @@ describe('local Agent Core lifecycle', () => {
       sessionManager: initialSessionManager,
     });
     const hosts: typeof runtime.localSubagentHost[] = [];
-    const subscriptions = new Map<typeof runtime.localSubagentHost, number>();
-    const detaches = new Map<typeof runtime.localSubagentHost, number>();
     const observeHost = (host: typeof runtime.localSubagentHost) => {
-      const subscribe = host.subscribe.bind(host);
-      host.subscribe = (listener) => {
-        subscriptions.set(host, (subscriptions.get(host) ?? 0) + 1);
-        const detach = subscribe(listener);
-        return () => {
-          detaches.set(host, (detaches.get(host) ?? 0) + 1);
-          detach();
-        };
-      };
       hosts.push(host);
     };
     observeHost(runtime.localSubagentHost);
     const detachHostChanges = runtime.subscribeLocalSubagentHost(observeHost);
-    const setExtensionStatus = vi.fn();
-    const detachPresenter = attachLocalSubagentPresenter(runtime, { setExtensionStatus });
     const shutdowns: typeof hosts = [];
     const observeShutdown = () => {
       const host = runtime.localSubagentHost;
@@ -457,13 +425,8 @@ describe('local Agent Core lifecycle', () => {
     expect(shutdowns).toEqual(hosts.slice(0, 4));
     expect(hosts).toHaveLength(5);
     expect(new Set(hosts)).toHaveLength(5);
-    expect(hosts.map((host) => subscriptions.get(host))).toEqual([1, 1, 1, 1, 1]);
-    expect(hosts.map((host) => detaches.get(host) ?? 0)).toEqual([1, 1, 1, 1, 0]);
 
-    detachPresenter();
     detachHostChanges();
-    expect(hosts.map((host) => detaches.get(host))).toEqual([1, 1, 1, 1, 1]);
-    expect(setExtensionStatus).toHaveBeenLastCalledWith('felan-subagents', undefined);
     await runtime.dispose();
   });
 
