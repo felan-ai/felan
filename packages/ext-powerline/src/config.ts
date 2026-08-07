@@ -10,7 +10,7 @@ export type DirectoryStyle = 'full' | 'fish' | 'basename';
 export type SessionDisplayType = 'cost' | 'tokens' | 'both' | 'breakdown';
 export type ContextDisplayStyle = 'text' | 'bar' | 'blocks' | 'blocks-line' | 'dots';
 export type SegmentAlignment = 'left' | 'right';
-export type SegmentName = 'directory' | 'git' | 'model' | 'session' | 'context' | 'status';
+export type SegmentName = 'directory' | 'git' | 'model' | 'session' | 'subscription' | 'context' | 'status';
 export type ThemeColorKey = SegmentName | 'warning' | 'critical' | 'muted' | 'extensionStatus1' | 'extensionStatus2' | 'extensionStatus3' | 'extensionStatus4';
 
 export interface SegmentConfig {
@@ -28,6 +28,10 @@ export interface SegmentConfig {
   displayStyle?: ContextDisplayStyle;
   showPercentageOnly?: boolean;
   showTokensOnly?: boolean;
+  showProviderName?: boolean;
+  showReset?: boolean;
+  showPercentage?: boolean;
+  maxWindows?: number;
   width?: number;
   warningThreshold?: number;
   criticalThreshold?: number;
@@ -87,6 +91,7 @@ const DEFAULT_CONFIG: PowerlineConfig = {
       {
         segments: {
           session: { enabled: true, type: 'tokens' },
+          subscription: { enabled: true, showProviderName: true, showReset: true, showPercentage: true, maxWindows: 3 },
           context: { enabled: true, displayStyle: 'bar' },
           status: { enabled: true, align: 'right' },
         },
@@ -105,7 +110,7 @@ const DIRECTORY_STYLES = new Set<DirectoryStyle>(['full', 'fish', 'basename']);
 const SESSION_TYPES = new Set<SessionDisplayType>(['cost', 'tokens', 'both', 'breakdown']);
 const CONTEXT_STYLES = new Set<ContextDisplayStyle>(['text', 'bar', 'blocks', 'blocks-line', 'dots']);
 const ALIGNMENTS = new Set<SegmentAlignment>(['left', 'right']);
-const SEGMENT_NAMES = new Set<SegmentName>(['directory', 'git', 'model', 'session', 'context', 'status']);
+const SEGMENT_NAMES = new Set<SegmentName>(['directory', 'git', 'model', 'session', 'subscription', 'context', 'status']);
 const THEME_COLOR_KEYS = new Set<ThemeColorKey>([
   ...SEGMENT_NAMES,
   'warning',
@@ -126,8 +131,11 @@ const BOOLEAN_SEGMENT_FIELDS = [
   'showRepoName',
   'showPercentageOnly',
   'showTokensOnly',
+  'showProviderName',
+  'showReset',
+  'showPercentage',
 ] as const;
-const NUMBER_SEGMENT_FIELDS = ['width', 'warningThreshold', 'criticalThreshold'] as const;
+const NUMBER_SEGMENT_FIELDS = ['maxWindows', 'width', 'warningThreshold', 'criticalThreshold'] as const;
 
 export interface LoadPowerlineConfigResult {
   readonly path: string;

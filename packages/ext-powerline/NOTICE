@@ -7,7 +7,11 @@ Copyright (c) 2026 Milko Slavov.
 
 The pi-powerline source credits packages/sub-core from
 https://github.com/marckrenn/pi-sub, licensed under the MIT License, for
-subscription provider and usage logic. Copyright (c) 2026 Marc Krenn. Felan
-does not include the credential loading or subscription network implementation.
+subscription provider and usage logic. Copyright (c) 2026 Marc Krenn.
+
+This package includes adapted subscription provider detection, usage parsing,
+controller, and rendering logic. Credential loading and provider network
+requests are supplied by the consuming Felan host and remain outside this
+package.
 
 All adaptations remain available under the MIT License in LICENSE.

@@ -8,6 +8,7 @@ The footer displays:
 - cached Git branch, revision, working-tree status, tag, age, stash, upstream, and repository name
 - active model and thinking level
 - session token and cost totals
+- active Codex or Claude subscription usage
 - context-window usage
 - statuses published by other Pi extensions
 
@@ -17,17 +18,21 @@ charsets. Git probes are asynchronous, cached, coalesced, time-bounded, and
 executed exclusively through `pi.exec`.
 
 The extension installs its footer on `session_start` only when `ctx.mode` is
-`tui`, redraws for model, thinking, agent, turn, tool, compaction, tree, and Git
-branch changes, and removes and disposes the footer on `session_shutdown`.
-Headless Pi modes perform no footer or Git work.
+`tui`, redraws for model, thinking, agent, turn, tool, compaction, tree, usage,
+and Git branch changes, and removes and disposes the footer on
+`session_shutdown`. Headless Pi modes perform no footer, Git, or subscription
+work.
 
 ## Configuration
 
 The extension reads `$FELAN_AGENT_DIR/powerline.json`, which defaults to
 `~/.felan/powerline.json`, when it initializes. It accepts the compatible Pi
 powerline fields for display layout, supported segments, and custom colors.
-Segments that depend on subscriptions, credentials, or private services remain
-excluded.
+
+The `subscription` segment supports Codex and Claude OAuth plans. Codex values
+show remaining percentage; Claude values show used percentage. The segment can
+configure `showProviderName`, `showReset`, `showPercentage`, and `maxWindows`.
+It refreshes at startup, after turns and model changes, and once per minute.
 
 Configuration is inert for the process lifetime. These Pi flags override the
 file when the TUI footer is installed:
@@ -43,9 +48,16 @@ file when the TUI footer is installed:
 | `--felan-powerline-session-type` | `tokens`, `cost`, `both`, `breakdown` | `tokens` |
 | `--felan-powerline-context-style` | `text`, `bar`, `blocks`, `blocks-line`, `dots` | `bar` |
 
-The portable subset reads this single configuration file. It does not watch
-files, inspect private authentication files or JWTs, call subscription
-services, or depend on tmux or private environment conventions.
+The package default export is hostless and renders no subscription data.
+Consumers enable subscription usage with
+`createPowerlineExtension(subscriptionUsageHost)`. The portable package owns
+provider detection, response parsing, caching, throttling, and rendering; the
+host owns credential access and provider requests.
+
+Felan's local TUI supplies a host backed by `ModelRuntime`. It uses the active
+provider's Felan OAuth credential and fixed Codex or Anthropic usage endpoints.
+The extension package does not inspect authentication files, receive stored
+credential objects, or perform network requests.
 
 ## Development
 
@@ -61,8 +73,7 @@ pnpm --filter @felan-ai/ext-powerline test
 
 ## Attribution
 
-The rendering, theme, segment, lifecycle, and Git-cache design is adapted from
-the MIT-licensed `pi-powerline` source by Milko Slavov. That source credits the
-MIT-licensed `marckrenn/pi-sub` `packages/sub-core` for subscription provider
-and usage logic. Felan excludes that credential and network functionality.
-See [NOTICE](NOTICE).
+The rendering, theme, segment, lifecycle, Git-cache, and subscription controller
+design is adapted from the MIT-licensed `pi-powerline` source by Milko Slavov.
+That source credits the MIT-licensed `marckrenn/pi-sub` `packages/sub-core` for
+subscription provider and usage logic. See [NOTICE](NOTICE).

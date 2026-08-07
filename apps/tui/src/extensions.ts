@@ -1,12 +1,15 @@
-import type { ExtensionPackageImporter } from '@felan-ai/agent-core';
+import type { ExtensionPackageImporter, ModelRuntime } from '@felan-ai/agent-core';
 import { createAskUserExtension } from '@felan-ai/ext-ask-user';
 import { createTuiAskUserHost } from '@felan-ai/ext-ask-user/tui';
+import { createPowerlineExtension } from '@felan-ai/ext-powerline';
 import {
   createSubagentsExtension,
   type SubagentHost,
 } from '@felan-ai/ext-subagents';
+import { createLocalSubscriptionUsageHost } from './powerline.js';
 
 export const askUserExtensionPackage = '@felan-ai/ext-ask-user';
+export const powerlineExtensionPackage = '@felan-ai/ext-powerline';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const builtinExtensionPackages = {
   subagents: subagentsExtensionPackage,
@@ -17,7 +20,7 @@ export const builtinExtensionPackages = {
   webAccess: '@felan-ai/ext-web-access',
   backgroundBash: '@felan-ai/ext-background-bash',
   codex: '@felan-ai/ext-codex',
-  powerline: '@felan-ai/ext-powerline',
+  powerline: powerlineExtensionPackage,
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);
 
@@ -49,9 +52,11 @@ export const importLocalExtension: ExtensionPackageImporter = async (packageName
 
 export function createLocalExtensionImporter(
   host: SubagentHost,
+  modelRuntime: ModelRuntime,
   importExtension: ExtensionPackageImporter = importLocalExtension,
   shutdownHost?: () => Promise<void>,
 ): ExtensionPackageImporter {
+  const powerline = createPowerlineExtension(createLocalSubscriptionUsageHost(modelRuntime));
   return async (packageName) => {
     if (packageName === askUserExtensionPackage) {
       return { default: createAskUserExtension(createTuiAskUserHost()) };
@@ -68,6 +73,9 @@ export function createLocalExtensionImporter(
           }
         }) satisfies ReturnType<typeof createSubagentsExtension>,
       };
+    }
+    if (packageName === powerlineExtensionPackage) {
+      return { default: powerline };
     }
     return importExtension(packageName);
   };

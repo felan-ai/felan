@@ -151,7 +151,12 @@ export function createLocalSessionRuntimeFactory(
       runtime,
       ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
-      importExtension: createLocalExtensionImporter(host, importExtension, shutdownHost),
+      importExtension: createLocalExtensionImporter(
+        host,
+        options.modelRuntime,
+        importExtension,
+        shutdownHost,
+      ),
       modelRuntime: options.modelRuntime,
       settingsManager,
       skillPaths,

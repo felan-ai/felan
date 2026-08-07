@@ -691,7 +691,11 @@ export class LocalSubagentManager {
       runtime,
       ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
-      importExtension: createLocalExtensionImporter(input.subagents, this.#options.importExtension),
+      importExtension: createLocalExtensionImporter(
+        input.subagents,
+        this.#options.modelRuntime,
+        this.#options.importExtension,
+      ),
       modelRuntime: this.#options.modelRuntime,
       settingsManager: this.#options.settingsManager,
       sessionManager,

@@ -5,6 +5,7 @@ import { getThemePalette } from '../src/colors.js';
 import { configFromFlags, type PowerlineConfig, type SegmentName } from '../src/config.js';
 import { renderFooterLine, renderStyledSegments } from '../src/footer.js';
 import { renderSegments, sanitizePlainText, type FooterDataLike, type RenderedSegment } from '../src/segments.js';
+import type { SubscriptionState } from '../src/subscription.js';
 import { getSymbols } from '../src/symbols.js';
 
 describe('powerline rendering', () => {
@@ -18,6 +19,7 @@ describe('powerline rendering', () => {
     const palette = getThemePalette(config);
     expect(palette.colors.directory).toEqual({ fg: '#ffffff', bg: '#123456' });
     expect(palette.colors.git).toBeDefined();
+    expect(palette.colors.subscription).toBeDefined();
   });
 
   it('renders minimal, powerline, and capsule styles with both charsets', () => {
@@ -121,6 +123,47 @@ describe('powerline segments', () => {
     expect(rendered.text).toBe('in2.0k out1.0k R500 W100 $0.223');
   });
 
+  it('renders Codex remaining usage and Claude used usage', () => {
+    const codex = renderSingle('subscription', {
+      enabled: true,
+      showProviderName: false,
+      showReset: true,
+    }, context({
+      model: { provider: 'openai-codex', id: 'gpt-5.6-sol' },
+      subscription: {
+        provider: 'codex',
+        loading: false,
+        usage: {
+          provider: 'codex',
+          displayName: 'Codex Plan',
+          windows: [
+            { label: 'Week', usedPercent: 41, resetDescription: '5d8h' },
+            { label: 'GPT-5.6 Week', usedPercent: 12, resetDescription: '2d' },
+          ],
+        },
+      },
+    }));
+    expect(codex.text).toBe('7d 59% | 5d8h');
+
+    const claude = renderSingle('subscription', {
+      enabled: true,
+      showProviderName: true,
+      showReset: false,
+    }, context({
+      model: { provider: 'anthropic', id: 'claude-opus-4-6' },
+      subscription: {
+        provider: 'anthropic',
+        loading: false,
+        usage: {
+          provider: 'anthropic',
+          displayName: 'Claude Plan',
+          windows: [{ label: 'Week', usedPercent: 41 }],
+        },
+      },
+    }));
+    expect(claude.text).toBe('Claude 7d 41%');
+  });
+
   it('renders context variants and threshold colors', () => {
     const warning = renderSingle('context', {
       enabled: true,
@@ -172,6 +215,7 @@ describe('powerline segments', () => {
     const statuses = renderSegments({ segments: { status: { enabled: true } } }, {
       ctx: ctx.ctx,
       footerData: ctx.footerData,
+      subscription: ctx.subscription,
       symbols: getSymbols('text'),
     });
     expect(statuses.map((status) => status.text)).toEqual(['ready', 'bad line']);
@@ -198,6 +242,7 @@ function renderSingle(
     ctx: value.ctx,
     footerData: value.footerData,
     ...(gitDetails === undefined ? {} : { gitDetails }),
+    subscription: value.subscription,
     symbols: getSymbols('text'),
   });
   expect(rendered).toHaveLength(1);
@@ -213,7 +258,8 @@ function context(options: {
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   branch?: string | null;
   statuses?: ReadonlyMap<string, string>;
-} = {}): { ctx: ExtensionContext; footerData: FooterDataLike } {
+  subscription?: SubscriptionState;
+} = {}): { ctx: ExtensionContext; footerData: FooterDataLike; subscription: SubscriptionState } {
   const ctx = {
     cwd: options.cwd ?? '/workspace',
     model: options.model,
@@ -227,7 +273,7 @@ function context(options: {
     getAvailableProviderCount: () => options.providerCount ?? 1,
     onBranchChange: () => () => {},
   };
-  return { ctx, footerData };
+  return { ctx, footerData, subscription: options.subscription ?? { loading: false } };
 }
 
 function assistantEntry(input: number, output: number, cacheRead: number, cacheWrite: number, total: number) {

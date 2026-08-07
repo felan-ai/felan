@@ -1,3 +1,4 @@
+import type { ModelRuntime } from '@felan-ai/agent-core';
 import type { SubagentHost } from '@felan-ai/ext-subagents';
 import { describe, expect, it } from 'vitest';
 import {
@@ -39,7 +40,7 @@ describe('local extension importer', () => {
   });
 
   it('creates the subagent extension without invoking the generic importer', async () => {
-    const importer = createLocalExtensionImporter(testSubagentHost(), async () => {
+    const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => {
       throw new Error('The generic importer must not load the subagent extension');
     });
 
@@ -49,11 +50,21 @@ describe('local extension importer', () => {
   });
 
   it('creates the TUI ask-user extension without invoking the generic importer', async () => {
-    const importer = createLocalExtensionImporter(testSubagentHost(), async () => {
+    const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => {
       throw new Error('The generic importer must not load the ask-user extension');
     });
 
     await expect(importer('@felan-ai/ext-ask-user')).resolves.toMatchObject({
+      default: expect.any(Function),
+    });
+  });
+
+  it('creates powerline with the Felan subscription host without invoking the generic importer', async () => {
+    const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => {
+      throw new Error('The generic importer must not load the powerline extension');
+    });
+
+    await expect(importer('@felan-ai/ext-powerline')).resolves.toMatchObject({
       default: expect.any(Function),
     });
   });
@@ -100,4 +111,8 @@ function testSubagentHost(): SubagentHost {
     steer: async () => ({ ok: false, error: { code: 'not_found', message: 'unused' } }),
     cancel: async () => ({ ok: false, error: { code: 'not_found', message: 'unused' } }),
   };
+}
+
+function testModelRuntime(): ModelRuntime {
+  return {} as ModelRuntime;
 }

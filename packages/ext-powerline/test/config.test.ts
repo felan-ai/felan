@@ -72,7 +72,13 @@ describe('powerline config file', () => {
             { segments: { directory: { enabled: true, style: 'basename' } } },
             {
               segments: {
-                subscription: { enabled: true },
+                subscription: {
+                  enabled: true,
+                  showProviderName: false,
+                  showReset: true,
+                  showPercentage: false,
+                  maxWindows: 2,
+                },
                 model: { enabled: true, align: 'right' },
                 context: { enabled: true, displayStyle: 'dots' },
               },
@@ -88,7 +94,12 @@ describe('powerline config file', () => {
       expect(loaded.path).toBe(join(agentDir, 'powerline.json'));
       expect(loaded.config).toMatchObject({
         theme: 'custom',
-        colors: { custom: { directory: { fg: '#ffffff', bg: '#123456' } } },
+        colors: {
+          custom: {
+            directory: { fg: '#ffffff', bg: '#123456' },
+            subscription: { fg: '#ffffff', bg: '#654321' },
+          },
+        },
         display: {
           padding: 2,
           style: 'capsule',
@@ -99,6 +110,13 @@ describe('powerline config file', () => {
       });
       expect(loaded.config.display.lines).toHaveLength(3);
       expect(loaded.config.display.lines[1]?.segments).toEqual({
+        subscription: {
+          enabled: true,
+          showProviderName: false,
+          showReset: true,
+          showPercentage: false,
+          maxWindows: 2,
+        },
         model: { enabled: true, align: 'right' },
         context: { enabled: true, displayStyle: 'dots' },
       });

@@ -12,6 +12,7 @@ import {
 import type { PowerlineConfig } from './config.js';
 import { GitCache } from './git.js';
 import { renderSegments, type FooterDataLike, type RenderedSegment } from './segments.js';
+import type { SubscriptionState } from './subscription.js';
 import { getSymbols, type PowerlineSymbols } from './symbols.js';
 
 export interface PowerlineFooterOptions {
@@ -20,6 +21,7 @@ export interface PowerlineFooterOptions {
   tui: TUI;
   footerData: FooterDataLike;
   config: PowerlineConfig;
+  subscription: SubscriptionState;
 }
 
 export class PowerlineFooter implements Component {
@@ -61,6 +63,7 @@ export class PowerlineFooter implements Component {
         ctx: this.options.ctx,
         footerData: this.options.footerData,
         ...(gitDetails === undefined ? {} : { gitDetails }),
+        subscription: this.options.subscription,
         symbols,
       });
       if (segments.length > 0) lines.push(...renderFooterLine(segments, config, palette, mode, symbols, safeWidth));

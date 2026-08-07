@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Local Felan terminal agent",
   "license": "MIT",
   "type": "module",

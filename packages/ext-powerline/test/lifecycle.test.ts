@@ -1,8 +1,11 @@
 import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
 import type { Component, TUI } from '@earendil-works/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
-import powerlineExtension from '../src/index.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import powerlineExtension, { createPowerlineExtension } from '../src/index.js';
 import type { FooterDataLike } from '../src/segments.js';
+import type { SubscriptionUsageHost } from '../src/subscription.js';
+
+afterEach(() => vi.useRealTimers());
 
 describe('powerline lifecycle', () => {
   it.each(['rpc', 'json', 'print'] as const)('is headless-safe in %s mode', async (mode) => {
@@ -74,6 +77,46 @@ describe('powerline lifecycle', () => {
     expect([...harness.flags.keys()]).toHaveLength(8);
     expect([...harness.flags.keys()].every((flag) => flag.startsWith('felan-powerline-'))).toBe(true);
   });
+
+  it('refreshes injected subscription usage for TUI sessions and model changes', async () => {
+    vi.useFakeTimers();
+    const usageHost: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({
+        ok: true,
+        data: { rate_limit: { primary_window: { used_percent: 20 } } },
+      }),
+    };
+    const harness = extensionHarness();
+    createPowerlineExtension(usageHost)(harness.pi);
+    const ctx = extensionContext('tui', { provider: 'openai-codex', id: 'gpt-5.6-sol' });
+
+    await harness.emit('session_start', {}, ctx.value);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(usageHost.fetchUsage).toHaveBeenCalledOnce();
+    expect(usageHost.fetchUsage).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider: 'codex',
+      modelProvider: 'openai-codex',
+      signal: expect.any(AbortSignal),
+    }));
+
+    const selected = extensionContext('tui', { provider: 'anthropic', id: 'claude-opus-4-6' });
+    await harness.emit('model_select', {}, selected.value);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(usageHost.fetchUsage).toHaveBeenCalledTimes(2);
+    expect(usageHost.fetchUsage).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider: 'anthropic',
+      modelProvider: 'anthropic',
+    }));
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(usageHost.fetchUsage).toHaveBeenCalledTimes(3);
+    expect(usageHost.fetchUsage).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider: 'anthropic',
+    }));
+
+    await harness.emit('session_shutdown', {}, selected.value);
+  });
 });
 
 function extensionHarness() {
@@ -103,14 +146,14 @@ function extensionHarness() {
   };
 }
 
-function extensionContext(mode: ExtensionContext['mode']) {
+function extensionContext(mode: ExtensionContext['mode'], model?: Record<string, unknown>) {
   const setFooter = vi.fn();
   const value = {
     mode,
     hasUI: mode === 'tui' || mode === 'rpc',
     cwd: '/workspace',
     ui: { setFooter },
-    model: undefined,
+    model,
     thinkingLevel: 'off',
     getContextUsage: () => undefined,
     sessionManager: { getEntries: () => [] },

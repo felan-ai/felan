@@ -9,3 +9,10 @@ contain the applicable attribution and source provenance.
 The terminal application uses @earendil-works/pi-coding-agent 0.84.0 from
 https://github.com/earendil-works/pi, licensed under the MIT License.
 Copyright (c) 2025 Mario Zechner.
+
+The local powerline subscription host adapts provider request behavior from
+packages/pi-powerline in https://github.com/mslavov/pi-extensions at commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d. Copyright (c) 2026 Milko Slavov.
+That source credits the MIT-licensed packages/sub-core from
+https://github.com/marckrenn/pi-sub for subscription provider and usage logic.
+Copyright (c) 2026 Marc Krenn.

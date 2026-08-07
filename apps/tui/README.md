@@ -38,7 +38,9 @@ packages, extensions, configured skill paths, prompts, themes, and Pi context
 files remain filtered. Agent Skills are loaded from `~/.agents/skills` and
 `<workspace>/.agents/skills` and are shared with local subagents.
 The built-in powerline reads `~/.felan/powerline.json` (or
-`$FELAN_AGENT_DIR/powerline.json`) once when it initializes.
+`$FELAN_AGENT_DIR/powerline.json`) once when it initializes. Its subscription
+segment obtains the active Codex or Claude OAuth token through Felan's
+`ModelRuntime` and requests usage from that provider's fixed endpoint.
 
 All built-in extensions are enabled by default. Toggle them in
 `~/.felan/settings.json`:
@@ -111,8 +113,8 @@ application's current workspace. The TUI status line shows active/recent child
 state, and runtime shutdown awaits active-child cancellation before Pi teardown.
 Completed-child continuation uses the same child ID and Pi session file while
 replacing the latest result. The default list also
-includes `@felan-ai/ext-powerline` for an ANSI-aware footer; it is a direct TUI
-dependency and is not part of cloud composition.
+includes `@felan-ai/ext-powerline` for an ANSI-aware footer with subscription
+usage; it is a direct TUI dependency and is not part of cloud composition.
 
 Local agent definitions are loaded only from bundled Felan definitions,
 `~/.felan/agents/*.md` (or `$FELAN_AGENT_DIR/agents/*.md`), and
