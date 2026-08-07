@@ -89,6 +89,24 @@ describe('explicit local Felan agent discovery', () => {
       descriptor: { allowNesting: false },
     });
   });
+
+  it('rejects the unsupported minimal thinking value', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(join(cwd, '.felan', 'agents'), { recursive: true });
+    await writeFile(join(cwd, '.felan', 'agents', 'worker.md'), [
+      '---',
+      'description: Worker',
+      'thinking: minimal',
+      '---',
+      'Worker prompt',
+    ].join('\n'));
+
+    await expect(discoverLocalSubagents(cwd, agentDir)).rejects.toThrow(
+      'Felan agent worker.md has invalid thinking',
+    );
+  });
 });
 
 function definition(description: string, prompt: string): string {

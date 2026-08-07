@@ -1,11 +1,6 @@
-export type SubagentThinking =
-  | 'off'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max';
+import type { FelanThinkingLevel } from '@felan-ai/agent-core';
+
+export type SubagentThinking = FelanThinkingLevel;
 
 export interface SubagentDescriptor {
   readonly id: string;

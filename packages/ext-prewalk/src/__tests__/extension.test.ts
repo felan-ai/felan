@@ -1,10 +1,6 @@
 import type {
-  AgentRuntime,
   ExtensionContext,
   FelanExtensionAPI,
-  AgentRuntimeKind,
-  ExecOptions,
-  ExecResult,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import prewalkExtension from '../index.js';
@@ -17,71 +13,12 @@ import {
 
 type Handler = (event: any, ctx: ExtensionContext) => any;
 
-class ProbeRuntime implements AgentRuntime {
-  readonly cwd = '/workspace';
-  readonly #storage: ReturnType<AgentRuntime['storage']> = {
-    root: '/storage',
-    readFile: async () => { throw new Error('storage readFile is unavailable in this test runtime'); },
-    writeFile: async () => { throw new Error('storage writeFile is unavailable in this test runtime'); },
-    listFiles: async () => { throw new Error('storage listFiles is unavailable in this test runtime'); },
-    mkdir: async () => { throw new Error('storage mkdir is unavailable in this test runtime'); },
-    remove: async () => { throw new Error('storage remove is unavailable in this test runtime'); },
-  };
-  readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
-  readonly shellCalls: Array<{ command: string; options?: Parameters<AgentRuntime['shell']>[1] }> = [];
-
-  constructor(
-    readonly kind: AgentRuntimeKind,
-    private readonly execute: () => ExecResult,
-  ) {}
-
-  storage(): ReturnType<AgentRuntime['storage']> {
-    return this.#storage;
-  }
-
-  async exec(command: string, args: readonly string[], options?: ExecOptions): Promise<ExecResult> {
-    this.execCalls.push(options ? { command, args: [...args], options } : { command, args: [...args] });
-    return this.execute();
-  }
-
-  async shell(command: string, options?: Parameters<AgentRuntime['shell']>[1]): Promise<ExecResult> {
-    this.shellCalls.push(options ? { command, options } : { command });
-    return { stdout: '', stderr: '', code: 0, killed: false };
-  }
-
-  async readFile(): Promise<Uint8Array> {
-    throw new Error('readFile is unavailable in this test runtime');
-  }
-
-  async writeFile(): Promise<void> {
-    throw new Error('writeFile is unavailable in this test runtime');
-  }
-
-  async listFiles(): Promise<string[]> {
-    throw new Error('listFiles is unavailable in this test runtime');
-  }
-
-  async mkdir(): Promise<void> {
-    throw new Error('mkdir is unavailable in this test runtime');
-  }
-
-  async remove(): Promise<void> {
-    throw new Error('remove is unavailable in this test runtime');
-  }
-}
-
 const plannerModel = { provider: 'openai-codex', id: 'gpt-5.6-sol', name: 'Sol' } as any;
 const targetModel = { provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'Luna' } as any;
 const alternateTarget = { provider: 'anthropic', id: 'claude-opus', name: 'Opus' } as any;
 const externalModel = { provider: 'anthropic', id: 'claude-sonnet', name: 'Sonnet' } as any;
-
-function validTodos() {
-  return Array.from({ length: 5 }, (_, index) => ({
-    content: `Task ${index + 1}`,
-    activeForm: `Doing task ${index + 1}`,
-    status: index === 0 ? 'in_progress' : 'pending',
-  }));
-}
+const anthropicPlanner = { provider: 'anthropic', id: 'claude-opus-4-6', name: 'Opus' } as any;
+const anthropicTarget = { provider: 'anthropic', id: 'claude-haiku-4-5', name: 'Haiku' } as any;
 
 function assistant(
   stopReason: 'stop' | 'toolUse' | 'error' = 'stop',
@@ -122,13 +59,12 @@ function createHarness(
   options: {
     activeTools?: string[];
     models?: any[];
+    currentModel?: any;
+    scopedModels?: any[];
     authenticated?: boolean;
     idle?: boolean;
-    beads?: boolean;
     mode?: 'tui' | 'rpc' | 'json' | 'print';
     flags?: Record<string, boolean | string>;
-    runtimeKind?: AgentRuntimeKind;
-    probeThrows?: boolean;
   } = {},
 ) {
   const handlers = new Map<string, Handler[]>();
@@ -137,20 +73,11 @@ function createHarness(
   const registeredFlags = new Map<string, any>();
   const capabilities: Array<{ id: string; instructions: string }> = [];
   const models = options.models ?? [plannerModel, targetModel, alternateTarget, externalModel];
-  let currentModel = plannerModel;
+  let currentModel = options.currentModel ?? plannerModel;
   let thinkingLevel = 'max';
   let authenticated = options.authenticated ?? true;
   let idle = options.idle ?? true;
 
-  const runtime = new ProbeRuntime(options.runtimeKind ?? 'host', () => {
-      if (options.probeThrows) throw new Error('bd unavailable');
-      return {
-        stdout: options.beads ? '{}' : '',
-        stderr: '',
-        code: options.beads ? 0 : 1,
-        killed: false,
-      };
-  });
   const ui = {
     notify: vi.fn(),
     setStatus: vi.fn(),
@@ -169,8 +96,10 @@ function createHarness(
       find: vi.fn((provider: string, modelId: string) => (
         models.find((model) => model.provider === provider && model.id === modelId)
       )),
+      getAvailable: vi.fn(() => authenticated ? models : []),
       hasConfiguredAuth: vi.fn(() => authenticated),
     },
+    scopedModels: (options.scopedModels ?? []).map((model) => ({ model })),
     isIdle: vi.fn(() => idle),
     waitForIdle,
   } as unknown as ExtensionContext;
@@ -195,14 +124,7 @@ function createHarness(
   });
   const sendMessage = vi.fn();
   const sendUserMessage = vi.fn();
-  const facadeExec = vi.fn((
-    command: string,
-    args: string[],
-    execOptions?: Parameters<AgentRuntime['exec']>[2],
-  ) => runtime.exec(command, args, execOptions));
-
   const pi = {
-    runtime,
     registerCapability: (capability: { id: string; instructions: string }) => capabilities.push(capability),
     on: vi.fn((event: string, handler: Handler) => {
       const eventHandlers = handlers.get(event) ?? [];
@@ -215,8 +137,7 @@ function createHarness(
       if (!flags.has(name) && flagOptions.default !== undefined) flags.set(name, flagOptions.default);
     }),
     getFlag: vi.fn((name: string) => flags.get(name)),
-    getActiveTools: vi.fn(() => options.activeTools ?? ['read', 'bash', 'todo_write', 'edit', 'write']),
-    exec: facadeExec,
+    getActiveTools: vi.fn(() => options.activeTools ?? ['read', 'TaskCreate', 'TaskUpdate', 'edit', 'write']),
     getThinkingLevel: vi.fn(() => thinkingLevel),
     setThinkingLevel,
     setModel,
@@ -230,10 +151,8 @@ function createHarness(
     pi,
     ctx,
     ui,
-    runtime,
     registeredFlags,
     capabilities,
-    facadeExec,
     emit,
     command: commands.get('prewalk'),
     setModel,
@@ -277,9 +196,9 @@ async function qualifyHandoff(harness: ReturnType<typeof createHarness>) {
   await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
   await harness.emit('tool_call', {
     type: 'tool_call',
-    toolCallId: 'todo',
-    toolName: 'todo_write',
-    input: { todos: validTodos() },
+    toolCallId: 'task',
+    toolName: 'TaskUpdate',
+    input: { task_id: 'T-ABC123', status: 'in_progress' },
   });
   await harness.emit('tool_call', {
     type: 'tool_call',
@@ -292,12 +211,12 @@ async function qualifyHandoff(harness: ReturnType<typeof createHarness>) {
     turnIndex: 0,
     message: assistant('toolUse', [
       { type: 'text', text: 'Plan' },
-      { type: 'toolCall', id: 'todo', name: 'todo_write', arguments: {} },
+      { type: 'toolCall', id: 'task', name: 'TaskUpdate', arguments: {} },
       { type: 'toolCall', id: 'mutation', name: 'edit', arguments: {} },
     ]),
     toolResults: [
       toolResult('mutation', 'edit'),
-      toolResult('todo', 'todo_write', false, { newTodos: validTodos() }),
+      toolResult('task', 'TaskUpdate', false, { task: { id: 'T-ABC123', status: 'in_progress' } }),
     ],
   });
 }
@@ -321,7 +240,7 @@ describe('flags and commands', () => {
 
     expect(harness.registeredFlags.get('prewalk-target-model')).toMatchObject({
       type: 'string',
-      default: 'openai-codex/gpt-5.6-luna',
+      default: 'low',
     });
     expect(harness.registeredFlags.get('prewalk-restore-planner')).toMatchObject({
       type: 'boolean',
@@ -338,7 +257,7 @@ describe('flags and commands', () => {
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.setStatus).toHaveBeenLastCalledWith(
       'prewalk',
-      'Prewalk armed → openai-codex/gpt-5.6-luna',
+      'Prewalk armed → low',
     );
   });
 
@@ -385,7 +304,7 @@ describe('flags and commands', () => {
     expect(harness.sendMessage).not.toHaveBeenCalled();
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk: idle | target openai-codex/gpt-5.6-luna | restore planner on',
+      'Prewalk: idle | target low | restore planner on',
       'info',
     );
   });
@@ -412,52 +331,27 @@ describe('flags and commands', () => {
   });
 });
 
-describe('runtime routing and host/cloud parity', () => {
-  it.each(['host', 'docker', 'daytona'] as const)(
-    'probes Beads through %s AgentRuntime exec with literal argv and timeout',
-    async (runtimeKind) => {
-      const harness = createHarness({ beads: true, runtimeKind });
-
-      await harness.command.handler('', harness.ctx);
-
-      expect(harness.runtime.kind).toBe(runtimeKind);
-      expect(harness.facadeExec).toHaveBeenCalledWith(
-        'bd',
-        ['-C', '/workspace', '--readonly', '--json', 'status', '--no-activity'],
-        { timeout: 5_000 },
-      );
-      expect(harness.runtime.execCalls).toEqual([{
-        command: 'bd',
-        args: ['-C', '/workspace', '--readonly', '--json', 'status', '--no-activity'],
-        options: { timeout: 5_000 },
-      }]);
-      expect(harness.runtime.shellCalls).toEqual([]);
-      expect(harness.ui.notify).toHaveBeenCalledWith(expect.stringContaining('armed with Beads'), 'info');
-    },
-  );
-
-  it('treats runtime probe failures as no Beads workspace', async () => {
-    const harness = createHarness({ probeThrows: true, activeTools: ['read', 'edit', 'write'] });
+describe('planning handoff and context', () => {
+  it('arms with Codex apply_patch without checking Tasks tools', async () => {
+    const harness = createHarness({ activeTools: ['read', 'exec_command', 'apply_patch'] });
 
     await harness.command.handler('Task', harness.ctx);
 
-    expect(harness.sendUserMessage).not.toHaveBeenCalled();
+    expect(harness.sendUserMessage).toHaveBeenCalledWith('Task');
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk requires the active todo_write tool.',
-      'error',
+      'Prewalk armed. The next task will plan, make one mutation, then hand off to low.',
+      'info',
     );
   });
-});
 
-describe('planning gate and context', () => {
-  it('retains explicit capability refusal when Felan has no todo_write', async () => {
-    const harness = createHarness({ activeTools: ['read', 'bash', 'edit', 'write'] });
+  it('does not treat shell tools as mutation tools', async () => {
+    const harness = createHarness({ activeTools: ['read', 'bash', 'exec_command', 'write_stdin'] });
 
     await harness.command.handler('Task', harness.ctx);
 
     expect(harness.sendUserMessage).not.toHaveBeenCalled();
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk requires the active todo_write tool.',
+      'Prewalk requires an active mutation tool (edit, write, or apply_patch).',
       'error',
     );
   });
@@ -472,21 +366,15 @@ describe('planning gate and context', () => {
     );
   });
 
-  it('detects a Beads workspace and hands off after Beads tracking', async () => {
-    const harness = createHarness({ beads: true });
+  it('keeps Tasks in the guidance and hands off after a successful mutation', async () => {
+    const harness = createHarness();
     await startPlanning(harness);
 
     const planning = await contextMessages(harness, []);
-    expect(planning.at(-1)?.content).toContain('Use the beads skill and direct bd CLI commands');
-    expect(planning.at(-1)?.content).toContain('instead of todo_write');
+    expect(planning.at(-1)?.content).toContain('Use TaskCreate');
+    expect(planning.at(-1)?.content).toContain('Use TaskUpdate');
 
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
-    await harness.emit('tool_call', {
-      type: 'tool_call',
-      toolCallId: 'beads',
-      toolName: 'bash',
-      input: { command: "bd create --title 'Implement feature' --type task" },
-    });
     await harness.emit('tool_call', {
       type: 'tool_call',
       toolCallId: 'mutation',
@@ -497,31 +385,13 @@ describe('planning gate and context', () => {
       type: 'turn_end',
       turnIndex: 0,
       message: assistant('toolUse'),
-      toolResults: [toolResult('beads', 'bash'), toolResult('mutation', 'edit')],
+      toolResults: [toolResult('mutation', 'edit')],
     });
 
     expect(harness.setModel).toHaveBeenCalledWith(targetModel);
     const implementing = await contextMessages(harness, []);
-    expect(implementing.at(-1)?.content).toContain('close each completed Bead');
-    expect(implementing.at(-1)?.content).toContain('instead of todo_write');
-  });
-
-  it('blocks invalid planning checklists before todo_write executes', async () => {
-    const harness = createHarness();
-    await startPlanning(harness);
-    await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
-
-    const blocked = await harness.emit('tool_call', {
-      type: 'tool_call',
-      toolCallId: 'todo',
-      toolName: 'todo_write',
-      input: { todos: validTodos().slice(0, 4) },
-    });
-
-    expect(blocked).toEqual({
-      block: true,
-      reason: 'Prewalk requires 5-9 todo items before the first mutation.',
-    });
+    expect(implementing.at(-1)?.content).toContain('existing session task graph');
+    expect(implementing.at(-1)?.content).toContain('verified result');
   });
 
   it('preserves unrelated history while replacing only its own phase message', async () => {
@@ -529,7 +399,7 @@ describe('planning gate and context', () => {
     await startPlanning(harness);
     const original = [
       { role: 'user', content: 'Task', timestamp: 1 },
-      toolResult('old-todo', 'todo_write', false, { newTodos: validTodos() }),
+      toolResult('old-task', 'TaskUpdate', false, { task: { id: 'T-ABC123' } }),
       { role: 'custom', customType: 'other-extension', content: 'keep', display: false, timestamp: 2 },
       { role: 'custom', customType: `${CONTROL_MESSAGE_PREFIX}stale`, content: 'remove', display: false, timestamp: 3 },
     ];
@@ -550,7 +420,7 @@ describe('planning gate and context', () => {
     expect(ownMessages).toHaveLength(1);
     expect(ownMessages[0].customType).toBe(IMPLEMENTATION_MESSAGE_TYPE);
     expect(implementing).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: 'toolResult', toolName: 'todo_write' }),
+      expect.objectContaining({ role: 'toolResult', toolName: 'TaskUpdate' }),
     ]));
   });
 
@@ -612,6 +482,29 @@ describe('planning gate and context', () => {
 });
 
 describe('model handoff and restoration', () => {
+  it('prefers the planner provider when resolving the implementation tier', async () => {
+    const harness = createHarness({
+      currentModel: anthropicPlanner,
+      models: [anthropicPlanner, targetModel, anthropicTarget],
+    });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).toHaveBeenCalledWith(anthropicTarget);
+  });
+
+  it('resolves tiers only from the current session model scope', async () => {
+    const harness = createHarness({
+      currentModel: anthropicPlanner,
+      models: [anthropicPlanner, targetModel, anthropicTarget],
+      scopedModels: [targetModel],
+    });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).toHaveBeenCalledWith(targetModel);
+  });
+
   it('switches once at turn_end and restores model before thinking at agent_settled', async () => {
     const harness = createHarness();
 
@@ -680,24 +573,41 @@ describe('model handoff and restoration', () => {
 });
 
 describe('model failures and manual control', () => {
-  it('cancels when the target model is unavailable', async () => {
+  it('cancels when the selected tier has no authenticated model', async () => {
     const harness = createHarness({ models: [plannerModel] });
     await qualifyHandoff(harness);
 
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk target model is unavailable: openai-codex/gpt-5.6-luna.',
+      'Prewalk has no authenticated model for the low tier.',
       'error',
     );
     expect(await contextMessages(harness, [])).toEqual([]);
   });
 
-  it('cancels when target authentication is unavailable', async () => {
+  it('excludes unauthenticated models from tier selection', async () => {
     const harness = createHarness({ authenticated: false });
     await qualifyHandoff(harness);
 
     expect(harness.setModel).not.toHaveBeenCalled();
-    expect(harness.ui.notify).toHaveBeenCalledWith(expect.stringContaining('not authenticated'), 'error');
+    expect(harness.ui.notify).toHaveBeenCalledWith(
+      'Prewalk has no authenticated model for the low tier.',
+      'error',
+    );
+  });
+
+  it('retains explicit authentication errors for exact model overrides', async () => {
+    const harness = createHarness({
+      authenticated: false,
+      flags: { 'prewalk-target-model': 'anthropic/claude-opus' },
+    });
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).not.toHaveBeenCalled();
+    expect(harness.ui.notify).toHaveBeenCalledWith(
+      'Prewalk target model is not authenticated: anthropic/claude-opus.',
+      'error',
+    );
   });
 
   it.each([

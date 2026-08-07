@@ -1,7 +1,14 @@
 import { Type, type TSchema } from 'typebox';
-import type {
-  FelanExtension,
-  FelanExtensionAPI,
+import {
+  formatModelReference,
+  FELAN_THINKING_LEVELS,
+  isModelTier,
+  parseModelReference,
+  selectModelForTier,
+  StringEnum,
+  type ExtensionContext,
+  type FelanExtension,
+  type FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import type {
   SubagentDescriptor,
@@ -13,15 +20,7 @@ import type {
 } from './contracts.js';
 import { renderError, renderRecord, renderRecords } from './presentation.js';
 
-const thinkingSchema = Type.Union([
-  Type.Literal('off'),
-  Type.Literal('minimal'),
-  Type.Literal('low'),
-  Type.Literal('medium'),
-  Type.Literal('high'),
-  Type.Literal('xhigh'),
-  Type.Literal('max'),
-]);
+const thinkingSchema = StringEnum(FELAN_THINKING_LEVELS);
 const MAX_TURNS = 100;
 const MAX_TIMEOUT_SECONDS = 86_400;
 
@@ -64,7 +63,10 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
     prompt: Type.String({ minLength: 1, description: 'Task for the child agent' }),
     description: Type.String({ minLength: 1, description: 'Short status label' }),
     subagent_type: typeSchema,
-    model: Type.Optional(Type.String({ minLength: 1 })),
+    model: Type.Optional(Type.String({
+      minLength: 1,
+      description: 'inherit, high, medium, low, or an exact provider/model reference',
+    })),
     thinking: Type.Optional(thinkingSchema),
     max_turns: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TURNS })),
     timeout_seconds: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_SECONDS })),
@@ -83,19 +85,19 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
       if (!descriptor) return toolError(error('unknown_agent_type', `unknown subagent type: ${type}`));
       const validation = validateSpawn(host, params);
       if (validation) return toolError(validation);
-      const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
-      const parentThinking = pi.getThinkingLevel() as SubagentThinking;
-      const model = normalizeModel(params.model, descriptor, parentModel);
+      const parentThinking = normalizeThinking(pi.getThinkingLevel());
+      const model = normalizeModel(params.model, descriptor, ctx);
       if (!model.ok) return toolError(model.error);
+      const thinking = params.thinking
+        ?? descriptor.defaultThinking
+        ?? parentThinking;
       const request: SubagentSpawnRequest = {
         type,
         description: params.description,
         prompt: params.prompt,
         inheritContext: params.inherit_context ?? false,
-        ...(model.value === undefined ? {} : { model: model.value }),
-        ...(params.thinking ?? descriptor.defaultThinking ?? parentThinking) === undefined
-          ? {}
-          : { thinking: params.thinking ?? descriptor.defaultThinking ?? parentThinking },
+        ...(model.value.reference === undefined ? {} : { model: model.value.reference }),
+        ...(thinking === undefined ? {} : { thinking }),
         ...(params.max_turns ?? descriptor.defaultMaxTurns) === undefined
           ? {}
           : { maxTurns: params.max_turns ?? descriptor.defaultMaxTurns },
@@ -197,25 +199,68 @@ function validateSpawn(
     return error('invalid_request', `description exceeds ${host.policy.maxDescriptionBytes} bytes`);
   }
   if (params.model && !isCanonicalModelSelector(params.model)) {
-    return error('unsupported_model', 'model must be inherit or an exact provider/model reference');
+    return error(
+      'unsupported_model',
+      'model must be inherit, high, medium, low, or an exact provider/model reference',
+    );
   }
 }
 
 function normalizeModel(
   requested: string | undefined,
   descriptor: SubagentDescriptor,
-  parentModel: string | undefined,
-): SubagentHostResult<string | undefined> {
-  const selected = requested ?? descriptor.defaultModel ?? parentModel;
-  if (selected !== 'inherit') return { ok: true, value: selected };
-  if (!parentModel) return { ok: false, error: error('unsupported_model', 'parent has no model to inherit') };
-  return { ok: true, value: parentModel };
+  ctx: ExtensionContext,
+): SubagentHostResult<{ reference?: string }> {
+  const parentModel = ctx.model;
+  const selected = (requested ?? descriptor.defaultModel)?.trim();
+  if (!selected) {
+    return {
+      ok: true,
+      value: parentModel ? { reference: formatModelReference(parentModel) } : {},
+    };
+  }
+  if (selected === 'inherit') {
+    if (!parentModel) {
+      return { ok: false, error: error('unsupported_model', 'parent has no model to inherit') };
+    }
+    return { ok: true, value: { reference: formatModelReference(parentModel) } };
+  }
+  if (isModelTier(selected)) {
+    const models = ctx.scopedModels.length > 0
+      ? ctx.scopedModels.map(({ model }) => model)
+      : ctx.modelRegistry.getAvailable();
+    const selection = selectModelForTier(selected, models, {
+      ...(parentModel === undefined ? {} : { preferredModel: parentModel }),
+    });
+    if (!selection) {
+      return {
+        ok: false,
+        error: error('unsupported_model', `no authenticated model is available for the ${selected} tier`),
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        reference: formatModelReference(selection.model),
+      },
+    };
+  }
+
+  const model = parseModelReference(selected);
+  return model
+    ? { ok: true, value: { reference: formatModelReference(model) } }
+    : { ok: false, error: error('unsupported_model', 'invalid model reference') };
 }
 
 function isCanonicalModelSelector(selector: string): boolean {
-  if (selector === 'inherit') return true;
-  const separator = selector.indexOf('/');
-  return separator > 0 && separator < selector.length - 1;
+  const normalized = selector.trim();
+  return normalized === 'inherit' || isModelTier(normalized) || parseModelReference(normalized) !== undefined;
+}
+
+function normalizeThinking(
+  thinking: ReturnType<FelanExtensionAPI['getThinkingLevel']>,
+): SubagentThinking {
+  return thinking === 'minimal' ? 'low' : thinking;
 }
 
 async function executeHost<T>(

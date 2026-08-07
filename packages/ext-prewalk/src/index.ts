@@ -1,11 +1,15 @@
-import type {
-  ExtensionContext,
-  FelanExtension,
-  FelanExtensionAPI,
+import {
+  formatModelReference,
+  isModelTier,
+  parseModelReference,
+  selectModelForTier,
+  type ModelReference,
+  type ModelTier,
+  type ExtensionContext,
+  type FelanExtension,
+  type FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import {
-  BEADS_PLANNING_INSTRUCTION,
-  BEADS_VERIFICATION_INSTRUCTION,
   CONTINUATION_MESSAGE_TYPE,
   CONTROL_MESSAGE_PREFIX,
   IMPLEMENTATION_MESSAGE_TYPE,
@@ -19,7 +23,6 @@ import {
   recordToolCall,
   reduceTurn,
   validateArmingTools,
-  validateTodoWriteInput,
   type PrewalkPhase,
   type PrewalkState,
 } from './state.js';
@@ -33,11 +36,9 @@ interface PrewalkConfig {
   restorePlanner: boolean;
 }
 
-interface TargetModel {
-  provider: string;
-  modelId: string;
-  key: string;
-}
+type TargetModel =
+  | { readonly kind: 'tier'; readonly tier: ModelTier; readonly key: string }
+  | { readonly kind: 'model'; readonly model: ModelReference; readonly key: string };
 
 interface PlannerSnapshot {
   model: PlannerModel;
@@ -46,7 +47,7 @@ interface PlannerSnapshot {
 }
 
 const DEFAULT_CONFIG: PrewalkConfig = {
-  targetModel: 'openai-codex/gpt-5.6-luna',
+  targetModel: 'low',
   restorePlanner: true,
 };
 const TARGET_MODEL_FLAG = 'prewalk-target-model';
@@ -60,7 +61,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
   });
 
   pi.registerFlag(TARGET_MODEL_FLAG, {
-    description: 'Model used to implement a planned Prewalk task (provider/model-id)',
+    description: 'Model tier or exact provider/model-id used to implement a planned Prewalk task',
     type: 'string',
     default: DEFAULT_CONFIG.targetModel,
   });
@@ -77,7 +78,6 @@ const prewalkExtension: FelanExtension = (pi): void => {
   let state: PrewalkState = { phase: 'idle' };
   let plannerSnapshot: PlannerSnapshot | undefined;
   let expectedModelKey: string | undefined;
-  let useBeads = false;
 
   function refreshConfig(): void {
     loadedConfig = loadConfig(pi);
@@ -125,7 +125,6 @@ const prewalkExtension: FelanExtension = (pi): void => {
     state = { phase: 'idle' };
     plannerSnapshot = undefined;
     expectedModelKey = undefined;
-    useBeads = false;
     updateStatus(ctx);
   }
 
@@ -145,8 +144,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
       return false;
     }
 
-    useBeads = await hasBeadsWorkspace(pi, ctx.cwd);
-    const validation = validateArmingTools(pi.getActiveTools(), useBeads);
+    const validation = validateArmingTools(pi.getActiveTools());
     if (!validation.ok) {
       notify(ctx, validation.reason, 'error');
       return false;
@@ -154,8 +152,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
 
     state = { phase: 'armed' };
     updateStatus(ctx);
-    const tracking = useBeads ? 'Beads' : 'todo_write';
-    notify(ctx, `Prewalk armed with ${tracking}. The next task will plan, make one mutation, then hand off to ${targetModel.key}.`);
+    notify(ctx, `Prewalk armed. The next task will plan, make one mutation, then hand off to ${targetModel.key}.`);
     return true;
   }
 
@@ -183,34 +180,51 @@ const prewalkExtension: FelanExtension = (pi): void => {
     state = { phase: 'handoff', run };
     updateStatus(ctx);
 
-    const target = ctx.modelRegistry.find(targetModel.provider, targetModel.modelId);
-    if (!target) {
-      failAutomation(ctx, `Prewalk target model is unavailable: ${targetModel.key}.`);
-      return;
+    let target: PlannerModel;
+    if (targetModel.kind === 'tier') {
+      const availableModels = ctx.scopedModels.length > 0
+        ? ctx.scopedModels.map(({ model }) => model)
+        : ctx.modelRegistry.getAvailable();
+      const selected = selectModelForTier(targetModel.tier, availableModels, {
+        preferredModel: snapshot.model,
+      });
+      if (!selected) {
+        failAutomation(ctx, `Prewalk has no authenticated model for the ${targetModel.tier} tier.`);
+        return;
+      }
+      target = selected.model;
+    } else {
+      const exactTarget = ctx.modelRegistry.find(targetModel.model.provider, targetModel.model.id);
+      if (!exactTarget) {
+        failAutomation(ctx, `Prewalk target model is unavailable: ${targetModel.key}.`);
+        return;
+      }
+      if (!ctx.modelRegistry.hasConfiguredAuth(exactTarget)) {
+        failAutomation(ctx, `Prewalk target model is not authenticated: ${targetModel.key}.`);
+        return;
+      }
+      target = exactTarget;
     }
-    if (!ctx.modelRegistry.hasConfiguredAuth(target)) {
-      failAutomation(ctx, `Prewalk target model is not authenticated: ${targetModel.key}.`);
-      return;
-    }
+    const targetKey = formatModelReference(target);
 
     try {
-      expectedModelKey = targetModel.key;
+      expectedModelKey = targetKey;
       const switched = await pi.setModel(target);
       if (state.phase !== 'handoff' || plannerSnapshot !== snapshot) return;
       if (!switched) {
-        failAutomation(ctx, `Prewalk could not switch to ${targetModel.key}.`);
+        failAutomation(ctx, `Prewalk could not switch to ${targetKey}.`);
         return;
       }
 
       state = { phase: 'implementing', run };
       updateStatus(ctx);
-      notify(ctx, `Prewalk handed implementation to ${targetModel.key}.`);
+      notify(ctx, `Prewalk handed implementation to ${targetKey}.`);
     } catch (error) {
       if (state.phase === 'handoff' && plannerSnapshot === snapshot) {
-        failAutomation(ctx, `Prewalk could not switch to ${targetModel.key}: ${errorMessage(error)}`);
+        failAutomation(ctx, `Prewalk could not switch to ${targetKey}: ${errorMessage(error)}`);
       }
     } finally {
-      if (expectedModelKey === targetModel.key) expectedModelKey = undefined;
+      if (expectedModelKey === targetKey) expectedModelKey = undefined;
     }
   }
 
@@ -312,7 +326,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
   });
 
   pi.on('context', (event) => {
-    return { messages: buildContextMessages(event.messages, state.phase, useBeads) as typeof event.messages };
+    return { messages: buildContextMessages(event.messages, state.phase) as typeof event.messages };
   });
 
   pi.on('turn_start', () => {
@@ -323,17 +337,11 @@ const prewalkExtension: FelanExtension = (pi): void => {
   pi.on('tool_call', (event) => {
     if (state.phase !== 'planning' || !state.run) return;
 
-    if (!useBeads && event.toolName === 'todo_write') {
-      const validation = validateTodoWriteInput(event.input);
-      if (!validation.ok) return { block: true, reason: validation.reason };
-    }
-
     state = {
       phase: 'planning',
       run: recordToolCall(
         state.run,
-        { toolCallId: event.toolCallId, toolName: event.toolName, input: event.input },
-        useBeads,
+        { toolCallId: event.toolCallId, toolName: event.toolName },
       ),
     };
   });
@@ -407,14 +415,14 @@ const prewalkExtension: FelanExtension = (pi): void => {
   });
 };
 
-function buildContextMessages(messages: readonly unknown[], phase: PrewalkPhase, useBeads: boolean): unknown[] {
+function buildContextMessages(messages: readonly unknown[], phase: PrewalkPhase): unknown[] {
   const filtered = structuredClone(messages).filter((message) => !isControlMessage(message));
   const instruction = phase === 'planning'
-    ? { customType: PLANNING_MESSAGE_TYPE, content: useBeads ? BEADS_PLANNING_INSTRUCTION : PLANNING_INSTRUCTION }
+    ? { customType: PLANNING_MESSAGE_TYPE, content: PLANNING_INSTRUCTION }
     : phase === 'implementing'
       ? {
           customType: IMPLEMENTATION_MESSAGE_TYPE,
-          content: useBeads ? BEADS_VERIFICATION_INSTRUCTION : VERIFICATION_INSTRUCTION,
+          content: VERIFICATION_INSTRUCTION,
         }
       : undefined;
 
@@ -430,19 +438,6 @@ function buildContextMessages(messages: readonly unknown[], phase: PrewalkPhase,
       timestamp: Date.now(),
     },
   ];
-}
-
-async function hasBeadsWorkspace(pi: FelanExtensionAPI, cwd: string): Promise<boolean> {
-  try {
-    const result = await pi.exec(
-      'bd',
-      ['-C', cwd, '--readonly', '--json', 'status', '--no-activity'],
-      { timeout: 5_000 },
-    );
-    return result.code === 0;
-  } catch {
-    return false;
-  }
 }
 
 function isTextOnlyCompletion(message: unknown): boolean {
@@ -465,14 +460,10 @@ function modelKey(model: ExtensionContext['model']): string {
 }
 
 function parseTargetModel(value: string): TargetModel | undefined {
-  const separator = value.indexOf('/');
-  if (separator <= 0 || separator === value.length - 1) return undefined;
-
-  const provider = value.slice(0, separator).trim();
-  const modelId = value.slice(separator + 1).trim();
-  if (!provider || !modelId) return undefined;
-
-  return { provider, modelId, key: `${provider}/${modelId}` };
+  const normalized = value.trim();
+  if (isModelTier(normalized)) return { kind: 'tier', tier: normalized, key: normalized };
+  const model = parseModelReference(normalized);
+  return model ? { kind: 'model', model, key: formatModelReference(model) } : undefined;
 }
 
 function loadConfig(pi: FelanExtensionAPI): { config: PrewalkConfig; warning?: string } {
@@ -480,7 +471,9 @@ function loadConfig(pi: FelanExtensionAPI): { config: PrewalkConfig; warning?: s
   const restorePlanner = pi.getFlag(RESTORE_PLANNER_FLAG);
   const parsedTarget = typeof targetModel === 'string' ? parseTargetModel(targetModel) : undefined;
 
-  if (!parsedTarget) return invalidConfig(`${TARGET_MODEL_FLAG} must use the form "provider/model-id"`);
+  if (!parsedTarget) {
+    return invalidConfig(`${TARGET_MODEL_FLAG} must be high, medium, low, or an exact provider/model-id`);
+  }
   if (typeof restorePlanner !== 'boolean') return invalidConfig(`${RESTORE_PLANNER_FLAG} must be a boolean`);
 
   return {

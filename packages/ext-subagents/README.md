@@ -9,8 +9,17 @@ The extension registers exactly `Agent`, `list_subagents`,
 `get_subagent_result`, `steer_subagent`, and `cancel_subagent`. It owns shared
 schemas, defaults, validation, and normalized text results while the host owns
 execution, latest records, continuation, persistence, completion delivery, and policy.
-Agent Core remains unaware of subagents and provides only generic runtime,
-session, coding-tool, and extension composition.
+Agent Core remains unaware of subagent execution and provides generic runtime,
+session, coding-tool, extension composition, and model-tier selection.
+
+The `Agent` tool accepts `inherit`, `high`, `medium`, `low`, or an exact
+`provider/model-id` in its `model` field. Tier selection uses the models already
+allowed and authenticated for the active session, prefers the parent model's
+provider and family, and sends the resolved exact model reference to the host.
+Model tiers do not imply a thinking level. Explicit tool thinking wins over
+descriptor defaults and then the parent thinking level. Extension-facing
+thinking accepts `off`, `low`, `medium`, `high`, `xhigh`, and `max`; an inherited
+Pi `minimal` level normalizes to `low`.
 
 All child launches are asynchronous and return after admission. Result reads
 return the latest record immediately, while completion notices surface finished

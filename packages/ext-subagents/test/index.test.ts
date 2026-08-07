@@ -3,9 +3,11 @@ import type {
   FelanExtensionAPI,
   ToolDefinition,
 } from '@felan-ai/agent-core';
+import { FELAN_THINKING_LEVELS } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createSubagentsExtension,
+  type SubagentDescriptor,
   type SubagentHost,
   type SubagentRecord,
   type SubagentSpawnRequest,
@@ -39,7 +41,7 @@ describe('@felan-ai/ext-subagents', () => {
     expect(schema.properties.subagent_type.anyOf).toEqual([
       expect.objectContaining({ const: 'reviewer' }),
     ]);
-    expect(schema.properties.thinking.anyOf).toContainEqual(expect.objectContaining({ const: 'max' }));
+    expect(schema.properties.thinking.enum).toEqual(FELAN_THINKING_LEVELS);
     expect(Object.keys(schema.properties)).toEqual([
       'prompt',
       'description',
@@ -101,6 +103,27 @@ describe('@felan-ai/ext-subagents', () => {
     );
   });
 
+  it('normalizes an inherited Pi minimal thinking level to low', async () => {
+    const harness = createHarness({
+      descriptor: {
+        id: 'reviewer',
+        description: 'Review changes',
+        allowNesting: false,
+      },
+      parentThinking: 'minimal',
+    });
+    await execute(harness, 'Agent', {
+      prompt: 'Review',
+      description: 'review',
+      subagent_type: 'reviewer',
+    });
+
+    expect(harness.host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ thinking: 'low' }),
+      undefined,
+    );
+  });
+
   it('normalizes validation and host failures without throwing', async () => {
     const harness = createHarness();
     const oversized = await execute(harness, 'Agent', {
@@ -111,7 +134,7 @@ describe('@felan-ai/ext-subagents', () => {
     expect(resultText(oversized)).toContain('invalid_request');
     expect(harness.host.spawn).not.toHaveBeenCalled();
 
-    for (const model of ['auto', 'high', 'preferred-model', '/model', 'provider/']) {
+    for (const model of ['auto', 'preferred-model', '/model', 'provider/']) {
       const invalidModel = await execute(harness, 'Agent', {
         prompt: 'Review',
         description: 'review',
@@ -158,6 +181,51 @@ describe('@felan-ai/ext-subagents', () => {
     );
   });
 
+  it('resolves model tiers with current-provider preference independently of thinking', async () => {
+    const anthropicPlanner = { provider: 'anthropic', id: 'claude-opus-4-6' } as any;
+    const anthropicTarget = { provider: 'anthropic', id: 'claude-haiku-4-5' } as any;
+    const openaiTarget = { provider: 'openai-codex', id: 'gpt-5.6-luna' } as any;
+    const harness = createHarness({
+      descriptor: {
+        id: 'reviewer',
+        description: 'Review changes',
+        allowNesting: false,
+      },
+      parentModel: anthropicPlanner,
+      parentThinking: 'max',
+      models: [openaiTarget, anthropicTarget],
+    });
+
+    await execute(harness, 'Agent', {
+      prompt: 'Review',
+      description: 'review',
+      subagent_type: 'reviewer',
+      model: 'low',
+    });
+
+    expect(harness.host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'anthropic/claude-haiku-4-5',
+        thinking: 'max',
+      }),
+      undefined,
+    );
+  });
+
+  it('reports an unavailable tier before calling the host', async () => {
+    const harness = createHarness({ models: [] });
+
+    const result = await execute(harness, 'Agent', {
+      prompt: 'Review',
+      description: 'review',
+      subagent_type: 'reviewer',
+      model: 'medium',
+    });
+
+    expect(resultText(result)).toContain('no authenticated model is available for the medium tier');
+    expect(harness.host.spawn).not.toHaveBeenCalled();
+  });
+
   it('maps list, result, steer, and cancel requests to the host', async () => {
     const harness = createHarness();
     await execute(harness, 'list_subagents', { include_descendants: true });
@@ -197,7 +265,11 @@ describe('@felan-ai/ext-subagents', () => {
 });
 
 function createHarness(options: {
-  parentThinking?: 'medium' | 'max';
+  parentThinking?: 'minimal' | 'medium' | 'max';
+  descriptor?: SubagentDescriptor;
+  parentModel?: any;
+  models?: any[];
+  scopedModels?: any[];
 } = {}) {
   const tools = new Map<string, ToolDefinition<any, any, any>>();
   const capabilities: Array<{ id: string; instructions: string }> = [];
@@ -210,8 +282,14 @@ function createHarness(options: {
     status: 'running',
     createdAt: '2026-01-01T00:00:00.000Z',
   };
+  const selectedDescriptor = options.descriptor ?? descriptor;
+  const parentModel = options.parentModel ?? { provider: 'provider', id: 'model' };
+  const models = options.models ?? [
+    parentModel,
+    { provider: 'provider', id: 'exact-model' },
+  ];
   const host = {
-    descriptors: [descriptor],
+    descriptors: [selectedDescriptor],
     policy,
     attachParent: vi.fn(() => () => {}),
     spawn: vi.fn(async (_request: SubagentSpawnRequest) => ({ ok: true as const, value: record })),
@@ -226,7 +304,14 @@ function createHarness(options: {
     getThinkingLevel: () => options.parentThinking ?? 'medium',
   } as unknown as FelanExtensionAPI;
   createSubagentsExtension(host)(pi);
-  return { pi, tools, host, capabilities };
+  const context = {
+    model: parentModel,
+    modelRegistry: {
+      getAvailable: () => models,
+    },
+    scopedModels: (options.scopedModels ?? []).map((model) => ({ model })),
+  } as unknown as ExtensionContext;
+  return { pi, tools, host, capabilities, context };
 }
 
 async function execute(
@@ -235,10 +320,7 @@ async function execute(
   params: Record<string, unknown>,
 ) {
   const tool = harness.tools.get(name)!;
-  const context = {
-    model: { provider: 'provider', id: 'model' },
-  } as ExtensionContext;
-  return tool.execute('call', params, undefined, undefined, context);
+  return tool.execute('call', params, undefined, undefined, harness.context);
 }
 
 function resultText(result: { content: Array<{ type: string; text?: string }> }): string | undefined {

@@ -15,6 +15,23 @@ export type {
   ExecResult,
 } from './runtime.js';
 export { AGENT_CORE_VERSION } from './version.js';
+export {
+  MODEL_TIERS,
+  formatModelReference,
+  getModelFamily,
+  getModelStrength,
+  isModelTier,
+  parseModelReference,
+  selectModelForTier,
+} from './model-tiers.js';
+export type {
+  ModelReference,
+  ModelTier,
+  ModelTierClassifier,
+  ModelTierSelection,
+} from './model-tiers.js';
+export { FELAN_THINKING_LEVELS, isFelanThinkingLevel } from './thinking.js';
+export type { FelanThinkingLevel } from './thinking.js';
 export { HostAgentRuntime } from './host-agent-runtime.js';
 export type { HostAgentRuntimeOptions, HostShellOptions } from './host-agent-runtime.js';
 export {

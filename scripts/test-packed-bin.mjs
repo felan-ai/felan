@@ -29,9 +29,7 @@ const sourcePackages = packagePaths.map((packagePath) => JSON.parse(
 const sourcePackagesByName = new Map(sourcePackages.map((manifest) => [manifest.name, manifest]));
 const packageNames = sourcePackages.map(({ name }) => name);
 const agentCoreVersion = sourcePackagesByName.get('@felan-ai/agent-core').version;
-const [agentCoreMajor, agentCoreMinor] = agentCoreVersion.split('.');
-const agentCorePeerRange = `^${agentCoreMajor}.${agentCoreMinor}.0`;
-const extCodexAgentCorePeerRange = `^${agentCoreMajor}.${agentCoreMinor}.1`;
+const [agentCoreMajor, agentCoreMinor, agentCorePatch] = agentCoreVersion.split('.').map(Number);
 const felanVersion = sourcePackagesByName.get('@felan-ai/felan').version;
 const audit = process.argv.includes('--audit');
 const cleanEnvironment = Object.fromEntries(
@@ -360,13 +358,20 @@ function validateInstalledPackage(sourcePackage) {
       throw new Error(`${manifest.name} packed Agent Core as a direct dependency`);
     }
     const peerRange = manifest.peerDependencies?.['@felan-ai/agent-core'];
-    const expectedPeerRange = manifest.name === '@felan-ai/ext-codex'
-      ? extCodexAgentCorePeerRange
-      : agentCorePeerRange;
-    if (peerRange !== expectedPeerRange) {
+    const sourcePeerRange = sourcePackage.peerDependencies?.['@felan-ai/agent-core'];
+    if (peerRange !== sourcePeerRange) {
       throw new Error(
-        `${manifest.name} Agent Core peer is ${peerRange}, expected ${expectedPeerRange}`,
+        `${manifest.name} packed Agent Core peer is ${peerRange}, expected ${sourcePeerRange}`,
       );
+    }
+    const compatibleMinor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(peerRange ?? '');
+    if (
+      !compatibleMinor
+      || Number(compatibleMinor[1]) !== agentCoreMajor
+      || Number(compatibleMinor[2]) !== agentCoreMinor
+      || Number(compatibleMinor[3]) > agentCorePatch
+    ) {
+      throw new Error(`${manifest.name} Agent Core peer ${peerRange} is incompatible with ${agentCoreVersion}`);
     }
   }
 

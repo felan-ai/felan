@@ -8,9 +8,7 @@ export interface PrewalkState {
 }
 
 export interface PrewalkRunState {
-  trackingGateOpen: boolean;
-  toolCalls: RecordedToolCall[];
-  nextOrdinal: number;
+  mutationCallIds: string[];
   continuationCount: number;
   continuationArmed: boolean;
 }
@@ -18,7 +16,6 @@ export interface PrewalkRunState {
 export interface ToolCallSummary {
   toolCallId: string;
   toolName: string;
-  input?: unknown;
 }
 
 export interface ToolResultSummary {
@@ -34,82 +31,19 @@ export interface TurnDecision {
 
 export type ValidationResult = { ok: true } | { ok: false; reason: string };
 
-type RecordedToolCall = {
-  toolCallId: string;
-  kind: 'tracking' | 'mutation';
-  ordinal: number;
-};
-
 const MUTATION_TOOLS = ['edit', 'write', 'apply_patch'] as const;
-const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
-const BEADS_MUTATIONS = new Set([
-  'create',
-  'new',
-  'q',
-  'update',
-  'close',
-  'done',
-  'link',
-  'dep',
-  'reopen',
-  'assign',
-  'priority',
-  'tag',
-  'label',
-  'note',
-  'comment',
-  'edit',
-  'set-state',
-]);
 
 export const MUTATION_TOOL_NAMES: ReadonlySet<string> = new Set(MUTATION_TOOLS);
 
-export function validateArmingTools(activeTools: readonly string[], useBeads = false): ValidationResult {
-  const missingTracking = useBeads
-    ? !activeTools.some((toolName) => toolName === 'bash' || toolName === 'exec_command')
-    : !activeTools.includes('todo_write');
-  const missingMutation = !activeTools.some((toolName) => MUTATION_TOOL_NAMES.has(toolName));
-
-  if (!missingTracking && !missingMutation) return { ok: true };
-
-  const requirements: string[] = [];
-  if (missingTracking) {
-    requirements.push(useBeads ? 'an active shell tool (bash or exec_command)' : 'the active todo_write tool');
-  }
-  if (missingMutation) requirements.push('an active mutation tool (edit, write, or apply_patch)');
-
-  return {
-    ok: false,
-    reason: `Prewalk requires ${requirements.join(' and ')}.`,
-  };
-}
-
-export function validateTodoWriteInput(input: unknown): ValidationResult {
-  if (!isRecord(input) || !Array.isArray(input.todos)) {
-    return { ok: false, reason: 'Prewalk requires todo_write input with a todos array.' };
-  }
-
-  if (input.todos.length < 5 || input.todos.length > 9) {
-    return { ok: false, reason: 'Prewalk requires 5-9 todo items before the first mutation.' };
-  }
-
-  if (input.todos.some((todo) => !isRecord(todo) || !TODO_STATUSES.has(String(todo.status)))) {
-    return { ok: false, reason: 'Every Prewalk todo must have a valid pending, in_progress, or completed status.' };
-  }
-
-  const inProgressCount = input.todos.filter((todo) => todo.status === 'in_progress').length;
-  if (inProgressCount !== 1) {
-    return { ok: false, reason: 'Prewalk requires exactly one in_progress todo item.' };
-  }
-
-  return { ok: true };
+export function validateArmingTools(activeTools: readonly string[]): ValidationResult {
+  return activeTools.some((toolName) => MUTATION_TOOL_NAMES.has(toolName))
+    ? { ok: true }
+    : { ok: false, reason: 'Prewalk requires an active mutation tool (edit, write, or apply_patch).' };
 }
 
 export function createRunState(): PrewalkRunState {
   return {
-    trackingGateOpen: false,
-    toolCalls: [],
-    nextOrdinal: 0,
+    mutationCallIds: [],
     continuationCount: 0,
     continuationArmed: true,
   };
@@ -118,25 +52,16 @@ export function createRunState(): PrewalkRunState {
 export function beginTurn(state: PrewalkRunState): PrewalkRunState {
   return {
     ...state,
-    toolCalls: [],
-    nextOrdinal: 0,
+    mutationCallIds: [],
   };
 }
 
-export function recordToolCall(state: PrewalkRunState, call: ToolCallSummary, useBeads = false): PrewalkRunState {
-  const ordinal = state.nextOrdinal;
-  const nextState = { ...state, nextOrdinal: ordinal + 1 };
-  const kind = isTrackingCall(call, useBeads)
-    ? 'tracking'
-    : MUTATION_TOOL_NAMES.has(call.toolName)
-      ? 'mutation'
-      : undefined;
-
-  if (!kind) return nextState;
+export function recordToolCall(state: PrewalkRunState, call: ToolCallSummary): PrewalkRunState {
+  if (!MUTATION_TOOL_NAMES.has(call.toolName)) return state;
 
   return {
-    ...nextState,
-    toolCalls: [...state.toolCalls, { toolCallId: call.toolCallId, kind, ordinal }],
+    ...state,
+    mutationCallIds: [...state.mutationCallIds, call.toolCallId],
   };
 }
 
@@ -146,16 +71,7 @@ export function reduceTurn(
   options: { allowContinuation?: boolean } = {},
 ): TurnDecision {
   const successfulIds = new Set(results.filter((result) => !result.isError).map((result) => result.toolCallId));
-  const successfulTracking = state.toolCalls.filter(
-    (call) => call.kind === 'tracking' && successfulIds.has(call.toolCallId),
-  );
-  const successfulMutations = state.toolCalls.filter(
-    (call) => call.kind === 'mutation' && successfulIds.has(call.toolCallId),
-  );
-
-  const shouldHandoff = state.trackingGateOpen
-    ? successfulMutations.length > 0
-    : successfulMutations.some((mutation) => successfulTracking.some((tracking) => tracking.ordinal < mutation.ordinal));
+  const shouldHandoff = state.mutationCallIds.some((toolCallId) => successfulIds.has(toolCallId));
 
   let continuationArmed = results.some((result) => !result.isError) || state.continuationArmed;
   let continuationCount = state.continuationCount;
@@ -175,99 +91,11 @@ export function reduceTurn(
 
   return {
     state: {
-      trackingGateOpen: state.trackingGateOpen || successfulTracking.length > 0,
-      toolCalls: [],
-      nextOrdinal: 0,
+      mutationCallIds: [],
       continuationCount,
       continuationArmed,
     },
     shouldHandoff,
     shouldContinue,
   };
-}
-
-function isTrackingCall(call: ToolCallSummary, useBeads: boolean): boolean {
-  if (!useBeads) return call.toolName === 'todo_write';
-  if (call.toolName !== 'bash' && call.toolName !== 'exec_command') return false;
-  if (!isRecord(call.input)) return false;
-  const command = call.input.command ?? call.input.cmd;
-  return typeof command === 'string' && shellCommandSegments(command).some(isBeadsMutationSegment);
-}
-
-function isBeadsMutationSegment(argv: readonly string[]): boolean {
-  const commandIndex = argv.findIndex((argument) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(argument));
-  if (commandIndex === -1 || argv[commandIndex] !== 'bd') return false;
-
-  return BEADS_MUTATIONS.has(argv[commandIndex + 1] ?? '');
-}
-
-function shellCommandSegments(command: string): string[][] {
-  const segments: string[][] = [];
-  let argv: string[] = [];
-  let token = '';
-  let tokenStarted = false;
-  let quote: "'" | '"' | '`' | undefined;
-
-  const finishToken = () => {
-    if (!tokenStarted) return;
-    argv.push(token);
-    token = '';
-    tokenStarted = false;
-  };
-  const finishSegment = () => {
-    finishToken();
-    if (argv.length > 0) segments.push(argv);
-    argv = [];
-  };
-
-  for (let index = 0; index < command.length; index += 1) {
-    const character = command[index]!;
-
-    if (quote !== undefined) {
-      if (character === quote) {
-        quote = undefined;
-      } else if (character === '\\' && quote !== "'" && index + 1 < command.length) {
-        token += command[index + 1]!;
-        index += 1;
-      } else {
-        token += character;
-      }
-      continue;
-    }
-
-    if (character === "'" || character === '"' || character === '`') {
-      quote = character;
-      tokenStarted = true;
-      continue;
-    }
-    if (character === '\\' && index + 1 < command.length) {
-      token += command[index + 1]!;
-      tokenStarted = true;
-      index += 1;
-      continue;
-    }
-    if (character === '#' && !tokenStarted) {
-      while (index + 1 < command.length && command[index + 1] !== '\n') index += 1;
-      continue;
-    }
-    if (character === ';' || character === '&' || character === '|' || character === '\n') {
-      finishSegment();
-      if ((character === '&' || character === '|') && command[index + 1] === character) index += 1;
-      continue;
-    }
-    if (/\s/.test(character)) {
-      finishToken();
-      continue;
-    }
-
-    token += character;
-    tokenStarted = true;
-  }
-
-  finishSegment();
-  return segments;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }

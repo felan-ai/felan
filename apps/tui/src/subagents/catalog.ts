@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
+import { isFelanThinkingLevel } from '@felan-ai/agent-core';
 import type {
   SubagentDescriptor,
   SubagentThinking,
@@ -120,7 +121,7 @@ function frontmatter(source: string): { fields: Record<string, string>; body: st
 
 function parseThinking(value: string | undefined, file: string): SubagentThinking | undefined {
   if (!value) return undefined;
-  if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value)) {
+  if (!isFelanThinkingLevel(value)) {
     throw new Error(`Felan agent ${file} has invalid thinking`);
   }
   return value as SubagentThinking;

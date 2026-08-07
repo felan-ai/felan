@@ -66,6 +66,34 @@ resource, skill, and tool symbols needed to compose Felan applications, so
 consumers import those symbols from `@felan-ai/agent-core` without declaring
 Pi packages directly.
 
+Agent Core also exposes shared `high`, `medium`, and `low` model tiers for
+extensions that need model-strength selection:
+
+```ts
+import { selectModelForTier } from '@felan-ai/agent-core';
+
+const models = ctx.scopedModels.length > 0
+  ? ctx.scopedModels.map(({ model }) => model)
+  : ctx.modelRegistry.getAvailable();
+const selection = selectModelForTier('low', models, {
+  preferredModel: ctx.model,
+});
+```
+
+Callers provide the models already allowed and authenticated by their host.
+Selection prefers candidates from the current provider and model family, then
+falls back across the supplied model scope. `getModelFamily` and
+`getModelStrength` classify the host's live model list with version-independent
+family and role names, so new Opus, Sonnet, Haiku, Sol, Terra, Luna, Pro, Flash,
+Max, and similar releases do not require an exact-ID catalog update. Aggregate
+providers including OpenCode, OpenCode Go, OpenRouter, and GitHub Copilot are
+classified from each model's identity rather than treated as one family.
+Unknown naming schemes default to `medium`, and hosts can pass a custom
+`classifyModel` function to `selectModelForTier`. Model tiers do not imply a
+thinking level. `FELAN_THINKING_LEVELS` separately defines `off`, `low`,
+`medium`, `high`, `xhigh`, and `max`; `minimal` is outside the Felan-facing
+scale. Agent Core does not load model-tier configuration or resolve credentials.
+
 Agent Core owns the runtime-neutral Felan base system prompt. Every composed
 session uses this prompt; consumers extend it with `appendSystemPrompt` and
 cannot replace it. Inline extensions can contribute model-facing behavior
