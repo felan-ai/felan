@@ -1,0 +1,15 @@
+@felan-ai/ext-mcp
+Copyright (c) 2026 Felan contributors
+
+This package adapts selected MIT-licensed behavior from pi-mcp-adapter 2.21.0:
+https://github.com/nicobailon/pi-mcp-adapter
+npm gitHead eaf379782fddf836828811d1b71ad85d27bc70dd
+Copyright (c) 2026 Nico Bailon.
+
+It uses @modelcontextprotocol/client 2.0.0 (and its @modelcontextprotocol/core
+2.0.0 dependency) from https://github.com/modelcontextprotocol/typescript-sdk
+under that project's included Apache-2.0/MIT transition terms. Copyright (c)
+2024-2025 Model Context Protocol, a Series of LF Projects, LLC.
+
+It uses TypeBox 1.1.38 from https://github.com/sinclairzx81/typebox,
+licensed under the MIT License. Copyright (c) 2017-2026 Haydn Paterson.

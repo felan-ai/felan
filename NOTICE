@@ -5,7 +5,7 @@ This product uses Pi 0.84.0 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 
 @felan-ai/ext-subagents, @felan-ai/ext-ask-user, @felan-ai/ext-tasks,
-@felan-ai/ext-background-bash, @felan-ai/ext-web-access, and
+@felan-ai/ext-background-bash, @felan-ai/ext-web-access, @felan-ai/ext-mcp, and
 @felan-ai/ext-codex use TypeBox 1.1.38 from
 https://github.com/sinclairzx81/typebox, licensed under the MIT License.
 Copyright (c) 2017-2026 Haydn Paterson.
@@ -43,6 +43,22 @@ from https://github.com/nicobailon/pi-web-access at npm gitHead
 d2aab00dcf0547572276d9de4bc4a2a49d640e13. Copyright (c) 2025 Nico Bailon.
 Package-level dependency attribution and license terms are included in
 packages/ext-web-access/NOTICE and LICENSE.
+
+@felan-ai/ext-mcp adapts selected MIT-licensed behavior from
+pi-mcp-adapter 2.21.0 at npm gitHead
+eaf379782fddf836828811d1b71ad85d27bc70dd from
+https://github.com/nicobailon/pi-mcp-adapter. Copyright (c) 2026 Nico Bailon.
+It uses @modelcontextprotocol/client 2.0.0 and
+@modelcontextprotocol/core 2.0.0 from
+https://github.com/modelcontextprotocol/typescript-sdk under that project's
+included Apache-2.0/MIT transition terms. Package-level attribution is in
+packages/ext-mcp/NOTICE and LICENSE.
+
+The local TUI OAuth host uses @napi-rs/keyring 1.3.0 from
+https://github.com/Brooooooklyn/keyring-node, licensed under the MIT License.
+Copyright (c) 2020 N-API for Rust. It uses open 11.0.0 from
+https://github.com/sindresorhus/open, licensed under the MIT License.
+Copyright (c) Sindre Sorhus.
 
 @felan-ai/ext-codex adapts selected MIT-licensed portions and behavior from
 @howaboua/pi-codex-conversion 3.0.8 from

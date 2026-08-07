@@ -41,13 +41,25 @@ for (const required of [
   '@earendil-works/pi-coding-agent@0.84.0',
   '@earendil-works/pi-tui@0.84.0',
   '@lydell/node-pty@1.2.0-beta.14',
+  '@modelcontextprotocol/client@2.0.0',
+  '@modelcontextprotocol/core@2.0.0',
+  '@napi-rs/keyring@1.3.0',
+  'open@11.0.0',
   'typebox@1.1.38',
 ]) {
   if (!packages.includes(required)) errors.push(`Production license inventory is missing ${required}`);
 }
 
 const notice = readFileSync(resolve(root, 'NOTICE'), 'utf8');
-for (const requiredNotice of ['Pi 0.84.0', '@lydell/node-pty 1.2.0-beta.14', 'TypeBox 1.1.38']) {
+for (const requiredNotice of [
+  'Pi 0.84.0',
+  '@lydell/node-pty 1.2.0-beta.14',
+  'TypeBox 1.1.38',
+  'pi-mcp-adapter 2.21.0',
+  '@modelcontextprotocol/client 2.0.0',
+  '@napi-rs/keyring 1.3.0',
+  'open 11.0.0',
+]) {
   if (!notice.includes(requiredNotice)) errors.push(`NOTICE is missing ${requiredNotice}`);
 }
 const agentCoreNotice = readFileSync(resolve(root, 'packages/agent-core/NOTICE'), 'utf8');
@@ -93,6 +105,23 @@ for (const requiredNotice of [
 ]) {
   if (!webAccessNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-web-access/NOTICE is missing ${requiredNotice}`);
+  }
+}
+const mcpNotice = readFileSync(resolve(root, 'packages/ext-mcp/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'pi-mcp-adapter 2.21.0',
+  'eaf379782fddf836828811d1b71ad85d27bc70dd',
+  '@modelcontextprotocol/client 2.0.0',
+  'TypeBox 1.1.38',
+]) {
+  if (!mcpNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-mcp/NOTICE is missing ${requiredNotice}`);
+  }
+}
+const tuiNotice = readFileSync(resolve(root, 'apps/tui/NOTICE'), 'utf8');
+for (const requiredNotice of ['@napi-rs/keyring 1.3.0', 'open 11.0.0']) {
+  if (!tuiNotice.includes(requiredNotice)) {
+    errors.push(`apps/tui/NOTICE is missing ${requiredNotice}`);
   }
 }
 

@@ -53,6 +53,7 @@ All built-in extensions are enabled by default. Toggle them in
     "tasks": true,
     "prewalk": true,
     "context": true,
+    "mcp": true,
     "webAccess": true,
     "backgroundBash": true,
     "codex": true,
@@ -64,6 +65,50 @@ All built-in extensions are enabled by default. Toggle them in
 `askUser` provides the sequential `ask_user` tool. The local host presents
 single questions or 1-4 question wizards as searchable overlays or inline
 dialogs, with multi-select, freeform answers, and optional comments.
+
+`mcp` provides one OAuth-only remote MCP gateway. It merges
+`$FELAN_AGENT_DIR/mcp.json` with `<cwd>/.mcp.json`; the project file has higher
+precedence for same-name servers. It does not discover `.pi/mcp.json`, Cursor,
+Claude, Codex, or other ambient host configuration. A minimal Felan-owned
+config is:
+
+```json
+{
+  "mcpServers": {
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "auth": "oauth"
+    }
+  }
+}
+```
+
+Servers in the Felan-owned file must explicitly use `auth: "oauth"`. Standard
+project entries with `type: "http"` and a URL may omit `auth`; Felan treats
+those entries as OAuth. The initial port supports remote HTTP MCP servers
+through Streamable HTTP with classified SSE fallback. Unsupported project
+entries such as stdio, sockets, bearer tokens, and custom headers are skipped
+with a warning rather than executed. Direct tools and MCP Apps are not loaded.
+Optional per-server `oauth` fields are `clientId`, `clientSecret`,
+`clientSecretEnv`, `scope`, `redirectUri`, `clientName`, `clientUri`, and
+`authorizationParams`. Dynamic client registration is used when no client ID
+is configured. A client secret or `clientSecretEnv` requires `clientId`;
+prefer the environment reference over storing a client secret in the file.
+The default callback is `http://127.0.0.1:3118/callback`; set `redirectUri` to
+the exact pre-registered loopback callback when using a configured client.
+
+Run `/mcp` to inspect configured servers, list tools, reconnect, authenticate,
+or log out. `/mcp auth [server]` opens a server picker when its argument is
+omitted. Configuration is loaded at startup;
+run `/reload` after editing either file. The model uses the `mcp` gateway tool
+for search, describe, and remote tool calls. The local host follows the upstream
+adapter's browser + PKCE loopback flow and stores tokens and dynamic-client
+credentials in the OS credential store, bound to the Felan agent directory,
+server name, server URL, OAuth client/redirect/scope profile, and
+authorization-server issuer. It fails closed when that store is unavailable.
+Print-mode subagents never open a browser or callback listener; they can reuse
+credentials established by a root TUI session. MCP metadata and results are
+bounded and explicitly marked as untrusted remote content.
 
 `tasks` provides `TaskCreate`, `TaskUpdate`, `TaskList`, and `TaskGet` over one
 dependency-aware graph shared by the root session and every nested subagent.

@@ -16,3 +16,10 @@ packages/pi-powerline in https://github.com/mslavov/pi-extensions at commit
 That source credits the MIT-licensed packages/sub-core from
 https://github.com/marckrenn/pi-sub for subscription provider and usage logic.
 Copyright (c) 2026 Marc Krenn.
+
+The local MCP OAuth host uses @napi-rs/keyring 1.3.0 from
+https://github.com/Brooooooklyn/keyring-node, licensed under the MIT License.
+Copyright (c) 2020 N-API for Rust.
+
+It uses open 11.0.0 from https://github.com/sindresorhus/open, licensed under
+the MIT License. Copyright (c) Sindre Sorhus.

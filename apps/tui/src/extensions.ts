@@ -6,9 +6,11 @@ import {
   createSubagentsExtension,
   type SubagentHost,
 } from '@felan-ai/ext-subagents';
+import { createLocalMcpExtension } from './mcp/index.js';
 import { createLocalSubscriptionUsageHost } from './powerline.js';
 
 export const askUserExtensionPackage = '@felan-ai/ext-ask-user';
+export const mcpExtensionPackage = '@felan-ai/ext-mcp';
 export const powerlineExtensionPackage = '@felan-ai/ext-powerline';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const builtinExtensionPackages = {
@@ -17,6 +19,7 @@ export const builtinExtensionPackages = {
   tasks: '@felan-ai/ext-tasks',
   prewalk: '@felan-ai/ext-prewalk',
   context: '@felan-ai/ext-context',
+  mcp: mcpExtensionPackage,
   webAccess: '@felan-ai/ext-web-access',
   backgroundBash: '@felan-ai/ext-background-bash',
   codex: '@felan-ai/ext-codex',
@@ -60,6 +63,9 @@ export function createLocalExtensionImporter(
   return async (packageName) => {
     if (packageName === askUserExtensionPackage) {
       return { default: createAskUserExtension(createTuiAskUserHost()) };
+    }
+    if (packageName === mcpExtensionPackage) {
+      return { default: createLocalMcpExtension() };
     }
     if (packageName === subagentsExtensionPackage) {
       const subagents = createSubagentsExtension(host);

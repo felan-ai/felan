@@ -16,6 +16,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-tasks',
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',
+      '@felan-ai/ext-mcp',
       '@felan-ai/ext-web-access',
       '@felan-ai/ext-background-bash',
       '@felan-ai/ext-codex',
@@ -28,6 +29,8 @@ describe('local extension importer', () => {
         expect(imported).toMatchObject({ createSubagentsExtension: expect.any(Function) });
       } else if (packageName === '@felan-ai/ext-ask-user') {
         expect(imported).toMatchObject({ createAskUserExtension: expect.any(Function) });
+      } else if (packageName === '@felan-ai/ext-mcp') {
+        expect(imported).toMatchObject({ createMcpExtension: expect.any(Function) });
       } else {
         expect(imported).toMatchObject({ default: expect.any(Function) });
       }
@@ -59,6 +62,16 @@ describe('local extension importer', () => {
     });
   });
 
+  it('creates the local OAuth MCP extension without invoking the generic importer', async () => {
+    const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => {
+      throw new Error('The generic importer must not load the MCP extension');
+    });
+
+    await expect(importer('@felan-ai/ext-mcp')).resolves.toMatchObject({
+      default: expect.any(Function),
+    });
+  });
+
   it('creates powerline with the Felan subscription host without invoking the generic importer', async () => {
     const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => {
       throw new Error('The generic importer must not load the powerline extension');
@@ -74,6 +87,7 @@ describe('local extension importer', () => {
       subagents: false,
       askUser: false,
       tasks: false,
+      mcp: false,
       webAccess: false,
       backgroundBash: false,
       codex: false,

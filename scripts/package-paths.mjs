@@ -7,6 +7,7 @@ export const packagePaths = [
   'packages/ext-prewalk',
   'packages/ext-background-bash',
   'packages/ext-web-access',
+  'packages/ext-mcp',
   'packages/ext-codex',
   'packages/ext-powerline',
   'apps/tui',

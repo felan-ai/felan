@@ -28,8 +28,8 @@ afterEach(async () => {
 describe('LocalSubagentHost', () => {
   it('keeps safe inspection tools and removes mutation/process tools for read-only GPT children', () => {
     expect(readOnlyToolNames([
-      'grep', 'find', 'ls', 'view_image', 'exec_command', 'write_stdin', 'apply_patch',
-    ])).toEqual(['read', 'grep', 'find', 'ls', 'view_image']);
+      'grep', 'find', 'ls', 'view_image', 'exec_command', 'write_stdin', 'apply_patch', 'mcp',
+    ])).toEqual(['read', 'grep', 'find', 'ls', 'view_image', 'mcp']);
     expect(readOnlyToolNames(['read', 'bash', 'edit', 'write', 'grep']))
       .toEqual(['read', 'grep']);
   });

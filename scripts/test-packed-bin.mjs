@@ -86,6 +86,8 @@ try {
           if (typeof extension.createSubagentsExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (packageName === '@felan-ai/ext-ask-user') {
           if (typeof extension.createAskUserExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
+        } else if (packageName === '@felan-ai/ext-mcp') {
+          if (typeof extension.createMcpExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (typeof extension.default !== 'function') {
           throw new Error(packageName + ' has no extension factory');
         }
@@ -177,6 +179,39 @@ try {
       }
       if (JSON.stringify(webAccessCapabilities) !== JSON.stringify(['web-access'])) {
         throw new Error('Packed web access extension capability is unavailable');
+      }
+      const mcp = await import('@felan-ai/ext-mcp');
+      const mcpTools = [];
+      const mcpCapabilities = [];
+      const mcpCommands = [];
+      mcp.createMcpExtension({
+        config: {
+          mcpServers: {
+            packed: { url: 'https://mcp.example.test/mcp', auth: 'oauth' },
+          },
+        },
+        oauthHost: {
+          createSession: async () => ({
+            providerFor: async () => ({}),
+            authenticate: async () => ({ status: 'unavailable', message: 'packed smoke' }),
+            logout: async () => {},
+            close: async () => {},
+          }),
+        },
+      })({
+        registerCapability: (capability) => mcpCapabilities.push(capability.id),
+        registerTool: (tool) => mcpTools.push(tool.name),
+        registerCommand: (name) => mcpCommands.push(name),
+        on: () => {},
+      });
+      if (JSON.stringify(mcpTools) !== JSON.stringify(['mcp'])) {
+        throw new Error('Packed MCP gateway tool is unavailable');
+      }
+      if (JSON.stringify(mcpCapabilities) !== JSON.stringify(['mcp'])) {
+        throw new Error('Packed MCP capability is unavailable');
+      }
+      if (JSON.stringify(mcpCommands) !== JSON.stringify(['mcp'])) {
+        throw new Error('Packed MCP commands are unavailable');
       }
       const core = await import('@felan-ai/agent-core');
       const fs = await import('node:fs/promises');
