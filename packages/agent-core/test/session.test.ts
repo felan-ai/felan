@@ -50,6 +50,7 @@ describe('Agent Core session composition', () => {
     const modelRuntime = await createModelRuntime(agentDir);
     const sessionManager = SessionManager.inMemory(cwd);
     const runtime = new TestAgentRuntime(cwd);
+    await runtime.writeFile('AGENTS.md', new TextEncoder().encode('Root project instructions'));
     const order: string[] = [];
     let wrappedInvocations = 0;
     let streamWrapped = false;
@@ -154,10 +155,57 @@ describe('Agent Core session composition', () => {
       systemPrompt.indexOf('Child persona instructions'),
     );
     expect(systemPrompt.indexOf('Child persona instructions')).toBeLessThan(
+      systemPrompt.indexOf('Project-specific instructions and guidelines:'),
+    );
+    expect(systemPrompt).toContain('<project_context>');
+    expect(systemPrompt).toContain(
+      `<project_instructions path="${join(cwd, 'AGENTS.md').replace(/\\/g, '/')}">`,
+    );
+    expect(systemPrompt.indexOf('Root project instructions')).toBeLessThan(
       systemPrompt.indexOf('Current working directory:'),
     );
 
     result.session.dispose();
+  });
+
+  it('loads cwd CLAUDE.md as fallback and prefers AGENTS.md', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const runtime = new TestAgentRuntime(cwd);
+    const modelRuntime = await createModelRuntime(agentDir);
+    const compose = () => createAgentCoreSession({
+      runtime,
+      extensionPackages: [],
+      importExtension: async () => {
+        throw new Error('No extension package should be imported');
+      },
+      modelRuntime,
+      settingsManager: SettingsManager.inMemory(),
+      sessionManager: SessionManager.inMemory(cwd),
+      agentDir,
+    });
+    await runtime.writeFile(
+      'CLAUDE.md',
+      new TextEncoder().encode('\nClaude fallback instructions\n'),
+    );
+
+    const claudeResult = await compose();
+    expect(claudeResult.session.systemPrompt).toContain(
+      `<project_instructions path="${join(cwd, 'CLAUDE.md').replace(/\\/g, '/')}">\n`
+      + '\nClaude fallback instructions\n',
+    );
+    claudeResult.session.dispose();
+
+    await runtime.writeFile('AGENTS.md', new TextEncoder().encode('Agent instructions'));
+    const agentResult = await compose();
+    expect(agentResult.session.systemPrompt).toContain(
+      `<project_instructions path="${join(cwd, 'AGENTS.md').replace(/\\/g, '/')}">\n`
+      + 'Agent instructions',
+    );
+    expect(agentResult.session.systemPrompt).not.toContain('Claude fallback instructions');
+    agentResult.session.dispose();
   });
 
   it('lets feature extensions override runtime-backed coding tools', async () => {

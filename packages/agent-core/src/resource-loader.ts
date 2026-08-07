@@ -21,10 +21,24 @@ export interface CreateAgentCoreResourceLoaderOptions {
   readonly appendSystemPrompt?: readonly string[];
 }
 
+interface CreateAgentCoreResourceLoaderInternalOptions extends CreateAgentCoreResourceLoaderOptions {
+  readonly contextFiles?: readonly {
+    readonly path: string;
+    readonly content: string;
+  }[];
+}
+
 export async function createAgentCoreResourceLoader(
   options: CreateAgentCoreResourceLoaderOptions,
 ): Promise<ResourceLoader> {
+  return createAgentCoreResourceLoaderWithContextFiles(options);
+}
+
+export async function createAgentCoreResourceLoaderWithContextFiles(
+  options: CreateAgentCoreResourceLoaderInternalOptions,
+): Promise<ResourceLoader> {
   const skills = options.skills === undefined ? undefined : [...options.skills];
+  const contextFiles = (options.contextFiles ?? []).map((file) => ({ ...file }));
   const consumerAppends = (options.appendSystemPrompt ?? []).filter((prompt) => prompt.trim().length > 0);
   const resourceSettings = SettingsManager.inMemory({
     packages: [],
@@ -57,6 +71,9 @@ export async function createAgentCoreResourceLoader(
             diagnostics: [],
           }),
         }),
+    agentsFilesOverride: () => ({
+      agentsFiles: contextFiles,
+    }),
     systemPromptOverride: () => FELAN_BASE_SYSTEM_PROMPT,
     appendSystemPromptOverride: () => {
       const capabilities = formatCapabilitiesSection(collectCapabilities(options.extensionFactories));

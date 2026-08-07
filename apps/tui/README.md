@@ -35,8 +35,10 @@ other host paths directly.
 
 Only source-controlled built-in Felan extensions can be imported. External
 packages, extensions, configured skill paths, prompts, themes, and Pi context
-files remain filtered. Agent Skills are loaded from `~/.agents/skills` and
-`<workspace>/.agents/skills` and are shared with local subagents.
+files remain filtered. Agent Core separately loads one instruction file from
+the session cwd, preferring `AGENTS.md` over `CLAUDE.md`. Agent Skills are
+loaded from `~/.agents/skills` and `<workspace>/.agents/skills` and are shared
+with local subagents.
 The built-in powerline reads `~/.felan/powerline.json` (or
 `$FELAN_AGENT_DIR/powerline.json`) once when it initializes. Its subscription
 segment obtains the active Codex or Claude OAuth token through Felan's
@@ -165,13 +167,22 @@ The TUI reads one optional `$FELAN_AGENT_DIR/APPEND_SYSTEM.md` file when each
 session is constructed (`~/.felan/APPEND_SYSTEM.md` by default). Missing and
 blank files add nothing; other read failures stop session construction with the
 filesystem error. The file extends Agent Core's Felan prompt after enabled
-extension capabilities. Child persona instructions follow this application
-append. Explicit Agent Skills and the current working directory are added last.
+extension capabilities.
+
+Agent Core also reads at most one instruction file from each session's cwd
+through the active `AgentRuntime`, with `AGENTS.md` taking precedence over
+`CLAUDE.md`. Missing, unreadable, and blank instruction files are nonfatal.
+Child persona instructions follow the application append, root project
+instructions follow those consumer appends using Pi's path-labeled context-file
+format, and explicit Agent Skills and the current working directory are added
+last. The progressive-context extension remains responsible only for instruction
+files below the session cwd.
 
 System prompt inputs are limited to Agent Core, enabled capabilities, the
-single application append above, explicit Agent Skills, and the current working
-directory. Pi `SYSTEM.md`, project `APPEND_SYSTEM.md`, and project
-prompt/context files stay outside local composition.
+single application append above, the selected cwd instruction file, explicit
+Agent Skills, and the current working directory. Pi `SYSTEM.md`, project
+`APPEND_SYSTEM.md`, and other Pi-discovered prompt/context files stay outside
+local composition.
 
 When enabled, `@felan-ai/ext-subagents` uses the session-bound local host and
 provides `Agent`, `list_subagents`,

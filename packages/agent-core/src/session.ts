@@ -16,13 +16,15 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { loadFelanExtensions, type ExtensionPackageImporter } from './extensions.js';
 import {
-  createAgentCoreResourceLoader,
+  createAgentCoreResourceLoaderWithContextFiles,
   runtimeToolsExtensionName,
 } from './resource-loader.js';
 import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
 
 export type StreamFunction = AgentSession['agent']['streamFunction'];
+const PROJECT_INSTRUCTION_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const;
+const decoder = new TextDecoder();
 
 export interface CreateAgentCoreSessionOptions {
   readonly runtime: AgentRuntime;
@@ -107,7 +109,8 @@ async function composeAgentCoreSession(
     ...(options.inlineExtensions ?? []),
     createRuntimeToolsExtension(options.runtime),
   ];
-  const resourceLoader = await createAgentCoreResourceLoader({
+  const projectInstructions = await loadProjectInstructions(options.runtime);
+  const resourceLoader = await createAgentCoreResourceLoaderWithContextFiles({
     cwd: options.runtime.cwd,
     agentDir,
     extensionFactories,
@@ -116,6 +119,7 @@ async function composeAgentCoreSession(
       : { extensionFlagValues: options.extensionFlagValues }),
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
+    ...(projectInstructions === undefined ? {} : { contextFiles: [projectInstructions] }),
     ...(options.appendSystemPrompt === undefined
       ? {}
       : { appendSystemPrompt: options.appendSystemPrompt }),
@@ -157,6 +161,24 @@ async function composeAgentCoreSession(
       diagnostics: [],
     },
   };
+}
+
+async function loadProjectInstructions(runtime: AgentRuntime): Promise<{
+  readonly path: string;
+  readonly content: string;
+} | undefined> {
+  for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
+    try {
+      const content = decoder.decode(await runtime.readFile(filename));
+      if (content.trim().length === 0) return undefined;
+      return {
+        path: `${runtime.cwd.replace(/\\/g, '/').replace(/\/+$/, '')}/${filename}`,
+        content,
+      };
+    } catch {
+      continue;
+    }
+  }
 }
 
 function createRuntimeToolsExtension(runtime: AgentRuntime): InlineExtension {

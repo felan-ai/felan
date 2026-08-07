@@ -41,7 +41,7 @@ afterEach(async () => {
 });
 
 describe('local Agent Core lifecycle', () => {
-  it('uses the Felan root for sessions and loads only configured built-ins and .agents skills', async () => {
+  it('uses the Felan root for sessions and loads only configured built-ins, root instructions, and .agents skills', async () => {
     const root = await temporaryDirectory();
     const home = join(root, 'home');
     const cwd = join(root, 'workspace');
@@ -73,6 +73,8 @@ describe('local Agent Core lifecycle', () => {
     }));
     await writeFile(join(agentDir, 'APPEND_SYSTEM.md'), 'Local application instructions');
     await writeFile(join(cwd, '.pi', 'APPEND_SYSTEM.md'), 'Ignored project append');
+    await writeFile(join(cwd, 'AGENTS.md'), 'Root project instructions');
+    await writeFile(join(cwd, 'CLAUDE.md'), 'Ignored fallback instructions');
     await writeFile(join(projectSkills, 'project-skill', 'SKILL.md'), skill('project-skill'));
     await writeFile(join(userSkills, 'user-skill', 'SKILL.md'), skill('user-skill'));
     await writeFile(join(ignoredSkills, 'ignored-skill', 'SKILL.md'), skill('ignored-skill'));
@@ -93,9 +95,14 @@ describe('local Agent Core lifecycle', () => {
     const systemPrompt = runtime.session.systemPrompt;
     expect(systemPrompt.startsWith(FELAN_BASE_SYSTEM_PROMPT)).toBe(true);
     expect(systemPrompt).toContain('Local application instructions');
+    expect(systemPrompt).toContain('Root project instructions');
+    expect(systemPrompt).not.toContain('Ignored fallback instructions');
     expect(systemPrompt).not.toContain('Ignored project append');
     expect(systemPrompt).not.toContain('## Enabled capabilities');
     expect(systemPrompt.indexOf('Local application instructions')).toBeLessThan(
+      systemPrompt.indexOf('Root project instructions'),
+    );
+    expect(systemPrompt.indexOf('Root project instructions')).toBeLessThan(
       systemPrompt.indexOf('<available_skills>'),
     );
     expect(systemPrompt.indexOf('<available_skills>')).toBeLessThan(

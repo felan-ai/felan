@@ -3,11 +3,11 @@
 Runtime-portable progressive loading of nested `AGENTS.md` and `CLAUDE.md`
 instructions for Felan sessions.
 
-Felan loads instructions at the session cwd separately. This extension discovers
-instructions below that cwd after the agent successfully reads a file or the user
-submits a decoded CLI `@file` block. It walks from the cwd toward the observed
-file, skips the cwd itself, and loads at most one instruction file per nested
-directory with this precedence:
+Agent Core loads instructions at the session cwd during composition. This
+extension discovers instructions below that cwd after the agent successfully
+reads a file or the user submits a decoded CLI `@file` block. It walks from the
+cwd toward the observed file, skips the cwd itself, and loads at most one
+instruction file per nested directory with this precedence:
 
 1. `AGENTS.md`
 2. `CLAUDE.md`

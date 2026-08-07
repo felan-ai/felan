@@ -99,7 +99,12 @@ scale. Agent Core does not load model-tier configuration or resolve credentials.
 
 Agent Core owns the runtime-neutral Felan base system prompt. Every composed
 session uses this prompt; consumers extend it with `appendSystemPrompt` and
-cannot replace it. Inline extensions can contribute model-facing behavior
+cannot replace it. During composition, Agent Core also reads at most one
+instruction file from the session cwd through `AgentRuntime`, with `AGENTS.md`
+taking precedence over `CLAUDE.md`. Missing, unreadable, and blank instruction
+files are nonfatal. The selected file is supplied through Pi's context-file
+interface, which renders it as path-labeled project instructions rather than a
+consumer prompt append. Inline extensions can contribute model-facing behavior
 during initialization:
 
 ```ts
@@ -115,7 +120,8 @@ Capability IDs and instructions are validated, duplicate IDs report both
 extension sources, and contributions retain extension load and registration
 order across resource reloads. Agent Core renders enabled capabilities as one
 section after the base prompt. Consumer appends follow that section, then Pi
-adds explicit skills and the current working directory.
+adds cwd project instructions, explicit skills, and the current working
+directory.
 
 Tool definitions sent with the model request remain the authoritative tool
 inventory. The Felan-owned prompt intentionally does not render Pi's default
@@ -125,7 +131,8 @@ capabilities for multi-tool workflow guidance.
 Applications may pass explicit `skills` or `skillPaths` into session
 composition. Agent Core exposes only those resources while ambient project,
 user, and package skill discovery remains disabled. Ambient system prompt,
-append prompt, and context discovery are also disabled.
+append prompt, and context discovery are also disabled; the selected cwd
+instruction file is the only built-in project-context input.
 
 ## Development
 
