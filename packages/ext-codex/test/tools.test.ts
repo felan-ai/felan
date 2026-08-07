@@ -203,13 +203,31 @@ describe('Codex runtime-backed tools', () => {
   });
 
   it('strips split terminal control sequences while preserving tabs and newlines', async () => {
-    const runtime = await createRuntime();
+    const first = new TextEncoder().encode('safe\t\n\u001b]0;injected');
+    const second = new TextEncoder().encode('\u0007\u001b[31mred\u001b[0m\u001bPsecret\u001b\\\u0000done\n');
+    const snapshots: AgentRuntimeProcessSnapshot[] = [
+      { output: first, nextOffset: first.length, running: true },
+      { output: new Uint8Array(), nextOffset: first.length, running: true },
+      { output: second, nextOffset: first.length + second.length, running: false, exitCode: 0 },
+    ];
+    const process: AgentRuntimeProcess = {
+      pid: 1234,
+      async read() {
+        const snapshot = snapshots.shift();
+        if (!snapshot) throw new Error('Unexpected process read');
+        return snapshot;
+      },
+      async write() {},
+      async terminate() {},
+      async dispose() {},
+    };
+    const runtime: AgentRuntime = {
+      ...fakeRuntime().runtime,
+      processes: { startShell: async () => process },
+    };
     const sessions = new ExecSessionManager(runtime);
-    const first = JSON.stringify('safe\t\n\u001b]0;injected');
-    const second = JSON.stringify('\u0007\u001b[31mred\u001b[0m\u001bPsecret\u001b\\\u0000done\n');
-    const script = `process.stdout.write(${first}); setTimeout(() => process.stdout.write(${second}), 400)`;
     const started = await sessions.exec({
-      cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      cmd: 'scripted output',
       yield_time_ms: 250,
     });
 
