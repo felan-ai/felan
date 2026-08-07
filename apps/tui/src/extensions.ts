@@ -28,6 +28,7 @@ export const builtinExtensionPackages = {
   webAccess: '@felan-ai/ext-web-access',
   backgroundBash: '@felan-ai/ext-background-bash',
   codex: '@felan-ai/ext-codex',
+  rtkOptimizer: '@felan-ai/ext-rtk-optimizer',
   powerline: powerlineExtensionPackage,
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);

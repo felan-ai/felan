@@ -66,6 +66,7 @@ describe('local Agent Core lifecycle', () => {
         webAccess: false,
         backgroundBash: false,
         codex: false,
+        rtkOptimizer: false,
         powerline: false,
       },
     }));

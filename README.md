@@ -15,6 +15,7 @@ shared agent core, first-party Pi extensions, and local terminal application.
 - `@felan-ai/ext-web-access`: bounded web research with explicit untrusted-content boundaries
 - `@felan-ai/ext-mcp`: portable OAuth-only remote MCP gateway with consumer-owned authentication
 - `@felan-ai/ext-codex`: GPT-only structured command, patch, and image tools with OpenAI Responses controls
+- `@felan-ai/ext-rtk-optimizer`: RTK command rewriting and tool-output compaction for ordinary and Codex command tools
 - `@felan-ai/ext-powerline`: ANSI-aware local TUI footer with cached Git, model, session, subscription, context, and extension status segments
 - `@felan-ai/felan`: account-free local terminal application with the `felan` binary
 

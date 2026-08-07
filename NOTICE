@@ -66,6 +66,13 @@ https://github.com/IgorWarzocha/howaboua-pi-stuff.
 Copyright (c) 2026 Umberto B. Package-level attribution and license terms are
 included in packages/ext-codex/NOTICE and LICENSE.
 
+@felan-ai/ext-rtk-optimizer adapts MIT-licensed code and behavior from
+pi-rtk-optimizer 0.9.0 at source commit
+d155d253cb2f1358e34e717d47a82ebccb08cb8e from
+https://github.com/MasuRii/pi-rtk-optimizer. Copyright (c) 2026 MasuRii.
+Package-level attribution and license terms are included in
+packages/ext-rtk-optimizer/NOTICE and LICENSE.
+
 @felan-ai/ext-prewalk adapts MIT-licensed portions of packages/pi-prewalk from
 mslavov/pi-extensions at commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
 Copyright (c) 2026 Dimitar Panayotov and Milko Slavov. Package-level attribution

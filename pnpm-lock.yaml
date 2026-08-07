@@ -56,6 +56,9 @@ importers:
       '@felan-ai/ext-prewalk':
         specifier: workspace:*
         version: link:../../packages/ext-prewalk
+      '@felan-ai/ext-rtk-optimizer':
+        specifier: workspace:*
+        version: link:../../packages/ext-rtk-optimizer
       '@felan-ai/ext-subagents':
         specifier: workspace:*
         version: link:../../packages/ext-subagents
@@ -156,6 +159,12 @@ importers:
         version: link:../agent-core
 
   packages/ext-prewalk:
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-rtk-optimizer:
     devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*

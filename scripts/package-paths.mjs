@@ -9,6 +9,7 @@ export const packagePaths = [
   'packages/ext-web-access',
   'packages/ext-mcp',
   'packages/ext-codex',
+  'packages/ext-rtk-optimizer',
   'packages/ext-powerline',
   'apps/tui',
 ];

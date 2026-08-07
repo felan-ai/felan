@@ -59,6 +59,7 @@ for (const requiredNotice of [
   '@modelcontextprotocol/client 2.0.0',
   '@napi-rs/keyring 1.3.0',
   'open 11.0.0',
+  'pi-rtk-optimizer 0.9.0',
 ]) {
   if (!notice.includes(requiredNotice)) errors.push(`NOTICE is missing ${requiredNotice}`);
 }
@@ -90,6 +91,15 @@ const codexNotice = readFileSync(resolve(root, 'packages/ext-codex/NOTICE'), 'ut
 for (const requiredNotice of ['@howaboua/pi-codex-conversion 3.0.8', 'TypeBox 1.1.38']) {
   if (!codexNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-codex/NOTICE is missing ${requiredNotice}`);
+  }
+}
+const rtkOptimizerNotice = readFileSync(resolve(root, 'packages/ext-rtk-optimizer/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'pi-rtk-optimizer 0.9.0',
+  'd155d253cb2f1358e34e717d47a82ebccb08cb8e',
+]) {
+  if (!rtkOptimizerNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-rtk-optimizer/NOTICE is missing ${requiredNotice}`);
   }
 }
 const tasksNotice = readFileSync(resolve(root, 'packages/ext-tasks/NOTICE'), 'utf8');

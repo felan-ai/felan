@@ -1,0 +1,14 @@
+@felan-ai/ext-rtk-optimizer
+
+Includes code and behavior adapted from pi-rtk-optimizer 0.9.0,
+https://github.com/MasuRii/pi-rtk-optimizer at source commit
+d155d253cb2f1358e34e717d47a82ebccb08cb8e.
+
+Copyright (c) 2026 MasuRii
+Licensed under the MIT License included in this package.
+
+Adapted portions include RTK rewrite delegation, runtime availability guards,
+tool-output compaction techniques, read-compaction safeguards, configuration,
+session metrics, and the /rtk command behavior. Felan routes I/O through
+AgentRuntime and adds native support for Codex exec_command and write_stdin
+tools while preserving their structured result envelopes.

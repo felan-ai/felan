@@ -57,6 +57,7 @@ All built-in extensions are enabled by default. Toggle them in
     "webAccess": true,
     "backgroundBash": true,
     "codex": true,
+    "rtkOptimizer": true,
     "powerline": false
   }
 }
@@ -134,6 +135,14 @@ Use `/background-bash` or `Ctrl+Shift+J` to inspect them.
 ordinary coding tools when another model is selected. Root and nested sessions
 load the same optional request controls from `$FELAN_AGENT_DIR/codex.json`; see
 the extension package README for the three supported fields.
+
+`rtkOptimizer` delegates command rewrites to an `rtk` executable available in
+the active runtime and compacts noisy command, read, and grep results. It
+supports both ordinary `bash` calls and Codex `exec_command` / `write_stdin`
+calls; Codex result envelopes remain intact while only their `Output:` payloads
+are compacted. Configuration is shared by root and nested sessions at
+`$FELAN_AGENT_DIR/storage/agent/rtk-optimizer/config.json`. Use `/rtk` for
+interactive settings, runtime verification, and session savings metrics.
 
 ## System prompt append
 
