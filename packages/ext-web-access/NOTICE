@@ -1,8 +1,9 @@
 @felan-ai/ext-web-access
 Copyright (c) 2026 Felan contributors
 
-This package is based in part on pi-web-access 0.18.0, distributed under the
-MIT License, npm gitHead d2aab00dcf0547572276d9de4bc4a2a49d640e13.
+This package is based in part on pi-web-access 0.18.0 from
+https://github.com/nicobailon/pi-web-access at npm gitHead
+d2aab00dcf0547572276d9de4bc4a2a49d640e13, distributed under the MIT License.
 Copyright (c) 2025 Nico Bailon.
 
 Runtime dependencies include:

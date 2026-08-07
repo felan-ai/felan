@@ -1,8 +1,9 @@
 @felan-ai/ext-codex
 
 Includes selected code and behavior adapted from
-@howaboua/pi-codex-conversion 3.0.8,
-https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-codex-conversion.
+@howaboua/pi-codex-conversion 3.0.8 at npm gitHead
+62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91,
+https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91/packages/pi-codex-conversion.
 
 Copyright (c) 2026 Umberto B.
 Licensed under the MIT License included in this package.

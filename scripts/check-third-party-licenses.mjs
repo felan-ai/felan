@@ -88,7 +88,11 @@ if (!backgroundBashNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-background-bash/NOTICE is missing TypeBox 1.1.38');
 }
 const codexNotice = readFileSync(resolve(root, 'packages/ext-codex/NOTICE'), 'utf8');
-for (const requiredNotice of ['@howaboua/pi-codex-conversion 3.0.8', 'TypeBox 1.1.38']) {
+for (const requiredNotice of [
+  '@howaboua/pi-codex-conversion 3.0.8',
+  '62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91',
+  'TypeBox 1.1.38',
+]) {
   if (!codexNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-codex/NOTICE is missing ${requiredNotice}`);
   }
@@ -109,6 +113,7 @@ if (!tasksNotice.includes('TypeBox 1.1.38')) {
 const webAccessNotice = readFileSync(resolve(root, 'packages/ext-web-access/NOTICE'), 'utf8');
 for (const requiredNotice of [
   'pi-web-access 0.18.0',
+  'https://github.com/nicobailon/pi-web-access',
   'd2aab00dcf0547572276d9de4bc4a2a49d640e13',
   'TypeBox 1.1.38',
   'undici 8.10.0',

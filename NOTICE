@@ -61,7 +61,8 @@ https://github.com/sindresorhus/open, licensed under the MIT License.
 Copyright (c) Sindre Sorhus.
 
 @felan-ai/ext-codex adapts selected MIT-licensed portions and behavior from
-@howaboua/pi-codex-conversion 3.0.8 from
+@howaboua/pi-codex-conversion 3.0.8 at npm gitHead
+62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91 from
 https://github.com/IgorWarzocha/howaboua-pi-stuff.
 Copyright (c) 2026 Umberto B. Package-level attribution and license terms are
 included in packages/ext-codex/NOTICE and LICENSE.
