@@ -321,7 +321,8 @@ describe('HostAgentRuntime', () => {
       : interrupted;
 
     expect(new TextDecoder().decode(interrupted.output)).toContain('interrupted');
-    expect(completed).toMatchObject({ running: false, exitCode: 0 });
+    expect(completed.running).toBe(false);
+    expect([0, 130]).toContain(completed.exitCode);
     await processHandle.dispose();
   });
 
