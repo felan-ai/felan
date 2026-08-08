@@ -12,10 +12,10 @@ Adapted portions include structured tool schemas and output conventions,
 patch parsing and matching, model activation policy, OpenAI request options,
 cached WebSocket transport selection, and local TUI tool labels. Felan
 implements process and file operations against AgentRuntime and uses Pi
-0.84.0's native OpenAI Codex transport for connection reuse and cached
+0.84.1's native OpenAI Codex transport for connection reuse and cached
 continuation.
 
-This package uses @earendil-works/pi-tui 0.84.0 from
+This package uses @earendil-works/pi-tui 0.84.1 from
 https://github.com/earendil-works/pi, licensed under the MIT License.
 Copyright (c) 2025 Mario Zechner.
 

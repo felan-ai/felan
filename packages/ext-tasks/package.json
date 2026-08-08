@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-tasks",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Dependency-aware session task tracking for Felan",
   "license": "MIT",
   "type": "module",
@@ -26,7 +26,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "0.84.0",
+    "@earendil-works/pi-tui": "0.84.1",
     "typebox": "1.1.38"
   },
   "peerDependencies": {

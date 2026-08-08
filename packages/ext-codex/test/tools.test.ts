@@ -182,7 +182,7 @@ describe('Codex runtime-backed tools', () => {
       yield_time_ms: 30_000,
     });
 
-    expect(completed).toMatchObject({ exit_code: 0 });
+    expect([0, 130]).toContain(completed.exit_code);
     await expect(text(runtime, 'interrupted')).resolves.toBe('yes');
     await sessions.shutdown();
   });

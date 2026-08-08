@@ -8,6 +8,6 @@ https://github.com/edlsh/pi-ask-user
 The source is MIT licensed. Its license and copyright notice are preserved in
 LICENSE.
 
-The adapted local interface targets Pi-TUI 0.84.0. Tool schemas use TypeBox 1.1.38.
+The adapted local interface targets Pi-TUI 0.84.1. Tool schemas use TypeBox 1.1.38.
 The original global Symbol bridge is replaced by the explicit
 AskUserHost contract.

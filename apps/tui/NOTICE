@@ -7,7 +7,7 @@ packages listed in package.json. Their package-level LICENSE and NOTICE files
 contain the applicable attribution and source provenance.
 
 The terminal application uses @earendil-works/pi-coding-agent and
-@earendil-works/pi-tui 0.84.0 from https://github.com/earendil-works/pi,
+@earendil-works/pi-tui 0.84.1 from https://github.com/earendil-works/pi,
 licensed under the MIT License.
 Copyright (c) 2025 Mario Zechner.
 

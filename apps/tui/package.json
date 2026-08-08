@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.11.3",
+  "version": "0.11.4",
   "description": "Local Felan terminal agent",
   "license": "MIT",
   "type": "module",
@@ -34,8 +34,8 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.84.0",
-    "@earendil-works/pi-tui": "0.84.0",
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-tui": "0.84.1",
     "@felan-ai/agent-core": "workspace:*",
     "@felan-ai/ext-ask-user": "workspace:*",
     "@felan-ai/ext-background-bash": "workspace:*",
