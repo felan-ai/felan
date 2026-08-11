@@ -206,12 +206,34 @@ includes `@felan-ai/ext-powerline` for an ANSI-aware footer with subscription
 usage; it is a direct TUI dependency and is not part of cloud composition.
 
 Local agent definitions are loaded only from bundled Felan definitions,
-`~/.felan/agents/*.md` (or `$FELAN_AGENT_DIR/agents/*.md`), and
-`<workspace>/.felan/agents/*.md`, with
-project definitions taking precedence. Pi ambient agent discovery remains
-disabled. Local subagent concurrency defaults to four and depth defaults to
-three; set `felanSubagents.concurrency` and `felanSubagents.maxDepth` in the
-Felan settings file to configure those bounded values.
+`~/.agents/agents/*.md`, `~/.felan/agents/*.md` (or
+`$FELAN_AGENT_DIR/agents/*.md`), `<workspace>/.agents/agents/*.md`, and
+`<workspace>/.felan/agents/*.md`. Project definitions override user and
+bundled definitions; within one scope the Felan-specific directory overrides
+the shared `.agents` directory. Pi ambient agent discovery remains disabled.
+
+Each definition is a Markdown file with flat `key: value` frontmatter and a
+required prompt body. `description` is required; `id` defaults to the filename.
+Optional fields are `model`, `thinking`, `max_turns`, `timeout_seconds`, and
+`allow_nesting`. Definitions do not change tool access: custom children receive
+the normal enabled Felan tools.
+
+```md
+---
+description: Review changes for correctness and regressions
+model: high
+thinking: high
+max_turns: 20
+timeout_seconds: 600
+allow_nesting: false
+---
+
+Review the requested changes and report findings with file and line references.
+```
+
+Local subagent concurrency defaults to four and depth defaults to three; set
+`felanSubagents.concurrency` and `felanSubagents.maxDepth` in the Felan settings
+file to configure those bounded values.
 
 Local model selectors are deterministic and support explicit inheritance or an
 exact authenticated `provider/model`; exact selectors never fall back. Requested

@@ -14,8 +14,8 @@ import type {
 } from '@felan-ai/ext-subagents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  inspectionToolNames,
   LocalSubagentHost,
-  readOnlyToolNames,
   type LocalSubagentRunner,
 } from '../src/subagents/host.js';
 
@@ -26,11 +26,11 @@ afterEach(async () => {
 });
 
 describe('LocalSubagentHost', () => {
-  it('keeps safe inspection tools and removes mutation/process tools for read-only GPT children', () => {
-    expect(readOnlyToolNames([
+  it('keeps safe inspection tools and removes mutation and process tools', () => {
+    expect(inspectionToolNames([
       'grep', 'find', 'ls', 'view_image', 'exec_command', 'write_stdin', 'apply_patch', 'mcp',
     ])).toEqual(['read', 'grep', 'find', 'ls', 'view_image', 'mcp']);
-    expect(readOnlyToolNames(['read', 'bash', 'edit', 'write', 'grep']))
+    expect(inspectionToolNames(['read', 'bash', 'edit', 'write', 'grep']))
       .toEqual(['read', 'grep']);
   });
 
@@ -809,6 +809,7 @@ async function harness(options: {
     sessionId: 'root',
     cwd,
     agentDir,
+    homeDir: root,
     modelRuntime,
     settingsManager: SettingsManager.inMemory(),
     extensionPackages: [],

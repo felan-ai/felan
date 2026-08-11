@@ -1,4 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { isFelanThinkingLevel } from '@felan-ai/agent-core';
 import type {
@@ -9,7 +10,7 @@ import type {
 export interface LocalSubagentDefinition {
   readonly descriptor: SubagentDescriptor;
   readonly prompt: string;
-  readonly capability: 'coding' | 'read-only';
+  readonly toolProfile?: 'inspection';
 }
 
 const bundledDefinitions: readonly LocalSubagentDefinition[] = [
@@ -20,7 +21,6 @@ const bundledDefinitions: readonly LocalSubagentDefinition[] = [
       allowNesting: true,
     },
     prompt: 'You are a general-purpose Felan subagent. Complete the assigned task and report a concise result.',
-    capability: 'coding',
   },
   {
     descriptor: {
@@ -29,7 +29,7 @@ const bundledDefinitions: readonly LocalSubagentDefinition[] = [
       allowNesting: false,
     },
     prompt: 'You are a read-focused Felan subagent. Investigate the assigned task and report findings without modifying files.',
-    capability: 'read-only',
+    toolProfile: 'inspection',
   },
   {
     descriptor: {
@@ -37,21 +37,27 @@ const bundledDefinitions: readonly LocalSubagentDefinition[] = [
       description: 'Code reviewer focused on correctness and regressions',
       allowNesting: false,
     },
-    prompt: 'You are a Felan code-review subagent. Inspect the assigned work for correctness, security, and regressions.',
-    capability: 'read-only',
+    prompt: 'You are a Felan code-review subagent. Inspect the assigned work for correctness, security, and regressions without modifying files.',
+    toolProfile: 'inspection',
   },
 ];
 
 export async function discoverLocalSubagents(
   cwd: string,
   agentDir: string,
+  homeDir: string = homedir(),
 ): Promise<readonly LocalSubagentDefinition[]> {
   const definitions = new Map(bundledDefinitions.map((definition) => [definition.descriptor.id, definition]));
-  for (const definition of await readDefinitions(join(agentDir, 'agents'))) {
-    definitions.set(definition.descriptor.id, definition);
-  }
-  for (const definition of await readDefinitions(join(cwd, '.felan', 'agents'))) {
-    definitions.set(definition.descriptor.id, definition);
+  const directories = new Set([
+    join(homeDir, '.agents', 'agents'),
+    join(agentDir, 'agents'),
+    join(cwd, '.agents', 'agents'),
+    join(cwd, '.felan', 'agents'),
+  ]);
+  for (const directory of directories) {
+    for (const definition of await readDefinitions(directory)) {
+      definitions.set(definition.descriptor.id, definition);
+    }
   }
   return [...definitions.values()].map(freezeDefinition);
 }
@@ -86,23 +92,18 @@ function parseDefinition(file: string, source: string): LocalSubagentDefinition 
   const thinking = parseThinking(fields.thinking, file);
   const defaultMaxTurns = parsePositiveInteger(fields.max_turns, 'max_turns', file);
   const defaultTimeoutSeconds = parsePositiveInteger(fields.timeout_seconds, 'timeout_seconds', file);
-  const capability = fields.capability ?? 'coding';
-  if (capability !== 'coding' && capability !== 'read-only') {
-    throw new Error(`Felan agent ${file} has an unknown capability`);
-  }
 
   return {
     descriptor: {
       id,
       description,
-      allowNesting: capability === 'coding' && fields.allow_nesting === 'true',
+      allowNesting: fields.allow_nesting === 'true',
       ...(fields.model === undefined ? {} : { defaultModel: fields.model }),
       ...(thinking === undefined ? {} : { defaultThinking: thinking }),
       ...(defaultMaxTurns === undefined ? {} : { defaultMaxTurns }),
       ...(defaultTimeoutSeconds === undefined ? {} : { defaultTimeoutSeconds }),
     },
     prompt: body.trim(),
-    capability,
   };
 }
 

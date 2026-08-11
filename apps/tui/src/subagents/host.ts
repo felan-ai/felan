@@ -50,6 +50,7 @@ export interface CreateLocalSubagentHostOptions {
   readonly sessionId: string;
   readonly cwd: string;
   readonly agentDir: string;
+  readonly homeDir?: string;
   readonly modelRuntime: ModelRuntime;
   readonly settingsManager: SettingsManager;
   readonly extensionPackages: readonly string[];
@@ -127,7 +128,7 @@ export class LocalSubagentHost implements SubagentHost {
   }
 
   static async create(options: CreateLocalSubagentHostOptions): Promise<LocalSubagentHost> {
-    const definitions = await discoverLocalSubagents(options.cwd, options.agentDir);
+    const definitions = await discoverLocalSubagents(options.cwd, options.agentDir, options.homeDir);
     const manager = await LocalSubagentManager.create(options, definitions);
     return new LocalSubagentHost(manager, options.sessionId);
   }
@@ -743,8 +744,8 @@ export class LocalSubagentManager {
     try {
       if (input.signal.aborted) return sessionFileOutcome(created.session.sessionFile);
       await created.session.bindExtensions({ mode: 'print' });
-      if (input.definition.capability === 'read-only') {
-        created.session.setActiveToolsByName(readOnlyToolNames(created.session.getActiveToolNames()));
+      if (input.definition.toolProfile === 'inspection') {
+        created.session.setActiveToolsByName(inspectionToolNames(created.session.getActiveToolNames()));
       }
       if (input.signal.aborted) return sessionFileOutcome(created.session.sessionFile);
 
@@ -1014,7 +1015,7 @@ export class LocalSubagentManager {
   }
 }
 
-export function readOnlyToolNames(activeToolNames: readonly string[]): string[] {
+export function inspectionToolNames(activeToolNames: readonly string[]): string[] {
   const blocked = new Set(['bash', 'edit', 'write', 'exec_command', 'write_stdin', 'apply_patch']);
   const safe = activeToolNames.filter((name) => !blocked.has(name));
   if (!safe.includes('read')) safe.unshift('read');

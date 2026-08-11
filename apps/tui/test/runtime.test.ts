@@ -82,7 +82,7 @@ describe('local Agent Core lifecycle', () => {
 
     expect(skillPaths).toEqual([projectSkills, userSkills]);
 
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, skillPaths });
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: home, skillPaths });
 
     expect(runtime.session.sessionManager.getSessionDir()).toBe(join(agentDir, 'sessions'));
     expect(runtime.services.resourceLoader.getExtensions().extensions.filter((extension) => !extension.hidden))
@@ -123,6 +123,7 @@ describe('local Agent Core lifecycle', () => {
 
     const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
       agentDir,
+      homeDir: root,
       modelRuntime: await createLocalModelRuntime(agentDir),
       extensionPackages: [],
       importExtension: async () => {
@@ -144,7 +145,7 @@ describe('local Agent Core lifecycle', () => {
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent');
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir });
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: root });
     const runtimeView = createToolActivityRuntimeView(runtime);
 
     expect(runtimeView.session.getToolDefinition('read')).not.toBe(runtime.session.getToolDefinition('read'));
@@ -164,7 +165,7 @@ describe('local Agent Core lifecycle', () => {
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent');
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir });
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: root });
     const host = runtime.localSubagentHost;
     const order: string[] = [];
     const shutdown = host.shutdown.bind(host);
@@ -188,7 +189,7 @@ describe('local Agent Core lifecycle', () => {
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent');
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir });
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: root });
     const host = runtime.localSubagentHost;
     host.shutdown = async () => {
       throw new Error('shutdown failed');
@@ -216,6 +217,7 @@ describe('local Agent Core lifecycle', () => {
     const runtime = await createLocalFelanRuntime({
       cwd,
       agentDir,
+      homeDir: root,
       sessionDir,
       sessionManager,
     });
@@ -269,6 +271,7 @@ describe('local Agent Core lifecycle', () => {
     const modelRuntime = await createLocalModelRuntime(agentDir);
     const createRuntime = createLocalSessionRuntimeFactory({
       agentDir,
+      homeDir: root,
       modelRuntime,
       extensionPackages: [],
       importExtension: async () => {
@@ -412,6 +415,7 @@ describe('local Agent Core lifecycle', () => {
     const runtime = await createLocalFelanRuntime({
       cwd: cwdA,
       agentDir,
+      homeDir: root,
       sessionDir,
       sessionManager: initialSessionManager,
     });
@@ -469,6 +473,7 @@ describe('local Agent Core lifecycle', () => {
     const runtimeRequests: LocalAgentRuntimeFactoryRequest[] = [];
     const createRuntime = createLocalSessionRuntimeFactory({
       agentDir,
+      homeDir: root,
       modelRuntime,
       extensionPackages: [],
       importExtension: async () => {

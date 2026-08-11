@@ -62,6 +62,7 @@ export type LocalFelanRuntime = AgentSessionRuntime & {
 
 export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly agentDir: string;
+  readonly homeDir?: string;
   readonly modelRuntime: ModelRuntime;
   readonly extensionPackages?: readonly string[];
   readonly importExtension?: ExtensionPackageImporter;
@@ -73,6 +74,7 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
 export interface CreateLocalFelanRuntimeOptions {
   readonly cwd?: string;
   readonly agentDir?: string;
+  readonly homeDir?: string;
   readonly continueRecent?: boolean;
   readonly sessionManager?: SessionManager;
   readonly modelRuntime?: ModelRuntime;
@@ -127,7 +129,7 @@ export function createLocalSessionRuntimeFactory(
     const extensionPackages = options.extensionPackages
       ?? resolveBuiltinExtensionPackages(felanSettings.builtinExtensions);
     const importExtension = options.importExtension ?? importLocalExtension;
-    const skillPaths = options.skillPaths ?? getLocalSkillPaths(cwd);
+    const skillPaths = options.skillPaths ?? getLocalSkillPaths(cwd, options.homeDir);
     const subagentSettings = options.subagentSettings ?? felanSettings.felanSubagents;
     const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
     const runtime = options.runtimeFactory?.(runtimeRequest)
@@ -141,6 +143,7 @@ export function createLocalSessionRuntimeFactory(
       sessionId: sessionManager.getSessionId(),
       cwd,
       agentDir: options.agentDir,
+      ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
       modelRuntime: options.modelRuntime,
       settingsManager,
       extensionPackages,
@@ -237,6 +240,7 @@ export async function createLocalFelanRuntime(
       : SessionManager.create(cwd, sessionDir));
   const createRuntime = createLocalSessionRuntimeFactory({
     agentDir,
+    ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
     modelRuntime,
     ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),

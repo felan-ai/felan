@@ -11,30 +11,52 @@ afterEach(async () => {
 });
 
 describe('explicit local Felan agent discovery', () => {
-  it('uses project, user, then bundled precedence without Pi discovery', async () => {
+  it('loads shared and Felan definitions with project, user, then bundled precedence', async () => {
     const root = await temporaryDirectory();
+    const home = join(root, 'home');
     const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
+    const agentDir = join(home, '.felan');
     await Promise.all([
+      mkdir(join(home, '.agents', 'agents'), { recursive: true }),
+      mkdir(join(cwd, '.agents', 'agents'), { recursive: true }),
       mkdir(join(cwd, '.felan', 'agents'), { recursive: true }),
       mkdir(join(cwd, '.pi', 'agents'), { recursive: true }),
       mkdir(join(agentDir, 'agents'), { recursive: true }),
     ]);
+    await writeFile(join(home, '.agents', 'agents', 'shared-user.md'), definition('Shared user', 'Shared user prompt'));
+    await writeFile(join(home, '.agents', 'agents', 'user-priority.md'), definition('Shared user priority', 'Shared user priority prompt'));
+    await writeFile(join(agentDir, 'agents', 'user-priority.md'), definition('Felan user priority', 'Felan user priority prompt'));
+    await writeFile(join(agentDir, 'agents', 'scope-priority.md'), definition('Felan user scope', 'Felan user scope prompt'));
     await writeFile(join(agentDir, 'agents', 'reviewer.md'), definition('User reviewer', 'User prompt'));
+    await writeFile(join(cwd, '.agents', 'agents', 'reviewer.md'), definition('Shared project reviewer', 'Shared project prompt'));
+    await writeFile(join(cwd, '.agents', 'agents', 'shared-project.md'), definition('Shared project', 'Shared project prompt'));
+    await writeFile(join(cwd, '.agents', 'agents', 'scope-priority.md'), definition('Shared project scope', 'Shared project scope prompt'));
     await writeFile(join(cwd, '.felan', 'agents', 'reviewer.md'), definition('Project reviewer', 'Project prompt'));
     await writeFile(join(cwd, '.pi', 'agents', 'ambient.md'), definition('Ambient', 'Ambient prompt'));
 
-    const definitions = await discoverLocalSubagents(cwd, agentDir);
+    const definitions = await discoverLocalSubagents(cwd, agentDir, home);
     const reviewer = definitions.find((entry) => entry.descriptor.id === 'reviewer');
 
     expect(reviewer).toMatchObject({
       descriptor: { description: 'Project reviewer' },
       prompt: 'Project prompt',
     });
+    expect(definitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ descriptor: expect.objectContaining({ id: 'shared-user' }) }),
+      expect.objectContaining({ descriptor: expect.objectContaining({ id: 'shared-project' }) }),
+      expect.objectContaining({
+        descriptor: expect.objectContaining({ id: 'user-priority', description: 'Felan user priority' }),
+        prompt: 'Felan user priority prompt',
+      }),
+      expect.objectContaining({
+        descriptor: expect.objectContaining({ id: 'scope-priority', description: 'Shared project scope' }),
+        prompt: 'Shared project scope prompt',
+      }),
+    ]));
     expect(definitions.map((entry) => entry.descriptor.id)).not.toContain('ambient');
   });
 
-  it('parses only declarative Felan policy fields', async () => {
+  it('parses declarative Felan fields and ignores unsupported policy fields', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent');
@@ -47,7 +69,7 @@ describe('explicit local Felan agent discovery', () => {
       'max_turns: 9',
       'timeout_seconds: 120',
       'allow_nesting: true',
-      'capability: coding',
+      'capability: read-only',
       'extensions: arbitrary-package',
       '---',
       'Worker prompt',
@@ -65,28 +87,6 @@ describe('explicit local Felan agent discovery', () => {
         allowNesting: true,
       },
       prompt: 'Worker prompt',
-      capability: 'coding',
-    });
-  });
-
-  it('normalizes read-only definitions to leaf agents', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await mkdir(join(cwd, '.felan', 'agents'), { recursive: true });
-    await writeFile(join(cwd, '.felan', 'agents', 'reader.md'), [
-      '---',
-      'description: Reader',
-      'allow_nesting: true',
-      'capability: read-only',
-      '---',
-      'Read only',
-    ].join('\n'));
-
-    const definitions = await discoverLocalSubagents(cwd, agentDir);
-    expect(definitions.find((entry) => entry.descriptor.id === 'reader')).toMatchObject({
-      capability: 'read-only',
-      descriptor: { allowNesting: false },
     });
   });
 
