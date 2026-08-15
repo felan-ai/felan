@@ -36,10 +36,10 @@ for (const [license, entries] of Object.entries(inventory)) {
 }
 
 for (const required of [
-  '@earendil-works/pi-agent-core@0.84.1',
-  '@earendil-works/pi-ai@0.84.1',
-  '@earendil-works/pi-coding-agent@0.84.1',
-  '@earendil-works/pi-tui@0.84.1',
+  '@earendil-works/pi-agent-core@0.84.2',
+  '@earendil-works/pi-ai@0.84.2',
+  '@earendil-works/pi-coding-agent@0.84.2',
+  '@earendil-works/pi-tui@0.84.2',
   '@lydell/node-pty@1.2.0-beta.14',
   '@modelcontextprotocol/client@2.0.0',
   '@modelcontextprotocol/core@2.0.0',
@@ -52,7 +52,7 @@ for (const required of [
 
 const notice = readFileSync(resolve(root, 'NOTICE'), 'utf8');
 for (const requiredNotice of [
-  'Pi 0.84.1',
+  'Pi 0.84.2',
   '@lydell/node-pty 1.2.0-beta.14',
   'TypeBox 1.1.38',
   'pi-mcp-adapter 2.21.0',
@@ -76,7 +76,7 @@ for (const requiredNotice of [
   'https://github.com/mslavov/pi-extensions',
   'https://github.com/edlsh/pi-ask-user',
   '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
-  'Pi-TUI 0.84.1',
+  'Pi-TUI 0.84.2',
   'TypeBox 1.1.38',
 ]) {
   if (!askUserNotice.includes(requiredNotice)) {

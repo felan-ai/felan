@@ -269,7 +269,7 @@ try {
   for (const expected of [
     `Felan version: ${felanVersion}`,
     `Agent Core version: ${agentCoreVersion}`,
-    'Pi version: 0.84.1',
+    'Pi version: 0.84.2',
     'Runtime: host',
     'Credentials: local',
   ]) {
