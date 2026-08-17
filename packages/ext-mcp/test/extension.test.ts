@@ -45,6 +45,109 @@ describe('MCP extension', () => {
     expect(oauth.close).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ['an object', {
+      action: 'call',
+      server: 'docs',
+      tool: 'find_docs',
+      args: { query: 'oauth' },
+    }],
+    ['a JSON string', JSON.stringify({
+      action: 'call',
+      server: 'docs',
+      tool: 'find_docs',
+      args: { query: 'oauth' },
+    })],
+  ])('recovers a complete gateway request nested as %s', async (_label, nestedRequest) => {
+    const listTools = vi.spyOn(McpManager.prototype, 'listTools').mockResolvedValue([{
+      name: 'find_docs',
+      description: 'Find documentation',
+      inputSchema: { type: 'object' },
+    }]);
+    const callTool = vi.spyOn(McpManager.prototype, 'callTool').mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+    });
+    const harness = createHarness();
+    await harness.start();
+
+    try {
+      const result = await harness.execute({ args: nestedRequest });
+
+      expect(listTools).toHaveBeenCalledWith('docs', undefined);
+      expect(callTool).toHaveBeenCalledWith(
+        'docs',
+        'find_docs',
+        { query: 'oauth' },
+        undefined,
+      );
+      expect(result).toMatchObject({ details: { server: 'docs', tool: 'find_docs' } });
+    } finally {
+      listTools.mockRestore();
+      callTool.mockRestore();
+      await harness.shutdown();
+    }
+  });
+
+  it('returns fixed corrective guidance for invalid args-only gateway requests', async () => {
+    const statuses = vi.spyOn(McpManager.prototype, 'statuses');
+    const listTools = vi.spyOn(McpManager.prototype, 'listTools');
+    const harness = createHarness();
+    await harness.start();
+
+    try {
+      const invalidRequests: Record<string, unknown>[] = [
+        { args: { query: 'raw-secret' } },
+        { args: { action: 'unsupported', query: 'raw-secret' } },
+        { args: { action: 'status', unexpected: 'raw-secret' } },
+        { args: { action: 'call', server: 'docs', tool: 42, args: { value: 'raw-secret' } } },
+        { args: { action: 'call', tool: 'find_docs', args: { value: 'raw-secret' } } },
+        { args: '{"action":"call","raw-secret"' },
+      ];
+
+      for (const request of invalidRequests) {
+        const result = await harness.execute(request);
+        expect(result).toMatchObject({
+          isError: true,
+          details: { error: 'invalid_nested_mcp_request' },
+        });
+        expect(result.content[0]).toMatchObject({
+          text: expect.stringContaining('Pass "action" and its gateway parameters at the top level'),
+        });
+        expect(JSON.stringify(result)).not.toContain('raw-secret');
+      }
+      expect(statuses).not.toHaveBeenCalled();
+      expect(listTools).not.toHaveBeenCalled();
+    } finally {
+      statuses.mockRestore();
+      listTools.mockRestore();
+      await harness.shutdown();
+    }
+  });
+
+  it('keeps normal call args unchanged when a top-level action is present', async () => {
+    const listTools = vi.spyOn(McpManager.prototype, 'listTools').mockResolvedValue([{
+      name: 'proxy',
+      description: 'Proxy a structured request',
+      inputSchema: { type: 'object' },
+    }]);
+    const callTool = vi.spyOn(McpManager.prototype, 'callTool').mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+    });
+    const harness = createHarness();
+    const args = { action: 'status', server: 'nested', query: 'unchanged' };
+    await harness.start();
+
+    try {
+      await harness.execute({ action: 'call', server: 'docs', tool: 'proxy', args });
+
+      expect(callTool).toHaveBeenCalledWith('docs', 'proxy', args, undefined);
+    } finally {
+      listTools.mockRestore();
+      callTool.mockRestore();
+      await harness.shutdown();
+    }
+  });
+
   it('advertises configured servers and lazy reconnect behavior without exposing server URLs', () => {
     const harness = createHarness(undefined, {
       mcpServers: {

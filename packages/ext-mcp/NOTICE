@@ -1,10 +1,17 @@
 @felan-ai/ext-mcp
 Copyright (c) 2026 Felan contributors
 
-This package adapts selected MIT-licensed behavior from pi-mcp-adapter 2.21.0:
+This package initially adapts selected MIT-licensed behavior from
+pi-mcp-adapter 2.21.0:
 https://github.com/nicobailon/pi-mcp-adapter
 npm gitHead eaf379782fddf836828811d1b71ad85d27bc70dd
 Copyright (c) 2026 Nico Bailon.
+
+The upstream implementation was reviewed through the latest released version,
+pi-mcp-adapter 2.26.0 (npm gitHead
+5ee81b47b571b3c4ac2e68a03812c64e3f95cb98), plus main commit
+1bf36719cec478a163bb52e3390182963aab9f85 ("fix: recover nested mcp proxy
+args"). The nested gateway-request recovery from that commit is adapted here.
 
 It uses @modelcontextprotocol/client 2.0.0 (and its @modelcontextprotocol/core
 2.0.0 dependency) from https://github.com/modelcontextprotocol/typescript-sdk

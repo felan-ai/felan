@@ -11,10 +11,24 @@ import type {
 } from './contracts.js';
 
 export const MAX_ASK_USER_QUESTIONS = 4;
+const OPTION_TITLE_KEYS = ['title', 'label', 'text', 'value', 'name', 'option'] as const;
 
 export type AskUserValidationResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: string };
+
+export function prepareAskUserArguments(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+  const prepared = { ...input };
+  if ('options' in prepared) prepared.options = prepareOptions(prepared.options);
+  if (Array.isArray(prepared.questions)) {
+    prepared.questions = prepared.questions.map((question) => {
+      if (!isRecord(question) || !('options' in question)) return question;
+      return { ...question, options: prepareOptions(question.options) };
+    });
+  }
+  return prepared;
+}
 
 export function normalizeAskUserRequest(input: AskUserInput): AskUserValidationResult<AskUserRequest> {
   const rawQuestions = input.questions === undefined ? [input] : input.questions;
@@ -52,6 +66,7 @@ export function normalizeAskUserRequest(input: AskUserInput): AskUserValidationR
     value: {
       questions,
       ...(input.displayMode === undefined ? {} : { displayMode: input.displayMode }),
+      ...(input.singleSelectLayout === undefined ? {} : { singleSelectLayout: input.singleSelectLayout }),
       ...(input.overlayToggleKey === undefined ? {} : { overlayToggleKey: input.overlayToggleKey }),
       ...(input.commentToggleKey === undefined ? {} : { commentToggleKey: input.commentToggleKey }),
       ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
@@ -145,15 +160,45 @@ function normalizeQuestion(
 
 function normalizeOptions(options: readonly AskUserOptionInput[]): AskUserValidationResult<AskUserOption[]> {
   const normalized: AskUserOption[] = [];
-  for (const option of options) {
-    const title = normalizeRequiredText(typeof option === 'string' ? option : option?.title);
-    if (!title) return invalid('Option titles must contain text');
-    const description = typeof option === 'string' ? undefined : normalizeRequiredText(option.description);
-    normalized.push({ title, ...(description === undefined ? {} : { description }) });
+  for (let index = 0; index < options.length; index += 1) {
+    const normalizedOption = normalizeAskUserOption(options[index]);
+    if (!normalizedOption) {
+      return invalid(
+        `Option ${index + 1} is unusable: expected a string, number, boolean, or an object with a non-empty title, label, text, value, name, or option`,
+      );
+    }
+    normalized.push(normalizedOption);
   }
   const titles = normalized.map((option) => option.title.toLocaleLowerCase());
   if (new Set(titles).size !== titles.length) return invalid('Option titles must be unique within a question');
   return { ok: true, value: normalized };
+}
+
+export function normalizeAskUserOption(option: unknown): AskUserOption | undefined {
+  const primitiveTitle = normalizeOptionTitle(option);
+  if (primitiveTitle !== undefined) return { title: primitiveTitle };
+  if (!isRecord(option)) return undefined;
+
+  let title: string | undefined;
+  for (const key of OPTION_TITLE_KEYS) {
+    title = normalizeOptionTitle(option[key]);
+    if (title !== undefined) break;
+  }
+  if (title === undefined) return undefined;
+  const description = normalizeRequiredText(option.description);
+  return { title, ...(description === undefined ? {} : { description }) };
+}
+
+function prepareOptions(options: unknown): unknown {
+  if (!Array.isArray(options)) return options;
+  return options.map((option) => normalizeAskUserOption(option) ?? option);
+}
+
+function normalizeOptionTitle(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.trim() || undefined;
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : undefined;
+  if (typeof value === 'boolean') return String(value);
+  return undefined;
 }
 
 function validateAnswers(

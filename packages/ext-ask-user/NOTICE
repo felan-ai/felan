@@ -8,6 +8,11 @@ https://github.com/edlsh/pi-ask-user
 The source is MIT licensed. Its license and copyright notice are preserved in
 LICENSE.
 
+Additional option-schema hardening, environment normalization, responsive
+single-select layout, rendered-row bounds, and context-collapse behavior are
+adapted from pi-ask-user 0.14.0 at source commit
+2de7e145227f7a527e995e323a50e7ee9bf88b0e.
+
 The adapted local interface targets Pi-TUI 0.84.2. Tool schemas use TypeBox 1.1.38.
 The original global Symbol bridge is replaced by the explicit
 AskUserHost contract.

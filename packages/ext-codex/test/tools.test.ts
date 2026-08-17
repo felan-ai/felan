@@ -321,6 +321,62 @@ describe('Codex runtime-backed tools', () => {
     await sessions.shutdown();
   });
 
+  it('treats an adjacent Delete File and Add File for the same path as one replacement', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const patch = tool(createCodexTools(runtime, sessions), 'apply_patch');
+    await runtime.writeFile('replace.txt', new TextEncoder().encode('before\n'));
+
+    const result = await patch.execute('patch', { input: `*** Begin Patch
+*** Delete File: replace.txt
+*** Add File: replace.txt
++after
+*** End Patch` }, undefined, undefined, imageContext()) as ToolResult;
+
+    expect(result.details).toEqual({
+      status: 'success',
+      result: {
+        changedFiles: ['replace.txt'],
+        createdFiles: [],
+        deletedFiles: [],
+        movedFiles: [],
+        fuzz: 0,
+      },
+    });
+    await expect(text(runtime, 'replace.txt')).resolves.toBe('after\n');
+    await sessions.shutdown();
+  });
+
+  it('leaves the original file in place when an adjacent replacement write fails', async () => {
+    const host = await createRuntime();
+    await host.writeFile('replace.txt', new TextEncoder().encode('before\n'));
+    const runtime = runtimeWithWriteFailure(host, 'replace.txt');
+
+    await expect(applyPatch(runtime, `*** Begin Patch
+*** Delete File: replace.txt
+*** Add File: replace.txt
++after
+*** End Patch`)).rejects.toMatchObject({
+      result: { changedFiles: [], createdFiles: [], deletedFiles: [] },
+    });
+    await expect(text(host, 'replace.txt')).resolves.toBe('before\n');
+  });
+
+  it('rejects a repeated path when Delete File and Add File are not adjacent', async () => {
+    const runtime = await createRuntime();
+    await runtime.writeFile('replace.txt', new TextEncoder().encode('before\n'));
+
+    await expect(applyPatch(runtime, `*** Begin Patch
+*** Delete File: replace.txt
+*** Add File: other.txt
++other
+*** Add File: replace.txt
++after
+*** End Patch`)).rejects.toThrow('Duplicate patch path: replace.txt');
+    await expect(text(runtime, 'replace.txt')).resolves.toBe('before\n');
+    await expect(runtime.readFile('other.txt')).rejects.toThrow();
+  });
+
   it('uses exclusive creation for concurrent Add File patches', async () => {
     const runtime = await createRuntime();
     const patch = `*** Begin Patch
@@ -417,10 +473,67 @@ describe('Codex runtime-backed tools', () => {
     ) as ToolResult;
     expect(started.details).toHaveProperty('session_id');
 
-    await sessions.shutdown();
+    const shutdown = sessions.shutdown();
+    expect(sessions.shutdown()).toBe(shutdown);
+    await shutdown;
 
     await expect(sessions.write({ session_id: (started.details as { session_id: number }).session_id }))
-      .rejects.toThrow('Unknown process id');
+      .rejects.toThrow('exec manager is shut down');
+    await expect(sessions.exec({ cmd: 'echo unavailable' }))
+      .rejects.toThrow('exec manager is shut down');
+  });
+
+  it('disposes a process that finishes starting after shutdown begins', async () => {
+    const fake = fakeRuntime();
+    const process = new FakeProcess(12_345, 0);
+    let resolveProcess!: (started: AgentRuntimeProcess) => void;
+    const pendingProcess = new Promise<AgentRuntimeProcess>((resolve) => { resolveProcess = resolve; });
+    let notifyStart!: () => void;
+    const startRequested = new Promise<void>((resolve) => { notifyStart = resolve; });
+    const runtime: AgentRuntime = {
+      ...fake.runtime,
+      processes: {
+        startShell() {
+          notifyStart();
+          return pendingProcess;
+        },
+      },
+    };
+    const sessions = new ExecSessionManager(runtime);
+    const execution = sessions.exec({ cmd: 'slow start' });
+    const executionResult = execution.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await startRequested;
+
+    const shutdown = sessions.shutdown();
+    expect(sessions.shutdown()).toBe(shutdown);
+    await expect(sessions.exec({ cmd: 'too late' })).rejects.toThrow('exec manager is shut down');
+    await expect(sessions.write({ session_id: 12_345 })).rejects.toThrow('exec manager is shut down');
+
+    resolveProcess(process);
+    expect(await executionResult).toMatchObject({ message: 'exec manager is shut down' });
+    await shutdown;
+    expect(process.disposed).toBe(true);
+    expect(process.disposeCalls).toBe(1);
+  });
+
+  it('reports process disposal failures during shutdown', async () => {
+    const process = new FailingDisposeProcess(12_346, 0);
+    const fake = fakeRuntime();
+    const runtime: AgentRuntime = {
+      ...fake.runtime,
+      processes: { startShell: async () => process },
+    };
+    const sessions = new ExecSessionManager(runtime);
+    const result = await sessions.exec({ cmd: 'still running' });
+    expect(result.session_id).toBeDefined();
+
+    const shutdown = sessions.shutdown();
+    expect(sessions.shutdown()).toBe(shutdown);
+    await expect(shutdown).rejects.toThrow('Failed to shut down exec sessions');
+    expect(process.disposeCalls).toBe(1);
   });
 
   it('preserves an executing command when its initial wait is aborted', async () => {
@@ -503,6 +616,7 @@ class FakeProcess implements AgentRuntimeProcess {
   readonly waits: number[] = [];
   readonly writes: string[] = [];
   disposed = false;
+  disposeCalls = 0;
   maxConcurrentWrites = 0;
   #activeWrites = 0;
   #running = true;
@@ -537,12 +651,20 @@ class FakeProcess implements AgentRuntimeProcess {
   }
 
   async dispose(): Promise<void> {
+    this.disposeCalls += 1;
     this.disposed = true;
     await this.terminate();
   }
 }
 
 class FakeTerminal extends FakeProcess {}
+
+class FailingDisposeProcess extends FakeProcess {
+  override async dispose(): Promise<void> {
+    await super.dispose();
+    throw new Error('injected dispose failure');
+  }
+}
 
 function fakeRuntime(writeDelayMs = 0): {
   runtime: AgentRuntime;
@@ -668,6 +790,26 @@ function runtimeWithRemoveFailures(host: HostAgentRuntime, failRollback: boolean
       }
       await host.remove(path, options);
     },
+    readAgentFile: (path) => host.readAgentFile(path),
+  };
+}
+
+function runtimeWithWriteFailure(host: HostAgentRuntime, failedPath: string): AgentRuntime {
+  return {
+    kind: host.kind,
+    cwd: host.cwd,
+    processes: host.processes,
+    storage: (scope) => host.storage(scope),
+    exec: (command, args, options) => host.exec(command, args, options),
+    shell: (command, options) => host.shell(command, options),
+    readFile: (path, options) => host.readFile(path, options),
+    writeFile: async (path, content, options) => {
+      if (path === failedPath) throw new Error(`injected write failure: ${path}`);
+      await host.writeFile(path, content, options);
+    },
+    listFiles: (path, options) => host.listFiles(path, options),
+    mkdir: (path, options) => host.mkdir(path, options),
+    remove: (path, options) => host.remove(path, options),
     readAgentFile: (path) => host.readAgentFile(path),
   };
 }

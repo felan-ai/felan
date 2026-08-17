@@ -3,6 +3,7 @@ import type {
   FelanExtensionAPI,
   ToolDefinition,
 } from '@felan-ai/agent-core';
+import { Check } from 'typebox/value';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createAskUserExtension,
@@ -28,6 +29,21 @@ describe('@felan-ai/ext-ask-user core', () => {
       type: 'string',
       enum: ['overlay', 'inline'],
     });
+    expect(schema.properties.singleSelectLayout).toMatchObject({
+      type: 'string',
+      enum: ['auto', 'list'],
+    });
+    for (const optionsSchema of [
+      schema.properties.options,
+      schema.properties.questions.items.properties.options,
+    ]) {
+      expect(optionsSchema.items).toMatchObject({
+        type: 'object',
+        required: ['title'],
+        additionalProperties: false,
+      });
+      expect(optionsSchema.items.anyOf).toBeUndefined();
+    }
     expect(schema.properties.overlayToggleKey.anyOf).toBeUndefined();
   });
 
@@ -36,6 +52,7 @@ describe('@felan-ai/ext-ask-user core', () => {
       context: ' Shared context ',
       options: [' Alpha ', { title: 'Beta', description: ' Second ' }],
       allowComment: true,
+      singleSelectLayout: 'list',
       questions: [
         { question: ' First? ', header: ' Scope ' },
         { question: 'Second?', allowMultiple: true, allowFreeform: false },
@@ -45,6 +62,7 @@ describe('@felan-ai/ext-ask-user core', () => {
     expect(normalized).toEqual({
       ok: true,
       value: {
+        singleSelectLayout: 'list',
         questions: [
           {
             id: 'q1',
@@ -68,6 +86,65 @@ describe('@felan-ai/ext-ask-user core', () => {
           },
         ],
       },
+    });
+  });
+
+  it('coerces legacy primitives and common proxy aliases', () => {
+    const normalized = normalizeAskUserRequest({
+      question: 'Pick?',
+      options: [
+        ' Legacy string ',
+        7,
+        false,
+        { label: 'Label alias', description: ' Detail ' },
+        { text: 'Text alias' },
+        { value: 'Value alias' },
+        { name: 'Name alias' },
+        { option: 'Option alias' },
+      ],
+    });
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      value: {
+        questions: [{
+          options: [
+            { title: 'Legacy string' },
+            { title: '7' },
+            { title: 'false' },
+            { title: 'Label alias', description: 'Detail' },
+            { title: 'Text alias' },
+            { title: 'Value alias' },
+            { title: 'Name alias' },
+            { title: 'Option alias' },
+          ],
+        }],
+      },
+    });
+  });
+
+  it('prepares legacy and proxy option shapes before tool-schema validation', () => {
+    const tool = createHarness(answeringHost()).tool;
+    const prepared = tool.prepareArguments?.({
+      question: 'Pick?',
+      options: ['Legacy', { label: 'Alias' }, false],
+      questions: [{ question: 'Nested?', options: [{ text: 'Nested alias' }] }],
+    });
+
+    expect(prepared).toMatchObject({
+      options: [{ title: 'Legacy' }, { title: 'Alias' }, { title: 'false' }],
+      questions: [{ options: [{ title: 'Nested alias' }] }],
+    });
+    expect(Check(tool.parameters, prepared)).toBe(true);
+  });
+
+  it('returns a clear validation error for an unusable option', () => {
+    expect(normalizeAskUserRequest({
+      question: 'Pick?',
+      options: [{ label: 'Valid' }, {}],
+    })).toEqual({
+      ok: false,
+      error: 'Option 2 is unusable: expected a string, number, boolean, or an object with a non-empty title, label, text, value, name, or option',
     });
   });
 

@@ -45,7 +45,7 @@ const NESTED_ANSWER_TIMEOUT_MS = 60_000;
 
 const ProviderSelectionSchema = Type.Union([
   StringEnum(SEARCH_SELECTIONS),
-  Type.Array(StringEnum(PROVIDER_NAMES), { minItems: 1, uniqueItems: true }),
+  Type.Array(StringEnum(PROVIDER_NAMES), { minItems: 1 }),
 ]);
 
 const WebSearchParams = Type.Object({
@@ -97,15 +97,19 @@ type FetchContentParams = Static<typeof FetchContentParams>;
 type GetSearchContentParams = Static<typeof GetSearchContentParams>;
 
 const webAccessExtension: FelanExtension = (pi) => {
-  const store = new ResultStore(pi.appendEntry.bind(pi));
+  const store = new ResultStore(pi.runtime, pi.appendEntry.bind(pi));
 
   pi.registerCapability({
     id: 'web-access',
     instructions: WEB_CONTENT_CAPABILITY_INSTRUCTION,
   });
 
-  pi.on('session_start', (_event, ctx) => store.restore(ctx));
-  pi.on('session_shutdown', () => store.clear());
+  pi.on('session_start', async (_event, ctx) => {
+    await store.restore(ctx);
+  });
+  pi.on('session_shutdown', async () => {
+    await store.clear();
+  });
 
   pi.registerTool({
     name: 'web_search',
@@ -131,7 +135,7 @@ const webAccessExtension: FelanExtension = (pi) => {
       }
       const id = generateResponseId();
       const stored: StoredResult = { id, type: 'search', timestamp: Date.now(), queries: queryRecords };
-      store.put(stored);
+      await store.put(stored);
       return {
         content: [{
           type: 'text',
@@ -141,7 +145,7 @@ const webAccessExtension: FelanExtension = (pi) => {
             trustedStorageInstruction(queryRecords.flatMap((query) => query.fetched)),
           ),
         }],
-        details: stored,
+        details: searchDetails(stored),
       };
     },
   });
@@ -191,10 +195,10 @@ const webAccessExtension: FelanExtension = (pi) => {
         errors,
       });
       const stored: StoredResult = { id, type: 'research', timestamp: artifact.timestamp, artifact, urls: fetched, queries: queryRecords };
-      store.put(stored);
+      await store.put(stored);
       return {
         content: [{ type: 'text', text: trustedResultText(id, artifact, 'Use get_search_content with this response ID for paging or exact text lookup.') }],
-        details: stored,
+        details: researchDetails(stored),
       };
     },
   });
@@ -226,17 +230,17 @@ const webAccessExtension: FelanExtension = (pi) => {
         urls: pages,
         ...(answer !== undefined ? { answer } : {}),
       };
-      store.put(stored);
+      await store.put(stored);
       if (answer !== undefined) {
         return {
           content: [{
             type: 'text',
             text: trustedResultText(id, { type: 'answer', answer, sources: pages.map(pageMetadata) }, trustedStorageInstruction(pages)),
           }],
-          details: imageDetails(stored, pages),
+          details: fetchDetails(stored, pages),
         };
       }
-      return { content: fetchedPageContent(id, pages), details: imageDetails(stored, pages) };
+      return { content: fetchedPageContent(id, pages), details: fetchDetails(stored, pages) };
     },
   });
 
@@ -251,13 +255,13 @@ const webAccessExtension: FelanExtension = (pi) => {
       if (params.findText !== undefined && (params.offset !== undefined || params.limit !== undefined)) {
         throw new Error('findText cannot be combined with offset or limit');
       }
-      const stored = store.get(params.responseId);
+      const stored = await store.get(params.responseId);
       if (!stored) throw new Error(`No current web result found for response ID ${params.responseId}`);
       const selected = selectStoredContent(stored, params);
       if (selected.page?.image && params.findText === undefined && params.offset === undefined && params.limit === undefined) {
         return {
           content: imageContent(params.responseId, selected.page),
-          details: { responseId: params.responseId, page: selected.page, trust: imageTrust(selected.page) },
+          details: { responseId: params.responseId, imageTrust: [imageTrust(selected.page)] },
         };
       }
       const text = selected.text;
@@ -266,7 +270,13 @@ const webAccessExtension: FelanExtension = (pi) => {
         const found = findContent(text, queries, (params.findMode ?? 'case-insensitive') as FindMode);
         return {
           content: [{ type: 'text', text: trustedResultText(params.responseId, found, 'Match snippets are bounded to 20,000 characters.') }],
-          details: { responseId: params.responseId, ...found },
+          details: {
+            responseId: params.responseId,
+            mode: found.mode,
+            matchCount: found.matchCount,
+            returnedMatches: found.returnedMatches,
+            queryCount: found.queryResults.length,
+          },
         };
       }
       const offset = params.offset ?? 0;
@@ -448,9 +458,47 @@ function imageTrust(page: ExtractedContent) {
   return { source: 'remote-web', untrusted: true, mimeType: page.image?.mimeType ?? page.contentType };
 }
 
-function imageDetails(stored: StoredResult, pages: ExtractedContent[]) {
-  const trust = pages.filter((page) => page.image).map((page) => ({ url: page.url, ...imageTrust(page) }));
-  return trust.length > 0 ? { ...stored, imageTrust: trust } : stored;
+function searchDetails(stored: StoredResult) {
+  const queries = stored.queries ?? [];
+  const pages = queries.flatMap((query) => query.fetched);
+  return withImageTrust({
+    responseId: stored.id,
+    type: stored.type,
+    queryCount: queries.length,
+    providerResponseCount: queries.reduce((total, query) => total + query.responses.length, 0),
+    resultCount: queries.reduce(
+      (total, query) => total + query.responses.reduce((queryTotal, response) => queryTotal + response.results.length, 0),
+      0,
+    ),
+    fetchedCount: pages.length,
+  }, pages);
+}
+
+function researchDetails(stored: StoredResult) {
+  const pages = stored.urls ?? [];
+  return withImageTrust({
+    responseId: stored.id,
+    type: stored.type,
+    queryCount: stored.queries?.length ?? 0,
+    sourceCount: stored.artifact?.sources.length ?? 0,
+    passageCount: stored.artifact?.passages.length ?? 0,
+    fetchedCount: pages.length,
+  }, pages);
+}
+
+function fetchDetails(stored: StoredResult, pages: ExtractedContent[]) {
+  return withImageTrust({
+    responseId: stored.id,
+    type: stored.type,
+    urlCount: pages.length,
+    successfulCount: pages.filter((page) => page.error === null).length,
+    totalCharacters: pages.reduce((total, page) => total + page.content.length, 0),
+  }, pages);
+}
+
+function withImageTrust<T extends Record<string, unknown>>(details: T, pages: ExtractedContent[]) {
+  const trust = pages.flatMap((page, urlIndex) => page.image ? [{ urlIndex, ...imageTrust(page) }] : []);
+  return trust.length > 0 ? { ...details, imageTrust: trust } : details;
 }
 
 function queryRecordForModel(query: SearchQueryRecord) {

@@ -29,7 +29,7 @@ const WriteStdinParams = Type.Object({
 
 const ApplyPatchParams = Type.Object({
   input: Type.String({
-    description: 'Full patch text. Use *** Begin Patch / *** End Patch with Add/Update/Delete File sections. Order each file\'s hunks top-to-bottom; indentation is literal',
+    description: 'Full patch text. Use *** Begin Patch / *** End Patch with Add/Update/Delete File sections. *** Move to: path must immediately follow its Update File header and still needs a nonempty @@ hunk; use one unchanged context line for a pure move. Order each file\'s hunks top-to-bottom; indentation is literal',
   }),
 }, { additionalProperties: false });
 

@@ -169,6 +169,11 @@ try {
       const webAccessCapabilities = [];
       webAccess.default({
         appendEntry: () => {},
+        runtime: {
+          kind: 'packed-test',
+          cwd: process.env.PACKED_SMOKE_WORKSPACE,
+          storage: () => ({ root: process.env.PACKED_SMOKE_WORKSPACE + '/.web-access-session' }),
+        },
         registerCapability: (capability) => webAccessCapabilities.push(capability.id),
         registerTool: (tool) => webAccessTools.push(tool.name),
         on: () => {},

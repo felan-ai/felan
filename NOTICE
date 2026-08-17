@@ -31,23 +31,33 @@ commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
 Copyright (c) 2026 Milko Slavov. Package-level attribution and license terms
 are included in packages/ext-background-bash/NOTICE and LICENSE.
 
-@felan-ai/ext-ask-user adapts MIT-licensed portions of packages/pi-ask-user
-from https://github.com/mslavov/pi-extensions at source commit
+@felan-ai/ext-ask-user initially adapts MIT-licensed portions of
+packages/pi-ask-user from https://github.com/mslavov/pi-extensions at source commit
 7e72e509fe45a5a87c4c2e176cb711de994a8c1d. That package originates from
 https://github.com/edlsh/pi-ask-user. Copyright (c) 2026 Enzo Lucchesi.
+Additional proxy-safe option handling and bounded prompt behavior are adapted
+from pi-ask-user 0.14.0 at npm gitHead
+2de7e145227f7a527e995e323a50e7ee9bf88b0e.
 Package-level attribution and license terms are included in
 packages/ext-ask-user/NOTICE and LICENSE.
 
-@felan-ai/ext-web-access adapts MIT-licensed portions of pi-web-access 0.18.0
-from https://github.com/nicobailon/pi-web-access at npm gitHead
+@felan-ai/ext-web-access initially adapts MIT-licensed portions of
+pi-web-access 0.18.0 from https://github.com/nicobailon/pi-web-access at npm gitHead
 d2aab00dcf0547572276d9de4bc4a2a49d640e13. Copyright (c) 2025 Nico Bailon.
+Its runtime-backed fetched-content cache also adapts behavior reviewed in
+pi-web-access 0.23.0 at npm gitHead
+c77b28221d527f298d409d7e61ade661e548f50c.
 Package-level dependency attribution and license terms are included in
 packages/ext-web-access/NOTICE and LICENSE.
 
-@felan-ai/ext-mcp adapts selected MIT-licensed behavior from
+@felan-ai/ext-mcp initially adapts selected MIT-licensed behavior from
 pi-mcp-adapter 2.21.0 at npm gitHead
 eaf379782fddf836828811d1b71ad85d27bc70dd from
 https://github.com/nicobailon/pi-mcp-adapter. Copyright (c) 2026 Nico Bailon.
+The upstream was reviewed through pi-mcp-adapter 2.26.0 at npm gitHead
+5ee81b47b571b3c4ac2e68a03812c64e3f95cb98, and nested gateway-request
+recovery is adapted from subsequent main commit
+1bf36719cec478a163bb52e3390182963aab9f85.
 It uses @modelcontextprotocol/client 2.0.0 and
 @modelcontextprotocol/core 2.0.0 from
 https://github.com/modelcontextprotocol/typescript-sdk under that project's
@@ -60,10 +70,13 @@ Copyright (c) 2020 N-API for Rust. It uses open 11.0.0 from
 https://github.com/sindresorhus/open, licensed under the MIT License.
 Copyright (c) Sindre Sorhus.
 
-@felan-ai/ext-codex adapts selected MIT-licensed portions and behavior from
+@felan-ai/ext-codex initially adapts selected MIT-licensed portions and behavior from
 @howaboua/pi-codex-conversion 3.0.8 at npm gitHead
 62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91 from
 https://github.com/IgorWarzocha/howaboua-pi-stuff.
+Additional patch replacement and execution-shutdown behavior are adapted from
+@howaboua/pi-codex-conversion 3.0.15 at npm gitHead
+b4b99630cda3c066749af0fb3ac9b8184b2a4c7d.
 Copyright (c) 2026 Umberto B. Package-level attribution and license terms are
 included in packages/ext-codex/NOTICE and LICENSE.
 

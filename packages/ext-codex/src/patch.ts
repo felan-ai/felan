@@ -8,7 +8,7 @@ interface Chunk {
 }
 
 interface PatchAction {
-  type: 'add' | 'delete' | 'update';
+  type: 'add' | 'delete' | 'replace' | 'update';
   path: string;
   newFile?: string;
   lines?: string[];
@@ -72,6 +72,12 @@ async function applyAction(
     await runtime.mkdir(dirname(action.path), { recursive: true });
     await runtime.writeFile(action.path, encoder.encode(action.newFile ?? ''), { exclusive: true });
     result.createdFiles.push(action.path);
+    result.changedFiles.push(action.path);
+    return;
+  }
+  if (action.type === 'replace') {
+    await requireFile(runtime, action.path);
+    await runtime.writeFile(action.path, encoder.encode(action.newFile ?? ''));
     result.changedFiles.push(action.path);
     return;
   }
@@ -185,10 +191,14 @@ function parsePatchActions(text: string): PatchAction[] {
     const header = lines[index]!;
     const match = /^\*\*\* (Add|Delete|Update) File: (.+)$/u.exec(header);
     if (!match) throw new Error(`Invalid patch hunk on line ${index + 1}: ${header}`);
-    const type = match[1]!.toLowerCase() as PatchAction['type'];
+    const type = match[1]!.toLowerCase() as 'add' | 'delete' | 'update';
     const path = normalizePatchPath(match[2]!);
     if (!path) throw new Error('Patch path cannot be empty');
-    if (seen.has(path)) throw new Error(`Duplicate patch path: ${path}`);
+    const previous = actions.at(-1);
+    const replacesDeletedPath = type === 'add'
+      && previous?.type === 'delete'
+      && previous.path === path;
+    if (seen.has(path) && !replacesDeletedPath) throw new Error(`Duplicate patch path: ${path}`);
     seen.add(path);
     index += 1;
 
@@ -213,7 +223,9 @@ function parsePatchActions(text: string): PatchAction[] {
       for (const line of body) {
         if (!line.startsWith('+')) throw new Error(`Invalid Add File line: ${line}`);
       }
-      actions.push({ type, path, newFile: `${body.map((line) => line.slice(1)).join('\n')}\n` });
+      const newFile = `${body.map((line) => line.slice(1)).join('\n')}\n`;
+      if (replacesDeletedPath) actions[actions.length - 1] = { type: 'replace', path, newFile };
+      else actions.push({ type, path, newFile });
     } else {
       actions.push({ type, path, lines: body, ...(movePath ? { movePath } : {}) });
     }

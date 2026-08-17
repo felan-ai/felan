@@ -113,6 +113,143 @@ describe('createTuiAskUserHost', () => {
     expect(customOptions).toMatchObject({ overlay: true, overlayOptions: { anchor: 'center' } });
   });
 
+  it('normalizes display-mode environment values', async () => {
+    vi.stubEnv('PI_ASK_USER_DISPLAY_MODE', '  InLiNe  ');
+    let customOptions: unknown = 'unset';
+    const { context } = tuiContext((component, options) => {
+      customOptions = options;
+      component.handleInput?.('\u001b');
+    });
+
+    await ask(singleRequest(), context);
+    expect(customOptions).toBeUndefined();
+  });
+
+  it('supports list-only single-select layout from requests and the environment', async () => {
+    let requestLines: string[] = [];
+    const requested = tuiContext((component) => {
+      requestLines = component.render(100);
+      component.handleInput?.('\u001b');
+    });
+    await ask({ ...singleRequest(), singleSelectLayout: 'list' }, requested.context);
+    expect(requestLines.find((line) => line.includes('Filter:'))).not.toContain('Alpha');
+
+    vi.stubEnv('PI_ASK_USER_SINGLE_SELECT_LAYOUT', '  LiSt  ');
+    let environmentLines: string[] = [];
+    const environment = tuiContext((component) => {
+      environmentLines = component.render(100);
+      component.handleInput?.('\u001b');
+    });
+    await ask(singleRequest(), environment.context);
+    expect(environmentLines.find((line) => line.includes('Filter:'))).not.toContain('Alpha');
+
+    let autoLines: string[] = [];
+    const auto = tuiContext((component) => {
+      autoLines = component.render(100);
+      component.handleInput?.('\u001b');
+    });
+    await ask({ ...singleRequest(), singleSelectLayout: 'auto' }, auto.context);
+    expect(autoLines.find((line) => line.includes('Filter:'))).toContain('Alpha');
+  });
+
+  it('collapses long context by default and toggles it only with ctrl+e', async () => {
+    const longContext = Array.from({ length: 20 }, (_, index) => `context-${index + 1}`).join(' ');
+    let collapsedLines: string[] = [];
+    let afterOtherEditorControls: string[] = [];
+    let expandedLines: string[] = [];
+    const { context } = tuiContext((component) => {
+      collapsedLines = component.render(62);
+      component.handleInput?.('\u0018');
+      component.handleInput?.('\u0019');
+      afterOtherEditorControls = component.render(62);
+      component.handleInput?.('\u0005');
+      expandedLines = component.render(62);
+      component.handleInput?.('\u001b');
+    });
+
+    await ask(singleRequest({ context: longContext }), context);
+    expect(collapsedLines.join('\n')).toContain('Context (');
+    expect(collapsedLines.join('\n')).toContain('ctrl+e expand');
+    expect(collapsedLines.join('\n')).toContain('Alpha');
+    expect(afterOtherEditorControls).toEqual(collapsedLines);
+    expect(expandedLines.join('\n')).toContain('context-20');
+    expect(expandedLines.join('\n')).toContain('ctrl+e collapse context');
+  });
+
+  it('bounds multi-select by rendered rows and keeps the active option visible', async () => {
+    const options = Array.from({ length: 6 }, (_, index) => ({
+      title: `Option ${index + 1}`,
+      description: `Description ${index + 1} with enough detail to wrap across several rendered terminal rows`,
+    }));
+    let rendered: string[] = [];
+    const { context } = tuiContext((component) => {
+      component.render(60);
+      for (let index = 0; index < 4; index += 1) component.handleInput?.('\u001b[B');
+      rendered = component.render(60);
+      component.handleInput?.('\u001b');
+    }, 18);
+
+    await ask(singleRequest({ options, allowMultiple: true, allowFreeform: false }), context);
+    expect(rendered).toHaveLength(15);
+    expect(rendered.join('\n')).toContain('Option 5');
+    expect(rendered.join('\n')).toContain('(5/6)');
+    expect(rendered.join('\n')).not.toContain('Option 1');
+
+    let shortTerminal: string[] = [];
+    const short = tuiContext((component) => {
+      component.render(60);
+      for (let index = 0; index < 5; index += 1) component.handleInput?.('\u001b[B');
+      shortTerminal = component.render(60);
+      component.handleInput?.('\u001b');
+    }, 6);
+    await ask(singleRequest({ options, allowMultiple: true, allowFreeform: false }), short.context);
+    expect(shortTerminal).toHaveLength(4);
+    expect(shortTerminal.join('\n')).toContain('Option 6');
+    expect(shortTerminal.filter((line) => /Option \d/.test(line))).toHaveLength(1);
+
+    let shortWizard: string[] = [];
+    const wizard = tuiContext((component) => {
+      shortWizard = component.render(60);
+      component.handleInput?.('\u001b');
+    }, 6);
+    await ask({
+      questions: [
+        { ...singleRequest().questions[0]!, id: 'q1', header: 'First' },
+        { ...singleRequest().questions[0]!, id: 'q2', header: 'Second' },
+      ],
+    }, wizard.context);
+    expect(shortWizard).toHaveLength(4);
+    expect(shortWizard.join('\n')).toContain('Alpha');
+    expect(shortWizard.join('\n')).toContain('First');
+  });
+
+  it('keeps freeform and comment editors visible on short terminals', async () => {
+    let freeformLines: string[] = [];
+    const freeform = tuiContext((component) => {
+      component.handleInput?.('\u001b[B');
+      component.handleInput?.('\u001b[B');
+      component.handleInput?.('\r');
+      for (const character of 'short reply') component.handleInput?.(character);
+      freeformLines = component.render(60);
+      component.handleInput?.('\r');
+    }, 6);
+    await expect(ask(singleRequest(), freeform.context)).resolves.toMatchObject({ status: 'answered' });
+    expect(freeformLines).toHaveLength(4);
+    expect(freeformLines.join('\n')).toContain('short reply');
+
+    let commentLines: string[] = [];
+    const comment = tuiContext((component) => {
+      component.handleInput?.('\u0007');
+      component.handleInput?.('\r');
+      for (const character of 'short note') component.handleInput?.(character);
+      commentLines = component.render(60);
+      component.handleInput?.('\r');
+    }, 6);
+    await expect(ask(singleRequest({ allowComment: true }), comment.context)).resolves.toMatchObject({ status: 'answered' });
+    expect(commentLines).toHaveLength(4);
+    expect(commentLines.join('\n')).toContain('short note');
+  });
+
   it('falls back to RPC dialogs and rejects non-interactive modes', async () => {
     const rpc = dialogContext('Beta');
     await expect(ask(singleRequest(), rpc)).resolves.toEqual({
@@ -184,7 +321,7 @@ function singleRequest(overrides: Partial<AskUserRequest['questions'][number]> =
   };
 }
 
-function tuiContext(driver: (component: Component, options: unknown) => void) {
+function tuiContext(driver: (component: Component, options: unknown) => void, terminalRows = 40) {
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
@@ -200,7 +337,7 @@ function tuiContext(driver: (component: Component, options: unknown) => void) {
       return false;
     },
   };
-  const tui = { terminal: { rows: 40 }, requestRender: vi.fn() };
+  const tui = { terminal: { rows: terminalRows }, requestRender: vi.fn() };
   const ui = {
     theme,
     custom: (_factory: any, options: unknown) => new Promise((resolve) => {

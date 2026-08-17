@@ -5,6 +5,7 @@ import type {
 } from '@felan-ai/agent-core';
 import { StringEnum } from '@felan-ai/agent-core';
 import { Type, type Static } from 'typebox';
+import { Check } from 'typebox/value';
 import {
   formatMcpToolResult,
   MCP_UNTRUSTED_INSTRUCTION,
@@ -103,6 +104,13 @@ type McpParams = Static<typeof McpParameters>;
 interface McpToolErrorDetails {
   readonly error: string;
   readonly server?: string;
+}
+
+class InvalidNestedMcpRequestError extends Error {
+  constructor() {
+    super('Invalid MCP gateway request nested inside args');
+    this.name = 'InvalidNestedMcpRequestError';
+  }
 }
 
 interface SessionState {
@@ -215,12 +223,14 @@ export function createMcpExtension(options: CreateMcpExtensionOptions): FelanExt
       executionMode: 'sequential',
       parameters: McpParameters,
       async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+        let dispatchParams = params;
         try {
+          dispatchParams = recoverNestedMcpParams(params);
           const current = await requireState(initializing, () => state);
-          return await executeMcpAction(current, params, signal, ctx);
+          return await executeMcpAction(current, dispatchParams, signal, ctx);
         } catch (error) {
           if (signal?.aborted) throw error;
-          return toolError(error, params);
+          return toolError(error, dispatchParams);
         }
       },
     };
@@ -624,6 +634,49 @@ function parseArguments(value: McpParams['args']): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function recoverNestedMcpParams(params: McpParams): McpParams {
+  if (params.action !== undefined || params.args === undefined) return params;
+  if (params.server !== undefined || params.tool !== undefined || params.query !== undefined) {
+    throw new InvalidNestedMcpRequestError();
+  }
+
+  let nested: unknown;
+  try {
+    nested = typeof params.args === 'string'
+      ? JSON.parse(params.args) as unknown
+      : params.args;
+  } catch {
+    throw new InvalidNestedMcpRequestError();
+  }
+
+  if (!Check(McpParameters, nested) || nested.action === undefined || !isCompleteMcpRequest(nested)) {
+    throw new InvalidNestedMcpRequestError();
+  }
+  return nested;
+}
+
+function isCompleteMcpRequest(params: McpParams): boolean {
+  const hasServer = params.server !== undefined && params.server.trim().length > 0;
+  const hasTool = params.tool !== undefined && params.tool.trim().length > 0;
+  const hasQuery = params.query !== undefined && params.query.trim().length > 0;
+  switch (params.action) {
+    case 'status':
+      return params.server === undefined || hasServer;
+    case 'reconnect':
+    case 'list':
+    case 'authenticate':
+    case 'logout':
+      return hasServer;
+    case 'search':
+      return hasServer && hasQuery;
+    case 'describe':
+    case 'call':
+      return hasServer && hasTool;
+    default:
+      return false;
+  }
+}
+
 function requireParameter(value: string | undefined, name: string, action: string): string {
   const normalized = value?.trim();
   if (!normalized) throw new Error(`MCP action ${action} requires ${name}`);
@@ -651,7 +704,21 @@ function textResult(text: string, details: Record<string, unknown>) {
   };
 }
 
-function toolError(_error: unknown, params: McpParams) {
+function toolError(error: unknown, params: McpParams) {
+  if (error instanceof InvalidNestedMcpRequestError) {
+    return {
+      content: [{
+        type: 'text' as const,
+        text: [
+          'MCP gateway parameters nested inside "args" were invalid.',
+          'Pass "action" and its gateway parameters at the top level;',
+          'reserve "args" for remote tool arguments when action is "call".',
+        ].join(' '),
+      }],
+      isError: true,
+      details: { error: 'invalid_nested_mcp_request' },
+    };
+  }
   const action = params.action ?? 'status';
   const server = params.server;
   if (action === 'reconnect' && server !== undefined) {

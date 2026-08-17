@@ -159,9 +159,10 @@ merge from a long-lived source fork. Felan can evolve its portable contracts
 and product behavior without carrying a divergent Pi codebase.
 
 Many extensions are portable adaptations of, or were designed with reference
-to, existing Pi extensions. Their immutable upstream source versions and commits
-are recorded in [Upstream extension baselines](docs/upstream-extensions.md) so
-later upstream changes can be reviewed without reconstructing provenance.
+to, existing Pi extensions. Their immutable adaptation sources and latest
+reviewed upstream checkpoints are recorded in
+[Upstream extension review baselines](docs/upstream-extensions.md), including
+reviews where no change was ported.
 
 The local host loads only Felan's source-controlled built-in extensions. It
 does not discover ambient Pi extensions, prompts, project settings, or package

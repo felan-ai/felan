@@ -37,6 +37,7 @@ interface ExecSession {
   offset: number;
   pendingOutput: string;
   pendingOriginalCharCount: number;
+  disposePromise?: Promise<void>;
 }
 
 const DEFAULT_EXEC_YIELD_MS = 10_000;
@@ -54,6 +55,10 @@ const SESSION_ID_MAX_EXCLUSIVE = 100_000;
 export class ExecSessionManager {
   readonly #sessions = new Map<number, ExecSession>();
   readonly #completed = new Map<number, UnifiedExecResult>();
+  readonly #starting = new Set<Promise<void>>();
+  readonly #shutdownFailures: unknown[] = [];
+  #shuttingDown = false;
+  #shutdownPromise?: Promise<void>;
 
   constructor(private readonly runtime: AgentRuntime) {}
 
@@ -62,6 +67,7 @@ export class ExecSessionManager {
     signal?: AbortSignal,
     onUpdate?: (result: UnifiedExecResult) => void,
   ): Promise<UnifiedExecResult> {
+    this.#assertAvailable();
     const processes = this.runtime.processes;
     if (!processes) throw new Error('exec_command requires runtime process support');
     if (signal?.aborted) throw new Error('exec_command aborted');
@@ -71,21 +77,8 @@ export class ExecSessionManager {
       ...(input.shell === undefined ? {} : { shell: input.shell }),
       ...(input.login === undefined ? {} : { login: input.login }),
     };
-    const process = input.tty === true
-      ? await this.#startTerminal(input.cmd, processOptions)
-      : await processes.startShell(input.cmd, processOptions);
-    const session: ExecSession = {
-      id: this.#allocateSessionId(),
-      process,
-      tty: input.tty === true,
-      decoder: new TextDecoder(),
-      sanitizer: new TerminalSanitizer(),
-      interactionTail: Promise.resolve(),
-      offset: 0,
-      pendingOutput: '',
-      pendingOriginalCharCount: 0,
-    };
-    this.#sessions.set(session.id, session);
+    const session = await this.#startSession(input, processOptions, processes);
+    this.#assertAvailable();
     try {
       return await this.#withInteraction(session, async () => {
         onUpdate?.(this.#emptyResult(session, startedAt));
@@ -118,6 +111,7 @@ export class ExecSessionManager {
     signal?: AbortSignal,
     onUpdate?: (result: UnifiedExecResult) => void,
   ): Promise<UnifiedExecResult> {
+    this.#assertAvailable();
     const session = this.#sessions.get(input.session_id);
     if (!session) {
       return this.#completedResult(input);
@@ -125,6 +119,7 @@ export class ExecSessionManager {
     const startedAt = Date.now();
     try {
       return await this.#withInteraction(session, async () => {
+        this.#assertAvailable();
         if (this.#sessions.get(input.session_id) !== session) return this.#completedResult(input);
         const chars = input.chars ?? '';
         if (chars) {
@@ -159,11 +154,11 @@ export class ExecSessionManager {
     }
   }
 
-  async shutdown(): Promise<void> {
-    const sessions = [...this.#sessions.values()];
-    this.#sessions.clear();
-    this.#completed.clear();
-    await Promise.allSettled(sessions.map((session) => session.process.dispose()));
+  shutdown(): Promise<void> {
+    if (this.#shutdownPromise) return this.#shutdownPromise;
+    this.#shuttingDown = true;
+    this.#shutdownPromise = this.#finishShutdown();
+    return this.#shutdownPromise;
   }
 
   #emptyResult(session: ExecSession, startedAt: number): UnifiedExecResult {
@@ -176,14 +171,85 @@ export class ExecSessionManager {
   }
 
   async #complete(session: ExecSession, result: UnifiedExecResult): Promise<void> {
-    if (this.#sessions.get(session.id) === session) this.#sessions.delete(session.id);
+    try {
+      await this.#disposeSession(session);
+    } finally {
+      if (this.#sessions.get(session.id) === session) this.#sessions.delete(session.id);
+    }
+    if (this.#shuttingDown) return;
     this.#completed.set(session.id, result);
     while (this.#completed.size > COMPLETED_HISTORY_LIMIT) {
       const oldest = this.#completed.keys().next().value as number | undefined;
       if (oldest === undefined) break;
       this.#completed.delete(oldest);
     }
-    await session.process.dispose();
+  }
+
+  async #startSession(
+    input: ExecCommandInput,
+    options: Parameters<NonNullable<AgentRuntime['processes']>['startShell']>[1],
+    processes: NonNullable<AgentRuntime['processes']>,
+  ): Promise<ExecSession> {
+    let finishStart!: () => void;
+    const starting = new Promise<void>((resolveStart) => { finishStart = resolveStart; });
+    this.#starting.add(starting);
+    let process: AgentRuntimeProcess | undefined;
+    try {
+      process = input.tty === true
+        ? await this.#startTerminal(input.cmd, options)
+        : await processes.startShell(input.cmd, options);
+      this.#assertAvailable();
+      const session: ExecSession = {
+        id: this.#allocateSessionId(),
+        process,
+        tty: input.tty === true,
+        decoder: new TextDecoder(),
+        sanitizer: new TerminalSanitizer(),
+        interactionTail: Promise.resolve(),
+        offset: 0,
+        pendingOutput: '',
+        pendingOriginalCharCount: 0,
+      };
+      this.#sessions.set(session.id, session);
+      process = undefined;
+      return session;
+    } finally {
+      try {
+        if (process) {
+          try {
+            await process.dispose();
+          } catch (error) {
+            if (this.#shuttingDown) this.#shutdownFailures.push(error);
+            throw error;
+          }
+        }
+      } finally {
+        this.#starting.delete(starting);
+        finishStart();
+      }
+    }
+  }
+
+  async #finishShutdown(): Promise<void> {
+    await Promise.allSettled([...this.#starting]);
+    const sessions = [...this.#sessions.values()];
+    this.#sessions.clear();
+    this.#completed.clear();
+    const results = await Promise.allSettled(sessions.map((session) => this.#disposeSession(session)));
+    const failures = [
+      ...this.#shutdownFailures,
+      ...results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []),
+    ];
+    if (failures.length > 0) throw new AggregateError(failures, 'Failed to shut down exec sessions');
+  }
+
+  #disposeSession(session: ExecSession): Promise<void> {
+    session.disposePromise ??= Promise.resolve().then(() => session.process.dispose());
+    return session.disposePromise;
+  }
+
+  #assertAvailable(): void {
+    if (this.#shuttingDown) throw new Error('exec manager is shut down');
   }
 
   async #startTerminal(

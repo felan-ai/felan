@@ -14,6 +14,19 @@ model. Private-network destinations are blocked by default. Connections are
 pinned to validated DNS answers, redirects are revalidated, and model-facing
 text is bounded; full extracted text remains available through paging.
 
+Full search, research, and fetched results are cached for one hour under a
+dedicated directory in `AgentRuntime.storage('session')`. Session entries keep
+only versioned metadata references, and tool result details contain compact
+response IDs, counts, and image trust metadata rather than remote page bodies.
+The cache is limited to 32 MiB per result, 64 MiB total, and 128 entries, with
+oldest-first eviction; `get_search_content` continues to retrieve the full
+stored result while it is available.
+
+The latest reviewed upstream release is pi-web-access 0.23.0 at commit
+`c77b28221d527f298d409d7e61ade661e548f50c`. This package selectively adapts
+its externalized cache behavior without adding its providers, hosted
+extractors, browser-cookie authentication, or feature gates.
+
 ## Configuration
 
 Create `web-search.json` in Pi's agent directory. Every field is optional.

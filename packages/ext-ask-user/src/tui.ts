@@ -27,10 +27,12 @@ import type {
   AskUserQuestionAnswer,
   AskUserRequest,
   AskUserResponse,
+  AskUserSingleSelectLayout,
   AskUserToolDetails,
   AskUserToolErrorDetails,
   AskUserToolPresentation,
 } from './contracts.js';
+import { normalizeAskUserOption } from './normalize.js';
 import { renderSingleSelectRows } from './single-select-layout.js';
 
 type Theme = ExtensionContext['ui']['theme'];
@@ -42,6 +44,7 @@ const BOX_LEFT = '│ ';
 const BOX_RIGHT = ' │';
 const BOX_OVERHEAD = BOX_LEFT.length + BOX_RIGHT.length;
 const OVERLAY_MAX_HEIGHT_RATIO = 0.85;
+const OVERLAY_MIN_RENDER_LINES = 8;
 const OVERLAY_WIDTH: SizeValue = '92%';
 const OVERLAY_MAX_HEIGHT: SizeValue = '85%';
 const OVERLAY_MIN_WIDTH = 40;
@@ -52,6 +55,8 @@ const SPLIT_SEPARATOR = ' │ ';
 const COMMENT_LABEL = 'Add extra context after selection';
 const DEFAULT_OVERLAY_TOGGLE = 'alt+o';
 const DEFAULT_COMMENT_TOGGLE = 'ctrl+g';
+const CONTEXT_TOGGLE_KEY = Key.ctrl('e');
+const INLINE_CONTEXT_MAX_ROWS = 3;
 const FREEFORM_SENTINEL = 'Type custom response...';
 const DISABLED_VALUES = new Set(['off', 'none', 'disabled', '']);
 
@@ -91,6 +96,7 @@ async function presentAskUser(
   }
 
   const displayMode = resolveDisplayMode(request.displayMode);
+  const singleSelectLayout = resolveSingleSelectLayout(request.singleSelectLayout);
   const shortcuts: ResolvedShortcuts = {
     overlayToggle: resolveShortcut(
       request.overlayToggleKey,
@@ -164,6 +170,7 @@ async function presentAskUser(
           return new AskPrompt(
             question,
             displayMode,
+            singleSelectLayout,
             tui,
             theme,
             keybindings,
@@ -174,6 +181,7 @@ async function presentAskUser(
         return new AskWizard(
           request.questions,
           displayMode,
+          singleSelectLayout,
           tui,
           theme,
           keybindings,
@@ -215,8 +223,13 @@ async function presentAskUser(
 
 function resolveDisplayMode(value: AskUserRequest['displayMode']): 'overlay' | 'inline' {
   if (value) return value;
-  const environment = process.env.PI_ASK_USER_DISPLAY_MODE;
+  const environment = process.env.PI_ASK_USER_DISPLAY_MODE?.trim().toLowerCase();
   return environment === 'inline' || environment === 'overlay' ? environment : 'overlay';
+}
+
+function resolveSingleSelectLayout(value: AskUserRequest['singleSelectLayout']): AskUserSingleSelectLayout {
+  if (value) return value;
+  return process.env.PI_ASK_USER_SINGLE_SELECT_LAYOUT?.trim().toLowerCase() === 'list' ? 'list' : 'auto';
 }
 
 function resolveShortcut(
@@ -249,6 +262,14 @@ function customUIOptions(displayMode: 'overlay' | 'inline', onHandle: (handle: O
     },
     onHandle,
   };
+}
+
+function overlayMaxRenderLines(terminalRows: number): number {
+  const rows = Number.isFinite(terminalRows) ? Math.max(1, Math.floor(terminalRows)) : 24;
+  const availableRows = Math.max(1, rows - 2);
+  const ratioRows = Math.max(1, Math.floor(rows * OVERLAY_MAX_HEIGHT_RATIO));
+  const minimumRows = Math.min(OVERLAY_MIN_RENDER_LINES, availableRows);
+  return Math.min(availableRows, Math.max(minimumRows, ratioRows));
 }
 
 class BorderTop implements Component {
@@ -337,6 +358,7 @@ class MultiSelectList implements Component {
   private selectedIndex = 0;
   private readonly checked = new Set<number>();
   private commentEnabled = false;
+  private maxVisibleRows = 10;
   private cachedWidth: number | undefined;
   private cachedLines: string[] | undefined;
   onCancel?: () => void;
@@ -351,6 +373,14 @@ class MultiSelectList implements Component {
     private readonly keybindings: KeybindingsManager,
     private readonly commentToggle: ResolvedShortcut,
   ) {}
+
+  setMaxVisibleRows(rows: number): void {
+    const normalized = Math.max(1, Math.floor(rows));
+    if (normalized !== this.maxVisibleRows) {
+      this.maxVisibleRows = normalized;
+      this.invalidate();
+    }
+  }
 
   invalidate(): void {
     this.cachedWidth = undefined;
@@ -409,32 +439,67 @@ class MultiSelectList implements Component {
     if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
     const count = this.itemCount();
     if (count === 0) return [this.theme.fg('warning', 'No options')];
-    const visible = Math.min(count, 10);
-    const start = Math.max(0, Math.min(this.selectedIndex - Math.floor(visible / 2), count - visible));
-    const end = Math.min(start + visible, count);
-    const lines: string[] = [];
-    for (let index = start; index < end; index += 1) {
+    const blocks: string[][] = [];
+    for (let index = 0; index < count; index += 1) {
       const active = index === this.selectedIndex;
       const pointer = active ? this.theme.fg('accent', '→') : ' ';
+      const block: string[] = [];
       if (this.isCommentRow(index)) {
         const check = this.commentEnabled ? this.theme.fg('success', '[✓]') : this.theme.fg('dim', '[ ]');
-        lines.push(truncateToWidth(`${pointer}   ${check} ${this.theme.fg(active ? 'accent' : 'text', COMMENT_LABEL)}`, width, ''));
+        block.push(truncateToWidth(`${pointer}   ${check} ${this.theme.fg(active ? 'accent' : 'text', COMMENT_LABEL)}`, width, ''));
+        blocks.push(block);
         continue;
       }
       if (this.isFreeformRow(index)) {
-        lines.push(truncateToWidth(`${pointer}   ${this.theme.fg(active ? 'accent' : 'text', 'Type something.')} ${this.theme.fg('muted', '— Enter a custom response')}`, width, ''));
+        block.push(truncateToWidth(`${pointer}   ${this.theme.fg(active ? 'accent' : 'text', 'Type something.')} ${this.theme.fg('muted', '— Enter a custom response')}`, width, ''));
+        blocks.push(block);
         continue;
       }
       const option = this.options[index]!;
       const check = this.checked.has(index) ? this.theme.fg('success', '[✓]') : this.theme.fg('dim', '[ ]');
-      lines.push(truncateToWidth(`${pointer} ${this.theme.fg('dim', `${index + 1}.`)} ${check} ${this.theme.fg(active ? 'accent' : 'text', this.theme.bold(option.title))}`, width, ''));
+      block.push(truncateToWidth(`${pointer} ${this.theme.fg('dim', `${index + 1}.`)} ${check} ${this.theme.fg(active ? 'accent' : 'text', this.theme.bold(option.title))}`, width, ''));
       if (option.description) {
         for (const line of wrapTextWithAnsi(option.description, Math.max(10, width - 6))) {
-          lines.push(truncateToWidth(`      ${this.theme.fg('muted', line)}`, width, ''));
+          block.push(truncateToWidth(`      ${this.theme.fg('muted', line)}`, width, ''));
         }
       }
+      blocks.push(block);
     }
-    if (start > 0 || end < count) lines.push(this.theme.fg('dim', `  (${this.selectedIndex + 1}/${count})`));
+
+    const totalRows = blocks.reduce((sum, block) => sum + block.length, 0);
+    let lines: string[];
+    if (totalRows <= this.maxVisibleRows) {
+      lines = blocks.flat();
+    } else {
+      const availableRows = this.maxVisibleRows > 1 ? this.maxVisibleRows - 1 : 1;
+      const selectedBlock = blocks[this.selectedIndex] ?? blocks[0] ?? [];
+      if (selectedBlock.length >= availableRows) {
+        lines = selectedBlock.slice(0, availableRows);
+      } else {
+        let start = this.selectedIndex;
+        let end = this.selectedIndex + 1;
+        let usedRows = selectedBlock.length;
+        while (true) {
+          const next = blocks[end];
+          if (next && usedRows + next.length <= availableRows) {
+            usedRows += next.length;
+            end += 1;
+            continue;
+          }
+          const previous = blocks[start - 1];
+          if (previous && usedRows + previous.length <= availableRows) {
+            start -= 1;
+            usedRows += previous.length;
+            continue;
+          }
+          break;
+        }
+        lines = blocks.slice(start, end).flat();
+      }
+      if (this.maxVisibleRows > 1) {
+        lines.push(this.theme.fg('dim', truncateToWidth(`  (${this.selectedIndex + 1}/${count})`, width, '')));
+      }
+    }
     this.cachedWidth = width;
     this.cachedLines = lines;
     return lines;
@@ -481,6 +546,7 @@ class SearchableSingleSelect implements Component {
     private readonly allowFreeform: boolean,
     private readonly allowComment: boolean,
     private readonly theme: Theme,
+    private readonly singleSelectLayout: AskUserSingleSelectLayout,
     private readonly keybindings: KeybindingsManager,
     private readonly commentToggle: ResolvedShortcut,
   ) {}
@@ -553,7 +619,7 @@ class SearchableSingleSelect implements Component {
     const filtered = this.filtered();
     const count = this.itemCount(filtered);
     this.selectedIndex = count > 0 ? Math.min(this.selectedIndex, count - 1) : 0;
-    const split = splitPaneWidths(width);
+    const split = this.singleSelectLayout === 'list' ? null : splitPaneWidths(width);
     const lines = split
       ? this.renderSplit(split.left, split.right, filtered)
       : this.renderList(width, filtered, false);
@@ -564,8 +630,8 @@ class SearchableSingleSelect implements Component {
 
   private renderList(width: number, filtered: readonly AskUserOption[], hideDescriptions: boolean): string[] {
     const query = this.searchQuery ? this.theme.fg('text', this.searchQuery) : this.theme.fg('dim', 'type to filter');
-    const lines = [truncateToWidth(`${this.theme.fg('accent', 'Filter:')} ${query}`, width, '')];
-    if (this.searchQuery && filtered.length === 0) lines.push(this.theme.fg('warning', 'No matching options'));
+    const header = [truncateToWidth(`${this.theme.fg('accent', 'Filter:')} ${query}`, width, '')];
+    if (this.searchQuery && filtered.length === 0) header.push(this.theme.fg('warning', 'No matching options'));
     const rows = renderSingleSelectRows({
       options: filtered,
       selectedIndex: this.selectedIndex,
@@ -573,11 +639,12 @@ class SearchableSingleSelect implements Component {
       allowFreeform: this.allowFreeform,
       allowComment: this.allowComment,
       commentEnabled: this.commentEnabled,
-      maxRows: Math.max(1, this.maxVisibleRows - lines.length),
+      maxRows: Math.max(1, this.maxVisibleRows - header.length),
       hideDescriptions,
     });
-    lines.push(...rows.map((row) => this.styleLine(row.line, width, row.selected)));
-    return lines.slice(0, this.maxVisibleRows);
+    const renderedRows = rows.map((row) => this.styleLine(row.line, width, row.selected));
+    if (this.maxVisibleRows === 1) return renderedRows.length > 0 ? [renderedRows[0]!] : header.slice(-1);
+    return [...header, ...renderedRows].slice(0, this.maxVisibleRows);
   }
 
   private renderSplit(leftWidth: number, rightWidth: number, filtered: readonly AskUserOption[]): string[] {
@@ -670,6 +737,9 @@ class AskPrompt extends Container {
   private readonly modeContainer = new Container();
   private readonly titleText = new Text('', 1, 0);
   private readonly helpText = new Text('', 1, 0);
+  private readonly contextText?: Text;
+  private contextIsCollapsible = false;
+  private contextExpanded = false;
   private singleSelect?: SearchableSingleSelect;
   private multiSelect?: MultiSelectList;
   private editor?: Editor;
@@ -687,6 +757,7 @@ class AskPrompt extends Container {
   constructor(
     private readonly question: AskUserQuestion,
     private readonly displayMode: 'overlay' | 'inline',
+    private readonly singleSelectLayout: AskUserSingleSelectLayout,
     private readonly tui: TUI,
     private readonly theme: Theme,
     private readonly keybindings: KeybindingsManager,
@@ -705,11 +776,8 @@ class AskPrompt extends Container {
     this.addChild(new Text(theme.fg('text', theme.bold(question.question)), 1, 0));
     if (question.context) {
       this.addChild(new Spacer(1));
-      this.addChild(new Text(
-        `${theme.fg('accent', theme.bold('Context:'))}\n${theme.fg('dim', question.context)}`,
-        1,
-        0,
-      ));
+      this.contextText = new Text('', 1, 0);
+      this.addChild(this.contextText);
     }
     this.addChild(new Spacer(1));
     this.addChild(this.modeContainer);
@@ -731,23 +799,55 @@ class AskPrompt extends Container {
 
   override render(width: number): string[] {
     const innerWidth = Math.max(1, width - BOX_OVERHEAD);
-    if (this.mode === 'select' && !this.question.allowMultiple) {
-      const maxHeight = Math.max(12, Math.floor(this.tui.terminal.rows * OVERLAY_MAX_HEIGHT_RATIO));
-      const staticLines = 10
-        + wrapTextWithAnsi(this.question.question, Math.max(10, innerWidth - 2)).length
-        + (this.question.context ? wrapTextWithAnsi(this.question.context, Math.max(10, innerWidth - 2)).length + 1 : 0);
-      this.ensureSingle().setMaxVisibleRows(Math.max(4, maxHeight - staticLines));
+    const maxHeight = this.displayMode === 'overlay'
+      ? overlayMaxRenderLines(this.tui.terminal.rows)
+      : undefined;
+    this.updateContext(innerWidth, maxHeight);
+    if (this.mode === 'select') {
+      const questionRows = wrapTextWithAnsi(this.question.question, Math.max(10, innerWidth - 2)).length;
+      const contextRows = this.contextText?.render(innerWidth).length ?? 0;
+      const staticLines = 10 + questionRows + (contextRows > 0 ? contextRows + 1 : 0);
+      const visibleRows = maxHeight === undefined
+        ? (this.question.allowMultiple ? 10 : 12)
+        : Math.max(1, maxHeight - staticLines);
+      if (this.question.allowMultiple) this.ensureMulti().setMaxVisibleRows(visibleRows);
+      else this.ensureSingle().setMaxVisibleRows(visibleRows);
     }
     const lines = super.render(innerWidth);
+    if (maxHeight !== undefined && lines.length > maxHeight) {
+      if (maxHeight <= 1) return [this.renderTopBorder(width)];
+      if (maxHeight === 2) return [this.renderTopBorder(width), this.renderBottomBorder(width)];
+      const bodyCapacity = maxHeight - 2;
+      const renderedModeLines = this.modeContainer.render(innerWidth);
+      let prioritizedModeLines = renderedModeLines;
+      if (this.mode !== 'select' && renderedModeLines.length > 1) {
+        prioritizedModeLines = renderedModeLines.slice(0, -1);
+      } else if (!this.question.allowMultiple && renderedModeLines.length > 1) {
+        prioritizedModeLines = renderedModeLines.slice(1);
+      }
+      const modeLines = prioritizedModeLines.slice(-bodyCapacity);
+      const promptBudget = Math.max(0, bodyCapacity - modeLines.length);
+      const promptLines = [
+        ...new Text(this.theme.fg('text', this.theme.bold(this.question.question)), 1, 0).render(innerWidth),
+        ...(this.contextText?.render(innerWidth) ?? []),
+      ].slice(0, promptBudget);
+      return this.frameBody([...promptLines, ...modeLines], width, innerWidth);
+    }
     const border = (text: string) => this.theme.fg('accent', text);
     return lines.map((line, index) => {
-      if (index === 0) return new BorderTop(border, 'ask_user', (text) => this.theme.fg('dim', this.theme.bold(text))).render(width)[0]!;
-      if (index === lines.length - 1) return new BorderBottom(border, `v${VERSION}`, (text) => this.theme.fg('dim', text)).render(width)[0]!;
+      if (index === 0) return this.renderTopBorder(width);
+      if (index === lines.length - 1) return this.renderBottomBorder(width);
       return `${border(BOX_LEFT)}${truncateToWidth(line, innerWidth, '', true)}${border(BOX_RIGHT)}`;
     });
   }
 
   handleInput(data: string): void {
+    if (this.contextIsCollapsible && matchesKey(data, CONTEXT_TOGGLE_KEY)) {
+      this.contextExpanded = !this.contextExpanded;
+      this.invalidate();
+      this.tui.requestRender();
+      return;
+    }
     if (this.mode !== 'select') {
       if (matchesKey(data, Key.escape)) {
         this.showSelect();
@@ -777,6 +877,7 @@ class AskPrompt extends Container {
       this.question.allowFreeform,
       this.question.allowComment,
       this.theme,
+      this.singleSelectLayout,
       this.keybindings,
       this.shortcuts.commentToggle,
     );
@@ -881,10 +982,14 @@ class AskPrompt extends Container {
     const overlay = this.displayMode === 'overlay' && !this.shortcuts.overlayToggle.disabled
       ? literalHint(this.theme, this.shortcuts.overlayToggle.spec, 'hide')
       : undefined;
+    const context = this.contextIsCollapsible
+      ? literalHint(this.theme, CONTEXT_TOGGLE_KEY, this.contextExpanded ? 'collapse context' : 'expand context')
+      : undefined;
     if (this.mode !== 'select') {
       this.helpText.setText(this.theme.fg('dim', [
         keyHint(this.theme, this.keybindings, 'tui.input.submit', this.mode === 'comment' ? 'submit/skip' : 'submit'),
         literalHint(this.theme, 'esc', 'back'),
+        context,
         overlay,
       ].filter(Boolean).join(' • ')));
       return;
@@ -896,10 +1001,60 @@ class AskPrompt extends Container {
       this.question.allowMultiple ? literalHint(this.theme, 'space', 'toggle') : literalHint(this.theme, 'type', 'filter'),
       literalHint(this.theme, '↑↓', 'navigate'),
       comment,
+      context,
       overlay,
       keyHint(this.theme, this.keybindings, 'tui.select.confirm', this.question.allowMultiple ? 'submit' : 'select'),
       keyHint(this.theme, this.keybindings, 'tui.select.cancel', 'cancel'),
     ].filter(Boolean).join(' • ')));
+  }
+
+  private updateContext(width: number, maxHeight: number | undefined): void {
+    if (!this.contextText || !this.question.context) return;
+    const contentWidth = Math.max(10, width - 2);
+    const contextRows = wrapTextWithAnsi(this.question.context, contentWidth).length;
+    const questionRows = wrapTextWithAnsi(this.question.question, contentWidth).length;
+    const wouldCrowdChoices = maxHeight !== undefined && 11 + questionRows + contextRows + 1 > maxHeight;
+    const collapsible = contextRows > INLINE_CONTEXT_MAX_ROWS || wouldCrowdChoices;
+    if (this.contextIsCollapsible !== collapsible) {
+      this.contextIsCollapsible = collapsible;
+      if (!collapsible) this.contextExpanded = false;
+      this.updateText();
+    }
+    if (this.contextIsCollapsible && !this.contextExpanded) {
+      this.contextText.setText(this.theme.fg(
+        'dim',
+        `Context (${contextRows} lines) — ${CONTEXT_TOGGLE_KEY} expand`,
+      ));
+      return;
+    }
+    this.contextText.setText(
+      `${this.theme.fg('accent', this.theme.bold('Context:'))}\n${this.theme.fg('dim', this.question.context)}`,
+    );
+  }
+
+  private frameBody(body: string[], width: number, innerWidth: number): string[] {
+    const border = (text: string) => this.theme.fg('accent', text);
+    return [
+      this.renderTopBorder(width),
+      ...body.map((line) => `${border(BOX_LEFT)}${truncateToWidth(line, innerWidth, '', true)}${border(BOX_RIGHT)}`),
+      this.renderBottomBorder(width),
+    ];
+  }
+
+  private renderTopBorder(width: number): string {
+    return new BorderTop(
+      (text) => this.theme.fg('accent', text),
+      'ask_user',
+      (text) => this.theme.fg('dim', this.theme.bold(text)),
+    ).render(width)[0]!;
+  }
+
+  private renderBottomBorder(width: number): string {
+    return new BorderBottom(
+      (text) => this.theme.fg('accent', text),
+      `v${VERSION}`,
+      (text) => this.theme.fg('dim', text),
+    ).render(width)[0]!;
   }
 }
 
@@ -921,6 +1076,7 @@ class AskWizard implements Component {
   constructor(
     private readonly questions: readonly AskUserQuestion[],
     private readonly displayMode: 'overlay' | 'inline',
+    private readonly singleSelectLayout: AskUserSingleSelectLayout,
     private readonly tui: TUI,
     private readonly theme: Theme,
     private readonly keybindings: KeybindingsManager,
@@ -956,7 +1112,18 @@ class AskWizard implements Component {
     const inner = Math.max(1, width - BOX_OVERHEAD);
     const navigation = `${border(BOX_LEFT)}${truncateToWidth(this.navigation(), inner, '', true)}${border(BOX_RIGHT)}`;
     const spacer = `${border(BOX_LEFT)}${truncateToWidth('', inner, '', true)}${border(BOX_RIGHT)}`;
-    return [body[0]!, navigation, spacer, ...body.slice(1)];
+    const decorated = [body[0]!, navigation, spacer, ...body.slice(1)];
+    if (this.displayMode !== 'overlay') return decorated;
+    const maxHeight = overlayMaxRenderLines(this.tui.terminal.rows);
+    if (decorated.length <= maxHeight) return decorated;
+    if (maxHeight <= 1) return [body[0]!];
+    if (maxHeight === 2) return [body[0]!, body.at(-1)!];
+    const contentCapacity = maxHeight - 2;
+    const promptContent = body.slice(1, -1);
+    const content = contentCapacity === 1
+      ? promptContent.slice(-1)
+      : [navigation, ...promptContent.slice(-(contentCapacity - 1))];
+    return [body[0]!, ...content, body.at(-1)!];
   }
 
   private ensurePrompt(): AskPrompt {
@@ -965,6 +1132,7 @@ class AskWizard implements Component {
     this.prompt = new AskPrompt(
       question,
       this.displayMode,
+      this.singleSelectLayout,
       this.tui,
       this.theme,
       this.keybindings,
@@ -1193,9 +1361,7 @@ const toolPresentation: AskUserToolPresentation = {
       );
     }
     const options = Array.isArray(values.options) ? values.options : [];
-    const labels = options.map((option: unknown) => (
-      typeof option === 'string' ? option : (option as AskUserOption).title
-    ));
+    const labels = options.map((option: unknown) => normalizeAskUserOption(option)?.title ?? '<invalid>');
     const optionLine = labels.length > 0
       ? `\n${theme.fg('dim', `  ${labels.length} option(s): ${labels.join(', ')}`)}`
       : '';

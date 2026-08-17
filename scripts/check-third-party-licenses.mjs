@@ -56,6 +56,10 @@ for (const requiredNotice of [
   '@lydell/node-pty 1.2.0-beta.14',
   'TypeBox 1.1.38',
   'pi-mcp-adapter 2.21.0',
+  'pi-mcp-adapter 2.26.0',
+  'pi-ask-user 0.14.0',
+  'pi-web-access 0.23.0',
+  '@howaboua/pi-codex-conversion 3.0.15',
   '@modelcontextprotocol/client 2.0.0',
   '@napi-rs/keyring 1.3.0',
   'open 11.0.0',
@@ -76,6 +80,8 @@ for (const requiredNotice of [
   'https://github.com/mslavov/pi-extensions',
   'https://github.com/edlsh/pi-ask-user',
   '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
+  'pi-ask-user 0.14.0',
+  '2de7e145227f7a527e995e323a50e7ee9bf88b0e',
   'Pi-TUI 0.84.2',
   'TypeBox 1.1.38',
 ]) {
@@ -91,6 +97,8 @@ const codexNotice = readFileSync(resolve(root, 'packages/ext-codex/NOTICE'), 'ut
 for (const requiredNotice of [
   '@howaboua/pi-codex-conversion 3.0.8',
   '62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91',
+  '@howaboua/pi-codex-conversion 3.0.15',
+  'b4b99630cda3c066749af0fb3ac9b8184b2a4c7d',
   'TypeBox 1.1.38',
 ]) {
   if (!codexNotice.includes(requiredNotice)) {
@@ -115,6 +123,8 @@ for (const requiredNotice of [
   'pi-web-access 0.18.0',
   'https://github.com/nicobailon/pi-web-access',
   'd2aab00dcf0547572276d9de4bc4a2a49d640e13',
+  'pi-web-access 0.23.0',
+  'c77b28221d527f298d409d7e61ade661e548f50c',
   'TypeBox 1.1.38',
   'undici 8.10.0',
 ]) {
@@ -126,6 +136,9 @@ const mcpNotice = readFileSync(resolve(root, 'packages/ext-mcp/NOTICE'), 'utf8')
 for (const requiredNotice of [
   'pi-mcp-adapter 2.21.0',
   'eaf379782fddf836828811d1b71ad85d27bc70dd',
+  'pi-mcp-adapter 2.26.0',
+  '5ee81b47b571b3c4ac2e68a03812c64e3f95cb98',
+  '1bf36719cec478a163bb52e3390182963aab9f85',
   '@modelcontextprotocol/client 2.0.0',
   'TypeBox 1.1.38',
 ]) {

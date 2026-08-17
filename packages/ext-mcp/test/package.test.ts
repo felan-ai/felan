@@ -10,7 +10,7 @@ describe('@felan-ai/ext-mcp package boundary', () => {
     const managerSource = await readFile(join(packageRoot, 'src', 'manager.ts'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-mcp',
-      version: '0.1.1',
+      version: '0.1.2',
       license: 'MIT',
       dependencies: {
         '@modelcontextprotocol/client': '2.0.0',
@@ -30,5 +30,8 @@ describe('@felan-ai/ext-mcp package boundary', () => {
     expect(source).not.toContain('.mcp.json');
     expect(notice).toContain('pi-mcp-adapter 2.21.0');
     expect(notice).toContain('eaf379782fddf836828811d1b71ad85d27bc70dd');
+    expect(notice).toContain('pi-mcp-adapter 2.26.0');
+    expect(notice).toContain('5ee81b47b571b3c4ac2e68a03812c64e3f95cb98');
+    expect(notice).toContain('1bf36719cec478a163bb52e3390182963aab9f85');
   });
 });

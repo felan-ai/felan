@@ -18,17 +18,15 @@ import type {
 import {
   MAX_ASK_USER_QUESTIONS,
   normalizeAskUserRequest,
+  prepareAskUserArguments,
   validateAskUserHostOutcome,
   validateAskUserProgress,
 } from './normalize.js';
 
-const OptionSchema = Type.Union([
-  Type.String({ minLength: 1, description: 'Short title for this option' }),
-  Type.Object({
-    title: Type.String({ minLength: 1, description: 'Short title for this option' }),
-    description: Type.Optional(Type.String({ minLength: 1, description: 'Longer description explaining this option' })),
-  }, { additionalProperties: false }),
-]);
+const OptionSchema = Type.Object({
+  title: Type.String({ minLength: 1, description: 'Short title for this option' }),
+  description: Type.Optional(Type.String({ minLength: 1, description: 'Longer description explaining this option' })),
+}, { additionalProperties: false });
 
 const QuestionSchema = Type.Object({
   question: Type.String({ minLength: 1, description: 'The focused question to ask the user' }),
@@ -55,6 +53,9 @@ const AskUserParameters = Type.Object({
   })),
   displayMode: Type.Optional(StringEnum(['overlay', 'inline'] as const, {
     description: "UI rendering mode. 'overlay' shows a centered modal, 'inline' renders in-place. Omit to respect the host preference.",
+  })),
+  singleSelectLayout: Type.Optional(StringEnum(['auto', 'list'] as const, {
+    description: "Single-select layout. 'auto' uses a details pane on wide terminals; 'list' always keeps descriptions below options. Omit to respect the host preference.",
   })),
   overlayToggleKey: Type.Optional(Type.String({
     minLength: 1,
@@ -96,6 +97,7 @@ export function createAskUserExtension(host: AskUserHost): FelanExtension {
       ],
       executionMode: 'sequential',
       parameters: AskUserParameters,
+      prepareArguments: (args: unknown) => prepareAskUserArguments(args) as AskUserParams,
       async execute(toolCallId, params: AskUserParams, signal, onUpdate, extensionContext) {
         const normalized = normalizeAskUserRequest(params as AskUserInput);
         if (!normalized.ok) return toolError(normalized.error);
@@ -277,12 +279,14 @@ export type {
   AskUserHostOutcome,
   AskUserInput,
   AskUserOption,
+  AskUserOptionAliasInput,
   AskUserOptionInput,
   AskUserQuestion,
   AskUserQuestionAnswer,
   AskUserQuestionInput,
   AskUserRequest,
   AskUserResponse,
+  AskUserSingleSelectLayout,
   AskUserToolDetails,
   AskUserToolErrorDetails,
   AskUserToolPresentation,

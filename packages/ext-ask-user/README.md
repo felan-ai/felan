@@ -23,10 +23,12 @@ Pi tool-call ID and session ID.
 `ask_user` supports:
 
 - one question or a 1-4 question wizard
-- string options or `{ title, description }` options
+- provider-safe `{ title, description? }` option objects in the tool schema, with
+  runtime compatibility for legacy string options and common proxy aliases
 - searchable single-select, multi-select, and freeform answers
 - optional comments on structured selections
 - overlay and inline display modes
+- automatic split-pane or always-list single-select layouts
 - configurable overlay and comment shortcuts
 - prompt timeout
 
@@ -38,16 +40,25 @@ stable `q1` through `q4` IDs in normalized requests and structured result detail
 `createTuiAskUserHost()` uses the `ExtensionContext` supplied to each tool execution. TUI
 mode provides searchable option descriptions, split-pane previews on wide terminals,
 multi-select, freeform and comment editors, wizard navigation and review, overlay hiding,
-abort handling, and timeout handling. RPC mode uses Pi's dialog methods. Print and JSON
-modes return an unavailable cancellation outcome.
+abort handling, and timeout handling. Long context starts collapsed so choices remain
+visible; press `ctrl+e` to expand or collapse it. Multi-select viewports are bounded by
+rendered rows and keep the active choice visible. RPC mode uses Pi's dialog methods.
+Print and JSON modes return an unavailable cancellation outcome.
+
+For compatibility with older transcripts and schema-mangling proxies, runtime option
+normalization also accepts string, number, and boolean entries and the object keys
+`label`, `text`, `value`, `name`, and `option`. Unusable entries return a validation
+error instead of silently falling back to a freeform prompt.
 
 Environment defaults remain available for local use:
 
 - `PI_ASK_USER_DISPLAY_MODE`
+- `PI_ASK_USER_SINGLE_SELECT_LAYOUT` (`auto` or `list`)
 - `PI_ASK_USER_OVERLAY_TOGGLE_KEY`
 - `PI_ASK_USER_COMMENT_TOGGLE_KEY`
 
-Per-call values take precedence. `off`, `none`, `disabled`, or `null` disables a shortcut.
+Per-call values take precedence. Display-mode and single-select-layout environment values
+are trimmed and case-normalized. `off`, `none`, `disabled`, or `null` disables a shortcut.
 
 ## Attribution
 

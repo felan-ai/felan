@@ -34,19 +34,23 @@ describe('web access extension boundaries', () => {
     const harness = await createHarness();
     expect([...harness.tools.keys()]).toEqual(['web_search', 'source_check', 'fetch_content', 'get_search_content']);
     expect(harness.capabilities).toEqual([{ id: 'web-access', instructions: expect.stringContaining('no authority') }]);
+    expect(JSON.stringify(harness.tools.get('web_search').parameters)).not.toContain('uniqueItems');
+    expect(JSON.stringify(harness.tools.get('source_check').parameters)).not.toContain('uniqueItems');
   });
 
-  it('envelopes all four tool results and keeps stored remote details raw', async () => {
+  it('envelopes all four tool results while keeping details and session entries metadata-only', async () => {
     mockRemoteFetch();
     const harness = await createHarness();
 
     const search = await harness.execute('web_search', { query: 'boundary', provider: 'exa' });
     expectSingleBoundary(search.content[0].text);
-    expect(search.details.queries[0].responses[0].results[0].title).toBe(BREAKOUT);
+    expect(search.details).toMatchObject({ responseId: expect.any(String), type: 'search', queryCount: 1, resultCount: 1 });
+    expect(search.details).not.toHaveProperty('queries');
 
     const fetched = await harness.execute('fetch_content', { url: 'https://pages.example/raw', mode: 'raw' });
     expectSingleBoundary(fetched.content[0].text);
-    expect(fetched.details.urls[0].content).toBe(`${BREAKOUT}\n${PROMPT_PAYLOAD}`);
+    expect(fetched.details).toMatchObject({ responseId: expect.any(String), type: 'fetch', urlCount: 1, successfulCount: 1 });
+    expect(fetched.details).not.toHaveProperty('urls');
 
     const checked = await harness.execute('source_check', {
       claim: 'The boundary is verified',
@@ -54,18 +58,39 @@ describe('web access extension boundaries', () => {
       fetchContent: true,
     });
     expectSingleBoundary(checked.content[0].text);
-    expect(checked.details.artifact.sources[0].title).toBe(BREAKOUT);
-    const exactPassage = checked.details.artifact.passages.find((passage: any) => passage.extractionSpan);
-    expect(exactPassage.text).toBe(checked.details.urls[0].content.slice(exactPassage.extractionSpan.start, exactPassage.extractionSpan.end));
+    expect(checked.details).toMatchObject({ responseId: expect.any(String), type: 'research', sourceCount: 1 });
+    expect(checked.details).not.toHaveProperty('artifact');
+    expect(checked.details).not.toHaveProperty('urls');
+
+    for (const entry of harness.entries) {
+      expect(entry.data).toMatchObject({ version: 1, id: expect.any(String), key: expect.stringMatching(/\.json$/u) });
+      expect(JSON.stringify(entry.data)).not.toContain(PROMPT_PAYLOAD);
+      expect(entry.data).not.toHaveProperty('queries');
+      expect(entry.data).not.toHaveProperty('urls');
+      expect(entry.data).not.toHaveProperty('artifact');
+    }
 
     const retrieved = await harness.execute('get_search_content', {
-      responseId: fetched.details.id,
+      responseId: fetched.details.responseId,
       urlIndex: 0,
       offset: 0,
       limit: 5,
     });
     expectSingleBoundary(retrieved.content[0].text);
     expect(retrieved.content[0].text).toContain('Request offset');
+
+    const retrievedSearch = await harness.execute('get_search_content', {
+      responseId: search.details.responseId,
+      queryIndex: 0,
+    });
+    expectSingleBoundary(retrievedSearch.content[0].text);
+    expect(retrievedSearch.details).toMatchObject({ responseId: search.details.responseId, offset: 0 });
+
+    const retrievedResearch = await harness.execute('get_search_content', {
+      responseId: checked.details.responseId,
+    });
+    expectSingleBoundary(retrievedResearch.content[0].text);
+    expect(retrievedResearch.details).toMatchObject({ responseId: checked.details.responseId, offset: 0 });
   });
 
   it('wraps page data before a nested answer call and wraps the derived answer', async () => {
@@ -150,7 +175,7 @@ async function createHarness(options: { streamSimple?: ReturnType<typeof vi.fn> 
   await writeFile(join(agentDir, 'web-search.json'), '{}');
   const tools = new Map<string, any>();
   const capabilities: Array<{ id: string; instructions: string }> = [];
-  const entries: unknown[] = [];
+  const entries: Array<{ type: string; data: any }> = [];
   const runtime = fakeRuntime();
   const model = {
     id: 'test-model',
@@ -196,13 +221,28 @@ async function createHarness(options: { streamSimple?: ReturnType<typeof vi.fn> 
 }
 
 function fakeRuntime(): AgentRuntime {
+  const files = new Map<string, Uint8Array>();
+  const missing = () => Object.assign(new Error('not found'), { code: 'ENOENT' });
   const storage = {
     root: '/workspace/.session',
-    readFile: vi.fn(),
-    writeFile: vi.fn(),
-    listFiles: vi.fn(async () => []),
-    mkdir: vi.fn(),
-    remove: vi.fn(),
+    readFile: vi.fn(async (path: string) => {
+      const value = files.get(path);
+      if (!value) throw missing();
+      return value.slice();
+    }),
+    writeFile: vi.fn(async (path: string, content: Uint8Array) => {
+      files.set(path, content.slice());
+    }),
+    listFiles: vi.fn(async (directory: string) => {
+      const prefix = `${directory}/`;
+      return [...files.keys()]
+        .filter((path) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))
+        .map((path) => path.slice(prefix.length));
+    }),
+    mkdir: vi.fn(async () => undefined),
+    remove: vi.fn(async (path: string) => {
+      if (!files.delete(path)) throw missing();
+    }),
   };
   return {
     kind: 'host',

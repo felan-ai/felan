@@ -9,7 +9,7 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-ask-user',
-      version: '0.1.2',
+      version: '0.1.3',
       type: 'module',
       license: 'MIT',
       engines: { node: '>=22.19.0' },
@@ -34,6 +34,8 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
     expect(notice).toContain('https://github.com/mslavov/pi-extensions');
     expect(notice).toContain('https://github.com/edlsh/pi-ask-user');
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');
+    expect(notice).toContain('pi-ask-user 0.14.0');
+    expect(notice).toContain('2de7e145227f7a527e995e323a50e7ee9bf88b0e');
     expect(notice).toContain('Pi-TUI 0.84.2');
     expect(notice).toContain('TypeBox 1.1.38');
   });

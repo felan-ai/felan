@@ -4,13 +4,24 @@ import type {
 } from '@felan-ai/agent-core';
 
 export type AskUserDisplayMode = 'overlay' | 'inline';
+export type AskUserSingleSelectLayout = 'auto' | 'list';
 
 export interface AskUserOption {
   readonly title: string;
   readonly description?: string;
 }
 
-export type AskUserOptionInput = string | AskUserOption;
+export interface AskUserOptionAliasInput {
+  readonly title?: string | number | boolean;
+  readonly label?: string | number | boolean;
+  readonly text?: string | number | boolean;
+  readonly value?: string | number | boolean;
+  readonly name?: string | number | boolean;
+  readonly option?: string | number | boolean;
+  readonly description?: string;
+}
+
+export type AskUserOptionInput = string | number | boolean | AskUserOptionAliasInput;
 
 export interface AskUserQuestionInput {
   readonly question: string;
@@ -25,6 +36,7 @@ export interface AskUserQuestionInput {
 export interface AskUserInput extends Partial<AskUserQuestionInput> {
   readonly questions?: readonly AskUserQuestionInput[];
   readonly displayMode?: AskUserDisplayMode;
+  readonly singleSelectLayout?: AskUserSingleSelectLayout;
   readonly overlayToggleKey?: string | null;
   readonly commentToggleKey?: string | null;
   readonly timeout?: number;
@@ -44,6 +56,7 @@ export interface AskUserQuestion {
 export interface AskUserRequest {
   readonly questions: readonly AskUserQuestion[];
   readonly displayMode?: AskUserDisplayMode;
+  readonly singleSelectLayout?: AskUserSingleSelectLayout;
   readonly overlayToggleKey?: string | null;
   readonly commentToggleKey?: string | null;
   readonly timeout?: number;
