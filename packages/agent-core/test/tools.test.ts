@@ -81,7 +81,78 @@ describe('runtime-backed coding tools', () => {
       ],
     });
   });
+
+  it('accepts file grep targets and normalizes empty paths', async () => {
+    const runtime = new TestAgentRuntime('/virtual-felan-workspace');
+    await runtime.mkdir('nested');
+    await runtime.writeFile('nested/target.ts', new TextEncoder().encode('const needle = true;'));
+    const tools = toolsByName(createRuntimeCodingTools(runtime));
+
+    await tools.grep!.execute(
+      'grep-file',
+      { pattern: 'needle', path: 'nested/target.ts' },
+      undefined,
+      undefined,
+      context,
+    );
+    await tools.grep!.execute(
+      'grep-empty-path',
+      { pattern: 'needle', path: '' },
+      undefined,
+      undefined,
+      context,
+    );
+
+    expect(runtime.execCalls.map(({ args }) => args.slice(-2))).toEqual([
+      ['needle', 'nested/target.ts'],
+      ['needle', '.'],
+    ]);
+  });
+
+  it('validates grep targets through the runtime before execution', async () => {
+    const runtime = new TestAgentRuntime('/virtual-felan-workspace');
+    const tools = toolsByName(createRuntimeCodingTools(runtime));
+
+    await expect(tools.grep!.execute(
+      'grep-escape',
+      { pattern: 'secret', path: '../outside.txt' },
+      undefined,
+      undefined,
+      context,
+    )).rejects.toThrow('escapes runtime cwd');
+    expect(runtime.execCalls).toHaveLength(0);
+  });
+
+  it('does not infer file access from a parent directory listing', async () => {
+    const runtime = new FilePolicyRuntime('/virtual-felan-workspace');
+    const tools = toolsByName(createRuntimeCodingTools(runtime));
+
+    await expect(tools.grep!.execute(
+      'grep-denied-file',
+      { pattern: 'secret', path: 'secret.txt' },
+      undefined,
+      undefined,
+      context,
+    )).rejects.toThrow('File access denied');
+    expect(runtime.execCalls).toHaveLength(0);
+  });
 });
+
+class FilePolicyRuntime extends TestAgentRuntime {
+  override async readFile(path: string): Promise<Uint8Array> {
+    if (path === 'secret.txt') throw new Error('File access denied');
+    return super.readFile(path);
+  }
+
+  override async listFiles(
+    path: string,
+    options?: { recursive?: boolean },
+  ): Promise<string[]> {
+    if (path === 'secret.txt') throw new Error('File listing denied');
+    if (path === '.') return ['secret.txt'];
+    return super.listFiles(path, options);
+  }
+}
 
 function toolsByName(tools: ToolDefinition<any, any, any>[]) {
   return Object.fromEntries(tools.map((tool) => [tool.name, tool])) as Record<

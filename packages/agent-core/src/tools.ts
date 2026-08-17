@@ -60,16 +60,17 @@ export function createRuntimeCodingTools(runtime: AgentRuntime): ToolDefinition<
   const grep = createGrepToolDefinition(runtime.cwd);
   grep.execute = async (
     _toolCallId,
-    { pattern, path = '.', glob, ignoreCase, literal, context, limit = 100 },
+    { pattern, path, glob, ignoreCase, literal, context, limit = 100 },
     signal,
   ) => {
-    await runtime.listFiles(path);
+    const searchPath = path || '.';
+    await validateGrepPath(runtime, searchPath);
     const args = ['--line-number', '--color=never', '--hidden'];
     if (ignoreCase) args.push('--ignore-case');
     if (literal) args.push('--fixed-strings');
     if (glob) args.push('--glob', glob);
     if (context && context > 0) args.push('--context', String(context));
-    args.push('--', pattern, path);
+    args.push('--', pattern, searchPath);
 
     const result = await runtime.exec('rg', args, signal === undefined ? undefined : { signal });
     if (result.killed) throw new Error('Operation aborted');
@@ -117,6 +118,14 @@ export function createRuntimeCodingTools(runtime: AgentRuntime): ToolDefinition<
   });
 
   return [read, bash, edit, write, grep, find, ls];
+}
+
+async function validateGrepPath(runtime: AgentRuntime, path: string): Promise<void> {
+  try {
+    await runtime.listFiles(path);
+  } catch {
+    await runtime.readFile(path);
+  }
 }
 
 async function pathExists(runtime: AgentRuntime, path: string): Promise<boolean> {
