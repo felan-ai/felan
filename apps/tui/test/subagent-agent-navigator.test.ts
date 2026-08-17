@@ -5,10 +5,15 @@ import {
   type Theme,
 } from '@earendil-works/pi-coding-agent';
 import {
+  SUBAGENT_COMPLETION_MESSAGE_TYPE,
+  type SubagentCompletionNotice,
+} from '@felan-ai/ext-subagents';
+import {
   KeybindingsManager as TuiKeybindingsManager,
   TUI_KEYBINDINGS,
   setKeybindings,
   visibleWidth,
+  type Component,
 } from '@earendil-works/pi-tui';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
@@ -174,6 +179,7 @@ describe('AgentRailEditor', () => {
 describe('registerLocalSubagentNavigator', () => {
   it('registers TUI controls and exposes the rail separately from the editor', () => {
     const commands = new Map<string, unknown>();
+    const messageRenderers = new Map<string, CompletionRenderer>();
     const shortcuts: unknown[] = [];
     const handlers = new Map<string, Array<(event: unknown, context: unknown) => void>>();
     const pi = {
@@ -183,6 +189,7 @@ describe('registerLocalSubagentNavigator', () => {
         handlers.set(event, registered);
       }),
       registerCommand: vi.fn((name, command) => commands.set(name, command)),
+      registerMessageRenderer: vi.fn((name, renderer) => messageRenderers.set(name, renderer)),
       registerShortcut: vi.fn((shortcut, definition) => shortcuts.push([shortcut, definition])),
     };
     const host = navigatorHost(() => [record('agent-1')]);
@@ -208,6 +215,7 @@ describe('registerLocalSubagentNavigator', () => {
     handlers.get('session_start')![0]!({}, context);
 
     expect(commands.has('agents')).toBe(true);
+    expect(messageRenderers.has(SUBAGENT_COMPLETION_MESSAGE_TYPE)).toBe(true);
     expect(shortcuts).toHaveLength(1);
     expect(setEditorComponent).toHaveBeenCalledOnce();
     expect(editor?.render(80).join('\n')).not.toContain('reviewer');
@@ -215,7 +223,64 @@ describe('registerLocalSubagentNavigator', () => {
     handlers.get('session_shutdown')![0]!({}, context);
     expect(railRenderer).toBeUndefined();
   });
+
+  it('renders completion notices as one bounded summary line by default', () => {
+    const messageRenderers = new Map<string, CompletionRenderer>();
+    const pi = {
+      on: vi.fn(),
+      registerCommand: vi.fn(),
+      registerMessageRenderer: vi.fn((name, renderer) => messageRenderers.set(name, renderer)),
+      registerShortcut: vi.fn(),
+    };
+    registerLocalSubagentNavigator(pi as never, navigatorHost(() => []));
+    const renderer = messageRenderers.get(SUBAGENT_COMPLETION_MESSAGE_TYPE)!;
+    const notice: SubagentCompletionNotice = {
+      deliveryId: 'delivery-1',
+      parentSessionId: 'parent-1',
+      agentId: '844e8bcc-1c51-40f5-8ef0-791604e69f58',
+      type: 'explore',
+      status: 'completed',
+      summary: '\u001b[31m## Summary\u0007\u0008 heading\u001b[0m\nsecond detail\nthird detail\nfourth detail',
+    };
+    const message = {
+      role: 'custom',
+      customType: SUBAGENT_COMPLETION_MESSAGE_TYPE,
+      content: `Subagent completion: ${notice.summary}`,
+      display: true,
+      details: { notice },
+      timestamp: 1,
+    };
+
+    const collapsed = renderer(message, { expanded: false, outputPad: 1 }, theme)!.render(60);
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]).toContain('Subagent explore completed');
+    expect(collapsed[0]).toContain('Summary heading');
+    expect(collapsed.join('\n')).not.toContain('second detail');
+    expect(collapsed.join('\n')).not.toContain('\u001b[31m');
+    expect(collapsed.join('\n')).not.toMatch(/[\u0007\u0008\u009B]/u);
+    expect(collapsed.every((line) => visibleWidth(line) <= 60)).toBe(true);
+
+    const expanded = renderer(message, { expanded: true, outputPad: 1 }, theme)!.render(60);
+    expect(expanded.join('\n')).toContain('second detail');
+    expect(expanded.join('\n')).toContain('third detail');
+    expect(expanded.join('\n')).not.toContain('fourth detail');
+    expect(expanded.join('\n')).toContain('1 more lines');
+    expect(expanded.every((line) => visibleWidth(line) <= 60)).toBe(true);
+  });
 });
+
+type CompletionRenderer = (
+  message: {
+    role: 'custom';
+    customType: string;
+    content: string;
+    display: boolean;
+    details: { notice: SubagentCompletionNotice };
+    timestamp: number;
+  },
+  options: { expanded: boolean; outputPad: number },
+  theme: Theme,
+) => Component | undefined;
 
 function createHarness(initialRecords: LocalSubagentView[], rows = 14, columns = 80) {
   let records = initialRecords;

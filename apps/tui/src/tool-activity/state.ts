@@ -65,13 +65,7 @@ type ActivityListener = () => void;
 type RendererInvalidator = () => void;
 
 const STANDALONE_TOOLS = new Set([
-  'Agent',
   'ask_user',
-  'cancel_subagent',
-  'get_subagent_result',
-  'list_subagents',
-  'mcp',
-  'steer_subagent',
   'view_image',
 ]);
 
@@ -518,7 +512,6 @@ function normalizeResult(result: {
 
 function isStandalone(call: ToolActivityCall): boolean {
   return STANDALONE_TOOLS.has(call.name)
-    || call.name.startsWith('mcp__')
     || call.result?.content.some((content) => content.type === 'image') === true;
 }
 

@@ -65,10 +65,12 @@ All built-in extensions are enabled by default. Toggle them in
 }
 ```
 
-The local transcript groups adjacent tool calls by default. Press `Ctrl+O` to
-switch between group summaries and bounded per-call previews. Use `/tools` or
-`Alt+T` to inspect the complete arguments and result for one call. To restore
-Pi's original ungrouped rendering, set:
+The local transcript groups adjacent tool calls by default, with one concise
+action row per call beneath each group title. Press `Ctrl+O` to show bounded
+result previews. Use `/tools` or `Alt+T` to inspect the complete arguments and
+result for one call. Subagent completion notices stay on one summary line by
+default; `Ctrl+O` shows a bounded preview and `Alt+A` opens full agent details.
+To restore Pi's original ungrouped rendering, set:
 
 ```json
 {

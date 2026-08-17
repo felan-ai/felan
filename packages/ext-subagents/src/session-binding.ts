@@ -6,7 +6,7 @@ import type {
   SubagentParentPort,
 } from './contracts.js';
 
-const completionType = 'felan-subagent-completion';
+export const SUBAGENT_COMPLETION_MESSAGE_TYPE = 'felan-subagent-completion';
 const encoder = new TextEncoder();
 
 export function bindSubagentSession(options: {
@@ -50,7 +50,7 @@ function createParentPort(
   const sessionManager = session.sessionManager;
   const delivered = new Set(
     sessionManager.getEntries()
-      .flatMap((entry) => entry.type === 'custom_message' && entry.customType === completionType
+      .flatMap((entry) => entry.type === 'custom_message' && entry.customType === SUBAGENT_COMPLETION_MESSAGE_TYPE
         ? completionIds(entry.details)
         : []),
   );
@@ -76,12 +76,12 @@ function createParentPort(
     if (
       event.type !== 'message_end'
       || event.message.role !== 'custom'
-      || event.message.customType !== completionType
+      || event.message.customType !== SUBAGENT_COMPLETION_MESSAGE_TYPE
     ) return;
     const ids = completionIds(event.message.details);
     queueMicrotask(() => {
       const persisted = new Set(sessionManager.getEntries().flatMap((entry) => (
-        entry.type === 'custom_message' && entry.customType === completionType
+        entry.type === 'custom_message' && entry.customType === SUBAGENT_COMPLETION_MESSAGE_TYPE
           ? completionIds(entry.details)
           : []
       )));
@@ -126,7 +126,7 @@ function createParentPort(
         try {
           await session.sendCustomMessage(
             {
-              customType: completionType,
+              customType: SUBAGENT_COMPLETION_MESSAGE_TYPE,
               content: formatCompletionNotice(notice),
               display: true,
               details: { notice },

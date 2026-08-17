@@ -299,7 +299,10 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
-export { bindSubagentSession } from './session-binding.js';
+export {
+  bindSubagentSession,
+  SUBAGENT_COMPLETION_MESSAGE_TYPE,
+} from './session-binding.js';
 export type {
   SubagentCompletionNotice,
   SubagentDescriptor,

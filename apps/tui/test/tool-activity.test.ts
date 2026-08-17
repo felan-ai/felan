@@ -54,12 +54,29 @@ describe('ToolActivityState', () => {
 
     expect(harness.state.groups().map((group) => group.callIds)).toEqual([
       ['read-1', 'grep-1'],
-      ['exec-1'],
-      ['agent-1'],
-      ['task-1'],
+      ['exec-1', 'agent-1', 'task-1'],
     ]);
-    expect(harness.state.group('agent-1')?.standalone).toBe(true);
+    expect(harness.state.group('exec-1')?.standalone).toBe(false);
     expect(harness.state.call('grep-1')).toMatchObject({ status: 'completed', isError: false });
+  });
+
+  it('groups MCP and subagent activity across adjacent tool-only turns', () => {
+    const harness = activityHarness([
+      assistant([toolCall('mcp-1', 'mcp', { action: 'list', server: 'linear' })], 10),
+      toolResult('mcp-1', 'mcp', 'tools', false, 20),
+      assistant([toolCall('mcp-2', 'mcp', { action: 'call', server: 'linear', tool: 'get_issue' })], 30),
+      toolResult('mcp-2', 'mcp', 'issue', false, 40),
+      assistant([
+        { type: 'text', text: 'Delegating next.' },
+        toolCall('agent-1', 'Agent', { description: 'Review auth', subagent_type: 'reviewer' }),
+        toolCall('result-1', 'get_subagent_result', { agent_id: 'agent-123' }),
+      ], 50),
+    ]);
+
+    expect(harness.state.groups().map((group) => group.callIds)).toEqual([
+      ['mcp-1', 'mcp-2'],
+      ['agent-1', 'result-1'],
+    ]);
   });
 
   it('updates a live group before transcript listeners and splits rich image calls', () => {
@@ -93,23 +110,27 @@ describe('ToolActivityState', () => {
 });
 
 describe('tool activity rendering', () => {
-  it('renders a compact group, bounded previews, and no rows for non-anchor calls', () => {
+  it('renders one-line action rows, bounded previews, and no rows for non-anchor calls', () => {
     const harness = activityHarness([
       assistant([
         toolCall('read-1', 'read', { path: 'src/a.ts' }),
         toolCall('grep-1', 'grep', { pattern: 'needle' }),
       ], 10),
-      toolResult('read-1', 'read', 'line 1\nline 2\nline 3\nline 4\nline 5', false, 20),
+      toolResult('read-1', 'read', 'line 1\u0007\nline 2\nline 3\nline 4\nline 5', false, 20),
       toolResult('grep-1', 'grep', 'match', false, 25),
     ]);
     const definition = createToolActivityDisplayDefinition(harness.state, 'read', toolDefinition('read'));
+    const grepDefinition = createToolActivityDisplayDefinition(harness.state, 'grep', toolDefinition('grep'));
     const anchor = definition.renderCall!({ path: 'src/a.ts' }, theme, renderContext('read-1', false));
-    const hidden = definition.renderCall!({ pattern: 'needle' }, theme, renderContext('grep-1', false));
+    const hidden = grepDefinition.renderCall!({ pattern: 'needle' }, theme, renderContext('grep-1', false));
     const collapsed = anchor.render(100).join('\n');
 
     expect(collapsed).toContain('Read 1 file and searched code');
+    expect(collapsed).toContain('  ✓ Read · src/a.ts');
+    expect(collapsed).toContain('  ✓ Searched · needle');
     expect(collapsed).not.toContain('line 1');
     expect(hidden.render(100)).toEqual([]);
+    expect(anchor.render(36).every((line) => visibleWidth(line) <= 36)).toBe(true);
 
     const expanded = definition.renderCall!(
       { path: 'src/a.ts' },
@@ -119,7 +140,73 @@ describe('tool activity rendering', () => {
     expect(expanded).toContain('line 1');
     expect(expanded).toContain('… 2 more lines');
     expect(expanded).not.toContain('line 4');
+    expect(expanded).not.toContain('\u0007');
     expect(expanded).toContain('Alt+T full details');
+  });
+
+  it('summarizes grouped MCP and subagent calls without raw arguments or results', () => {
+    const mcpHarness = activityHarness([
+      assistant([
+        toolCall('mcp-1', 'mcp', {
+          action: 'search',
+          server: 'linear',
+          query: 'auth\u0007\u0008 bugs',
+        }),
+        toolCall('mcp-2', 'mcp', {
+          action: 'call',
+          server: 'linear',
+          tool: 'get_issue',
+          args: { secret: 'do-not-render' },
+        }),
+      ], 10),
+      toolResult('mcp-1', 'mcp', 'search result that stays collapsed', false, 20),
+      toolResult('mcp-2', 'mcp', 'call result that stays collapsed', false, 25),
+    ]);
+    const mcpOutput = renderToolActivityGroup(mcpHarness.state, 'mcp-1', theme, false);
+
+    expect(mcpOutput).toContain('Completed 2 MCP actions');
+    expect(mcpOutput).toContain('Searched MCP tools · linear · auth bugs');
+    expect(mcpOutput).toContain('Called MCP tool · linear · get_issue');
+    expect(mcpOutput).not.toMatch(/[\u0000-\u0009\u000B-\u000C\u000E-\u001F\u007F-\u009F]/u);
+    expect(mcpOutput).not.toContain('do-not-render');
+    expect(mcpOutput).not.toContain('search result that stays collapsed');
+
+    const subagentHarness = activityHarness([
+      assistant([
+        toolCall('agent-1', 'Agent', {
+          description: 'Review auth',
+          subagent_type: 'reviewer',
+          prompt: 'long prompt that must not render',
+        }),
+        toolCall('list-1', 'list_subagents', { include_descendants: true }),
+        toolCall('result-1', 'get_subagent_result', { agent_id: 'agent-123' }),
+        toolCall('steer-1', 'steer_subagent', {
+          agent_id: 'agent-123',
+          message: 'long guidance that must not render',
+        }),
+        toolCall('cancel-1', 'cancel_subagent', {
+          agent_id: 'agent-456',
+          reason: 'private reason that must not render',
+        }),
+      ], 30),
+      toolResult('agent-1', 'Agent', 'queued', false, 40),
+      toolResult('list-1', 'list_subagents', 'records', false, 41),
+      toolResult('result-1', 'get_subagent_result', 'long child result that must stay collapsed', false, 45),
+      toolResult('steer-1', 'steer_subagent', 'queued', false, 46),
+      toolResult('cancel-1', 'cancel_subagent', 'cancelled', false, 47),
+    ]);
+    const subagentOutput = renderToolActivityGroup(subagentHarness.state, 'agent-1', theme, false);
+
+    expect(subagentOutput).toContain('Coordinated 5 subagent actions');
+    expect(subagentOutput).toContain('Started subagent · Review auth · reviewer');
+    expect(subagentOutput).toContain('Listed subagents · including descendants');
+    expect(subagentOutput).toContain('Read subagent result · agent-123');
+    expect(subagentOutput).toContain('Steered subagent · agent-123');
+    expect(subagentOutput).toContain('Cancelled subagent · agent-456');
+    expect(subagentOutput).not.toContain('long prompt');
+    expect(subagentOutput).not.toContain('long guidance');
+    expect(subagentOutput).not.toContain('private reason');
+    expect(subagentOutput).not.toContain('long child result');
   });
 
   it('shows failures in the group summary', () => {

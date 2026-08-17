@@ -1,6 +1,6 @@
 import {
-  Text,
   stripTerminalSequences,
+  truncateToWidth,
   type Component,
 } from '@earendil-works/pi-tui';
 import type {
@@ -14,6 +14,8 @@ import {
 
 const PREVIEW_LINES = 3;
 const MAX_PREVIEW_WIDTH = 120;
+const INLINE_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/gu;
+const MULTILINE_CONTROL_CHARACTERS = /[\u0000-\u0009\u000B-\u000C\u000E-\u001F\u007F-\u009F]/gu;
 
 type ToolRenderContext = Parameters<
   NonNullable<ToolDefinition<any, any, any>['renderCall']>
@@ -22,6 +24,23 @@ type ToolRenderContext = Parameters<
 class EmptyComponent implements Component {
   render(): string[] {
     return [];
+  }
+
+  invalidate(): void {}
+}
+
+class ToolActivityGroupComponent implements Component {
+  constructor(
+    private readonly state: ToolActivityState,
+    private readonly groupId: string,
+    private readonly theme: Theme,
+    private readonly expanded: boolean,
+  ) {}
+
+  render(width: number): string[] {
+    return renderToolActivityGroup(this.state, this.groupId, this.theme, this.expanded)
+      .split('\n')
+      .map((line) => truncateToWidth(line, Math.max(1, width), '…'));
   }
 
   invalidate(): void {}
@@ -40,7 +59,7 @@ export function createToolActivityDisplayDefinition(
       state.registerRenderer(context.toolCallId, context.invalidate);
       const placement = state.placement(context.toolCallId);
       if (!placement?.anchor) return empty(context);
-      return new Text(renderToolActivityGroup(state, placement.groupId, theme, context.expanded), 0, 0);
+      return new ToolActivityGroupComponent(state, placement.groupId, theme, context.expanded);
     },
     renderResult(_result, _options, _theme, context) {
       state.registerRenderer(context.toolCallId, context.invalidate);
@@ -67,12 +86,12 @@ export function renderToolActivityGroup(
   const metadata = groupMetadata(calls);
   const inspectHint = expanded ? ' · Alt+T full details' : '';
   const header = `${status} ${theme.bold(summary)}${theme.fg('muted', `${metadata ? ` · ${metadata}` : ''}${inspectHint}`)}`;
-  if (!expanded) return header;
-
   const lines = [header];
   for (const call of calls) {
     lines.push(`  ${callStatus(call, theme)} ${toolCallLabel(call)}`);
-    for (const preview of resultPreview(call)) lines.push(theme.fg('dim', `      ${preview}`));
+    if (expanded) {
+      for (const preview of resultPreview(call)) lines.push(theme.fg('dim', `      ${preview}`));
+    }
   }
   return lines.join('\n');
 }
@@ -84,8 +103,6 @@ export function toolCallLabel(call: ToolActivityCall): string {
 }
 
 export function toolGroupSummary(calls: readonly ToolActivityCall[]): string {
-  if (calls.length === 1) return toolCallLabel(calls[0]!);
-
   const running = calls.some((call) => call.status === 'pending' || call.status === 'running');
   const counts = new Map<ToolCategory, number>();
   for (const call of calls) {
@@ -118,7 +135,7 @@ function callStatus(call: ToolActivityCall, theme: Theme): string {
 }
 
 function groupMetadata(calls: readonly ToolActivityCall[]): string {
-  const details = [`${calls.length} action${calls.length === 1 ? '' : 's'}`];
+  const details: string[] = [];
   const failures = calls.filter((call) => call.isError).length;
   const running = calls.filter((call) => call.status === 'pending' || call.status === 'running').length;
   if (failures > 0) details.push(`${failures} failed`);
@@ -150,14 +167,16 @@ function formatDuration(durationMs: number): string | undefined {
 function resultPreview(call: ToolActivityCall): string[] {
   const text = call.result?.content
     .filter((content) => content.type === 'text' && content.text)
-    .map((content) => stripTerminalSequences(content.text!))
+    .map((content) => safeMultilineText(content.text!))
     .join('\n')
     .trim();
   const images = call.result?.content.filter((content) => content.type === 'image') ?? [];
   if (!text) {
     return images.length === 0
       ? []
-      : images.slice(0, PREVIEW_LINES).map((image) => `[${image.mimeType ?? 'image'}]`);
+      : images.slice(0, PREVIEW_LINES).map((image) => (
+        `[${truncate(oneLine(image.mimeType ?? 'image') || 'image', MAX_PREVIEW_WIDTH)}]`
+      ));
   }
 
   const allLines = text.split('\n').map((line) => truncate(line.trimEnd(), MAX_PREVIEW_WIDTH));
@@ -169,10 +188,11 @@ function resultPreview(call: ToolActivityCall): string[] {
   return lines;
 }
 
-type ToolCategory = 'read' | 'search' | 'edit' | 'command' | 'task' | 'web' | 'delegate' | 'other';
+type ToolCategory = 'read' | 'search' | 'edit' | 'command' | 'task' | 'web' | 'mcp' | 'delegate' | 'other';
 
 function toolCategory(name: string): ToolCategory {
   const normalized = name.toLowerCase();
+  if (normalized === 'mcp' || normalized.startsWith('mcp__')) return 'mcp';
   if (normalized === 'read') return 'read';
   if (['web_search', 'source_check', 'fetch_content', 'get_search_content'].includes(normalized)) return 'web';
   if (['grep', 'find', 'ls'].includes(normalized) || normalized.includes('search')) return 'search';
@@ -199,7 +219,8 @@ function categorySummary(category: ToolCategory, count: number, running: boolean
     case 'command': return `${running ? 'running' : 'ran'} ${count} command${plural}`;
     case 'task': return `${running ? 'updating' : 'updated'} ${count} task action${plural}`;
     case 'web': return `${running ? 'researching' : 'completed'} ${count} web action${plural}`;
-    case 'delegate': return `${running ? 'coordinating' : 'completed'} ${count} agent action${plural}`;
+    case 'mcp': return `${running ? 'running' : 'completed'} ${count} MCP action${plural}`;
+    case 'delegate': return `${running ? 'coordinating' : 'coordinated'} ${count} subagent action${plural}`;
     case 'other': return `${running ? 'running' : 'completed'} ${count} action${plural}`;
   }
 }
@@ -207,6 +228,8 @@ function categorySummary(category: ToolCategory, count: number, running: boolean
 function callLabel(call: ToolActivityCall): string {
   const running = call.status === 'pending' || call.status === 'running';
   const normalized = call.name.toLowerCase();
+  if (normalized === 'mcp') return mcpCallLabel(call, running);
+  if (normalized.startsWith('mcp__')) return running ? 'Calling MCP tool' : 'Called MCP tool';
   if (normalized === 'read') return running ? 'Reading' : 'Read';
   if (normalized === 'grep') return running ? 'Searching' : 'Searched';
   if (normalized === 'find') return running ? 'Finding files' : 'Found files';
@@ -218,15 +241,51 @@ function callLabel(call: ToolActivityCall): string {
   if (normalized === 'fetch_content') return running ? 'Fetching content' : 'Fetched content';
   if (normalized === 'get_search_content') return running ? 'Reading web content' : 'Read web content';
   if (normalized === 'agent') return running ? 'Starting subagent' : 'Started subagent';
+  if (normalized === 'list_subagents') return running ? 'Listing subagents' : 'Listed subagents';
+  if (normalized === 'get_subagent_result') return running ? 'Reading subagent result' : 'Read subagent result';
+  if (normalized === 'steer_subagent') return running ? 'Steering subagent' : 'Steered subagent';
+  if (normalized === 'cancel_subagent') return running ? 'Cancelling subagent' : 'Cancelled subagent';
   if (normalized.startsWith('task')) return formatToolName(call.name);
   return running ? `Running ${formatToolName(call.name)}` : formatToolName(call.name);
+}
+
+function mcpCallLabel(call: ToolActivityCall, running: boolean): string {
+  const action = firstString(asRecord(call.args), ['action'])?.toLowerCase() ?? 'status';
+  switch (action) {
+    case 'status': return running ? 'Checking MCP status' : 'Checked MCP status';
+    case 'reconnect': return running ? 'Reconnecting MCP server' : 'Reconnected MCP server';
+    case 'list': return running ? 'Listing MCP tools' : 'Listed MCP tools';
+    case 'search': return running ? 'Searching MCP tools' : 'Searched MCP tools';
+    case 'describe': return running ? 'Inspecting MCP tool' : 'Inspected MCP tool';
+    case 'call': return running ? 'Calling MCP tool' : 'Called MCP tool';
+    case 'authenticate': return running ? 'Authenticating MCP server' : 'Authenticated MCP server';
+    case 'logout': return running ? 'Logging out of MCP server' : 'Logged out of MCP server';
+    default: return running ? 'Running MCP action' : 'Completed MCP action';
+  }
+}
+
+function mcpArgumentPreview(args: Record<string, unknown>): string | undefined {
+  const action = firstString(args, ['action'])?.toLowerCase() ?? 'status';
+  const server = firstString(args, ['server']);
+  if (action === 'status') return server ?? 'all servers';
+  if (action === 'call' || action === 'describe') {
+    return joinPreview(server, firstString(args, ['tool']));
+  }
+  if (action === 'search') {
+    return joinPreview(server, firstString(args, ['query']));
+  }
+  return server;
 }
 
 function argumentPreview(call: ToolActivityCall): string | undefined {
   const args = asRecord(call.args);
   const normalized = call.name.toLowerCase();
   let value: string | undefined;
-  if (['read', 'edit', 'write', 'view_image'].includes(normalized)) {
+  if (normalized === 'mcp') {
+    value = mcpArgumentPreview(args);
+  } else if (normalized.startsWith('mcp__')) {
+    value = formatToolName(call.name);
+  } else if (['read', 'edit', 'write', 'view_image'].includes(normalized)) {
     value = firstString(args, ['path', 'file_path']);
   } else if (normalized === 'grep') {
     value = firstString(args, ['pattern']);
@@ -245,7 +304,14 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
   } else if (normalized === 'fetch_content') {
     value = firstString(args, ['url']) ?? firstArrayString(args, 'urls');
   } else if (normalized === 'agent') {
-    value = firstString(args, ['description', 'subagent_type']);
+    value = joinPreview(
+      firstString(args, ['description']),
+      firstString(args, ['subagent_type']),
+    );
+  } else if (normalized === 'list_subagents') {
+    value = args.include_descendants === true ? 'including descendants' : undefined;
+  } else if (['get_subagent_result', 'steer_subagent', 'cancel_subagent'].includes(normalized)) {
+    value = firstString(args, ['agent_id']);
   } else {
     value = firstString(args, ['description', 'query', 'path', 'name', 'id']);
   }
@@ -272,8 +338,13 @@ function firstArrayString(record: Record<string, unknown>, key: string): string 
   return Array.isArray(value) && typeof value[0] === 'string' ? value[0].trim() || undefined : undefined;
 }
 
+function joinPreview(...parts: Array<string | undefined>): string | undefined {
+  const present = parts.filter((part): part is string => part !== undefined && part.length > 0);
+  return present.length > 0 ? present.join(' · ') : undefined;
+}
+
 function formatToolName(name: string): string {
-  return name
+  return oneLine(name)
     .replace(/^mcp__/, '')
     .replace(/__/g, ' · ')
     .replace(/[._-]+/g, ' ')
@@ -282,7 +353,16 @@ function formatToolName(name: string): string {
 }
 
 function oneLine(value: string): string {
-  return stripTerminalSequences(value).replace(/\s+/g, ' ').trim();
+  return stripTerminalSequences(value)
+    .replace(INLINE_CONTROL_CHARACTERS, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function safeMultilineText(value: string): string {
+  return stripTerminalSequences(value)
+    .replace(/\r\n?/g, '\n')
+    .replace(MULTILINE_CONTROL_CHARACTERS, ' ');
 }
 
 function truncate(value: string, maxLength: number): string {

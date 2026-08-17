@@ -23,6 +23,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui';
 import { AgentTranscript } from './agent-transcript.js';
+import { registerSubagentCompletionRenderer } from './completion-presentation.js';
 import type { LocalSubagentHost, LocalSubagentView } from './host.js';
 
 const MAX_RAIL_ROWS = 5;
@@ -586,10 +587,14 @@ export async function openAgentNavigator(
 }
 
 export function registerLocalSubagentNavigator(
-  pi: Pick<FelanExtensionAPI, 'on' | 'registerCommand' | 'registerShortcut'>,
+  pi: Pick<
+    FelanExtensionAPI,
+    'on' | 'registerCommand' | 'registerMessageRenderer' | 'registerShortcut'
+  >,
   host: LocalSubagentNavigatorHost,
   options: LocalSubagentNavigatorOptions = {},
 ): void {
+  registerSubagentCompletionRenderer(pi);
   let controlsRegistered = false;
   let stopRail = () => {};
   pi.on('session_start', (_event, ctx) => {
