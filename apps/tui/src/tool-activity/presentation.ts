@@ -106,7 +106,7 @@ export function toolGroupSummary(calls: readonly ToolActivityCall[]): string {
   const running = calls.some((call) => call.status === 'pending' || call.status === 'running');
   const counts = new Map<ToolCategory, number>();
   for (const call of calls) {
-    const category = toolCategory(call.name);
+    const category = summaryCategory(call);
     counts.set(category, (counts.get(category) ?? 0) + 1);
   }
   const parts = Array.from(counts, ([category, count]) => categorySummary(category, count, running));
@@ -188,7 +188,24 @@ function resultPreview(call: ToolActivityCall): string[] {
   return lines;
 }
 
-type ToolCategory = 'read' | 'search' | 'edit' | 'command' | 'task' | 'web' | 'mcp' | 'delegate' | 'other';
+type ToolCategory =
+  | 'read'
+  | 'search'
+  | 'edit'
+  | 'command'
+  | 'wait'
+  | 'interact'
+  | 'task'
+  | 'web'
+  | 'mcp'
+  | 'delegate'
+  | 'other';
+
+function summaryCategory(call: ToolActivityCall): ToolCategory {
+  if (!call.name.toLowerCase().includes('write_stdin')) return toolCategory(call.name);
+  const chars = asRecord(call.args).chars;
+  return typeof chars === 'string' && chars.length > 0 ? 'interact' : 'wait';
+}
 
 function toolCategory(name: string): ToolCategory {
   const normalized = name.toLowerCase();
@@ -217,6 +234,8 @@ function categorySummary(category: ToolCategory, count: number, running: boolean
       : `${running ? 'running' : 'ran'} ${count} searches`;
     case 'edit': return `${running ? 'editing' : 'edited'} ${count} file${plural}`;
     case 'command': return `${running ? 'running' : 'ran'} ${count} command${plural}`;
+    case 'wait': return `${running ? 'waiting' : 'waited'} for ${count} command${plural}`;
+    case 'interact': return `${running ? 'interacting' : 'interacted'} with ${count} command${plural}`;
     case 'task': return `${running ? 'updating' : 'updated'} ${count} task action${plural}`;
     case 'web': return `${running ? 'researching' : 'completed'} ${count} web action${plural}`;
     case 'mcp': return `${running ? 'running' : 'completed'} ${count} MCP action${plural}`;
@@ -234,6 +253,12 @@ function callLabel(call: ToolActivityCall): string {
   if (normalized === 'grep') return running ? 'Searching' : 'Searched';
   if (normalized === 'find') return running ? 'Finding files' : 'Found files';
   if (normalized === 'ls') return running ? 'Listing files' : 'Listed files';
+  if (normalized.includes('write_stdin')) {
+    const chars = asRecord(call.args).chars;
+    const interacted = typeof chars === 'string' && chars.length > 0;
+    if (interacted) return running ? 'Interacting with command' : 'Interacted with command';
+    return running ? 'Waiting for command' : 'Waited for command';
+  }
   if (toolCategory(call.name) === 'edit') return running ? 'Editing' : 'Edited';
   if (toolCategory(call.name) === 'command') return running ? 'Running command' : 'Ran command';
   if (normalized === 'web_search') return running ? 'Searching the web' : 'Searched the web';
@@ -293,8 +318,10 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
     value = firstString(args, ['pattern', 'path']);
   } else if (normalized === 'ls') {
     value = firstString(args, ['path']);
+  } else if (normalized.includes('write_stdin')) {
+    value = call.relatedCommand ?? firstString(args, ['cmd', 'command']);
   } else if (toolCategory(call.name) === 'command') {
-    value = firstString(args, ['cmd', 'command', 'id', 'session_id']);
+    value = firstString(args, ['cmd', 'command', 'id']);
   } else if (normalized.startsWith('task')) {
     value = firstString(args, ['title', 'task_id', 'view']);
   } else if (normalized === 'web_search') {

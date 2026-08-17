@@ -1,12 +1,13 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostAgentRuntime } from '../src/index.js';
 
 const temporaryPaths: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
@@ -51,6 +52,29 @@ describe('HostAgentRuntime', () => {
     expect(result.killed).toBe(true);
     expect(result.code).not.toBe(0);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'falls back to the child when group termination is not permitted',
+    async () => {
+      const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+      const originalKill = process.kill.bind(process);
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid < 0) {
+          throw Object.assign(new Error('Operation not permitted'), { code: 'EPERM' });
+        }
+        return originalKill(pid, signal);
+      });
+
+      const result = await runtime.exec(
+        process.execPath,
+        ['-e', 'setInterval(() => {}, 1000)'],
+        { timeout: 20 },
+      );
+
+      expect(killSpy.mock.calls.some(([pid]) => pid < 0)).toBe(true);
+      expect(result).toMatchObject({ code: 143, killed: true });
+    },
+  );
 
   it('rejects lexical and symlink escapes across operations', async () => {
     const workspace = await createTemporaryDirectory('workspace');

@@ -31,6 +31,7 @@ export interface ToolActivityCall {
   readonly id: string;
   name: string;
   args: unknown;
+  relatedCommand?: string;
   status: ToolActivityStatus;
   isPartial: boolean;
   isError: boolean;
@@ -68,9 +69,14 @@ const STANDALONE_TOOLS = new Set([
   'ask_user',
   'view_image',
 ]);
+const RUNNING_SESSION_PATTERN = /^Process running with session ID (\d+)\s*$/mu;
+const ABORTED_SESSION_PATTERN = /\bexec_command aborted; process continues as session (\d+)\b/iu;
 
 export class ToolActivityState {
   readonly #calls = new Map<string, ToolActivityCall>();
+  readonly #execCommands = new Map<string, string>();
+  readonly #sessionCommands = new Map<string, string>();
+  readonly #relatedCommands = new Map<string, string>();
   readonly #definitions = new Map<string, ToolDefinition<any, any, any>>();
   readonly #listeners = new Set<ActivityListener>();
   readonly #rendererInvalidators = new Map<string, RendererInvalidator>();
@@ -116,6 +122,9 @@ export class ToolActivityState {
     this.#session = undefined;
     this.#activeAssistant = undefined;
     this.#calls.clear();
+    this.#execCommands.clear();
+    this.#sessionCommands.clear();
+    this.#relatedCommands.clear();
     this.#definitions.clear();
     this.#segments = [];
     this.#groups = [];
@@ -130,6 +139,7 @@ export class ToolActivityState {
     if (!session) return;
 
     this.#calls.clear();
+    this.#rebuildCommandLinks(session);
     this.#segments = [];
     this.#activeAssistant = undefined;
 
@@ -210,6 +220,7 @@ export class ToolActivityState {
     let call = this.#calls.get(toolCallId);
     if (!call) {
       call = this.#ensureCall(toolCallId, toolName, args, Date.now());
+      this.#linkCommand(call);
       const segment = this.#activeAssistant ?? this.#appendSyntheticAssistant();
       segment.callIds.push(toolCallId);
       this.#rebuildGroups();
@@ -217,6 +228,7 @@ export class ToolActivityState {
     }
     call.name = toolName;
     call.args = args;
+    this.#linkCommand(call);
   }
 
   isRendererPreserved(toolName: string): boolean {
@@ -262,6 +274,7 @@ export class ToolActivityState {
         call.isPartial = true;
         call.isError = false;
         call.result = normalizeResult(event.partialResult);
+        this.#rememberSessionCommand(call);
         this.#invalidateCall(call.id);
         break;
       }
@@ -272,6 +285,7 @@ export class ToolActivityState {
         call.isError = event.isError;
         call.completedAt = Date.now();
         call.result = normalizeResult(event.result);
+        this.#rememberSessionCommand(call);
         this.#rebuildGroups();
         this.#invalidateCall(call.id);
         break;
@@ -325,6 +339,7 @@ export class ToolActivityState {
       );
       call.name = content.name;
       call.args = content.arguments;
+      this.#linkCommand(call);
     }
     return segment;
   }
@@ -347,6 +362,7 @@ export class ToolActivityState {
       const call = this.#ensureCall(content.id, content.name, content.arguments, message.timestamp);
       call.name = content.name;
       call.args = content.arguments;
+      this.#linkCommand(call);
       this.#invalidateCall(call.id);
     }
     if (!sameIds(segment.callIds, nextIds)) {
@@ -388,6 +404,7 @@ export class ToolActivityState {
     call.isPartial = false;
     call.completedAt = toTimestamp(message.timestamp) ?? Date.now();
     call.result = normalizeResult(message);
+    this.#rememberSessionCommand(call);
     this.#invalidateCall(call.id);
   }
 
@@ -400,7 +417,65 @@ export class ToolActivityState {
     }
     if (args !== undefined) call.args = args;
     call.name = toolName;
+    this.#linkCommand(call);
     return call;
+  }
+
+  #rebuildCommandLinks(session: AgentSession): void {
+    this.#execCommands.clear();
+    this.#sessionCommands.clear();
+    this.#relatedCommands.clear();
+
+    for (const entry of session.sessionManager.getBranch()) {
+      for (const message of sessionEntryToContextMessages(entry)) {
+        if (message.role === 'assistant') {
+          for (const content of message.content) {
+            if (content.type !== 'toolCall') continue;
+            if (isExecCommand(content.name)) {
+              const command = commandFromArgs(content.arguments);
+              if (command) this.#execCommands.set(content.id, command);
+              continue;
+            }
+            if (!isWriteStdin(content.name)) continue;
+            const sessionId = sessionKeyFromArgs(content.arguments);
+            const command = sessionId ? this.#sessionCommands.get(sessionId) : undefined;
+            if (command) this.#relatedCommands.set(content.id, command);
+          }
+          continue;
+        }
+        if (message.role !== 'toolResult' || !isExecCommand(message.toolName)) continue;
+        const command = this.#execCommands.get(message.toolCallId);
+        const sessionId = sessionKeyFromResult(message);
+        if (command && sessionId) this.#sessionCommands.set(sessionId, command);
+      }
+    }
+  }
+
+  #linkCommand(call: ToolActivityCall): void {
+    if (isExecCommand(call.name)) {
+      const command = commandFromArgs(call.args);
+      if (command) this.#execCommands.set(call.id, command);
+      this.#rememberSessionCommand(call);
+      return;
+    }
+    if (!isWriteStdin(call.name)) return;
+
+    const sessionId = sessionKeyFromArgs(call.args);
+    const command = this.#relatedCommands.get(call.id)
+      ?? (sessionId ? this.#sessionCommands.get(sessionId) : undefined);
+    if (!command) {
+      delete call.relatedCommand;
+      return;
+    }
+    call.relatedCommand = command;
+    this.#relatedCommands.set(call.id, command);
+  }
+
+  #rememberSessionCommand(call: ToolActivityCall): void {
+    if (!isExecCommand(call.name) || !call.result) return;
+    const command = commandFromArgs(call.args) ?? this.#execCommands.get(call.id);
+    const sessionId = sessionKeyFromResult(call.result);
+    if (command && sessionId) this.#sessionCommands.set(sessionId, command);
   }
 
   #ensureCall(
@@ -508,6 +583,55 @@ function normalizeResult(result: {
     content: Array.isArray(result.content) ? result.content : [],
     ...(result.details === undefined ? {} : { details: result.details }),
   };
+}
+
+function isExecCommand(toolName: string): boolean {
+  return toolName.toLowerCase().includes('exec_command');
+}
+
+function isWriteStdin(toolName: string): boolean {
+  return toolName.toLowerCase().includes('write_stdin');
+}
+
+function commandFromArgs(args: unknown): string | undefined {
+  const record = toRecord(args);
+  for (const key of ['cmd', 'command'] as const) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function sessionKeyFromArgs(args: unknown): string | undefined {
+  return sessionKey(toRecord(args).session_id);
+}
+
+function sessionKeyFromResult(result: {
+  readonly details?: unknown;
+  readonly content?: readonly ToolActivityContent[];
+}): string | undefined {
+  const structured = sessionKey(toRecord(result.details).session_id);
+  if (structured) return structured;
+  for (const content of result.content ?? []) {
+    if (content.type !== 'text' || !content.text) continue;
+    const outputMarker = content.text.indexOf('\nOutput:\n');
+    const metadata = outputMarker === -1 ? content.text : content.text.slice(0, outputMarker);
+    const match = RUNNING_SESSION_PATTERN.exec(metadata) ?? ABORTED_SESSION_PATTERN.exec(metadata);
+    if (match?.[1]) return match[1];
+  }
+  return undefined;
+}
+
+function sessionKey(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value);
+  if (typeof value === 'string' && /^\d+$/u.test(value.trim())) return value.trim();
+  return undefined;
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function isStandalone(call: ToolActivityCall): boolean {

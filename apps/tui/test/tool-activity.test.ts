@@ -107,6 +107,77 @@ describe('ToolActivityState', () => {
     ]);
     expect(harness.state.group('read-2')?.standalone).toBe(true);
   });
+
+  it('links live write_stdin calls to their original command', () => {
+    const harness = activityHarness([]);
+    const execMessage = assistant([
+      toolCall('exec-1', 'exec_command', { cmd: 'pnpm test' }),
+    ], 10);
+    harness.emit({ type: 'message_start', message: execMessage });
+    harness.emit({
+      type: 'tool_execution_end',
+      toolCallId: 'exec-1',
+      toolName: 'exec_command',
+      result: {
+        content: [{ type: 'text', text: 'Process running with session ID 59967' }],
+        details: { session_id: 59967 },
+      },
+      isError: false,
+    });
+    harness.emit({ type: 'message_end', message: execMessage });
+
+    const pollMessage = assistant([
+      { type: 'thinking', thinking: 'Wait for completion.' },
+      toolCall('poll-1', 'write_stdin', { session_id: 59967 }),
+    ], 20);
+    harness.emit({ type: 'message_start', message: pollMessage });
+
+    expect(harness.state.call('poll-1')?.relatedCommand).toBe('pnpm test');
+    const output = renderToolActivityGroup(harness.state, 'poll-1', theme, false);
+    expect(output).toContain('Waiting for 1 command');
+    expect(output).toContain('Waiting for command · pnpm test');
+    expect(output).not.toContain('59967');
+  });
+
+  it('restores command links after an aborted exec_command continues in the background', () => {
+    const harness = activityHarness([
+      assistant([toolCall('exec-1', 'exec_command', { cmd: 'pnpm test' })], 10),
+      toolResult(
+        'exec-1',
+        'exec_command',
+        'exec_command aborted; process continues as session 59967',
+        true,
+        20,
+      ),
+      assistant([toolCall('poll-1', 'write_stdin', { session_id: 59967 })], 30),
+    ]);
+
+    expect(harness.state.call('poll-1')?.relatedCommand).toBe('pnpm test');
+  });
+
+  it('keeps restored command links stable when session IDs are reused', () => {
+    const harness = activityHarness([
+      assistant([toolCall('exec-1', 'exec_command', { cmd: 'first command' })], 10),
+      toolResult('exec-1', 'exec_command', 'Process running with session ID 59967', false, 20),
+      assistant([
+        { type: 'thinking', thinking: 'Poll the first command.' },
+        toolCall('poll-1', 'write_stdin', { session_id: 59967 }),
+      ], 30),
+      toolResult('poll-1', 'write_stdin', 'Process exited with code 0', false, 40),
+      assistant([
+        { type: 'thinking', thinking: 'Start another command.' },
+        toolCall('exec-2', 'exec_command', { cmd: 'second command' }),
+      ], 50),
+      toolResult('exec-2', 'exec_command', 'Process running with session ID 59967', false, 60),
+      assistant([
+        { type: 'thinking', thinking: 'Poll the second command.' },
+        toolCall('poll-2', 'write_stdin', { session_id: 59967 }),
+      ], 70),
+    ]);
+
+    expect(harness.state.call('poll-1')?.relatedCommand).toBe('first command');
+    expect(harness.state.call('poll-2')?.relatedCommand).toBe('second command');
+  });
 });
 
 describe('tool activity rendering', () => {
@@ -216,6 +287,38 @@ describe('tool activity rendering', () => {
     ]);
 
     expect(renderToolActivityGroup(harness.state, 'exec-1', theme, false)).toContain('1 failed');
+  });
+
+  it('renders the original command for write_stdin calls instead of the session ID', () => {
+    const harness = activityHarness([
+      assistant([toolCall('exec-1', 'exec_command', { cmd: 'pnpm test' })], 10),
+      toolResult(
+        'exec-1',
+        'exec_command',
+        'Process running with session ID 59967',
+        false,
+        20,
+      ),
+      assistant([
+        { type: 'thinking', thinking: 'Wait for completion.' },
+        toolCall('poll-1', 'write_stdin', { session_id: 59967 }),
+      ], 30),
+      toolResult('poll-1', 'write_stdin', 'Process exited with code 0', false, 40, { exit_code: 0 }),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'poll-1', theme, false);
+    expect(output).toContain('Waited for 1 command');
+    expect(output).toContain('Waited for command · pnpm test');
+    expect(output).not.toContain('59967');
+  });
+
+  it('does not expose an unresolved write_stdin session ID', () => {
+    const harness = activityHarness([
+      assistant([toolCall('poll-1', 'write_stdin', { session_id: 59967 })], 10),
+      toolResult('poll-1', 'write_stdin', 'Unknown process id 59967', true, 20),
+    ]);
+
+    expect(renderToolActivityGroup(harness.state, 'poll-1', theme, false)).not.toContain('59967');
   });
 
   it('suppresses Pi fallback output while retaining bounded expansion', () => {
@@ -388,13 +491,14 @@ function toolResult(
   text: string,
   isError: boolean,
   timestamp: number,
+  details?: unknown,
 ) {
   return {
     role: 'toolResult' as const,
     toolCallId,
     toolName,
     content: [{ type: 'text' as const, text }],
-    details: undefined,
+    details,
     isError,
     timestamp,
   };

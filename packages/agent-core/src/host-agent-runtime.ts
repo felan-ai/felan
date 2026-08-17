@@ -426,7 +426,7 @@ class HostRuntimeTerminal extends HostBufferedProcess {
     try {
       process.kill(-this.#terminal.pid, signal);
     } catch (error) {
-      if (!isNoSuchProcessError(error)) throw error;
+      if (!isNoSuchProcessError(error) && !isPermissionError(error)) throw error;
       if (this.running) this.#terminal.kill(signal);
     }
   }
@@ -701,14 +701,22 @@ function killChild(child: ChildProcess, signal: NodeJS.Signals): void {
     process.kill(-child.pid, signal);
     return;
   } catch (error) {
-    if (!isNoSuchProcessError(error)) throw error;
+    if (!isNoSuchProcessError(error) && !isPermissionError(error)) throw error;
   }
 
-  child.kill(signal);
+  try {
+    child.kill(signal);
+  } catch (error) {
+    if (!isNoSuchProcessError(error) && !isPermissionError(error)) throw error;
+  }
 }
 
 function isNoSuchProcessError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ESRCH';
+}
+
+function isPermissionError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'EPERM';
 }
 
 function killedResult(): ExecResult {
