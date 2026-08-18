@@ -214,6 +214,11 @@ pnpm verify
 
 See [Contributing](CONTRIBUTING.md) and the [Release process](docs/releasing.md).
 
+## Community
+
+[Join the Felan Discord community](https://discord.gg/skNd4GSzZ) to connect with
+other users and contributors.
+
 ## License
 
 [MIT](LICENSE). See [NOTICE](NOTICE) for third-party attribution.
