@@ -12,7 +12,7 @@ import {
   type Model,
   type ToolDefinition,
 } from '@felan-ai/agent-core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ExecSessionManager,
   MAX_VIEW_IMAGE_INPUT_BYTES,
@@ -24,6 +24,7 @@ import { ApplyPatchError, applyPatch } from '../src/patch.js';
 const temporaryPaths: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -238,26 +239,24 @@ describe('Codex runtime-backed tools', () => {
   });
 
   it('uses Codex wait bounds and serializes interactions per session', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(0);
     const fake = fakeRuntime(20);
     const sessions = new ExecSessionManager(fake.runtime);
     const started = await sessions.exec({ cmd: 'interactive', tty: true, yield_time_ms: 1 });
     const terminal = fake.terminals[0]!;
-    expect(terminal.waits.at(-1)).toBeGreaterThanOrEqual(240);
-    expect(terminal.waits.at(-1)).toBeLessThanOrEqual(250);
+    expect(terminal.waits.at(-1)).toBe(250);
 
     await sessions.write({ session_id: started.session_id! });
-    expect(terminal.waits.at(-1)).toBeGreaterThanOrEqual(4_990);
-    expect(terminal.waits.at(-1)).toBeLessThanOrEqual(5_000);
+    expect(terminal.waits.at(-1)).toBe(5_000);
     await sessions.write({ session_id: started.session_id!, yield_time_ms: 999_999 });
-    expect(terminal.waits.at(-1)).toBeGreaterThanOrEqual(299_990);
-    expect(terminal.waits.at(-1)).toBeLessThanOrEqual(300_000);
+    expect(terminal.waits.at(-1)).toBe(300_000);
 
     await Promise.all([
       sessions.write({ session_id: started.session_id!, chars: 'first' }),
       sessions.write({ session_id: started.session_id!, chars: 'second' }),
     ]);
     expect(terminal.waits.filter((wait) => wait > 0).slice(-2)
-      .every((wait) => wait >= 240 && wait <= 250)).toBe(true);
+      .every((wait) => wait === 250)).toBe(true);
     expect(terminal.maxConcurrentWrites).toBe(1);
     await sessions.shutdown();
   });
