@@ -170,6 +170,11 @@ resources. Built-ins are enabled by default and can be toggled in
 `~/.felan/settings.json`. See the [local TUI documentation](apps/tui/README.md)
 for commands, configuration, and extension-specific controls.
 
+For a source-backed local feature matrix covering Codex, OpenCode, Claude Code,
+Pi, and Oh My Pi—including tasks, agents, context, web research, execution,
+safety, and features Felan lacks—see the
+[coding-agent comparison](docs/comparison.md).
+
 ## Repository map
 
 | Package | Purpose |
