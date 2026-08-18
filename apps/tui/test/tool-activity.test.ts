@@ -321,6 +321,29 @@ describe('tool activity rendering', () => {
     expect(renderToolActivityGroup(harness.state, 'poll-1', theme, false)).not.toContain('59967');
   });
 
+  it('renders a completed TaskUpdate with the task title instead of its ID', () => {
+    const harness = activityHarness([
+      assistant([
+        toolCall('task-update-1', 'TaskUpdate', {
+          task_id: 'T-AAAAAA',
+          status: 'in_progress',
+        }),
+      ], 10),
+      toolResult(
+        'task-update-1',
+        'TaskUpdate',
+        'Updated T-AAAAAA: Implement feature',
+        false,
+        20,
+        { task: { id: 'T-AAAAAA', title: 'Implement feature' } },
+      ),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'task-update-1', theme, false);
+    expect(output).toContain('TaskUpdate · Implement feature');
+    expect(output).not.toContain('T-AAAAAA');
+  });
+
   it('suppresses Pi fallback output while retaining bounded expansion', () => {
     const harness = activityHarness([
       assistant([toolCall('read-1', 'read', { path: 'src/a.ts' })], 10),

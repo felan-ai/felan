@@ -323,7 +323,10 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
   } else if (toolCategory(call.name) === 'command') {
     value = firstString(args, ['cmd', 'command', 'id']);
   } else if (normalized.startsWith('task')) {
-    value = firstString(args, ['title', 'task_id', 'view']);
+    const resultTask = asRecord(asRecord(call.result?.details).task);
+    value = normalized === 'taskupdate'
+      ? firstString(resultTask, ['title']) ?? firstString(args, ['title', 'task_id', 'view'])
+      : firstString(args, ['title', 'task_id', 'view']);
   } else if (normalized === 'web_search') {
     value = firstString(args, ['query']) ?? firstArrayString(args, 'queries');
   } else if (normalized === 'source_check') {
