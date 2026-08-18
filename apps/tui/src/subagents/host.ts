@@ -4,6 +4,7 @@ import {
   HostAgentRuntime,
   SessionManager,
   createAgentCoreSession,
+  type CreateAgentCoreSessionOptions,
   type ExtensionPackageImporter,
   type ModelRuntime,
   type SettingsManager,
@@ -53,6 +54,7 @@ export interface CreateLocalSubagentHostOptions {
   readonly homeDir?: string;
   readonly modelRuntime: ModelRuntime;
   readonly settingsManager: SettingsManager;
+  readonly scopedModels?: CreateAgentCoreSessionOptions['scopedModels'];
   readonly extensionPackages: readonly string[];
   readonly importExtension: ExtensionPackageImporter;
   readonly skillPaths?: readonly string[];
@@ -738,6 +740,9 @@ export class LocalSubagentManager {
       ...(this.#options.skillPaths === undefined ? {} : { skillPaths: this.#options.skillPaths }),
       ...(model === undefined ? {} : { model }),
       ...(input.request.thinking === undefined ? {} : { thinkingLevel: input.request.thinking }),
+      ...(this.#options.scopedModels === undefined
+        ? {}
+        : { scopedModels: this.#options.scopedModels }),
     });
     onSession(created.session);
     bindSubagentSession({ host: input.subagents, session: created.session });
@@ -1016,7 +1021,15 @@ export class LocalSubagentManager {
 }
 
 export function inspectionToolNames(activeToolNames: readonly string[]): string[] {
-  const blocked = new Set(['bash', 'edit', 'write', 'exec_command', 'write_stdin', 'apply_patch']);
+  const blocked = new Set([
+    'bash',
+    'edit',
+    'write',
+    'exec_command',
+    'write_stdin',
+    'apply_patch',
+    'enter_prewalk',
+  ]);
   const safe = activeToolNames.filter((name) => !blocked.has(name));
   if (!safe.includes('read')) safe.unshift('read');
   return safe;

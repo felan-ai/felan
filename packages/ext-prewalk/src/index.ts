@@ -9,6 +9,7 @@ import {
   type FelanExtension,
   type FelanExtensionAPI,
 } from '@felan-ai/agent-core';
+import { Type } from 'typebox';
 import {
   CONTINUATION_MESSAGE_TYPE,
   CONTROL_MESSAGE_PREFIX,
@@ -46,6 +47,12 @@ interface PlannerSnapshot {
   thinkingLevel: PlannerThinkingLevel;
 }
 
+interface ModelTransition {
+  expectedModelKey: string;
+  externalModel?: PlannerModel;
+  externalThinkingLevel?: PlannerThinkingLevel;
+}
+
 const DEFAULT_CONFIG: PrewalkConfig = {
   targetModel: 'low',
   restorePlanner: true,
@@ -53,11 +60,13 @@ const DEFAULT_CONFIG: PrewalkConfig = {
 const TARGET_MODEL_FLAG = 'prewalk-target-model';
 const RESTORE_PLANNER_FLAG = 'prewalk-restore-planner';
 const HEADLESS_TASK_MESSAGE_TYPE = 'pi-prewalk-task';
+const ENTER_PREWALK_TOOL = 'enter_prewalk';
+const EnterPrewalkParams = Type.Object({}, { additionalProperties: false });
 
 const prewalkExtension: FelanExtension = (pi): void => {
   pi.registerCapability({
     id: 'prewalk',
-    instructions: 'Prewalk can coordinate a same-session planning-to-implementation handoff when the user invokes /prewalk. During an active run, follow the phase-specific planning, task-tracking, implementation, and verification guidance injected into the conversation.',
+    instructions: 'Use Prewalk for user tasks that require creating, editing, moving, renaming, or deleting files. When such a task begins and no injected planning or implementation guidance is already present, call enter_prewalk as the first and only tool call before repository exploration or mutation. Do not call it when the context already directs you to explore and build a task graph or to continue an existing session task graph, and do not enter Prewalk for read-only requests. The tool is available in the root session and mutation-capable subagents. During an active run, follow the injected planning, task-tracking, implementation, and verification guidance. The user can exit with /prewalk exit (or /prewalk off).',
   });
 
   pi.registerFlag(TARGET_MODEL_FLAG, {
@@ -77,7 +86,10 @@ const prewalkExtension: FelanExtension = (pi): void => {
   let configWarningShown = false;
   let state: PrewalkState = { phase: 'idle' };
   let plannerSnapshot: PlannerSnapshot | undefined;
-  let expectedModelKey: string | undefined;
+  let exitRequested = false;
+  let modelTransition: ModelTransition | undefined;
+  let handoffPromise: Promise<void> | undefined;
+  let restorationPromise: Promise<boolean> | undefined;
 
   function refreshConfig(): void {
     loadedConfig = loadConfig(pi);
@@ -109,22 +121,24 @@ const prewalkExtension: FelanExtension = (pi): void => {
     const continuationText = state.phase === 'planning' && continuationCount > 0
       ? ` · ${continuationCount}/3`
       : '';
-    ctx.ui.setStatus('prewalk', `Prewalk ${state.phase}${continuationText} → ${targetModel.key}`);
+    const exitText = exitRequested ? ' · exit pending' : '';
+    ctx.ui.setStatus('prewalk', `Prewalk ${state.phase}${continuationText}${exitText} → ${targetModel.key}`);
   }
 
   function publishStatus(ctx: ExtensionContext): void {
     publishConfigWarning(ctx);
     const planner = plannerSnapshot ? ` | planner ${plannerSnapshot.modelKey}` : '';
+    const exit = exitRequested ? ' | exit pending' : '';
     notify(
       ctx,
-      `Prewalk: ${state.phase} | target ${targetModel.key} | restore planner ${config.restorePlanner ? 'on' : 'off'}${planner}`,
+      `Prewalk: ${state.phase} | target ${targetModel.key} | restore planner ${config.restorePlanner ? 'on' : 'off'}${planner}${exit}`,
     );
   }
 
   function clearAutomation(ctx: ExtensionContext): void {
     state = { phase: 'idle' };
     plannerSnapshot = undefined;
-    expectedModelKey = undefined;
+    exitRequested = false;
     updateStatus(ctx);
   }
 
@@ -156,11 +170,10 @@ const prewalkExtension: FelanExtension = (pi): void => {
     return true;
   }
 
-  function beginRun(ctx: ExtensionContext): void {
-    if (state.phase !== 'armed') return;
+  function startRun(ctx: ExtensionContext, handoffArmed = true): boolean {
     if (!ctx.model) {
       failAutomation(ctx, 'Prewalk requires a selected planner model.');
-      return;
+      return false;
     }
 
     plannerSnapshot = {
@@ -168,8 +181,15 @@ const prewalkExtension: FelanExtension = (pi): void => {
       modelKey: modelKey(ctx.model),
       thinkingLevel: pi.getThinkingLevel(),
     };
-    state = { phase: 'planning', run: createRunState() };
+    exitRequested = false;
+    state = { phase: 'planning', run: createRunState({ handoffArmed }) };
     updateStatus(ctx);
+    return true;
+  }
+
+  function beginRun(ctx: ExtensionContext): void {
+    if (state.phase !== 'armed') return;
+    startRun(ctx);
   }
 
   async function switchToTarget(ctx: ExtensionContext): Promise<void> {
@@ -194,22 +214,29 @@ const prewalkExtension: FelanExtension = (pi): void => {
       }
       target = selected.model;
     } else {
-      const exactTarget = ctx.modelRegistry.find(targetModel.model.provider, targetModel.model.id);
-      if (!exactTarget) {
+      const exactReference = targetModel.model;
+      const registeredTarget = ctx.modelRegistry.find(exactReference.provider, exactReference.id);
+      if (!registeredTarget) {
         failAutomation(ctx, `Prewalk target model is unavailable: ${targetModel.key}.`);
         return;
       }
-      if (!ctx.modelRegistry.hasConfiguredAuth(exactTarget)) {
+      const scopedTarget = ctx.scopedModels.find(({ model }) => (
+        model.provider === exactReference.provider && model.id === exactReference.id
+      ))?.model;
+      if (ctx.scopedModels.length > 0 && !scopedTarget) {
+        failAutomation(ctx, `Prewalk target model is outside the current session model scope: ${targetModel.key}.`);
+        return;
+      }
+      target = scopedTarget ?? registeredTarget;
+      if (!ctx.modelRegistry.hasConfiguredAuth(target)) {
         failAutomation(ctx, `Prewalk target model is not authenticated: ${targetModel.key}.`);
         return;
       }
-      target = exactTarget;
     }
     const targetKey = formatModelReference(target);
 
     try {
-      expectedModelKey = targetKey;
-      const switched = await pi.setModel(target);
+      const switched = await setModelPreservingExternalSelection(target, ctx);
       if (state.phase !== 'handoff' || plannerSnapshot !== snapshot) return;
       if (!switched) {
         failAutomation(ctx, `Prewalk could not switch to ${targetKey}.`);
@@ -223,12 +250,22 @@ const prewalkExtension: FelanExtension = (pi): void => {
       if (state.phase === 'handoff' && plannerSnapshot === snapshot) {
         failAutomation(ctx, `Prewalk could not switch to ${targetKey}: ${errorMessage(error)}`);
       }
-    } finally {
-      if (expectedModelKey === targetKey) expectedModelKey = undefined;
     }
   }
 
-  async function restorePlanner(ctx: ExtensionContext): Promise<boolean> {
+  function restorePlanner(ctx: ExtensionContext): Promise<boolean> {
+    if (restorationPromise) return restorationPromise;
+
+    const restoration = performPlannerRestoration(ctx).finally(() => {
+      if (restorationPromise === restoration) restorationPromise = undefined;
+    });
+    restorationPromise = restoration;
+    return restoration;
+  }
+
+  async function performPlannerRestoration(ctx: ExtensionContext): Promise<boolean> {
+    if (handoffPromise) await handoffPromise;
+
     const snapshot = plannerSnapshot;
     if (!snapshot) {
       clearAutomation(ctx);
@@ -240,8 +277,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
 
     try {
       if (modelKey(ctx.model) !== snapshot.modelKey) {
-        expectedModelKey = snapshot.modelKey;
-        const restored = await pi.setModel(snapshot.model);
+        const restored = await setModelPreservingExternalSelection(snapshot.model, ctx);
         if (state.phase !== 'restoring' || plannerSnapshot !== snapshot) return false;
         if (!restored) throw new Error(`model ${snapshot.modelKey} is not authenticated`);
       }
@@ -256,8 +292,49 @@ const prewalkExtension: FelanExtension = (pi): void => {
         notify(ctx, `Prewalk could not restore ${snapshot.modelKey}: ${errorMessage(error)}`, 'error');
       }
       return false;
+    }
+  }
+
+  async function setModelPreservingExternalSelection(
+    model: PlannerModel,
+    ctx: ExtensionContext,
+  ): Promise<boolean> {
+    if (modelTransition) throw new Error('another Prewalk model transition is already active');
+
+    const transition: ModelTransition = { expectedModelKey: modelKey(model) };
+    modelTransition = transition;
+    try {
+      let switched: boolean;
+      try {
+        switched = await pi.setModel(model);
+      } finally {
+        await reapplyExternalModel(ctx, transition);
+      }
+      return switched;
     } finally {
-      if (expectedModelKey === snapshot.modelKey) expectedModelKey = undefined;
+      if (modelTransition === transition) modelTransition = undefined;
+    }
+  }
+
+  async function reapplyExternalModel(
+    ctx: ExtensionContext,
+    transition: ModelTransition,
+  ): Promise<void> {
+    while (
+      transition.externalModel
+      && modelKey(ctx.model) !== modelKey(transition.externalModel)
+    ) {
+      const externalModel = transition.externalModel;
+      transition.expectedModelKey = modelKey(externalModel);
+      const restored = await pi.setModel(externalModel);
+      if (!restored) throw new Error(`could not retain manual model ${modelKey(externalModel)}`);
+    }
+    if (
+      transition.externalModel
+      && transition.externalThinkingLevel !== undefined
+      && modelKey(ctx.model) === modelKey(transition.externalModel)
+    ) {
+      pi.setThinkingLevel(transition.externalThinkingLevel);
     }
   }
 
@@ -267,10 +344,26 @@ const prewalkExtension: FelanExtension = (pi): void => {
       return;
     }
 
+    if (state.phase === 'restoring') {
+      const restored = await restorePlanner(ctx);
+      if (restored) notify(ctx, 'Prewalk is off and the planner model has been restored.');
+      return;
+    }
+
     const targetIsActive = state.phase === 'handoff'
-      || state.phase === 'implementing'
-      || state.phase === 'restoring';
+      || state.phase === 'implementing';
     if (targetIsActive && config.restorePlanner && plannerSnapshot) {
+      if (state.phase === 'handoff' || !ctx.isIdle()) {
+        if (!exitRequested) {
+          exitRequested = true;
+          updateStatus(ctx);
+          notify(ctx, 'Prewalk will exit and restore the planner when the current agent run settles.');
+        } else {
+          notify(ctx, 'Prewalk exit is already pending.');
+        }
+        return;
+      }
+
       const restored = await restorePlanner(ctx);
       if (restored) notify(ctx, 'Prewalk is off and the planner model has been restored.');
       return;
@@ -280,8 +373,41 @@ const prewalkExtension: FelanExtension = (pi): void => {
     notify(ctx, 'Prewalk is off.');
   }
 
+  pi.registerTool({
+    name: ENTER_PREWALK_TOOL,
+    label: 'Enter Prewalk',
+    description: 'Enter same-session Prewalk for the current user task. Call this once, as the only tool call in the response and before exploration or mutation, when completing the request requires creating, editing, moving, renaming, or deleting files. Do not call it for read-only work or when injected guidance already directs planning or implementation.',
+    promptSnippet: 'Enter Prewalk before starting a task that will mutate files',
+    executionMode: 'sequential',
+    parameters: EnterPrewalkParams,
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      if (state.phase === 'idle') refreshConfig();
+      publishConfigWarning(ctx);
+
+      if (state.phase !== 'idle') {
+        return prewalkToolError(
+          `Prewalk is already ${state.phase}; continue the active run without calling ${ENTER_PREWALK_TOOL} again.`,
+          state.phase,
+        );
+      }
+
+      const validation = validateArmingTools(pi.getActiveTools());
+      if (!validation.ok) return prewalkToolError(validation.reason, state.phase);
+      if (!ctx.model) return prewalkToolError('Prewalk requires a selected planner model.', state.phase);
+
+      startRun(ctx, false);
+      return {
+        content: [{
+          type: 'text',
+          text: `Prewalk entered for the current task. Follow the injected planning guidance, keep the task graph concise, and make one focused mutation before the handoff to ${targetModel.key}.`,
+        }],
+        details: { phase: 'planning', targetModel: targetModel.key },
+      };
+    },
+  });
+
   pi.registerCommand('prewalk', {
-    description: 'Plan with the current model, make one mutation, then hand off implementation',
+    description: 'Enter Prewalk, inspect status, or exit its model-routing lifecycle',
     handler: async (args, ctx) => {
       if (state.phase === 'idle') refreshConfig();
       const command = args.trim();
@@ -289,7 +415,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
         publishStatus(ctx);
         return;
       }
-      if (command === 'off') {
+      if (command === 'off' || command === 'exit' || command === 'cancel') {
         await turnOff(ctx);
         return;
       }
@@ -356,7 +482,11 @@ const prewalkExtension: FelanExtension = (pi): void => {
     updateStatus(ctx);
 
     if (decision.shouldHandoff) {
-      await switchToTarget(ctx);
+      const handoff = switchToTarget(ctx).finally(() => {
+        if (handoffPromise === handoff) handoffPromise = undefined;
+      });
+      handoffPromise = handoff;
+      await handoff;
       return;
     }
 
@@ -373,13 +503,13 @@ const prewalkExtension: FelanExtension = (pi): void => {
   });
 
   pi.on('model_select', (event, ctx) => {
-    if (state.phase === 'idle') return;
-
     const selectedModelKey = modelKey(event.model);
-    if (expectedModelKey === selectedModelKey) {
-      expectedModelKey = undefined;
-      return;
+    if (modelTransition?.expectedModelKey === selectedModelKey) return;
+    if (modelTransition) {
+      modelTransition.externalModel = event.model;
+      modelTransition.externalThinkingLevel = pi.getThinkingLevel();
     }
+    if (state.phase === 'idle') return;
 
     clearAutomation(ctx);
     notify(ctx, `Prewalk cancelled after the model changed to ${selectedModelKey}.`, 'warning');
@@ -416,7 +546,13 @@ const prewalkExtension: FelanExtension = (pi): void => {
 };
 
 function buildContextMessages(messages: readonly unknown[], phase: PrewalkPhase): unknown[] {
-  const filtered = structuredClone(messages).filter((message) => !isControlMessage(message));
+  const successfulEntries = successfulEntryCallIds(messages);
+  const filtered: unknown[] = [];
+  for (const message of structuredClone(messages)) {
+    if (isControlMessage(message) || isSuccessfulEntryResult(message, successfulEntries)) continue;
+    const stripped = stripSuccessfulEntryCall(message, successfulEntries);
+    if (stripped !== undefined) filtered.push(stripped);
+  }
   const instruction = phase === 'planning'
     ? { customType: PLANNING_MESSAGE_TYPE, content: PLANNING_INSTRUCTION }
     : phase === 'implementing'
@@ -455,6 +591,56 @@ function isControlMessage(message: unknown): boolean {
     && message.customType.startsWith(CONTROL_MESSAGE_PREFIX);
 }
 
+function successfulEntryCallIds(messages: readonly unknown[]): ReadonlySet<string> {
+  const callIds = new Set<string>();
+  for (const message of messages) {
+    if (
+      isRecord(message)
+      && message.role === 'toolResult'
+      && message.toolName === ENTER_PREWALK_TOOL
+      && message.isError !== true
+      && typeof message.toolCallId === 'string'
+    ) {
+      callIds.add(message.toolCallId);
+    }
+  }
+  return callIds;
+}
+
+function isSuccessfulEntryResult(message: unknown, callIds: ReadonlySet<string>): boolean {
+  return isRecord(message)
+    && message.role === 'toolResult'
+    && message.toolName === ENTER_PREWALK_TOOL
+    && typeof message.toolCallId === 'string'
+    && callIds.has(message.toolCallId);
+}
+
+function stripSuccessfulEntryCall(
+  message: unknown,
+  callIds: ReadonlySet<string>,
+): unknown | undefined {
+  if (!isRecord(message) || message.role !== 'assistant' || !Array.isArray(message.content)) {
+    return message;
+  }
+
+  const isEntryCall = (item: unknown): boolean => (
+    isRecord(item)
+    && item.type === 'toolCall'
+    && item.name === ENTER_PREWALK_TOOL
+    && typeof item.id === 'string'
+    && callIds.has(item.id)
+  );
+  if (!message.content.some(isEntryCall)) return message;
+
+  const hasOtherToolCalls = message.content.some((item) => (
+    isRecord(item) && item.type === 'toolCall' && !isEntryCall(item)
+  ));
+  if (!hasOtherToolCalls) return undefined;
+
+  const content = message.content.filter((item) => !isEntryCall(item));
+  return content.length === 0 ? undefined : { ...message, content };
+}
+
 function modelKey(model: ExtensionContext['model']): string {
   return model ? `${model.provider}/${model.id}` : 'none';
 }
@@ -490,6 +676,14 @@ function invalidConfig(reason: string): { config: PrewalkConfig; warning: string
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function prewalkToolError(message: string, phase: PrewalkPhase) {
+  return {
+    content: [{ type: 'text' as const, text: message }],
+    details: { error: message, phase },
+    isError: true,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

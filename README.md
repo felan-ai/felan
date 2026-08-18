@@ -87,10 +87,12 @@ The root agent and every subagent share one dependency-aware task graph with
 stable IDs, priorities, prerequisites, ownership, acceptance criteria, and
 verified results. `/tasks` opens list, detail, and graph views in the TUI.
 
-`/prewalk` keeps planning and implementation in one trajectory: the current
-model explores and plans, makes the first focused mutation, then switches the
-same conversation and tool history to a configured authenticated model tier or
-exact model to finish and verify the work.
+Prewalk keeps planning and implementation in one trajectory: for a file-changing
+task, the model can call `enter_prewalk` itself (or the user can invoke
+`/prewalk`), explore and build a bounded task graph, make the first focused
+mutation, then switch the same useful conversation and tool history to a
+configured authenticated model tier or exact model to finish and verify the
+work. Mutation-capable subagents receive the same tool and independent lifecycle.
 
 ### 03 · Ask before guessing
 

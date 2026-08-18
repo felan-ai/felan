@@ -1,5 +1,5 @@
 # Prewalk Extension
 
-- Preserve the same-session state machine: the first successful code mutation triggers handoff at the turn boundary without forking or replacing history.
-- Phase guidance stays in transient hidden context. Preserve bounded continuation, tier or exact-model target resolution, planner model and thinking restoration on settle/shutdown, and cancellation on manual model changes.
+- Preserve the same-session state machine: `/prewalk` can arm an idle session and `enter_prewalk` can enter planning from an active model turn. A tool-entered run must observe planning guidance in a later model turn before the first successful code mutation can trigger handoff. Never fork or replace useful history.
+- Phase guidance and successful entry-tool controls stay out of model context. Preserve bounded continuation, session-scoped tier and exact-model target resolution, planner model and thinking restoration on settle/shutdown, deferred restoration for exit requests during active inference, and cancellation on manual model changes. An in-flight internal model switch must never overwrite a later manual selection.
 - Keep the Tasks workflow in phase guidance. Do not inspect Tasks, todo, or Beads activity at runtime. Qualify only explicit mutation tools (`edit`, `write`, and Codex `apply_patch`), not general shell tools; keep mutation qualification in `state.ts` and lifecycle/model orchestration in `index.ts`.

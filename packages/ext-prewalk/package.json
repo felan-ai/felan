@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-prewalk",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Same-session planner-to-implementation model handoff for Felan",
   "license": "MIT",
   "type": "module",
@@ -24,6 +24,9 @@
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "typebox": "1.1.38"
   },
   "peerDependencies": {
     "@felan-ai/agent-core": "^0.4.3",

@@ -9,9 +9,9 @@ export const PLANNING_INSTRUCTION = `Explore the repository thoroughly and deter
 Follow this order:
 1. Inspect the relevant source, tests, configuration, documentation, and constraints.
 2. Determine the full implementation scope, affected files and symbols, risks, and verification required.
-3. Use TaskCreate to record detailed, outcome-oriented implementation and validation tasks. Link them with blocked_by dependencies that encode the required implementation and validation order, so the next ready task is unambiguous at each step.
+3. Use TaskCreate to record a concise graph of no more than 9 outcome-oriented tasks. Put concrete validation in each task's acceptance criteria, using a dedicated validation task only when it covers multiple changes. Link tasks with blocked_by dependencies that encode the required implementation and validation order, so the next ready task is unambiguous at each step.
 4. Use TaskUpdate to claim the first ready task by setting it in_progress.
-5. Start implementing immediately. Work through ready tasks in dependency order, keep task statuses current, record verified results when completing them, and continue until the request is complete.
+5. Start implementing immediately with one focused change. Work through ready tasks in dependency order, keep task statuses current, record verified results when completing them, and continue until the request is complete.
 
 Keep the implementation focused on the requested scope and revise the task graph when repository evidence changes the plan.`;
 

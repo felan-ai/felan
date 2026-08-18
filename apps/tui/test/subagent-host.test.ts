@@ -28,7 +28,7 @@ afterEach(async () => {
 describe('LocalSubagentHost', () => {
   it('keeps safe inspection tools and removes mutation and process tools', () => {
     expect(inspectionToolNames([
-      'grep', 'find', 'ls', 'view_image', 'exec_command', 'write_stdin', 'apply_patch', 'mcp',
+      'grep', 'find', 'ls', 'view_image', 'exec_command', 'write_stdin', 'apply_patch', 'enter_prewalk', 'mcp',
     ])).toEqual(['read', 'grep', 'find', 'ls', 'view_image', 'mcp']);
     expect(inspectionToolNames(['read', 'bash', 'edit', 'write', 'grep']))
       .toEqual(['read', 'grep']);

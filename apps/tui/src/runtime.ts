@@ -158,6 +158,9 @@ export function createLocalSessionRuntimeFactory(
       ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
       modelRuntime: options.modelRuntime,
       settingsManager,
+      ...(modelScope.scopedModels.length === 0
+        ? {}
+        : { scopedModels: modelScope.scopedModels }),
       extensionPackages,
       importExtension,
       skillPaths,

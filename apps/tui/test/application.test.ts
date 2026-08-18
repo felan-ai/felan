@@ -9,6 +9,8 @@ const interactive = vi.hoisted(() => ({
   disposals: 0,
   piTelemetry: [] as Array<string | undefined>,
   piVersionChecks: [] as Array<string | undefined>,
+  headerAdapters: [] as boolean[],
+  modeOptions: [] as unknown[],
   runError: undefined as Error | undefined,
   runs: 0,
   toolRenderShells: [] as Array<string | undefined>,
@@ -20,10 +22,16 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
   return {
     ...original,
     InteractiveMode: class {
-      constructor(private runtime: InstanceType<typeof original.AgentSessionRuntime>) {
+      builtInHeader: unknown = undefined;
+
+      constructor(
+        private runtime: InstanceType<typeof original.AgentSessionRuntime>,
+        options?: unknown,
+      ) {
         interactive.agentDirs.push(process.env.PI_CODING_AGENT_DIR);
         interactive.piTelemetry.push(process.env.PI_TELEMETRY);
         interactive.piVersionChecks.push(process.env.PI_SKIP_VERSION_CHECK);
+        interactive.modeOptions.push(options);
         const dispose = runtime.dispose.bind(runtime);
         runtime.dispose = async () => {
           interactive.disposals += 1;
@@ -34,6 +42,9 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
 
       async run() {
         interactive.runs += 1;
+        interactive.headerAdapters.push(
+          typeof Object.getOwnPropertyDescriptor(this, 'builtInHeader')?.get === 'function',
+        );
         interactive.toolRenderShells.push(this.runtime.session.getToolDefinition('read')?.renderShell);
         interactive.toolNames = this.runtime.session.agent.state.tools.map((tool) => tool.name);
         if (interactive.runError) throw interactive.runError;
@@ -52,6 +63,8 @@ afterEach(async () => {
   interactive.disposals = 0;
   interactive.piTelemetry = [];
   interactive.piVersionChecks = [];
+  interactive.headerAdapters = [];
+  interactive.modeOptions = [];
   interactive.runError = undefined;
   interactive.runs = 0;
   interactive.toolRenderShells = [];
@@ -75,6 +88,7 @@ describe('interactive application', () => {
     expect(interactive.agentDirs).toEqual([agentDir]);
     expect(interactive.piVersionChecks).toEqual(['1']);
     expect(interactive.piTelemetry).toEqual(['0']);
+    expect(interactive.headerAdapters).toEqual([true]);
     expect(interactive.disposals).toBe(1);
     expect(interactive.toolRenderShells).toEqual(['self']);
     expect(process.env.PI_CODING_AGENT_DIR).toBe(previousPiAgentDir);
@@ -107,6 +121,18 @@ describe('interactive application', () => {
 
     expect(interactive.runs).toBe(0);
     expect(interactive.disposals).toBe(1);
+  });
+
+  it('forwards verbose startup to Pi while installing the adapter before run', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+
+    await runLocalFelan({ cwd, agentDir, verbose: true });
+
+    expect(interactive.modeOptions).toEqual([{ verbose: true }]);
+    expect(interactive.headerAdapters).toEqual([true]);
   });
 
   it('disposes the runtime when InteractiveMode.run fails', async () => {

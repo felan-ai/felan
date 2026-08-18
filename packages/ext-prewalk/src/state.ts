@@ -11,6 +11,7 @@ export interface PrewalkRunState {
   mutationCallIds: string[];
   continuationCount: number;
   continuationArmed: boolean;
+  handoffArmed: boolean;
 }
 
 export interface ToolCallSummary {
@@ -41,11 +42,12 @@ export function validateArmingTools(activeTools: readonly string[]): ValidationR
     : { ok: false, reason: 'Prewalk requires an active mutation tool (edit, write, or apply_patch).' };
 }
 
-export function createRunState(): PrewalkRunState {
+export function createRunState(options: { handoffArmed?: boolean } = {}): PrewalkRunState {
   return {
     mutationCallIds: [],
     continuationCount: 0,
     continuationArmed: true,
+    handoffArmed: options.handoffArmed ?? true,
   };
 }
 
@@ -53,6 +55,7 @@ export function beginTurn(state: PrewalkRunState): PrewalkRunState {
   return {
     ...state,
     mutationCallIds: [],
+    handoffArmed: true,
   };
 }
 
@@ -71,7 +74,8 @@ export function reduceTurn(
   options: { allowContinuation?: boolean } = {},
 ): TurnDecision {
   const successfulIds = new Set(results.filter((result) => !result.isError).map((result) => result.toolCallId));
-  const shouldHandoff = state.mutationCallIds.some((toolCallId) => successfulIds.has(toolCallId));
+  const shouldHandoff = state.handoffArmed
+    && state.mutationCallIds.some((toolCallId) => successfulIds.has(toolCallId));
 
   let continuationArmed = results.some((result) => !result.isError) || state.continuationArmed;
   let continuationCount = state.continuationCount;
@@ -94,6 +98,7 @@ export function reduceTurn(
       mutationCallIds: [],
       continuationCount,
       continuationArmed,
+      handoffArmed: state.handoffArmed,
     },
     shouldHandoff,
     shouldContinue,

@@ -47,6 +47,17 @@ describe('turn reduction', () => {
     expect(reduceTurn(state, [ok('mutation')]).shouldHandoff).toBe(true);
   });
 
+  it('does not hand off during the model-entry turn', () => {
+    let state = createRunState({ handoffArmed: false });
+    state = call(state, 'mutation', 'edit');
+
+    const entryTurn = reduceTurn(state, [ok('mutation')]);
+    expect(entryTurn.shouldHandoff).toBe(false);
+
+    state = call(beginTurn(entryTurn.state), 'next-mutation', 'edit');
+    expect(reduceTurn(state, [ok('next-mutation')]).shouldHandoff).toBe(true);
+  });
+
   it.each(['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'read', 'bash', 'exec_command', 'write_stdin'])(
     'does not treat %s as a mutation',
     (toolName) => {
@@ -138,6 +149,8 @@ describe('phase prompts', () => {
     expect(PLANNING_INSTRUCTION).toContain('Explore the repository thoroughly');
     expect(PLANNING_INSTRUCTION).toContain('affected files and symbols');
     expect(PLANNING_INSTRUCTION).toContain('Use TaskCreate');
+    expect(PLANNING_INSTRUCTION).toContain('no more than 9');
+    expect(PLANNING_INSTRUCTION).toContain("validation in each task's acceptance criteria");
     expect(PLANNING_INSTRUCTION).toContain('blocked_by dependencies');
     expect(PLANNING_INSTRUCTION).toContain('next ready task is unambiguous');
     expect(PLANNING_INSTRUCTION).toContain('Use TaskUpdate');
