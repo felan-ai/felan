@@ -15,6 +15,7 @@ import {
   type BackgroundBashStatusFilter,
 } from './job-store.js';
 import { BackgroundBashManager } from './process-manager.js';
+import { inspectBackgroundBashRuntime } from './runtime-support.js';
 import { BackgroundBashOverlay } from './ui/background-bash-overlay.js';
 
 const STATUS_VALUES = ['running', 'completed', 'failed', 'killed', 'unknown', 'all'] as const;
@@ -106,6 +107,8 @@ const backgroundBashExtension: FelanExtension = (pi) => {
   let completionPollTimer: ReturnType<typeof setInterval> | undefined;
   let completionPollGeneration = 0;
   let completionPollRunningGeneration: number | undefined;
+  let runtimeAvailable: boolean | undefined;
+  let runtimeCheck: Promise<boolean> | undefined;
   const watchedJobIds = new Set<string>();
 
   const createStatusTarget = (ctx: ExtensionContext): StatusTarget | undefined => {
@@ -456,10 +459,27 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     pi.setActiveTools([...new Set([...pi.getActiveTools(), 'bash', ...BACKGROUND_TOOL_NAMES])]);
   };
 
-  const enableExtension = (ctx: ExtensionContext) => {
+  const ensureRuntimeAvailable = async (): Promise<boolean> => {
+    if (runtimeAvailable !== undefined) return runtimeAvailable;
+    runtimeCheck ??= inspectBackgroundBashRuntime(pi.runtime)
+      .then((status) => {
+        runtimeAvailable = status.available;
+        return status.available;
+      })
+      .finally(() => {
+        runtimeCheck = undefined;
+      });
+    return runtimeCheck;
+  };
+
+  const enableExtension = async (ctx: ExtensionContext) => {
     if (!supportsBackgroundBashModel(ctx.model)) {
       stopStatusPolling();
       pauseCompletionPolling();
+      return;
+    }
+    if (!await ensureRuntimeAvailable()) {
+      disableExtension();
       return;
     }
     registerBackgroundBash();
@@ -488,8 +508,8 @@ const backgroundBashExtension: FelanExtension = (pi) => {
   };
 
   pi.on('session_start', (_event, ctx) => enableExtension(ctx));
-  pi.on('model_select', (event, ctx) => {
-    if (supportsBackgroundBashModel(event.model)) enableExtension(ctx);
+  pi.on('model_select', async (event, ctx) => {
+    if (supportsBackgroundBashModel(event.model)) await enableExtension(ctx);
     else disableExtension();
   });
   pi.on('session_shutdown', () => {
@@ -497,6 +517,9 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     clearCompletionWatches();
   });
 };
+
+export { inspectBackgroundBashRuntime } from './runtime-support.js';
+export type { BackgroundBashRuntimeStatus } from './runtime-support.js';
 
 function formatDate(ms: number | undefined): string {
   return ms ? new Date(ms).toISOString() : '-';

@@ -185,6 +185,34 @@ try {
       if (JSON.stringify(webAccessCapabilities) !== JSON.stringify(['web-access'])) {
         throw new Error('Packed web access extension capability is unavailable');
       }
+      const markitdown = await import('@felan-ai/ext-markitdown');
+      const markitdownCapabilities = [];
+      const markitdownCommands = [];
+      const markitdownEvents = [];
+      markitdown.default({
+        runtime: {
+          kind: 'packed-test',
+          cwd: process.env.PACKED_SMOKE_WORKSPACE,
+          storage: () => ({ root: process.env.PACKED_SMOKE_WORKSPACE + '/.markitdown-storage' }),
+        },
+        registerCapability: (capability) => markitdownCapabilities.push(capability.id),
+        registerCommand: (name) => markitdownCommands.push(name),
+        on: (name) => markitdownEvents.push(name),
+      });
+      if (JSON.stringify(markitdownCapabilities) !== JSON.stringify(['markitdown'])) {
+        throw new Error('Packed MarkItDown capability is unavailable');
+      }
+      if (JSON.stringify(markitdownCommands) !== JSON.stringify(['markitdown'])) {
+        throw new Error('Packed MarkItDown command is unavailable');
+      }
+      if (JSON.stringify(markitdownEvents) !== JSON.stringify(['tool_call', 'tool_result'])) {
+        throw new Error('Packed MarkItDown read interception is unavailable');
+      }
+      const existingBinaryHandlers = ['.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'];
+      if (markitdown.MARKITDOWN_EXTENSIONS.some((extension) => existingBinaryHandlers.includes(extension))
+        || existingBinaryHandlers.some((extension) => !markitdown.MARKITDOWN_EXCLUDED_EXTENSIONS.includes(extension))) {
+        throw new Error('Packed MarkItDown extension overlaps PDF or image handling');
+      }
       const mcp = await import('@felan-ai/ext-mcp');
       const mcpTools = [];
       const mcpCapabilities = [];
@@ -260,7 +288,7 @@ try {
       if (prompt.includes('operating inside pi')) {
         throw new Error('Packed runtime retained the Pi base prompt');
       }
-      const capabilityPositions = ['### subagents', '### ask-user', '### tasks', '### prewalk', '### progressive-context', '### web-access']
+      const capabilityPositions = ['### subagents', '### ask-user', '### tasks', '### prewalk', '### web-access', '### markitdown', '### progressive-context']
         .map((heading) => prompt.indexOf(heading));
       if (capabilityPositions.some((position) => position < 0)
         || capabilityPositions.some((position, index) => index > 0 && position <= capabilityPositions[index - 1])) {

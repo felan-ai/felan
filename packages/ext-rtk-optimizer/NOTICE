@@ -12,3 +12,8 @@ tool-output compaction techniques, read-compaction safeguards, configuration,
 session metrics, and the /rtk command behavior. Felan routes I/O through
 AgentRuntime and adds native support for Codex exec_command and write_stdin
 tools while preserving their structured result envelopes.
+
+The optional /rtk install command downloads, verifies, and executes the
+official rtk-ai/rtk installer from commit
+b34be37caf3796b69a50952a28e60e32b5daad43 to install RTK 0.45.0. The installer
+and RTK binary are not bundled in this npm package.

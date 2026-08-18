@@ -1,4 +1,5 @@
 import type { AgentRuntime } from '@felan-ai/agent-core';
+import { managedRtkExecutable, supportsManagedRtk } from './installer.js';
 import type { RuntimeStatus } from './types.js';
 
 export interface RewriteDecision {
@@ -11,6 +12,7 @@ export interface RewriteDecision {
 
 export interface ResolveRtkRewriteOptions {
   readonly timeoutMs?: number;
+  readonly executable?: string;
 }
 
 export interface RtkRewriteResult {
@@ -34,7 +36,25 @@ export async function computeRewriteDecision(
     };
   }
 
+  if (isAlreadyManagedRtk(command, options?.executable)) {
+    return {
+      changed: false,
+      originalCommand: command,
+      rewrittenCommand: command,
+      reason: 'already_rtk',
+    };
+  }
+
   if (isAlreadyRtk(command)) {
+    const executable = options?.executable;
+    if (executable && executable !== 'rtk') {
+      return {
+        changed: true,
+        originalCommand: command,
+        rewrittenCommand: qualifyManagedRewrite(command, executable),
+        reason: 'ok',
+      };
+    }
     return {
       changed: false,
       originalCommand: command,
@@ -67,11 +87,12 @@ export async function resolveRtkRewrite(
   command: string,
   options: ResolveRtkRewriteOptions = {},
 ): Promise<RtkRewriteResult> {
+  const executable = options.executable ?? 'rtk';
   try {
-    const result = await runtime.exec('rtk', ['rewrite', command], {
+    const result = await runtime.exec(executable, ['rewrite', command], {
       timeout: options.timeoutMs ?? 3_000,
     });
-    const rewritten = result.stdout.trim();
+    const rawRewritten = result.stdout.trim();
 
     if (result.code === 1) {
       return { changed: false, rewrittenCommand: command, exitCode: result.code };
@@ -85,7 +106,7 @@ export async function resolveRtkRewrite(
       };
     }
     if (result.code === 0 || result.code === 3) {
-      if (!rewritten) {
+      if (!rawRewritten) {
         return {
           changed: false,
           rewrittenCommand: command,
@@ -93,6 +114,9 @@ export async function resolveRtkRewrite(
           error: 'rtk returned empty output',
         };
       }
+      const rewritten = rawRewritten === command
+        ? rawRewritten
+        : qualifyManagedRewrite(rawRewritten, executable);
       return {
         changed: rewritten !== command,
         rewrittenCommand: rewritten,
@@ -117,28 +141,40 @@ export async function resolveRtkRewrite(
 }
 
 export async function inspectRtkRuntime(runtime: AgentRuntime): Promise<RuntimeStatus> {
-  try {
-    const result = await runtime.exec('rtk', ['--version'], { timeout: 5_000 });
-    if (result.code === 0) {
-      return {
-        rtkAvailable: true,
-        lastCheckedAt: Date.now(),
-        ...(result.stdout.trim() ? { version: trimMessage(result.stdout) } : {}),
-      };
+  const failures: string[] = [];
+  const candidates = [
+    ...(supportsManagedRtk(runtime)
+      ? [{ command: managedRtkExecutable(runtime), source: 'managed' as const }]
+      : []),
+    { command: 'rtk', source: 'path' as const },
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const result = await runtime.exec(candidate.command, ['--version'], { timeout: 5_000 });
+      if (result.code === 0 && !result.killed) {
+        return {
+          rtkAvailable: true,
+          lastCheckedAt: Date.now(),
+          command: candidate.command,
+          source: candidate.source,
+          ...(result.stdout.trim() ? { version: trimMessage(result.stdout) } : {}),
+        };
+      }
+      const detail = result.killed
+        ? 'timed out or was terminated'
+        : trimMessage(`${result.stderr} ${result.stdout}`) || `exit ${result.code}`;
+      failures.push(`${candidate.source}: ${detail}`);
+    } catch (error) {
+      failures.push(`${candidate.source}: ${trimMessage(errorMessage(error))}`);
     }
-    const detail = trimMessage(`${result.stderr} ${result.stdout}`);
-    return {
-      rtkAvailable: false,
-      lastCheckedAt: Date.now(),
-      lastError: detail || `exit ${result.code}`,
-    };
-  } catch (error) {
-    return {
-      rtkAvailable: false,
-      lastCheckedAt: Date.now(),
-      lastError: trimMessage(errorMessage(error)),
-    };
   }
+
+  return {
+    rtkAvailable: false,
+    lastCheckedAt: Date.now(),
+    lastError: trimMessage(failures.join('; ')),
+  };
 }
 
 export function isAlreadyRtk(command: string): boolean {
@@ -164,4 +200,25 @@ function trimMessage(value: string, maxLength = 220): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function qualifyManagedRewrite(rewritten: string, executable: string): string {
+  if (executable === 'rtk' || !rewritten) return rewritten;
+  return `${managedPathPrefix(executable)}${rewritten}\n\n)`;
+}
+
+function isAlreadyManagedRtk(command: string, executable: string | undefined): boolean {
+  if (!executable || executable === 'rtk') return false;
+  const effectiveCommand = splitLeadingEnvAssignments(command.trimStart()).command.trimStart();
+  return effectiveCommand.startsWith(managedPathPrefix(executable));
+}
+
+function managedPathPrefix(executable: string): string {
+  const separator = executable.lastIndexOf('/');
+  const directory = separator < 0 ? '.' : executable.slice(0, separator);
+  return `(PATH=${quotePosixShellArgument(directory)}:"$PATH"; export PATH; `;
+}
+
+function quotePosixShellArgument(value: string): string {
+  return `'${value.replace(/'/gu, `'\\''`)}'`;
 }

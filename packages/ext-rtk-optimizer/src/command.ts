@@ -7,15 +7,17 @@ export interface RtkOptimizerController {
   setConfig(config: RtkOptimizerConfig): Promise<void>;
   getRuntimeStatus(): RuntimeStatus;
   refreshRuntimeStatus(): Promise<RuntimeStatus>;
+  install(onStatus: (message: string) => void): Promise<RuntimeStatus>;
   getMetricsSummary(): string;
   clearMetrics(): void;
 }
 
-const USAGE = 'Usage: /rtk [show|path|verify|stats|clear-stats|reset|help]';
+const USAGE = 'Usage: /rtk [show|path|verify|install|stats|clear-stats|reset|help]';
 const SUBCOMMANDS = [
   ['show', 'Show current RTK configuration and runtime status'],
   ['path', 'Show the RTK configuration path'],
   ['verify', 'Check whether rtk is available in the runtime'],
+  ['install', 'Run the pinned official RTK installer'],
   ['stats', 'Show output-compaction metrics'],
   ['clear-stats', 'Clear output-compaction metrics'],
   ['reset', 'Reset RTK settings to defaults'],
@@ -85,6 +87,21 @@ export function registerRtkCommand(pi: FelanExtensionAPI, controller: RtkOptimiz
             : `RTK is unavailable${status.lastError ? `: ${status.lastError}` : '.'}`,
           status.rtkAvailable ? 'info' : 'warning',
         );
+      } else if (subcommand === 'install') {
+        ctx.ui.setStatus('rtk-install', '… Installing RTK');
+        try {
+          const status = await controller.install((message) => {
+            ctx.ui.setStatus('rtk-install', `… ${message}`);
+          });
+          ctx.ui.notify(
+            status.rtkAvailable
+              ? `RTK installed successfully${status.version ? ` (${status.version})` : ''}.`
+              : `RTK installation failed${status.lastError ? `: ${status.lastError}` : '.'}`,
+            status.rtkAvailable ? 'info' : 'error',
+          );
+        } finally {
+          ctx.ui.setStatus('rtk-install', undefined);
+        }
       } else if (subcommand === 'stats') {
         ctx.ui.notify(controller.getMetricsSummary(), 'info');
       } else if (subcommand === 'clear-stats') {

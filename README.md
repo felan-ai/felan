@@ -164,6 +164,10 @@ reviewed upstream checkpoints are recorded in
 [Upstream extension review baselines](docs/upstream-extensions.md), including
 reviews where no change was ported.
 
+External executable detection, safe degradation, local onboarding, and cloud
+preinstallation responsibilities are documented in
+[Runtime dependencies](docs/runtime-dependencies.md).
+
 The local host loads only Felan's source-controlled built-in extensions. It
 does not discover ambient Pi extensions, prompts, project settings, or package
 resources. Built-ins are enabled by default and can be toggled in
@@ -186,6 +190,7 @@ safety, and features Felan lacks—see the
 | `@felan-ai/ext-tasks` | Dependency-aware task graph shared across a root session and its children |
 | `@felan-ai/ext-context` | Progressive loading of nested project instructions |
 | `@felan-ai/ext-prewalk` | Same-session planner-to-implementation model handoff |
+| `@felan-ai/ext-markitdown` | Bounded binary-document conversion through the ordinary read workflow |
 | `@felan-ai/ext-background-bash` | Detached Bash processes for models outside `openai` and `openai-codex` |
 | `@felan-ai/ext-web-access` | Bounded web research and content retrieval with SSRF protections |
 | `@felan-ai/ext-mcp` | Portable OAuth-only remote MCP gateway |

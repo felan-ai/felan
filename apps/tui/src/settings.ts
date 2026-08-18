@@ -1,6 +1,14 @@
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { SettingsManager } from '@felan-ai/agent-core';
-import type { BuiltinExtensionSettings } from './extensions.js';
+import lockfile from 'proper-lockfile';
+import {
+  builtinExtensionPackages,
+  type BuiltinExtensionName,
+  type BuiltinExtensionSettings,
+} from './extensions.js';
 import type { LocalSubagentSettings } from './subagents/host.js';
 
 export interface FelanSettings {
@@ -11,9 +19,11 @@ export interface FelanSettings {
 
 export interface FelanTuiSettings {
   readonly toolDisplay?: LocalToolDisplayMode;
+  readonly dependencyOnboarding?: Readonly<Record<string, LocalDependencyOnboardingChoice>>;
 }
 
 export type LocalToolDisplayMode = 'grouped' | 'full';
+export type LocalDependencyOnboardingChoice = 'continue';
 
 export function createLocalSettingsManager(cwd: string, agentDir: string): SettingsManager {
   const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
@@ -66,6 +76,105 @@ export function getLocalToolDisplayMode(settingsManager: SettingsManager): Local
   if (mode === undefined) return 'grouped';
   if (mode === 'grouped' || mode === 'full') return mode;
   throw new Error('felanTui.toolDisplay must be "grouped" or "full"');
+}
+
+export async function setBuiltinExtensionEnabled(
+  agentDir: string,
+  name: BuiltinExtensionName,
+  enabled: boolean,
+): Promise<void> {
+  await updateGlobalFelanSettings(agentDir, (settings) => {
+    const raw = settings.builtinExtensions;
+    if (raw !== undefined && !isRecord(raw)) throw new Error('builtinExtensions must be an object');
+    settings.builtinExtensions = { ...(raw ?? {}), [name]: enabled };
+  });
+}
+
+export async function setDependencyOnboardingChoice(
+  agentDir: string,
+  dependencyId: string,
+  choice: LocalDependencyOnboardingChoice | undefined,
+): Promise<void> {
+  await updateGlobalFelanSettings(agentDir, (settings) => {
+    const rawTui = settings.felanTui;
+    if (rawTui !== undefined && !isRecord(rawTui)) throw new Error('felanTui must be an object');
+    const tui = { ...(rawTui ?? {}) };
+    const rawChoices = tui.dependencyOnboarding;
+    if (rawChoices !== undefined && !isRecord(rawChoices)) {
+      throw new Error('felanTui.dependencyOnboarding must be an object');
+    }
+    const choices = { ...(rawChoices ?? {}) };
+    if (choice === undefined) delete choices[dependencyId];
+    else choices[dependencyId] = choice;
+    if (Object.keys(choices).length === 0) delete tui.dependencyOnboarding;
+    else tui.dependencyOnboarding = choices;
+    settings.felanTui = tui;
+  });
+}
+
+export function isBuiltinExtensionEnabled(settings: FelanSettings, name: BuiltinExtensionName): boolean {
+  return settings.builtinExtensions?.[name] !== false;
+}
+
+export function getDependencyOnboardingChoice(
+  settings: FelanSettings,
+  dependencyId: string,
+): LocalDependencyOnboardingChoice | undefined {
+  const value = settings.felanTui?.dependencyOnboarding?.[dependencyId];
+  return value === 'continue' ? value : undefined;
+}
+
+type MutableSettings = Record<string, unknown> & {
+  builtinExtensions?: Record<string, unknown>;
+  felanTui?: Record<string, unknown>;
+};
+
+async function updateGlobalFelanSettings(
+  agentDir: string,
+  update: (settings: MutableSettings) => void,
+): Promise<void> {
+  const path = join(agentDir, 'settings.json');
+  await mkdir(agentDir, { recursive: true });
+  const release = await lockfile.lock(path, {
+    realpath: false,
+    retries: { retries: 10, minTimeout: 20, maxTimeout: 50 },
+  });
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    let settings: MutableSettings;
+    try {
+      const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
+      if (!isRecord(parsed)) throw new Error('settings.json must contain an object');
+      settings = structuredClone(parsed) as MutableSettings;
+    } catch (error) {
+      if (!isMissingFile(error)) throw error;
+      settings = {};
+    }
+
+    update(settings);
+    validateBuiltinExtensionKeys(settings.builtinExtensions);
+    await writeFile(temporaryPath, `${JSON.stringify(settings, null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    await rename(temporaryPath, path);
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => {});
+    await release();
+  }
+}
+
+function validateBuiltinExtensionKeys(settings: Record<string, unknown> | undefined): void {
+  if (!settings) return;
+  for (const [name, enabled] of Object.entries(settings)) {
+    if (!Object.hasOwn(builtinExtensionPackages, name)) throw new Error(`Unknown built-in extension: ${name}`);
+    if (typeof enabled !== 'boolean') throw new Error(`Built-in extension ${name} must be a boolean`);
+  }
+}
+
+function isMissingFile(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 'ENOENT';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

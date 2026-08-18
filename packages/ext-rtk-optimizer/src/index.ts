@@ -1,7 +1,8 @@
-import type { ExtensionContext, FelanExtension } from '@felan-ai/agent-core';
+import type { AgentRuntime, ExtensionContext, FelanExtension } from '@felan-ai/agent-core';
 import { registerRtkCommand } from './command.js';
 import { computeRewriteDecision, inspectRtkRuntime } from './command-rewriter.js';
 import { loadRtkOptimizerConfig, saveRtkOptimizerConfig } from './config.js';
+import { installManagedRtk } from './installer.js';
 import { compactToolResult, type ToolResultCompactionMetadata } from './output-compactor.js';
 import { OutputMetrics } from './output-metrics.js';
 import { toRecord } from './record-utils.js';
@@ -21,6 +22,11 @@ const EXTENSION_NAME = 'RTK optimizer';
 const RUNTIME_STATUS_MAX_AGE_MS = 30_000;
 const SOURCE_FILTER_TROUBLESHOOTING_NOTE =
   "RTK note: If file edits repeatedly fail because old text does not match, run '/rtk', disable lossy read compaction, re-read the file, apply the edit, and then re-enable compaction if desired.";
+const activeRuntimeRefreshers = new WeakMap<AgentRuntime, () => Promise<RuntimeStatus>>();
+
+export async function refreshActiveRtkRuntime(runtime: AgentRuntime): Promise<RuntimeStatus> {
+  return activeRuntimeRefreshers.get(runtime)?.() ?? inspectRtkRuntime(runtime);
+}
 
 const rtkOptimizerExtension: FelanExtension = async (pi) => {
   const initialLoad = await loadRtkOptimizerConfig(pi.runtime);
@@ -48,6 +54,7 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
       });
     return statusRefresh;
   };
+  activeRuntimeRefreshers.set(pi.runtime, refreshRuntimeStatus);
 
   const ensureRuntimeStatusFresh = async (): Promise<void> => {
     if (!config.guardWhenRtkMissing) return;
@@ -79,6 +86,12 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
     },
     getRuntimeStatus: () => runtimeStatus,
     refreshRuntimeStatus,
+    install: async (onStatus) => {
+      const status = await installManagedRtk(pi.runtime, onStatus);
+      runtimeStatus = status;
+      if (status.rtkAvailable) missingRtkWarningShown = false;
+      return status;
+    },
     getMetricsSummary: () => metrics.summary(),
     clearMetrics: () => metrics.clear(),
   });
@@ -105,6 +118,9 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
   });
 
   pi.on('session_shutdown', () => {
+    if (activeRuntimeRefreshers.get(pi.runtime) === refreshRuntimeStatus) {
+      activeRuntimeRefreshers.delete(pi.runtime);
+    }
     codexSessionCommands.clear();
     activeCodexCommands.clear();
   });
@@ -134,7 +150,9 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
       return undefined;
     }
 
-    const decision = await computeRewriteDecision(pi.runtime, command);
+    const decision = await computeRewriteDecision(pi.runtime, command, {
+      ...(runtimeStatus.command === undefined ? {} : { executable: runtimeStatus.command }),
+    });
     if (!decision.changed) {
       if (decision.warning) {
         warnOnce(
@@ -384,6 +402,13 @@ export {
   validateRtkOptimizerConfig,
 } from './config.js';
 export { computeRewriteDecision, inspectRtkRuntime, resolveRtkRewrite } from './command-rewriter.js';
+export {
+  installManagedRtk,
+  managedRtkDirectory,
+  managedRtkExecutable,
+  MANAGED_RTK_VERSION,
+  supportsManagedRtk,
+} from './installer.js';
 export { compactToolResult } from './output-compactor.js';
 export { OutputMetrics } from './output-metrics.js';
 export { DEFAULT_RTK_OPTIMIZER_CONFIG } from './types.js';

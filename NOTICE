@@ -25,6 +25,15 @@ packages/pi-progressive-context from https://github.com/mslavov/pi-extensions
 at commit 9571293d422db11de893fa80ed0fc3e39945c657.
 Copyright (c) 2026 Milko Slavov.
 
+@felan-ai/ext-markitdown adapts MIT-licensed portions of
+packages/pi-markitdown from https://github.com/mslavov/pi-extensions at commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d. Copyright (c) 2026 Milko Slavov.
+It interoperates with Microsoft MarkItDown 0.1.7 from
+https://github.com/microsoft/markitdown under the MIT License. MarkItDown is
+installed only on explicit request and is not bundled in the npm package.
+Package-level attribution and license terms are included in
+packages/ext-markitdown/NOTICE and LICENSE.
+
 @felan-ai/ext-background-bash adapts MIT-licensed portions of
 packages/pi-background-bash from https://github.com/mslavov/pi-extensions at
 commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
@@ -86,6 +95,8 @@ d155d253cb2f1358e34e717d47a82ebccb08cb8e from
 https://github.com/MasuRii/pi-rtk-optimizer. Copyright (c) 2026 MasuRii.
 Package-level attribution and license terms are included in
 packages/ext-rtk-optimizer/NOTICE and LICENSE.
+The optional managed installer and RTK binary are downloaded only after
+explicit user confirmation and are not bundled in this distribution.
 
 @felan-ai/ext-prewalk adapts MIT-licensed portions of packages/pi-prewalk from
 mslavov/pi-extensions at commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.

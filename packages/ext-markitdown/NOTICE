@@ -1,0 +1,14 @@
+@felan-ai/ext-markitdown
+Copyright (c) 2026 Felan contributors
+
+This package adapts MIT-licensed behavior from packages/pi-markitdown in
+https://github.com/mslavov/pi-extensions at source commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
+Copyright (c) 2026 Milko Slavov.
+
+The extension interoperates with Microsoft MarkItDown 0.1.7, available from
+https://github.com/microsoft/markitdown under the MIT License. MarkItDown and
+its Python dependencies are not bundled in this npm package. The optional
+`/markitdown install` command installs them into Felan-owned runtime storage.
+
+The full license text for this package is in LICENSE.

@@ -16,12 +16,13 @@ describe('local extension importer', () => {
       '@felan-ai/ext-ask-user',
       '@felan-ai/ext-tasks',
       '@felan-ai/ext-prewalk',
-      '@felan-ai/ext-context',
       '@felan-ai/ext-mcp',
       '@felan-ai/ext-web-access',
       '@felan-ai/ext-background-bash',
       '@felan-ai/ext-codex',
       '@felan-ai/ext-rtk-optimizer',
+      '@felan-ai/ext-markitdown',
+      '@felan-ai/ext-context',
       '@felan-ai/ext-powerline',
     ]);
 
@@ -89,6 +90,7 @@ describe('local extension importer', () => {
       subagents: false,
       askUser: false,
       tasks: false,
+      markitdown: false,
       mcp: false,
       webAccess: false,
       backgroundBash: false,

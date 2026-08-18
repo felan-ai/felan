@@ -1,23 +1,18 @@
 {
-  "name": "@felan-ai/ext-rtk-optimizer",
-  "version": "0.1.1",
-  "description": "RTK command rewriting and tool-output compaction for Felan",
+  "name": "@felan-ai/ext-markitdown",
+  "version": "0.1.0",
+  "description": "Bounded MarkItDown document conversion for Felan read workflows",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felan-ai/felan.git",
-    "directory": "packages/ext-rtk-optimizer"
+    "directory": "packages/ext-markitdown"
   },
   "engines": {
     "node": ">=22.19.0"
   },
-  "files": [
-    "dist",
-    "LICENSE",
-    "NOTICE",
-    "README.md"
-  ],
+  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -31,7 +26,7 @@
     "prepack": "pnpm build"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.4.3"
+    "@felan-ai/agent-core": "^0.4.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

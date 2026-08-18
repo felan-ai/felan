@@ -7,6 +7,7 @@ import {
   HostAgentRuntime,
   ModelRuntime,
   SessionManager,
+  bindFelanExtension,
   createAgentCoreSessionRuntimeFactory,
   createAgentSessionRuntime,
   type AgentSessionServices,
@@ -19,6 +20,10 @@ import {
   type AgentSessionRuntime,
 } from '@earendil-works/pi-coding-agent';
 import { createLocalCodexStreamFunctionWrapper } from './codex.js';
+import {
+  createLocalDependencyExtension,
+  localDependencyExtensionName,
+} from './dependencies.js';
 import {
   createLocalExtensionImporter,
   importLocalExtension,
@@ -134,6 +139,13 @@ export function createLocalSessionRuntimeFactory(
     const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
     const runtime = options.runtimeFactory?.(runtimeRequest)
       ?? new HostAgentRuntime(cwd, runtimeRequest);
+    const dependencyExtension = bindFelanExtension(
+      localDependencyExtensionName,
+      createLocalDependencyExtension({ agentDir: options.agentDir, settingsManager }),
+      runtime,
+      options.agentDir,
+    );
+    if (typeof dependencyExtension !== 'function') dependencyExtension.hidden = true;
     const wrapStreamFunction = await createLocalCodexStreamFunctionWrapper(
       extensionPackages,
       runtime,
@@ -182,7 +194,7 @@ export function createLocalSessionRuntimeFactory(
       modelRuntime: options.modelRuntime,
       settingsManager,
       skillPaths,
-      inlineExtensions: [createToolActivityExtension(toolActivityState)],
+      inlineExtensions: [dependencyExtension, createToolActivityExtension(toolActivityState)],
       ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt: [appendSystemPrompt] }),
       ...(modelScope.scopedModels.length === 0 ? {} : { scopedModels: modelScope.scopedModels }),
     };

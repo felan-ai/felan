@@ -64,6 +64,7 @@ for (const requiredNotice of [
   '@napi-rs/keyring 1.3.0',
   'open 11.0.0',
   'pi-rtk-optimizer 0.9.0',
+  'Microsoft MarkItDown 0.1.7',
 ]) {
   if (!notice.includes(requiredNotice)) errors.push(`NOTICE is missing ${requiredNotice}`);
 }
@@ -112,6 +113,17 @@ for (const requiredNotice of [
 ]) {
   if (!rtkOptimizerNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-rtk-optimizer/NOTICE is missing ${requiredNotice}`);
+  }
+}
+const markitdownNotice = readFileSync(resolve(root, 'packages/ext-markitdown/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'packages/pi-markitdown',
+  '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
+  'Microsoft MarkItDown 0.1.7',
+  'https://github.com/microsoft/markitdown',
+]) {
+  if (!markitdownNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-markitdown/NOTICE is missing ${requiredNotice}`);
   }
 }
 const tasksNotice = readFileSync(resolve(root, 'packages/ext-tasks/NOTICE'), 'utf8');

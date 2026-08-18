@@ -55,6 +55,7 @@ All built-in extensions are enabled by default. Toggle them in
     "tasks": true,
     "prewalk": true,
     "context": true,
+    "markitdown": true,
     "mcp": true,
     "webAccess": true,
     "backgroundBash": true,
@@ -64,6 +65,16 @@ All built-in extensions are enabled by default. Toggle them in
   }
 }
 ```
+
+On the first interactive startup with a missing external runtime dependency,
+Felan opens a dependency wizard before the first prompt. MarkItDown can be
+installed into Felan's managed Python environment or disabled. RTK can be
+installed with its pinned official installer or skipped while its
+binary-independent output compaction remains active. Background Bash is
+disabled when required POSIX process utilities are unavailable. Choices are
+stored in global settings, never prompt in non-interactive sessions, and can be
+revisited with `/dependencies`. Install actions always require explicit
+confirmation.
 
 The local transcript groups adjacent tool calls by default, with one concise
 action row per call beneath each group title. Press `Ctrl+O` to show bounded
@@ -146,10 +157,22 @@ Brave, and self-hosted SearXNG. Configure providers in
 encoded as untrusted external data; private and reserved network targets are
 blocked by default.
 
+`markitdown` extends ordinary `read` calls for DOC/DOCX, PPT/PPTX, XLS/XLSX,
+RTF, EPUB, and Outlook MSG files. It intentionally leaves PDFs, images, audio,
+and generic archives to their existing or explicit workflows. Input,
+conversion time, and output are
+bounded; a content-hash Markdown cache preserves normal offset/limit reads, and
+every result marks extracted document text as untrusted. The extension never
+downloads Python packages automatically. Run `/markitdown` for status or
+`/markitdown install` to explicitly install the managed converter. If the
+converter is absent, conversion interception remains disabled.
+
 `backgroundBash` augments `bash` with detached processes for models outside the
 `openai` and `openai-codex` providers. Logs and process metadata live under
 `$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>/background-bash/<workspace-key>/jobs`.
-Use `/background-bash` or `Ctrl+Shift+J` to inspect them.
+Use `/background-bash` or `Ctrl+Shift+J` to inspect them. Required POSIX process
+utilities are probed through the active runtime; the tools remain inactive on
+incompatible runtimes.
 
 `codex` activates `exec_command`, `write_stdin`, `apply_patch`, and
 `view_image` for GPT models on the exact `openai` and `openai-codex` providers.
@@ -158,13 +181,16 @@ ordinary coding tools when another model is selected. Root and nested sessions
 load the same optional request controls from `$FELAN_AGENT_DIR/codex.json`; see
 the extension package README for the three supported fields.
 
-`rtkOptimizer` delegates command rewrites to an `rtk` executable available in
-the active runtime and compacts noisy command, read, and grep results. It
+`rtkOptimizer` delegates command rewrites to a managed or `PATH` `rtk`
+executable available in the active runtime and compacts noisy command, read,
+and grep results. It
 supports both ordinary `bash` calls and Codex `exec_command` / `write_stdin`
 calls; Codex result envelopes remain intact while only their `Output:` payloads
 are compacted. Configuration is shared by root and nested sessions at
 `$FELAN_AGENT_DIR/storage/agent/rtk-optimizer/config.json`. Use `/rtk` for
-interactive settings, runtime verification, and session savings metrics.
+interactive settings, runtime verification, explicit installation, and session
+savings metrics. Missing RTK bypasses rewriting without disabling output
+compaction.
 
 ## System prompt append
 

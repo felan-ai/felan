@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SettingsManager } from '@felan-ai/agent-core';
@@ -6,8 +6,12 @@ import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createLocalSettingsManager,
+  getDependencyOnboardingChoice,
   getFelanSettings,
   getLocalToolDisplayMode,
+  isBuiltinExtensionEnabled,
+  setBuiltinExtensionEnabled,
+  setDependencyOnboardingChoice,
 } from '../src/settings.js';
 
 const temporaryPaths: string[] = [];
@@ -80,6 +84,39 @@ describe('local settings', () => {
       .toThrow('felanTui must be an object');
     expect(() => getLocalToolDisplayMode(settingsWith({ felanTui: { toolDisplay: 'compact' } })))
       .toThrow('felanTui.toolDisplay must be "grouped" or "full"');
+  });
+
+  it('persists dependency choices without replacing unrelated global settings', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      defaultProvider: 'anthropic',
+      felanTui: { toolDisplay: 'full' },
+    }));
+
+    await Promise.all([
+      setBuiltinExtensionEnabled(agentDir, 'markitdown', false),
+      setDependencyOnboardingChoice(agentDir, 'rtk', 'continue'),
+    ]);
+
+    const settings = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8'));
+    expect(settings).toMatchObject({
+      defaultProvider: 'anthropic',
+      builtinExtensions: { markitdown: false },
+      felanTui: {
+        toolDisplay: 'full',
+        dependencyOnboarding: { rtk: 'continue' },
+      },
+    });
+    expect(isBuiltinExtensionEnabled(settings, 'markitdown')).toBe(false);
+    expect(getDependencyOnboardingChoice(settings, 'rtk')).toBe('continue');
+    const manager = createLocalSettingsManager(root, agentDir);
+    expect(getDependencyOnboardingChoice(getFelanSettings(manager), 'rtk')).toBe('continue');
+
+    await setDependencyOnboardingChoice(agentDir, 'rtk', undefined);
+    const cleared = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8'));
+    expect(cleared.felanTui).toEqual({ toolDisplay: 'full' });
   });
 });
 

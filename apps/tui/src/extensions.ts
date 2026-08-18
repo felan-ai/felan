@@ -23,12 +23,14 @@ export const builtinExtensionPackages = {
   askUser: askUserExtensionPackage,
   tasks: '@felan-ai/ext-tasks',
   prewalk: '@felan-ai/ext-prewalk',
-  context: '@felan-ai/ext-context',
   mcp: mcpExtensionPackage,
   webAccess: '@felan-ai/ext-web-access',
   backgroundBash: '@felan-ai/ext-background-bash',
   codex: '@felan-ai/ext-codex',
   rtkOptimizer: '@felan-ai/ext-rtk-optimizer',
+  // Append conversion diagnostics after result optimization, then restore the source path for progressive context.
+  markitdown: '@felan-ai/ext-markitdown',
+  context: '@felan-ai/ext-context',
   powerline: powerlineExtensionPackage,
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);

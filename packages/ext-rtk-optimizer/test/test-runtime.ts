@@ -13,9 +13,10 @@ export class MemoryRuntime implements AgentRuntime {
       args: readonly string[],
       options?: ExecOptions,
     ) => Promise<ExecResult> = async () => ({ stdout: '', stderr: '', code: 0, killed: false }),
+    storageRoot = '/agent-storage',
   ) {
     this.#storage = {
-      root: '/agent-storage',
+      root: storageRoot,
       readFile: async (path) => {
         const value = this.files.get(path);
         if (value === undefined) {

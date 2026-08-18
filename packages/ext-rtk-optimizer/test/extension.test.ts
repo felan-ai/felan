@@ -138,7 +138,7 @@ describe('RTK optimizer extension', () => {
     await harness.emit('tool_call', event);
 
     expect(event.input.cmd).toBe('git status');
-    expect(runtime.execCalls.map((call) => call.args[0])).toEqual(['--version']);
+    expect(runtime.execCalls.map((call) => call.args[0])).toEqual(['--version', '--version']);
     expect(harness.notifications.some(([message]) => message.includes('rtk is unavailable'))).toBe(true);
   });
 
@@ -165,6 +165,18 @@ describe('RTK optimizer extension', () => {
     await command!.handler('verify', harness.ctx);
 
     expect(harness.notifications.at(-1)).toEqual(['RTK is available (rtk 1.0.0).', 'info']);
+  });
+
+  it('exposes explicit managed installation without running it at startup', async () => {
+    const runtime = rtkRuntime();
+    const harness = await createHarness(runtime);
+    expect(runtime.execCalls).toEqual([]);
+
+    await harness.commands.get('rtk')!.handler('install', harness.ctx);
+
+    expect(runtime.execCalls.some((call) => call.command === 'curl')).toBe(true);
+    expect(harness.notifications.at(-1)?.[0]).toContain('RTK installation failed');
+    expect(harness.statuses.at(-1)).toEqual(['rtk-install', undefined]);
   });
 
   it('reports invalid shared configuration in headless sessions', async () => {
@@ -194,12 +206,14 @@ async function createHarness(runtime: MemoryRuntime, hasUI = true) {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
   const notifications: Array<[string, string | undefined]> = [];
+  const statuses: Array<[string, string | undefined]> = [];
   const ctx = {
     cwd: runtime.cwd,
     hasUI,
     ui: {
       notify: (message: string, level?: string) => notifications.push([message, level]),
       select: vi.fn(async () => undefined),
+      setStatus: (key: string, value: string | undefined) => statuses.push([key, value]),
     },
   } as unknown as ExtensionContext;
   const pi = {
@@ -221,6 +235,7 @@ async function createHarness(runtime: MemoryRuntime, hasUI = true) {
     ctx,
     commands,
     notifications,
+    statuses,
     async emit(name: string, event: Record<string, unknown>): Promise<unknown[]> {
       const results: unknown[] = [];
       for (const handler of handlers.get(name) ?? []) results.push(await handler(event, ctx));

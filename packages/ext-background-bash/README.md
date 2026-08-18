@@ -14,6 +14,10 @@ Docker, and Daytona runtimes need `nohup`, `ps`, and either `setsid` or shell jo
 control so each process receives an isolated process group. The extension
 captures `runtime.storage('session')` once; that handle must be
 durable and visible in the same filesystem namespace as `runtime.shell`.
+It probes the required POSIX shell/process utilities through `AgentRuntime` and
+leaves its tools inactive when the runtime is incompatible. The local TUI can
+persistently disable the extension through dependency onboarding; Felan does
+not install operating-system utilities.
 
 The extension activates for selected models outside the OpenAI provider family.
 Providers `openai` and `openai-codex` are reserved for a separate background Bash

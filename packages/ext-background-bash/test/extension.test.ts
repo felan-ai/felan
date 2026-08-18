@@ -53,6 +53,20 @@ describe('background bash extension activation', () => {
     ]);
   });
 
+  it('does not register tools when required POSIX process utilities are unavailable', async () => {
+    const runtime = {
+      ...unusedRuntime(),
+      shell: vi.fn(async () => ({ stdout: '', stderr: 'sh: not found', code: 127, killed: false })),
+    };
+    const harness = createHarness(runtime);
+    await backgroundBashExtension(harness.pi);
+
+    await harness.emit('session_start', {}, context('anthropic'));
+
+    expect(harness.registerTool).not.toHaveBeenCalled();
+    expect(runtime.shell).toHaveBeenCalledOnce();
+  });
+
   it('activates when the selected model changes from OpenAI to another provider', async () => {
     const harness = createHarness();
     await backgroundBashExtension(harness.pi);
@@ -80,12 +94,9 @@ describe('background bash extension activation', () => {
   });
 
   it('converts foreground timeout seconds to runtime milliseconds', async () => {
-    const shell = vi.fn(async () => ({
-      stdout: '',
-      stderr: '',
-      code: 143,
-      killed: true,
-    }));
+    const shell = vi.fn(async (command: string) => command.includes('missing=')
+      ? { stdout: '', stderr: '', code: 0, killed: false }
+      : { stdout: '', stderr: '', code: 143, killed: true });
     const harness = createHarness({ ...unusedRuntime(), shell });
     await backgroundBashExtension(harness.pi);
     await harness.emit('session_start', {}, context('anthropic'));
@@ -267,7 +278,7 @@ function unusedRuntime(): AgentRuntime {
       remove: unused,
     }),
     exec: unused,
-    shell: unused,
+    shell: async () => ({ stdout: '', stderr: '', code: 0, killed: false }),
     readFile: unused,
     writeFile: unused,
     listFiles: unused,

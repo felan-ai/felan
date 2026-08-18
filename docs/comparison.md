@@ -272,8 +272,10 @@ The RTK optimizer has two layers:
 - output compaction ships in Felan and performs command-aware aggregation for
   tests, builds, Git, linters, and searches, strips ANSI, protects context with
   a final cap, and records estimated savings;
-- command rewriting delegates to an external `rtk` executable. If it is not on
-  `PATH`, the default guard leaves commands unchanged while compaction continues.
+- command rewriting delegates to a managed or `PATH` `rtk` executable. If it is
+  unavailable, the default guard leaves commands unchanged while compaction
+  continues; the local TUI offers explicit installation or a persisted
+  missing-dependency acknowledgement through dependency onboarding.
 
 OpenCode and Claude Code preserve large raw output in files and return a bounded
 preview; Codex exposes a model-settable output token budget. Those are useful,
@@ -285,7 +287,8 @@ Felan's detached background Bash jobs are also different from merely adding
 `&` to a shell command. They have IDs, statuses, logs, wait/stop tools, process
 groups, completion messages, and a TUI overlay. This extension is active for
 models outside the exact OpenAI provider family and requires POSIX facilities
-such as `nohup`, `ps`, and `setsid` or shell job control. GPT/OpenAI sessions
+such as `nohup`, `ps`, and `setsid` or shell job control; incompatible runtimes
+leave the extension inactive. GPT/OpenAI sessions
 instead get Codex-style in-memory process sessions with PTY/stdin and polling;
 those are not restart-durable detached jobs.
 

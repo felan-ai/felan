@@ -73,4 +73,6 @@ export interface RuntimeStatus {
   readonly lastCheckedAt?: number;
   readonly version?: string;
   readonly lastError?: string;
+  readonly command?: string;
+  readonly source?: 'managed' | 'path';
 }

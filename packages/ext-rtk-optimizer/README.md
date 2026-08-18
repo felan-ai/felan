@@ -27,8 +27,19 @@ of at most 80 lines stay exact even when read compaction is enabled.
 ## Requirements
 
 Install [RTK](https://github.com/rtk-ai/rtk) in the execution runtime and make
-the `rtk` executable available on its `PATH`. Use `/rtk verify` to check the
-same `AgentRuntime` used by coding tools.
+the `rtk` executable available on its `PATH`, or run `/rtk install`. The
+explicit install command downloads a commit-pinned copy of RTK's official
+installer, verifies its reviewed SHA-256 digest, and asks that installer for
+the pinned RTK 0.45.0 release. The upstream installer verifies the release
+archive checksum before placing the executable in Felan agent storage. It
+requires `curl` plus standard Linux/macOS shell utilities; Windows users must
+place `rtk.exe` on `PATH` manually.
+
+Managed RTK is preferred over `PATH`. Rewritten shell commands receive its bin
+directory through a command-scoped `PATH`, so no shell-profile change is
+required and compound rewrites can resolve every `rtk` invocation. Use
+`/rtk verify` to check the same `AgentRuntime` used by coding tools. Installation
+never runs during extension startup or from a model-initiated tool call.
 
 ## Configuration
 
@@ -88,6 +99,7 @@ Run `/rtk` to edit settings interactively. Subcommands are:
 - `/rtk show`
 - `/rtk path`
 - `/rtk verify`
+- `/rtk install`
 - `/rtk stats`
 - `/rtk clear-stats`
 - `/rtk reset`
