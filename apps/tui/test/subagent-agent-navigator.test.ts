@@ -3,6 +3,7 @@ import {
   type AgentSession,
   type KeybindingsManager,
   type Theme,
+  type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import {
   SUBAGENT_COMPLETION_MESSAGE_TYPE,
@@ -16,6 +17,7 @@ import {
   type Component,
 } from '@earendil-works/pi-tui';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { AgentTranscript } from '../src/subagents/agent-transcript.js';
 import {
   AgentNavigator,
   AgentRailEditor,
@@ -70,6 +72,41 @@ describe('AgentNavigator', () => {
     harness.navigator.dispose();
   });
 
+  it('shows the resolved model in selected metadata and list rows', () => {
+    const withModel = record('agent-1', 'running', {
+      type: 'explore',
+      model: 'provider/child-model',
+    });
+    const withoutModel = record('agent-2', 'queued', { type: 'reviewer' });
+    const harness = createHarness([withModel, withoutModel], 10, 80);
+
+    const lines = harness.navigator.render(80);
+    const output = lines.join('\n');
+
+    expect(output).toContain('Viewing explore · provider/child-model');
+    expect(output).toContain('explore · provider/child-model');
+    expect(output).not.toContain('reviewer · undefined');
+    expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true);
+    harness.navigator.dispose();
+  });
+
+  it('falls back to the live session model when no request model was stored', () => {
+    const session = sessionWithMessages([], () => {}, {
+      model: { provider: 'default-provider', id: 'default-model' },
+    });
+    const harness = createHarness([
+      record('agent-1', 'running', { type: 'general', session }),
+    ], 10, 80);
+
+    const lines = harness.navigator.render(80);
+    const output = lines.join('\n');
+
+    expect(output).toContain('Viewing general · default-provider/default-model');
+    expect(output).toContain('general · default-provider/default-model');
+    expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true);
+    harness.navigator.dispose();
+  });
+
   it('renders live child-session events', () => {
     let listener!: (event: unknown) => void;
     const session = sessionWithMessages(
@@ -91,6 +128,66 @@ describe('AgentNavigator', () => {
     harness.navigator.dispose();
   });
 
+  it('uses the grouped tool presentation for selected child transcripts', () => {
+    const definition = toolDefinition('read');
+    const session = sessionWithMessages([
+      assistantToolCall('read-1', 'read', { path: 'src/a.ts' }),
+    ], () => {}, {
+      definition,
+    });
+    const keybindings = new TuiKeybindingsManager(TUI_KEYBINDINGS);
+    const transcript = new AgentTranscript(
+      { requestRender: vi.fn() } as never,
+      keybindings as unknown as KeybindingsManager,
+    );
+
+    transcript.attach(session);
+    const output = transcript.render(100).join('\n');
+
+    expect(output).toContain('Reading 1 file');
+    expect(output).toContain('Reading · src/a.ts');
+    transcript.handleInput('\x0f');
+    expect(transcript.render(100).join('\n')).not.toContain('Alt+T full details');
+    transcript.dispose();
+  });
+
+  it('keeps grouped child tools live and releases both session subscriptions', () => {
+    const definition = toolDefinition('read');
+    const listeners: Array<(event: unknown) => void> = [];
+    const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
+    const session = sessionWithMessages([], (listener) => listeners.push(listener), {
+      definition,
+      unsubscribes,
+    });
+    const transcript = new AgentTranscript(
+      { requestRender: vi.fn() } as never,
+      new TuiKeybindingsManager(TUI_KEYBINDINGS) as unknown as KeybindingsManager,
+    );
+
+    transcript.attach(session);
+    const message = assistantToolCall('read-1', 'read', { path: 'src/a.ts' });
+    for (const listener of listeners) listener({ type: 'message_start', message });
+    for (const listener of listeners) listener({
+      type: 'tool_execution_start',
+      toolCallId: 'read-1',
+      toolName: 'read',
+      args: { path: 'src/a.ts' },
+    });
+    for (const listener of listeners) listener({
+      type: 'tool_execution_end',
+      toolCallId: 'read-1',
+      toolName: 'read',
+      result: { content: [{ type: 'text', text: 'file contents' }] },
+      isError: false,
+    });
+
+    expect(transcript.render(100).join('\n')).toContain('Read 1 file');
+    expect(listeners).toHaveLength(2);
+    transcript.dispose();
+    expect(unsubscribes).toHaveLength(2);
+    expect(unsubscribes.every((unsubscribe) => unsubscribe.mock.calls.length === 1)).toBe(true);
+  });
+
   it('closes without stopping the selected subagent', () => {
     const harness = createHarness([record('agent-1')]);
 
@@ -105,7 +202,7 @@ describe('AgentNavigator', () => {
 describe('AgentRailEditor', () => {
   it('shows only active subagents and moves focus through the rail from prompt history', () => {
     const records = [
-      record('agent-1', 'running', { type: 'explore' }),
+      record('agent-1', 'running', { type: 'explore', model: 'provider/explore-model' }),
       record('agent-2', 'queued', { type: 'developer' }),
       record('agent-3', 'completed', { type: 'finished' }),
     ];
@@ -135,6 +232,7 @@ describe('AgentRailEditor', () => {
 
     let output = editor.render(80).join('\n');
     expect(output).toContain('› ● explore');
+    expect(output).toContain('provider/explore-model');
     expect(output).toContain('◦ developer');
     expect(output).not.toContain('finished');
     expect(output).not.toContain('\x1b[7m');
@@ -347,23 +445,66 @@ function record(
 function sessionWithMessages(
   messages: unknown[],
   capture: (listener: (event: unknown) => void) => void,
+  options: {
+    definition?: ToolDefinition<any, any, any>;
+    model?: { provider: string; id: string };
+    unsubscribes?: Array<ReturnType<typeof vi.fn>>;
+  } = {},
 ): AgentSession {
   return {
     messages,
+    ...(options.model === undefined ? {} : { model: options.model }),
     state: { streamingMessage: undefined, pendingToolCalls: new Set() },
     subscribe: vi.fn((listener: (event: unknown) => void) => {
       capture(listener);
-      return vi.fn();
+      const unsubscribe = vi.fn();
+      options.unsubscribes?.push(unsubscribe);
+      return unsubscribe;
     }),
     settingsManager: {
+      getGlobalSettings: vi.fn(() => ({})),
       getHideThinkingBlock: vi.fn(() => false),
       setHideThinkingBlock: vi.fn(),
       getShowImages: vi.fn(() => false),
       getImageWidthCells: vi.fn(() => 40),
     },
-    sessionManager: { getCwd: vi.fn(() => process.cwd()) },
-    getToolDefinition: vi.fn(),
+    sessionManager: {
+      getCwd: vi.fn(() => process.cwd()),
+      getBranch: vi.fn(() => []),
+      buildContextEntries: vi.fn(() => []),
+    },
+    getToolDefinition: vi.fn(() => options.definition),
   } as unknown as AgentSession;
+}
+
+function assistantToolCall(id: string, name: string, arguments_: unknown): unknown {
+  return {
+    role: 'assistant',
+    content: [{ type: 'toolCall', id, name, arguments: arguments_ }],
+    api: 'test',
+    provider: 'test',
+    model: 'test-model',
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: 'toolUse',
+    timestamp: 1,
+  };
+}
+
+function toolDefinition(name: string): ToolDefinition<any, any, any> {
+  return {
+    name,
+    label: name,
+    description: name,
+    parameters: { type: 'object', properties: {} } as never,
+    execute: async () => ({ content: [] }),
+  };
 }
 
 function sessionWithStreamingText(text: string): AgentSession {

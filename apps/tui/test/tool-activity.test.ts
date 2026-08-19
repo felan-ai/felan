@@ -20,6 +20,7 @@ import {
   renderToolActivityGroup,
 } from '../src/tool-activity/presentation.js';
 import {
+  createToolActivitySessionView,
   createToolActivityRuntimeView,
   registerToolActivitySession,
 } from '../src/tool-activity/runtime-view.js';
@@ -391,6 +392,12 @@ describe('tool activity runtime view', () => {
     expect(view.session.getToolDefinition('read')?.renderShell).toBe('self');
     expect((view.session as typeof session).exportedDefinition()).toBe(original);
     expect(runtime.session.getToolDefinition('read')).toBe(original);
+
+    const childState = new ToolActivityState('grouped');
+    const childView = createToolActivitySessionView(session, childState);
+    expect(childView.getToolDefinition('read')).not.toBe(original);
+    expect(childView.getToolDefinition('read')?.renderShell).toBe('self');
+    childState.dispose();
   });
 
   it('preserves original definitions in full mode', () => {
@@ -401,6 +408,22 @@ describe('tool activity runtime view', () => {
     registerToolActivitySession(session, state);
 
     expect(createToolActivityRuntimeView(runtime).session.getToolDefinition('read')).toBe(original);
+    expect(createToolActivitySessionView(session, state).getToolDefinition('read')).toBe(original);
+  });
+
+  it('does not reuse a child session view after its state is disposed', () => {
+    const original = toolDefinition('read');
+    const session = { getToolDefinition: () => original } as unknown as AgentSession;
+    const firstState = new ToolActivityState('grouped');
+    const firstView = createToolActivitySessionView(session, firstState);
+    firstState.dispose();
+
+    const secondState = new ToolActivityState('grouped');
+    const secondView = createToolActivitySessionView(session, secondState);
+
+    expect(secondView).not.toBe(firstView);
+    expect(secondView.getToolDefinition('read')).not.toBe(original);
+    secondState.dispose();
   });
 });
 

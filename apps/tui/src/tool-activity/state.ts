@@ -88,10 +88,17 @@ export class ToolActivityState {
   #session: AgentSession | undefined;
   #unsubscribe: (() => void) | undefined;
 
-  constructor(private displayMode: LocalToolDisplayMode) {}
+  constructor(
+    private displayMode: LocalToolDisplayMode,
+    private readonly showInspectorHint = true,
+  ) {}
 
   get mode(): LocalToolDisplayMode {
     return this.displayMode;
+  }
+
+  get inspectorHintEnabled(): boolean {
+    return this.showInspectorHint;
   }
 
   get cwd(): string {

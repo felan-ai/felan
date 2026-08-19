@@ -84,7 +84,7 @@ export function renderToolActivityGroup(
   const summary = toolGroupSummary(calls);
   const status = groupStatus(calls, theme);
   const metadata = groupMetadata(calls);
-  const inspectHint = expanded ? ' · Alt+T full details' : '';
+  const inspectHint = expanded && state.inspectorHintEnabled ? ' · Alt+T full details' : '';
   const header = `${status} ${theme.bold(summary)}${theme.fg('muted', `${metadata ? ` · ${metadata}` : ''}${inspectHint}`)}`;
   const lines = [header];
   for (const call of calls) {

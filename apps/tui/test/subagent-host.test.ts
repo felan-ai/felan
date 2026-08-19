@@ -417,14 +417,26 @@ describe('LocalSubagentHost', () => {
 
   it('provides synchronous direct-child views for the TUI navigator', async () => {
     const release = deferred();
+    const models = [{ provider: 'provider', id: 'child-model', reasoning: false }];
+    const modelRuntime = {
+      getAvailableSnapshot: () => models,
+      hasConfiguredAuth: () => true,
+      getModel: (provider: string, id: string) => models.find((model) => (
+        model.provider === provider && model.id === id
+      )),
+    } as unknown as ModelRuntime;
     const { host } = await harness({
+      modelRuntime,
       runner: async (input) => {
         await input.onReady({ steer: async () => {}, cancel: async () => {} });
         await release.promise;
         return { result: 'done' };
       },
     });
-    const spawned = await host.spawn(request({ description: 'visible child' }));
+    const spawned = await host.spawn(request({
+      description: 'visible child',
+      model: 'provider/child-model',
+    }));
     if (!spawned.ok) return;
     await settle();
 
@@ -432,11 +444,13 @@ describe('LocalSubagentHost', () => {
       expect.objectContaining({
         agentId: spawned.value.agentId,
         description: 'visible child',
+        model: 'provider/child-model',
         status: 'running',
       }),
     ]);
     expect(host.getLocalSubagent(spawned.value.agentId)).toMatchObject({
       agentId: spawned.value.agentId,
+      model: 'provider/child-model',
       status: 'running',
     });
 

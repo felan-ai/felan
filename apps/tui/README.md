@@ -79,8 +79,10 @@ confirmation.
 The local transcript groups adjacent tool calls by default, with one concise
 action row per call beneath each group title. Press `Ctrl+O` to show bounded
 result previews. Use `/tools` or `Alt+T` to inspect the complete arguments and
-result for one call. Subagent completion notices stay on one summary line by
-default; `Ctrl+O` shows a bounded preview and `Alt+A` opens full agent details.
+result for one root-session call. Selected subagent transcripts use the same
+grouped or full tool rendering and `Ctrl+O` previews. Subagent completion
+notices stay on one summary line by default; `Ctrl+O` shows a bounded preview
+and `Alt+A` opens full agent details.
 To restore Pi's original ungrouped rendering, set:
 
 ```json
@@ -225,8 +227,10 @@ child in a full-width interactive rail beneath the powerline status rows, or
 beneath the editor when powerline is disabled. Press Down at the editor's newest
 prompt to enter the rail, use Up/Down to select a child, press Up on the first
 child to return to the editor, and press Enter to open that child in the agent
-navigator. Use `/agents` or `Alt+A` to open the navigator directly, follow live
-transcripts, send steering messages, or stop active work.
+navigator. Each child row and the selected-child header show the resolved
+provider/model when available. Use `/agents` or `Alt+A` to open the navigator
+directly, follow live transcripts with the same tool presentation as the main
+agent, send steering messages, or stop active work.
 Runtime shutdown awaits active-child cancellation before Pi teardown.
 Completed-child continuation uses the same child ID and Pi session file while
 replacing the latest result. The default list also

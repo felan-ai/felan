@@ -484,10 +484,11 @@ export class AgentNavigator implements Component, Focusable {
     if (!selected) {
       return this.theme.bold('Agent navigator') + this.theme.fg('dim', ' · no subagents · Esc closes');
     }
+    const model = modelLabel(selected);
     return this.theme.bold(`Viewing ${selected.type}`)
       + this.theme.fg(
         'dim',
-        ` · ${describeActivity(selected)} · ${formatDuration(selected)} · Esc returns`,
+        `${model ? ` · ${model}` : ''} · ${describeActivity(selected)} · ${formatDuration(selected)} · Esc returns`,
       );
   }
 
@@ -660,7 +661,13 @@ function renderAgentRow(
   if (width <= 0) return '';
   const cursor = selected ? theme.fg('accent', '›') : ' ';
   const name = selected ? theme.bold(record.type) : record.type;
-  const head = `${cursor} ${statusIcon(record, theme)} ${name}`;
+  const baseHead = `${cursor} ${statusIcon(record, theme)} ${name}`;
+  const model = modelLabel(record);
+  const head = truncateToWidth(
+    baseHead + (model ? theme.fg('dim', ` · ${model}`) : ''),
+    width,
+    '…',
+  );
   const duration = formatDuration(record);
   const durationWidth = visibleWidth(duration);
   const summary = record.status === 'running'
@@ -746,6 +753,13 @@ function activityLine(text: string): string {
     .find((candidate) => candidate.trim())
     ?.replace(/[\x00-\x09\x0B-\x1F\x7F]/g, ' ')
     .trim() ?? '';
+}
+
+function modelLabel(record: LocalSubagentView): string {
+  const sessionModel = record.session?.model;
+  const model = record.model
+    ?? (sessionModel ? `${sessionModel.provider}/${sessionModel.id}` : undefined);
+  return model ? activityLine(model) : '';
 }
 
 function formatStatus(status: LocalSubagentView['status']): string {

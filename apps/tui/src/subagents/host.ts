@@ -44,6 +44,7 @@ export interface LocalSubagentSettings {
 }
 
 export interface LocalSubagentView extends SubagentRecord {
+  readonly model?: string;
   readonly session?: AgentSession;
 }
 
@@ -1079,6 +1080,7 @@ function cloneRecord(record: SubagentRecord): SubagentRecord {
 function localView(child: MutableChild): LocalSubagentView {
   return {
     ...cloneRecord(child.record),
+    ...(child.request.model === undefined ? {} : { model: child.request.model }),
     ...(child.session === undefined ? {} : { session: child.session }),
   };
 }

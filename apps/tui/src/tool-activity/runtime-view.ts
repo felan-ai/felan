@@ -7,7 +7,7 @@ import { createToolActivityDisplayDefinition } from './presentation.js';
 import { ToolActivityState } from './state.js';
 
 const sessionStates = new WeakMap<AgentSession, ToolActivityState>();
-const sessionViews = new WeakMap<AgentSession, AgentSession>();
+const sessionViews = new WeakMap<AgentSession, WeakMap<ToolActivityState, AgentSession>>();
 const displayDefinitions = new WeakMap<
   ToolActivityState,
   WeakMap<ToolDefinition<any, any, any>, ToolDefinition<any, any, any>>
@@ -15,6 +15,13 @@ const displayDefinitions = new WeakMap<
 
 export function registerToolActivitySession(session: AgentSession, state: ToolActivityState): void {
   sessionStates.set(session, state);
+}
+
+export function createToolActivitySessionView(
+  session: AgentSession,
+  state: ToolActivityState,
+): AgentSession {
+  return createSessionView(session, state);
 }
 
 export function createToolActivityRuntimeView<T extends AgentSessionRuntime>(runtime: T): T {
@@ -33,7 +40,16 @@ export function createToolActivityRuntimeView<T extends AgentSessionRuntime>(run
 function sessionView(session: AgentSession): AgentSession {
   const state = sessionStates.get(session);
   if (!state) return session;
-  const existing = sessionViews.get(session);
+  return createSessionView(session, state);
+}
+
+function createSessionView(session: AgentSession, state: ToolActivityState): AgentSession {
+  let views = sessionViews.get(session);
+  if (!views) {
+    views = new WeakMap();
+    sessionViews.set(session, views);
+  }
+  const existing = views.get(state);
   if (existing) return existing;
 
   const boundMethods = new Map<PropertyKey, { source: Function; bound: Function }>();
@@ -53,7 +69,7 @@ function sessionView(session: AgentSession): AgentSession {
       return Reflect.set(target, property, value, target);
     },
   });
-  sessionViews.set(session, view);
+  views.set(state, view);
   return view;
 }
 

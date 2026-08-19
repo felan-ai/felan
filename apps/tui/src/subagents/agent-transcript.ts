@@ -17,6 +17,9 @@ import {
   type MarkdownTheme,
   type TUI,
 } from '@earendil-works/pi-tui';
+import { getLocalToolDisplayMode } from '../settings.js';
+import { createToolActivitySessionView } from '../tool-activity/runtime-view.js';
+import { ToolActivityState } from '../tool-activity/state.js';
 
 type AgentMessage = AgentSession['messages'][number];
 type AssistantMessage = Extract<AgentMessage, { role: 'assistant' }>;
@@ -26,6 +29,8 @@ type UserMessage = Extract<AgentMessage, { role: 'user' }>;
 
 interface Attachment {
   session: AgentSession;
+  sessionView: AgentSession;
+  toolActivityState: ToolActivityState;
   unsubscribe: (() => void) | undefined;
   released: boolean;
 }
@@ -56,12 +61,23 @@ export class AgentTranscript implements Component {
   attach(session: AgentSession): void {
     this.detach();
 
-    const attachment: Attachment = { session, unsubscribe: undefined, released: false };
+    const toolActivityState = new ToolActivityState(
+      getLocalToolDisplayMode(session.settingsManager),
+      false,
+    );
+    const attachment: Attachment = {
+      session,
+      sessionView: createToolActivitySessionView(session, toolActivityState),
+      toolActivityState,
+      unsubscribe: undefined,
+      released: false,
+    };
     const queuedEvents: AgentSessionEvent[] = [];
     let replaying = true;
     this.#attachment = attachment;
 
     try {
+      toolActivityState.attach(session);
       attachment.unsubscribe = session.subscribe((event) => {
         if (this.#attachment !== attachment) return;
         if (replaying) queuedEvents.push(event);
@@ -92,6 +108,7 @@ export class AgentTranscript implements Component {
       attachment.unsubscribe = undefined;
       unsubscribe?.();
     }
+    attachment?.toolActivityState.dispose();
     this.#clear();
   }
 
@@ -315,9 +332,9 @@ export class AgentTranscript implements Component {
       toolCallId,
       args,
       { showImages: this.#showImages, imageWidthCells: this.#imageWidthCells },
-      session.getToolDefinition(toolName),
+      this.#attachment?.sessionView.getToolDefinition(toolName),
       this.tui,
-      session.sessionManager.getCwd(),
+      this.#attachment?.sessionView.sessionManager.getCwd() ?? session.sessionManager.getCwd(),
     );
     component.setExpanded(this.#toolsExpanded);
     this.#toolComponents.set(toolCallId, component);
