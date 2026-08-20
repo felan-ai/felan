@@ -5,8 +5,8 @@ export type SubagentThinking = FelanThinkingLevel;
 export interface SubagentDescriptor {
   readonly id: string;
   readonly description: string;
-  readonly defaultModel?: string;
-  readonly defaultThinking?: SubagentThinking;
+  readonly model?: string;
+  readonly thinking?: SubagentThinking;
   readonly defaultMaxTurns?: number;
   readonly defaultTimeoutSeconds?: number;
   readonly allowNesting: boolean;

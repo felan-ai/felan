@@ -48,13 +48,21 @@ function formatSubagentCapability(descriptors: readonly SubagentDescriptor[]): s
   return [
     'Use child agents for independent, parallel, or specialized work when delegation reduces latency or keeps the main context focused.',
     availableTypes,
+    'Definition model and thinking settings take precedence over per-call values; otherwise per-call values apply, then the parent settings.',
     'Child agents always run asynchronously. Give each child a self-contained task with the relevant scope, constraints, and expected output, then continue useful parent work while independent tasks run in parallel.',
     'Completion notices surface finished work automatically; rely on them during normal execution. Use list_subagents and get_subagent_result for an immediate status check when current state is needed, steer_subagent to refine active work, and cancel_subagent when work is no longer needed. Integrate and verify child results before reporting completion.',
   ].join(' ');
 }
 
-function formatDescriptor({ id, description }: SubagentDescriptor): string {
-  return `${id} (${description.replace(/\s+/g, ' ').trim()})`;
+function formatDescriptor(descriptor: SubagentDescriptor): string {
+  const details = [descriptor.description.replace(/\s+/g, ' ').trim()];
+  if (descriptor.model !== undefined) {
+    details.push(`model: ${descriptor.model}`);
+  }
+  if (descriptor.thinking !== undefined) {
+    details.push(`thinking: ${descriptor.thinking}`);
+  }
+  return `${descriptor.id} (${details.join('; ')})`;
 }
 
 function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
@@ -65,7 +73,7 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
     subagent_type: typeSchema,
     model: Type.Optional(Type.String({
       minLength: 1,
-      description: 'inherit, high, medium, low, or an exact provider/model reference',
+      description: 'For definitions without a model: inherit, high, medium, low, or an exact provider/model reference',
     })),
     thinking: Type.Optional(thinkingSchema),
     max_turns: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TURNS })),
@@ -83,13 +91,13 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
       const type = params.subagent_type as string;
       const descriptor = host.descriptors.find((entry) => entry.id === type);
       if (!descriptor) return toolError(error('unknown_agent_type', `unknown subagent type: ${type}`));
-      const validation = validateSpawn(host, params);
+      const validation = validateSpawn(host, descriptor, params);
       if (validation) return toolError(validation);
       const parentThinking = normalizeThinking(pi.getThinkingLevel());
-      const model = normalizeModel(params.model, descriptor, ctx);
+      const model = normalizeModel(descriptor.model ?? params.model, ctx);
       if (!model.ok) return toolError(model.error);
-      const thinking = params.thinking
-        ?? descriptor.defaultThinking
+      const thinking = descriptor.thinking
+        ?? params.thinking
         ?? parentThinking;
       const request: SubagentSpawnRequest = {
         type,
@@ -185,6 +193,7 @@ function registerCancel(pi: FelanExtensionAPI, host: SubagentHost): void {
 
 function validateSpawn(
   host: SubagentHost,
+  descriptor: SubagentDescriptor,
   params: {
     prompt: string;
     description: string;
@@ -198,7 +207,8 @@ function validateSpawn(
   if (byteLength(params.description) > host.policy.maxDescriptionBytes) {
     return error('invalid_request', `description exceeds ${host.policy.maxDescriptionBytes} bytes`);
   }
-  if (params.model && !isCanonicalModelSelector(params.model)) {
+  const model = descriptor.model ?? params.model;
+  if (model && !isCanonicalModelSelector(model)) {
     return error(
       'unsupported_model',
       'model must be inherit, high, medium, low, or an exact provider/model reference',
@@ -208,11 +218,10 @@ function validateSpawn(
 
 function normalizeModel(
   requested: string | undefined,
-  descriptor: SubagentDescriptor,
   ctx: ExtensionContext,
 ): SubagentHostResult<{ reference?: string }> {
   const parentModel = ctx.model;
-  const selected = (requested ?? descriptor.defaultModel)?.trim();
+  const selected = requested?.trim();
   if (!selected) {
     return {
       ok: true,

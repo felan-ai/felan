@@ -21,6 +21,7 @@ import {
   type SubagentSpawnRequest,
   type SubagentStatus,
 } from '@felan-ai/ext-subagents';
+import type { MemoryHost } from '@felan-ai/ext-memory';
 import {
   CURRENT_SESSION_VERSION,
   type AgentSession,
@@ -60,6 +61,10 @@ export interface CreateLocalSubagentHostOptions {
   readonly importExtension: ExtensionPackageImporter;
   readonly skillPaths?: readonly string[];
   readonly runtimeFactory?: LocalAgentRuntimeFactory;
+  readonly memoryHostFactory?: (options: {
+    readonly cwd: string;
+    readonly sessionStorageRoot: string;
+  }) => MemoryHost;
   readonly settings?: LocalSubagentSettings;
   readonly runChild?: LocalSubagentRunner;
 }
@@ -274,7 +279,7 @@ export class LocalSubagentManager {
     }
     const definition = this.definitions.get(request.type);
     if (!definition) return failure('unknown_agent_type', `Unknown subagent type: ${request.type}`);
-    const resolvedModel = this.#resolveModel(request.model, definition.descriptor.defaultModel);
+    const resolvedModel = this.#resolveModel(request.model);
     if (!resolvedModel.ok) return resolvedModel;
     if (!this.#supportsThinking(resolvedModel.value, request.thinking)) {
       return failure('unsupported_thinking', 'The resolved model does not support the requested thinking level');
@@ -696,6 +701,10 @@ export class LocalSubagentManager {
       this.#options.agentDir,
       input.rootSessionId,
     );
+    const memoryHost = this.#options.memoryHostFactory?.({
+      cwd: input.cwd,
+      sessionStorageRoot: runtimeRequest.sessionStorageRoot,
+    });
     await Promise.all([
       mkdir(this.#store.sessionDirectory(), { recursive: true }),
       mkdir(runtimeRequest.sessionStorageRoot, { recursive: true }),
@@ -733,6 +742,8 @@ export class LocalSubagentManager {
         input.subagents,
         this.#options.modelRuntime,
         this.#options.importExtension,
+        undefined,
+        memoryHost === undefined ? undefined : { role: 'reader', host: memoryHost },
       ),
       modelRuntime: this.#options.modelRuntime,
       settingsManager: this.#options.settingsManager,
@@ -828,14 +839,12 @@ export class LocalSubagentManager {
 
   #resolveModel(
     selector: string | undefined,
-    defaultModel: string | undefined,
   ): SubagentHostResult<string | undefined> {
-    const value = selector ?? defaultModel;
-    if (!value) return success(undefined);
-    if (value === 'inherit') {
+    if (!selector) return success(undefined);
+    if (selector === 'inherit') {
       return failure('unsupported_model', 'Parent model is unavailable');
     }
-    const model = this.#exactModel(value);
+    const model = this.#exactModel(selector);
     return model && this.#options.modelRuntime.hasConfiguredAuth(model.provider)
       ? success(`${model.provider}/${model.id}`)
       : failure('unsupported_model', 'The requested model is unavailable or unauthenticated');

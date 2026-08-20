@@ -16,7 +16,7 @@ import {
 const descriptor = {
   id: 'reviewer',
   description: 'Review\nchanges',
-  defaultThinking: 'high' as const,
+  thinking: 'high' as const,
   defaultMaxTurns: 7,
   allowNesting: false,
 };
@@ -57,7 +57,7 @@ describe('@felan-ai/ext-subagents', () => {
     expect(harness.capabilities).toEqual([
       expect.objectContaining({
         id: 'subagents',
-        instructions: expect.stringMatching(/reviewer \(Review changes\).*always run asynchronously.*Completion notices/s),
+        instructions: expect.stringMatching(/reviewer \(Review changes; thinking: high\).*always run asynchronously.*Completion notices/s),
       }),
     ]);
     expect(harness.tools.get('Agent')!.description).toContain(
@@ -67,7 +67,7 @@ describe('@felan-ai/ext-subagents', () => {
     expect(harness.tools.get('get_subagent_result')!.description).toContain('immediately');
   });
 
-  it('applies shared defaults from the active Pi session', async () => {
+  it('uses definition settings before parent fallbacks', async () => {
     const harness = createHarness();
     const result = await execute(harness, 'Agent', {
       prompt: 'Review',
@@ -88,8 +88,68 @@ describe('@felan-ai/ext-subagents', () => {
     expect(resultText(result)).toContain('status: running');
   });
 
+  it('uses definition model and thinking over tool arguments', async () => {
+    const planner = { provider: 'anthropic', id: 'claude-opus-4-6' } as any;
+    const lowModel = { provider: 'openai-codex', id: 'gpt-5.6-luna' } as any;
+    const harness = createHarness({
+      descriptor: {
+        id: 'explore',
+        description: 'Explore changes',
+        model: 'low',
+        thinking: 'off',
+        allowNesting: false,
+      },
+      parentModel: planner,
+      parentThinking: 'max',
+      models: [planner, lowModel],
+    });
+
+    expect(harness.capabilities[0]?.instructions).toContain('model: low');
+    expect(harness.capabilities[0]?.instructions).toContain('thinking: off');
+    expect(harness.tools.get('Agent')!.description).toContain('model: low');
+
+    await execute(harness, 'Agent', {
+      prompt: 'Explore',
+      description: 'explore',
+      subagent_type: 'explore',
+      model: 'inherit',
+      thinking: 'high',
+    });
+
+    expect(harness.host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'openai-codex/gpt-5.6-luna',
+        thinking: 'off',
+      }),
+      undefined,
+    );
+
+    await execute(harness, 'Agent', {
+      prompt: 'Explore',
+      description: 'explore',
+      subagent_type: 'explore',
+      model: 'auto',
+      thinking: 'max',
+    });
+    expect(harness.host.spawn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        model: 'openai-codex/gpt-5.6-luna',
+        thinking: 'off',
+      }),
+      undefined,
+    );
+  });
+
   it('preserves Pi max thinking in the request', async () => {
-    const harness = createHarness({ parentThinking: 'max' });
+    const harness = createHarness({
+      descriptor: {
+        id: 'reviewer',
+        description: 'Review changes',
+        allowNesting: false,
+      },
+      parentThinking: 'max',
+    });
     await execute(harness, 'Agent', {
       prompt: 'Review',
       description: 'review',
