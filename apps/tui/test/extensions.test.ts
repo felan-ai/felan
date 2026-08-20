@@ -1,4 +1,6 @@
 import type { ModelRuntime } from '@felan-ai/agent-core';
+import type { FelanExtensionAPI } from '@felan-ai/agent-core';
+import { createEmptyMemoryArtifact, createMemorySnapshot, type MemoryHost } from '@felan-ai/ext-memory';
 import type { SubagentHost } from '@felan-ai/ext-subagents';
 import { describe, expect, it } from 'vitest';
 import {
@@ -23,6 +25,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-rtk-optimizer',
       '@felan-ai/ext-markitdown',
       '@felan-ai/ext-context',
+      '@felan-ai/ext-memory',
       '@felan-ai/ext-powerline',
     ]);
 
@@ -34,6 +37,8 @@ describe('local extension importer', () => {
         expect(imported).toMatchObject({ createAskUserExtension: expect.any(Function) });
       } else if (packageName === '@felan-ai/ext-mcp') {
         expect(imported).toMatchObject({ createMcpExtension: expect.any(Function) });
+      } else if (packageName === '@felan-ai/ext-memory') {
+        expect(imported).toMatchObject({ createMemoryExtension: expect.any(Function) });
       } else {
         expect(imported).toMatchObject({ default: expect.any(Function) });
       }
@@ -85,6 +90,36 @@ describe('local extension importer', () => {
     });
   });
 
+  it('binds memory as root or reader without sharing checkpoint behavior', async () => {
+    const host = memoryHost();
+    const rootImporter = createLocalExtensionImporter(
+      testSubagentHost(),
+      testModelRuntime(),
+      async () => { throw new Error('Memory must be host-bound'); },
+      undefined,
+      { role: 'root', host },
+    );
+    const readerImporter = createLocalExtensionImporter(
+      testSubagentHost(),
+      testModelRuntime(),
+      async () => { throw new Error('Memory must be host-bound'); },
+      undefined,
+      { role: 'reader', host },
+    );
+    const rootHandlers: string[] = [];
+    const readerHandlers: string[] = [];
+    const root = await rootImporter('@felan-ai/ext-memory') as { default: (pi: FelanExtensionAPI) => void };
+    const reader = await readerImporter('@felan-ai/ext-memory') as { default: (pi: FelanExtensionAPI) => void };
+    root.default(extensionApi(rootHandlers));
+    reader.default(extensionApi(readerHandlers));
+    expect(rootHandlers).toContain('agent_settled');
+    expect(readerHandlers).not.toContain('agent_settled');
+    expect(rootHandlers).toEqual(expect.arrayContaining(['session_start', 'session_compact', 'session_tree']));
+    expect(readerHandlers).toEqual(expect.arrayContaining(['session_start', 'session_compact', 'session_tree']));
+    expect(rootHandlers).not.toContain('context');
+    expect(readerHandlers).not.toContain('context');
+  });
+
   it('enables only configured built-in extensions', () => {
     expect(resolveBuiltinExtensionPackages({
       subagents: false,
@@ -96,6 +131,7 @@ describe('local extension importer', () => {
       backgroundBash: false,
       codex: false,
       rtkOptimizer: false,
+      memory: false,
       powerline: false,
     })).toEqual([
       '@felan-ai/ext-prewalk',
@@ -136,4 +172,19 @@ function testSubagentHost(): SubagentHost & LocalSubagentNavigatorHost {
 
 function testModelRuntime(): ModelRuntime {
   return {} as ModelRuntime;
+}
+
+function memoryHost(): MemoryHost {
+  return {
+    readCurrent: async () => createMemorySnapshot(createEmptyMemoryArtifact('.memory'), '.memory'),
+    recordCheckpoint: async () => {},
+    status: async () => ({ enabled: true, state: 'idle', pendingCheckpoints: 0 }),
+  };
+}
+
+function extensionApi(handlers: string[]): FelanExtensionAPI {
+  return {
+    on: ((event: string) => handlers.push(event)) as FelanExtensionAPI['on'],
+    registerCapability: () => {},
+  } as unknown as FelanExtensionAPI;
 }

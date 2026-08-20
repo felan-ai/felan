@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { InteractiveMode } from '@earendil-works/pi-coding-agent';
 import {
   createLocalFelanRuntime,
@@ -25,7 +26,17 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
       ...(options.initialMessage === undefined ? {} : { initialMessage: options.initialMessage }),
       ...(options.verbose === undefined ? {} : { verbose: options.verbose }),
     });
-    installFelanStartupHeader(mode, { expanded: options.verbose === true });
+    installFelanStartupHeader(mode, {
+      expanded: options.verbose === true,
+      memorySummaryPath: () => join(
+        runtime.services.agentDir,
+        'storage',
+        'sessions',
+        encodeURIComponent(runtime.session.sessionManager.getSessionId()),
+        '.memory',
+        'summary.md',
+      ),
+    });
     await mode.run();
   } finally {
     try {

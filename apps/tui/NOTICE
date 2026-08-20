@@ -6,6 +6,10 @@ This package composes the MIT-licensed @felan-ai/agent-core and Felan extension
 packages listed in package.json. Their package-level LICENSE and NOTICE files
 contain the applicable attribution and source provenance.
 
+The local-first memory integration is original MIT-licensed Felan code from
+@felan-ai/ext-memory. Its package-level LICENSE and NOTICE contain the
+applicable attribution.
+
 The terminal application uses @earendil-works/pi-coding-agent and
 @earendil-works/pi-tui 0.84.2 from https://github.com/earendil-works/pi,
 licensed under the MIT License.

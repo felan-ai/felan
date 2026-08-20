@@ -1,6 +1,7 @@
 import type { ExtensionPackageImporter, ModelRuntime } from '@felan-ai/agent-core';
 import { createAskUserExtension } from '@felan-ai/ext-ask-user';
 import { createTuiAskUserHost } from '@felan-ai/ext-ask-user/tui';
+import { createMemoryExtension, type MemoryHost, type MemoryRole } from '@felan-ai/ext-memory';
 import { createPowerlineExtension } from '@felan-ai/ext-powerline';
 import {
   createSubagentsExtension,
@@ -18,6 +19,7 @@ export const askUserExtensionPackage = '@felan-ai/ext-ask-user';
 export const mcpExtensionPackage = '@felan-ai/ext-mcp';
 export const powerlineExtensionPackage = '@felan-ai/ext-powerline';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
+export const memoryExtensionPackage = '@felan-ai/ext-memory';
 export const builtinExtensionPackages = {
   subagents: subagentsExtensionPackage,
   askUser: askUserExtensionPackage,
@@ -31,6 +33,7 @@ export const builtinExtensionPackages = {
   // Append conversion diagnostics after result optimization, then restore the source path for progressive context.
   markitdown: '@felan-ai/ext-markitdown',
   context: '@felan-ai/ext-context',
+  memory: memoryExtensionPackage,
   powerline: powerlineExtensionPackage,
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);
@@ -61,11 +64,17 @@ export const importLocalExtension: ExtensionPackageImporter = async (packageName
   return import(packageName);
 };
 
+export interface LocalMemoryExtensionBinding {
+  readonly role: MemoryRole;
+  readonly host: MemoryHost;
+}
+
 export function createLocalExtensionImporter(
   host: SubagentHost & LocalSubagentNavigatorHost,
   modelRuntime: ModelRuntime,
   importExtension: ExtensionPackageImporter = importLocalExtension,
   shutdownHost?: () => Promise<void>,
+  memoryBinding?: LocalMemoryExtensionBinding,
 ): ExtensionPackageImporter {
   let powerlineLoaded = false;
   let agentRailRenderer: AgentRailRenderer | undefined;
@@ -101,6 +110,10 @@ export function createLocalExtensionImporter(
     if (packageName === powerlineExtensionPackage) {
       powerlineLoaded = true;
       return { default: powerline };
+    }
+    if (packageName === memoryExtensionPackage) {
+      if (!memoryBinding) throw new Error('Local memory extension requires a host binding');
+      return { default: createMemoryExtension(memoryBinding) };
     }
     return importExtension(packageName);
   };

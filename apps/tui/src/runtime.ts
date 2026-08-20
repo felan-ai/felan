@@ -7,6 +7,7 @@ import {
   HostAgentRuntime,
   ModelRuntime,
   SessionManager,
+  type AgentSession,
   bindFelanExtension,
   createAgentCoreSessionRuntimeFactory,
   createAgentSessionRuntime,
@@ -32,7 +33,9 @@ import {
 import {
   createLocalSettingsManager,
   getFelanSettings,
+  getLocalMemoryProcessingEnabled,
   getLocalToolDisplayMode,
+  isBuiltinExtensionEnabled,
 } from './settings.js';
 import { loadLocalAppendSystemPrompt } from './system-prompt.js';
 import {
@@ -46,6 +49,8 @@ import {
 import { createToolActivityExtension } from './tool-activity/extension.js';
 import { registerToolActivitySession } from './tool-activity/runtime-view.js';
 import { ToolActivityState } from './tool-activity/state.js';
+import { createLocalMemoryControlExtension } from './memory/control.js';
+import { LocalMemoryCoordinator } from './memory/coordinator.js';
 
 const localSubagentHost = Symbol('localSubagentHost');
 const localSubagentShutdown = Symbol('localSubagentShutdown');
@@ -74,6 +79,8 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly runtimeFactory?: LocalAgentRuntimeFactory;
   readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
+  readonly memoryCoordinator?: LocalMemoryCoordinator;
+  readonly onSessionModel?: (model: AgentSession['model']) => void;
 }
 
 export interface CreateLocalFelanRuntimeOptions {
@@ -87,6 +94,7 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly runtimeFactory?: LocalAgentRuntimeFactory;
   readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
+  readonly memoryCoordinator?: LocalMemoryCoordinator;
 }
 
 export function getLocalAgentDir(): string {
@@ -134,6 +142,10 @@ export function createLocalSessionRuntimeFactory(
     const extensionPackages = options.extensionPackages
       ?? resolveBuiltinExtensionPackages(felanSettings.builtinExtensions);
     const importExtension = options.importExtension ?? importLocalExtension;
+    const memoryHost = options.memoryCoordinator?.createSessionHost({
+      cwd,
+      sessionStorageRoot: runtimeRequest.sessionStorageRoot,
+    });
     const skillPaths = options.skillPaths ?? getLocalSkillPaths(cwd, options.homeDir);
     const subagentSettings = options.subagentSettings ?? felanSettings.felanSubagents;
     const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
@@ -151,6 +163,20 @@ export function createLocalSessionRuntimeFactory(
       runtime,
       options.agentDir,
     );
+    const memoryControlExtension = options.memoryCoordinator === undefined
+      ? undefined
+      : bindFelanExtension(
+        '@felan-ai/felan/memory-control',
+        createLocalMemoryControlExtension({
+          coordinator: options.memoryCoordinator,
+          agentDir: options.agentDir,
+        }),
+        runtime,
+        options.agentDir,
+      );
+    if (memoryControlExtension && typeof memoryControlExtension !== 'function') {
+      memoryControlExtension.hidden = true;
+    }
     const host = await LocalSubagentHost.create({
       sessionId: sessionManager.getSessionId(),
       cwd,
@@ -166,6 +192,15 @@ export function createLocalSessionRuntimeFactory(
       skillPaths,
       ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
       ...(subagentSettings === undefined ? {} : { settings: subagentSettings }),
+      ...(options.memoryCoordinator === undefined ? {} : {
+        memoryHostFactory: ({ cwd: childCwd, sessionStorageRoot }: {
+          readonly cwd: string;
+          readonly sessionStorageRoot: string;
+        }) => options.memoryCoordinator!.createSessionHost({
+          cwd: childCwd,
+          sessionStorageRoot,
+        }),
+      }),
     });
     const shutdownState: LocalSubagentShutdownState = { failed: false };
     const shutdownHost = async () => {
@@ -193,11 +228,16 @@ export function createLocalSessionRuntimeFactory(
         options.modelRuntime,
         importExtension,
         shutdownHost,
+        memoryHost === undefined ? undefined : { role: 'root' as const, host: memoryHost },
       ),
       modelRuntime: options.modelRuntime,
       settingsManager,
       skillPaths,
-      inlineExtensions: [dependencyExtension, createToolActivityExtension(toolActivityState)],
+      inlineExtensions: [
+        dependencyExtension,
+        createToolActivityExtension(toolActivityState),
+        ...(memoryControlExtension === undefined ? [] : [memoryControlExtension]),
+      ],
       ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt: [appendSystemPrompt] }),
       ...(modelScope.scopedModels.length === 0 ? {} : { scopedModels: modelScope.scopedModels }),
     };
@@ -205,6 +245,7 @@ export function createLocalSessionRuntimeFactory(
 
   return async (request) => {
     const result = await createCoreRuntime(request);
+    options.onSessionModel?.(result.session.model);
     const {
       host,
       modelScope,
@@ -248,11 +289,21 @@ export async function createLocalFelanRuntime(
   await mkdir(agentDir, { recursive: true });
   const modelRuntime = options.modelRuntime ?? await createLocalModelRuntime(agentDir);
   const startupSettings = createLocalSettingsManager(cwd, agentDir);
+  const startupFelanSettings = getFelanSettings(startupSettings);
+  const memoryProcessingEnabled = isBuiltinExtensionEnabled(startupFelanSettings, 'memory')
+    && getLocalMemoryProcessingEnabled(startupSettings);
   const sessionDir = options.sessionDir ?? startupSettings.getSessionDir() ?? join(agentDir, 'sessions');
   const sessionManager = options.sessionManager
     ?? (options.continueRecent
       ? SessionManager.continueRecent(cwd, sessionDir)
       : SessionManager.create(cwd, sessionDir));
+  const ownsMemoryCoordinator = options.memoryCoordinator === undefined;
+  const memoryCoordinator = options.memoryCoordinator ?? new LocalMemoryCoordinator({
+    agentDir,
+    modelRuntime,
+    sessionDir,
+    enabled: false,
+  });
   const createRuntime = createLocalSessionRuntimeFactory({
     agentDir,
     ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
@@ -260,14 +311,21 @@ export async function createLocalFelanRuntime(
     ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.subagentSettings === undefined ? {} : { subagentSettings: options.subagentSettings }),
+    memoryCoordinator,
+    onSessionModel: (model) => memoryCoordinator.setSelectedModel(model),
   });
-
-  const runtime = await createAgentSessionRuntime(createRuntime, {
-    cwd: sessionManager.getCwd(),
-    agentDir,
-    sessionManager,
-  });
-  return installLocalSubagentLifecycle(runtime);
+  try {
+    const runtime = await createAgentSessionRuntime(createRuntime, {
+      cwd: sessionManager.getCwd(),
+      agentDir,
+      sessionManager,
+    });
+    if (ownsMemoryCoordinator) memoryCoordinator.setEnabled(memoryProcessingEnabled);
+    return installLocalSubagentLifecycle(runtime, memoryCoordinator);
+  } catch (error) {
+    await memoryCoordinator.dispose().catch(() => {});
+    throw error;
+  }
 }
 
 function getRuntimeLocalSubagentHost(runtime: { readonly services: AgentSessionServices }): LocalSubagentHost {
@@ -284,7 +342,10 @@ function getRuntimeLocalSubagentShutdown(
   return state;
 }
 
-function installLocalSubagentLifecycle(runtime: AgentSessionRuntime): LocalFelanRuntime {
+function installLocalSubagentLifecycle(
+  runtime: AgentSessionRuntime,
+  memoryCoordinator?: LocalMemoryCoordinator,
+): LocalFelanRuntime {
   const listeners = new Set<(host: LocalSubagentHost) => void>();
   const localRuntime = runtime as LocalFelanRuntime;
   Object.defineProperties(localRuntime, {
@@ -313,6 +374,12 @@ function installLocalSubagentLifecycle(runtime: AgentSessionRuntime): LocalFelan
     session.dispose = observedDispose;
     let disposeFailed = false;
     let disposeError: unknown;
+    let memoryDisposeError: unknown;
+    try {
+      await memoryCoordinator?.dispose();
+    } catch (error) {
+      memoryDisposeError = error;
+    }
     try {
       await dispose();
     } catch (error) {
@@ -331,7 +398,14 @@ function installLocalSubagentLifecycle(runtime: AgentSessionRuntime): LocalFelan
     } finally {
       if (session.dispose === observedDispose) session.dispose = sessionDispose;
     }
+    if (disposeFailed && memoryDisposeError !== undefined) {
+      throw new AggregateError(
+        [disposeError, memoryDisposeError],
+        'Local runtime and memory shutdown both failed',
+      );
+    }
     if (disposeFailed) throw disposeError;
+    if (memoryDisposeError !== undefined) throw memoryDisposeError;
     if (shutdownState.failed) throw shutdownState.error;
   };
   const switchSession = runtime.switchSession.bind(runtime);

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.12.8",
+  "version": "0.12.11",
   "description": "Local Felan terminal agent",
   "license": "MIT",
   "type": "module",
@@ -44,6 +44,7 @@
     "@felan-ai/ext-subagents": "workspace:*",
     "@felan-ai/ext-tasks": "workspace:*",
     "@felan-ai/ext-context": "workspace:*",
+    "@felan-ai/ext-memory": "workspace:*",
     "@felan-ai/ext-markitdown": "workspace:*",
     "@felan-ai/ext-powerline": "workspace:*",
     "@felan-ai/ext-prewalk": "workspace:*",

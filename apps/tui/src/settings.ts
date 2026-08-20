@@ -3,13 +3,13 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { SettingsManager } from '@felan-ai/agent-core';
-import lockfile from 'proper-lockfile';
 import {
   builtinExtensionPackages,
   type BuiltinExtensionName,
   type BuiltinExtensionSettings,
 } from './extensions.js';
 import type { LocalSubagentSettings } from './subagents/host.js';
+import { withLocalFileLock } from './lock.js';
 
 export interface FelanSettings {
   readonly builtinExtensions?: BuiltinExtensionSettings;
@@ -19,6 +19,7 @@ export interface FelanSettings {
 
 export interface FelanTuiSettings {
   readonly toolDisplay?: LocalToolDisplayMode;
+  readonly memoryProcessing?: boolean;
   readonly dependencyOnboarding?: Readonly<Record<string, LocalDependencyOnboardingChoice>>;
 }
 
@@ -78,6 +79,17 @@ export function getLocalToolDisplayMode(settingsManager: SettingsManager): Local
   throw new Error('felanTui.toolDisplay must be "grouped" or "full"');
 }
 
+export function getLocalMemoryProcessingEnabled(settingsManager: SettingsManager): boolean {
+  const rawSettings = settingsManager.getGlobalSettings() as Record<string, unknown>;
+  const rawTui = rawSettings.felanTui;
+  if (rawTui === undefined) return true;
+  if (!isRecord(rawTui)) throw new Error('felanTui must be an object');
+  const value = rawTui.memoryProcessing;
+  if (value === undefined) return true;
+  if (typeof value !== 'boolean') throw new Error('felanTui.memoryProcessing must be a boolean');
+  return value;
+}
+
 export async function setBuiltinExtensionEnabled(
   agentDir: string,
   name: BuiltinExtensionName,
@@ -87,6 +99,17 @@ export async function setBuiltinExtensionEnabled(
     const raw = settings.builtinExtensions;
     if (raw !== undefined && !isRecord(raw)) throw new Error('builtinExtensions must be an object');
     settings.builtinExtensions = { ...(raw ?? {}), [name]: enabled };
+  });
+}
+
+export async function setLocalMemoryProcessingEnabled(
+  agentDir: string,
+  enabled: boolean,
+): Promise<void> {
+  await updateGlobalFelanSettings(agentDir, (settings) => {
+    const rawTui = settings.felanTui;
+    if (rawTui !== undefined && !isRecord(rawTui)) throw new Error('felanTui must be an object');
+    settings.felanTui = { ...(rawTui ?? {}), memoryProcessing: enabled };
   });
 }
 
@@ -135,34 +158,41 @@ async function updateGlobalFelanSettings(
 ): Promise<void> {
   const path = join(agentDir, 'settings.json');
   await mkdir(agentDir, { recursive: true });
-  const release = await lockfile.lock(path, {
+  try {
+    await writeFile(path, '{}\n', { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (!isAlreadyExistsFile(error)) throw error;
+  }
+  await withLocalFileLock(path, {
     realpath: false,
     retries: { retries: 10, minTimeout: 20, maxTimeout: 50 },
-  });
-  const temporaryPath = `${path}.${randomUUID()}.tmp`;
-  try {
-    let settings: MutableSettings;
+  }, async (lock) => {
+    const temporaryPath = `${path}.${randomUUID()}.tmp`;
     try {
-      const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
-      if (!isRecord(parsed)) throw new Error('settings.json must contain an object');
-      settings = structuredClone(parsed) as MutableSettings;
-    } catch (error) {
-      if (!isMissingFile(error)) throw error;
-      settings = {};
-    }
+      let settings: MutableSettings;
+      try {
+        const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
+        if (!isRecord(parsed)) throw new Error('settings.json must contain an object');
+        settings = structuredClone(parsed) as MutableSettings;
+      } catch (error) {
+        if (!isMissingFile(error)) throw error;
+        settings = {};
+      }
 
-    update(settings);
-    validateBuiltinExtensionKeys(settings.builtinExtensions);
-    await writeFile(temporaryPath, `${JSON.stringify(settings, null, 2)}\n`, {
-      encoding: 'utf8',
-      flag: 'wx',
-      mode: 0o600,
-    });
-    await rename(temporaryPath, path);
-  } finally {
-    await rm(temporaryPath, { force: true }).catch(() => {});
-    await release();
-  }
+      update(settings);
+      validateBuiltinExtensionKeys(settings.builtinExtensions);
+      await writeFile(temporaryPath, `${JSON.stringify(settings, null, 2)}\n`, {
+        encoding: 'utf8',
+        flag: 'wx',
+        mode: 0o600,
+      });
+      lock.throwIfCompromised();
+      await rename(temporaryPath, path);
+      lock.throwIfCompromised();
+    } finally {
+      await rm(temporaryPath, { force: true }).catch(() => {});
+    }
+  });
 }
 
 function validateBuiltinExtensionKeys(settings: Record<string, unknown> | undefined): void {
@@ -175,6 +205,10 @@ function validateBuiltinExtensionKeys(settings: Record<string, unknown> | undefi
 
 function isMissingFile(error: unknown): boolean {
   return typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 'ENOENT';
+}
+
+function isAlreadyExistsFile(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 'EEXIST';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

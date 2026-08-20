@@ -88,6 +88,8 @@ try {
           if (typeof extension.createAskUserExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (packageName === '@felan-ai/ext-mcp') {
           if (typeof extension.createMcpExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
+        } else if (packageName === '@felan-ai/ext-memory') {
+          if (typeof extension.createMemoryExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (typeof extension.default !== 'function') {
           throw new Error(packageName + ' has no extension factory');
         }
@@ -145,6 +147,41 @@ try {
       }
       if (JSON.stringify(askUserCapabilities) !== JSON.stringify(['ask-user'])) {
         throw new Error('Packed ask-user extension capability is unavailable');
+      }
+      const memory = await import('@felan-ai/ext-memory');
+      const memoryCapabilities = [];
+      const memoryEvents = [];
+      memory.createMemoryExtension({
+        role: 'root',
+        host: {
+          readCurrent: async () => null,
+          recordCheckpoint: async () => {},
+          status: async () => ({ enabled: true, state: 'idle', pendingCheckpoints: 0 }),
+        },
+      })({
+        registerCapability: (capability) => memoryCapabilities.push(capability.id),
+        on: (event) => memoryEvents.push(event),
+      });
+      if (JSON.stringify(memoryCapabilities) !== JSON.stringify(['memory'])) {
+        throw new Error('Packed memory capability is unavailable');
+      }
+      if (JSON.stringify(memoryEvents) !== JSON.stringify(['session_start', 'session_compact', 'session_tree', 'agent_settled'])) {
+        throw new Error('Packed memory lifecycle handlers are unavailable');
+      }
+      const readerEvents = [];
+      memory.createMemoryExtension({
+        role: 'reader',
+        host: {
+          readCurrent: async () => null,
+          recordCheckpoint: async () => {},
+          status: async () => ({ enabled: true, state: 'idle', pendingCheckpoints: 0 }),
+        },
+      })({
+        registerCapability: () => {},
+        on: (event) => readerEvents.push(event),
+      });
+      if (JSON.stringify(readerEvents) !== JSON.stringify(['session_start', 'session_compact', 'session_tree'])) {
+        throw new Error('Packed reader memory lifecycle handlers are unavailable');
       }
       const tasks = await import('@felan-ai/ext-tasks');
       const taskTools = [];

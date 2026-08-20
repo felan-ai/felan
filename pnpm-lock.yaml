@@ -53,6 +53,9 @@ importers:
       '@felan-ai/ext-mcp':
         specifier: workspace:*
         version: link:../../packages/ext-mcp
+      '@felan-ai/ext-memory':
+        specifier: workspace:*
+        version: link:../../packages/ext-memory
       '@felan-ai/ext-powerline':
         specifier: workspace:*
         version: link:../../packages/ext-powerline
@@ -159,6 +162,12 @@ importers:
       typebox:
         specifier: 1.1.38
         version: 1.1.38
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-memory:
     devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*

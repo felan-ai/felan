@@ -15,7 +15,7 @@
 Felan is a model-portable coding agent for software development work. It pairs
 a host-owned runtime and controlled resource policy with first-party extensions
 for parallel agents, planning, task coordination, human input, project context,
-web research, and external tools.
+local-first memory, web research, and external tools.
 
 **Felan wraps [Pi](https://github.com/earendil-works/pi); it does not fork Pi.**
 It consumes pinned `@earendil-works/pi-*` packages and composes their model,
@@ -71,6 +71,20 @@ Both surfaces use the same portable agent core and extension contracts; each
 host owns its credentials, storage, policy, integrations, and presentation.
 This repository contains that open agent layer, its first-party extensions, and
 the local terminal host. It does not contain the full SaaS application.
+
+Local Felan enables account-free, project-scoped memory by default. Settled
+root sessions are consolidated into an inspectable Markdown wiki while Felan
+is running; child sessions can recall the projection but cannot record
+evidence. Existing memory remains readable without model credentials, and a
+missing credential only leaves processing pending.
+Dreaming is host-owned: the TUI schedules a bounded batch and runs a disposable
+Pi memory worker over staged evidence, then validates and publishes the staged
+Markdown filesystem. The portable memory extension itself never starts a
+direct one-shot JSON-artifact request or schedules processing. Host-side
+materialization streams each checkpoint's active-branch delta from JSONL,
+redacts it, and caps staged evidence at 256 KiB rather than rejecting a large
+source session; deterministic source failures remain pending while valid
+checkpoints can proceed.
 
 ## Built to keep software work moving
 
@@ -187,6 +201,7 @@ safety, and features Felan lacks—see the
 | --- | --- |
 | `@felan-ai/felan` | Account-free local terminal application and `felan` binary |
 | `@felan-ai/agent-core` | Portable runtime contracts, Node.js host runtime, prompt, tools, and Pi session composition |
+| `@felan-ai/ext-memory` | Portable Markdown memory schema, validation, and root/reader session integration |
 | `@felan-ai/ext-subagents` | Tracked asynchronous subagent protocol and tools |
 | `@felan-ai/ext-ask-user` | Structured interactive questions with host-owned presentation |
 | `@felan-ai/ext-tasks` | Dependency-aware task graph shared across a root session and its children |

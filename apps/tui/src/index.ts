@@ -27,6 +27,13 @@ export type {
   CreateLocalSessionRuntimeFactoryOptions,
   LocalFelanRuntime,
 } from './runtime.js';
+export { LocalMemoryCoordinator } from './memory/coordinator.js';
+export { localMemoryProjectDirectory, resolveLocalMemoryProject } from './memory/project.js';
+export type {
+  LocalMemoryCoordinatorOptions,
+  LocalMemorySessionHostOptions,
+} from './memory/coordinator.js';
+export type { LocalMemoryProject } from './memory/project.js';
 export type {
   LocalAgentRuntimeFactory,
   LocalAgentRuntimeFactoryRequest,

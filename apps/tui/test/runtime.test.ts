@@ -69,6 +69,7 @@ describe('local Agent Core lifecycle', () => {
         backgroundBash: false,
         codex: false,
         rtkOptimizer: false,
+        memory: false,
         powerline: false,
       },
     }));

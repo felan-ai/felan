@@ -16,6 +16,14 @@ const PREVIEW_LINES = 3;
 const MAX_PREVIEW_WIDTH = 120;
 const INLINE_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/gu;
 const MULTILINE_CONTROL_CHARACTERS = /[\u0000-\u0009\u000B-\u000C\u000E-\u001F\u007F-\u009F]/gu;
+const SESSION_MEMORY_PATH_PATTERN = /(?:^|[\\/\s"'=])\.memory(?:[\\/]|$)/u;
+const CANONICAL_MEMORY_PATH_PATTERN = /(?:^|[\\/])memory[\\/]v1[\\/]projects[\\/][a-f0-9]{64}[\\/]current(?:[\\/]|$)/iu;
+const MEMORY_READ_COMMANDS = new Set([
+  'cat', 'find', 'grep', 'head', 'ls', 'rg', 'sed', 'stat', 'tail', 'wc',
+]);
+const READ_COMMAND_AUXILIARIES = new Set([
+  ':', '[', 'cd', 'echo', 'export', 'false', 'printf', 'pwd', 'set', 'test', 'true', 'unset',
+]);
 
 type ToolRenderContext = Parameters<
   NonNullable<ToolDefinition<any, any, any>['renderCall']>
@@ -189,6 +197,7 @@ function resultPreview(call: ToolActivityCall): string[] {
 }
 
 type ToolCategory =
+  | 'memory'
   | 'read'
   | 'search'
   | 'edit'
@@ -202,6 +211,7 @@ type ToolCategory =
   | 'other';
 
 function summaryCategory(call: ToolActivityCall): ToolCategory {
+  if (isMemoryRecall(call)) return 'memory';
   if (!call.name.toLowerCase().includes('write_stdin')) return toolCategory(call.name);
   const chars = asRecord(call.args).chars;
   return typeof chars === 'string' && chars.length > 0 ? 'interact' : 'wait';
@@ -210,7 +220,7 @@ function summaryCategory(call: ToolActivityCall): ToolCategory {
 function toolCategory(name: string): ToolCategory {
   const normalized = name.toLowerCase();
   if (normalized === 'mcp' || normalized.startsWith('mcp__')) return 'mcp';
-  if (normalized === 'read') return 'read';
+  if (normalized === 'read' || normalized === 'read_file') return 'read';
   if (['web_search', 'source_check', 'fetch_content', 'get_search_content'].includes(normalized)) return 'web';
   if (['grep', 'find', 'ls'].includes(normalized) || normalized.includes('search')) return 'search';
   if (
@@ -228,6 +238,9 @@ function toolCategory(name: string): ToolCategory {
 function categorySummary(category: ToolCategory, count: number, running: boolean): string {
   const plural = count === 1 ? '' : 's';
   switch (category) {
+    case 'memory': return count === 1
+      ? `${running ? 'recalling' : 'recalled'} memory`
+      : `${running ? 'running' : 'completed'} ${count} memory recalls`;
     case 'read': return `${running ? 'reading' : 'read'} ${count} file${plural}`;
     case 'search': return count === 1
       ? `${running ? 'searching' : 'searched'} code`
@@ -247,9 +260,10 @@ function categorySummary(category: ToolCategory, count: number, running: boolean
 function callLabel(call: ToolActivityCall): string {
   const running = call.status === 'pending' || call.status === 'running';
   const normalized = call.name.toLowerCase();
+  if (isMemoryRecall(call)) return running ? 'Recalling memory' : 'Memory Recall';
   if (normalized === 'mcp') return mcpCallLabel(call, running);
   if (normalized.startsWith('mcp__')) return running ? 'Calling MCP tool' : 'Called MCP tool';
-  if (normalized === 'read') return running ? 'Reading' : 'Read';
+  if (normalized === 'read' || normalized === 'read_file') return running ? 'Reading' : 'Read';
   if (normalized === 'grep') return running ? 'Searching' : 'Searched';
   if (normalized === 'find') return running ? 'Finding files' : 'Found files';
   if (normalized === 'ls') return running ? 'Listing files' : 'Listed files';
@@ -310,7 +324,7 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
     value = mcpArgumentPreview(args);
   } else if (normalized.startsWith('mcp__')) {
     value = formatToolName(call.name);
-  } else if (['read', 'edit', 'write', 'view_image'].includes(normalized)) {
+  } else if (['read', 'read_file', 'edit', 'write', 'view_image'].includes(normalized)) {
     value = firstString(args, ['path', 'file_path']);
   } else if (normalized === 'grep') {
     value = firstString(args, ['pattern']);
@@ -346,6 +360,184 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
     value = firstString(args, ['description', 'query', 'path', 'name', 'id']);
   }
   return value ? truncate(oneLine(value), 88) : undefined;
+}
+
+function isMemoryRecall(call: ToolActivityCall): boolean {
+  const normalized = call.name.toLowerCase();
+  const args = asRecord(call.args);
+  if (['read', 'read_file', 'grep', 'find', 'ls'].includes(normalized)) {
+    return isMemoryPath(firstString(args, ['path', 'file_path']));
+  }
+  if (normalized !== 'bash' && !normalized.includes('exec_command')) return false;
+  const command = firstString(args, ['cmd', 'command']);
+  return command !== undefined && isReadOnlyMemoryCommand(command);
+}
+
+function isMemoryPath(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.startsWith('@') ? value.slice(1) : value;
+  return SESSION_MEMORY_PATH_PATTERN.test(normalized) || CANONICAL_MEMORY_PATH_PATTERN.test(normalized);
+}
+
+interface ParsedShellCommand {
+  readonly name: string;
+  readonly args: readonly string[];
+}
+
+function isReadOnlyMemoryCommand(command: string): boolean {
+  if (/`|\$\(|\$\{|\$[A-Za-z_]|[<>]\(/u.test(command)) return false;
+  const commands = shellCommands(command);
+  if (commands.length === 0) return false;
+  if (commands.some(({ name }) => !MEMORY_READ_COMMANDS.has(name) && !READ_COMMAND_AUXILIARIES.has(name))) {
+    return false;
+  }
+  if (/\bfind\b[^;&|\n]*(?:-delete|-exec(?:dir)?|-f(?:print0?|ls)|-ok(?:dir)?)/iu.test(command)) return false;
+  if (/\bsed\b[^;&|\n]*(?:\s-(?:[a-z]*i|i[a-z]*)\b|\s--in-place\b)/iu.test(command)) return false;
+  const withoutNullRedirects = command.replace(/(?:\d+|&)?\s*>\s*\/dev\/null\b/giu, '');
+  if (withoutNullRedirects.includes('>')) return false;
+  const reads = commands.filter(({ name }) => MEMORY_READ_COMMANDS.has(name));
+  return reads.length > 0 && reads.every(hasMemoryReadOperand);
+}
+
+function shellCommands(command: string): ParsedShellCommand[] {
+  return shellCommandSegments(command)
+    .map(parseShellCommand)
+    .filter((parsed): parsed is ParsedShellCommand => parsed !== undefined);
+}
+
+function shellCommandSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = '';
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  let comment = false;
+  const append = () => {
+    if (current.trim()) segments.push(current);
+    current = '';
+  };
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]!;
+    if (comment) {
+      if (character === '\n') {
+        append();
+        comment = false;
+      }
+      continue;
+    }
+    if (escaped) {
+      current += character;
+      escaped = false;
+      continue;
+    }
+    if (character === '\\' && quote !== "'") {
+      current += character;
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      current += character;
+      if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      current += character;
+      quote = character;
+      continue;
+    }
+    if (character === '#' && (current.length === 0 || /\s/u.test(current.at(-1)!))) {
+      comment = true;
+      continue;
+    }
+    if (';&|()\n'.includes(character)) {
+      append();
+      continue;
+    }
+    current += character;
+  }
+  if (quote || escaped) return [];
+  append();
+  return segments;
+}
+
+function parseShellCommand(segment: string): ParsedShellCommand | undefined {
+  const words = shellWords(segment);
+  for (let index = 0; index < words.length; index += 1) {
+    const token = words[index]!;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(token)) continue;
+    const normalized = token.split(/[\\/]/u).at(-1)!.toLowerCase();
+    if (['!', 'builtin', 'command', 'do', 'elif', 'else', 'if', 'then'].includes(normalized)) continue;
+    if (['done', 'fi'].includes(normalized)) return { name: 'true', args: [] };
+    return { name: normalized, args: words.slice(index + 1) };
+  }
+  return undefined;
+}
+
+function shellWords(segment: string): string[] {
+  const words: string[] = [];
+  let current = '';
+  let started = false;
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  const append = () => {
+    if (started) words.push(current);
+    current = '';
+    started = false;
+  };
+  for (const character of segment) {
+    if (escaped) {
+      current += character;
+      started = true;
+      escaped = false;
+      continue;
+    }
+    if (character === '\\' && quote !== "'") {
+      escaped = true;
+      started = true;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = undefined;
+      else current += character;
+      started = true;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      started = true;
+      continue;
+    }
+    if (/\s/u.test(character)) append();
+    else {
+      current += character;
+      started = true;
+    }
+  }
+  append();
+  return words;
+}
+
+function hasMemoryReadOperand(command: ParsedShellCommand): boolean {
+  const positionals = command.args.filter((argument) => argument !== '--' && !argument.startsWith('-'));
+  let paths: readonly string[];
+  if (command.name === 'grep' || command.name === 'rg') {
+    if (command.args.some((argument) => argument.startsWith('-') && !/^-[FHiLlnsvwx]+$/u.test(argument))) {
+      return false;
+    }
+    paths = positionals.slice(1);
+  } else if (command.name === 'sed') {
+    if (command.args.some((argument) => argument.startsWith('-') && !['-n', '--quiet', '--silent'].includes(argument))) {
+      return false;
+    }
+    const program = positionals[0];
+    if (!program || !/^(?:(?:\d+|\$)(?:,(?:\d+|\$))?)?p$/u.test(program)) return false;
+    paths = positionals.slice(1);
+  } else if (command.name === 'find') {
+    const expression = command.args.findIndex((argument) => argument.startsWith('-') || ['!', '('].includes(argument));
+    paths = command.args.slice(0, expression < 0 ? command.args.length : expression);
+  } else {
+    paths = positionals;
+  }
+  return paths.some(isMemoryPath);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

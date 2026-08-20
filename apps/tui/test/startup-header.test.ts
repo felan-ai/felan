@@ -1,5 +1,6 @@
 import type { InteractiveMode } from '@earendil-works/pi-coding-agent';
 import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
+import { MEMORY_CONTEXT_CUSTOM_TYPE } from '@felan-ai/ext-memory';
 import type { Component } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 import { FELAN_VERSION } from '../src/version.js';
@@ -73,6 +74,75 @@ describe('Felan startup header', () => {
       'Press ctrl+o to show full startup help and loaded resources.',
     ].join('\n'));
   });
+
+  it('adds loaded project memory to the displayed Context resources only', () => {
+    const loaded = resourceMode(true);
+    installFelanStartupHeader(loaded.mode, {
+      memorySummaryPath: () => '/agent/storage/sessions/session-1/.memory/summary.md',
+    });
+
+    loaded.showResources();
+
+    expect(loaded.displayedPaths).toEqual([
+      'AGENTS.md',
+      '/agent/storage/sessions/session-1/.memory/summary.md',
+    ]);
+    expect(loaded.actualPaths()).toEqual(['AGENTS.md']);
+
+    const unavailable = resourceMode(false);
+    installFelanStartupHeader(unavailable.mode, {
+      memorySummaryPath: () => '/agent/storage/sessions/session-1/.memory/summary.md',
+    });
+    unavailable.showResources();
+    expect(unavailable.displayedPaths).toEqual(['AGENTS.md']);
+  });
+
+  it('restores the resource loader when Context rendering fails', () => {
+    const session = resourceSession(true, 'AGENTS.md');
+    const originalDescriptor = Object.getOwnPropertyDescriptor(session.resourceLoader, 'getAgentsFiles');
+    const mode = {
+      builtInHeader: undefined,
+      session,
+      showLoadedResources() {
+        this.session.resourceLoader.getAgentsFiles();
+        throw new Error('Context rendering failed');
+      },
+    } as unknown as InteractiveMode;
+    installFelanStartupHeader(mode, {
+      memorySummaryPath: () => '/agent/storage/sessions/session-1/.memory/summary.md',
+    });
+
+    expect(() => modeInternalsWithResources(mode).showLoadedResources()).toThrow('Context rendering failed');
+    expect(Object.getOwnPropertyDescriptor(session.resourceLoader, 'getAgentsFiles')).toEqual(originalDescriptor);
+    expect(session.resourceLoader.getAgentsFiles().agentsFiles.map(({ path }) => path)).toEqual(['AGENTS.md']);
+  });
+
+  it('decorates only the current session after replacement', () => {
+    const first = resourceSession(true, 'FIRST.md');
+    const second = resourceSession(true, 'SECOND.md', 'session-2');
+    const displayed: string[][] = [];
+    const mode = {
+      builtInHeader: undefined,
+      session: first,
+      showLoadedResources() {
+        displayed.push(this.session.resourceLoader.getAgentsFiles().agentsFiles.map(({ path }) => path));
+      },
+    };
+    installFelanStartupHeader(mode as unknown as InteractiveMode, {
+      memorySummaryPath: () => `/agent/storage/sessions/${mode.session.sessionManager.getSessionId()}/.memory/summary.md`,
+    });
+
+    mode.showLoadedResources();
+    mode.session = second;
+    mode.showLoadedResources();
+
+    expect(displayed).toEqual([
+      ['FIRST.md', '/agent/storage/sessions/session-1/.memory/summary.md'],
+      ['SECOND.md', '/agent/storage/sessions/session-2/.memory/summary.md'],
+    ]);
+    expect(first.resourceLoader.getAgentsFiles().agentsFiles.map(({ path }) => path)).toEqual(['FIRST.md']);
+    expect(second.resourceLoader.getAgentsFiles().agentsFiles.map(({ path }) => path)).toEqual(['SECOND.md']);
+  });
 });
 
 function testMode(): InteractiveMode {
@@ -81,6 +151,48 @@ function testMode(): InteractiveMode {
 
 function modeInternals(mode: InteractiveMode): { builtInHeader: Component | undefined } {
   return mode as unknown as { builtInHeader: Component | undefined };
+}
+
+function modeInternalsWithResources(mode: InteractiveMode): { showLoadedResources(): void } {
+  return mode as unknown as { showLoadedResources(): void };
+}
+
+function resourceMode(memoryLoaded: boolean): {
+  mode: InteractiveMode;
+  displayedPaths: string[];
+  actualPaths(): string[];
+  showResources(): void;
+} {
+  const session = resourceSession(memoryLoaded, 'AGENTS.md');
+  const displayedPaths: string[] = [];
+  const mode = {
+    builtInHeader: undefined,
+    session,
+    showLoadedResources() {
+      displayedPaths.push(...this.session.resourceLoader.getAgentsFiles().agentsFiles.map(({ path }) => path));
+    },
+  };
+  return {
+    mode: mode as unknown as InteractiveMode,
+    displayedPaths,
+    actualPaths: () => mode.session.resourceLoader.getAgentsFiles().agentsFiles.map(({ path }) => path),
+    showResources: () => mode.showLoadedResources(),
+  };
+}
+
+function resourceSession(memoryLoaded: boolean, contextPath: string, sessionId = 'session-1') {
+  const contextFiles = [{ path: contextPath, content: 'Project instructions' }];
+  return {
+    sessionManager: {
+      getSessionId: () => sessionId,
+      buildContextEntries: () => memoryLoaded
+        ? [{ type: 'custom_message', customType: MEMORY_CONTEXT_CUSTOM_TYPE }]
+        : [],
+    },
+    resourceLoader: {
+      getAgentsFiles: () => ({ agentsFiles: contextFiles }),
+    },
+  };
 }
 
 class FakeExpandableHeader implements Component {

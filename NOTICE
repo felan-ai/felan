@@ -1,6 +1,11 @@
 Felan
 Copyright (c) 2026 Felan contributors
 
+@felan-ai/ext-memory is original Felan MIT-licensed code providing the
+portable local-first Markdown memory schema, validation, and session bridge.
+Its package-level license and attribution are included in
+packages/ext-memory/LICENSE and NOTICE.
+
 This product uses Pi 0.84.2 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 

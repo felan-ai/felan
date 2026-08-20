@@ -15,6 +15,64 @@ global settings from `~/.felan/settings.json` and does not load Pi project
 settings. Pi project trust does not apply to Felan's fixed resource policy, so
 Felan starts without a project trust prompt.
 
+Local memory is enabled by default and works without a Felan account or cloud
+connection. It consolidates settled root-session evidence into an inspectable
+Markdown wiki. The canonical project store is outside the customer repository:
+
+```text
+$FELAN_AGENT_DIR/memory/v1/projects/<project-hash>/
+  state.json
+  current/summary.md
+  current/index.md
+  current/pages/...
+```
+
+The project hash is derived from the canonical Git root, or the canonical cwd
+when no repository exists. Root-session storage receives a non-authoritative
+copy at `storage/sessions/<root-id>/.memory`; child sessions can read that copy
+but ordinary edits never publish it. Felan does not create `<repository>/.memory`
+and does not synchronize local memory with cloud team memory.
+Each session receives one hidden persisted memory-context entry at startup;
+provider calls reuse it, and compaction or tree navigation restores it only if
+it is no longer on the active branch. That entry is excluded from memory
+evidence processing. Once it loads successfully, the welcome screen's
+`[Context]` section lists the projected `.memory/summary.md` path alongside
+project instructions so the loaded summary can be opened directly.
+
+Use `/memory status`, `/memory run`, `/memory enable`, `/memory disable`, or
+`/memory open` to inspect and control local processing. A missing local model
+credential never prevents startup or recall of existing memory; processing
+remains pending until a configured model is available. Processing is idle
+batched while Felan runs and catches up on the next launch after shutdown. The
+enable/disable commands persist `felanTui.memoryProcessing` and do not remove
+the memory recall extension.
+
+After checkpoints are recorded, the TUI coordinator owns idle batching,
+startup recovery, retries, and shutdown cancellation. Each batch runs one
+disposable headless Pi memory-dreamer session against staging. It reads the
+immutable `.dreaming/input` manifest and transcripts, edits staged `.memory`
+files in place, and returns only a concise completion summary. The worker has
+no normal Felan extensions, skills, repository context, credentials, or
+process execution; its active tools are limited to `read`, `ls`, `edit`, and
+`write`. The worker has no separate turn, tool-call, or per-file I/O budgets;
+the only execution failsafe is a one-hour wall-clock timeout. The coordinator
+validates and publishes the staged filesystem output, so model, validation,
+cancellation, timeout, or publication failures leave evidence pending for
+retry. The worker uses the active root-session model when it is authenticated;
+if that model is unavailable, it falls back to another authenticated available
+model. With no authenticated model, evidence remains pending. The portable
+`@felan-ai/ext-memory` extension only recalls memory and records root
+checkpoints; it does not schedule dreaming.
+
+Evidence ingestion is separate from the worker's file-tool policy. The host
+opens each checkpoint's append-only JSONL session with a bounded snapshot and
+streams only the visible active-branch delta; abandoned branches, hidden
+memory-context entries, and unrelated large tool output are not staged. Source
+files may be much larger than the evidence sent to the model. After redaction,
+each staged transcript is capped at 256 KiB. A changed, missing, or malformed
+checkpoint source remains pending without blocking valid checkpoints in the
+same batch; it is retried by `/memory run`, a newer cursor, or a later launch.
+
 Felan suppresses Pi's version notification, bundled changelog, package update
 notifications, and install/update telemetry. Update behavior is owned by the
 Felan application.
@@ -61,6 +119,7 @@ All built-in extensions are enabled by default. Toggle them in
     "backgroundBash": true,
     "codex": true,
     "rtkOptimizer": true,
+    "memory": true,
     "powerline": false
   }
 }
@@ -82,7 +141,9 @@ result previews. Use `/tools` or `Alt+T` to inspect the complete arguments and
 result for one root-session call. Selected subagent transcripts use the same
 grouped or full tool rendering and `Ctrl+O` previews. Subagent completion
 notices stay on one summary line by default; `Ctrl+O` shows a bounded preview
-and `Alt+A` opens full agent details.
+and `Alt+A` opens full agent details. Grouped reads from projected or canonical
+local memory appear as `Memory Recall`; conservative read-only Codex commands
+receive the same label without hiding mutating or arbitrary shell commands.
 To restore Pi's original ungrouped rendering, set:
 
 ```json
@@ -243,6 +304,15 @@ Local agent definitions are loaded only from bundled Felan definitions,
 `<workspace>/.felan/agents/*.md`. Project definitions override user and
 bundled definitions; within one scope the Felan-specific directory overrides
 the shared `.agents` directory. Pi ambient agent discovery remains disabled.
+
+The bundled definitions have role-specific model settings: `general` inherits the
+parent model and thinking for implementation or investigation, `explore` uses the
+`low` model tier with thinking `off` for cheap read-only exploration, and `reviewer`
+inherits the parent model and thinking for quality-sensitive review. A definition's
+`model` and `thinking` settings take precedence over `Agent` arguments. When a
+definition omits either setting, the corresponding argument is used; if both omit
+it, the parent setting is inherited. A custom definition with id `explore` replaces
+the bundled definition and can choose its own settings.
 
 Each definition is a Markdown file with flat `key: value` frontmatter and a
 required prompt body. `description` is required; `id` defaults to the filename.

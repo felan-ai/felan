@@ -11,6 +11,29 @@ afterEach(async () => {
 });
 
 describe('explicit local Felan agent discovery', () => {
+  it('uses cheap model and thinking settings only for the bundled explore agent', async () => {
+    const root = await temporaryDirectory();
+    const definitions = await discoverLocalSubagents(
+      join(root, 'workspace'),
+      join(root, 'home', '.felan'),
+      join(root, 'home'),
+    );
+    const descriptors = Object.fromEntries(definitions.map((definition) => [
+      definition.descriptor.id,
+      definition.descriptor,
+    ]));
+
+    expect(Object.keys(descriptors)).toEqual(['general', 'explore', 'reviewer']);
+    expect(descriptors.explore).toMatchObject({
+      model: 'low',
+      thinking: 'off',
+    });
+    for (const id of ['general', 'reviewer']) {
+      expect(descriptors[id]).not.toHaveProperty('model');
+      expect(descriptors[id]).not.toHaveProperty('thinking');
+    }
+  });
+
   it('loads shared and Felan definitions with project, user, then bundled precedence', async () => {
     const root = await temporaryDirectory();
     const home = join(root, 'home');
@@ -80,8 +103,8 @@ describe('explicit local Felan agent discovery', () => {
       descriptor: {
         id: 'worker',
         description: 'Worker',
-        defaultModel: 'provider/model',
-        defaultThinking: 'max',
+        model: 'provider/model',
+        thinking: 'max',
         defaultMaxTurns: 9,
         defaultTimeoutSeconds: 120,
         allowNesting: true,

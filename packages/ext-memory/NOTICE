@@ -1,0 +1,7 @@
+@felan-ai/ext-memory
+
+The Markdown memory schema and dreaming policy were adapted from Felan's
+filesystem-memory implementation and local-first memory architecture.
+
+The package otherwise contains original Felan project code and is distributed
+under the MIT License in LICENSE.

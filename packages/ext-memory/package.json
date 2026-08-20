@@ -1,0 +1,38 @@
+{
+  "name": "@felan-ai/ext-memory",
+  "version": "0.2.1",
+  "description": "Portable local-first memory contracts and extension for Felan",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felan-ai/felan.git",
+    "directory": "packages/ext-memory"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepack": "pnpm build"
+  },
+  "peerDependencies": {
+    "@felan-ai/agent-core": "^0.4.9"
+  },
+  "devDependencies": {
+    "@felan-ai/agent-core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
