@@ -1,12 +1,12 @@
-import { AGENT_CORE_VERSION } from '@felan-ai/agent-core';
-import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
-import { runLocalFelan, type RunLocalFelanOptions } from './application.js';
+import type { RunLocalFelanOptions } from './application.js';
+import { runFelanUpdate } from './update.js';
 import { FELAN_VERSION } from './version.js';
 
 export interface CliDependencies {
   readonly writeOutput?: (line: string) => void;
   readonly writeError?: (line: string) => void;
   readonly launch?: (options: RunLocalFelanOptions) => Promise<void>;
+  readonly update?: () => Promise<number>;
 }
 
 const help = `Usage: felan [options] [message]
@@ -14,6 +14,7 @@ const help = `Usage: felan [options] [message]
 Options:
   -c, --continue     Continue the most recent session for this directory
   --diagnostics      Print local runtime versions and configuration mode
+  update             Update a global npm installation of Felan
   -h, --help         Show this help
   -v, --version      Print the Felan version
   --verbose          Show verbose startup details`;
@@ -21,7 +22,14 @@ Options:
 export async function runCli(args: readonly string[], dependencies: CliDependencies = {}): Promise<number> {
   const writeOutput = dependencies.writeOutput ?? ((line) => console.log(line));
   const writeError = dependencies.writeError ?? ((line) => console.error(line));
-  const launch = dependencies.launch ?? runLocalFelan;
+  if (args[0] === 'update') {
+    if (args.length !== 1) {
+      writeError('Usage: felan update');
+      return 1;
+    }
+    return dependencies.update?.() ?? runFelanUpdate({ writeOutput, writeError });
+  }
+
   let continueRecent = false;
   let verbose = false;
   const messageParts: string[] = [];
@@ -45,6 +53,10 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       writeOutput(FELAN_VERSION);
       return 0;
     } else if (argument === '--diagnostics') {
+      const [{ AGENT_CORE_VERSION }, { VERSION: PI_VERSION }] = await Promise.all([
+        import('@felan-ai/agent-core'),
+        import('@earendil-works/pi-coding-agent'),
+      ]);
       writeOutput(`Felan version: ${FELAN_VERSION}`);
       writeOutput(`Agent Core version: ${AGENT_CORE_VERSION}`);
       writeOutput(`Pi version: ${PI_VERSION}`);
@@ -60,6 +72,10 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     }
   }
 
+  const launch = dependencies.launch ?? (async (options: RunLocalFelanOptions) => {
+    const { runLocalFelan } = await import('./application.js');
+    await runLocalFelan(options);
+  });
   await launch({
     continueRecent,
     verbose,

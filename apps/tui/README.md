@@ -41,13 +41,22 @@ felan [options] [message]
 
 -c, --continue     Continue the most recent session for this directory
 --diagnostics      Print runtime versions and configuration mode
+update             Update a global npm installation of Felan
 -h, --help         Show help
 -v, --version      Print the Felan version
 --verbose          Show verbose startup details
 ```
 
-The public binary launches the interactive TUI. Internal headless modes used
-by subagents and extension adapters are not public CLI entry points.
+Run `felan update` to check the stable npm release. It updates only a verified
+global npm installation, reports when the installation is current, and tells
+you to restart after a successful update. `npx`, local/source, and other
+package-manager installations are not changed; update those with the command
+that installed them.
+
+Invocations that start or continue an agent session launch the interactive TUI.
+`felan update` and informational flags exit without starting a session. Internal
+headless modes used by subagents and extension adapters are not public CLI entry
+points.
 
 `felan --diagnostics` reports Felan, Agent Core, Pi, and Node.js versions plus
 runtime and credential modes.
