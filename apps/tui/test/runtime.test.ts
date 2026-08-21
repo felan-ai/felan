@@ -66,6 +66,7 @@ describe('local Agent Core lifecycle', () => {
         markitdown: false,
         mcp: false,
         webAccess: false,
+        browser: false,
         backgroundBash: false,
         codex: false,
         rtkOptimizer: false,

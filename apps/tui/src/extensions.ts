@@ -27,6 +27,7 @@ export const builtinExtensionPackages = {
   prewalk: '@felan-ai/ext-prewalk',
   mcp: mcpExtensionPackage,
   webAccess: '@felan-ai/ext-web-access',
+  browser: '@felan-ai/ext-browser',
   backgroundBash: '@felan-ai/ext-background-bash',
   codex: '@felan-ai/ext-codex',
   rtkOptimizer: '@felan-ai/ext-rtk-optimizer',

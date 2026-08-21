@@ -211,6 +211,7 @@ safety, and features Felan lacks—see the
 | `@felan-ai/ext-prewalk` | Same-session planner-to-implementation model handoff |
 | `@felan-ai/ext-markitdown` | Bounded binary-document conversion through the ordinary read workflow |
 | `@felan-ai/ext-background-bash` | Detached Bash processes for models outside `openai` and `openai-codex` |
+| `@felan-ai/ext-browser` | Version-matched `agent-browser` CLI automation, on-demand skills, and direct screenshot image delivery |
 | `@felan-ai/ext-web-access` | Bounded web research and content retrieval with SSRF protections |
 | `@felan-ai/ext-mcp` | Portable OAuth-only remote MCP gateway |
 | `@felan-ai/ext-codex` | GPT-specific command, patch, image, and OpenAI Responses controls |

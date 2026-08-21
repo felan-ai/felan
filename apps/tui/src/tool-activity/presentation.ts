@@ -316,12 +316,29 @@ function mcpArgumentPreview(args: Record<string, unknown>): string | undefined {
   return server;
 }
 
+function browserArgumentPreview(args: Record<string, unknown>): string | undefined {
+  const operation = firstString(args, ['operation'])?.toLowerCase();
+  if (operation === 'skill') {
+    return joinPreview(
+      operation,
+      firstString(args, ['skill']),
+      args.full === true ? 'full' : undefined,
+    );
+  }
+  if (operation === 'run') {
+    return joinPreview(operation, firstArrayString(args, 'args'));
+  }
+  return operation;
+}
+
 function argumentPreview(call: ToolActivityCall): string | undefined {
   const args = asRecord(call.args);
   const normalized = call.name.toLowerCase();
   let value: string | undefined;
   if (normalized === 'mcp') {
     value = mcpArgumentPreview(args);
+  } else if (normalized === 'browser') {
+    value = browserArgumentPreview(args);
   } else if (normalized.startsWith('mcp__')) {
     value = formatToolName(call.name);
   } else if (['read', 'read_file', 'edit', 'write', 'view_image'].includes(normalized)) {

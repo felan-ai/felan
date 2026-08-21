@@ -6,6 +6,11 @@ import type {
 } from '@felan-ai/agent-core';
 import { inspectBackgroundBashRuntime } from '@felan-ai/ext-background-bash';
 import {
+  inspectAgentBrowserRuntime,
+  installManagedAgentBrowser,
+  MANAGED_AGENT_BROWSER_VERSION,
+} from '@felan-ai/ext-browser';
+import {
   detectMarkitdown,
   installManagedMarkitdown,
   setActiveMarkitdownEnabled,
@@ -63,6 +68,27 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     check: async (runtime) => {
       const status = await inspectBackgroundBashRuntime(runtime);
       return status.available ? status : { available: false, reason: status.reason };
+    },
+  },
+  {
+    id: 'agent-browser',
+    label: 'agent-browser',
+    extension: 'browser',
+    purpose: 'browser automation, authenticated web-app workflows, and screenshots',
+    installConfirmation: `Download the reviewed agent-browser ${MANAGED_AGENT_BROWSER_VERSION} package, verify its integrity, and install its native CLI into Felan agent storage?`,
+    unavailableChoice: 'Disable the Browser extension',
+    unavailableOutcome: 'disable-extension',
+    check: async (runtime) => {
+      const detected = await inspectAgentBrowserRuntime(runtime);
+      return detected.available
+        ? { available: true, version: detected.invocation.version }
+        : { available: false, reason: detected.reason };
+    },
+    install: async (runtime, onStatus) => {
+      const detected = await installManagedAgentBrowser(runtime, onStatus);
+      return detected.available
+        ? { available: true, version: detected.invocation.version }
+        : { available: false, reason: detected.reason };
     },
   },
   {

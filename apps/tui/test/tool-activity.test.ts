@@ -323,6 +323,36 @@ describe('tool activity rendering', () => {
     expect(subagentOutput).not.toContain('long child result');
   });
 
+  it('shows browser operation details without exposing trailing browser arguments', () => {
+    const harness = activityHarness([
+      assistant([
+        toolCall('browser-skill', 'browser', {
+          operation: 'skill',
+          skill: 'core',
+          full: true,
+        }),
+        toolCall('browser-open', 'browser', {
+          operation: 'run',
+          args: ['open', 'https://example.com/?token=do-not-render'],
+        }),
+        toolCall('browser-fill', 'browser', {
+          operation: 'run',
+          args: ['fill', '@e3', 'private form value'],
+        }),
+      ], 10),
+      toolResult('browser-skill', 'browser', 'skill', false, 20),
+      toolResult('browser-open', 'browser', 'opened', false, 21),
+      toolResult('browser-fill', 'browser', 'filled', false, 22),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'browser-skill', theme, false);
+    expect(output).toContain('Browser · skill · core · full');
+    expect(output).toContain('Browser · run · open');
+    expect(output).toContain('Browser · run · fill');
+    expect(output).not.toContain('do-not-render');
+    expect(output).not.toContain('private form value');
+  });
+
   it('shows failures in the group summary', () => {
     const harness = activityHarness([
       assistant([toolCall('exec-1', 'exec_command', { cmd: 'false' })], 10),

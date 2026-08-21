@@ -26,6 +26,7 @@ describe('local runtime dependency onboarding', () => {
   it('registers only primary binary-backed or platform-gated extension behavior', () => {
     expect(localRuntimeDependencies.map(({ id }) => id)).toEqual([
       'background-bash',
+      'agent-browser',
       'markitdown',
       'rtk',
     ]);
@@ -57,6 +58,44 @@ describe('local runtime dependency onboarding', () => {
     expect(settings.felanTui.dependencyOnboarding).toEqual({ rtk: 'continue' });
   });
 
+  it('installs the browser CLI only after confirmation', async () => {
+    const fixture = await createFixture();
+    const install = vi.fn(async () => ({ available: true as const, version: '0.31.1' }));
+    const browser = dependency({
+      id: 'agent-browser',
+      extension: 'browser',
+      install,
+      unavailableChoice: 'Disable the Browser extension',
+    });
+    const harness = await createHarness(fixture, [browser], {
+      selections: ['Install agent-browser'],
+      confirmations: [true],
+    });
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    expect(harness.confirm).toHaveBeenCalledWith('Install agent-browser', 'Install agent-browser?');
+    expect(install).toHaveBeenCalledOnce();
+    expect(harness.notifications).toContainEqual(['agent-browser installed (0.31.1).', 'info']);
+  });
+
+  it('persists browser extension disablement', async () => {
+    const fixture = await createFixture();
+    const browser = dependency({
+      id: 'agent-browser',
+      extension: 'browser',
+      unavailableChoice: 'Disable the Browser extension',
+    });
+    const harness = await createHarness(fixture, [browser], {
+      selections: ['Disable the Browser extension'],
+    });
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
+    expect(settings.builtinExtensions.browser).toBe(false);
+  });
+
   it('persists extension disablement and does not ask again on reload', async () => {
     const fixture = await createFixture();
     const markitdown = dependency({ id: 'markitdown', extension: 'markitdown' });
@@ -86,7 +125,7 @@ describe('local runtime dependency onboarding', () => {
 
 function dependency(options: {
   id: string;
-  extension: 'markitdown' | 'rtkOptimizer';
+  extension: 'browser' | 'markitdown' | 'rtkOptimizer';
   unavailableChoice?: string;
   unavailableOutcome?: 'disable-extension' | 'continue';
   install?: LocalRuntimeDependency['install'];

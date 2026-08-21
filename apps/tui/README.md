@@ -124,6 +124,7 @@ All built-in extensions are enabled by default. Toggle them in
     "markitdown": true,
     "mcp": true,
     "webAccess": true,
+    "browser": true,
     "backgroundBash": true,
     "codex": true,
     "rtkOptimizer": true,
@@ -138,10 +139,11 @@ Felan opens a dependency wizard before the first prompt. MarkItDown can be
 installed into Felan's managed Python environment or disabled. RTK can be
 installed with its pinned official installer or skipped while its
 binary-independent output compaction remains active. Background Bash is
-disabled when required POSIX process utilities are unavailable. Choices are
-stored in global settings, never prompt in non-interactive sessions, and can be
-revisited with `/dependencies`. Install actions always require explicit
-confirmation.
+disabled when required POSIX process utilities are unavailable. The reviewed
+`agent-browser` CLI can be installed into Felan's managed agent storage or the
+Browser extension can be disabled. Choices are stored in global settings,
+never prompt in non-interactive sessions, and can be revisited with
+`/dependencies`. Install actions always require explicit confirmation.
 
 The local transcript groups adjacent tool calls by default, with one concise
 action row per call beneath each group title. Press `Ctrl+O` to show bounded
@@ -227,6 +229,13 @@ Brave, and self-hosted SearXNG. Configure providers in
 `$FELAN_AGENT_DIR/web-search.json`. Model-facing web content is explicitly
 encoded as untrusted external data; private and reserved network targets are
 blocked by default.
+
+`browser` registers one browser tool backed by the reviewed `agent-browser`
+CLI. Ask the tool for the version-matched `core` or specialized skill before
+browser actions, then pass literal CLI arguments for navigation, snapshots,
+interactions, and screenshots. Bare screenshots are attached directly when the
+selected model accepts image input; browser pages, skill text, and CLI output
+remain untrusted data.
 
 `markitdown` extends ordinary `read` calls for DOC/DOCX, PPT/PPTX, XLS/XLSX,
 RTF, EPUB, and Outlook MSG files. It intentionally leaves PDFs, images, audio,

@@ -28,14 +28,15 @@ portable detection, optional installation, and safe unavailable behavior;
 | --- | --- | --- | --- |
 | MarkItDown document conversion | `markitdown` 0.1.7 | Read interception is bypassed; the extension can be disabled globally | Managed Python virtual environment |
 | RTK command rewriting | compatible `rtk` | Rewriting is bypassed; binary-independent output compaction remains active | Digest-verified official installer pinned to RTK 0.45.0 on Linux/macOS |
+| Browser automation and screenshots | `agent-browser` 0.31.1 | The browser tool is unavailable; the extension can be disabled | Integrity-verified native CLI package in Felan agent storage; Chrome is installed separately by an explicit agent-browser action |
 | Background Bash detached processes | POSIX shell plus `sh`, `nohup`, `ps`, `tr`, `kill`, `date`, `cat`, and `mv` | Background Bash tools remain inactive | No managed installer; use a compatible runtime |
 
 Other process calls are not whole-extension startup dependencies. `git` in web
 repository extraction and the powerline is optional per operation; credential
-shell commands are explicitly configured by the user; browser launch is an
-explicit OAuth action; and `rg` is a core runtime prerequisite managed by Pi in
-the local TUI. Those paths report or suppress their own operation-level errors
-instead of disabling otherwise usable extensions.
+shell commands are explicitly configured by the user; Chrome installation is a
+separate explicit browser action; and `rg` is a core runtime prerequisite
+managed by Pi in the local TUI. Those paths report or suppress their own
+operation-level errors instead of disabling otherwise usable extensions.
 
 When adding another binary-backed extension, add its detector and explicit
 installer (if one can be made safe) to the owning package, register it in the

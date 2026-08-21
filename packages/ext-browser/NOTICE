@@ -1,0 +1,21 @@
+@felan-ai/ext-browser
+Copyright (c) 2026 Felan contributors
+
+This package integrates with, but does not include, agent-browser 0.31.1 from
+https://github.com/vercel-labs/agent-browser, distributed under the Apache License 2.0.
+The reviewed upstream release is v0.31.1 at tag commit
+ed2e10598c9064aecfaeb7cf21b540684db4be2c and its npm archive is identified by
+SHA-512 integrity
+RjgfT0EsHe1oZQbwzUqJTPb7w3sU8DGbbAjMxLNI5dW1y0cc81TbVsqgjqQJmsy3GEbEcKe/ryARwmWGqJAXXQ==.
+
+The optional managed installer downloads agent-browser only after explicit
+host-owned confirmation. It verifies the immutable npm archive and selected
+native executable before use, extracts bundled version-matched skill data, and
+does not run npm lifecycle scripts. agent-browser and any separately installed
+Chrome browser remain third-party runtime dependencies under their own terms.
+
+This package uses TypeBox 1.1.38 from https://github.com/sinclairzx81/typebox,
+licensed under the MIT License. Copyright (c) 2017-2026 Haydn Paterson.
+
+The full license text for this package is in LICENSE. Third-party license texts
+are available from their respective distributions.

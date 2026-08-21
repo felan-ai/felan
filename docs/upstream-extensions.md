@@ -19,6 +19,7 @@ use the reviewed path revision.
 | --- | --- | --- | --- | --- |
 | `@felan-ai/ext-ask-user` | Adapted source; the snapshot originates from `edlsh/pi-ask-user` | [`pi-ask-user` 0.11.2 at `7e72e509`][ask-user-baseline] | Origin [`pi-ask-user` 0.14.0 at `2de7e145`][ask-user-reviewed]; Felan fork remains at `7e72e509` | Ported proxy-safe option handling and bounded TUI improvements; retained Felan's portable host contract. |
 | `@felan-ai/ext-background-bash` | Adapted source | [`pi-background-bash` 0.1.0 at `7e72e509`][background-bash-baseline] | Same release and revision | No upstream change; Felan now probes required POSIX runtime utilities and keeps the feature inactive when they are unavailable. |
+| `@felan-ai/ext-browser` | External CLI integration; no upstream source copied | [`agent-browser` 0.31.1 at `ed2e1059`][agent-browser-reviewed] | Same release and revision | Felan exposes the version-matched bundled skills and CLI through a portable tool, adds host-owned onboarding, isolates sessions, and converts safe screenshots to native image content; it does not vendor the upstream daemon or install Chrome automatically. |
 | `@felan-ai/ext-codex` | Adapted selected code and behavior | [`@howaboua/pi-codex-conversion` 3.0.8 at `62d1501a`][codex-baseline] | Release [`3.0.15` at `b4b99630`][codex-reviewed], plus main through [`2e775ab4`][codex-main-reviewed] | Ported delete-and-readd patch replacement and shutdown fencing; excluded the upstream provider, voice, compaction, Code Mode, Notebook Mode, and the post-release display sidecar. |
 | `@felan-ai/ext-context` | Adapted source | [`pi-progressive-context` 0.1.0 at `9571293d`][context-baseline] | [`0.1.0` at monorepo `7e72e509`][context-reviewed] | No path changes since the adaptation source. |
 | `@felan-ai/ext-markitdown` | Adapted behavior with a new runtime safety boundary | [`pi-markitdown` 0.1.0 at `7e72e509`][markitdown-baseline] | Same release and revision | Ported automatic `read` interception for document formats while excluding PDF/image overlap plus source audio and recursive ZIP handling; replaced direct host I/O, silent binary fallback, and startup installation with bounded runtime staging, explicit installation, clear diagnostics, and untrusted-content guidance. |
@@ -74,6 +75,7 @@ outcome even when the decision is "do not port."
 
 [ask-user-baseline]: https://github.com/mslavov/pi-extensions/tree/7e72e509fe45a5a87c4c2e176cb711de994a8c1d/packages/pi-ask-user
 [ask-user-reviewed]: https://github.com/edlsh/pi-ask-user/tree/2de7e145227f7a527e995e323a50e7ee9bf88b0e
+[agent-browser-reviewed]: https://github.com/vercel-labs/agent-browser/tree/ed2e10598c9064aecfaeb7cf21b540684db4be2c
 [background-bash-baseline]: https://github.com/mslavov/pi-extensions/tree/7e72e509fe45a5a87c4c2e176cb711de994a8c1d/packages/pi-background-bash
 [codex-baseline]: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91/packages/pi-codex-conversion
 [codex-reviewed]: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/b4b99630cda3c066749af0fb3ac9b8184b2a4c7d/packages/pi-codex-conversion

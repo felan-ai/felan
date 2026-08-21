@@ -94,6 +94,17 @@ const backgroundBashNotice = readFileSync(resolve(root, 'packages/ext-background
 if (!backgroundBashNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-background-bash/NOTICE is missing TypeBox 1.1.38');
 }
+const browserNotice = readFileSync(resolve(root, 'packages/ext-browser/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'agent-browser 0.31.1',
+  'Apache License 2.0',
+  'RjgfT0EsHe1oZQbwzUqJTPb7w3sU8DGbbAjMxLNI5dW1y0cc81TbVsqgjqQJmsy3GEbEcKe/ryARwmWGqJAXXQ==',
+  'TypeBox 1.1.38',
+]) {
+  if (!browserNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-browser/NOTICE is missing ${requiredNotice}`);
+  }
+}
 const codexNotice = readFileSync(resolve(root, 'packages/ext-codex/NOTICE'), 'utf8');
 for (const requiredNotice of [
   '@howaboua/pi-codex-conversion 3.0.8',

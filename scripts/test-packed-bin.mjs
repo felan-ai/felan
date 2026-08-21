@@ -222,6 +222,31 @@ try {
       if (JSON.stringify(webAccessCapabilities) !== JSON.stringify(['web-access'])) {
         throw new Error('Packed web access extension capability is unavailable');
       }
+      const browser = await import('@felan-ai/ext-browser');
+      const browserTools = [];
+      const browserCapabilities = [];
+      const browserEvents = [];
+      browser.default({
+        runtime: {
+          kind: 'packed-test',
+          cwd: process.env.PACKED_SMOKE_WORKSPACE,
+          storage: (scope = 'session') => ({
+            root: process.env.PACKED_SMOKE_WORKSPACE + (scope === 'agent' ? '/.browser-agent-storage' : '/.browser-session-storage'),
+          }),
+        },
+        registerCapability: (capability) => browserCapabilities.push(capability.id),
+        registerTool: (tool) => browserTools.push(tool.name),
+        on: (name) => browserEvents.push(name),
+      });
+      if (JSON.stringify(browserTools) !== JSON.stringify(['browser'])) {
+        throw new Error('Packed browser tool is unavailable');
+      }
+      if (JSON.stringify(browserCapabilities) !== JSON.stringify(['browser'])) {
+        throw new Error('Packed browser capability is unavailable');
+      }
+      if (JSON.stringify(browserEvents) !== JSON.stringify(['session_shutdown'])) {
+        throw new Error('Packed browser lifecycle handler is unavailable');
+      }
       const markitdown = await import('@felan-ai/ext-markitdown');
       const markitdownCapabilities = [];
       const markitdownCommands = [];
@@ -325,7 +350,7 @@ try {
       if (prompt.includes('operating inside pi')) {
         throw new Error('Packed runtime retained the Pi base prompt');
       }
-      const capabilityPositions = ['### subagents', '### ask-user', '### tasks', '### prewalk', '### web-access', '### markitdown', '### progressive-context']
+      const capabilityPositions = ['### subagents', '### ask-user', '### tasks', '### prewalk', '### web-access', '### browser', '### markitdown', '### progressive-context']
         .map((heading) => prompt.indexOf(heading));
       if (capabilityPositions.some((position) => position < 0)
         || capabilityPositions.some((position, index) => index > 0 && position <= capabilityPositions[index - 1])) {
