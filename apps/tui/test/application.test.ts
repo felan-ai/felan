@@ -6,15 +6,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const interactive = vi.hoisted(() => ({
   agentDirs: [] as Array<string | undefined>,
   constructorError: undefined as Error | undefined,
+  deferUpdateCheck: false,
   disposals: 0,
+  events: [] as string[],
   piTelemetry: [] as Array<string | undefined>,
   piVersionChecks: [] as Array<string | undefined>,
   headerAdapters: [] as boolean[],
+  initializations: 0,
+  latestUpdate: undefined as string | undefined,
   modeOptions: [] as unknown[],
   runError: undefined as Error | undefined,
   runs: 0,
   toolRenderShells: [] as Array<string | undefined>,
   toolNames: [] as string[],
+  updateCheckSignals: [] as AbortSignal[],
+  warnings: [] as string[],
 }));
 
 vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
@@ -40,8 +46,14 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
         if (interactive.constructorError) throw interactive.constructorError;
       }
 
+      async init() {
+        interactive.initializations += 1;
+        interactive.events.push('init');
+      }
+
       async run() {
         interactive.runs += 1;
+        interactive.events.push('run');
         interactive.headerAdapters.push(
           typeof Object.getOwnPropertyDescriptor(this, 'builtInHeader')?.get === 'function',
         );
@@ -49,6 +61,38 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
         interactive.toolNames = this.runtime.session.agent.state.tools.map((tool) => tool.name);
         if (interactive.runError) throw interactive.runError;
       }
+
+      showWarning(message: string) {
+        interactive.warnings.push(message);
+        interactive.events.push('warning');
+      }
+    },
+  };
+});
+
+vi.mock('../src/update.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../src/update.js')>();
+  return {
+    ...original,
+    checkForFelanUpdate: async (options?: { signal?: AbortSignal }) => {
+      interactive.events.push('check');
+      if (options?.signal) interactive.updateCheckSignals.push(options.signal);
+      if (interactive.deferUpdateCheck) {
+        return new Promise<string | undefined>((resolve) => {
+          const signal = options?.signal;
+          if (!signal) {
+            resolve(undefined);
+            return;
+          }
+          const handleAbort = () => {
+            interactive.events.push('check-abort');
+            resolve(undefined);
+          };
+          if (signal.aborted) handleAbort();
+          else signal.addEventListener('abort', handleAbort, { once: true });
+        });
+      }
+      return interactive.latestUpdate;
     },
   };
 });
@@ -60,15 +104,21 @@ const temporaryPaths: string[] = [];
 afterEach(async () => {
   interactive.agentDirs = [];
   interactive.constructorError = undefined;
+  interactive.deferUpdateCheck = false;
   interactive.disposals = 0;
+  interactive.events = [];
   interactive.piTelemetry = [];
   interactive.piVersionChecks = [];
   interactive.headerAdapters = [];
+  interactive.initializations = 0;
+  interactive.latestUpdate = undefined;
   interactive.modeOptions = [];
   interactive.runError = undefined;
   interactive.runs = 0;
   interactive.toolRenderShells = [];
   interactive.toolNames = [];
+  interactive.updateCheckSignals = [];
+  interactive.warnings = [];
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
@@ -85,6 +135,7 @@ describe('interactive application', () => {
     await runLocalFelan({ cwd, agentDir });
 
     expect(interactive.runs).toBe(1);
+    expect(interactive.initializations).toBe(1);
     expect(interactive.agentDirs).toEqual([agentDir]);
     expect(interactive.piVersionChecks).toEqual(['1']);
     expect(interactive.piTelemetry).toEqual(['0']);
@@ -108,6 +159,38 @@ describe('interactive application', () => {
       'TaskGet',
     ]));
     expect(interactive.toolNames).not.toContain('spawn_agent');
+  });
+
+  it('checks for a Felan update after initialization and reports a newer release', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+    interactive.latestUpdate = '0.13.2';
+
+    await runLocalFelan({ cwd, agentDir });
+
+    expect(interactive.events).toEqual(['init', 'check', 'run', 'warning']);
+    expect(interactive.warnings).toEqual([
+      'Felan 0.13.2 is available. Exit all Felan sessions, then run felan update '
+        + '(global npm) or update with your package manager.',
+    ]);
+  });
+
+  it('cancels a pending update check before disposing the interactive runtime', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+    interactive.deferUpdateCheck = true;
+
+    await runLocalFelan({ cwd, agentDir });
+
+    expect(interactive.events).toEqual(['init', 'check', 'run', 'check-abort']);
+    expect(interactive.updateCheckSignals).toHaveLength(1);
+    expect(interactive.updateCheckSignals[0]?.aborted).toBe(true);
+    expect(interactive.warnings).toEqual([]);
+    expect(interactive.disposals).toBe(1);
   });
 
   it('disposes the runtime when InteractiveMode construction fails', async () => {
