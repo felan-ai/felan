@@ -26,8 +26,11 @@ describe('local memory store', () => {
     const { store, root } = await createStore();
     const sessionStorage = join(root, 'session-storage');
     const projection = await store.projectTo(sessionStorage);
-    await expect(readFile(join(projection, 'summary.md'), 'utf8')).resolves.toBe('');
-    await writeFile(join(projection, 'summary.md'), 'agent edit', 'utf8');
+    await expect(readFile(join(projection.memoryPath, 'summary.md'), 'utf8')).resolves.toBe('');
+    await expect(readFile(join(projection.memoryPath, 'index.md'), 'utf8')).resolves.toContain(
+      `Follow its ${projection.memoryPath} links`,
+    );
+    await writeFile(join(projection.memoryPath, 'summary.md'), 'agent edit', 'utf8');
     await expect(store.readCurrent()).resolves.toMatchObject({ files: expect.arrayContaining([{ path: 'summary.md', content: '' }]) });
     expect(store.currentDirectory).not.toContain(join('workspace', '.memory'));
   });

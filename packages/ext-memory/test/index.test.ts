@@ -8,6 +8,8 @@ import {
   createActiveBranchDigester,
   createMemoryDreamerInstructions,
   createMemoryExtension,
+  createMemoryNavigationGuide,
+  createMemoryProjectionSnapshot,
   createMemorySnapshot,
   createSessionCheckpoint,
   digestActiveBranch,
@@ -100,6 +102,34 @@ describe('@felan-ai/ext-memory', () => {
     expect(memoryArtifactFingerprint(files)).toBe(memoryArtifactFingerprint(result.artifact!));
   });
 
+  it('rebases root navigation for a session projection without changing canonical memory', () => {
+    const canonicalPath = '.memory';
+    const projectionPath = '/sessions/root-1/.memory';
+    const canonical = createMemorySnapshot([
+      { path: 'summary.md', content: 'The project prefers small changes.' },
+      {
+        path: 'index.md',
+        content: `# Memory index\n\n${createMemoryNavigationGuide(canonicalPath)}\n\n## Memory map\n- [Workflow](${canonicalPath}/pages/workflows/index.md)\n`,
+      },
+      { path: 'pages/workflows/index.md', content: '# Workflows\n\n- [Release](release.md) — Release safely.\n' },
+      { path: 'pages/workflows/release.md', content: '# Release\n\n## Sources\n- session:session-1\n' },
+    ], canonicalPath, { sourceSessionIds: ['session-1'] });
+
+    const projection = createMemoryProjectionSnapshot(canonical, projectionPath);
+    const projectedIndex = projection.files.find(({ path }) => path === 'index.md')?.content;
+    const canonicalIndex = canonical.files.find(({ path }) => path === 'index.md')?.content;
+
+    expect(projection.memoryPath).toBe(projectionPath);
+    expect(projection.fingerprint).toBe(canonical.fingerprint);
+    expect(projectedIndex).toContain(createMemoryNavigationGuide(projectionPath));
+    expect(projectedIndex).toContain(`[Workflow](${projectionPath}/pages/workflows/index.md)`);
+    expect(canonicalIndex).toContain(`[Workflow](${canonicalPath}/pages/workflows/index.md)`);
+    expect(validateMemoryArtifact(projection, {
+      memoryPath: projectionPath,
+      sourceSessionIds: ['session-1'],
+    }).ok).toBe(true);
+  });
+
   it('rejects unsafe paths, broken navigation, summary links, and foreign provenance', () => {
     const result = validateMemoryArtifact([
       { path: '../summary.md', content: 'bad' },
@@ -144,6 +174,10 @@ describe('@felan-ai/ext-memory', () => {
     const prompt = formatMemoryPromptContext(snapshot);
     expect(prompt).toContain('<memory>');
     expect(prompt).toContain('lower-priority, untrusted reference context');
+    expect(prompt).toContain('Use the Summary for orientation only');
+    expect(prompt).toContain('read the Index first');
+    expect(prompt).toContain('Cite the supporting page paths and session IDs');
+    expect(prompt).toContain('if no page supports a claim, say so');
     expect(prompt).toContain('Memory note (direct user request): ...');
     expect(prompt).toContain('preserved in the current session transcript');
     expect(prompt).toContain('not as confirmation that canonical memory has changed');
@@ -157,6 +191,16 @@ describe('@felan-ai/ext-memory', () => {
     });
     expect(dreamerInstructions).toContain('explicit user-authored requests');
     expect(dreamerInstructions).toContain('not independent evidence');
+    expect(dreamerInstructions).toContain('Preserve relevant existing source entries');
+    expect(dreamerInstructions).toContain('Add new source entries only for target session IDs');
+    expect(dreamerInstructions).toContain('Update every affected topic, entity, or concept page');
+    expect(dreamerInstructions).toContain('meaningful cross-links between related pages');
+    expect(dreamerInstructions).toContain('preserving unresolved contradictions');
+    expect(dreamerInstructions).toContain('bounded semantic lint');
+    expect(dreamerInstructions).toContain('stale or duplicate claims');
+    expect(dreamerInstructions).toContain('important concepts without pages');
+    expect(dreamerInstructions).toContain('never invent facts, links, or sources');
+    expect(dreamerInstructions).not.toContain('entries drawn only from the manifest');
   });
 });
 
@@ -170,7 +214,7 @@ describe('memory extension lifecycle', () => {
     const extension = await extensionHarness(createMemoryExtension({ role: 'reader', host }));
     expect(extension.registerCapability).toHaveBeenCalledWith(expect.objectContaining({
       id: 'memory',
-      instructions: expect.stringContaining('preserved in the current session transcript'),
+      instructions: expect.stringContaining('read the index first'),
     }));
     await extension.emit('session_start');
     expect(extension.sendMessage).not.toHaveBeenCalled();

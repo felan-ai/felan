@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
 import {
   createMemorySnapshot,
+  createMemoryProjectionSnapshot,
   createSessionCheckpoint,
   extractSourceIds,
   hydrateMemoryDirectory,
@@ -160,14 +161,13 @@ export class LocalMemoryCoordinator {
     const context = await this.#context(cwd);
     const snapshot = await context.store.readCurrent();
     const projectionKey = `${context.project.key}:${sessionStorageRoot}`;
+    const memoryPath = join(sessionStorageRoot, context.store.projectionName);
     if (this.#projections.get(projectionKey) !== snapshot.fingerprint) {
-      await context.store.projectTo(sessionStorageRoot);
+      const projection = await context.store.projectTo(sessionStorageRoot, snapshot);
       this.#projections.set(projectionKey, snapshot.fingerprint);
+      return projection;
     }
-    return {
-      ...snapshot,
-      memoryPath: join(sessionStorageRoot, context.store.projectionName),
-    };
+    return createMemoryProjectionSnapshot(snapshot, memoryPath);
   }
 
   async recordCheckpoint(cwd: string, checkpoint: SessionCheckpoint): Promise<void> {

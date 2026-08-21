@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile, lstat } from 'node:fs/promises'
 import { dirname, join } from 'node:path';
 import {
   createEmptyMemoryArtifact,
+  createMemoryProjectionSnapshot,
   createMemorySnapshot,
   hydrateMemoryDirectory,
   memoryArtifactFingerprint,
@@ -105,11 +106,15 @@ export class LocalMemoryStore {
     });
   }
 
-  async projectTo(sessionStorageRoot: string): Promise<string> {
-    const snapshot = await this.readCurrent();
+  async projectTo(
+    sessionStorageRoot: string,
+    snapshot?: MemorySnapshot,
+  ): Promise<MemorySnapshot> {
+    const current = snapshot ?? await this.readCurrent();
     const target = join(sessionStorageRoot, this.projectionName);
-    await hydrateMemoryDirectory(snapshot, target, { replace: true, memoryPath: this.#memoryPath });
-    return target;
+    const projection = createMemoryProjectionSnapshot(current, target);
+    await hydrateMemoryDirectory(projection, target, { replace: true, memoryPath: target });
+    return projection;
   }
 
   async recordCheckpoint(checkpoint: SessionCheckpoint): Promise<boolean> {

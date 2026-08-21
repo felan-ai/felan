@@ -76,7 +76,9 @@ Local Felan enables account-free, project-scoped memory by default. Settled
 root sessions are consolidated into an inspectable Markdown wiki while Felan
 is running; child sessions can recall the projection but cannot record
 evidence. Existing memory remains readable without model credentials, and a
-missing credential only leaves processing pending.
+missing credential only leaves processing pending. The injected summary is
+orientation only; substantive memory-backed answers follow the index to
+relevant pages and cite their paths and source session IDs.
 Dreaming is host-owned: the TUI schedules a bounded batch and runs a disposable
 Pi memory worker over staged evidence, then validates and publishes the staged
 Markdown filesystem. The portable memory extension itself never starts a

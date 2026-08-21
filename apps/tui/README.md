@@ -37,7 +37,10 @@ provider calls reuse it, and compaction or tree navigation restores it only if
 it is no longer on the active branch. That entry is excluded from memory
 evidence processing. Once it loads successfully, the welcome screen's
 `[Context]` section lists the projected `.memory/summary.md` path alongside
-project instructions so the loaded summary can be opened directly.
+project instructions so the loaded summary can be opened directly. The summary
+is orientation only: substantive memory-backed answers should follow the
+projected absolute `index.md` links to relevant pages and cite page paths and
+their `Sources` session IDs.
 
 Use `/memory status`, `/memory run`, `/memory enable`, `/memory disable`, or
 `/memory open` to inspect and control local processing. A missing local model
@@ -72,6 +75,11 @@ files may be much larger than the evidence sent to the model. After redaction,
 each staged transcript is capped at 256 KiB. A changed, missing, or malformed
 checkpoint source remains pending without blocking valid checkpoints in the
 same batch; it is retried by `/memory run`, a newer cursor, or a later launch.
+The dreamer updates affected pages and cross-links, preserves valid historical
+source entries, marks superseded or conflicting claims, and performs a bounded
+semantic maintenance pass before publication. Root-index links in each session
+projection are rebased to that projection's absolute `.memory` path; canonical
+memory remains unchanged.
 
 Felan suppresses Pi's version notification, bundled changelog, package update
 notifications, and install/update telemetry. Update behavior is owned by the

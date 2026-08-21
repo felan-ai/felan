@@ -144,11 +144,18 @@ describe('LocalMemoryCoordinator', () => {
     expect(observed.transcripts[0]).not.toContain('old memory must not be ingested');
     expect(observed.transcripts[0]).not.toContain('abandoned branch');
     expect(Buffer.byteLength(observed.transcripts[0]!, 'utf8')).toBeLessThanOrEqual(256);
-    expect(await host.readCurrent()).toMatchObject({ files: expect.arrayContaining([
+    const refreshed = await host.readCurrent();
+    expect(refreshed).toMatchObject({ files: expect.arrayContaining([
       { path: 'summary.md', content: 'The project prefers focused changes.' },
     ]) });
+    const projectedIndex = refreshed.files.find(({ path }) => path === 'index.md')?.content;
+    const projectionPath = join(sessionStorageRoot, '.memory');
+    expect(projectedIndex).toContain(`[Workflow](${projectionPath}/pages/workflows/index.md)`);
     await expect(access(join(cwd, '.memory'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await readFile(join(sessionStorageRoot, '.memory', 'summary.md'), 'utf8')).toBe('The project prefers focused changes.');
+    expect(await readFile(join(sessionStorageRoot, '.memory', 'index.md'), 'utf8')).toContain(
+      `[Workflow](${projectionPath}/pages/workflows/index.md)`,
+    );
 
     await writeResumedSession(sessionFile, cwd);
     await host.recordCheckpoint(resumedCheckpointFor(sessionFile));

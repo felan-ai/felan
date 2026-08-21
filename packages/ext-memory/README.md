@@ -19,8 +19,10 @@ After a root checkpoint is recorded, the application host decides whether to
 schedule processing. The portable extension never wakes a worker itself.
 
 Memory is a Markdown wiki containing `summary.md`, `index.md`, and topical
-pages under `pages/`. Hosts project a non-authoritative copy into each root
-session and retain canonical storage outside customer repositories.
+pages under `pages/`. The summary is orientation only: substantive claims
+should follow the index to relevant area and topic pages and cite their paths
+and `Sources` session IDs. Hosts project a non-authoritative copy into each
+root session and retain canonical storage outside customer repositories.
 
 The extension appends one hidden, persisted memory-context message when a
 session starts. Later provider calls reuse that session context instead of
@@ -51,6 +53,12 @@ caps each staged transcript at 256 KiB. Large source session files are not
 rejected solely for their total size. Deterministic source failures remain
 pending for retry, while valid checkpoints in the same batch can still be
 published.
+
+The memory schema asks the dreamer to update every affected topic, entity, and
+concept page; add meaningful cross-links; preserve valid historical citations;
+mark superseded guidance and unresolved contradictions; and run a bounded
+semantic lint for stale, duplicate, weakly linked, or missing knowledge without
+inventing facts, links, or sources.
 
 Source: `packages/ext-memory` in <https://github.com/felan-ai/felan>.
 
