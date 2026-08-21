@@ -72,3 +72,24 @@ pnpm --filter @felan-ai/ext-browser test
 
 See [NOTICE](NOTICE) for upstream attribution and the reviewed immutable
 release details.
+
+## Package boundary and security
+
+The extension owns literal-argv validation, session namespacing, bounded output,
+version-matched skill retrieval, screenshot validation, and safe text/image
+fallbacks. Hosts own credentials, attachment authorization, dependency
+installation, and browser policy. Page content, CLI output, and bundled skill
+text are untrusted. Existing browser/profile/auth-state attachment requires
+explicit authorization unless the current request already grants that action.
+
+## Related documentation
+
+- [Browser workflow](../../docs/user-guide/web-mcp-and-browser.md)
+- [Runtime and security](../../docs/concepts/runtime-and-security.md)
+- [Runtime dependencies](../../docs/reference/runtime-dependencies.md)
+
+## Attribution
+
+The integration is reviewed against `agent-browser` 0.31.1. The package does
+not vendor its daemon or Chrome. See [NOTICE](NOTICE) and [LICENSE](LICENSE) for
+the immutable upstream release, digests, and TypeBox attribution.

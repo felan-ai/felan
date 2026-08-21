@@ -65,3 +65,40 @@ much faster.
 The automatic `read` interception is available only while the ordinary `read`
 tool is active. Felan's Codex mode currently replaces that tool, so this
 extension does not add a second Codex-specific document tool.
+
+## Composition and package boundary
+
+```ts
+import markitdownExtension from '@felan-ai/ext-markitdown';
+
+const extension = markitdownExtension;
+```
+
+The package owns format selection, bounded staging, conversion diagnostics, and
+cache redirection. The host supplies `AgentRuntime`, installation policy, and
+the `markitdown` executable. It requires a compatible `@felan-ai/agent-core`
+peer and Python 3.10 or newer only when the managed converter is installed.
+
+## Development
+
+Source: `packages/ext-markitdown` in <https://github.com/felan-ai/felan>.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @felan-ai/ext-markitdown build
+pnpm --filter @felan-ai/ext-markitdown type-check
+pnpm --filter @felan-ai/ext-markitdown test
+```
+
+## Related documentation
+
+- [Web, MCP, browser, and documents](../../docs/user-guide/web-mcp-and-browser.md)
+- [Runtime dependencies](../../docs/reference/runtime-dependencies.md)
+- [Runtime and security](../../docs/concepts/runtime-and-security.md)
+
+## Attribution
+
+The package adapts reviewed `pi-markitdown` behavior and interoperates with
+Microsoft MarkItDown 0.1.7, which is installed separately when requested. It
+does not bundle the Python converter. See [NOTICE](NOTICE) and [LICENSE](LICENSE).

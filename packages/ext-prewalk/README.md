@@ -89,6 +89,27 @@ Prewalk uses Pi's namespaced extension flags and does not read a configuration f
 - Session quit, reload, replacement, or fork while the target is active attempts planner restoration as a graceful shutdown backstop.
 - Reaching the automatic continuation limit lets the run settle normally.
 
+## Attribution
+
+This package adapts the MIT-licensed `packages/pi-prewalk` implementation from `mslavov/pi-extensions` at commit `7e72e509fe45a5a87c4c2e176cb711de994a8c1d`. See [NOTICE](./NOTICE) and [LICENSE](./LICENSE).
+
+## Composition and package boundary
+
+```ts
+import prewalkExtension from '@felan-ai/ext-prewalk';
+
+const extension = prewalkExtension;
+```
+
+The extension owns the same-session state machine, explicit mutation
+qualification, transient planning/implementation guidance, target selection,
+and restoration lifecycle. Agent Core supplies model tiers and the host supplies
+authenticated model scope, session lifecycle, and active tools. Prewalk does
+not inspect or execute the task graph, and it is not a sandbox or approval mode.
+
+The package requires compatible Agent Core and Tasks peers plus an explicit
+`edit`, `write`, or Codex `apply_patch` tool in the composed session.
+
 ## Development
 
 Source: `packages/ext-prewalk` in <https://github.com/felan-ai/felan>.
@@ -97,9 +118,12 @@ Source: `packages/ext-prewalk` in <https://github.com/felan-ai/felan>.
 corepack enable
 pnpm install --frozen-lockfile
 pnpm --filter @felan-ai/ext-prewalk build
+pnpm --filter @felan-ai/ext-prewalk type-check
 pnpm --filter @felan-ai/ext-prewalk test
 ```
 
-## Attribution
+## Related documentation
 
-This package adapts the MIT-licensed `packages/pi-prewalk` implementation from `mslavov/pi-extensions` at commit `7e72e509fe45a5a87c4c2e176cb711de994a8c1d`. See [NOTICE](./NOTICE) and [LICENSE](./LICENSE).
+- [Agents, tasks, and Prewalk](../../docs/user-guide/agents-tasks-and-prewalk.md)
+- [Architecture](../../docs/concepts/architecture.md)
+- [Extension catalog](../../docs/reference/extension-catalog.md)

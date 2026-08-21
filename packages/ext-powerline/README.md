@@ -1,6 +1,8 @@
 # @felan-ai/ext-powerline
 
-Default local TUI footer extension for Felan, targeting Pi 0.84.2.
+Portable ANSI-aware TUI footer extension targeting Pi 0.84.2. The local Felan
+TUI enables it by default and binds a host that can display Codex or Claude
+subscription usage; the package itself is hostless by default.
 
 The footer displays:
 
@@ -62,6 +64,24 @@ provider's Felan OAuth credential and fixed Codex or Anthropic usage endpoints.
 The extension package does not inspect authentication files, receive stored
 credential objects, or perform network requests.
 
+## Package boundary and requirements
+
+```ts
+import { createPowerlineExtension } from '@felan-ai/ext-powerline';
+
+const extension = createPowerlineExtension();
+```
+
+The package owns width-safe rendering, layout/config parsing, Git-cache
+behavior, provider detection, response parsing, caching, and throttling. Hosts
+own credential access, provider requests, TUI installation, and any extra footer
+rows. The footer is installed only in TUI mode; headless sessions do no Git or
+subscription work.
+
+The local default can be disabled with `builtinExtensions.powerline: false` in
+Felan settings. The package requires a compatible `@felan-ai/agent-core` peer
+and Pi-TUI.
+
 ## Development
 
 Source: `packages/ext-powerline` in <https://github.com/felan-ai/felan>.
@@ -80,3 +100,10 @@ The rendering, theme, segment, lifecycle, Git-cache, and subscription controller
 design is adapted from the MIT-licensed `pi-powerline` source by Milko Slavov.
 That source credits the MIT-licensed `marckrenn/pi-sub` `packages/sub-core` for
 subscription provider and usage logic. See [NOTICE](NOTICE).
+See [LICENSE](LICENSE) for the package license.
+
+## Related documentation
+
+- [Local CLI and Powerline behavior](../../docs/user-guide/local-cli.md)
+- [Configuration](../../docs/user-guide/configuration.md#powerline)
+- [Extension catalog](../../docs/reference/extension-catalog.md)

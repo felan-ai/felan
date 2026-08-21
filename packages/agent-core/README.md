@@ -2,6 +2,10 @@
 
 Portable Felan agent contracts and the Node.js host runtime.
 
+`@felan-ai/agent-core` is the feature-neutral composition layer between a
+Felan host and the pinned Pi packages. It is intended for applications and
+portable extensions, not as a complete end-user CLI.
+
 ```ts
 import { HostAgentRuntime } from '@felan-ai/agent-core';
 
@@ -134,6 +138,21 @@ user, and package skill discovery remains disabled. Ambient system prompt,
 append prompt, and context discovery are also disabled; the selected cwd
 instruction file is the only built-in project-context input.
 
+## Package boundary
+
+Agent Core owns `AgentRuntime`, `HostAgentRuntime`, the Felan base prompt, cwd
+project instructions, provider-aware model tiers, runtime-backed coding tools,
+capabilities, session/resource composition, and the public Pi composition
+exports. Hosts own credentials, settings, storage roots, model scope,
+presentation, and feature extension selection. Feature-specific behavior such
+as tasks, memory scheduling, progressive context, and Prewalk belongs in its
+own extension or application.
+
+Host mode is deliberately not a sandbox. Use a runtime with an external
+isolation boundary for untrusted workloads. Runtime callers should use literal
+argv with `exec`, bounded byte-based I/O, and the scoped storage APIs rather
+than reaching around the adapter.
+
 ## Development
 
 Source: `packages/agent-core` in <https://github.com/felan-ai/felan>.
@@ -142,5 +161,19 @@ Source: `packages/agent-core` in <https://github.com/felan-ai/felan>.
 corepack enable
 pnpm install --frozen-lockfile
 pnpm --filter @felan-ai/agent-core build
+pnpm --filter @felan-ai/agent-core type-check
 pnpm --filter @felan-ai/agent-core test
 ```
+
+## Attribution
+
+Agent Core composes the pinned MIT-licensed Pi packages listed in the package
+manifest. See [NOTICE](NOTICE) and [LICENSE](LICENSE) for the complete
+third-party attribution boundary.
+
+## Related documentation
+
+- [Felan architecture](../../docs/concepts/architecture.md)
+- [Runtime and security](../../docs/concepts/runtime-and-security.md)
+- [Extension catalog](../../docs/reference/extension-catalog.md)
+- [Maintainer architecture map](../../docs/maintainers/architecture-map.md)

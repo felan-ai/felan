@@ -35,6 +35,26 @@ loaded.
 Ambient Pi agent and extension discovery is outside this package and remains
 disabled by Felan applications.
 
+## Installation and composition
+
+```ts
+import { createSubagentsExtension } from '@felan-ai/ext-subagents';
+
+const extension = createSubagentsExtension(host);
+```
+
+The `host` implements `SubagentHost` and owns execution, admission, records,
+persistence, continuation, nesting, cancellation, and completion delivery. A
+local TUI may add a navigator; a cloud host may provide a different
+presentation without changing the portable tool contract.
+
+## Package boundary and requirements
+
+This package owns exactly five model-facing tools, their schemas, validation,
+normalized results, host binding, and model-tier resolution. It does not load
+ambient agents/extensions and does not execute child sessions itself. It
+requires a compatible `@felan-ai/agent-core` peer and TypeBox.
+
 ## Development
 
 Source: `packages/ext-subagents` in <https://github.com/felan-ai/felan>.
@@ -43,10 +63,17 @@ Source: `packages/ext-subagents` in <https://github.com/felan-ai/felan>.
 corepack enable
 pnpm install --frozen-lockfile
 pnpm --filter @felan-ai/ext-subagents build
+pnpm --filter @felan-ai/ext-subagents type-check
 pnpm --filter @felan-ai/ext-subagents test
 ```
 
 ## Attribution
 
 The architecture was informed by the MIT-licensed `pi-subagents` project. See
-[NOTICE](NOTICE) for the reviewed source and commit.
+[NOTICE](NOTICE) and [LICENSE](LICENSE) for the reviewed source and commit.
+
+## Related documentation
+
+- [Agents, tasks, and Prewalk](../../docs/user-guide/agents-tasks-and-prewalk.md)
+- [Extension catalog](../../docs/reference/extension-catalog.md)
+- [Architecture](../../docs/concepts/architecture.md)

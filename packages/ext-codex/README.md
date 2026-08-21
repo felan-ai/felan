@@ -63,3 +63,28 @@ pnpm --filter @felan-ai/ext-codex test
 ```
 
 See [NOTICE](NOTICE) for upstream attribution.
+
+## Package boundary and requirements
+
+Agent Core owns the runtime contract and Pi owns provider transport. This
+package owns provider/model eligibility, structured tool replacement, request
+controls, PTY/session handling, and bounded image delivery; it does not register
+or replace a provider. Filesystem, process, PTY, and image reads go through the
+active `AgentRuntime`.
+
+The package requires a compatible `@felan-ai/agent-core` peer, TypeBox, and
+Pi-TUI. Runtime adapters without persistent-process support retain Felan's
+ordinary coding tools rather than registering unusable Codex controls. Host
+mode remains current-user access and is not a sandbox.
+
+## Related documentation
+
+- [Codex tools configuration](../../docs/user-guide/configuration.md#codex-tools)
+- [Runtime and security](../../docs/concepts/runtime-and-security.md)
+- [Extension catalog](../../docs/reference/extension-catalog.md)
+
+## Attribution
+
+Selected implementation behavior is adapted from the reviewed
+`@howaboua/pi-codex-conversion` sources. See [NOTICE](NOTICE) and
+[LICENSE](LICENSE) for source commits and attribution.

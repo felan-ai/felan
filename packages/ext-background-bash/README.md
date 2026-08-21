@@ -20,9 +20,10 @@ persistently disable the extension through dependency onboarding; Felan does
 not install operating-system utilities.
 
 The extension activates for selected models outside the OpenAI provider family.
-Providers `openai` and `openai-codex` are reserved for a separate background Bash
-extension. Keeping this policy here gives cloud and local consumers identical
-behavior without duplicating model filters in their composition roots.
+OpenAI and OpenAI Codex sessions use the separate Codex-specific process
+surface instead. Keeping eligibility here gives cloud and local consumers
+identical behavior without duplicating model filters in their composition
+roots.
 
 ## Tools and controls
 
@@ -49,10 +50,35 @@ Source: `packages/ext-background-bash` in <https://github.com/felan-ai/felan>.
 corepack enable
 pnpm install --frozen-lockfile
 pnpm --filter @felan-ai/ext-background-bash build
+pnpm --filter @felan-ai/ext-background-bash type-check
 pnpm --filter @felan-ai/ext-background-bash test
 ```
 
 ## Attribution
 
 This package adapts the MIT-licensed `pi-background-bash` implementation. See
-[NOTICE](NOTICE) for source details.
+[NOTICE](NOTICE) and [LICENSE](LICENSE) for source details.
+
+## Composition and requirements
+
+```ts
+import backgroundBashExtension from '@felan-ai/ext-background-bash';
+
+const extension = backgroundBashExtension;
+```
+
+Hosts provide the `AgentRuntime`; the local TUI owns the process overlay,
+shortcut, status polling, and dependency onboarding. Compatible runtimes need
+the POSIX shell/process facilities listed in
+[runtime dependencies](../../docs/reference/runtime-dependencies.md). Felan
+does not install operating-system utilities, and the feature remains inactive
+when they are unavailable.
+
+The extension owns detached job records, logs, lifecycle, model eligibility,
+and the five model-facing process controls. It does not provide a sandbox.
+
+## Related documentation
+
+- [Commands and shortcuts](../../docs/user-guide/commands-and-shortcuts.md)
+- [Runtime dependencies](../../docs/reference/runtime-dependencies.md)
+- [Runtime and security](../../docs/concepts/runtime-and-security.md)

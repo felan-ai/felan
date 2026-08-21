@@ -2,7 +2,8 @@
 
 <p align="center">
   <strong>One agent core, from your terminal to your team.</strong><br>
-  An open-source coding agent for local development and the shared agent runtime behind <a href="https://felan.ai">felan.ai</a>.
+  An open-source, model-portable coding agent for local development and the
+  shared runtime behind <a href="https://felan.ai">felan.ai</a>.
 </p>
 
 <p align="center">
@@ -12,21 +13,25 @@
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-%3E%3D22.19-5FA04E?style=flat&colorA=222222" alt="Node.js 22.19 or newer"></a>
 </p>
 
-Felan is a model-portable coding agent for software development work. It pairs
-a host-owned runtime and controlled resource policy with first-party extensions
-for parallel agents, planning, task coordination, human input, project context,
-local-first memory, web research, and external tools.
+Felan combines a portable agent core with a local terminal host and first-party
+extensions for the parts of software work that benefit from explicit state:
+parallel agents, dependency-aware tasks, structured questions, progressive
+context, local-first memory, bounded web research, remote MCP, browser
+automation, and model-specific coding tools.
 
 **Felan wraps [Pi](https://github.com/earendil-works/pi); it does not fork Pi.**
-It consumes pinned `@earendil-works/pi-*` packages and composes their model,
-session, TUI, and extension APIs with Felan's own agent core, runtime contracts,
-storage, policy, and presentation.
+Pinned Pi packages provide the model, session, extension, and TUI primitives;
+Felan owns the host contracts, feature behavior, policy, storage, and
+presentation around them.
 
-## Install
+> [!IMPORTANT]
+> The local agent runs with your user's filesystem and process permissions. It
+> is a host application, not a sandbox. Use an isolated host for untrusted
+> projects or commands.
 
-Felan requires Node.js 22.19.0 or newer.
+## Install and run
 
-Run it without a global install:
+Felan supports Node.js 22.19.0 or newer. Run it without a global install:
 
 ```sh
 npx @felan-ai/felan
@@ -39,189 +44,127 @@ npm install --global @felan-ai/felan
 felan
 ```
 
-On first launch, run `/login` inside the TUI to connect a supported model
-provider. Provider credentials are managed locally and no Felan account is
-required.
+Connect a provider inside the TUI with `/login`, then start working:
 
 ```sh
-felan "inspect this project"
+felan "inspect this project and explain how to run its tests"
 felan --continue
 felan --diagnostics
 ```
 
-Settings, sessions, agents, and runtime state live under `~/.felan` by default.
-Set `FELAN_AGENT_DIR` to use another directory.
+The local CLI is interactive. An initial message starts the TUI; it is not a
+separate print or one-shot mode. See [Getting started](docs/getting-started.md)
+for first-run setup and [Local CLI](docs/user-guide/local-cli.md) for all
+accepted flags and local state.
 
-> [!IMPORTANT]
-> The local agent runs with your user's filesystem and process permissions. It
-> is a host application, not a sandbox.
+## One agent, two hosts
 
-## One agent, two ways to run it
+The local CLI and Felan's managed product share the same portable agent layer.
+Each host owns the boundaries that cannot be portable:
 
-The local CLI is not a separate demo. It bundles the same Felan Agent Core that
-runs inside the SaaS product at [felan.ai](https://felan.ai).
-
-| Local Felan | Felan SaaS |
+| Local Felan | Felan managed host |
 | --- | --- |
-| Runs on your machine from the `@felan-ai/felan` package | Runs as managed cloud background agents |
-| Uses provider-owned credentials without a Felan account | Adds team workflows, triggers, integrations, shared knowledge, visibility, and guardrails |
-| Stores local sessions and state under `~/.felan` | Hosts resumable and shareable sessions for the team |
+| Runs on your machine from `@felan-ai/felan` | Runs as managed background agents |
+| Uses provider-owned local credentials; no Felan account required | Adds tenant/team workflows, integrations, visibility, and guardrails |
+| Stores sessions and project memory under the local agent directory | Provides host-managed storage, credentials, and integrations |
+| Applies a fixed source-controlled built-in and resource policy | Chooses the managed host's policy and integrations |
 
-Both surfaces use the same portable agent core and extension contracts; each
-host owns its credentials, storage, policy, integrations, and presentation.
-This repository contains that open agent layer, its first-party extensions, and
-the local terminal host. It does not contain the full SaaS application.
+Read [Architecture](docs/concepts/architecture.md) for the ownership boundary
+and [Local memory architecture](docs/concepts/local-memory.md) for the local
+versus host-managed memory lifecycle.
 
-Local Felan enables account-free, project-scoped memory by default. Settled
-root sessions are consolidated into an inspectable Markdown wiki while Felan
-is running; child sessions can recall the projection but cannot record
-evidence. Existing memory remains readable without model credentials, and a
-missing credential only leaves processing pending. The injected summary is
-orientation only; substantive memory-backed answers follow the index to
-relevant pages and cite their paths and source session IDs.
-Dreaming is host-owned: the TUI schedules a bounded batch and runs a disposable
-Pi memory worker over staged evidence, then validates and publishes the staged
-Markdown filesystem. The portable memory extension itself never starts a
-direct one-shot JSON-artifact request or schedules processing. Host-side
-materialization streams each checkpoint's active-branch delta from JSONL,
-redacts it, and caps staged evidence at 256 KiB rather than rejecting a large
-source session; deterministic source failures remain pending while valid
-checkpoints can proceed.
+## Built for software work
 
-## Built to keep software work moving
+| Workflow | What Felan adds |
+| --- | --- |
+| **Delegate and inspect** | Tracked asynchronous subagents with bounded nesting, live transcripts, steering, continuation, cancellation, and completion notices. |
+| **Plan and hand off** | A shared task graph with prerequisites, ownership, acceptance criteria, ready/blocked views, verified results, and same-session Prewalk model routing. |
+| **Ask instead of guessing** | Searchable one-question and one-to-four-question wizards with multi-select, freeform answers, comments, and timeout handling. |
+| **Load context where it applies** | Cwd instructions plus progressive nested `AGENTS.md`/`CLAUDE.md` discovery and explicit Agent Skills. |
+| **Remember locally** | An account-free, project-scoped Markdown wiki with bounded evidence ingestion, validation, citations, and retryable host-owned publication. |
+| **Research with evidence** | Multi-provider search, claim checking with exact passages, bounded page/PDF/GitHub retrieval, retained-content paging, untrusted-content markers, and SSRF protections. |
+| **Connect external tools carefully** | A lazy OAuth-only remote MCP gateway, explicit credential ownership, and bounded untrusted remote results. |
+| **Use the right model tools** | GPT-specific structured command/patch/image tools, detached Background Bash for other providers, and RTK-backed command/output optimization. |
+| **Keep the TUI readable** | Grouped tool activity, full-call inspection, agent/task/process overlays, and an ANSI-aware Powerline footer. |
 
-### 01 · Delegate work, then inspect it live
+The [extension catalog](docs/reference/extension-catalog.md) maps each workflow
+to its package, host boundary, commands, and runtime conditions.
 
-Spawn tracked subagents asynchronously, keep working while they run, and get
-completion notices when results are ready. Children can be listed, steered,
-continued, or cancelled. The local agent navigator shows live transcripts for
-bounded, nested agent trees without hiding them behind a single tool call.
+## Explicit host boundaries
 
-### 02 · Share the plan, not just the prompt
+Felan keeps the local host narrow in some places on purpose:
 
-The root agent and every subagent share one dependency-aware task graph with
-stable IDs, priorities, prerequisites, ownership, acceptance criteria, and
-verified results. `/tasks` opens list, detail, and graph views in the TUI.
+- only source-controlled built-in extensions are loaded;
+- ambient Pi packages, extensions, prompts, themes, project settings, and
+  package resources are filtered;
+- model credentials and MCP OAuth tokens belong to the local host;
+- web, document, browser, MCP, memory, and model-facing remote content are
+  bounded and treated as untrusted; and
+- missing binary dependencies degrade safely and require explicit interactive
+  installation or disablement.
 
-Prewalk keeps planning and implementation in one trajectory: for a file-changing
-task, the model can call `enter_prewalk` itself (or the user can invoke
-`/prewalk`), explore and build a bounded task graph, make the first focused
-mutation, then switch the same useful conversation and tool history to a
-configured authenticated model tier or exact model to finish and verify the
-work. Mutation-capable subagents receive the same tool and independent lifecycle.
+These controls do not sandbox ordinary shell or filesystem operations. Read the
+[runtime and security guide](docs/concepts/runtime-and-security.md) before
+using Felan with sensitive repositories.
 
-### 03 · Ask before guessing
-
-The `ask_user` tool gives the agent a structured way to pause for input. The
-local host renders single questions or one-to-four-question wizards with
-searchable choices, multi-select, freeform answers, and optional comments.
-
-### 04 · Load context where it applies
-
-Agent Core loads at most one cwd-level `AGENTS.md` or `CLAUDE.md`, while
-progressive context discovers nested instructions as the agent reads deeper
-into the repository. Explicit global and workspace Agent Skills are available
-to the root and its children, and discovered instructions survive context
-compaction.
-
-### 05 · Research the web with explicit boundaries
-
-Search with OpenAI, Exa, Brave, or self-hosted SearXNG; verify claims against
-exact source passages; and fetch pages, PDFs, images, or GitHub repositories.
-Remote material is bounded and marked as untrusted before it reaches the model,
-and private-network destinations are blocked by default.
-
-### 06 · Connect MCP without opening every door
-
-Felan exposes remote MCP servers through one token-efficient, OAuth-only
-gateway. The local host owns browser authentication and OS credential storage.
-Ambient MCP discovery, stdio servers, bearer tokens, custom headers, and direct
-tool injection remain outside the allowed surface.
-
-### 07 · Give each model the tools it expects
-
-GPT-family models on the exact `openai` and `openai-codex` providers receive
-structured `exec_command`, `write_stdin`, `apply_patch`, and optional
-`view_image` tools. Other model selections keep the ordinary runtime-backed
-coding tools. Models outside those two providers can also launch detached
-background Bash jobs. The RTK optimizer compacts noisy output and, when `rtk`
-is installed, uses it to rewrite supported commands.
-
-### 08 · Keep long terminal sessions readable
-
-The TUI groups adjacent tool activity into compact summaries, with `Ctrl+O` to
-toggle detail and `/tools` to inspect complete calls. Agent, task, and process
-navigators keep concurrent work visible, while the powerline tracks Git, model,
-session, subscription, context, and extension status.
-
-## Built on Pi, without becoming a Pi fork
+## Architecture
 
 ```text
-@felan-ai/felan local host              felan.ai cloud host
-                \                        /
-                 portable Felan extensions
-                            |
+@felan-ai/felan local host       Felan managed host
+              \                   /
+               portable extensions
+                         |
                  @felan-ai/agent-core
-                            |
-              pinned @earendil-works/pi-* packages
+                         |
+             pinned @earendil-works/pi-*
 ```
 
-Pi provides the underlying model adapters, session machinery, extension
-lifecycle, and interactive terminal UI. Agent Core composes Pi sessions with
-Felan's base prompt, runtime-backed coding tools, explicit resources, and
-enabled capabilities. Applications remain responsible for credentials,
-storage, host I/O, policy, and presentation.
+Behavior stays in its owning layer: `apps/tui` owns local policy, storage, and
+presentation; `ext-*` packages own portable feature behavior; and Agent Core
+owns adapter-neutral runtime contracts and base composition.
 
-That boundary is deliberate: updating Pi is a pinned dependency change, not a
-merge from a long-lived source fork. Felan can evolve its portable contracts
-and product behavior without carrying a divergent Pi codebase.
+## Documentation
 
-Many extensions are portable adaptations of, or were designed with reference
-to, existing Pi extensions. Their immutable adaptation sources and latest
-reviewed upstream checkpoints are recorded in
-[Upstream extension review baselines](docs/upstream-extensions.md), including
-reviews where no change was ported.
+The [documentation hub](docs/README.md) routes readers by audience:
 
-External executable detection, safe degradation, local onboarding, and cloud
-preinstallation responsibilities are documented in
-[Runtime dependencies](docs/runtime-dependencies.md).
-
-The local host loads only Felan's source-controlled built-in extensions. It
-does not discover ambient Pi extensions, prompts, project settings, or package
-resources. Built-ins are enabled by default and can be toggled in
-`~/.felan/settings.json`. See the [local TUI documentation](apps/tui/README.md)
-for commands, configuration, and extension-specific controls.
-
-For a source-backed local feature matrix covering Codex, OpenCode, Claude Code,
-Pi, and Oh My Pi—including tasks, agents, context, web research, execution,
-safety, and features Felan lacks—see the
-[coding-agent comparison](docs/comparison.md).
+- [Getting started](docs/getting-started.md)
+- [Local CLI](docs/user-guide/local-cli.md)
+- [Configuration](docs/user-guide/configuration.md)
+- [Commands and shortcuts](docs/user-guide/commands-and-shortcuts.md)
+- [Agents, tasks, and Prewalk](docs/user-guide/agents-tasks-and-prewalk.md)
+- [Context and memory](docs/user-guide/context-and-memory.md)
+- [Web, MCP, browser, and documents](docs/user-guide/web-mcp-and-browser.md)
+- [Architecture](docs/concepts/architecture.md)
+- [Runtime and security](docs/concepts/runtime-and-security.md)
+- [Comparisons with Codex, OpenCode, Claude Code, Pi, and Oh My Pi](docs/comparisons/README.md)
+- [Contributing](CONTRIBUTING.md)
+- [Release process](docs/maintainers/releasing.md)
 
 ## Repository map
 
-| Package | Purpose |
-| --- | --- |
-| `@felan-ai/felan` | Account-free local terminal application and `felan` binary |
-| `@felan-ai/agent-core` | Portable runtime contracts, Node.js host runtime, prompt, tools, and Pi session composition |
-| `@felan-ai/ext-memory` | Portable Markdown memory schema, validation, and root/reader session integration |
-| `@felan-ai/ext-output-style` | Validated output-style instructions for model responses |
-| `@felan-ai/ext-subagents` | Tracked asynchronous subagent protocol and tools |
-| `@felan-ai/ext-ask-user` | Structured interactive questions with host-owned presentation |
-| `@felan-ai/ext-tasks` | Dependency-aware task graph shared across a root session and its children |
-| `@felan-ai/ext-context` | Progressive loading of nested project instructions |
-| `@felan-ai/ext-prewalk` | Same-session planner-to-implementation model handoff |
-| `@felan-ai/ext-markitdown` | Bounded binary-document conversion through the ordinary read workflow |
-| `@felan-ai/ext-background-bash` | Detached Bash processes for models outside `openai` and `openai-codex` |
-| `@felan-ai/ext-browser` | Version-matched `agent-browser` CLI automation, on-demand skills, and direct screenshot image delivery |
-| `@felan-ai/ext-web-access` | Bounded web research and content retrieval with SSRF protections |
-| `@felan-ai/ext-mcp` | Portable OAuth-only remote MCP gateway |
-| `@felan-ai/ext-codex` | GPT-specific command, patch, image, and OpenAI Responses controls |
-| `@felan-ai/ext-rtk-optimizer` | RTK command rewriting and tool-output compaction |
-| `@felan-ai/ext-powerline` | ANSI-aware local TUI status footer |
+| Package | Purpose | Documentation |
+| --- | --- | --- |
+| [`@felan-ai/felan`](apps/tui/README.md) | Account-free local terminal application and `felan` binary | [Local CLI](docs/user-guide/local-cli.md) |
+| [`@felan-ai/agent-core`](packages/agent-core/README.md) | Portable runtime contracts, prompt, tools, model tiers, and Pi composition | [Architecture](docs/concepts/architecture.md) |
+| [`@felan-ai/ext-subagents`](packages/ext-subagents/README.md) | Tracked asynchronous subagent protocol | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
+| [`@felan-ai/ext-tasks`](packages/ext-tasks/README.md) | Dependency-aware root-session task graph | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
+| [`@felan-ai/ext-prewalk`](packages/ext-prewalk/README.md) | Same-session planner-to-implementation handoff | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
+| [`@felan-ai/ext-ask-user`](packages/ext-ask-user/README.md) | Structured one-to-four-question input | [Commands](docs/user-guide/commands-and-shortcuts.md) |
+| [`@felan-ai/ext-context`](packages/ext-context/README.md) | Progressive nested project context | [Context and memory](docs/user-guide/context-and-memory.md) |
+| [`@felan-ai/ext-memory`](packages/ext-memory/README.md) | Portable local-first memory contracts | [Memory architecture](docs/concepts/local-memory.md) |
+| [`@felan-ai/ext-output-style`](packages/ext-output-style/README.md) | Validated concise and explanatory response instructions | [Configuration](docs/user-guide/configuration.md#output-style) |
+| [`@felan-ai/ext-web-access`](packages/ext-web-access/README.md) | Bounded web search, source checking, and content retrieval | [Web access](docs/user-guide/web-mcp-and-browser.md) |
+| [`@felan-ai/ext-mcp`](packages/ext-mcp/README.md) | Portable OAuth-only remote MCP gateway | [MCP](docs/user-guide/web-mcp-and-browser.md) |
+| [`@felan-ai/ext-browser`](packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration | [Browser](docs/user-guide/web-mcp-and-browser.md) |
+| [`@felan-ai/ext-markitdown`](packages/ext-markitdown/README.md) | Bounded office-document conversion | [Documents](docs/user-guide/web-mcp-and-browser.md) |
+| [`@felan-ai/ext-background-bash`](packages/ext-background-bash/README.md) | Detached Bash processes and logs | [Commands](docs/user-guide/commands-and-shortcuts.md) |
+| [`@felan-ai/ext-codex`](packages/ext-codex/README.md) | GPT-specific structured tools and request controls | [Configuration](docs/user-guide/configuration.md) |
+| [`@felan-ai/ext-rtk-optimizer`](packages/ext-rtk-optimizer/README.md) | RTK command rewriting and output compaction | [Runtime dependencies](docs/reference/runtime-dependencies.md) |
+| [`@felan-ai/ext-powerline`](packages/ext-powerline/README.md) | ANSI-aware local TUI footer | [Local CLI](docs/user-guide/local-cli.md) |
 
 ## Develop from source
 
-Development and CI use Node.js 22.20.0 and pnpm 9.15.5.
+Repository development and CI use Node.js 22.20.0 and pnpm 9.15.5:
 
 ```sh
 git clone https://github.com/felan-ai/felan.git
@@ -232,19 +175,21 @@ pnpm build
 node apps/tui/dist/cli.js
 ```
 
-Run the complete build, type-check, test, license, and packed-install suite with:
+Run the complete build, type-check, test, license, packaging, and packed
+installation suite with:
 
 ```sh
 pnpm verify
 ```
 
-See [Contributing](CONTRIBUTING.md) and the [Release process](docs/releasing.md).
+See [Contributing](CONTRIBUTING.md) and the
+[maintainer architecture map](docs/maintainers/architecture-map.md) before
+changing a shared runtime or public package.
 
-## Community
+## Community and license
 
 [Join the Felan Discord community](https://discord.gg/skNd4GSzZ) to connect with
-other users and contributors.
+users and contributors.
 
-## License
-
-[MIT](LICENSE). See [NOTICE](NOTICE) for third-party attribution.
+Felan is licensed under the [MIT License](LICENSE). See [NOTICE](NOTICE) for
+third-party attribution and immutable upstream review details.

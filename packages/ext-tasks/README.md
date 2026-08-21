@@ -35,6 +35,26 @@ Local TUI sessions expose `/tasks` and `Ctrl+Shift+T` for list, detail, and grap
 views. Headless and cloud sessions use the same tools and storage without
 registering TUI controls.
 
+## Installation and composition
+
+```ts
+import tasksExtension from '@felan-ai/ext-tasks';
+
+const extension = tasksExtension;
+```
+
+The package owns the root-session graph, persistence, dependency validation,
+task tools, and optional TUI view. The host supplies `AgentRuntime.storage('session')`
+and session identity; task execution remains outside this package and may use
+any available agent mechanism.
+
+## Package boundary and requirements
+
+The graph is execution state for one root session, not a project issue tracker.
+It has no remote synchronization, due dates, labels, comments, or durable
+cross-session backlog. The package requires a compatible
+`@felan-ai/agent-core` peer, TypeBox, and Pi-TUI.
+
 ## Development
 
 Source: `packages/ext-tasks` in <https://github.com/felan-ai/felan>.
@@ -46,3 +66,16 @@ pnpm --filter @felan-ai/ext-tasks build
 pnpm --filter @felan-ai/ext-tasks type-check
 pnpm --filter @felan-ai/ext-tasks test
 ```
+
+## Related documentation
+
+- [Agents, tasks, and Prewalk](../../docs/user-guide/agents-tasks-and-prewalk.md)
+- [Commands and shortcuts](../../docs/user-guide/commands-and-shortcuts.md)
+- [Extension catalog](../../docs/reference/extension-catalog.md)
+
+## Attribution
+
+The interaction design was informed by the MIT-licensed `pi-todo-write` package
+and the open-source Beads task tracker; no Beads source or CLI is included.
+TypeBox attribution is recorded in [NOTICE](NOTICE); see [LICENSE](LICENSE) for
+the package license.

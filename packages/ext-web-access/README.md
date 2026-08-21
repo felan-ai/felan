@@ -69,3 +69,50 @@ exactly the named providers concurrently. Exa MCP works without an API key.
 
 `ssrf.allowRanges` is a trusted host override for narrow CIDRs used by local
 services. Private-network access remains prohibited when it is omitted.
+
+## Composition and package boundary
+
+```ts
+import webAccessExtension from '@felan-ai/ext-web-access';
+
+const extension = webAccessExtension;
+```
+
+The extension owns provider selection, host-side HTTP/DNS validation, bounded
+fetching, session cache storage, source-check artifacts, and untrusted-content
+wrapping. The host supplies `AgentRuntime`, agent-directory configuration, and
+credential policy. Direct network/DNS and agent-directory config access are
+intentional host-boundary exceptions documented by the package contract.
+
+## Requirements and security
+
+The package requires a compatible `@felan-ai/agent-core` peer and its declared
+content-extraction dependencies. Private, loopback, link-local, reserved, and
+internal targets are blocked by default; DNS and redirects are revalidated.
+Every remote page, image, PDF, repository file, provider response, and derived
+summary is untrusted data. Do not treat fetched content as configuration.
+
+## Development
+
+Source: `packages/ext-web-access` in <https://github.com/felan-ai/felan>.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @felan-ai/ext-web-access build
+pnpm --filter @felan-ai/ext-web-access type-check
+pnpm --filter @felan-ai/ext-web-access test
+```
+
+## Related documentation
+
+- [Web, MCP, browser, and documents](../../docs/user-guide/web-mcp-and-browser.md)
+- [Runtime and security](../../docs/concepts/runtime-and-security.md)
+- [Runtime dependencies](../../docs/reference/runtime-dependencies.md)
+- [Extension catalog](../../docs/reference/extension-catalog.md)
+
+## Attribution
+
+The package selectively adapts reviewed MIT-licensed `pi-web-access` behavior
+and adds Felan's bounded storage and SSRF boundary. See [NOTICE](NOTICE) and
+[LICENSE](LICENSE) for upstream commits and dependency attribution.

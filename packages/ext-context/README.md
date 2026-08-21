@@ -29,17 +29,6 @@ The extension registers concise static `progressive-context` capability
 guidance during initialization. Discovered nested instructions remain transient
 session context and continue to update as relevant files are observed.
 
-## Development
-
-Source: `packages/ext-context` in <https://github.com/felan-ai/felan>.
-
-```sh
-corepack enable
-pnpm install --frozen-lockfile
-pnpm --filter @felan-ai/ext-context build
-pnpm --filter @felan-ai/ext-context test
-```
-
 ## Trigger limitations
 
 - Progressive context affects the model call after a file read or attachment.
@@ -50,4 +39,35 @@ pnpm --filter @felan-ai/ext-context test
 ## Attribution
 
 This package adapts the MIT-licensed `pi-progressive-context` implementation.
-See [NOTICE](NOTICE) for source details.
+See [NOTICE](NOTICE) and [LICENSE](LICENSE) for source details.
+
+## Composition and package boundary
+
+```ts
+import contextExtension from '@felan-ai/ext-context';
+
+const extension = contextExtension;
+```
+
+Agent Core owns the cwd-level instruction file. This extension owns only nested
+discovery, deduplication, hidden context delivery, and the inspection command;
+the host supplies the cwd-contained `AgentRuntime`. It requires a compatible
+`@felan-ai/agent-core` peer and does not load ambient project resources.
+
+## Development
+
+Source: `packages/ext-context` in <https://github.com/felan-ai/felan>.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @felan-ai/ext-context build
+pnpm --filter @felan-ai/ext-context type-check
+pnpm --filter @felan-ai/ext-context test
+```
+
+## Related documentation
+
+- [Context and memory](../../docs/user-guide/context-and-memory.md)
+- [Architecture](../../docs/concepts/architecture.md)
+- [Extension catalog](../../docs/reference/extension-catalog.md)

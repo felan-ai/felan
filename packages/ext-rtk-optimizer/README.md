@@ -124,4 +124,23 @@ pnpm --filter @felan-ai/ext-rtk-optimizer test
 ## Attribution
 
 This package adapts the MIT-licensed `pi-rtk-optimizer` 0.9.0 implementation.
-See [NOTICE](NOTICE) for source provenance.
+See [NOTICE](NOTICE) and [LICENSE](LICENSE) for source provenance.
+
+## Package boundary and requirements
+
+The extension owns rewrite decisions at the tool boundary, command/result
+association, output compaction, configuration validation, and savings metrics.
+The host supplies `AgentRuntime`, the agent-scoped storage root, interactive
+settings presentation, and explicit installation policy. Output compaction can
+operate without the executable; command rewriting requires a compatible `rtk`
+on the active runtime.
+
+It requires a compatible `@felan-ai/agent-core` peer. Managed installation is
+explicit, digest-verified, and never runs during startup or a model tool call.
+Lossy read compaction remains opt-in and explicit ranges remain exact.
+
+## Related documentation
+
+- [Configuration](../../docs/user-guide/configuration.md#rtk)
+- [Commands and shortcuts](../../docs/user-guide/commands-and-shortcuts.md)
+- [Runtime dependencies](../../docs/reference/runtime-dependencies.md)

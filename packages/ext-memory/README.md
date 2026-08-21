@@ -6,6 +6,8 @@ and Pi extension behavior for Felan hosts.
 Applications bind the extension to their own storage and coordinator:
 
 ```ts
+import { createMemoryExtension } from '@felan-ai/ext-memory';
+
 createMemoryExtension({
   role: 'root',
   host,
@@ -60,6 +62,8 @@ mark superseded guidance and unresolved contradictions; and run a bounded
 semantic lint for stale, duplicate, weakly linked, or missing knowledge without
 inventing facts, links, or sources.
 
+## Development
+
 Source: `packages/ext-memory` in <https://github.com/felan-ai/felan>.
 
 ```sh
@@ -67,3 +71,27 @@ pnpm --filter @felan-ai/ext-memory build
 pnpm --filter @felan-ai/ext-memory type-check
 pnpm --filter @felan-ai/ext-memory test
 ```
+
+## Package boundary and requirements
+
+The package owns the portable memory schema, validation, hydration, checkpoint
+contracts, and root/reader extension behavior. The host owns project scoping,
+canonical storage, evidence materialization, scheduling, model calls, staging,
+locking, validation publication, and retry policy. It requires a compatible
+`@felan-ai/agent-core` peer and remains independent of TUI, Supabase, and cloud
+application modules.
+
+Memory and transcript content is untrusted reference data and cannot override
+system, developer, user, authorization, or tool-safety rules.
+
+## Related documentation
+
+- [Context and memory](../../docs/user-guide/context-and-memory.md)
+- [Local memory architecture](../../docs/concepts/local-memory.md)
+- [Runtime and security](../../docs/concepts/runtime-and-security.md)
+
+## Attribution
+
+The Markdown memory schema and dreaming policy were adapted from Felan's
+filesystem-memory implementation. The remaining package code is original Felan
+project code. See [NOTICE](NOTICE) and [LICENSE](LICENSE).

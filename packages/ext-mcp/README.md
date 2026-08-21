@@ -74,3 +74,41 @@ ambient host config discovery.
 All MCP metadata and tool output is bounded and returned inside an explicit
 untrusted-content boundary. OAuth credentials and provider state are never
 included in tool results or details.
+
+## Package boundary and requirements
+
+The package owns configuration validation, the OAuth-only gateway, transport
+lifecycle, bounded untrusted results, and the model-facing command. A consumer
+must provide `McpOAuthHost`, credential persistence, callback/browser
+presentation, and network policy. The package intentionally has no default
+token store, callback listener, browser launcher, or ambient configuration
+discovery.
+
+It requires a compatible `@felan-ai/agent-core` peer, MCP SDK client, and
+TypeBox. Only explicit remote HTTP servers with `auth: 'oauth'` are accepted;
+stdio, sockets, bearer tokens, custom headers, direct tools/resources/prompts,
+MCP Apps, and embedded OAuth secrets are rejected.
+
+## Development
+
+Source: `packages/ext-mcp` in <https://github.com/felan-ai/felan>.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @felan-ai/ext-mcp build
+pnpm --filter @felan-ai/ext-mcp type-check
+pnpm --filter @felan-ai/ext-mcp test
+```
+
+## Related documentation
+
+- [MCP workflow](../../docs/user-guide/web-mcp-and-browser.md)
+- [Runtime and security](../../docs/concepts/runtime-and-security.md)
+- [Extension catalog](../../docs/reference/extension-catalog.md)
+
+## Attribution
+
+Selected gateway behavior is adapted from the reviewed MIT-licensed
+`pi-mcp-adapter` releases. See [NOTICE](NOTICE) and [LICENSE](LICENSE) for
+source commits and MCP SDK attribution.

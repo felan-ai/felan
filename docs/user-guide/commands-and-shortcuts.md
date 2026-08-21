@@ -1,0 +1,81 @@
+# Commands and shortcuts
+
+Type `/` in the TUI to discover commands registered for the current session.
+Some commands are provided by Pi; the table below focuses on Felan's local host
+and first-party extensions.
+
+## Local host commands
+
+| Command | Purpose |
+| --- | --- |
+| `/dependencies` | Inspect, install, enable, or disable external runtime dependencies |
+| `/memory status` | Show local project-memory state |
+| `/memory run` | Process pending memory evidence now |
+| `/memory enable` | Enable host-owned memory processing |
+| `/memory disable` | Disable processing while keeping existing memory readable |
+| `/memory open` | Open canonical project memory in the local TUI |
+| `/agents` | Open the subagent navigator |
+| `/tools` | Inspect complete root-session tool arguments and results |
+
+`/dependencies` and `/memory open` require the interactive TUI.
+
+## Extension commands
+
+| Command | Purpose |
+| --- | --- |
+| `/tasks` | Open task list, detail, and dependency-graph views |
+| `/prewalk [task]` | Arm Prewalk, optionally starting the task immediately |
+| `/prewalk status` | Show phase, target model, and restoration setting |
+| `/prewalk exit` | Exit Prewalk; `off` and `cancel` are aliases |
+| `/background-bash` | Inspect detached processes and logs |
+| `/mcp [status\|tools\|reconnect\|auth\|logout] [server]` | Inspect and manage configured remote MCP servers |
+| `/markitdown` | Show document-converter status |
+| `/markitdown install` | Explicitly install the managed converter |
+| `/progressive-context` | Show progressively loaded nested instructions |
+| `/rtk` | Open interactive RTK settings |
+| `/rtk show` | Show RTK configuration and runtime status |
+| `/rtk verify` | Recheck the active runtime for RTK |
+| `/rtk install` | Explicitly install the pinned reviewed RTK release |
+| `/rtk stats` | Show session savings metrics |
+
+The Browser extension is model-facing and does not add a user slash command.
+Use `/dependencies` to manage its external CLI.
+
+## Common Pi commands
+
+The local application retains selected Pi interaction commands such as
+`/login`, `/model`, and `/reload`, while filtering ambient Pi resources and
+project settings. Use the live `/` menu for the authoritative list provided by
+the pinned Pi version.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Alt+A` | Open the subagent navigator |
+| `Alt+T` | Open the complete tool-call inspector |
+| `Ctrl+Shift+T` | Open task views |
+| `Ctrl+Shift+J` | Open Background Bash process/log views |
+| `Ctrl+O` | Toggle bounded tool and completion previews |
+
+At the newest prompt, press Down to move from the editor into the live
+subagent rail. Use Up/Down to select an agent and Enter to open it; Up from the
+first row returns to the editor.
+
+The startup header also advertises `/` command discovery and `!` shell mode.
+Shell commands still run with the local user's permissions.
+
+## CLI flags
+
+These are the flags accepted directly by the `felan` binary:
+
+```text
+-c, --continue
+--diagnostics
+-h, --help
+-v, --version
+--verbose
+```
+
+Other extension flags are public composition APIs for hosts that expose Pi's
+flag parser; the local `felan` wrapper rejects unknown CLI options.

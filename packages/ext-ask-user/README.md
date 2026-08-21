@@ -64,3 +64,28 @@ are trimmed and case-normalized. `off`, `none`, `disabled`, or `null` disables a
 
 The local interface is adapted from `pi-ask-user` by Enzo Lucchesi. See `NOTICE` and
 `LICENSE` for source and license details.
+
+## Package boundary and requirements
+
+The portable package owns the tool schema, normalization, validation, progress,
+and result text. A host owns presentation and delivery through `AskUserHost`;
+the local TUI adapter is optional. The package requires a compatible
+`@felan-ai/agent-core` peer, TypeBox, and Pi-TUI.
+
+## Development
+
+Source: `packages/ext-ask-user` in <https://github.com/felan-ai/felan>.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @felan-ai/ext-ask-user build
+pnpm --filter @felan-ai/ext-ask-user type-check
+pnpm --filter @felan-ai/ext-ask-user test
+```
+
+## Related documentation
+
+- [Commands and shortcuts](../../docs/user-guide/commands-and-shortcuts.md)
+- [Extension catalog](../../docs/reference/extension-catalog.md)
+- [Architecture](../../docs/concepts/architecture.md)
