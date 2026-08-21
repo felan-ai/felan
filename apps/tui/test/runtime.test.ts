@@ -72,6 +72,7 @@ describe('local Agent Core lifecycle', () => {
         rtkOptimizer: false,
         memory: false,
         powerline: false,
+        outputStyle: false,
       },
     }));
     await writeFile(join(agentDir, 'APPEND_SYSTEM.md'), 'Local application instructions');

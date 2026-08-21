@@ -6,6 +6,10 @@ portable local-first Markdown memory schema, validation, and session bridge.
 Its package-level license and attribution are included in
 packages/ext-memory/LICENSE and NOTICE.
 
+@felan-ai/ext-output-style is original Felan MIT-licensed code providing
+portable, validated output-style instructions. Its package-level license and
+notice are included in packages/ext-output-style/LICENSE and NOTICE.
+
 This product uses Pi 0.84.2 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 

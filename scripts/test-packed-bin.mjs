@@ -70,6 +70,7 @@ try {
   ], cleanEnvironment);
 
   for (const sourcePackage of sourcePackages) validateInstalledPackage(sourcePackage);
+  assertPackedFelanOutputStyleDependency();
   assertSingleAgentCoreInstallation();
   assertPackedToolBoundary();
 
@@ -101,6 +102,20 @@ try {
         } catch (error) {
           if (!String(error).includes('Unknown local extension package')) throw error;
         }
+      }
+      const outputStyle = await import('@felan-ai/ext-output-style');
+      let outputStyleHandler;
+      outputStyle.createOutputStyleExtension('explanatory')({
+        on: (event, handler) => {
+          if (event === 'before_agent_start') outputStyleHandler = handler;
+        },
+      });
+      const styledPrompt = outputStyleHandler?.({ systemPrompt: 'Packed base prompt' })?.systemPrompt;
+      if (!styledPrompt?.includes('## Output Style')
+        || !styledPrompt.includes('<output_style>')
+        || !styledPrompt.includes('Explain the reasoning and important tradeoffs')
+        || !styledPrompt.includes('</output_style>')) {
+        throw new Error('Packed output-style extension did not apply the explanatory style');
       }
       const subagents = await import('@felan-ai/ext-subagents');
       const canonicalTools = [];
@@ -510,6 +525,20 @@ function validateInstalledPackage(sourcePackage) {
     if (!/import\(packageName\)/.test(extensionSource)) {
       throw new Error('Packed TUI did not preserve its app-anchored native dynamic importer');
     }
+  }
+}
+
+function assertPackedFelanOutputStyleDependency() {
+  const felanManifest = JSON.parse(readFileSync(
+    join(installDir, 'node_modules', '@felan-ai', 'felan', 'package.json'),
+    'utf8',
+  ));
+  const outputStyleVersion = sourcePackagesByName.get('@felan-ai/ext-output-style')?.version;
+  if (!outputStyleVersion) throw new Error('Output-style package is missing from the public package list');
+  if (felanManifest.dependencies?.['@felan-ai/ext-output-style'] !== outputStyleVersion) {
+    throw new Error(
+      `Packed TUI output-style dependency is ${felanManifest.dependencies?.['@felan-ai/ext-output-style']}, expected ${outputStyleVersion}`,
+    );
   }
 }
 

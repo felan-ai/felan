@@ -9,6 +9,7 @@ import {
   getDependencyOnboardingChoice,
   getFelanSettings,
   getLocalMemoryProcessingEnabled,
+  getLocalOutputStyle,
   getLocalToolDisplayMode,
   isBuiltinExtensionEnabled,
   setBuiltinExtensionEnabled,
@@ -34,6 +35,7 @@ describe('local settings', () => {
       defaultProvider: 'anthropic',
       defaultModel: 'test-model',
       builtinExtensions: { prewalk: false },
+      outputStyle: 'explanatory',
       felanSubagents: { concurrency: 2 },
       felanTui: { toolDisplay: 'full' },
       packages: ['npm:untrusted-package'],
@@ -64,10 +66,12 @@ describe('local settings', () => {
     expect(settings.getProjectSettings().defaultModel).toBeUndefined();
     expect(getFelanSettings(settings)).toMatchObject({
       builtinExtensions: { prewalk: false },
+      outputStyle: 'explanatory',
       felanSubagents: { concurrency: 2 },
       felanTui: { toolDisplay: 'full' },
     });
     expect(getLocalToolDisplayMode(settings)).toBe('full');
+    expect(getLocalOutputStyle(settings)).toBe('explanatory');
 
     await settings.reload();
 
@@ -86,6 +90,15 @@ describe('local settings', () => {
       .toThrow('felanTui must be an object');
     expect(() => getLocalToolDisplayMode(settingsWith({ felanTui: { toolDisplay: 'compact' } })))
       .toThrow('felanTui.toolDisplay must be "grouped" or "full"');
+  });
+
+  it('defaults output style to concise and rejects invalid values', () => {
+    expect(getLocalOutputStyle(settingsWith({}))).toBe('concise');
+    expect(getLocalOutputStyle(settingsWith({ outputStyle: 'explanatory' }))).toBe('explanatory');
+    expect(() => getLocalOutputStyle(settingsWith({ outputStyle: 'verbose' })))
+      .toThrow('outputStyle must be one of: concise, explanatory');
+    expect(() => getLocalOutputStyle(settingsWith({ outputStyle: { path: '/tmp/prompt' } })))
+      .toThrow('outputStyle must be one of: concise, explanatory');
   });
 
   it('persists dependency choices without replacing unrelated global settings', async () => {

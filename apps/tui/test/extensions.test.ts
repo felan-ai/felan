@@ -28,6 +28,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-context',
       '@felan-ai/ext-memory',
       '@felan-ai/ext-powerline',
+      '@felan-ai/ext-output-style',
     ]);
 
     for (const packageName of localExtensionPackages) {
@@ -91,6 +92,30 @@ describe('local extension importer', () => {
     });
   });
 
+  it('binds the selected output style without invoking the generic importer', async () => {
+    const importer = createLocalExtensionImporter(
+      testSubagentHost(),
+      testModelRuntime(),
+      async () => { throw new Error('The generic importer must not load output style'); },
+      undefined,
+      undefined,
+      'explanatory',
+    );
+    const imported = await importer('@felan-ai/ext-output-style') as {
+      default: (pi: FelanExtensionAPI) => void;
+    };
+    let handler: ((event: { systemPrompt: string }) => { systemPrompt: string } | undefined) | undefined;
+    imported.default({
+      on: ((event: string, registered: typeof handler) => {
+        if (event === 'before_agent_start') handler = registered;
+      }) as FelanExtensionAPI['on'],
+    } as FelanExtensionAPI);
+
+    expect(handler?.({ systemPrompt: 'Base prompt' })?.systemPrompt).toContain(
+      'Explain the reasoning and important tradeoffs',
+    );
+  });
+
   it('binds memory as root or reader without sharing checkpoint behavior', async () => {
     const host = memoryHost();
     const rootImporter = createLocalExtensionImporter(
@@ -135,6 +160,7 @@ describe('local extension importer', () => {
       rtkOptimizer: false,
       memory: false,
       powerline: false,
+      outputStyle: false,
     })).toEqual([
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',

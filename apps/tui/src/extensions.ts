@@ -2,6 +2,11 @@ import type { ExtensionPackageImporter, ModelRuntime } from '@felan-ai/agent-cor
 import { createAskUserExtension } from '@felan-ai/ext-ask-user';
 import { createTuiAskUserHost } from '@felan-ai/ext-ask-user/tui';
 import { createMemoryExtension, type MemoryHost, type MemoryRole } from '@felan-ai/ext-memory';
+import {
+  createOutputStyleExtension,
+  DEFAULT_OUTPUT_STYLE,
+  type OutputStyle,
+} from '@felan-ai/ext-output-style';
 import { createPowerlineExtension } from '@felan-ai/ext-powerline';
 import {
   createSubagentsExtension,
@@ -20,6 +25,7 @@ export const mcpExtensionPackage = '@felan-ai/ext-mcp';
 export const powerlineExtensionPackage = '@felan-ai/ext-powerline';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const memoryExtensionPackage = '@felan-ai/ext-memory';
+export const outputStyleExtensionPackage = '@felan-ai/ext-output-style';
 export const builtinExtensionPackages = {
   subagents: subagentsExtensionPackage,
   askUser: askUserExtensionPackage,
@@ -36,6 +42,7 @@ export const builtinExtensionPackages = {
   context: '@felan-ai/ext-context',
   memory: memoryExtensionPackage,
   powerline: powerlineExtensionPackage,
+  outputStyle: outputStyleExtensionPackage,
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);
 
@@ -76,6 +83,7 @@ export function createLocalExtensionImporter(
   importExtension: ExtensionPackageImporter = importLocalExtension,
   shutdownHost?: () => Promise<void>,
   memoryBinding?: LocalMemoryExtensionBinding,
+  outputStyle: OutputStyle = DEFAULT_OUTPUT_STYLE,
 ): ExtensionPackageImporter {
   let powerlineLoaded = false;
   let agentRailRenderer: AgentRailRenderer | undefined;
@@ -115,6 +123,9 @@ export function createLocalExtensionImporter(
     if (packageName === memoryExtensionPackage) {
       if (!memoryBinding) throw new Error('Local memory extension requires a host binding');
       return { default: createMemoryExtension(memoryBinding) };
+    }
+    if (packageName === outputStyleExtensionPackage) {
+      return { default: createOutputStyleExtension(outputStyle) };
     }
     return importExtension(packageName);
   };

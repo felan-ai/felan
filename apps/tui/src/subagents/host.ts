@@ -22,6 +22,7 @@ import {
   type SubagentStatus,
 } from '@felan-ai/ext-subagents';
 import type { MemoryHost } from '@felan-ai/ext-memory';
+import type { OutputStyle } from '@felan-ai/ext-output-style';
 import {
   CURRENT_SESSION_VERSION,
   type AgentSession,
@@ -59,6 +60,7 @@ export interface CreateLocalSubagentHostOptions {
   readonly scopedModels?: CreateAgentCoreSessionOptions['scopedModels'];
   readonly extensionPackages: readonly string[];
   readonly importExtension: ExtensionPackageImporter;
+  readonly outputStyle?: OutputStyle;
   readonly skillPaths?: readonly string[];
   readonly runtimeFactory?: LocalAgentRuntimeFactory;
   readonly memoryHostFactory?: (options: {
@@ -98,6 +100,21 @@ export interface LocalSubagentRunOutcome {
 export type LocalSubagentRunner = (
   input: LocalSubagentRunInput,
 ) => Promise<LocalSubagentRunOutcome>;
+
+export function createLocalSubagentExtensionImporter(
+  options: Pick<CreateLocalSubagentHostOptions, 'modelRuntime' | 'importExtension' | 'outputStyle'>,
+  subagents: LocalSubagentHost,
+  memoryHost?: MemoryHost,
+): ExtensionPackageImporter {
+  return createLocalExtensionImporter(
+    subagents,
+    options.modelRuntime,
+    options.importExtension,
+    undefined,
+    memoryHost === undefined ? undefined : { role: 'reader', host: memoryHost },
+    options.outputStyle,
+  );
+}
 
 interface MutableChild {
   record: SubagentRecord;
@@ -738,12 +755,10 @@ export class LocalSubagentManager {
       runtime,
       ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
-      importExtension: createLocalExtensionImporter(
+      importExtension: createLocalSubagentExtensionImporter(
+        this.#options,
         input.subagents,
-        this.#options.modelRuntime,
-        this.#options.importExtension,
-        undefined,
-        memoryHost === undefined ? undefined : { role: 'reader', host: memoryHost },
+        memoryHost,
       ),
       modelRuntime: this.#options.modelRuntime,
       settingsManager: this.#options.settingsManager,
