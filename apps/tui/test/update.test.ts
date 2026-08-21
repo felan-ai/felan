@@ -1,13 +1,124 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { runFelanUpdate, type NpmResult } from '../src/update.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  checkForFelanUpdate,
+  runFelanUpdate,
+  type NpmResult,
+} from '../src/update.js';
 
 const temporaryDirectories: string[] = [];
+const previousFelanSkipVersionCheck = process.env.FELAN_SKIP_VERSION_CHECK;
+const previousPiOffline = process.env.PI_OFFLINE;
+
+beforeEach(() => {
+  delete process.env.FELAN_SKIP_VERSION_CHECK;
+  delete process.env.PI_OFFLINE;
+});
 
 afterEach(async () => {
+  if (previousFelanSkipVersionCheck === undefined) delete process.env.FELAN_SKIP_VERSION_CHECK;
+  else process.env.FELAN_SKIP_VERSION_CHECK = previousFelanSkipVersionCheck;
+  if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
+  else process.env.PI_OFFLINE = previousPiOffline;
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe('Felan update availability check', () => {
+  it('checks npm once with a bounded request and returns a newer stable release', async () => {
+    let requestedUrl: string | undefined;
+    let requestInit: RequestInit | undefined;
+
+    const latestVersion = await checkForFelanUpdate({
+      currentVersion: '0.13.0',
+      timeoutMs: 50,
+      fetch: async (input, init) => {
+        requestedUrl = String(input);
+        requestInit = init;
+        return jsonResponse({ version: '0.13.1' });
+      },
+    });
+
+    expect(latestVersion).toBe('0.13.1');
+    expect(requestedUrl).toBe('https://registry.npmjs.org/@felan-ai%2Ffelan/latest');
+    expect(new Headers(requestInit?.headers).get('accept')).toBe('application/json');
+    expect(new Headers(requestInit?.headers).get('user-agent')).toContain('felan/0.13.0');
+    expect(requestInit?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it.each(['0.13.0', '0.12.9', '0.13.1-next.1', 'not-a-version'])(
+    'ignores a non-newer stable release response: %s',
+    async (version) => {
+      await expect(checkForFelanUpdate({
+        currentVersion: '0.13.0',
+        fetch: async () => jsonResponse({ version }),
+      })).resolves.toBeUndefined();
+    },
+  );
+
+  it('silently ignores failed and malformed registry responses', async () => {
+    await expect(checkForFelanUpdate({
+      currentVersion: '0.13.0',
+      fetch: async () => new Response('', { status: 503 }),
+    })).resolves.toBeUndefined();
+    await expect(checkForFelanUpdate({
+      currentVersion: '0.13.0',
+      fetch: async () => new Response('{', { status: 200 }),
+    })).resolves.toBeUndefined();
+    await expect(checkForFelanUpdate({
+      currentVersion: '0.13.0',
+      fetch: async () => { throw new Error('offline'); },
+    })).resolves.toBeUndefined();
+  });
+
+  it('silently stops a request at the configured timeout', async () => {
+    await expect(checkForFelanUpdate({
+      currentVersion: '0.13.0',
+      timeoutMs: 5,
+      fetch: async (_input, init) => new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error('missing abort signal');
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+    })).resolves.toBeUndefined();
+  });
+
+  it('honors caller cancellation', async () => {
+    const controller = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    const check = checkForFelanUpdate({
+      currentVersion: '0.13.0',
+      signal: controller.signal,
+      fetch: async (_input, init) => new Promise<Response>((_resolve, reject) => {
+        requestSignal = init?.signal ?? undefined;
+        if (!requestSignal) throw new Error('missing abort signal');
+        requestSignal.addEventListener('abort', () => reject(requestSignal?.reason), { once: true });
+      }),
+    });
+
+    controller.abort();
+
+    await expect(check).resolves.toBeUndefined();
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it.each(['PI_OFFLINE', 'FELAN_SKIP_VERSION_CHECK'] as const)(
+    'skips the request when %s is set',
+    async (environmentVariable) => {
+      process.env[environmentVariable] = '1';
+      let requested = false;
+
+      await expect(checkForFelanUpdate({
+        currentVersion: '0.13.0',
+        fetch: async () => {
+          requested = true;
+          return jsonResponse({ version: '0.13.1' });
+        },
+      })).resolves.toBeUndefined();
+      expect(requested).toBe(false);
+    },
+  );
 });
 
 describe('Felan update', () => {
@@ -197,6 +308,13 @@ function npmSuccess(stdout: string): NpmResult {
 
 function npmFailure(stderr: string): NpmResult {
   return { status: 1, stdout: '', stderr };
+}
+
+function jsonResponse(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    headers: { 'Content-Type': 'application/json' },
+    status: 200,
+  });
 }
 
 async function temporaryDirectory(prefix: string): Promise<string> {

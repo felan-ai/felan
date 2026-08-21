@@ -6,6 +6,8 @@ import { FELAN_VERSION } from './version.js';
 
 const PACKAGE_NAME = '@felan-ai/felan';
 const PACKAGE_DIRECTORY = ['@felan-ai', 'felan'] as const;
+const LATEST_RELEASE_URL = 'https://registry.npmjs.org/@felan-ai%2Ffelan/latest';
+const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10_000;
 
 export interface NpmResult {
   readonly status: number;
@@ -19,6 +21,45 @@ export interface RunFelanUpdateOptions {
   readonly runNpm?: (args: readonly string[], cwd: string) => Promise<NpmResult>;
   readonly writeOutput?: (line: string) => void;
   readonly writeError?: (line: string) => void;
+}
+
+export interface CheckForFelanUpdateOptions {
+  readonly currentVersion?: string;
+  readonly fetch?: typeof globalThis.fetch;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}
+
+export async function checkForFelanUpdate(
+  options: CheckForFelanUpdateOptions = {},
+): Promise<string | undefined> {
+  if (process.env.FELAN_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
+
+  const currentVersion = options.currentVersion ?? FELAN_VERSION;
+  if (!isStableVersion(currentVersion)) return undefined;
+
+  try {
+    const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+    const response = await (options.fetch ?? globalThis.fetch)(LATEST_RELEASE_URL, {
+      headers: {
+        accept: 'application/json',
+        'User-Agent': `felan/${currentVersion} (${process.platform}; node/${process.versions.node}; ${process.arch})`,
+      },
+      signal,
+    });
+    if (!response.ok) return undefined;
+
+    const data: unknown = await response.json();
+    if (!isRecord(data) || typeof data.version !== 'string') return undefined;
+    const latestVersion = data.version.trim();
+    if (!isStableVersion(latestVersion) || compareVersions(latestVersion, currentVersion) <= 0) {
+      return undefined;
+    }
+    return latestVersion;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promise<number> {
@@ -190,4 +231,8 @@ function compareVersions(left: string, right: string): number {
 
 function commandError(result: NpmResult): string {
   return result.stderr.trim() || result.stdout.trim() || `npm exited with status ${result.status}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

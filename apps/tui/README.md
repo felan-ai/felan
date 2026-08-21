@@ -53,6 +53,13 @@ you to restart after a successful update. `npx`, local/source, and other
 package-manager installations are not changed; update those with the command
 that installed them.
 
+Interactive startup also checks npm once, asynchronously, for a newer stable
+release. If one is available, Felan tells you to exit all Felan sessions and
+run `felan update` for a global npm installation, or use the package manager
+that launched Felan. Offline, failed, and malformed responses stay silent, and
+Felan never installs an update automatically. Set
+`FELAN_SKIP_VERSION_CHECK=1` to disable this startup request.
+
 Invocations that start or continue an agent session launch the interactive TUI.
 `felan update` and informational flags exit without starting a session. Internal
 headless modes used by subagents and extension adapters are not public CLI entry

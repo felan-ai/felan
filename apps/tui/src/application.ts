@@ -6,6 +6,7 @@ import {
 } from './runtime.js';
 import { installFelanStartupHeader } from './startup-header.js';
 import { createToolActivityRuntimeView } from './tool-activity/runtime-view.js';
+import { checkForFelanUpdate } from './update.js';
 
 export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly initialMessage?: string;
@@ -37,7 +38,28 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
         'summary.md',
       ),
     });
-    await mode.run();
+    // Pi starts passive checks immediately after its idempotent initialization.
+    // Initialize first so Felan's check begins at the same lifecycle point.
+    await mode.init();
+    const updateCheckController = new AbortController();
+    let modeActive = true;
+    const updateNotification = checkForFelanUpdate({ signal: updateCheckController.signal })
+      .then((latestVersion) => {
+        if (modeActive && latestVersion) {
+          mode.showWarning(
+            `Felan ${latestVersion} is available. Exit all Felan sessions, then run felan update `
+              + '(global npm) or update with your package manager.',
+          );
+        }
+      })
+      .catch(() => {});
+    try {
+      await mode.run();
+    } finally {
+      modeActive = false;
+      updateCheckController.abort();
+      await updateNotification;
+    }
   } finally {
     try {
       await runtime.dispose();

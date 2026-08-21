@@ -34,6 +34,13 @@ newer release is available, it installs that exact `@felan-ai/felan` version
 and tells you to restart Felan. Registry, installation, and verification
 failures return a non-zero exit status and do not claim success.
 
+Interactive Felan checks npm once per launch, asynchronously, with a ten-second
+timeout and no retries. A newer stable release produces a notification to exit
+all Felan sessions and run `felan update` for global npm, or use the package
+manager that launched Felan. Offline, failed, and malformed responses stay
+silent. Startup checks never install updates. Set
+`FELAN_SKIP_VERSION_CHECK=1` to disable the request.
+
 Self-update is limited to the verified global npm installation that provides
 the running `felan` command. `npx`, local/source, pnpm, yarn, and bun
 installations are not changed; update those with their normal package-manager
