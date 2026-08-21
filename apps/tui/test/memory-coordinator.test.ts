@@ -289,23 +289,21 @@ describe('LocalMemoryCoordinator', () => {
       transcriptDigest: '0'.repeat(64),
     });
 
-    for (let attempt = 0; attempt < 100 && runs === 0; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    await expect(coordinator.status(cwd)).resolves.toMatchObject({
-      state: 'blocked',
-      pendingCheckpoints: 1,
-      message: 'Some memory checkpoints could not be materialized; evidence remains pending',
-    });
+    await vi.waitFor(async () => {
+      expect(await coordinator.status(cwd)).toMatchObject({
+        state: 'blocked',
+        pendingCheckpoints: 1,
+        message: 'Some memory checkpoints could not be materialized; evidence remains pending',
+      });
+    }, { timeout: 4_000 });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(runs).toBe(0);
 
     await host.recordCheckpoint(checkpointFor(sessionFile));
-    for (let attempt = 0; attempt < 100 && runs === 0; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    await expect(coordinator.status(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
-    expect(runs).toBe(1);
+    await vi.waitFor(async () => {
+      expect(runs).toBe(1);
+      expect(await coordinator.status(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    }, { timeout: 4_000 });
     await coordinator.dispose();
   });
 
@@ -381,11 +379,10 @@ describe('LocalMemoryCoordinator', () => {
       },
     });
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
-    for (let attempt = 0; attempt < 100 && runs === 0; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    expect(runs).toBe(1);
-    await expect(coordinator.status(cwd)).resolves.toMatchObject({ pendingCheckpoints: 0 });
+    await vi.waitFor(async () => {
+      expect(runs).toBe(1);
+      expect(await coordinator.status(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    }, { timeout: 4_000 });
     await coordinator.dispose();
   });
 });
