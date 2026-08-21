@@ -204,6 +204,7 @@ safety, and features Felan lacks—see the
 | `@felan-ai/felan` | Account-free local terminal application and `felan` binary |
 | `@felan-ai/agent-core` | Portable runtime contracts, Node.js host runtime, prompt, tools, and Pi session composition |
 | `@felan-ai/ext-memory` | Portable Markdown memory schema, validation, and root/reader session integration |
+| `@felan-ai/ext-output-style` | Validated output-style instructions for model responses |
 | `@felan-ai/ext-subagents` | Tracked asynchronous subagent protocol and tools |
 | `@felan-ai/ext-ask-user` | Structured interactive questions with host-owned presentation |
 | `@felan-ai/ext-tasks` | Dependency-aware task graph shared across a root session and its children |

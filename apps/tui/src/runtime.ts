@@ -34,6 +34,7 @@ import {
   createLocalSettingsManager,
   getFelanSettings,
   getLocalMemoryProcessingEnabled,
+  getLocalOutputStyle,
   getLocalToolDisplayMode,
   isBuiltinExtensionEnabled,
 } from './settings.js';
@@ -129,6 +130,7 @@ export function createLocalSessionRuntimeFactory(
     ]);
     const settingsManager = createLocalSettingsManager(cwd, options.agentDir);
     const felanSettings = getFelanSettings(settingsManager);
+    const outputStyle = getLocalOutputStyle(settingsManager);
     const toolActivityState = new ToolActivityState(getLocalToolDisplayMode(settingsManager));
     const reloadSettings = settingsManager.reload.bind(settingsManager);
     settingsManager.reload = async () => {
@@ -189,6 +191,7 @@ export function createLocalSessionRuntimeFactory(
         : { scopedModels: modelScope.scopedModels }),
       extensionPackages,
       importExtension,
+      outputStyle,
       skillPaths,
       ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
       ...(subagentSettings === undefined ? {} : { settings: subagentSettings }),
@@ -229,6 +232,7 @@ export function createLocalSessionRuntimeFactory(
         importExtension,
         shutdownHost,
         memoryHost === undefined ? undefined : { role: 'root' as const, host: memoryHost },
+        outputStyle,
       ),
       modelRuntime: options.modelRuntime,
       settingsManager,

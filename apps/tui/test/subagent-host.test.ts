@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type FelanExtensionAPI,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -14,6 +15,7 @@ import type {
 } from '@felan-ai/ext-subagents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createLocalSubagentExtensionImporter,
   inspectionToolNames,
   LocalSubagentHost,
   type LocalSubagentRunner,
@@ -32,6 +34,33 @@ describe('LocalSubagentHost', () => {
     ])).toEqual(['read', 'grep', 'find', 'ls', 'view_image', 'mcp']);
     expect(inspectionToolNames(['read', 'bash', 'edit', 'write', 'grep']))
       .toEqual(['read', 'grep']);
+  });
+
+  it('binds the configured output style into child extension composition', async () => {
+    const { host, modelRuntime } = await harness({
+      runner: async () => ({ result: 'unused' }),
+    });
+    const importer = createLocalSubagentExtensionImporter({
+      modelRuntime,
+      importExtension: async () => {
+        throw new Error('The generic importer must not load output style');
+      },
+      outputStyle: 'explanatory',
+    }, host);
+    const imported = await importer('@felan-ai/ext-output-style') as {
+      default: (pi: FelanExtensionAPI) => void;
+    };
+    let handler: ((event: { systemPrompt: string }) => { systemPrompt: string }) | undefined;
+    imported.default({
+      on: ((event: string, registered: typeof handler) => {
+        if (event === 'before_agent_start') handler = registered;
+      }) as FelanExtensionAPI['on'],
+    } as FelanExtensionAPI);
+
+    expect(handler?.({ systemPrompt: 'Child base prompt' }).systemPrompt).toContain(
+      'Explain the reasoning and important tradeoffs',
+    );
+    await host.shutdown();
   });
 
   it('continues one child with the same agent ID, session file, and latest result', async () => {
@@ -831,7 +860,7 @@ async function harness(options: {
     settings: { concurrency: options.concurrency ?? 4, maxDepth: options.maxDepth ?? 3 },
     runChild: options.runner,
   });
-  return { host };
+  return { host, modelRuntime };
 }
 
 function request(overrides: Partial<SubagentSpawnRequest> = {}): SubagentSpawnRequest {

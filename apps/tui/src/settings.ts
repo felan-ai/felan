@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { SettingsManager } from '@felan-ai/agent-core';
 import {
+  parseOutputStyle,
+  type OutputStyle,
+} from '@felan-ai/ext-output-style';
+import {
   builtinExtensionPackages,
   type BuiltinExtensionName,
   type BuiltinExtensionSettings,
@@ -13,6 +17,7 @@ import { withLocalFileLock } from './lock.js';
 
 export interface FelanSettings {
   readonly builtinExtensions?: BuiltinExtensionSettings;
+  readonly outputStyle?: OutputStyle;
   readonly felanSubagents?: LocalSubagentSettings;
   readonly felanTui?: FelanTuiSettings;
 }
@@ -25,6 +30,11 @@ export interface FelanTuiSettings {
 
 export type LocalToolDisplayMode = 'grouped' | 'full';
 export type LocalDependencyOnboardingChoice = 'continue';
+
+export function getLocalOutputStyle(settingsManager: SettingsManager): OutputStyle {
+  const rawSettings = settingsManager.getGlobalSettings() as Record<string, unknown>;
+  return parseOutputStyle(rawSettings.outputStyle);
+}
 
 export function createLocalSettingsManager(cwd: string, agentDir: string): SettingsManager {
   const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });

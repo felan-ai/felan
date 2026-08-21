@@ -129,10 +129,27 @@ All built-in extensions are enabled by default. Toggle them in
     "codex": true,
     "rtkOptimizer": true,
     "memory": true,
-    "powerline": false
+    "powerline": false,
+    "outputStyle": true
   }
 }
 ```
+
+The built-in output-style extension adds a bounded `## Output Style` section
+to the system prompt for root and child sessions. Select its instructions with
+the global `outputStyle` setting:
+
+```json
+{
+  "outputStyle": "explanatory"
+}
+```
+
+Supported values are `concise` and `explanatory`. `concise` is the default.
+Invalid values stop session construction with a settings error. Styles are
+built into Felan; this setting cannot load prompt text or ambient files. The
+selection is captured when a session runtime is created, so restart Felan after
+changing it.
 
 On the first interactive startup with a missing external runtime dependency,
 Felan opens a dependency wizard before the first prompt. MarkItDown can be

@@ -38,7 +38,11 @@ export type {
   LocalAgentRuntimeFactory,
   LocalAgentRuntimeFactoryRequest,
 } from './runtime-factory.js';
-export { createLocalSettingsManager, getFelanSettings } from './settings.js';
+export {
+  createLocalSettingsManager,
+  getFelanSettings,
+  getLocalOutputStyle,
+} from './settings.js';
 export type { FelanSettings } from './settings.js';
 export {
   LOCAL_APPEND_SYSTEM_PROMPT_FILENAME,
