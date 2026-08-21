@@ -20,9 +20,17 @@ const cleanHome = join(installDir, 'home');
 const cacheDir = join(installDir, 'npm-cache');
 const workspace = join(installDir, 'workspace');
 const agentDir = join(cleanHome, '.felan');
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npm = process.platform === 'win32' ? process.execPath : 'npm';
+const npmArguments = process.platform === 'win32'
+  ? [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+  : [];
 const binDirectory = join(installDir, 'node_modules', '.bin');
-const felan = join(binDirectory, process.platform === 'win32' ? 'felan.cmd' : 'felan');
+const felan = process.platform === 'win32'
+  ? process.execPath
+  : join(binDirectory, 'felan');
+const felanArguments = process.platform === 'win32'
+  ? [join(installDir, 'node_modules', '@felan-ai', 'felan', 'dist', 'cli.js')]
+  : [];
 const sourcePackages = packagePaths.map((packagePath) => JSON.parse(
   readFileSync(resolve(root, packagePath, 'package.json'), 'utf8'),
 ));
@@ -60,7 +68,7 @@ try {
     throw new Error(`Expected ${sourcePackages.length} packed artifacts, found ${tarballs.length}`);
   }
 
-  run(npm, [
+  runNpm([
     'install',
     '--ignore-scripts',
     '--no-fund',
@@ -336,9 +344,12 @@ try {
         agentStorageRoot: ptyAgentStorage,
       });
       if (!ptyRuntime.terminals) throw new Error('Packed HostAgentRuntime has no PTY capability');
-      const ptyScript = "process.stdout.write('packed-pty:' + process.stdout.isTTY)";
+      await fs.writeFile(
+        process.env.PACKED_SMOKE_WORKSPACE + '/packed-pty.mjs',
+        "process.stdout.write('packed-pty:' + process.stdout.isTTY)",
+      );
       const terminal = await ptyRuntime.terminals.startShell(
-        JSON.stringify(process.execPath) + ' -e ' + JSON.stringify(ptyScript),
+        'node packed-pty.mjs',
         { login: false },
       );
       let terminalOffset = 0;
@@ -372,10 +383,11 @@ try {
         throw new Error('Packed runtime capability order is incorrect');
       }
       await runtime.dispose();
+      process.exit(0);
     `,
   ], cleanEnvironment);
 
-  const diagnostics = run(felan, ['--diagnostics'], cleanEnvironment);
+  const diagnostics = runFelan(['--diagnostics'], cleanEnvironment);
   for (const expected of [
     `Felan version: ${felanVersion}`,
     `Agent Core version: ${agentCoreVersion}`,
@@ -387,11 +399,15 @@ try {
       throw new Error(`Packed felan --diagnostics output is missing ${JSON.stringify(expected)}`);
     }
   }
-  const help = run(felan, ['--help'], cleanEnvironment);
-  if (!help.stdout.includes('Usage: felan [options] [message]')) {
+  const help = runFelan(['--help'], cleanEnvironment);
+  if (!help.stdout.includes('Usage: felan [options] [message]') || !help.stdout.includes('update')) {
     throw new Error('Packed felan --help did not start the local TUI CLI');
   }
-  const versionResult = run(felan, ['--version'], cleanEnvironment);
+  const update = runFelanAllowFailure(['update'], cleanEnvironment);
+  if (update.status === 0 || !update.stderr.includes('only supports a verified global npm installation')) {
+    throw new Error('Packed felan update did not reject the isolated non-global installation');
+  }
+  const versionResult = runFelan(['--version'], cleanEnvironment);
   if (versionResult.stdout.trim() !== felanVersion) {
     throw new Error(`Packed felan --version reported ${JSON.stringify(versionResult.stdout.trim())}`);
   }
@@ -401,7 +417,7 @@ try {
   }
 
   if (audit) {
-    run(npm, ['audit', '--audit-level=high', '--prefix', installDir], cleanEnvironment);
+    runNpm(['audit', '--audit-level=high', '--prefix', installDir], cleanEnvironment);
   }
 } finally {
   rmSync(installDir, { recursive: true, force: true });
@@ -549,9 +565,31 @@ function run(command, args, env = process.env) {
     env,
   });
   if (result.status !== 0) {
-    process.stderr.write(result.stdout);
-    process.stderr.write(result.stderr);
-    throw new Error(`${command} exited with status ${result.status ?? 'unknown'}`);
+    process.stderr.write(result.stdout ?? '');
+    process.stderr.write(result.stderr ?? '');
+    throw new Error(`${command} exited with status ${result.status ?? 'unknown'}${result.error ? `: ${result.error.message}` : ''}`);
   }
   return result;
+}
+
+function runFelan(args, env = process.env) {
+  return run(felan, [...felanArguments, ...args], env);
+}
+
+function runFelanAllowFailure(args, env = process.env) {
+  return runAllowFailure(felan, [...felanArguments, ...args], env);
+}
+
+function runAllowFailure(command, args, env = process.env) {
+  const result = spawnSync(command, args, {
+    cwd: installDir,
+    encoding: 'utf8',
+    env,
+  });
+  if (result.error) throw result.error;
+  return result;
+}
+
+function runNpm(args, env = process.env) {
+  return run(npm, [...npmArguments, ...args], env);
 }

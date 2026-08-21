@@ -50,12 +50,14 @@ Connect a provider inside the TUI with `/login`, then start working:
 felan "inspect this project and explain how to run its tests"
 felan --continue
 felan --diagnostics
+felan update
 ```
 
-The local CLI is interactive. An initial message starts the TUI; it is not a
-separate print or one-shot mode. See [Getting started](docs/getting-started.md)
-for first-run setup and [Local CLI](docs/user-guide/local-cli.md) for all
-accepted flags and local state.
+Initial messages start the interactive TUI; they are not separate print or
+one-shot modes. A verified global npm installation also supports the finite
+`felan update` command. See [Getting started](docs/getting-started.md) for
+first-run setup and [Local CLI](docs/user-guide/local-cli.md) for all accepted
+commands, flags, and local state.
 
 ## One agent, two hosts
 

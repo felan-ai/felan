@@ -11,6 +11,7 @@ felan [options] [message]
 
 -c, --continue     Continue the most recent session for this directory
 --diagnostics      Print runtime versions and configuration mode
+update             Update a global npm installation of Felan
 -h, --help         Show help
 -v, --version      Print the Felan version
 --verbose          Show verbose startup details
@@ -19,9 +20,29 @@ felan [options] [message]
 Use `--` before an initial message that begins with a dash. Unknown options are
 rejected before the TUI starts.
 
-The public CLI always launches the interactive terminal application. Internal
-headless modes used by subagents and extension adapters are not public CLI
-entry points.
+### Update Felan
+
+Update a globally installed Felan CLI with:
+
+```sh
+felan update
+```
+
+The command checks npm's stable `latest` release without starting the TUI. If
+the global installation is current, it reports that no update is needed. If a
+newer release is available, it installs that exact `@felan-ai/felan` version
+and tells you to restart Felan. Registry, installation, and verification
+failures return a non-zero exit status and do not claim success.
+
+Self-update is limited to the verified global npm installation that provides
+the running `felan` command. `npx`, local/source, pnpm, yarn, and bun
+installations are not changed; update those with their normal package-manager
+command instead. To send `update` as an initial prompt, use `felan -- update`.
+
+Invocations that start or continue an agent session launch the interactive TUI.
+`felan update` and informational flags exit without starting a session. Internal
+headless modes used by subagents and extension adapters are not public CLI entry
+points.
 
 ## Diagnostics
 

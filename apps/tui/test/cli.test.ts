@@ -4,6 +4,70 @@ import { runCli } from '../src/cli-main.js';
 import { FELAN_VERSION } from '../src/version.js';
 
 describe('felan CLI', () => {
+  it('runs update without starting the interactive application', async () => {
+    let launched = false;
+    let updated = false;
+
+    const exitCode = await runCli(['update'], {
+      update: async () => {
+        updated = true;
+        return 7;
+      },
+      launch: async () => {
+        launched = true;
+      },
+    });
+
+    expect(exitCode).toBe(7);
+    expect(updated).toBe(true);
+    expect(launched).toBe(false);
+  });
+
+  it('rejects extra update arguments without starting the interactive application', async () => {
+    const errors: string[] = [];
+    let launched = false;
+    let updated = false;
+
+    const exitCode = await runCli(['update', '--help'], {
+      writeError: (line) => errors.push(line),
+      update: async () => {
+        updated = true;
+        return 0;
+      },
+      launch: async () => {
+        launched = true;
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors).toEqual(['Usage: felan update']);
+    expect(updated).toBe(false);
+    expect(launched).toBe(false);
+  });
+
+  it('keeps -- update as an initial interactive message', async () => {
+    const launches: unknown[] = [];
+    let updated = false;
+
+    const exitCode = await runCli(['--', 'update'], {
+      update: async () => {
+        updated = true;
+        return 0;
+      },
+      launch: async (options) => {
+        launches.push(options);
+      },
+    });
+
+    expect(exitCode).toBe(0);
+    expect(updated).toBe(false);
+    expect(launches).toEqual([{
+      continueRecent: false,
+      verbose: false,
+      initialMessage: 'update',
+    }]);
+  });
+
   it('reports Felan and Agent Core versions in diagnostics', async () => {
     const output: string[] = [];
 
