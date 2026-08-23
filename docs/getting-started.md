@@ -45,11 +45,12 @@ Inside the TUI, run:
 
 ```text
 /login
+/logout
 ```
 
-Choose a provider and complete its credential flow. Provider credentials stay
-with the local host; a felan.ai account is not required for the terminal
-application.
+Use `/login` to add a provider and `/logout` to remove a stored provider
+credential. Provider credentials stay with the local host; a felan.ai account
+is not required for the terminal application.
 
 ## Run the first task
 

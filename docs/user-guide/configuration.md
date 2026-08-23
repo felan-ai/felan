@@ -164,7 +164,8 @@ binary-independent output compaction does not.
 
 ## Secrets
 
-Use `/login` for model credentials and MCP OAuth for remote MCP credentials.
+Use `/login` to add model credentials and `/logout` to remove them. Use `/mcp`
+for remote MCP OAuth credentials.
 The local MCP host stores OAuth tokens in the OS credential store and fails
 closed when secure storage is unavailable. Prefer environment references over
 literal client secrets when an MCP server requires a registered client.

@@ -44,9 +44,9 @@ Use `/dependencies` to manage its external CLI.
 ## Common Pi commands
 
 The local application retains selected Pi interaction commands such as
-`/login`, `/model`, and `/reload`, while filtering ambient Pi resources and
-project settings. Use the live `/` menu for the authoritative list provided by
-the pinned Pi version.
+`/login`, `/logout`, `/model`, and `/reload`, while filtering ambient Pi
+resources and project settings. Use the live `/` menu for the authoritative
+list provided by the pinned Pi version.
 
 ## Keyboard shortcuts
 
