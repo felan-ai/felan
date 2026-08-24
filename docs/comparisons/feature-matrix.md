@@ -194,8 +194,10 @@ comments, or due dates.
 
 ### Prewalk still is not plan mode
 
-Prewalk is automatic model routing within one session—not a review gate,
-separate planning agent, or read-only mode.
+Prewalk is automatic model routing within one session—not a plan-review gate,
+separate planning agent, or read-only mode. Model-requested entry asks for user
+approval by default, but that approval starts Prewalk rather than approving a
+non-mutating plan artifact or later edits.
 
 The model can call `enter_prewalk` before complex repository work, or the user
 can invoke `/prewalk`. Small localized edits and routine one-file fixes should

@@ -87,13 +87,17 @@ tracker or durable cross-session backlog.
 ## Prewalk
 
 Prewalk is a same-session planner-to-implementer handoff. It is not a read-only
-plan mode and does not introduce an approval gate.
+plan mode or an approval checkpoint before edits. Model-requested entry asks
+for user approval by default.
 
 For complex repository work that benefits from substantial exploration,
 coordinated multi-file changes, dependency-aware planning, or broad verification,
-the model can call `enter_prewalk` before exploration. Small localized edits and
-routine one-file fixes should normally stay on the regular path. You can also
-enter explicitly:
+the model can call `enter_prewalk` before exploration. In a dialog-capable host,
+the default `ask` policy prompts before entering; a denial leaves the model on
+the regular path. JSON and print modes deny `ask` because interactive approval
+is unavailable. Small localized edits and routine one-file fixes should
+normally stay on the regular path. You can also enter explicitly without a
+redundant approval prompt:
 
 ```text
 /prewalk refactor the parser and verify the tests
@@ -105,6 +109,11 @@ override the implementation effort with `off`, `low`, `medium`, `high`, `xhigh`,
 or `max`. Pi clamps that request to the target model's capabilities. The
 original planner model and thinking level are restored after the run settles by
 default.
+
+Hosts can initialize `@felan-ai/ext-prewalk` with model-entry policy `ask`,
+`always`, or `never`. `ask` is the default; cloud or other unattended hosts can
+choose `always`. The `--prewalk-entry-approval` flag overrides the host default.
+This policy gates only model-called `enter_prewalk`, not explicit `/prewalk`.
 
 ### Lifecycle
 

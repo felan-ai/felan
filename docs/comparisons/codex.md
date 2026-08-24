@@ -21,7 +21,7 @@ and safety model around the coding agent, not only the model that is selected.
 | --- | --- | --- |
 | Primary surface | Local interactive TUI with a `felan` binary; an initial message still enters the TUI | Codex CLI and its documented local agent surfaces |
 | Task state | Persistent root-session objects with prerequisites, acceptance criteria, ownership, claims, ready/blocked views, and verified results | `update_plan` checklist with ordered progress state; the reviewed source does not describe Felan's dependency graph and ownership invariants |
-| Planning | Prewalk hands one useful session from a planner to a target model after a focused mutation; it is not an approval gate | Explicit non-mutating Plan mode and plan transition |
+| Planning | Prewalk hands one useful session from a planner to a target model after a focused mutation; model-requested entry asks by default, but it is not a plan-review gate | Explicit non-mutating Plan mode and plan transition |
 | Coding tools | Ordinary Pi tools, with a GPT-specific `exec_command`/`write_stdin`/`apply_patch` mode when the exact provider/model policy matches | Structured shell, patch, PTY, and approval/sandbox controls designed for Codex models |
 | Local safety | Host filesystem/process permissions; no general OS sandbox or action-approval system | OS-enforced sandbox and configurable approval/network policies |
 | Web research | Search, claim checking with exact passages, bounded fetching, paging, and default SSRF protection | Remote-backed web search with documented cached/live modes |

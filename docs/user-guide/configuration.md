@@ -112,6 +112,28 @@ format and model-selection behavior.
 
 ## Feature-specific configuration
 
+### Prewalk
+
+Model-called `enter_prewalk` uses the `ask` approval policy by default. A
+dialog-capable host asks before entering; JSON and print modes deny the request
+instead of waiting for input. `--prewalk-entry-approval` accepts `ask`, `always`,
+or `never`. Explicit `/prewalk` is already user intent and bypasses this gate.
+
+Platform compositions can set their default when initializing the extension.
+For example, an unattended cloud host can use:
+
+```ts
+import { createPrewalkExtension } from '@felan-ai/ext-prewalk';
+
+createPrewalkExtension({ entryApproval: 'always' });
+```
+
+The namespaced flag overrides the initialization default.
+Initialization options are validated immediately, so an unsupported
+`entryApproval` value makes `createPrewalkExtension()` throw while the host is
+constructing the extension. Invalid `--prewalk-entry-approval` flag values are
+reported as warnings and fall back to the host initialization defaults.
+
 ### Output style
 
 The top-level `outputStyle` setting accepts `concise` or `explanatory`.

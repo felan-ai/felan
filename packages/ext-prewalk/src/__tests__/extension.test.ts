@@ -3,7 +3,10 @@ import type {
   FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import prewalkExtension from '../index.js';
+import prewalkExtension, {
+  createPrewalkExtension,
+  type PrewalkExtensionOptions,
+} from '../index.js';
 import {
   CONTINUATION_INSTRUCTION,
   CONTINUATION_MESSAGE_TYPE,
@@ -68,6 +71,8 @@ function createHarness(
     mode?: 'tui' | 'rpc' | 'json' | 'print';
     flags?: Record<string, boolean | string>;
     thinkingLevel?: string;
+    entryApproved?: boolean;
+    prewalkOptions?: PrewalkExtensionOptions;
   } = {},
 ) {
   const handlers = new Map<string, Handler[]>();
@@ -85,6 +90,7 @@ function createHarness(
   const ui = {
     notify: vi.fn(),
     setStatus: vi.fn(),
+    confirm: vi.fn(async () => options.entryApproved ?? true),
   };
   const waitForIdle = vi.fn(async () => undefined);
 
@@ -150,7 +156,7 @@ function createHarness(
     sendUserMessage,
   } as unknown as FelanExtensionAPI;
 
-  prewalkExtension(pi);
+  (options.prewalkOptions ? createPrewalkExtension(options.prewalkOptions) : prewalkExtension)(pi);
 
   return {
     pi,
@@ -306,6 +312,10 @@ describe('flags and commands', () => {
       type: 'boolean',
       default: true,
     });
+    expect(harness.registeredFlags.get('prewalk-entry-approval')).toMatchObject({
+      type: 'string',
+      default: 'ask',
+    });
   });
 
   it('arms and sends an inline TUI task without changing sessions', async () => {
@@ -364,7 +374,7 @@ describe('flags and commands', () => {
     expect(harness.sendMessage).not.toHaveBeenCalled();
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk: idle | target low | target thinking medium | restore planner on',
+      'Prewalk: idle | target low | target thinking medium | restore planner on | model entry ask',
       'info',
     );
   });
@@ -386,11 +396,12 @@ describe('flags and commands', () => {
         'prewalk-target-model': 'anthropic/claude-opus',
         'prewalk-target-thinking': 'high',
         'prewalk-restore-planner': false,
+        'prewalk-entry-approval': 'always',
       },
     });
     await overridden.command.handler('status', overridden.ctx);
     expect(overridden.ui.notify).toHaveBeenCalledWith(
-      'Prewalk: idle | target anthropic/claude-opus | target thinking high | restore planner off',
+      'Prewalk: idle | target anthropic/claude-opus | target thinking high | restore planner off | model entry always',
       'info',
     );
 
@@ -407,6 +418,13 @@ describe('flags and commands', () => {
       expect.stringContaining('prewalk-target-thinking'),
       'warning',
     );
+
+    const malformedApproval = createHarness({ flags: { 'prewalk-entry-approval': 'sometimes' } });
+    await malformedApproval.emit('session_start', { type: 'session_start', reason: 'startup' });
+    expect(malformedApproval.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining('prewalk-entry-approval'),
+      'warning',
+    );
   });
 });
 
@@ -421,6 +439,80 @@ describe('model entry', () => {
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLANNING_MESSAGE_TYPE);
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', 'Prewalk planning');
+    expect(harness.ui.confirm).toHaveBeenCalledOnce();
+  });
+
+  it('uses an initialization policy to allow model entry without prompting', async () => {
+    const harness = createHarness({
+      idle: false,
+      prewalkOptions: { entryApproval: 'always' },
+    });
+
+    const result = await enterPrewalk(harness);
+
+    expect(result.isError).not.toBe(true);
+    expect(result.details.phase).toBe('planning');
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+    expect(harness.registeredFlags.get('prewalk-entry-approval')).toMatchObject({ default: 'always' });
+  });
+
+  it('denies model entry when the user declines approval', async () => {
+    const harness = createHarness({ idle: false, entryApproved: false });
+
+    const result = await enterPrewalk(harness);
+
+    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
+    expect(result.content[0].text).toContain('user declined');
+    expect(await contextMessages(harness, [])).toEqual([]);
+  });
+
+  it('denies model entry without prompting when configured never', async () => {
+    const harness = createHarness({
+      idle: false,
+      prewalkOptions: { entryApproval: 'never' },
+    });
+
+    const result = await enterPrewalk(harness);
+
+    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
+    expect(result.content[0].text).toContain('disabled');
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+  });
+
+  it('lets the namespaced flag override the initialization policy', async () => {
+    const harness = createHarness({
+      idle: false,
+      flags: { 'prewalk-entry-approval': 'never' },
+      prewalkOptions: { entryApproval: 'always' },
+    });
+
+    const result = await enterPrewalk(harness);
+
+    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
+    expect(result.content[0].text).toContain('disabled');
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+  });
+
+  it.each(['json', 'print'] as const)('denies ask policy in non-interactive %s mode', async (mode) => {
+    const harness = createHarness({ idle: false, mode });
+
+    const result = await enterPrewalk(harness);
+
+    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
+    expect(result.content[0].text).toContain(`unavailable in ${mode} mode`);
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
+  });
+
+  it('does not prompt when the user enters Prewalk explicitly', async () => {
+    const harness = createHarness({
+      entryApproved: false,
+      prewalkOptions: { entryApproval: 'never' },
+    });
+
+    await harness.command.handler('Implement the parser', harness.ctx);
+
+    expect(harness.sendUserMessage).toHaveBeenCalledWith('Implement the parser');
+    expect(harness.ui.confirm).not.toHaveBeenCalled();
   });
 
   it('rejects entry without a mutation tool or selected planner model', async () => {

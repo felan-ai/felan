@@ -4,7 +4,7 @@ Same-session Prewalk for Felan's complex repository work: the current model expl
 
 After the run settles, Prewalk restores the original planner model and thinking level by default. All of these automated changes are scoped to the active session and do not change the user's or project's default model or thinking preference.
 
-For complex repository work that benefits from substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification, the model can enter Prewalk itself by calling `enter_prewalk` before it explores or mutates the repository. Small localized edits and routine one-file fixes should normally stay on the regular path. `/prewalk` remains available when the user wants to enter explicitly. Read-only requests do not use Prewalk.
+For complex repository work that benefits from substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification, the model can request Prewalk by calling `enter_prewalk` before it explores or mutates the repository. Model-requested entry asks for user approval by default. Small localized edits and routine one-file fixes should normally stay on the regular path. `/prewalk` remains available when the user wants to enter explicitly and does not ask for redundant approval. Read-only requests do not use Prewalk.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ Prewalk refuses to arm when no explicit mutation tool is active. Shell tools suc
 enter_prewalk {}  Enter Prewalk for complex repository work
 ```
 
-The no-argument tool transitions the current run directly into planning, so it works while the agent is active. Use it for complex repository work rather than small localized edits or routine one-file fixes. It must be called once, by itself, before repository exploration or mutation. A mutation in the same model turn as the entry call cannot trigger handoff; the planning guidance must reach a later model turn first.
+The no-argument tool requests a transition of the current run into planning, so it works while the agent is active. With the default `ask` policy, dialog-capable hosts ask the user before entering. A denial returns a tool error that directs the model to continue normally. JSON and print modes deny `ask` rather than blocking for unavailable input. Hosts can initialize the extension with `always` for unattended environments such as a cloud platform, or `never` to reject model-requested entry. Use the tool for complex repository work rather than small localized edits or routine one-file fixes. It must be called once, by itself, before repository exploration or mutation. A mutation in the same model turn as a successful entry call cannot trigger handoff; the planning guidance must reach a later model turn first.
 
 The successful entry call and result are orchestration controls. They remain in the stored session transcript but are removed from model context. Current phase guidance is transient and replaced at the phase boundary, so the target receives the useful exploration, task graph, and first valid change with implementation guidance rather than an instruction to keep planning.
 
@@ -75,13 +75,15 @@ restoring its exact original thinking level.
 
 ## Flags
 
-Prewalk uses Pi's namespaced extension flags and does not read a configuration file.
+Prewalk accepts a host initialization default plus Pi's namespaced extension
+flags and does not read a configuration file.
 
 ```text
 --prewalk-target-model <high|medium|low|provider/model-id>
 --prewalk-target-thinking <off|low|medium|high|xhigh|max>
 --prewalk-restore-planner
 --no-prewalk-restore-planner
+--prewalk-entry-approval <ask|always|never>
 ```
 
 `prewalk-target-model` defaults to `low` and `prewalk-target-thinking` defaults
@@ -89,6 +91,16 @@ to exact `medium`. Tier selection uses the authenticated models allowed by the
 current session, preferring the planner's provider and model family. An exact
 `provider/model-id` overrides tier selection but must remain inside a nonempty
 session model scope. `prewalk-restore-planner` defaults to `true`.
+`prewalk-entry-approval` defaults to the extension initialization policy, which
+is `ask` unless the host supplies another value. The flag overrides that host
+default. This policy applies only to model-called `enter_prewalk`; `/prewalk`
+is already explicit user intent.
+
+Host initialization is validated immediately: passing an `entryApproval`
+value other than `ask`, `always`, or `never` makes
+`createPrewalkExtension()` throw during extension construction. Invalid
+`--prewalk-entry-approval` flag values follow the normal flag behavior instead:
+Prewalk reports a warning and falls back to the host initialization defaults.
 
 ## Failure behavior
 
@@ -111,9 +123,10 @@ This package adapts the MIT-licensed `packages/pi-prewalk` implementation from `
 ## Composition and package boundary
 
 ```ts
-import prewalkExtension from '@felan-ai/ext-prewalk';
+import prewalkExtension, { createPrewalkExtension } from '@felan-ai/ext-prewalk';
 
 const extension = prewalkExtension;
+const cloudExtension = createPrewalkExtension({ entryApproval: 'always' });
 ```
 
 The extension owns the same-session state machine, explicit mutation
@@ -121,7 +134,9 @@ qualification, stable-position transient planning/implementation guidance,
 target selection, and restoration lifecycle. Agent Core supplies model tiers and the host supplies
 authenticated model scope, session lifecycle, and active tools. Prewalk does not
 inspect or execute the task graph beyond the successful TaskCreate/TaskUpdate
-handoff gate described above, and it is not a sandbox or approval mode.
+handoff gate described above. Entry approval controls only whether a model may
+start Prewalk; it is not a sandbox, non-mutating plan mode, or approval
+checkpoint before edits.
 
 The package requires compatible Agent Core and Tasks peers plus an explicit
 `edit`, `write`, or Codex `apply_patch` tool in the composed session.
