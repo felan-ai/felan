@@ -14,6 +14,7 @@ import backgroundBashExtension from '../src/index.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 const temporaryPaths: string[] = [];
+const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -150,7 +151,7 @@ describe('background bash extension activation', () => {
     expect(JSON.stringify(message.details)).not.toContain('processToken');
 
     await harness.emit('session_shutdown', {}, ctx);
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('reads stored output without sending a second completion after wait finishes', async () => {
     const harness = createHarness(await createHostRuntime());

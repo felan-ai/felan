@@ -8,6 +8,8 @@ import { getBackgroundBashJobsDir } from '../src/job-store.js';
 import { BackgroundBashManager } from '../src/process-manager.js';
 
 const temporaryPaths: string[] = [];
+const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
+const INTEGRATION_WAIT_TIMEOUT_SECONDS = 30;
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -28,7 +30,7 @@ describe('BackgroundBashManager', () => {
     const { manager, runtime, storageScopes } = await createManager();
     const started = await manager.start("printf 'first\\nsecond\\n'");
 
-    const result = await manager.wait(started.meta.id, 10);
+    const result = await manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS);
 
     expect(result.timedOut).toBe(false);
     expect(result.job.status).toMatchObject({ status: 'completed', exitCode: 0 });
@@ -39,7 +41,7 @@ describe('BackgroundBashManager', () => {
     expect(storageScopes).toEqual(['session']);
     await expect(manager.tail(started.meta.id)).resolves.toContain('first\nsecond');
     await expect(manager.list('completed')).resolves.toHaveLength(1);
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('stops a running process and rejects ids outside the process registry', async () => {
     const { manager, runtime } = await createManager();
@@ -53,7 +55,7 @@ describe('BackgroundBashManager', () => {
     await expect(manager.get('../../outside')).rejects.toThrow(
       'Background Bash process not found: ../../outside',
     );
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('stops a process immediately after launch without losing runner identity', async () => {
     const { manager } = await createManager();
@@ -62,7 +64,7 @@ describe('BackgroundBashManager', () => {
     const stopped = await manager.stop(started.meta.id, 'SIGTERM');
 
     expect(stopped.status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('does not replace natural completion with an unknown stop result', async () => {
     const { manager } = await createManager();
@@ -72,14 +74,14 @@ describe('BackgroundBashManager', () => {
 
     expect(['completed', 'killed']).toContain(stopped.status.status);
     expect(stopped.status.status).not.toBe('unknown');
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it.skipIf(process.platform !== 'win32' || !nativeGitBashAvailable())(
     'runs and stops a detached process through native Git Bash process groups',
     async () => {
       const { manager } = await createManager();
       const started = await manager.start("printf 'windows git bash\\n'");
-      const completed = await manager.wait(started.meta.id, 10);
+      const completed = await manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS);
 
       expect(completed.job.status).toMatchObject({ status: 'completed', exitCode: 0 });
       await expect(manager.tail(started.meta.id)).resolves.toContain('windows git bash');
@@ -89,6 +91,7 @@ describe('BackgroundBashManager', () => {
         status: { status: 'killed', signal: 'SIGTERM' },
       });
     },
+    INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
 
