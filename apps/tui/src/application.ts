@@ -14,6 +14,13 @@ export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly verbose?: boolean;
 }
 
+export function brandResumeHint(output: string): string {
+  return output.replace(
+    /(To resume this session:(?:\x1b\[[0-9;]*m)*\s*)pi /,
+    '$1felan ',
+  );
+}
+
 export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise<void> {
   let nextOptions = options;
   while (true) {
@@ -43,6 +50,11 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
   process.env.PI_CODING_AGENT_DIR = runtime.services.agentDir;
   process.env.PI_SKIP_VERSION_CHECK = '1';
   process.env.PI_TELEMETRY = '0';
+  const previousStdoutWrite = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array, ...args: unknown[]) => {
+    if (typeof chunk === 'string') chunk = brandResumeHint(chunk);
+    return previousStdoutWrite.call(process.stdout, chunk, ...args as never[]);
+  }) as typeof process.stdout.write;
 
   try {
     const mode = new InteractiveMode(createToolActivityRuntimeView(runtime), {
@@ -111,6 +123,7 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
       } else {
         process.env.PI_TELEMETRY = previousPiTelemetry;
       }
+      process.stdout.write = previousStdoutWrite;
     }
   }
 }

@@ -425,7 +425,11 @@ try {
     }
   }
   const help = runFelan(['--help'], cleanEnvironment);
-  if (!help.stdout.includes('Usage: felan [options] [message]') || !help.stdout.includes('update')) {
+  if (
+    !help.stdout.includes('Usage: felan [options] [message]')
+    || !help.stdout.includes('-r, --resume')
+    || !help.stdout.includes('update')
+  ) {
     throw new Error('Packed felan --help did not start the local TUI CLI');
   }
   const update = runFelanAllowFailure(['update'], cleanEnvironment);

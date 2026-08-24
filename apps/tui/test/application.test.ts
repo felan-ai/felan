@@ -131,7 +131,7 @@ vi.mock('../src/update.js', async (importOriginal) => {
   };
 });
 
-import { runLocalFelan } from '../src/application.js';
+import { brandResumeHint, runLocalFelan } from '../src/application.js';
 import { CwdChangeRequested } from '../src/cwd-command.js';
 
 const temporaryPaths: string[] = [];
@@ -161,6 +161,20 @@ afterEach(async () => {
 });
 
 describe('interactive application', () => {
+  it('brands Pi resume hints as runnable Felan commands', () => {
+    expect(brandResumeHint(
+      "To resume this session: pi --session-dir 'C:\\Users\\35988\\.felan\\sessions' --session 01a033a6-db3c-7094-993f-0aad3b3dadfd\n",
+    )).toBe(
+      "To resume this session: felan --session-dir 'C:\\Users\\35988\\.felan\\sessions' --session 01a033a6-db3c-7094-993f-0aad3b3dadfd\n",
+    );
+    expect(brandResumeHint('ordinary output\n')).toBe('ordinary output\n');
+    expect(brandResumeHint(
+      '\x1b[2mTo resume this session:\x1b[22m pi --session session-id\n',
+    )).toBe(
+      '\x1b[2mTo resume this session:\x1b[22m felan --session session-id\n',
+    );
+  });
+
   it('runs Pi InteractiveMode with the composed local Agent Core runtime', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -168,6 +182,7 @@ describe('interactive application', () => {
     const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
     const previousPiSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
     const previousPiTelemetry = process.env.PI_TELEMETRY;
+    const previousStdoutWrite = process.stdout.write;
     await mkdir(cwd, { recursive: true });
 
     await runLocalFelan({ cwd, agentDir });
@@ -183,6 +198,7 @@ describe('interactive application', () => {
     expect(process.env.PI_CODING_AGENT_DIR).toBe(previousPiAgentDir);
     expect(process.env.PI_SKIP_VERSION_CHECK).toBe(previousPiSkipVersionCheck);
     expect(process.env.PI_TELEMETRY).toBe(previousPiTelemetry);
+    expect(process.stdout.write).toBe(previousStdoutWrite);
     expect(interactive.toolNames).toEqual(expect.arrayContaining([
       'read',
       'bash',
