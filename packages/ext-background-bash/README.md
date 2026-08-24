@@ -10,20 +10,29 @@ adapters map it to their root-session state path.
 
 The implementation routes filesystem and process operations through the active
 `AgentRuntime`. Background launch uses a detached POSIX shell runner. Host,
-Docker, and Daytona runtimes need `nohup`, `ps`, and either `setsid` or shell job
-control so each process receives an isolated process group. The extension
+Docker, and Daytona runtimes need `nohup`, `ps`, `sleep`, and either `setsid`
+or shell job control so each process receives an isolated process group. The extension
 captures `runtime.storage('session')` once; that handle must be
 durable and visible in the same filesystem namespace as `runtime.shell`.
-It probes the required POSIX shell/process utilities through `AgentRuntime` and
-leaves its tools inactive when the runtime is incompatible. The local TUI can
-persistently disable the extension through dependency onboarding; Felan does
-not install operating-system utilities.
+It requests the explicit POSIX shell flavor for probing and execution, then
+leaves its tools inactive when the runtime is incompatible. On native Windows,
+`HostAgentRuntime` discovers a same-host Git Bash installation through
+`FELAN_POSIX_SHELL`, `PATH`, or standard Git-for-Windows locations. WSL is not
+selected automatically because its path and process namespace does not match
+the host runtime. Git Bash's process tools use its `ps -l` format when GNU
+`ps -o` is unavailable. The local TUI can persistently disable the extension
+through dependency onboarding; Felan does not install operating-system
+utilities.
 
 The extension activates for selected models outside the OpenAI provider family.
 OpenAI and OpenAI Codex sessions use the separate Codex-specific process
 surface instead. Keeping eligibility here gives cloud and local consumers
 identical behavior without duplicating model filters in their composition
 roots.
+
+This release requires `@felan-ai/agent-core` 0.4.11 or newer within the 0.x
+compatible-minor range because it uses the runtime's explicit POSIX shell
+flavor.
 
 ## Tools and controls
 

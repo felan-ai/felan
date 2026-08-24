@@ -17,6 +17,13 @@ export interface AgentRuntimeExecResult extends PiExecResult {
 
 export type ExecResult = AgentRuntimeExecResult;
 
+export type AgentRuntimeShellFlavor = 'default' | 'posix';
+
+export interface AgentRuntimeShellOptions extends AgentRuntimeExecOptions {
+  readonly env?: Readonly<Record<string, string>>;
+  readonly shellFlavor?: AgentRuntimeShellFlavor;
+}
+
 export type AgentRuntimeKind = 'host' | 'docker' | 'daytona';
 
 export type AgentRuntimeStorageScope = 'session' | 'agent';
@@ -114,7 +121,7 @@ export interface AgentRuntime {
 
   shell(
     command: string,
-    options?: AgentRuntimeExecOptions & { env?: Readonly<Record<string, string>> },
+    options?: AgentRuntimeShellOptions,
   ): Promise<ExecResult>;
 
   readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array>;

@@ -236,6 +236,7 @@ export class BackgroundBashJobStore {
   ): Promise<BackgroundBashJob | undefined> {
     const job = await this.readJob(id);
     if (!job) return undefined;
+    if (isTerminalStatus(job.status.status) && job.status.status !== patch.status) return job;
     const now = Date.now();
     const status: BackgroundBashStatusFile = {
       ...job.status,

@@ -362,6 +362,36 @@ describe('HostAgentRuntime', () => {
     expect(result.killed).toBe(false);
   });
 
+  it('runs commands through an explicit POSIX shell without changing the default shell', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    let result;
+    try {
+      result = await runtime.shell('printf "%s" "$FELAN_POSIX_TEST"', {
+        env: { FELAN_POSIX_TEST: 'posix works' },
+        shellFlavor: 'posix',
+      });
+    } catch (error) {
+      if (process.platform === 'win32' && error instanceof Error && error.message.includes('POSIX shell')) return;
+      throw error;
+    }
+
+    expect(result).toMatchObject({ stdout: 'posix works', code: 0, killed: false });
+  });
+
+  it('rejects an explicitly unavailable POSIX shell', async () => {
+    const workspace = await createTemporaryDirectory('workspace');
+    const storage = await createTemporaryDirectory('storage');
+    const runtime = new HostAgentRuntime(workspace, {
+      sessionStorageRoot: join(storage, 'session'),
+      agentStorageRoot: join(storage, 'agent'),
+      posixShell: process.platform === 'win32' ? 'C:\\missing\\felan-posix-shell.exe' : '/missing/felan-posix-shell',
+    });
+    await mkdir(join(storage, 'session'), { recursive: true });
+    await mkdir(join(storage, 'agent'), { recursive: true });
+
+    await expect(runtime.shell('printf nope', { shellFlavor: 'posix' })).rejects.toThrow('Configured POSIX shell');
+  });
+
   it('reads only files inside its configured agent directory', async () => {
     const workspace = await createTemporaryDirectory('workspace');
     const storageRoot = await createTemporaryDirectory('storage');

@@ -94,7 +94,7 @@ export function supportsBackgroundBashModel(model: Model<Api> | undefined): bool
 
 const backgroundBashExtension: FelanExtension = (pi) => {
   const manager = new BackgroundBashManager(pi.runtime);
-  const foregroundBash = createRuntimeCodingTools(pi.runtime)
+  const foregroundBash = createRuntimeCodingTools(pi.runtime, { shellFlavor: 'posix' })
     .find((tool) => tool.name === 'bash')!;
   let helperToolsRegistered = false;
   let backgroundBashActive = false;

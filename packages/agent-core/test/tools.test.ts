@@ -41,6 +41,21 @@ describe('runtime-backed coding tools', () => {
     }
   });
 
+  it('can route the Bash coding tool through an explicit POSIX shell', async () => {
+    const runtime = new TestAgentRuntime('/virtual-felan-workspace');
+    const tools = toolsByName(createRuntimeCodingTools(runtime, { shellFlavor: 'posix' }));
+
+    await tools.bash!.execute(
+      'bash-posix',
+      { command: 'printf posix' },
+      undefined,
+      undefined,
+      context,
+    );
+
+    expect(runtime.shellCalls[0]?.options).toMatchObject({ shellFlavor: 'posix' });
+  });
+
   it('routes shell and grep execution through runtime operations with safe argv boundaries', async () => {
     const runtime = new TestAgentRuntime('/virtual-felan-workspace', {
       shell: ({ command }) => ({ stdout: command, stderr: '', code: 0, killed: false }),

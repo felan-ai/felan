@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
 import { createOutputLog, readLogTail } from './logs.js';
 import {
@@ -14,7 +15,10 @@ export interface WaitBackgroundBashResult {
 
 const WAIT_POLL_MS = 500;
 const PROCESS_STATUS_GRACE_MS = 5_000;
+const STOP_PROCESS_WAIT_MS = 5_000;
+const RUNNER_MARKER_MAX_AGE_SECONDS = 3;
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 export class BackgroundBashManager {
   readonly #store: BackgroundBashJobStore;
@@ -37,6 +41,7 @@ export class BackgroundBashManager {
         job.meta.processToken!,
       ), {
         cwd: this.runtime.cwd,
+        shellFlavor: 'posix',
         timeout: 10_000,
       });
       if (launch.killed || launch.code !== 0) {
@@ -98,12 +103,19 @@ export class BackgroundBashManager {
   }
 
   async stop(id: string, signal: NodeJS.Signals = 'SIGTERM'): Promise<BackgroundBashJob> {
-    const job = await this.get(id);
+    let job = await this.get(id);
     if (isTerminalStatus(job.status.status)) return job;
 
     const pid = job.status.pid ?? job.meta.pid;
-    const inspected = pid ? await this.#inspectJobProcess(job, pid) : undefined;
+    const inspection = pid
+      ? await this.#inspectForStop(job, pid)
+      : { job, inspected: undefined };
+    job = inspection.job;
+    if (isTerminalStatus(job.status.status)) return job;
+    const inspected = inspection.inspected;
     if (!pid || !inspected) {
+      const latest = await this.#store.readJob(id);
+      if (latest && isTerminalStatus(latest.status.status)) return latest;
       const unknown = await this.#store.markStatus(id, {
         status: 'unknown',
         ...(pid === undefined ? {} : { pid }),
@@ -125,6 +137,18 @@ export class BackgroundBashManager {
       throw new Error(result.stderr || `Unable to send ${signal} to Background Bash process ${id}`);
     }
 
+    if (!await this.#waitForProcessExit(pid)) {
+      return await this.#store.markStatus(id, {
+        status: 'unknown',
+        pid,
+        exitCode: null,
+        signal: null,
+        error: `Process did not exit after ${STOP_PROCESS_WAIT_MS / 1_000} seconds.`,
+      }) ?? job;
+    }
+
+    const completed = await this.#store.readJob(id);
+    if (completed && isTerminalStatus(completed.status.status)) return completed;
     const killed = await this.#store.markStatus(id, {
       status: 'killed',
       pid,
@@ -148,6 +172,8 @@ export class BackgroundBashManager {
     if (now - job.status.startedAt <= PROCESS_STATUS_GRACE_MS) return job;
     if (pid && await this.#isJobProcessAlive(job, pid)) return job;
 
+    const latest = await this.#store.readJob(job.meta.id);
+    if (latest && isTerminalStatus(latest.status.status)) return latest;
     return await this.#store.markStatus(job.meta.id, {
       status: 'unknown',
       ...(pid === undefined ? {} : { pid }),
@@ -163,25 +189,66 @@ export class BackgroundBashManager {
     return await this.#inspectJobProcess(job, pid) !== undefined;
   }
 
+  async #inspectForStop(
+    job: BackgroundBashJob,
+    pid: number,
+  ): Promise<{ job: BackgroundBashJob; inspected?: { processGroupId: number } }> {
+    let latest = job;
+    const deadline = Date.now() + PROCESS_STATUS_GRACE_MS;
+    while (true) {
+      latest = await this.#store.readJob(job.meta.id) ?? latest;
+      if (isTerminalStatus(latest.status.status)) return { job: latest };
+      const inspected = await this.#inspectJobProcess(latest, pid);
+      if (inspected) return { job: latest, inspected };
+      if (Date.now() >= deadline) return { job: latest };
+      await sleep(50);
+    }
+  }
+
+  async #waitForProcessExit(pid: number): Promise<boolean> {
+    const deadline = Date.now() + STOP_PROCESS_WAIT_MS;
+    while (Date.now() < deadline) {
+      if (!await this.#isProcessAlive(pid)) return true;
+      await sleep(Math.min(50, deadline - Date.now()));
+    }
+    return !await this.#isProcessAlive(pid);
+  }
+
+  async #isProcessAlive(pid: number): Promise<boolean> {
+    const result = await this.runtime.shell(`kill -0 -- ${shellQuote(String(pid))} 2>/dev/null`, {
+      cwd: this.runtime.cwd,
+      shellFlavor: 'posix',
+    });
+    return result.code === 0;
+  }
+
   async #inspectJobProcess(
     job: BackgroundBashJob,
     pid: number,
   ): Promise<{ processGroupId: number } | undefined> {
-    const result = await this.runtime.exec(
-      'ps',
-      ['-o', 'pgid=', '-o', 'command=', '-p', String(pid)],
-      { cwd: this.runtime.cwd },
-    );
+    const result = await this.runtime.shell(createInspectCommand(pid), {
+      cwd: this.runtime.cwd,
+      shellFlavor: 'posix',
+    });
     if (result.code !== 0) return undefined;
-    const match = result.stdout.match(/^\s*(\d+)\s+([\s\S]+?)\s*$/u);
-    if (!match) return undefined;
-    const processGroupId = Number(match[1]);
-    if (!Number.isSafeInteger(processGroupId) || processGroupId <= 0) return undefined;
-    const command = match[2] ?? '';
+    const inspected = parseProcessInspection(result.stdout);
+    if (!inspected) return undefined;
+    const { processGroupId, command } = inspected;
+    const expectedProcessGroupId = job.meta.processGroupId ?? pid;
+    const isGitBashShell = /(?:^|\/)(?:sh|bash)(?:\.exe)?$/iu.test(command);
+    const markerMatches = isGitBashShell && await this.#runnerMarkerMatches(job, pid);
+    const matchesGitBashProcess = isGitBashShell
+      && processGroupId === expectedProcessGroupId
+      && processGroupId === pid
+      && markerMatches;
     if (job.meta.processToken) {
-      if (!command.includes(job.meta.runnerPath) || !command.includes(job.meta.processToken)) return undefined;
+      if (
+        (!containsPosixPath(command, job.meta.runnerPath) || !command.includes(job.meta.processToken))
+        && !matchesGitBashProcess
+      ) return undefined;
     } else if (
-      !command.includes(job.meta.runnerPath)
+      !containsPosixPath(command, job.meta.runnerPath)
+      && !matchesGitBashProcess
       && !(command.includes('PI_BG_INFO_PATH') && command.includes('PI_BG_COMMAND'))
     ) {
       return undefined;
@@ -189,9 +256,29 @@ export class BackgroundBashManager {
     return { processGroupId };
   }
 
+  async #runnerMarkerMatches(job: BackgroundBashJob, pid: number): Promise<boolean> {
+    if (!job.meta.processToken) return false;
+    try {
+      const markerPath = join(job.meta.jobDir, 'runner-heartbeat');
+      const [id, token, markerPid, timestamp] = decoder
+        .decode(await this.#storage.readFile(markerPath))
+        .trim()
+        .split(/\r?\n/u);
+      const markerTimestamp = Number(timestamp);
+      return id === job.meta.id
+        && token === job.meta.processToken
+        && markerPid === String(pid)
+        && Number.isSafeInteger(markerTimestamp)
+        && Math.abs(Math.floor(Date.now() / 1_000) - markerTimestamp) <= RUNNER_MARKER_MAX_AGE_SECONDS;
+    } catch {
+      return false;
+    }
+  }
+
   #sendSignal(pid: number, signal: NodeJS.Signals) {
-    return this.runtime.exec('kill', [`-${signal.slice(3)}`, '--', String(pid)], {
+    return this.runtime.shell(`kill -${signal.slice(3)} -- ${shellQuote(String(pid))}`, {
       cwd: this.runtime.cwd,
+      shellFlavor: 'posix',
     });
   }
 }
@@ -209,6 +296,14 @@ function createLaunchCommand(runnerPath: string, processToken: string): string {
     `  nohup sh ${path} ${token} >/dev/null 2>&1 < /dev/null &`,
     '  pid="$!"',
     "  process_group=$(ps -o pgid= -p \"$pid\" 2>/dev/null | tr -d ' ')",
+    '  if [ -z "$process_group" ]; then',
+    '    process_group=$(ps -l -p "$pid" 2>/dev/null | {',
+    '      IFS= read -r header',
+    '      IFS= read -r row',
+    '      set -- $row',
+    '      printf "%s\\n" "${3:-}"',
+    '    })',
+    '  fi',
     '  if [ "$process_group" = "$pid" ]; then',
     "    printf 'group:%s:%s\\n' \"$pid\" \"$process_group\"",
     '  else',
@@ -221,19 +316,62 @@ function createLaunchCommand(runnerPath: string, processToken: string): string {
   ].join('\n');
 }
 
+function createInspectCommand(pid: number): string {
+  const quotedPid = shellQuote(String(pid));
+  return `ps -o pgid= -o command= -p ${quotedPid} 2>/dev/null || ps -l -p ${quotedPid} 2>/dev/null`;
+}
+
+function parseProcessInspection(output: string): { processGroupId: number; command: string } | undefined {
+  const lines = output.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const compact = lines[0]?.match(/^(\d+)\s+(.+)$/u);
+  if (compact) {
+    const processGroupId = Number(compact[1]);
+    if (Number.isSafeInteger(processGroupId) && processGroupId > 0) {
+      return { processGroupId, command: compact[2] ?? '' };
+    }
+  }
+
+  for (const line of lines) {
+    const fields = line.split(/\s+/u);
+    if (fields.length < 8 || !/^\d+$/u.test(fields[0] ?? '') || !/^\d+$/u.test(fields[2] ?? '')) continue;
+    const processGroupId = Number(fields[2]);
+    if (!Number.isSafeInteger(processGroupId) || processGroupId <= 0) continue;
+    return { processGroupId, command: fields.slice(7).join(' ') };
+  }
+  return undefined;
+}
+
 function createRunnerScript(job: BackgroundBashJob): string {
   const id = shellQuote(job.meta.id);
+  const processToken = shellQuote(job.meta.processToken ?? '');
   const commandPath = shellQuote(job.meta.commandPath);
   const completionPath = shellQuote(job.meta.completionPath);
   const outputPath = shellQuote(job.meta.logPath);
+  const markerPath = shellQuote(join(job.meta.jobDir, 'runner-heartbeat'));
   return `#!/bin/sh
 set +e
 job_id=${id}
+process_token=${processToken}
 command_path=${commandPath}
 completion_path=${completionPath}
 output_path=${outputPath}
+marker_path=${markerPath}
 started_at=${job.meta.startedAt}
 child_pid=
+heartbeat_pid=
+
+write_heartbeat() {
+  timestamp=$(date +%s)
+  tmp_path="$marker_path.$$.$timestamp.tmp"
+  printf '%s\\n%s\\n%s\\n%s\\n' "$job_id" "$process_token" "$$" "$timestamp" > "$tmp_path"
+  mv "$tmp_path" "$marker_path"
+}
+
+heartbeat() {
+  while write_heartbeat; do
+    sleep 1
+  done
+}
 
 write_completion() {
   status="$1"
@@ -263,6 +401,10 @@ EOF
 
 terminate() {
   signal_name="$1"
+  if [ -n "$heartbeat_pid" ]; then
+    kill "$heartbeat_pid" 2>/dev/null
+    wait "$heartbeat_pid" 2>/dev/null
+  fi
   short_signal=\${signal_name#SIG}
   if [ -n "$child_pid" ]; then
     kill -"$short_signal" "$child_pid" 2>/dev/null
@@ -276,11 +418,19 @@ trap 'terminate SIGTERM' TERM
 trap 'terminate SIGINT' INT
 trap 'terminate SIGHUP' HUP
 
+heartbeat &
+heartbeat_pid=$!
+
 sh "$command_path" >> "$output_path" 2>&1 &
 child_pid=$!
 wait "$child_pid"
 exit_code=$?
 trap - TERM INT HUP
+
+if [ -n "$heartbeat_pid" ]; then
+  kill "$heartbeat_pid" 2>/dev/null
+  wait "$heartbeat_pid" 2>/dev/null
+fi
 
 if [ ! -f "$completion_path" ]; then
   if [ "$exit_code" -eq 0 ]; then
@@ -306,7 +456,17 @@ function parseLaunchResult(output: string): { pid: number; processGroupId?: numb
 }
 
 function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
+  const normalized = process.platform === 'win32' ? value.replaceAll('\\', '/') : value;
+  return `'${normalized.replaceAll("'", `'\\''`)}'`;
+}
+
+function containsPosixPath(command: string, path: string): boolean {
+  const normalizedPath = path.replaceAll('\\', '/');
+  const variants = [normalizedPath];
+  const drivePath = normalizedPath.match(/^([a-z]):\/(.*)$/iu);
+  if (drivePath) variants.push(`/${drivePath[1]!.toLowerCase()}/${drivePath[2]}`);
+  const normalizedCommand = command.replaceAll('\\', '/');
+  return variants.some((variant) => normalizedCommand.includes(variant));
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

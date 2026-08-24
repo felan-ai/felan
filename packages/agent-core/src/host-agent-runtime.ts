@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import {
+  access,
   lstat,
   mkdir,
   open,
@@ -23,6 +24,7 @@ import type {
   AgentRuntimeProcesses,
   AgentRuntimeProcessReadOptions,
   AgentRuntimeProcessSnapshot,
+  AgentRuntimeShellOptions,
   AgentRuntimeShellProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
@@ -31,15 +33,14 @@ import type {
 } from './runtime.js';
 import { fileListingGlobMatcher, normalizeFileListingPath } from './file-listing.js';
 
-export type HostShellOptions = AgentRuntimeExecOptions & {
-  env?: Readonly<Record<string, string>>;
-};
+export type HostShellOptions = AgentRuntimeShellOptions;
 
 export interface HostAgentRuntimeOptions {
   readonly sessionStorageRoot: string;
   readonly agentStorageRoot: string;
   readonly agentDir?: string;
   readonly pathAccess?: 'workspace' | 'host';
+  readonly posixShell?: string;
 }
 
 export class HostAgentRuntime implements AgentRuntime {
@@ -50,6 +51,8 @@ export class HostAgentRuntime implements AgentRuntime {
   readonly #agentStorageRoot: string;
   readonly #agentDir: string | undefined;
   readonly #pathAccess: 'workspace' | 'host';
+  readonly #configuredPosixShell: string | undefined;
+  #posixShell: Promise<string> | undefined;
   readonly processes: AgentRuntimeProcesses;
   readonly terminals: AgentRuntimeTerminals;
 
@@ -62,6 +65,7 @@ export class HostAgentRuntime implements AgentRuntime {
     this.#agentStorageRoot = resolveStorageRoot(options.agentStorageRoot);
     this.#agentDir = options.agentDir === undefined ? undefined : resolveStorageRoot(options.agentDir);
     this.#pathAccess = options.pathAccess ?? 'workspace';
+    this.#configuredPosixShell = validateConfiguredShell(options.posixShell);
     this.#sessionStorage = createHostStorage(this.#sessionStorageRoot);
     this.#agentStorage = createHostStorage(this.#agentStorageRoot);
     this.processes = {
@@ -99,7 +103,45 @@ export class HostAgentRuntime implements AgentRuntime {
   async shell(command: string, options?: HostShellOptions): Promise<ExecResult> {
     const env = options?.env ? { ...options.env } : undefined;
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
+    if (options?.shellFlavor === 'posix') {
+      const shell = await this.#resolvePosixShell(cwd);
+      return this.#spawn(shell, ['-c', command], cwd, options, false, env);
+    }
     return this.#spawn(command, [], cwd, options, true, env);
+  }
+
+  #resolvePosixShell(cwd: string): Promise<string> {
+    this.#posixShell ??= this.#findPosixShell(cwd);
+    return this.#posixShell;
+  }
+
+  async #findPosixShell(cwd: string): Promise<string> {
+    if (this.#configuredPosixShell) {
+      if (await this.#isCompatiblePosixShell(this.#configuredPosixShell, cwd)) {
+        return this.#configuredPosixShell;
+      }
+      throw new Error(`Configured POSIX shell is unavailable or cannot access the runtime cwd: ${this.#configuredPosixShell}`);
+    }
+
+    if (process.platform !== 'win32') return '/bin/sh';
+
+    for (const candidate of windowsPosixShellCandidates(process.env)) {
+      if (await this.#isCompatiblePosixShell(candidate, cwd)) return candidate;
+    }
+    throw new Error('POSIX shell is unavailable. Install Git Bash or configure HostAgentRuntime.posixShell.');
+  }
+
+  async #isCompatiblePosixShell(shell: string, cwd: string): Promise<boolean> {
+    if (isAbsolute(shell)) {
+      try {
+        await access(shell);
+      } catch {
+        return false;
+      }
+    }
+    const probe = `test -d ${quotePosixPath(cwd)} && printf '%s\\n' __FELAN_POSIX_SHELL__`;
+    const result = await this.#spawn(shell, ['-c', probe], cwd, { timeout: 2_000 }, false);
+    return !result.killed && result.code === 0 && result.stdout.trim() === '__FELAN_POSIX_SHELL__';
   }
 
   async readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array> {
@@ -163,11 +205,13 @@ export class HostAgentRuntime implements AgentRuntime {
   ): Promise<AgentRuntimeProcess> {
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
     const shell = options?.shell ?? defaultShell();
+    const useShellOption = process.platform === 'win32' && isCmdShell(shell);
     const args = shellArguments(shell, command, options?.login ?? true);
-    const child = spawn(shell, args, {
+    const child = spawn(useShellOption ? command : shell, useShellOption ? [] : args, {
       cwd,
       detached: process.platform !== 'win32',
       env: options?.env ? { ...process.env, ...options.env } : process.env,
+      shell: useShellOption ? shell : false,
       stdio: [options?.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -183,7 +227,10 @@ export class HostAgentRuntime implements AgentRuntime {
     const args = shellArguments(shell, command, options?.login ?? true);
     const env = terminalEnvironment(options?.env);
     const pty = await loadPty();
-    const terminal = pty.spawn(shell, args, {
+    const terminalArgs = process.platform === 'win32' && isCmdShell(shell)
+      ? `/d /s /c "${command}"`
+      : args;
+    const terminal = pty.spawn(shell, terminalArgs, {
       cwd,
       env,
       name: env.TERM ?? 'xterm-256color',
@@ -403,13 +450,19 @@ class HostRuntimeTerminal extends HostBufferedProcess {
   readonly #terminal: IPty;
   readonly #dataSubscription: IDisposable;
   readonly #exitSubscription: IDisposable;
+  #startupOutput = process.platform === 'win32';
 
   constructor(terminal: IPty) {
     super();
     this.#terminal = terminal;
     this.#dataSubscription = terminal.onData((data) => {
       const raw = data as unknown;
-      this.appendOutput(typeof raw === 'string' ? Buffer.from(raw) : new Uint8Array(raw as Buffer));
+      const text = typeof raw === 'string'
+        ? raw
+        : new TextDecoder().decode(new Uint8Array(raw as Buffer));
+      const output = this.#startupOutput ? stripWindowsPtyStartup(text) : text;
+      if (this.#startupOutput && output !== undefined) this.#startupOutput = false;
+      if (output) this.appendOutput(Buffer.from(output));
     });
     this.#exitSubscription = terminal.onExit(({ exitCode, signal }) => {
       this.complete(signal ? 128 + signal : exitCode);
@@ -422,7 +475,12 @@ class HostRuntimeTerminal extends HostBufferedProcess {
 
   async write(content: Uint8Array): Promise<void> {
     if (!this.running) throw new Error('Process has exited');
-    this.#terminal.write(Buffer.from(content));
+    if (process.platform !== 'win32') {
+      this.#terminal.write(Buffer.from(content));
+      return;
+    }
+    const text = Buffer.from(content).toString();
+    this.#terminal.write(text.replace(/\r?\n/gu, '\r\n'));
   }
 
   protected sendSignal(signal: NodeJS.Signals): void {
@@ -710,10 +768,66 @@ function defaultShell(): string {
 }
 
 function shellArguments(shell: string, command: string, login: boolean): string[] {
-  if (process.platform === 'win32' && /(?:^|[\\/])cmd(?:\.exe)?$/iu.test(shell)) {
+  if (process.platform === 'win32' && isCmdShell(shell)) {
     return ['/d', '/s', '/c', command];
   }
   return login ? ['-l', '-c', command] : ['-c', command];
+}
+
+function isCmdShell(shell: string): boolean {
+  return /(?:^|[\\/])cmd(?:\.exe)?$/iu.test(shell);
+}
+
+function stripWindowsPtyStartup(value: string): string | undefined {
+  const marker = '\u001b[?9001h\u001b[?1004h';
+  if (value === marker || marker.startsWith(value)) return undefined;
+  return value.startsWith(marker) ? value.slice(marker.length) : value;
+}
+
+function validateConfiguredShell(shell: string | undefined): string | undefined {
+  if (shell === undefined) return undefined;
+  const normalized = shell.trim();
+  if (normalized.length === 0) throw new Error('Configured POSIX shell cannot be empty');
+  if (normalized.includes('\0')) throw new Error('Configured POSIX shell cannot contain NUL bytes');
+  return normalized;
+}
+
+function windowsPosixShellCandidates(env: NodeJS.ProcessEnv): string[] {
+  const candidates: string[] = [];
+  const add = (candidate: string | undefined): void => {
+    if (!candidate || candidate.includes('\0')) return;
+    if (!candidates.some((existing) => existing.toLowerCase() === candidate.toLowerCase())) {
+      candidates.push(candidate);
+    }
+  };
+
+  add(env.FELAN_POSIX_SHELL);
+  for (const entry of (env.Path ?? env.PATH ?? '').split(';')) {
+    const directory = entry.trim();
+    if (!directory) continue;
+    add(join(directory, 'sh.exe'));
+    add(join(directory, 'bash.exe'));
+  }
+
+  const roots = [
+    env.ProgramW6432,
+    env.ProgramFiles,
+    env['ProgramFiles(x86)'],
+    env.LOCALAPPDATA,
+  ];
+  for (const root of roots) {
+    if (!root) continue;
+    add(join(root, 'Git', 'bin', 'bash.exe'));
+    add(join(root, 'Git', 'bin', 'sh.exe'));
+    add(join(root, 'Git', 'usr', 'bin', 'bash.exe'));
+    add(join(root, 'Git', 'usr', 'bin', 'sh.exe'));
+  }
+  return candidates;
+}
+
+function quotePosixPath(value: string): string {
+  const normalized = process.platform === 'win32' ? value.replaceAll('\\', '/') : value;
+  return `'${normalized.replaceAll("'", `'\\''`)}'`;
 }
 
 function signalExitCode(signal: NodeJS.Signals | null): number {

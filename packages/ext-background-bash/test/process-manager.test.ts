@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,6 +54,42 @@ describe('BackgroundBashManager', () => {
       'Background Bash process not found: ../../outside',
     );
   });
+
+  it('stops a process immediately after launch without losing runner identity', async () => {
+    const { manager } = await createManager();
+    const started = await manager.start('sleep 30');
+
+    const stopped = await manager.stop(started.meta.id, 'SIGTERM');
+
+    expect(stopped.status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
+  });
+
+  it('does not replace natural completion with an unknown stop result', async () => {
+    const { manager } = await createManager();
+    const started = await manager.start('sleep 1; printf done');
+
+    const stopped = await manager.stop(started.meta.id, 'SIGTERM');
+
+    expect(['completed', 'killed']).toContain(stopped.status.status);
+    expect(stopped.status.status).not.toBe('unknown');
+  });
+
+  it.skipIf(process.platform !== 'win32' || !nativeGitBashAvailable())(
+    'runs and stops a detached process through native Git Bash process groups',
+    async () => {
+      const { manager } = await createManager();
+      const started = await manager.start("printf 'windows git bash\\n'");
+      const completed = await manager.wait(started.meta.id, 10);
+
+      expect(completed.job.status).toMatchObject({ status: 'completed', exitCode: 0 });
+      await expect(manager.tail(started.meta.id)).resolves.toContain('windows git bash');
+
+      const running = await manager.start('sleep 30');
+      await expect(manager.stop(running.meta.id)).resolves.toMatchObject({
+        status: { status: 'killed', signal: 'SIGTERM' },
+      });
+    },
+  );
 });
 
 async function createManager(): Promise<{
@@ -60,7 +97,7 @@ async function createManager(): Promise<{
   runtime: HostAgentRuntime;
   storageScopes: AgentRuntimeStorageScope[];
 }> {
-  const root = await mkdtemp(join(tmpdir(), 'felan-background-bash-'));
+  const root = await mkdtemp(join(tmpdir(), 'felan background bash spaces-'));
   temporaryPaths.push(root);
   const cwd = join(root, 'workspace');
   const sessionStorageRoot = join(root, 'session-storage');
@@ -101,14 +138,32 @@ async function readPid(runtime: HostAgentRuntime, path: string): Promise<number>
 async function waitForProcessExit(runtime: HostAgentRuntime, pid: number): Promise<void> {
   let processInfo = '';
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const result = await runtime.exec(
-      'ps',
-      ['-o', 'stat=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'command=', '-p', String(pid)],
-    );
+    const result = await runtime.shell(`kill -0 -- ${String(pid)} 2>/dev/null`, {
+      shellFlavor: 'posix',
+    });
     processInfo = result.stdout.trim();
-    const state = processInfo.match(/^(\S+)/u)?.[1] ?? '';
-    if (result.code !== 0 || state === '' || state.startsWith('Z')) return;
+    if (result.code !== 0) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Descendant process ${pid} is still running: ${processInfo}`);
+}
+
+function nativeGitBashAvailable(): boolean {
+  const pathEntries = (process.env.Path ?? process.env.PATH ?? '').split(';').filter(Boolean);
+  const roots = [
+    process.env.ProgramW6432,
+    process.env.ProgramFiles,
+    process.env['ProgramFiles(x86)'],
+    process.env.LOCALAPPDATA,
+  ].filter((value): value is string => Boolean(value));
+  const candidates = [
+    process.env.FELAN_POSIX_SHELL,
+    ...pathEntries.flatMap((entry) => [join(entry, 'bash.exe'), join(entry, 'sh.exe')]),
+    ...roots.flatMap((root) => [
+      join(root, 'Git', 'bin', 'bash.exe'),
+      join(root, 'Git', 'bin', 'sh.exe'),
+      join(root, 'Git', 'usr', 'bin', 'sh.exe'),
+    ]),
+  ];
+  return candidates.some((candidate) => candidate !== undefined && existsSync(candidate));
 }
