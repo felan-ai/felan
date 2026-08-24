@@ -19,6 +19,7 @@ type ContextMessage = {
   readonly customType?: string;
   readonly content?: string;
   readonly display?: boolean;
+  readonly timestamp?: number | string;
 };
 
 class RecordingRuntime implements AgentRuntime {
@@ -184,11 +185,73 @@ describe('@felan-ai/ext-context', () => {
 
     await harness.emit('session_start', { reason: 'new' });
 
-    expect(await harness.context(original)).toBe(original);
+    expect(await harness.context(messages)).toEqual(original);
     expect(harness.statuses.at(-1)).toEqual(['progressive-context', undefined]);
 
     await harness.successfulRead('nested/file.ts');
     expect((await harness.context(original)).at(-1)?.content).toContain('Nested instructions');
+  });
+
+  it('keeps unchanged instructions at a stable context prefix as history grows', async () => {
+    const runtime = await testRuntime();
+    await put(runtime, 'nested/AGENTS.md', 'Nested instructions');
+    await put(runtime, 'nested/file.ts', 'export {};');
+    const harness = await ExtensionHarness.create(runtime);
+    await harness.successfulRead('nested/file.ts');
+    const userMessage = { role: 'user', content: 'Task', timestamp: 1 };
+
+    const first = await harness.context([userMessage]);
+    const assistantMessage = { role: 'assistant', content: 'Read files', timestamp: 2 };
+    const second = await harness.context([userMessage, assistantMessage]);
+
+    expect(second.slice(0, first.length)).toEqual(first);
+    expect(second.at(-1)).toEqual(assistantMessage);
+  });
+
+  it('stays append-only after an earlier stable transient context message', async () => {
+    const runtime = await testRuntime();
+    await put(runtime, 'nested/AGENTS.md', 'Nested instructions');
+    await put(runtime, 'nested/file.ts', 'export {};');
+    const harness = await ExtensionHarness.create(runtime);
+    await harness.successfulRead('nested/file.ts');
+    const userMessage = { role: 'user', content: 'Task', timestamp: 1 };
+    const phaseGuidance = {
+      role: 'custom',
+      customType: 'pi-prewalk:planning',
+      content: 'Planning guidance',
+      display: false,
+      timestamp: 2,
+    };
+
+    const first = await harness.context([userMessage, phaseGuidance]);
+    const assistantMessage = { role: 'assistant', content: 'Inspect repository', timestamp: 3 };
+    const second = await harness.context([userMessage, phaseGuidance, assistantMessage]);
+
+    expect(second.slice(0, first.length)).toEqual(first);
+    expect(second.at(-1)).toEqual(assistantMessage);
+  });
+
+  it('re-anchors once when newly discovered instructions change the context', async () => {
+    const runtime = await testRuntime();
+    await put(runtime, 'nested/AGENTS.md', 'Nested instructions');
+    await put(runtime, 'nested/file.ts', 'export {};');
+    await put(runtime, 'nested/deeper/AGENTS.md', 'Deeper instructions');
+    await put(runtime, 'nested/deeper/file.ts', 'export {};');
+    const harness = await ExtensionHarness.create(runtime);
+    const userMessage = { role: 'user', content: 'Task', timestamp: 1 };
+    await harness.successfulRead('nested/file.ts');
+    await harness.context([userMessage]);
+
+    await harness.successfulRead('nested/deeper/file.ts');
+    const readTurn = { role: 'assistant', content: 'Read deeper file', timestamp: 2 };
+    const changed = await harness.context([userMessage, readTurn]);
+    expect(changed.at(-1)?.content).toContain('Nested instructions');
+    expect(changed.at(-1)?.content).toContain('Deeper instructions');
+
+    const nextTurn = { role: 'assistant', content: 'Continue', timestamp: 3 };
+    const stable = await harness.context([userMessage, readTurn, nextTurn]);
+    expect(stable.slice(0, changed.length)).toEqual(changed);
+    expect(stable.at(-1)).toEqual(nextTurn);
   });
 
   it('ignores failed and non-read tool results', async () => {
@@ -323,14 +386,21 @@ describe('@felan-ai/ext-context', () => {
     await put(runtime, 'nested/file.ts', 'export {};');
     const harness = await ExtensionHarness.create(runtime);
     await harness.successfulRead('nested/file.ts');
+    await harness.context([{ role: 'user', content: 'before compaction', timestamp: 1 }]);
 
     await harness.emit('session_compact', { summary: 'compacted state' });
-    const messages = await harness.context([{ role: 'user', content: 'compaction summary' }]);
+    const summary = { role: 'user', content: 'compaction summary', timestamp: 2 };
+    const messages = await harness.context([summary]);
 
     expect(messages.at(-1)).toMatchObject({
       customType: 'pi-progressive-context',
       content: expect.stringContaining('Persistent instructions'),
     });
+
+    const nextTurn = { role: 'assistant', content: 'after compaction', timestamp: 3 };
+    const stable = await harness.context([summary, nextTurn]);
+    expect(stable.slice(0, messages.length)).toEqual(messages);
+    expect(stable.at(-1)).toEqual(nextTurn);
   });
 
   it('reports empty and loaded state through /progressive-context', async () => {

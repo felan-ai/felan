@@ -9,9 +9,16 @@ type ContextFile = {
   readonly content: string;
 };
 
+type ContextAnchor = {
+  readonly afterKey?: string;
+  readonly fallbackIndex: number;
+  readonly instructionTimestamp: number;
+};
+
 type State = {
   readonly loadedContextFiles: Map<string, ContextFile>;
   readonly processedDirs: Set<string>;
+  contextAnchor: ContextAnchor | undefined;
 };
 
 const CONTEXT_FILE_CANDIDATES = ['AGENTS.md', 'CLAUDE.md'] as const;
@@ -27,11 +34,13 @@ const contextExtension: FelanExtension = (pi) => {
   const state: State = {
     loadedContextFiles: new Map(),
     processedDirs: new Set(),
+    contextAnchor: undefined,
   };
 
   pi.on('session_start', (_event, ctx) => {
     state.loadedContextFiles.clear();
     state.processedDirs.clear();
+    state.contextAnchor = undefined;
     ctx.ui.setStatus('progressive-context', undefined);
   });
 
@@ -51,18 +60,26 @@ const contextExtension: FelanExtension = (pi) => {
   });
 
   pi.on('context', (event) => {
-    if (state.loadedContextFiles.size === 0) return;
+    const messages = event.messages.filter((message) => !isProgressiveContextMessage(message));
+    if (state.loadedContextFiles.size === 0) {
+      state.contextAnchor = undefined;
+      return messages.length === event.messages.length ? undefined : { messages };
+    }
+
+    const { anchor, index } = resolveContextAnchor(messages, state.contextAnchor);
+    state.contextAnchor = anchor;
 
     return {
       messages: [
-        ...event.messages,
+        ...messages.slice(0, index),
         {
           role: 'custom',
           customType: CUSTOM_TYPE,
           content: formatProgressiveContext([...state.loadedContextFiles.values()]),
           display: false,
-          timestamp: Date.now(),
+          timestamp: anchor.instructionTimestamp,
         },
+        ...messages.slice(index),
       ],
     };
   });
@@ -112,12 +129,62 @@ async function discoverForPath(
   }
 
   if (discovered) {
+    state.contextAnchor = undefined;
     const count = state.loadedContextFiles.size;
     ctx.ui.setStatus(
       'progressive-context',
       `${count} nested context file${count === 1 ? '' : 's'}`,
     );
   }
+}
+
+function resolveContextAnchor(
+  messages: readonly unknown[],
+  currentAnchor?: ContextAnchor,
+): { anchor: ContextAnchor; index: number } {
+  if (currentAnchor) {
+    if (currentAnchor.afterKey !== undefined) {
+      const anchoredIndex = messages.findIndex(
+        (message) => contextMessageKey(message) === currentAnchor.afterKey,
+      );
+      if (anchoredIndex >= 0) return { anchor: currentAnchor, index: anchoredIndex + 1 };
+    } else if (currentAnchor.fallbackIndex <= messages.length) {
+      return { anchor: currentAnchor, index: currentAnchor.fallbackIndex };
+    }
+  }
+
+  const fallbackIndex = messages.length;
+  const afterKey = fallbackIndex > 0 ? contextMessageKey(messages[fallbackIndex - 1]) : undefined;
+  const anchor: ContextAnchor = {
+    fallbackIndex,
+    instructionTimestamp: Date.now(),
+    ...(afterKey === undefined ? {} : { afterKey }),
+  };
+  return { anchor, index: fallbackIndex };
+}
+
+function contextMessageKey(message: unknown): string | undefined {
+  if (!isRecord(message) || typeof message.role !== 'string') return undefined;
+  const timestamp = message.timestamp;
+  if (typeof timestamp !== 'number' && typeof timestamp !== 'string') return undefined;
+
+  return JSON.stringify([
+    message.role,
+    timestamp,
+    typeof message.toolCallId === 'string' ? message.toolCallId : '',
+    typeof message.customType === 'string' ? message.customType : '',
+    typeof message.responseId === 'string' ? message.responseId : '',
+  ]);
+}
+
+function isProgressiveContextMessage(message: unknown): boolean {
+  return isRecord(message)
+    && message.role === 'custom'
+    && message.customType === CUSTOM_TYPE;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function resolveObservedPath(observedPath: string, cwd: string): string | undefined {

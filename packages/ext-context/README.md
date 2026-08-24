@@ -12,10 +12,12 @@ instruction file per nested directory with this precedence:
 1. `AGENTS.md`
 2. `CLAUDE.md`
 
-Loaded files are normalized and deduplicated for the session. They are appended
-to each subsequent model context as one hidden `pi-progressive-context` message,
-so the instructions remain available after context compaction. A new session
-clears all discovered and processed paths.
+Loaded files are normalized and deduplicated for the session. They enter each
+subsequent model context as one hidden `pi-progressive-context` message. While
+the loaded instructions remain unchanged, that message stays at one stable
+context position and later conversation history appends after it. Discovering
+additional instructions or rebuilding context after compaction re-anchors the
+updated message once. A new session clears all discovered paths and the anchor.
 
 All file access goes through the cwd-contained `AgentRuntime`. Missing or
 unreadable files are nonfatal, and directories already checked during the
@@ -26,8 +28,9 @@ Use `/progressive-context` to show the nested instruction files loaded in the
 current session.
 
 The extension registers concise static `progressive-context` capability
-guidance during initialization. Discovered nested instructions remain transient
-session context and continue to update as relevant files are observed.
+guidance during initialization. Discovered nested instructions remain transient,
+stable-position session context and continue to update as relevant files are
+observed.
 
 ## Trigger limitations
 

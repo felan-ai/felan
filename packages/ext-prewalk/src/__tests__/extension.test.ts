@@ -5,6 +5,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 import prewalkExtension from '../index.js';
 import {
+  CONTINUATION_INSTRUCTION,
   CONTINUATION_MESSAGE_TYPE,
   CONTROL_MESSAGE_PREFIX,
   IMPLEMENTATION_MESSAGE_TYPE,
@@ -204,15 +205,36 @@ async function enterPrewalk(harness: ReturnType<typeof createHarness>) {
   );
 }
 
-async function qualifyHandoff(harness: ReturnType<typeof createHarness>) {
-  await startPlanning(harness);
-  await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+async function recordTaskGraph(harness: ReturnType<typeof createHarness>, prefix = 'task') {
   await harness.emit('tool_call', {
     type: 'tool_call',
-    toolCallId: 'task',
+    toolCallId: `${prefix}-create`,
+    toolName: 'TaskCreate',
+    input: { title: 'Implement the feature', acceptance_criteria: 'Run the relevant tests' },
+  });
+  await harness.emit('tool_call', {
+    type: 'tool_call',
+    toolCallId: `${prefix}-claim`,
     toolName: 'TaskUpdate',
     input: { task_id: 'T-ABC123', status: 'in_progress' },
   });
+}
+
+function taskGraphResults(prefix = 'task') {
+  return [
+    toolResult(`${prefix}-create`, 'TaskCreate'),
+    toolResult(`${prefix}-claim`, 'TaskUpdate', false, { task: { id: 'T-ABC123', status: 'in_progress' } }),
+  ];
+}
+
+async function qualifyHandoff(harness: ReturnType<typeof createHarness>) {
+  await startPlanning(harness);
+  await handoffPlanningRun(harness);
+}
+
+async function handoffPlanningRun(harness: ReturnType<typeof createHarness>) {
+  await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+  await recordTaskGraph(harness);
   await harness.emit('tool_call', {
     type: 'tool_call',
     toolCallId: 'mutation',
@@ -224,12 +246,13 @@ async function qualifyHandoff(harness: ReturnType<typeof createHarness>) {
     turnIndex: 0,
     message: assistant('toolUse', [
       { type: 'text', text: 'Plan' },
-      { type: 'toolCall', id: 'task', name: 'TaskUpdate', arguments: {} },
+      { type: 'toolCall', id: 'task-create', name: 'TaskCreate', arguments: {} },
+      { type: 'toolCall', id: 'task-claim', name: 'TaskUpdate', arguments: {} },
       { type: 'toolCall', id: 'mutation', name: 'edit', arguments: {} },
     ]),
     toolResults: [
+      ...taskGraphResults(),
       toolResult('mutation', 'edit'),
-      toolResult('task', 'TaskUpdate', false, { task: { id: 'T-ABC123', status: 'in_progress' } }),
     ],
   });
 }
@@ -246,7 +269,7 @@ describe('flags and commands', () => {
     expect(harness.capabilities).toEqual([
       expect.objectContaining({
         id: 'prewalk',
-        instructions: expect.stringMatching(/call enter_prewalk.*before repository exploration or mutation.*mutation-capable subagents/s),
+        instructions: expect.stringMatching(/complex repository work.*multi-file changes.*small localized edits.*call enter_prewalk/s),
       }),
     ]);
   });
@@ -262,7 +285,8 @@ describe('flags and commands', () => {
       properties: {},
       additionalProperties: false,
     });
-    expect(tool.description).toContain('creating, editing, moving, renaming, or deleting files');
+    expect(tool.description).toContain('complex repository task');
+    expect(tool.description).toContain('small localized edits');
   });
 
   it('registers namespaced Pi flags with defaults', () => {
@@ -287,7 +311,7 @@ describe('flags and commands', () => {
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.setStatus).toHaveBeenLastCalledWith(
       'prewalk',
-      'Prewalk armed → low',
+      'Prewalk armed',
     );
   });
 
@@ -382,6 +406,7 @@ describe('model entry', () => {
     expect(result.details).toEqual({ phase: 'planning', targetModel: 'low' });
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLANNING_MESSAGE_TYPE);
     expect(harness.setModel).not.toHaveBeenCalled();
+    expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', 'Prewalk planning');
   });
 
   it('rejects entry without a mutation tool or selected planner model', async () => {
@@ -414,6 +439,7 @@ describe('model entry', () => {
     });
 
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 1, timestamp: Date.now() });
+    await recordTaskGraph(harness, 'duplicate-task');
     await harness.emit('tool_call', {
       type: 'tool_call', toolCallId: 'mutation', toolName: 'edit', input: {},
     });
@@ -421,7 +447,7 @@ describe('model entry', () => {
       type: 'turn_end',
       turnIndex: 1,
       message: assistant('toolUse'),
-      toolResults: [toolResult('mutation', 'edit')],
+      toolResults: [...taskGraphResults('duplicate-task'), toolResult('mutation', 'edit')],
     });
     await harness.emit('agent_settled', { type: 'agent_settled' });
 
@@ -447,6 +473,7 @@ describe('model entry', () => {
     expect(harness.setModel).not.toHaveBeenCalled();
 
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 1, timestamp: Date.now() });
+    await recordTaskGraph(harness, 'planned-task');
     await harness.emit('tool_call', {
       type: 'tool_call', toolCallId: 'planned-mutation', toolName: 'edit', input: {},
     });
@@ -454,7 +481,7 @@ describe('model entry', () => {
       type: 'turn_end',
       turnIndex: 1,
       message: assistant('toolUse'),
-      toolResults: [toolResult('planned-mutation', 'edit')],
+      toolResults: [...taskGraphResults('planned-task'), toolResult('planned-mutation', 'edit')],
     });
 
     expect(harness.setModel).toHaveBeenCalledWith(targetModel);
@@ -510,7 +537,7 @@ describe('planning handoff and context', () => {
 
     expect(harness.sendUserMessage).toHaveBeenCalledWith('Task');
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk armed. The next task will plan, make one mutation, then hand off to low.',
+      'Prewalk armed. The next task will plan, initialize Tasks when both task tools are active, make one mutation, then hand off to low.',
       'info',
     );
   });
@@ -546,6 +573,7 @@ describe('planning handoff and context', () => {
     expect(planning.at(-1)?.content).toContain('Use TaskUpdate');
 
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+    await recordTaskGraph(harness);
     await harness.emit('tool_call', {
       type: 'tool_call',
       toolCallId: 'mutation',
@@ -556,13 +584,94 @@ describe('planning handoff and context', () => {
       type: 'turn_end',
       turnIndex: 0,
       message: assistant('toolUse'),
-      toolResults: [toolResult('mutation', 'edit')],
+      toolResults: [...taskGraphResults(), toolResult('mutation', 'edit')],
     });
 
     expect(harness.setModel).toHaveBeenCalledWith(targetModel);
+    expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', 'Prewalk implementing');
     const implementing = await contextMessages(harness, []);
     expect(implementing.at(-1)?.content).toContain('existing session task graph');
     expect(implementing.at(-1)?.content).toContain('verified result');
+  });
+
+  it('waits for the task graph before handing off when both task tools are active', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+
+    await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'early-mutation', toolName: 'edit', input: {},
+    });
+    await harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 0,
+      message: assistant('toolUse'),
+      toolResults: [toolResult('early-mutation', 'edit')],
+    });
+    expect(harness.setModel).not.toHaveBeenCalled();
+
+    await harness.emit('turn_start', { type: 'turn_start', turnIndex: 1, timestamp: Date.now() });
+    await recordTaskGraph(harness, 'gated-task');
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'ready-mutation', toolName: 'edit', input: {},
+    });
+    await harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 1,
+      message: assistant('toolUse'),
+      toolResults: [...taskGraphResults('gated-task'), toolResult('ready-mutation', 'edit')],
+    });
+
+    expect(harness.setModel).toHaveBeenCalledWith(targetModel);
+  });
+
+  it('does not open the task gate after failed task calls', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+
+    await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'failed-create', toolName: 'TaskCreate', input: { title: 'Feature' },
+    });
+    await harness.emit('tool_call', {
+      type: 'tool_call',
+      toolCallId: 'failed-claim',
+      toolName: 'TaskUpdate',
+      input: { task_id: 'T-ABC123', status: 'in_progress' },
+    });
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'failed-task-mutation', toolName: 'edit', input: {},
+    });
+    await harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 0,
+      message: assistant('toolUse'),
+      toolResults: [
+        toolResult('failed-create', 'TaskCreate', true),
+        toolResult('failed-claim', 'TaskUpdate', true),
+        toolResult('failed-task-mutation', 'edit'),
+      ],
+    });
+
+    expect(harness.setModel).not.toHaveBeenCalled();
+  });
+
+  it('keeps mutation-only handoff when the task tools are unavailable', async () => {
+    const harness = createHarness({ activeTools: ['read', 'edit', 'write'] });
+    await startPlanning(harness);
+
+    await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'mutation-only', toolName: 'edit', input: {},
+    });
+    await harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 0,
+      message: assistant('toolUse'),
+      toolResults: [toolResult('mutation-only', 'edit')],
+    });
+
+    expect(harness.setModel).toHaveBeenCalledWith(targetModel);
   });
 
   it('preserves unrelated history while replacing only its own phase message', async () => {
@@ -573,6 +682,7 @@ describe('planning handoff and context', () => {
       toolResult('old-task', 'TaskUpdate', false, { task: { id: 'T-ABC123' } }),
       { role: 'custom', customType: 'other-extension', content: 'keep', display: false, timestamp: 2 },
       { role: 'custom', customType: `${CONTROL_MESSAGE_PREFIX}stale`, content: 'remove', display: false, timestamp: 3 },
+      { role: 'custom', customType: CONTINUATION_MESSAGE_TYPE, content: '', display: false, timestamp: 4 },
     ];
 
     const planning = await contextMessages(harness, original);
@@ -595,21 +705,118 @@ describe('planning handoff and context', () => {
     ]));
   });
 
+  it('keeps planning guidance at a stable context prefix as history grows', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+    const userMessage = { role: 'user', content: 'Task', timestamp: 1 };
+
+    const first = await contextMessages(harness, [userMessage]);
+    expect(first).toEqual([
+      userMessage,
+      expect.objectContaining({ customType: PLANNING_MESSAGE_TYPE }),
+    ]);
+
+    const plannerTurn = assistant('toolUse', [
+      { type: 'toolCall', id: 'read-source', name: 'read', arguments: { path: 'src/index.ts' } },
+    ]);
+    const readResult = toolResult('read-source', 'read');
+    const second = await contextMessages(harness, [userMessage, plannerTurn, readResult]);
+
+    expect(second.slice(0, first.length)).toEqual(first);
+    expect(second.slice(first.length)).toEqual([plannerTurn, readResult]);
+  });
+
+  it('replaces planning controls with stable implementation guidance at handoff', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+    const userMessage = { role: 'user', content: 'Task', timestamp: 1 };
+    const plannerTurn = assistant();
+    const continuationMessage = {
+      role: 'custom',
+      customType: CONTINUATION_MESSAGE_TYPE,
+      content: CONTINUATION_INSTRUCTION,
+      display: false,
+      timestamp: 2,
+    };
+    const planningHistory = [userMessage, plannerTurn, continuationMessage];
+    const planning = await contextMessages(harness, planningHistory);
+    expect(planning.some((message) => message.customType === CONTINUATION_MESSAGE_TYPE)).toBe(true);
+
+    await handoffPlanningRun(harness);
+    const firstImplementation = await contextMessages(harness, planningHistory);
+    expect(firstImplementation).toEqual([
+      userMessage,
+      plannerTurn,
+      expect.objectContaining({ customType: IMPLEMENTATION_MESSAGE_TYPE }),
+    ]);
+
+    const targetTurn = { ...assistant(), model: targetModel.id };
+    const secondImplementation = await contextMessages(
+      harness,
+      [...planningHistory, targetTurn],
+    );
+    expect(secondImplementation.slice(0, firstImplementation.length)).toEqual(firstImplementation);
+    expect(secondImplementation.at(-1)).toEqual(targetTurn);
+
+    await harness.emit('agent_settled', { type: 'agent_settled' });
+    expect(await contextMessages(harness, secondImplementation)).toEqual([
+      userMessage,
+      plannerTurn,
+      targetTurn,
+    ]);
+  });
+
+  it('re-anchors planning guidance when compaction replaces its context prefix', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+    await contextMessages(harness, [{ role: 'user', content: 'Task', timestamp: 1 }]);
+
+    const summary = { role: 'compactionSummary', summary: 'Existing work', timestamp: 2 };
+    const compacted = await contextMessages(harness, [summary]);
+    expect(compacted).toEqual([
+      summary,
+      expect.objectContaining({ customType: PLANNING_MESSAGE_TYPE }),
+    ]);
+
+    const plannerTurn = assistant();
+    const next = await contextMessages(harness, [summary, plannerTurn]);
+    expect(next.slice(0, compacted.length)).toEqual(compacted);
+    expect(next.at(-1)).toEqual(plannerTurn);
+  });
+
   it('queues a hidden continuation once per no-progress stretch', async () => {
     const harness = createHarness();
     await startPlanning(harness);
+    const userMessage = { role: 'user', content: 'Task', timestamp: 1 };
+    const firstContext = await contextMessages(harness, [userMessage]);
+    const stoppedTurn = assistant();
 
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
     await harness.emit('turn_end', {
       type: 'turn_end',
       turnIndex: 0,
-      message: assistant(),
+      message: stoppedTurn,
       toolResults: [],
     });
     expect(harness.sendMessage).toHaveBeenCalledWith(
-      { customType: CONTINUATION_MESSAGE_TYPE, content: '', display: false },
+      {
+        customType: CONTINUATION_MESSAGE_TYPE,
+        content: CONTINUATION_INSTRUCTION,
+        display: false,
+      },
       { deliverAs: 'followUp' },
     );
+    const continuationMessage = {
+      role: 'custom',
+      ...harness.sendMessage.mock.calls[0]![0],
+      timestamp: 2,
+    };
+    const continuedContext = await contextMessages(
+      harness,
+      [userMessage, stoppedTurn, continuationMessage],
+    );
+    expect(continuedContext.slice(0, firstContext.length)).toEqual(firstContext);
+    expect(continuedContext.slice(firstContext.length)).toEqual([stoppedTurn, continuationMessage]);
 
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 1, timestamp: Date.now() });
     await harness.emit('turn_end', {
@@ -676,6 +883,34 @@ describe('model handoff and restoration', () => {
     expect(harness.setModel).toHaveBeenCalledWith(targetModel);
   });
 
+  it('skips a tier handoff when the target is already the planner model', async () => {
+    const harness = createHarness({ currentModel: targetModel, models: [targetModel] });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).not.toHaveBeenCalled();
+    expect(harness.ui.notify).toHaveBeenCalledWith(
+      `Prewalk target ${targetModel.provider}/${targetModel.id} already matches the planner model; continuing without a model handoff.`,
+      'info',
+    );
+    expect(await contextMessages(harness, [])).toEqual([]);
+  });
+
+  it('skips an exact-target handoff when the target is already the planner model', async () => {
+    const harness = createHarness({
+      currentModel: targetModel,
+      flags: { 'prewalk-target-model': `${targetModel.provider}/${targetModel.id}` },
+    });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).not.toHaveBeenCalled();
+    expect(harness.ui.notify).toHaveBeenCalledWith(
+      `Prewalk target ${targetModel.provider}/${targetModel.id} already matches the planner model; continuing without a model handoff.`,
+      'info',
+    );
+  });
+
   it('switches once at turn_end and restores model before thinking at agent_settled', async () => {
     const harness = createHarness();
 
@@ -719,7 +954,7 @@ describe('model handoff and restoration', () => {
     expect(harness.setModel).toHaveBeenCalledTimes(1);
     expect(harness.ui.setStatus).toHaveBeenLastCalledWith(
       'prewalk',
-      'Prewalk implementing · exit pending → low',
+      'Prewalk implementing · exit pending',
     );
     expect(harness.ui.notify).toHaveBeenCalledWith('Prewalk exit is already pending.', 'info');
 
@@ -743,7 +978,7 @@ describe('model handoff and restoration', () => {
     await vi.waitFor(() => {
       expect(harness.ui.setStatus).toHaveBeenLastCalledWith(
         'prewalk',
-        'Prewalk restoring → low',
+        'Prewalk restoring',
       );
     });
     const exit = harness.command.handler('exit', harness.ctx);
@@ -903,6 +1138,7 @@ describe('model failures and manual control', () => {
     const harness = createHarness();
     await startPlanning(harness);
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+    await recordTaskGraph(harness, 'raced-task');
     await harness.emit('tool_call', {
       type: 'tool_call', toolCallId: 'mutation', toolName: 'edit', input: {},
     });
@@ -924,7 +1160,7 @@ describe('model failures and manual control', () => {
       type: 'turn_end',
       turnIndex: 0,
       message: assistant('toolUse'),
-      toolResults: [toolResult('mutation', 'edit')],
+      toolResults: [...taskGraphResults('raced-task'), toolResult('mutation', 'edit')],
     });
     await vi.waitFor(() => expect(harness.setModel).toHaveBeenCalledWith(targetModel));
     harness.setCurrentModel(externalModel);
@@ -979,6 +1215,7 @@ describe('model failures and manual control', () => {
     const harness = createHarness();
     await startPlanning(harness);
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+    await recordTaskGraph(harness, 'shutdown-task');
     await harness.emit('tool_call', {
       type: 'tool_call', toolCallId: 'mutation', toolName: 'edit', input: {},
     });
@@ -1000,7 +1237,7 @@ describe('model failures and manual control', () => {
       type: 'turn_end',
       turnIndex: 0,
       message: assistant('toolUse'),
-      toolResults: [toolResult('mutation', 'edit')],
+      toolResults: [...taskGraphResults('shutdown-task'), toolResult('mutation', 'edit')],
     });
     await vi.waitFor(() => expect(harness.setModel).toHaveBeenCalledWith(targetModel));
     const shutdown = harness.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' });

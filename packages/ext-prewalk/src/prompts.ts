@@ -4,6 +4,8 @@ export const IMPLEMENTATION_MESSAGE_TYPE = `${CONTROL_MESSAGE_PREFIX}implementat
 export const CONTINUATION_MESSAGE_TYPE = `${CONTROL_MESSAGE_PREFIX}continuation`;
 export const MAX_AUTOMATIC_CONTINUATIONS = 3;
 
+export const CONTINUATION_INSTRUCTION = `Continue from the existing findings and task progress without repeating prior analysis. Take the next required tool action and proceed toward the focused mutation.`;
+
 export const PLANNING_INSTRUCTION = `Explore the repository thoroughly and determine the complete work required for the user's request.
 
 Follow this order:

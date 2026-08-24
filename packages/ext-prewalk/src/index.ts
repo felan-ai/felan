@@ -11,6 +11,7 @@ import {
 } from '@felan-ai/agent-core';
 import { Type } from 'typebox';
 import {
+  CONTINUATION_INSTRUCTION,
   CONTINUATION_MESSAGE_TYPE,
   CONTROL_MESSAGE_PREFIX,
   IMPLEMENTATION_MESSAGE_TYPE,
@@ -53,6 +54,20 @@ interface ModelTransition {
   externalThinkingLevel?: PlannerThinkingLevel;
 }
 
+type GuidedPhase = Extract<PrewalkPhase, 'planning' | 'implementing'>;
+
+interface PhaseContextAnchor {
+  phase: GuidedPhase;
+  afterKey?: string;
+  fallbackIndex: number;
+  instructionTimestamp: number;
+}
+
+interface ContextBuildResult {
+  messages: unknown[];
+  anchor?: PhaseContextAnchor;
+}
+
 const DEFAULT_CONFIG: PrewalkConfig = {
   targetModel: 'low',
   restorePlanner: true,
@@ -66,7 +81,7 @@ const EnterPrewalkParams = Type.Object({}, { additionalProperties: false });
 const prewalkExtension: FelanExtension = (pi): void => {
   pi.registerCapability({
     id: 'prewalk',
-    instructions: 'Use Prewalk for user tasks that require creating, editing, moving, renaming, or deleting files. When such a task begins and no injected planning or implementation guidance is already present, call enter_prewalk as the first and only tool call before repository exploration or mutation. Do not call it when the context already directs you to explore and build a task graph or to continue an existing session task graph, and do not enter Prewalk for read-only requests. The tool is available in the root session and mutation-capable subagents. During an active run, follow the injected planning, task-tracking, implementation, and verification guidance. The user can exit with /prewalk exit (or /prewalk off).',
+    instructions: 'Use Prewalk for complex repository work that benefits from substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification. Do not use it for small localized edits, routine one-file fixes, read-only requests, or when injected planning or implementation guidance is already present. When a complex file-changing task begins without that guidance, call enter_prewalk as the first and only tool call before repository exploration or mutation. The tool is available in the root session and mutation-capable subagents. During an active run, follow the injected planning, task-tracking, implementation, and verification guidance. The user can exit with /prewalk exit (or /prewalk off).',
   });
 
   pi.registerFlag(TARGET_MODEL_FLAG, {
@@ -90,6 +105,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
   let modelTransition: ModelTransition | undefined;
   let handoffPromise: Promise<void> | undefined;
   let restorationPromise: Promise<boolean> | undefined;
+  let phaseContextAnchor: PhaseContextAnchor | undefined;
 
   function refreshConfig(): void {
     loadedConfig = loadConfig(pi);
@@ -122,7 +138,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
       ? ` · ${continuationCount}/3`
       : '';
     const exitText = exitRequested ? ' · exit pending' : '';
-    ctx.ui.setStatus('prewalk', `Prewalk ${state.phase}${continuationText}${exitText} → ${targetModel.key}`);
+    ctx.ui.setStatus('prewalk', `Prewalk ${state.phase}${continuationText}${exitText}`);
   }
 
   function publishStatus(ctx: ExtensionContext): void {
@@ -138,6 +154,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
   function clearAutomation(ctx: ExtensionContext): void {
     state = { phase: 'idle' };
     plannerSnapshot = undefined;
+    phaseContextAnchor = undefined;
     exitRequested = false;
     updateStatus(ctx);
   }
@@ -166,7 +183,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
 
     state = { phase: 'armed' };
     updateStatus(ctx);
-    notify(ctx, `Prewalk armed. The next task will plan, make one mutation, then hand off to ${targetModel.key}.`);
+    notify(ctx, `Prewalk armed. The next task will plan, initialize Tasks when both task tools are active, make one mutation, then hand off to ${targetModel.key}.`);
     return true;
   }
 
@@ -181,8 +198,16 @@ const prewalkExtension: FelanExtension = (pi): void => {
       modelKey: modelKey(ctx.model),
       thinkingLevel: pi.getThinkingLevel(),
     };
+    phaseContextAnchor = undefined;
     exitRequested = false;
-    state = { phase: 'planning', run: createRunState({ handoffArmed }) };
+    const activeTools = pi.getActiveTools();
+    state = {
+      phase: 'planning',
+      run: createRunState({
+        handoffArmed,
+        taskGateRequired: activeTools.includes('TaskCreate') && activeTools.includes('TaskUpdate'),
+      }),
+    };
     updateStatus(ctx);
     return true;
   }
@@ -198,6 +223,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
     const run = state.run;
     const snapshot = plannerSnapshot;
     state = { phase: 'handoff', run };
+    phaseContextAnchor = undefined;
     updateStatus(ctx);
 
     let target: PlannerModel;
@@ -234,6 +260,11 @@ const prewalkExtension: FelanExtension = (pi): void => {
       }
     }
     const targetKey = formatModelReference(target);
+    if (sameModel(ctx.model, target)) {
+      clearAutomation(ctx);
+      notify(ctx, `Prewalk target ${targetKey} already matches the planner model; continuing without a model handoff.`);
+      return;
+    }
 
     try {
       const switched = await setModelPreservingExternalSelection(target, ctx);
@@ -376,8 +407,8 @@ const prewalkExtension: FelanExtension = (pi): void => {
   pi.registerTool({
     name: ENTER_PREWALK_TOOL,
     label: 'Enter Prewalk',
-    description: 'Enter same-session Prewalk for the current user task. Call this once, as the only tool call in the response and before exploration or mutation, when completing the request requires creating, editing, moving, renaming, or deleting files. Do not call it for read-only work or when injected guidance already directs planning or implementation.',
-    promptSnippet: 'Enter Prewalk before starting a task that will mutate files',
+    description: 'Enter same-session Prewalk for a complex repository task that requires substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification. Do not call it for small localized edits, routine one-file fixes, read-only work, or when injected guidance already directs planning or implementation. Call this once, as the only tool call in the response and before exploration or mutation.',
+    promptSnippet: 'Enter Prewalk for complex repository work before exploration',
     executionMode: 'sequential',
     parameters: EnterPrewalkParams,
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
@@ -399,7 +430,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
       return {
         content: [{
           type: 'text',
-          text: `Prewalk entered for the current task. Follow the injected planning guidance, keep the task graph concise, and make one focused mutation before the handoff to ${targetModel.key}.`,
+          text: `Prewalk entered for the current task. Follow the injected planning guidance, initialize Tasks when both task tools are active, keep the task graph concise, and make one focused mutation before the handoff to ${targetModel.key}.`,
         }],
         details: { phase: 'planning', targetModel: targetModel.key },
       };
@@ -452,7 +483,9 @@ const prewalkExtension: FelanExtension = (pi): void => {
   });
 
   pi.on('context', (event) => {
-    return { messages: buildContextMessages(event.messages, state.phase) as typeof event.messages };
+    const result = buildContextMessages(event.messages, state.phase, phaseContextAnchor);
+    phaseContextAnchor = result.anchor;
+    return { messages: result.messages as typeof event.messages };
   });
 
   pi.on('turn_start', () => {
@@ -467,7 +500,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
       phase: 'planning',
       run: recordToolCall(
         state.run,
-        { toolCallId: event.toolCallId, toolName: event.toolName },
+        { toolCallId: event.toolCallId, toolName: event.toolName, input: event.input },
       ),
     };
   });
@@ -494,7 +527,7 @@ const prewalkExtension: FelanExtension = (pi): void => {
       pi.sendMessage(
         {
           customType: CONTINUATION_MESSAGE_TYPE,
-          content: '',
+          content: CONTINUATION_INSTRUCTION,
           display: false,
         },
         { deliverAs: 'followUp' },
@@ -545,35 +578,87 @@ const prewalkExtension: FelanExtension = (pi): void => {
   });
 };
 
-function buildContextMessages(messages: readonly unknown[], phase: PrewalkPhase): unknown[] {
+function buildContextMessages(
+  messages: readonly unknown[],
+  phase: PrewalkPhase,
+  currentAnchor?: PhaseContextAnchor,
+): ContextBuildResult {
   const successfulEntries = successfulEntryCallIds(messages);
   const filtered: unknown[] = [];
   for (const message of structuredClone(messages)) {
-    if (isControlMessage(message) || isSuccessfulEntryResult(message, successfulEntries)) continue;
+    if (isControlMessage(message)) {
+      if (phase === 'planning' && isCurrentContinuationMessage(message)) filtered.push(message);
+      continue;
+    }
+    if (isSuccessfulEntryResult(message, successfulEntries)) continue;
     const stripped = stripSuccessfulEntryCall(message, successfulEntries);
     if (stripped !== undefined) filtered.push(stripped);
   }
-  const instruction = phase === 'planning'
+  const guidedPhase = phase === 'planning' || phase === 'implementing' ? phase : undefined;
+  const instruction = guidedPhase === 'planning'
     ? { customType: PLANNING_MESSAGE_TYPE, content: PLANNING_INSTRUCTION }
-    : phase === 'implementing'
+    : guidedPhase === 'implementing'
       ? {
           customType: IMPLEMENTATION_MESSAGE_TYPE,
           content: VERIFICATION_INSTRUCTION,
         }
       : undefined;
 
-  if (!instruction) return filtered;
+  if (guidedPhase === undefined || instruction === undefined) return { messages: filtered };
 
-  return [
-    ...filtered,
-    {
-      role: 'custom',
-      customType: instruction.customType,
-      content: instruction.content,
-      display: false,
-      timestamp: Date.now(),
-    },
-  ];
+  const { anchor, index } = resolvePhaseContextAnchor(filtered, guidedPhase, currentAnchor);
+  const phaseMessage = {
+    role: 'custom',
+    customType: instruction.customType,
+    content: instruction.content,
+    display: false,
+    timestamp: anchor.instructionTimestamp,
+  };
+
+  return {
+    messages: [...filtered.slice(0, index), phaseMessage, ...filtered.slice(index)],
+    anchor,
+  };
+}
+
+function resolvePhaseContextAnchor(
+  messages: readonly unknown[],
+  phase: GuidedPhase,
+  currentAnchor?: PhaseContextAnchor,
+): { anchor: PhaseContextAnchor; index: number } {
+  if (currentAnchor?.phase === phase) {
+    if (currentAnchor.afterKey !== undefined) {
+      const anchoredIndex = messages.findIndex(
+        (message) => contextMessageKey(message) === currentAnchor.afterKey,
+      );
+      if (anchoredIndex >= 0) return { anchor: currentAnchor, index: anchoredIndex + 1 };
+    } else if (currentAnchor.fallbackIndex <= messages.length) {
+      return { anchor: currentAnchor, index: currentAnchor.fallbackIndex };
+    }
+  }
+
+  const fallbackIndex = messages.length;
+  const afterKey = fallbackIndex > 0 ? contextMessageKey(messages[fallbackIndex - 1]) : undefined;
+  const anchor: PhaseContextAnchor = {
+    phase,
+    fallbackIndex,
+    instructionTimestamp: Date.now(),
+    ...(afterKey === undefined ? {} : { afterKey }),
+  };
+  return { anchor, index: fallbackIndex };
+}
+
+function contextMessageKey(message: unknown): string | undefined {
+  if (!isRecord(message) || typeof message.role !== 'string') return undefined;
+  const timestamp = message.timestamp;
+  if (typeof timestamp !== 'number' && typeof timestamp !== 'string') return undefined;
+
+  return JSON.stringify([
+    message.role,
+    timestamp,
+    typeof message.toolCallId === 'string' ? message.toolCallId : '',
+    typeof message.customType === 'string' ? message.customType : '',
+  ]);
 }
 
 function isTextOnlyCompletion(message: unknown): boolean {
@@ -589,6 +674,13 @@ function isControlMessage(message: unknown): boolean {
     && message.role === 'custom'
     && typeof message.customType === 'string'
     && message.customType.startsWith(CONTROL_MESSAGE_PREFIX);
+}
+
+function isCurrentContinuationMessage(message: unknown): boolean {
+  return isRecord(message)
+    && message.role === 'custom'
+    && message.customType === CONTINUATION_MESSAGE_TYPE
+    && message.content === CONTINUATION_INSTRUCTION;
 }
 
 function successfulEntryCallIds(messages: readonly unknown[]): ReadonlySet<string> {
@@ -643,6 +735,12 @@ function stripSuccessfulEntryCall(
 
 function modelKey(model: ExtensionContext['model']): string {
   return model ? `${model.provider}/${model.id}` : 'none';
+}
+
+function sameModel(left: ExtensionContext['model'], right: ModelReference): boolean {
+  return left !== undefined
+    && left.provider.toLowerCase() === right.provider.toLowerCase()
+    && left.id.toLowerCase() === right.id.toLowerCase();
 }
 
 function parseTargetModel(value: string): TargetModel | undefined {

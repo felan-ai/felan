@@ -24,8 +24,10 @@ new nested directory on the path for:
 1. `AGENTS.md`
 2. `CLAUDE.md`
 
-Loaded files affect subsequent model calls, are deduplicated for the session,
-and are re-injected after context compaction. Shell reads do not trigger
+Loaded files affect subsequent model calls and are deduplicated for the session.
+Unchanged instructions stay at one stable hidden context position while later
+conversation history appends after them. Newly discovered instructions and
+context compaction re-anchor the updated bundle once. Shell reads do not trigger
 discovery, and a file outside the session cwd cannot introduce nested project
 instructions.
 

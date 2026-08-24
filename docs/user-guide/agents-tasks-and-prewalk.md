@@ -89,8 +89,11 @@ tracker or durable cross-session backlog.
 Prewalk is a same-session planner-to-implementer handoff. It is not a read-only
 plan mode and does not introduce an approval gate.
 
-For an ordinary file-changing request the model can call `enter_prewalk` before
-exploration. You can also enter explicitly:
+For complex repository work that benefits from substantial exploration,
+coordinated multi-file changes, dependency-aware planning, or broad verification,
+the model can call `enter_prewalk` before exploration. Small localized edits and
+routine one-file fixes should normally stay on the regular path. You can also
+enter explicitly:
 
 ```text
 /prewalk refactor the parser and verify the tests
@@ -103,7 +106,8 @@ thinking level are restored after the run settles by default.
 ### Lifecycle
 
 1. The planner explores the relevant repository surface.
-2. It creates a concise task graph and claims the first ready task.
+2. When both task tools are active, it creates a concise task graph and claims
+   the first ready task.
 3. It makes one focused successful `edit`, `write`, or Codex `apply_patch`.
 4. At the turn boundary, Felan switches the next model request to the configured
    target.
@@ -111,9 +115,20 @@ thinking level are restored after the run settles by default.
    task graph, and verifies the work.
 6. Felan restores the planner selection after the run settles.
 
+Within planning or implementation, Prewalk injects the current hidden phase
+guidance once at a stable context position while later responses and tool
+results append after it. If the planner stops before useful tool progress,
+Prewalk can append a short hidden continuation instead of repeating the full
+planning instructions. Phase guidance is replaced at handoff and removed after
+the run.
+
 Shell commands do not qualify as the first mutation because they are also used
-for exploration and verification. A failed mutation does not trigger handoff.
-Task use is directed by Prewalk guidance but not enforced by its state machine.
+for exploration and verification. When both task tools are active, successful
+`TaskCreate` and `TaskUpdate` calls claiming `in_progress` work must precede the
+successful mutation; failed or unrelated task calls do not open that gate. If
+the task tools are unavailable, mutation-only handoff remains available. A
+failed mutation does not trigger handoff. Prewalk does not inspect `TaskList`,
+`TaskGet`, todo, or Beads activity.
 
 ### When not to use it
 

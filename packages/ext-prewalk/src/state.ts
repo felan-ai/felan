@@ -9,6 +9,12 @@ export interface PrewalkState {
 
 export interface PrewalkRunState {
   mutationCallIds: string[];
+  taskCreateCallIds: string[];
+  taskClaimCallIds: string[];
+  taskCreateSucceeded: boolean;
+  taskClaimSucceeded: boolean;
+  taskGateRequired: boolean;
+  taskGraphReady: boolean;
   continuationCount: number;
   continuationArmed: boolean;
   handoffArmed: boolean;
@@ -17,6 +23,7 @@ export interface PrewalkRunState {
 export interface ToolCallSummary {
   toolCallId: string;
   toolName: string;
+  input?: unknown;
 }
 
 export interface ToolResultSummary {
@@ -42,9 +49,19 @@ export function validateArmingTools(activeTools: readonly string[]): ValidationR
     : { ok: false, reason: 'Prewalk requires an active mutation tool (edit, write, or apply_patch).' };
 }
 
-export function createRunState(options: { handoffArmed?: boolean } = {}): PrewalkRunState {
+export function createRunState(options: {
+  handoffArmed?: boolean;
+  taskGateRequired?: boolean;
+} = {}): PrewalkRunState {
+  const taskGateRequired = options.taskGateRequired ?? false;
   return {
     mutationCallIds: [],
+    taskCreateCallIds: [],
+    taskClaimCallIds: [],
+    taskCreateSucceeded: false,
+    taskClaimSucceeded: false,
+    taskGateRequired,
+    taskGraphReady: !taskGateRequired,
     continuationCount: 0,
     continuationArmed: true,
     handoffArmed: options.handoffArmed ?? true,
@@ -55,16 +72,29 @@ export function beginTurn(state: PrewalkRunState): PrewalkRunState {
   return {
     ...state,
     mutationCallIds: [],
+    taskCreateCallIds: [],
+    taskClaimCallIds: [],
     handoffArmed: true,
   };
 }
 
 export function recordToolCall(state: PrewalkRunState, call: ToolCallSummary): PrewalkRunState {
-  if (!MUTATION_TOOL_NAMES.has(call.toolName)) return state;
+  const isMutation = MUTATION_TOOL_NAMES.has(call.toolName);
+  const isTaskCreate = call.toolName === 'TaskCreate';
+  const isTaskClaim = call.toolName === 'TaskUpdate' && isInProgressClaim(call.input);
+  if (!isMutation && !isTaskCreate && !isTaskClaim) return state;
 
   return {
     ...state,
-    mutationCallIds: [...state.mutationCallIds, call.toolCallId],
+    mutationCallIds: isMutation
+      ? [...state.mutationCallIds, call.toolCallId]
+      : state.mutationCallIds,
+    taskCreateCallIds: isTaskCreate
+      ? [...state.taskCreateCallIds, call.toolCallId]
+      : state.taskCreateCallIds,
+    taskClaimCallIds: isTaskClaim
+      ? [...state.taskClaimCallIds, call.toolCallId]
+      : state.taskClaimCallIds,
   };
 }
 
@@ -74,7 +104,13 @@ export function reduceTurn(
   options: { allowContinuation?: boolean } = {},
 ): TurnDecision {
   const successfulIds = new Set(results.filter((result) => !result.isError).map((result) => result.toolCallId));
+  const taskCreateSucceeded = state.taskCreateSucceeded
+    || hasSuccessfulCall(state.taskCreateCallIds, successfulIds);
+  const taskClaimSucceeded = state.taskClaimSucceeded
+    || hasSuccessfulCall(state.taskClaimCallIds, successfulIds);
+  const taskGraphReady = !state.taskGateRequired || (taskCreateSucceeded && taskClaimSucceeded);
   const shouldHandoff = state.handoffArmed
+    && taskGraphReady
     && state.mutationCallIds.some((toolCallId) => successfulIds.has(toolCallId));
 
   let continuationArmed = results.some((result) => !result.isError) || state.continuationArmed;
@@ -96,6 +132,12 @@ export function reduceTurn(
   return {
     state: {
       mutationCallIds: [],
+      taskCreateCallIds: [],
+      taskClaimCallIds: [],
+      taskCreateSucceeded,
+      taskClaimSucceeded,
+      taskGateRequired: state.taskGateRequired,
+      taskGraphReady,
       continuationCount,
       continuationArmed,
       handoffArmed: state.handoffArmed,
@@ -103,4 +145,16 @@ export function reduceTurn(
     shouldHandoff,
     shouldContinue,
   };
+}
+
+function hasSuccessfulCall(callIds: readonly string[], successfulIds: ReadonlySet<string>): boolean {
+  return callIds.some((callId) => successfulIds.has(callId));
+}
+
+function isInProgressClaim(input: unknown): boolean {
+  return isRecord(input) && input.status === 'in_progress';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
