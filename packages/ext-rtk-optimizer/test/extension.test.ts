@@ -1,8 +1,6 @@
 import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import { RTK_OPTIMIZER_CONFIG_FILE } from '../src/config.js';
 import rtkOptimizerExtension from '../src/index.js';
-import { DEFAULT_RTK_OPTIMIZER_CONFIG } from '../src/types.js';
 import { MemoryRuntime, result } from './test-runtime.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
@@ -144,10 +142,7 @@ describe('RTK optimizer extension', () => {
 
   it('suggests Codex rewrites without mutating the command', async () => {
     const runtime = rtkRuntime();
-    const config = structuredClone(DEFAULT_RTK_OPTIMIZER_CONFIG);
-    config.mode = 'suggest';
-    runtime.files.set(RTK_OPTIMIZER_CONFIG_FILE, new TextEncoder().encode(JSON.stringify(config)));
-    const harness = await createHarness(runtime);
+    const harness = await createHarness(runtime, true, { mode: 'suggest' });
     await harness.emit('session_start', { reason: 'startup' });
     const event = { toolName: 'exec_command', input: { cmd: 'git status' } };
 
@@ -179,18 +174,6 @@ describe('RTK optimizer extension', () => {
     expect(harness.statuses.at(-1)).toEqual(['rtk-install', undefined]);
   });
 
-  it('reports invalid shared configuration in headless sessions', async () => {
-    const runtime = rtkRuntime();
-    runtime.files.set(RTK_OPTIMIZER_CONFIG_FILE, new TextEncoder().encode('{ invalid'));
-    const harness = await createHarness(runtime, false);
-
-    await harness.emit('session_start', { reason: 'startup' });
-
-    expect(harness.notifications).toContainEqual([
-      expect.stringContaining('Invalid /agent-storage/rtk-optimizer/config.json'),
-      'warning',
-    ]);
-  });
 });
 
 function rtkRuntime(): MemoryRuntime {
@@ -202,7 +185,7 @@ function rtkRuntime(): MemoryRuntime {
   });
 }
 
-async function createHarness(runtime: MemoryRuntime, hasUI = true) {
+async function createHarness(runtime: MemoryRuntime, hasUI = true, config: Record<string, unknown> = {}) {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
   const notifications: Array<[string, string | undefined]> = [];
@@ -219,6 +202,7 @@ async function createHarness(runtime: MemoryRuntime, hasUI = true) {
   const pi = {
     runtime,
     agentDir: '/agent',
+    config,
     registerCapability: vi.fn(),
     registerCommand: (name: string, command: { handler: (args: string, ctx: any) => Promise<void> }) => {
       commands.set(name, command);

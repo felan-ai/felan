@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SettingsManager } from '@felan-ai/agent-core';
-import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
-import { afterEach, describe, expect, it } from 'vitest';
+import type { ExtensionConfigDefinition, SettingsManager } from '@felan-ai/agent-core';
+import type { Component, Focusable } from '@earendil-works/pi-tui';
+import { initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   createLocalSettingsManager,
   getDependencyOnboardingChoice,
@@ -14,10 +15,19 @@ import {
   isBuiltinExtensionEnabled,
   setBuiltinExtensionEnabled,
   setDependencyOnboardingChoice,
+  getExtensionConfigOverrides,
+  setExtensionConfigValue,
   setLocalMemoryProcessingEnabled,
 } from '../src/settings.js';
+import {
+  formatExtensionSettingDisplayValue,
+  installFelanSettingsCommand,
+  parseExtensionSettingValue,
+} from '../src/extension-settings.js';
 
 const temporaryPaths: string[] = [];
+
+beforeAll(() => initTheme('dark', false));
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
@@ -142,6 +152,94 @@ describe('local settings', () => {
     expect(getLocalMemoryProcessingEnabled(settingsWith({}))).toBe(true);
     expect(() => getLocalMemoryProcessingEnabled(settingsWith({ felanTui: { memoryProcessing: 'yes' } })))
       .toThrow('felanTui.memoryProcessing must be a boolean');
+  });
+
+  it('persists namespaced extension configuration without replacing unrelated settings', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ defaultModel: 'model', outputStyle: 'concise' }));
+
+    await setExtensionConfigValue(agentDir, 'prewalk', 'entryApproval', 'always');
+
+    const settings = getFelanSettings(createLocalSettingsManager(root, agentDir));
+    expect(settings.extensionConfig?.prewalk?.entryApproval).toBe('always');
+    expect(getExtensionConfigOverrides(settings)).toEqual([{
+      extensionId: 'prewalk',
+      values: { entryApproval: 'always' },
+      source: 'settings.json.extensionConfig.prewalk',
+    }]);
+  });
+
+  it('redacts sensitive extension values in settings presentation', async () => {
+    const field = {
+      type: 'string' as const,
+      default: '',
+      description: 'Credential source',
+      sensitive: true,
+    };
+    expect(formatExtensionSettingDisplayValue(field, '$OPENAI_API_KEY')).toBe('configured');
+    expect(formatExtensionSettingDisplayValue(field, '')).toBe('not set');
+    expect(parseExtensionSettingValue(field, '')).toBe('');
+    expect(parseExtensionSettingValue(field, '$OPENAI_API_KEY')).toBe('$OPENAI_API_KEY');
+  });
+
+  it('fuzzy-searches extension settings by extension and setting names', () => {
+    const definitions: readonly ExtensionConfigDefinition[] = [
+      {
+        id: 'webAccess',
+        title: 'Web Access',
+        fields: {
+          openaiApiKey: {
+            type: 'string',
+            default: '',
+            label: 'OpenAI API key',
+            description: 'OpenAI credential source',
+          },
+        },
+      },
+      {
+        id: 'rtkOptimizer',
+        title: 'RTK Optimizer',
+        fields: {
+          mode: {
+            type: 'string',
+            default: 'rewrite',
+            label: 'Rewrite mode',
+            description: 'Command rewrite mode',
+          },
+        },
+      },
+    ];
+    const openSettings = (): Component => {
+      let selector: { component: Component; focus: Focusable } | undefined;
+      const mode = {
+        showSettingsSelector() {},
+        showSelector(create: (done: () => void) => { component: Component; focus: Focusable }) {
+          selector = create(() => {});
+        },
+      };
+      installFelanSettingsCommand(mode, {
+        agentDir: '/tmp/.felan',
+        settingsManager: settingsWith({}),
+        definitions,
+      });
+      mode.showSettingsSelector();
+      if (!selector) throw new Error('Settings selector was not created');
+      return selector.component;
+    };
+
+    const extensionSearch = openSettings();
+    extensionSearch.handleInput?.('wbacc');
+    const extensionResults = extensionSearch.render(100).join('\n');
+    expect(extensionResults).toContain('Web Access: OpenAI API key');
+    expect(extensionResults).not.toContain('RTK Optimizer: Rewrite mode');
+
+    const settingSearch = openSettings();
+    settingSearch.handleInput?.('rtk mode');
+    const settingResults = settingSearch.render(100).join('\n');
+    expect(settingResults).toContain('RTK Optimizer: Rewrite mode');
+    expect(settingResults).not.toContain('Web Access: OpenAI API key');
   });
 });
 

@@ -1,5 +1,13 @@
 import type { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { RunLocalFelanOptions } from './application.js';
+import {
+  getExtensionConfigCliOptions,
+  parseExtensionConfigCliValue,
+  type ExtensionConfigOverride,
+} from '@felan-ai/agent-core';
+import { loadLocalExtensionConfigDefinitions, resolveBuiltinExtensionPackages } from './extensions.js';
+import { createLocalSettingsManager, getFelanSettings } from './settings.js';
+import { getLocalAgentDir } from './runtime.js';
 import { runFelanUpdate } from './update.js';
 import { FELAN_VERSION } from './version.js';
 
@@ -12,7 +20,7 @@ export interface CliDependencies {
   readonly update?: () => Promise<number>;
 }
 
-const help = `Usage: felan [options] [message]
+const help = (configOptions: readonly ReturnType<typeof getExtensionConfigCliOptions>[number][] = []) => `Usage: felan [options] [message]
 
 Options:
   -c, --continue     Continue the most recent session for this directory
@@ -23,7 +31,8 @@ Options:
   update             Update a global npm installation of Felan
   -h, --help         Show this help
   -v, --version      Print the Felan version
-  --verbose          Show verbose startup details`;
+  --verbose          Show verbose startup details
+${configOptions.map((option) => `  --${option.name}${option.configField.type === 'boolean' ? '' : ` <${option.configField.values?.join('|') ?? option.configField.type}>`}  ${option.configField.description}`).join('\n')}`;
 
 export async function runCli(args: readonly string[], dependencies: CliDependencies = {}): Promise<number> {
   const writeOutput = dependencies.writeOutput ?? ((line) => console.log(line));
@@ -43,6 +52,11 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   let verbose = false;
   const messageParts: string[] = [];
   let positionalOnly = false;
+  const cliOverrides = new Map<string, Record<string, unknown>>();
+  const startupSettings = createLocalSettingsManager(process.cwd(), getLocalAgentDir());
+  const enabledPackages = resolveBuiltinExtensionPackages(getFelanSettings(startupSettings).builtinExtensions);
+  const configOptions = getExtensionConfigCliOptions(await loadLocalExtensionConfigDefinitions(enabledPackages));
+  const configByName = new Map(configOptions.map((option) => [option.name, option]));
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -75,7 +89,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     } else if (argument === '--verbose') {
       verbose = true;
     } else if (argument === '-h' || argument === '--help') {
-      writeOutput(help);
+      writeOutput(help(configOptions));
       return 0;
     } else if (argument === '-v' || argument === '--version') {
       writeOutput(FELAN_VERSION);
@@ -92,6 +106,44 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       writeOutput('Runtime: host');
       writeOutput('Credentials: local');
       return 0;
+    } else if (argument.startsWith('--no-')) {
+      const option = configByName.get(argument.slice('--no-'.length));
+      if (!option || option.configField.type !== 'boolean') {
+        writeError(`Unknown option: ${argument}`);
+        return 1;
+      }
+      const values = cliOverrides.get(option.extensionId) ?? {};
+      values[option.field] = false;
+      cliOverrides.set(option.extensionId, values);
+    } else if (argument.startsWith('--')) {
+      const equals = argument.indexOf('=');
+      const name = argument.slice(2, equals === -1 ? undefined : equals);
+      const option = configByName.get(name);
+      if (option) {
+        let raw: string | boolean;
+        if (equals !== -1) raw = argument.slice(equals + 1);
+        else if (option.configField.type === 'boolean') raw = true;
+        else {
+          const value = args[index + 1];
+          if (value === undefined || value.startsWith('-')) {
+            writeError(`--${name} requires a value`);
+            return 1;
+          }
+          raw = value;
+          index += 1;
+        }
+        try {
+          const values = cliOverrides.get(option.extensionId) ?? {};
+          values[option.field] = parseExtensionConfigCliValue(option, raw);
+          cliOverrides.set(option.extensionId, values);
+        } catch (error) {
+          writeError(error instanceof Error ? error.message : String(error));
+          return 1;
+        }
+      } else {
+        writeError(`Unknown option: ${argument}`);
+        return 1;
+      }
     } else if (argument.startsWith('-')) {
       writeError(`Unknown option: ${argument}`);
       return 1;
@@ -134,6 +186,13 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     verbose,
     ...(sessionManager === undefined ? {} : { sessionManager }),
     ...(messageParts.length === 0 ? {} : { initialMessage: messageParts.join(' ') }),
+    ...(cliOverrides.size === 0 ? {} : {
+      extensionConfigOverrides: [...cliOverrides].map(([extensionId, values]) => ({
+        extensionId,
+        values,
+        source: 'CLI',
+      })) satisfies ExtensionConfigOverride[],
+    }),
   });
   return 0;
 }

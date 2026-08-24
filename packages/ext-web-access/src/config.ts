@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 import type { ProviderSelection } from './types.js';
 
 export interface WebAccessConfig {
@@ -31,28 +30,39 @@ export interface WebAccessConfig {
   };
 }
 
-export function configPath(agentDir: string): string {
-  return join(agentDir, 'web-search.json');
-}
+export const WEB_ACCESS_CONFIG = defineExtensionConfig({
+  id: 'webAccess',
+  title: 'Web access',
+  fields: {
+    provider: configField.json({ default: 'auto', description: 'Default web search provider', validate: validateProvider }),
+    searchProvider: configField.json({ default: null, description: 'Legacy provider alias', validate: (value) => value === null ? undefined : validateProvider(value) }),
+    openaiApiKey: configField.string({ default: '', description: 'OpenAI credential source', sensitive: true }),
+    openaiSearchModel: configField.string({ default: '', description: 'OpenAI web search model' }),
+    exaApiKey: configField.string({ default: '', description: 'Exa credential source', sensitive: true }),
+    braveApiKey: configField.string({ default: '', description: 'Brave credential source', sensitive: true }),
+    searxngBaseUrl: configField.string({ default: '', description: 'SearXNG base URL', validate: validateOptionalUrl }),
+    searxngHeaders: configField.json({ default: {}, description: 'SearXNG request headers', sensitive: true, validate: validateHeaders }),
+    pdf: configField.json({ default: {}, description: 'PDF extraction limits', validate: validatePdf }),
+    githubClone: configField.json({ default: {}, description: 'GitHub clone limits', validate: validateGithubClone }),
+    fetchContent: configField.json({ default: {}, description: 'Fetch domain policy', validate: validateFetchContent }),
+    ssrf: configField.json({ default: {}, description: 'SSRF allow ranges', validate: validateSsrf }),
+  },
+});
 
-export async function loadConfig(agentDir: string): Promise<WebAccessConfig> {
-  const path = configPath(agentDir);
-  let raw: string;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch (error) {
-    if (isMissingFile(error)) return {};
-    throw new Error(`Failed to read ${path}: ${errorMessage(error)}`);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`Failed to parse ${path}: ${errorMessage(error)}`);
-  }
-  if (!isRecord(parsed)) throw new Error(`${path} must contain a JSON object`);
-  return parsed as WebAccessConfig;
+export function webAccessConfigFromSettings(values: Readonly<Record<string, unknown>>): WebAccessConfig {
+  return {
+    provider: values.searchProvider === null ? values.provider : values.searchProvider,
+    openaiApiKey: values.openaiApiKey,
+    openaiSearchModel: values.openaiSearchModel,
+    exaApiKey: values.exaApiKey,
+    braveApiKey: values.braveApiKey,
+    searxngBaseUrl: values.searxngBaseUrl,
+    searxngHeaders: values.searxngHeaders,
+    ...(values.pdf === undefined ? {} : { pdf: values.pdf as NonNullable<WebAccessConfig['pdf']> }),
+    ...(values.githubClone === undefined ? {} : { githubClone: values.githubClone as NonNullable<WebAccessConfig['githubClone']> }),
+    ...(values.fetchContent === undefined ? {} : { fetchContent: values.fetchContent as NonNullable<WebAccessConfig['fetchContent']> }),
+    ...(values.ssrf === undefined ? {} : { ssrf: values.ssrf as NonNullable<WebAccessConfig['ssrf']> }),
+  };
 }
 
 export function configuredProvider(config: WebAccessConfig): ProviderSelection | undefined {
@@ -90,10 +100,73 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isMissingFile(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+function validateProvider(value: unknown): string | undefined {
+  try {
+    normalizeProviderSelection(value, 'provider');
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function validateOptionalUrl(value: unknown): string | undefined {
+  if (value === '') return undefined;
+  if (typeof value !== 'string') return 'must be a string';
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return 'must be an HTTP(S) URL without credentials';
+    return undefined;
+  } catch {
+    return 'must be an HTTP(S) URL';
+  }
+}
+
+function validateHeaders(value: unknown): string | undefined {
+  if (!isRecord(value)) return 'must be an object';
+  for (const [name, header] of Object.entries(value)) {
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(name) || typeof header !== 'string') return `contains an invalid header: ${name}`;
+  }
+  return undefined;
+}
+
+function validatePdf(value: unknown): string | undefined {
+  return validateOptionalNumberObject(value, new Set(['maxSizeMB', 'maxPages']));
+}
+
+function validateGithubClone(value: unknown): string | undefined {
+  return validateOptionalNumberObject(value, new Set(['maxRepoSizeMB', 'cloneTimeoutSeconds']), new Set(['enabled']));
+}
+
+function validateFetchContent(value: unknown): string | undefined {
+  if (!isRecord(value)) return 'must be an object';
+  if (value.domainPolicy === undefined) return undefined;
+  if (!isRecord(value.domainPolicy)) return 'domainPolicy must be an object';
+  return validateStringArrays(value.domainPolicy, new Set(['allow', 'deny']));
+}
+
+function validateSsrf(value: unknown): string | undefined {
+  if (!isRecord(value)) return 'must be an object';
+  return validateStringArrays(value, new Set(['allowRanges']));
+}
+
+function validateOptionalNumberObject(
+  value: unknown,
+  numberKeys: ReadonlySet<string>,
+  booleanKeys: ReadonlySet<string> = new Set(),
+): string | undefined {
+  if (!isRecord(value)) return 'must be an object';
+  for (const [key, item] of Object.entries(value)) {
+    if (!numberKeys.has(key) && !booleanKeys.has(key)) return `contains unknown field: ${key}`;
+    if (numberKeys.has(key) && (typeof item !== 'number' || !Number.isFinite(item) || item <= 0)) return `${key} must be a positive number`;
+    if (booleanKeys.has(key) && typeof item !== 'boolean') return `${key} must be a boolean`;
+  }
+  return undefined;
+}
+
+function validateStringArrays(value: Record<string, unknown>, allowed: ReadonlySet<string>): string | undefined {
+  for (const [key, item] of Object.entries(value)) {
+    if (!allowed.has(key)) return `contains unknown field: ${key}`;
+    if (!Array.isArray(item) || !item.every((entry) => typeof entry === 'string')) return `${key} must be an array of strings`;
+  }
+  return undefined;
 }

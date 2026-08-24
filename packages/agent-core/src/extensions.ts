@@ -9,14 +9,22 @@ import {
   CapabilityCollector,
   type FelanCapability,
 } from './capabilities.js';
+import {
+  type ExtensionConfigDefinition,
+  type ExtensionConfigOverride,
+  type ExtensionConfigValue,
+  getExtensionConfigDefinition,
+  resolveExtensionConfigs,
+} from './extension-config.js';
 
 export interface FelanModelSelectionOptions {
   readonly updateDefault?: boolean;
 }
 
-export interface FelanExtensionAPI extends ExtensionAPI {
+export interface FelanExtensionAPI extends Omit<ExtensionAPI, 'getFlag' | 'registerFlag'> {
   readonly agentDir: string;
   readonly runtime: AgentRuntime;
+  readonly config: Readonly<Record<string, ExtensionConfigValue>>;
   registerCapability(capability: FelanCapability): void;
   setModel(
     model: Parameters<ExtensionAPI['setModel']>[0],
@@ -32,6 +40,10 @@ export type FelanExtension = (
   pi: FelanExtensionAPI,
 ) => void | Promise<void>;
 
+export interface ConfiguredFelanExtension extends FelanExtension {
+  readonly configDefinition?: ExtensionConfigDefinition;
+}
+
 export type ExtensionPackageImporter = (
   packageName: string,
 ) => Promise<unknown>;
@@ -41,6 +53,7 @@ export function bindFelanExtension(
   extension: FelanExtension,
   runtime: AgentRuntime,
   agentDir: string = runtime.cwd,
+  config: Readonly<Record<string, ExtensionConfigValue>> = {},
 ): InlineExtension {
   return bindFelanExtensionWithCapabilities(
     packageName,
@@ -50,6 +63,7 @@ export function bindFelanExtension(
     new CapabilityCollector(),
     true,
     undefined,
+    config,
   );
 }
 
@@ -61,6 +75,7 @@ function bindFelanExtensionWithCapabilities(
   capabilityCollector: CapabilityCollector,
   resetCapabilities: boolean,
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
+  config: Readonly<Record<string, ExtensionConfigValue>>,
 ): InlineExtension {
   const inline: InlineExtension = {
     name: packageName,
@@ -80,6 +95,7 @@ function bindFelanExtensionWithCapabilities(
           agentDir,
           registerCapability,
           modelSelectionScope,
+          config,
         ));
       } finally {
         initializing = false;
@@ -95,6 +111,7 @@ export async function loadFelanExtensions(
   importExtension: ExtensionPackageImporter,
   runtime: AgentRuntime,
   agentDir: string = runtime.cwd,
+  configOverrides: readonly ExtensionConfigOverride[] = [],
 ): Promise<InlineExtension[]> {
   return loadFelanExtensionsWithScope(
     packageNames,
@@ -102,6 +119,7 @@ export async function loadFelanExtensions(
     runtime,
     agentDir,
     undefined,
+    configOverrides,
   );
 }
 
@@ -111,6 +129,7 @@ export async function loadFelanSessionExtensions(
   runtime: AgentRuntime,
   agentDir: string,
   modelSelectionScope: ModelSelectionPersistenceScope,
+  configOverrides: readonly ExtensionConfigOverride[] = [],
 ): Promise<InlineExtension[]> {
   return loadFelanExtensionsWithScope(
     packageNames,
@@ -118,6 +137,7 @@ export async function loadFelanSessionExtensions(
     runtime,
     agentDir,
     modelSelectionScope,
+    configOverrides,
   );
 }
 
@@ -127,6 +147,7 @@ async function loadFelanExtensionsWithScope(
   runtime: AgentRuntime,
   agentDir: string,
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
+  configOverrides: readonly ExtensionConfigOverride[],
 ): Promise<InlineExtension[]> {
   const seen = new Set<string>();
   const extensions: InlineExtension[] = [];
@@ -159,6 +180,11 @@ async function loadFelanExtensionsWithScope(
       throw new Error(`${packageName} must default-export a Felan extension`);
     }
 
+    const configuredExtension = defaultExport as ConfiguredFelanExtension;
+    const definition = getExtensionConfigDefinition(configuredExtension);
+    const config = definition === undefined
+      ? {}
+      : resolveExtensionConfigs([definition], configOverrides.filter(({ extensionId }) => extensionId === definition.id)).get(definition.id)!;
     extensions.push(bindFelanExtensionWithCapabilities(
       packageName,
       defaultExport as FelanExtension,
@@ -167,6 +193,7 @@ async function loadFelanExtensionsWithScope(
       capabilityCollector,
       extensions.length === 0,
       modelSelectionScope,
+      config,
     ));
   }
 
@@ -179,13 +206,15 @@ function createFelanExtensionAPI(
   agentDir: string,
   registerCapability: (capability: FelanCapability) => void,
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
+  config: Readonly<Record<string, ExtensionConfigValue>>,
 ): FelanExtensionAPI {
   const boundMethods = new Map<PropertyKey, unknown>();
 
-  return new Proxy(pi as FelanExtensionAPI, {
+  return new Proxy(pi as unknown as FelanExtensionAPI, {
     get(target, property) {
       if (property === 'agentDir') return agentDir;
       if (property === 'runtime') return runtime;
+      if (property === 'config') return config;
       if (property === 'registerCapability') {
         return registerCapability;
       }

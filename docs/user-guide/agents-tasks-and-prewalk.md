@@ -27,6 +27,20 @@ The local host owns admission, persistence, nesting, cancellation, model
 selection, and completion delivery. `/agents` or `Alt+A` opens live and stored
 child transcripts in the TUI.
 
+`max_turns` is a hard assistant-turn budget, not a guarantee of a final prose
+answer. Leave a final turn available for the child to summarize its work. If a
+child reaches the budget while continuing tool work, it is reported as
+`cancelled` with `turn_limit_reached`; a provider failure is reported as
+`failed` with `model_request_failed` instead. Parent cancellation, timeout,
+and host shutdown have their own terminal error codes.
+
+Felan persists child session paths before the first model request. If the host
+or process exits unexpectedly, a retained JSONL session can be continued
+explicitly with `steer_subagent` under the same child identity. Interrupted
+work is never replayed automatically, because tool side effects may already
+have occurred. Completion notices are durable and retried after transient
+parent delivery failures.
+
 ### Bundled agent types
 
 - `general` — implementation and investigation using the inherited model and
@@ -104,16 +118,17 @@ redundant approval prompt:
 ```
 
 The default target is the `low` model tier at exact `medium` thinking. Hosts or
-flags can select another tier or exact authenticated `provider/model`, and can
+the declarative extension configuration can select another tier or exact authenticated `provider/model`, and can
 override the implementation effort with `off`, `low`, `medium`, `high`, `xhigh`,
 or `max`. Pi clamps that request to the target model's capabilities. The
 original planner model and thinking level are restored after the run settles by
 default.
 
-Hosts can initialize `@felan-ai/ext-prewalk` with model-entry policy `ask`,
-`always`, or `never`. `ask` is the default; cloud or other unattended hosts can
-choose `always`. The `--prewalk-entry-approval` flag overrides the host default.
-This policy gates only model-called `enter_prewalk`, not explicit `/prewalk`.
+The `extensionConfig.prewalk.entryApproval` setting accepts `ask`, `always`, or
+`never`. `ask` is the default; cloud or other unattended hosts can choose
+`always`. Felan also exposes it as the generated
+`--prewalk-entry-approval` option and in `/settings`. This policy gates only
+model-called `enter_prewalk`, not explicit `/prewalk`.
 
 ### Lifecycle
 

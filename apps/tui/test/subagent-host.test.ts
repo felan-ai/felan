@@ -52,6 +52,7 @@ describe('LocalSubagentHost', () => {
     };
     let handler: ((event: { systemPrompt: string }) => { systemPrompt: string }) | undefined;
     imported.default({
+      config: { style: 'explanatory' },
       on: ((event: string, registered: typeof handler) => {
         if (event === 'before_agent_start') handler = registered;
       }) as FelanExtensionAPI['on'],
@@ -196,7 +197,10 @@ describe('LocalSubagentHost', () => {
     });
     const cancelled = await host.cancel(spawned.value.agentId, 'stop');
     const repeated = await host.cancel(spawned.value.agentId, 'stop again');
-    expect(cancelled).toMatchObject({ ok: true, value: { status: 'cancelled' } });
+    expect(cancelled).toMatchObject({
+      ok: true,
+      value: { status: 'cancelled', error: { code: 'cancelled_by_parent' } },
+    });
     expect(repeated).toEqual(cancelled);
   });
 
@@ -219,7 +223,7 @@ describe('LocalSubagentHost', () => {
       ok: true,
       value: {
         status: 'cancelled',
-        error: { code: 'host_unavailable' },
+        error: { code: 'host_shutdown' },
       },
     });
     await settle();
@@ -229,6 +233,57 @@ describe('LocalSubagentHost', () => {
         status: 'cancelled',
       }),
     ]);
+  });
+
+  it('retains a persisted session path so an interrupted child can be continued', async () => {
+    const root = await temporaryDirectory();
+    const sessionId = 'interrupted-child';
+    const sessionFile = join(root, 'agent', 'subagents', 'root', 'sessions', `${sessionId}.jsonl`);
+    const recordsFile = join(root, 'agent', 'subagents', 'root', 'records.json');
+    await mkdir(join(root, 'agent', 'subagents', 'root', 'sessions'), { recursive: true });
+    await writeSessionHeader(sessionFile, join(root, 'workspace'), sessionId);
+    await writeFile(recordsFile, `${JSON.stringify({
+      version: 1,
+      children: [{
+        record: {
+          agentId: sessionId,
+          parentSessionId: 'root',
+          rootSessionId: 'root',
+          type: 'reviewer',
+          description: 'interrupted review',
+          status: 'running',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        request: request(),
+        depth: 1,
+        sessionFile,
+        deliveryId: 'delivery-interrupted',
+        completionPending: false,
+      }],
+    })}\n`);
+
+    let continued = false;
+    const fixture = await harness({
+      root,
+      runner: async (input) => {
+        continued = input.sessionFile === sessionFile;
+        await input.onReady({ steer: async () => {}, cancel: async () => {} });
+        return { result: 'recovered result', sessionFile };
+      },
+    });
+    await expect(fixture.host.getResult(sessionId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'cancelled', error: { code: 'host_shutdown' } },
+    });
+    await expect(fixture.host.steer(sessionId, 'continue')).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'queued', agentId: sessionId },
+    });
+    await expect(waitForResult(fixture.host, sessionId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed', result: 'recovered result' },
+    });
+    expect(continued).toBe(true);
   });
 
   it('validates thinking against the exact model', async () => {
@@ -403,7 +458,7 @@ describe('LocalSubagentHost', () => {
     if (timed.ok) {
       await expect(waitForResult(timeoutHarness.host, timed.value.agentId)).resolves.toMatchObject({
         ok: true,
-        value: { status: 'timed_out' },
+        value: { status: 'timed_out', error: { code: 'timed_out' } },
       });
     }
     expect(cancelled).toBe(1);
@@ -421,6 +476,45 @@ describe('LocalSubagentHost', () => {
         value: { status: 'cancelled', error: { code: 'turn_limit_reached' } },
       });
     }
+  });
+
+  it('keeps model failures distinct and allows explicit continuation with retained history', async () => {
+    const root = await temporaryDirectory();
+    const retainedSession = join(root, 'failed-child.jsonl');
+    let runs = 0;
+    const fixture = await harness({
+      root,
+      runner: async (input) => {
+        runs += 1;
+        await input.onReady({ steer: async () => {}, cancel: async () => {} });
+        await writeSessionHeader(retainedSession, root, input.sessionId);
+        return input.sessionFile
+          ? { result: 'continued result', sessionFile: retainedSession }
+          : {
+              error: { code: 'model_request_failed', message: 'Model request failed: fetch failed' },
+              sessionFile: retainedSession,
+            };
+      },
+    });
+    const spawned = await fixture.host.spawn(request());
+    if (!spawned.ok) return;
+
+    await expect(waitForResult(fixture.host, spawned.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        status: 'failed',
+        error: { code: 'model_request_failed' },
+      },
+    });
+    await expect(fixture.host.steer(spawned.value.agentId, 'continue')).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'queued', agentId: spawned.value.agentId },
+    });
+    await expect(waitForResult(fixture.host, spawned.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed', result: 'continued result' },
+    });
+    expect(runs).toBe(2);
   });
 
   it('returns the latest active record without waiting for completion', async () => {
@@ -651,7 +745,31 @@ describe('LocalSubagentHost', () => {
     expect(new Set(delivered.map((notice) => notice.deliveryId)).size).toBe(1);
   });
 
-  it('preserves a completed result while its completion delivery remains unacknowledged', async () => {
+  it('retries transient unavailable completion delivery with the same delivery ID', async () => {
+    const delivered: SubagentCompletionNotice[] = [];
+    let attempts = 0;
+    const fixture = await harness({ runner: async (input) => {
+      await input.onReady({ steer: async () => {}, cancel: async () => {} });
+      return { result: 'done' };
+    } });
+    fixture.host.attachParent({
+      ...parentPort(delivered),
+      deliverCompletion: async (notice) => {
+        attempts += 1;
+        if (attempts === 1) return 'unavailable';
+        delivered.push(notice);
+        return 'delivered';
+      },
+    });
+    const spawned = await fixture.host.spawn(request());
+    if (!spawned.ok) return;
+    await waitForResult(fixture.host, spawned.value.agentId);
+    await vi.waitFor(() => expect(delivered).toHaveLength(1), { timeout: 1_000 });
+    expect(attempts).toBeGreaterThanOrEqual(2);
+    expect(delivered[0]?.deliveryId).toBeTruthy();
+  });
+
+  it('continues a retained result while its completion delivery remains unacknowledged', async () => {
     const root = await temporaryDirectory();
     const retainedSession = join(root, 'pending-child.jsonl');
     let deliveryStarted!: () => void;
@@ -682,24 +800,18 @@ describe('LocalSubagentHost', () => {
     await waitForResult(host, spawned.value.agentId);
     await started;
 
-    let steeringSettled = false;
-    const steering = host.steer(spawned.value.agentId, 'continue').then((result) => {
-      steeringSettled = true;
-      return result;
+    const steering = host.steer(spawned.value.agentId, 'continue');
+    await expect(steering).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'queued', agentId: spawned.value.agentId },
     });
-    await settle();
-    expect(steeringSettled).toBe(false);
     await expect(host.list({ includeDescendants: false })).resolves.toMatchObject({
       ok: true,
-      value: [expect.objectContaining({ status: 'completed', result: 'original result' })],
+      value: [expect.objectContaining({ status: 'running' })],
     });
 
     releaseDelivery('queued');
-    await expect(steering).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'not_steerable', message: expect.stringContaining('pending delivery') },
-    });
-    await expect(host.getResult(spawned.value.agentId)).resolves.toMatchObject({
+    await expect(waitForResult(host, spawned.value.agentId)).resolves.toMatchObject({
       ok: true,
       value: { status: 'completed', result: 'original result' },
     });

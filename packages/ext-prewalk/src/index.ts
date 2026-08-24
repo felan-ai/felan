@@ -1,4 +1,7 @@
 import {
+  associateExtensionConfig,
+  configField,
+  defineExtensionConfig,
   clampThinkingLevel,
   isFelanThinkingLevel,
   formatModelReference,
@@ -44,10 +47,24 @@ interface PrewalkConfig {
 }
 
 export type PrewalkEntryApprovalPolicy = 'ask' | 'always' | 'never';
-
-export interface PrewalkExtensionOptions {
-  readonly entryApproval?: PrewalkEntryApprovalPolicy;
-}
+export const PREWALK_CONFIG = defineExtensionConfig({
+  id: 'prewalk',
+  title: 'Prewalk',
+  fields: {
+    targetModel: configField.string({
+      default: 'low',
+      description: 'Implementation model tier or exact model',
+      validate: (value) => parseTargetModel(String(value)) ? undefined : 'must be a model tier or provider/model-id',
+    }),
+    targetThinking: configField.enum(['off', 'low', 'medium', 'high', 'xhigh', 'max'], {
+      default: 'medium', description: 'Implementation thinking level',
+    }),
+    restorePlanner: configField.boolean({ default: true, description: 'Restore the planner after implementation' }),
+    entryApproval: configField.enum(['ask', 'always', 'never'], {
+      default: 'ask', description: 'Approval policy for model-entered Prewalk',
+    }),
+  },
+});
 
 type TargetModel =
   | { readonly kind: 'tier'; readonly tier: ModelTier; readonly key: string }
@@ -87,65 +104,18 @@ interface ContextBuildResult {
   anchor?: PhaseContextAnchor;
 }
 
-const DEFAULT_CONFIG: PrewalkConfig = {
-  targetModel: 'low',
-  targetThinking: 'medium',
-  restorePlanner: true,
-  entryApproval: 'ask',
-};
-const TARGET_MODEL_FLAG = 'prewalk-target-model';
-const TARGET_THINKING_FLAG = 'prewalk-target-thinking';
-const RESTORE_PLANNER_FLAG = 'prewalk-restore-planner';
-const ENTRY_APPROVAL_FLAG = 'prewalk-entry-approval';
 const HEADLESS_TASK_MESSAGE_TYPE = 'pi-prewalk-task';
 const ENTER_PREWALK_TOOL = 'enter_prewalk';
 const EnterPrewalkParams = Type.Object({}, { additionalProperties: false });
 
-export function createPrewalkExtension(
-  options: PrewalkExtensionOptions = {},
-): FelanExtension {
-  if (options.entryApproval !== undefined && !isEntryApprovalPolicy(options.entryApproval)) {
-    throw new Error('Prewalk entryApproval must be ask, always, or never');
-  }
-  const defaultConfig: PrewalkConfig = {
-    ...DEFAULT_CONFIG,
-    ...(options.entryApproval === undefined ? {} : { entryApproval: options.entryApproval }),
-  };
-
-  return (pi): void => registerPrewalk(pi, defaultConfig);
-}
-
-function registerPrewalk(pi: FelanExtensionAPI, defaultConfig: PrewalkConfig): void {
+function registerPrewalk(pi: FelanExtensionAPI): void {
   pi.registerCapability({
     id: 'prewalk',
     instructions: 'Use Prewalk for complex repository work that benefits from substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification. Do not use it for small localized edits, routine one-file fixes, read-only requests, or when injected planning or implementation guidance is already present. When a complex file-changing task begins without that guidance, call enter_prewalk as the first and only tool call before repository exploration or mutation. Depending on the configured entry policy, the tool may ask the user for approval or decline model-requested entry; if declined, continue on the regular path. The tool is available in the root session and mutation-capable subagents. During an active run, follow the injected planning, task-tracking, implementation, and verification guidance. The user can enter explicitly with /prewalk or exit with /prewalk exit (or /prewalk off).',
   });
 
-  pi.registerFlag(TARGET_MODEL_FLAG, {
-    description: 'Model tier or exact provider/model-id used to implement a planned Prewalk task',
-    type: 'string',
-    default: DEFAULT_CONFIG.targetModel,
-  });
-  pi.registerFlag(TARGET_THINKING_FLAG, {
-    description: 'Thinking level used by the Prewalk implementation model',
-    type: 'string',
-    default: DEFAULT_CONFIG.targetThinking,
-  });
-  pi.registerFlag(RESTORE_PLANNER_FLAG, {
-    description: 'Restore the planner model and thinking level after implementation',
-    type: 'boolean',
-    default: DEFAULT_CONFIG.restorePlanner,
-  });
-  pi.registerFlag(ENTRY_APPROVAL_FLAG, {
-    description: 'Approval policy for model-called Prewalk entry: ask, always, or never',
-    type: 'string',
-    default: defaultConfig.entryApproval,
-  });
-
-  let loadedConfig: ReturnType<typeof loadConfig> = { config: { ...defaultConfig } };
-  let config = loadedConfig.config;
+  let config = pi.config as unknown as PrewalkConfig;
   let targetModel = parseTargetModel(config.targetModel)!;
-  let configWarningShown = false;
   let state: PrewalkState = { phase: 'idle' };
   let plannerSnapshot: PlannerSnapshot | undefined;
   let exitRequested = false;
@@ -156,8 +126,7 @@ function registerPrewalk(pi: FelanExtensionAPI, defaultConfig: PrewalkConfig): v
   let internalThinkingChange = false;
 
   function refreshConfig(): void {
-    loadedConfig = loadConfig(pi, defaultConfig);
-    config = loadedConfig.config;
+    config = pi.config as unknown as PrewalkConfig;
     targetModel = parseTargetModel(config.targetModel)!;
   }
 
@@ -169,11 +138,7 @@ function registerPrewalk(pi: FelanExtensionAPI, defaultConfig: PrewalkConfig): v
     }
   }
 
-  function publishConfigWarning(ctx: ExtensionContext): void {
-    if (!loadedConfig.warning || configWarningShown) return;
-    configWarningShown = true;
-    notify(ctx, `Prewalk flag warning: ${loadedConfig.warning} Using defaults.`, 'warning');
-  }
+  function publishConfigWarning(_ctx: ExtensionContext): void {}
 
   function updateStatus(ctx: ExtensionContext): void {
     if (state.phase === 'idle') {
@@ -738,6 +703,8 @@ function registerPrewalk(pi: FelanExtensionAPI, defaultConfig: PrewalkConfig): v
   });
 }
 
+export const createPrewalkExtension = (): FelanExtension => registerPrewalk;
+
 function buildContextMessages(
   messages: readonly unknown[],
   phase: PrewalkPhase,
@@ -925,49 +892,6 @@ function clampPiThinkingLevel(
   return clampThinkingLevel(model, level as Parameters<typeof clampThinkingLevel>[1]) as PlannerThinkingLevel;
 }
 
-function loadConfig(
-  pi: FelanExtensionAPI,
-  defaultConfig: PrewalkConfig,
-): { config: PrewalkConfig; warning?: string } {
-  const targetModel = pi.getFlag(TARGET_MODEL_FLAG);
-  const targetThinking = pi.getFlag(TARGET_THINKING_FLAG);
-  const restorePlanner = pi.getFlag(RESTORE_PLANNER_FLAG);
-  const entryApproval = pi.getFlag(ENTRY_APPROVAL_FLAG);
-  const parsedTarget = typeof targetModel === 'string' ? parseTargetModel(targetModel) : undefined;
-
-  if (!parsedTarget) {
-    return invalidConfig(defaultConfig, `${TARGET_MODEL_FLAG} must be high, medium, low, or an exact provider/model-id`);
-  }
-  if (typeof targetThinking !== 'string' || !isFelanThinkingLevel(targetThinking)) {
-    return invalidConfig(defaultConfig, `${TARGET_THINKING_FLAG} must be off, low, medium, high, xhigh, or max`);
-  }
-  if (typeof restorePlanner !== 'boolean') {
-    return invalidConfig(defaultConfig, `${RESTORE_PLANNER_FLAG} must be a boolean`);
-  }
-  if (!isEntryApprovalPolicy(entryApproval)) {
-    return invalidConfig(defaultConfig, `${ENTRY_APPROVAL_FLAG} must be ask, always, or never`);
-  }
-
-  return {
-    config: {
-      targetModel: parsedTarget.key,
-      targetThinking,
-      restorePlanner,
-      entryApproval,
-    },
-  };
-}
-
-function invalidConfig(
-  defaultConfig: PrewalkConfig,
-  reason: string,
-): { config: PrewalkConfig; warning: string } {
-  return { config: { ...defaultConfig }, warning: `${reason}.` };
-}
-
-function isEntryApprovalPolicy(value: unknown): value is PrewalkEntryApprovalPolicy {
-  return value === 'ask' || value === 'always' || value === 'never';
-}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -986,5 +910,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const prewalkExtension = createPrewalkExtension();
+
+associateExtensionConfig(prewalkExtension, PREWALK_CONFIG);
 
 export default prewalkExtension;

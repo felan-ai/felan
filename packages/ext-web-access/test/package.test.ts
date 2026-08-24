@@ -10,10 +10,10 @@ describe('@felan-ai/ext-web-access package boundary', () => {
     const notice = await readFile(join(packageRoot, 'NOTICE'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-web-access',
-      version: '0.2.0',
+      version: '0.4.0',
       license: 'MIT',
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
-      peerDependencies: { '@felan-ai/agent-core': '^0.4.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.5.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
     });
@@ -32,7 +32,7 @@ describe('@felan-ai/ext-web-access package boundary', () => {
     const sources = await Promise.all(sourcePaths.map(async (path) => ({ path, content: await readFile(path, 'utf8') })));
     expect(sources.map((source) => source.content).join('\n')).not.toMatch(/node:child_process/u);
     const directFsUsers = sources.filter((source) => /node:fs/u.test(source.content)).map((source) => source.path.replace(`${packageRoot}/`, ''));
-    expect(directFsUsers).toEqual(['src/config.ts']);
+    expect(directFsUsers).toEqual([]);
   });
 });
 

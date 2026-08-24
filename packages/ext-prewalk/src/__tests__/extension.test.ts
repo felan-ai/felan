@@ -4,8 +4,6 @@ import type {
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import prewalkExtension, {
-  createPrewalkExtension,
-  type PrewalkExtensionOptions,
 } from '../index.js';
 import {
   CONTINUATION_INSTRUCTION,
@@ -72,14 +70,32 @@ function createHarness(
     flags?: Record<string, boolean | string>;
     thinkingLevel?: string;
     entryApproved?: boolean;
-    prewalkOptions?: PrewalkExtensionOptions;
+    prewalkOptions?: { entryApproval?: string };
   } = {},
 ) {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, any>();
   const tools = new Map<string, any>();
   const flags = new Map(Object.entries(options.flags ?? {}));
-  const registeredFlags = new Map<string, any>();
+  const configValues: Record<string, unknown> = {
+    targetModel: 'low', targetThinking: 'medium', restorePlanner: true, entryApproval: 'ask',
+  };
+  for (const [name, value] of flags) {
+    if (name === 'prewalk-target-model') configValues.targetModel = value;
+    if (name === 'prewalk-target-thinking') configValues.targetThinking = value;
+    if (name === 'prewalk-restore-planner') configValues.restorePlanner = value;
+    if (name === 'prewalk-entry-approval') configValues.entryApproval = value;
+  }
+  if (options.prewalkOptions && 'entryApproval' in options.prewalkOptions) {
+    configValues.entryApproval = options.prewalkOptions.entryApproval;
+  }
+  if (flags.has('prewalk-entry-approval')) configValues.entryApproval = flags.get('prewalk-entry-approval');
+  const registeredFlags = new Map([
+    ['prewalk-target-model', { type: 'string', default: 'low' }],
+    ['prewalk-target-thinking', { type: 'string', default: 'medium' }],
+    ['prewalk-restore-planner', { type: 'boolean', default: true }],
+    ['prewalk-entry-approval', { type: 'string', default: 'ask' }],
+  ]);
   const capabilities: Array<{ id: string; instructions: string }> = [];
   const models = options.models ?? [plannerModel, targetModel, alternateTarget, externalModel];
   let currentModel = Object.hasOwn(options, 'currentModel') ? options.currentModel : plannerModel;
@@ -143,26 +159,22 @@ function createHarness(
       handlers.set(event, eventHandlers);
     }),
     registerCommand: vi.fn((name: string, command: any) => commands.set(name, command)),
-    registerFlag: vi.fn((name: string, flagOptions: any) => {
-      registeredFlags.set(name, flagOptions);
-      if (!flags.has(name) && flagOptions.default !== undefined) flags.set(name, flagOptions.default);
-    }),
-    getFlag: vi.fn((name: string) => flags.get(name)),
+    config: configValues,
     getActiveTools: vi.fn(() => options.activeTools ?? ['read', 'TaskCreate', 'TaskUpdate', 'edit', 'write']),
     getThinkingLevel: vi.fn(() => thinkingLevel),
     setThinkingLevel,
     setModel,
     sendMessage,
     sendUserMessage,
+    registeredFlags,
   } as unknown as FelanExtensionAPI;
 
-  (options.prewalkOptions ? createPrewalkExtension(options.prewalkOptions) : prewalkExtension)(pi);
+  prewalkExtension(pi);
 
   return {
     pi,
     ctx,
     ui,
-    registeredFlags,
     capabilities,
     tools,
     emit,
@@ -171,6 +183,7 @@ function createHarness(
     setThinkingLevel,
     sendMessage,
     sendUserMessage,
+    registeredFlags,
     waitForIdle,
     get currentModel() {
       return currentModel;
@@ -390,7 +403,7 @@ describe('flags and commands', () => {
     expect(harness.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('uses flag overrides and warns once for malformed flag values', async () => {
+  it('uses resolved configuration overrides', async () => {
     const overridden = createHarness({
       flags: {
         'prewalk-target-model': 'anthropic/claude-opus',
@@ -405,26 +418,6 @@ describe('flags and commands', () => {
       'info',
     );
 
-    const malformed = createHarness({ flags: { 'prewalk-target-model': 'invalid' } });
-    await malformed.emit('session_start', { type: 'session_start', reason: 'startup' });
-    await malformed.emit('session_start', { type: 'session_start', reason: 'reload' });
-    const warnings = malformed.ui.notify.mock.calls.filter(([, type]) => type === 'warning');
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]![0]).toContain('Using defaults');
-
-    const malformedThinking = createHarness({ flags: { 'prewalk-target-thinking': 'invalid' } });
-    await malformedThinking.emit('session_start', { type: 'session_start', reason: 'startup' });
-    expect(malformedThinking.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining('prewalk-target-thinking'),
-      'warning',
-    );
-
-    const malformedApproval = createHarness({ flags: { 'prewalk-entry-approval': 'sometimes' } });
-    await malformedApproval.emit('session_start', { type: 'session_start', reason: 'startup' });
-    expect(malformedApproval.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining('prewalk-entry-approval'),
-      'warning',
-    );
   });
 });
 
@@ -453,7 +446,7 @@ describe('model entry', () => {
     expect(result.isError).not.toBe(true);
     expect(result.details.phase).toBe('planning');
     expect(harness.ui.confirm).not.toHaveBeenCalled();
-    expect(harness.registeredFlags.get('prewalk-entry-approval')).toMatchObject({ default: 'always' });
+    expect(harness.pi.config).toMatchObject({ entryApproval: 'always' });
   });
 
   it('denies model entry when the user declines approval', async () => {

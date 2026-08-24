@@ -19,8 +19,8 @@ describe('local Codex stream composition', () => {
     const childOriginal = vi.fn<StreamFunction>(() => endedStream());
     const packages = [builtinExtensionPackages.codex];
 
-    const rootWrapper = await createLocalCodexStreamFunctionWrapper(packages, rootRuntime, agentDir);
-    const childWrapper = await createLocalCodexStreamFunctionWrapper(packages, childRuntime, agentDir);
+    const rootWrapper = await createLocalCodexStreamFunctionWrapper(packages, rootRuntime, agentDir, config);
+    const childWrapper = await createLocalCodexStreamFunctionWrapper(packages, childRuntime, agentDir, config);
     const model = {
       provider: 'openai-codex',
       id: 'gpt-5.3-codex',

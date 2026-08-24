@@ -17,7 +17,8 @@ through `exec_command` and loads referenced files only as needed.
 The local TUI presents Codex tool calls with friendly action labels while
 headless modes continue to expose the stable tool names and raw results.
 
-Optional settings live at `$FELAN_AGENT_DIR/codex.json`:
+Optional settings live under `extensionConfig.codex` in
+`$FELAN_AGENT_DIR/settings.json`:
 
 ```json
 {

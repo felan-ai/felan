@@ -1,6 +1,3 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { AgentRuntime, FelanExtensionAPI } from '@felan-ai/agent-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import webAccessExtension from '../src/index.js';
@@ -171,8 +168,7 @@ function mockRemoteFetch(): void {
 }
 
 async function createHarness(options: { streamSimple?: ReturnType<typeof vi.fn> } = {}) {
-  const agentDir = await mkdtemp(join(tmpdir(), 'felan-web-access-test-'));
-  await writeFile(join(agentDir, 'web-search.json'), '{}');
+  const agentDir = '/agent';
   const tools = new Map<string, any>();
   const capabilities: Array<{ id: string; instructions: string }> = [];
   const entries: Array<{ type: string; data: any }> = [];

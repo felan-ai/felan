@@ -50,6 +50,7 @@ function formatSubagentCapability(descriptors: readonly SubagentDescriptor[]): s
     availableTypes,
     'Definition model and thinking settings take precedence over per-call values; otherwise per-call values apply, then the parent settings.',
     'Child agents always run asynchronously. Give each child a self-contained task with the relevant scope, constraints, and expected output, then continue useful parent work while independent tasks run in parallel.',
+    'Treat max_turns as a hard assistant-turn budget and leave enough room for the child to return a final result.',
     'Completion notices surface finished work automatically; rely on them during normal execution. Use list_subagents and get_subagent_result for an immediate status check when current state is needed, steer_subagent to refine active work, and cancel_subagent when work is no longer needed. Integrate and verify child results before reporting completion.',
   ].join(' ');
 }
@@ -76,8 +77,16 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
       description: 'For definitions without a model: inherit, high, medium, low, or an exact provider/model reference',
     })),
     thinking: Type.Optional(thinkingSchema),
-    max_turns: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TURNS })),
-    timeout_seconds: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_SECONDS })),
+    max_turns: Type.Optional(Type.Integer({
+      minimum: 1,
+      maximum: MAX_TURNS,
+      description: 'Hard assistant-turn budget; allow enough turns for a final result',
+    })),
+    timeout_seconds: Type.Optional(Type.Integer({
+      minimum: 1,
+      maximum: MAX_TIMEOUT_SECONDS,
+      description: 'Wall-clock execution limit in seconds',
+    })),
     inherit_context: Type.Optional(Type.Boolean({ default: false })),
   }, { additionalProperties: false });
 

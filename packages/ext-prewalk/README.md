@@ -73,10 +73,11 @@ restoring its exact original thinking level.
 
 `enter_prewalk` is loaded into mutation-capable general and custom child sessions whenever Prewalk is enabled. Each child owns an independent lifecycle and snapshots its own selected model and thinking level. Child handoffs honor the root session's configured model scope. Inspection-only `explore` and `reviewer` children do not receive the entry tool because their mutation tools are intentionally disabled.
 
-## Flags
+## Configuration
 
-Prewalk accepts a host initialization default plus Pi's namespaced extension
-flags and does not read a configuration file.
+Prewalk declares typed settings. Felan exposes them through
+`extensionConfig.prewalk` in `settings.json`, generated CLI options, `/settings`,
+and Agent Core's programmatic configuration API.
 
 ```text
 --prewalk-target-model <high|medium|low|provider/model-id>
@@ -86,21 +87,11 @@ flags and does not read a configuration file.
 --prewalk-entry-approval <ask|always|never>
 ```
 
-`prewalk-target-model` defaults to `low` and `prewalk-target-thinking` defaults
-to exact `medium`. Tier selection uses the authenticated models allowed by the
-current session, preferring the planner's provider and model family. An exact
-`provider/model-id` overrides tier selection but must remain inside a nonempty
-session model scope. `prewalk-restore-planner` defaults to `true`.
-`prewalk-entry-approval` defaults to the extension initialization policy, which
-is `ask` unless the host supplies another value. The flag overrides that host
-default. This policy applies only to model-called `enter_prewalk`; `/prewalk`
-is already explicit user intent.
-
-Host initialization is validated immediately: passing an `entryApproval`
-value other than `ask`, `always`, or `never` makes
-`createPrewalkExtension()` throw during extension construction. Invalid
-`--prewalk-entry-approval` flag values follow the normal flag behavior instead:
-Prewalk reports a warning and falls back to the host initialization defaults.
+`targetModel` defaults to `low`, `targetThinking` defaults to exact `medium`,
+`restorePlanner` defaults to `true`, and `entryApproval` defaults to `ask`.
+The local CLI equivalent is `felan --prewalk-entry-approval always`. This policy
+applies only to model-called `enter_prewalk`; `/prewalk` is already explicit
+user intent.
 
 ## Failure behavior
 

@@ -43,16 +43,13 @@ never runs during extension startup or from a model-initiated tool call.
 
 ## Configuration
 
-The extension stores portable agent-scoped configuration at:
+The extension receives portable configuration from:
 
-```text
-$FELAN_AGENT_DIR/storage/agent/rtk-optimizer/config.json
-```
+`extensionConfig.rtkOptimizer` in `$FELAN_AGENT_DIR/settings.json`.
 
-The file is created with safe defaults on first load. Root sessions and nested
-subagents share it. Invalid JSON, unknown fields, invalid types, and values
-outside the documented ranges fall back to defaults for that load and notify
-the extension host when it exposes a notification channel; the invalid file is
+Root sessions and nested subagents receive the resolved snapshot. Invalid
+fields, invalid types, and values outside the documented ranges stop activation
+with a settings error; changes take effect in a new session. The invalid value is
 not overwritten.
 
 ```json
@@ -61,30 +58,22 @@ not overwritten.
   "mode": "rewrite",
   "guardWhenRtkMissing": true,
   "showRewriteNotifications": true,
-  "outputCompaction": {
-    "enabled": true,
-    "stripAnsi": true,
-    "readCompaction": {
-      "enabled": false
-    },
-    "truncate": {
-      "enabled": true,
-      "maxChars": 12000
-    },
-    "sourceCodeFilteringEnabled": false,
-    "preserveExactSkillReads": false,
-    "sourceCodeFiltering": "none",
-    "smartTruncate": {
-      "enabled": false,
-      "maxLines": 220
-    },
-    "aggregateTestOutput": true,
-    "filterBuildOutput": true,
-    "compactGitOutput": true,
-    "aggregateLinterOutput": true,
-    "groupSearchOutput": true,
-    "trackSavings": true
-  }
+  "compactionEnabled": true,
+  "stripAnsi": true,
+  "readCompaction": false,
+  "truncate": true,
+  "truncateMaxChars": 12000,
+  "sourceCodeFilteringEnabled": false,
+  "preserveExactSkillReads": false,
+  "sourceFiltering": "none",
+  "smartTruncate": false,
+  "smartTruncateMaxLines": 220,
+  "aggregateTestOutput": true,
+  "filterBuildOutput": true,
+  "compactGitOutput": true,
+  "aggregateLinterOutput": true,
+  "groupSearchOutput": true,
+  "trackSavings": true
 }
 ```
 
@@ -94,15 +83,14 @@ or `aggressive`. `truncate.maxChars` accepts 1,000–200,000 and
 
 ## Command
 
-Run `/rtk` to edit settings interactively. Subcommands are:
+Run `/settings` to edit RTK settings interactively. `/rtk` provides operational
+commands. Subcommands are:
 
 - `/rtk show`
-- `/rtk path`
 - `/rtk verify`
 - `/rtk install`
 - `/rtk stats`
 - `/rtk clear-stats`
-- `/rtk reset`
 - `/rtk help`
 
 Metrics are scoped to the current Felan extension session and reset at session

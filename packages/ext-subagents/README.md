@@ -27,6 +27,19 @@ return the latest record immediately, while completion notices surface finished
 work to the parent session. Notices steer active parent work at the next
 model-call boundary and trigger a turn when the parent is idle.
 
+`max_turns` is a hard assistant-turn budget. A child that reaches the budget
+while it still has tool work is cancelled with `turn_limit_reached`; callers
+should leave enough budget for a final textual result. The local host reserves
+that outcome separately from provider failures, parent cancellation, timeouts,
+and host shutdown. A retained child may be explicitly continued when its
+session history is available; Felan never replays interrupted work
+automatically after a restart.
+
+Terminal errors use stable codes: `model_request_failed`,
+`cancelled_by_parent`, `timed_out`, `host_shutdown`, and
+`turn_limit_reached`. `host_unavailable` is reserved for an unavailable host
+or parent, and `internal_error` is reserved for unexpected runtime failures.
+
 During initialization the extension registers a `subagents` capability with
 generic delegation and control guidance plus the current host's available agent
 types and descriptions. The contribution is present only when this extension is

@@ -5,7 +5,7 @@ import type {
   FelanExtensionAPI,
   Model,
 } from '@felan-ai/agent-core';
-import { StringEnum } from '@felan-ai/agent-core';
+import { associateExtensionConfig, StringEnum } from '@felan-ai/agent-core';
 import { Type, type Static } from 'typebox';
 import {
   IMAGE_WARNING,
@@ -15,8 +15,10 @@ import {
 } from './boundary.js';
 import {
   configuredProvider,
-  loadConfig,
   normalizeProviderSelection,
+  webAccessConfigFromSettings,
+  WEB_ACCESS_CONFIG,
+  type WebAccessConfig,
 } from './config.js';
 import { findContent, type FindMode } from './content-find.js';
 import { extractContent, fetchWithConcurrency } from './extract.js';
@@ -97,6 +99,7 @@ type FetchContentParams = Static<typeof FetchContentParams>;
 type GetSearchContentParams = Static<typeof GetSearchContentParams>;
 
 const webAccessExtension: FelanExtension = (pi) => {
+  const config = webAccessConfigFromSettings(pi.config ?? {});
   const store = new ResultStore(pi.runtime, pi.appendEntry.bind(pi));
 
   pi.registerCapability({
@@ -119,7 +122,6 @@ const webAccessExtension: FelanExtension = (pi) => {
     promptGuidelines: [WEB_CONTENT_CAPABILITY_INSTRUCTION],
     parameters: WebSearchParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const config = await loadConfig(pi.agentDir);
       const selection = params.provider === undefined
         ? configuredProvider(config) ?? 'auto'
         : normalizeProviderSelection(params.provider);
@@ -158,7 +160,6 @@ const webAccessExtension: FelanExtension = (pi) => {
     promptGuidelines: [WEB_CONTENT_CAPABILITY_INSTRUCTION],
     parameters: SourceCheckParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const config = await loadConfig(pi.agentDir);
       const selection = params.provider === undefined
         ? configuredProvider(config) ?? 'auto'
         : normalizeProviderSelection(params.provider);
@@ -214,7 +215,6 @@ const webAccessExtension: FelanExtension = (pi) => {
       const urls = normalizeUrls(params.url, params.urls);
       const mode = params.mode ?? 'readable';
       if (mode === 'answer' && !params.prompt?.trim()) throw new Error('prompt is required when mode is answer');
-      const config = await loadConfig(pi.agentDir);
       const pages = await fetchWithConcurrency(urls, 3, (url) => extractContent(url, pi.runtime, config, signal, {
         mode: mode === 'raw' ? 'raw' : 'readable',
         ...(params.forceClone !== undefined ? { forceClone: params.forceClone } : {}),
@@ -332,7 +332,7 @@ function normalizeUrls(url: string | undefined, urls: string[] | undefined): str
 async function fetchSearchContent(
   responses: Awaited<ReturnType<typeof searchProviders>>['responses'],
   pi: FelanExtensionAPI,
-  config: Awaited<ReturnType<typeof loadConfig>>,
+  config: WebAccessConfig,
   signal: AbortSignal | undefined,
 ): Promise<ExtractedContent[]> {
   const inline = responses.flatMap((response) => response.inlineContent ?? [])
@@ -596,4 +596,7 @@ function selectPage(pages: ExtractedContent[], url: string | undefined, index: n
   return undefined;
 }
 
+export { WEB_ACCESS_CONFIG, webAccessConfigFromSettings } from './config.js';
+export type { WebAccessConfig } from './config.js';
 export default webAccessExtension;
+associateExtensionConfig(webAccessExtension, WEB_ACCESS_CONFIG);

@@ -21,8 +21,8 @@ describe('Felan extension bridge', () => {
     });
     const pi = {
       marker: 'pi receiver',
-      getFlag(this: { marker: string }) {
-        return this.marker;
+      getActiveTools(this: { marker: string }) {
+        return [this.marker];
       },
     } as unknown as ExtensionAPI;
     let receivedRuntime;
@@ -34,8 +34,8 @@ describe('Felan extension bridge', () => {
       receivedRuntime = felanPi.runtime;
       receivedAgentDir = felanPi.agentDir;
       lateRegister = felanPi.registerCapability;
-      const detachedGetFlag = felanPi.getFlag;
-      receiverValue = detachedGetFlag('test');
+      const detachedGetActiveTools = felanPi.getActiveTools;
+      receiverValue = detachedGetActiveTools()[0];
       execOutput = await felanPi.exec('literal-command', ['two words', '$HOME', ';']);
     }, runtime, '/agent');
 

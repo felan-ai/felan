@@ -2,7 +2,7 @@ import type { ExtensionContext } from '@felan-ai/agent-core';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 import { getThemePalette } from '../src/colors.js';
-import { configFromFlags, type PowerlineConfig, type SegmentName } from '../src/config.js';
+import { DEFAULT_CONFIG, type PowerlineConfig, type SegmentName } from '../src/config.js';
 import { renderFooterLine, renderStyledSegments } from '../src/footer.js';
 import { renderSegments, sanitizePlainText, type FooterDataLike, type RenderedSegment } from '../src/segments.js';
 import type { SubscriptionState } from '../src/subscription.js';
@@ -228,7 +228,7 @@ function segment(name: SegmentName, text: string, align: 'left' | 'right' = 'lef
 }
 
 function testConfig(overrides: Partial<PowerlineConfig['display']>): PowerlineConfig {
-  const config = configFromFlags({ getFlag: () => undefined });
+  const config = DEFAULT_CONFIG;
   return { ...config, display: { ...config.display, ...overrides } };
 }
 

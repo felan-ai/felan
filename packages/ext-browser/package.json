@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-browser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Portable agent-browser tool integration for Felan",
   "license": "MIT",
   "type": "module",
@@ -34,7 +34,7 @@
     "typebox": "1.1.38"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.4.1"
+    "@felan-ai/agent-core": "^0.5.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

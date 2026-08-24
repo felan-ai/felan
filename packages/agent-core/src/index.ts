@@ -43,6 +43,31 @@ export {
   bindFelanExtension,
   loadFelanExtensions,
 } from './extensions.js';
+export {
+  associateExtensionConfig,
+  configField,
+  configureExtension,
+  defineExtensionConfig,
+  extensionConfigOverridesFromObject,
+  getExtensionConfigCliOptions,
+  getExtensionConfigDefinition,
+  parseExtensionConfigCliValue,
+  resolveExtensionConfigs,
+  validateExtensionConfigValue,
+} from './extension-config.js';
+export type {
+  ExtensionConfigCliOption,
+  ExtensionConfigDefinition,
+  ExtensionConfigField,
+  ExtensionConfigFieldOptions,
+  ExtensionConfigFields,
+  ExtensionConfigOverride,
+  ExtensionConfigPrimitive,
+  ExtensionConfigValue,
+  ExtensionConfigJsonObject,
+  ExtensionConfigJsonArray,
+  InferExtensionConfig,
+} from './extension-config.js';
 export { formatCapabilitiesSection } from './capabilities.js';
 export type { FelanCapability, RegisteredFelanCapability } from './capabilities.js';
 export { FELAN_BASE_SYSTEM_PROMPT } from './system-prompt.js';

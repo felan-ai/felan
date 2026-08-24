@@ -22,6 +22,7 @@ import {
 } from './resource-loader.js';
 import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
+import type { ExtensionConfigOverride } from './extension-config.js';
 
 export type StreamFunction = AgentSession['agent']['streamFunction'];
 const PROJECT_INSTRUCTION_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const;
@@ -32,7 +33,7 @@ export interface CreateAgentCoreSessionOptions {
   readonly wrapStreamFunction?: (original: StreamFunction) => StreamFunction;
   readonly extensionPackages: readonly string[];
   readonly importExtension: ExtensionPackageImporter;
-  readonly extensionFlagValues?: ReadonlyMap<string, boolean | string>;
+  readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly modelRuntime: ModelRuntime;
   readonly settingsManager: SettingsManager;
   readonly sessionManager: SessionManager;
@@ -106,6 +107,7 @@ async function composeAgentCoreSession(
     options.runtime,
     agentDir,
     modelSelectionScope,
+    options.extensionConfigOverrides,
   );
   const extensionFactories = [
     ...featureExtensions,
@@ -117,9 +119,6 @@ async function composeAgentCoreSession(
     cwd: options.runtime.cwd,
     agentDir,
     extensionFactories,
-    ...(options.extensionFlagValues === undefined
-      ? {}
-      : { extensionFlagValues: options.extensionFlagValues }),
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
     ...(projectInstructions === undefined ? {} : { contextFiles: [projectInstructions] }),

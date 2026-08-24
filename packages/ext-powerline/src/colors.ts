@@ -77,7 +77,7 @@ export function getThemePalette(config: PowerlineConfig): ThemePalette {
       colors: {
         ...THEMES.dark.colors,
         ...config.colors?.custom,
-      },
+      } as Record<ThemeColorKey, ColorPair>,
     };
   }
   return THEMES[config.theme];

@@ -14,6 +14,7 @@ import {
   type AgentSessionServices,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionPackageImporter,
+  type ExtensionConfigOverride,
 } from '@felan-ai/agent-core';
 import { bindSubagentSession } from '@felan-ai/ext-subagents';
 import {
@@ -37,6 +38,7 @@ import {
   getLocalOutputStyle,
   getLocalToolDisplayMode,
   isBuiltinExtensionEnabled,
+  getExtensionConfigOverrides,
 } from './settings.js';
 import { loadLocalAppendSystemPrompt } from './system-prompt.js';
 import {
@@ -82,6 +84,7 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly subagentSettings?: LocalSubagentSettings;
   readonly memoryCoordinator?: LocalMemoryCoordinator;
   readonly onSessionModel?: (model: AgentSession['model']) => void;
+  readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
 }
 
 export interface CreateLocalFelanRuntimeOptions {
@@ -96,6 +99,7 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
   readonly memoryCoordinator?: LocalMemoryCoordinator;
+  readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
 }
 
 export function getLocalAgentDir(): string {
@@ -130,6 +134,10 @@ export function createLocalSessionRuntimeFactory(
     ]);
     const settingsManager = createLocalSettingsManager(cwd, options.agentDir);
     const felanSettings = getFelanSettings(settingsManager);
+    const extensionConfigOverrides = [
+      ...getExtensionConfigOverrides(felanSettings),
+      ...(options.extensionConfigOverrides ?? []),
+    ];
     const outputStyle = getLocalOutputStyle(settingsManager);
     const toolActivityState = new ToolActivityState(getLocalToolDisplayMode(settingsManager));
     const reloadSettings = settingsManager.reload.bind(settingsManager);
@@ -164,6 +172,7 @@ export function createLocalSessionRuntimeFactory(
       extensionPackages,
       runtime,
       options.agentDir,
+      felanSettings.extensionConfig?.codex ?? undefined,
     );
     const memoryControlExtension = options.memoryCoordinator === undefined
       ? undefined
@@ -191,6 +200,7 @@ export function createLocalSessionRuntimeFactory(
         : { scopedModels: modelScope.scopedModels }),
       extensionPackages,
       importExtension,
+      extensionConfigOverrides,
       outputStyle,
       skillPaths,
       ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
@@ -226,6 +236,7 @@ export function createLocalSessionRuntimeFactory(
       runtime,
       ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
+      extensionConfigOverrides,
       importExtension: createLocalExtensionImporter(
         host,
         options.modelRuntime,
@@ -315,6 +326,7 @@ export async function createLocalFelanRuntime(
     ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.subagentSettings === undefined ? {} : { subagentSettings: options.subagentSettings }),
+    ...(options.extensionConfigOverrides === undefined ? {} : { extensionConfigOverrides: options.extensionConfigOverrides }),
     memoryCoordinator,
     onSessionModel: (model) => memoryCoordinator.setSelectedModel(model),
   });

@@ -12,7 +12,7 @@ describe('@felan-ai/ext-output-style package boundary', () => {
 
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-output-style',
-      version: '0.1.0',
+      version: '0.2.0',
       license: 'MIT',
       repository: {
         type: 'git',
@@ -21,7 +21,7 @@ describe('@felan-ai/ext-output-style package boundary', () => {
       },
       publishConfig: { access: 'public', provenance: true },
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
-      peerDependencies: { '@felan-ai/agent-core': '^0.4.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.5.0' },
     });
     expect(license).toContain('MIT License');
     expect(notice).toContain('original Felan code');

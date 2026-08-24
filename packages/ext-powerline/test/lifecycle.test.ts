@@ -98,15 +98,14 @@ describe('powerline lifecycle', () => {
     await harness.emit('session_shutdown', {}, ctx.value);
   });
 
-  it('registers lifecycle handlers and all namespaced flags at initialization', () => {
+  it('registers lifecycle handlers without Pi flags', () => {
     const harness = extensionHarness();
     powerlineExtension(harness.pi);
     expect([...harness.handlers.keys()]).toEqual(expect.arrayContaining([
       'session_start', 'session_shutdown', 'agent_start', 'agent_end', 'turn_end',
       'tool_execution_end', 'session_compact', 'session_tree', 'model_select', 'thinking_level_select',
     ]));
-    expect([...harness.flags.keys()]).toHaveLength(8);
-    expect([...harness.flags.keys()].every((flag) => flag.startsWith('felan-powerline-'))).toBe(true);
+    expect([...harness.flags.keys()]).toHaveLength(0);
   });
 
   it('refreshes injected subscription usage for TUI sessions and model changes', async () => {
@@ -160,8 +159,6 @@ function extensionHarness() {
       current.push(handler);
       handlers.set(event, current);
     },
-    registerFlag: (name: string, options: { default?: boolean | string }) => flags.set(name, options),
-    getFlag: (name: string) => flags.get(name)?.default,
     exec,
     agentDir: '/agent',
     runtime: {},

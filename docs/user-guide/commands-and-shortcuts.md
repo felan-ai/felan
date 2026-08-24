@@ -85,5 +85,7 @@ These are the flags accepted directly by the `felan` binary:
 --verbose
 ```
 
-Other extension flags are public composition APIs for hosts that expose Pi's
-flag parser; the local `felan` wrapper rejects unknown CLI options.
+Enabled configurable extensions add generated options to this list. For
+example, `--prewalk-entry-approval always` and `--powerline-theme nord` are
+also accepted. The same values can be persisted in `settings.json` or edited
+through `/settings`.

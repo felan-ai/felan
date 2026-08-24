@@ -207,4 +207,33 @@ describe('felan CLI', () => {
     expect(errors).toEqual(['Unknown option: --cloud']);
     expect(launched).toBe(false);
   });
+
+  it('parses declarative extension options and passes them to the runtime', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+    const exitCode = await runCli([
+      '--prewalk-entry-approval', 'always',
+      '--no-prewalk-restore-planner',
+      '--powerline-theme=nord',
+      'inspect',
+    ], { launch: async (options) => launches.push(options) });
+
+    expect(exitCode).toBe(0);
+    expect(launches[0]?.extensionConfigOverrides).toEqual([expect.objectContaining({
+      extensionId: 'prewalk', values: { entryApproval: 'always', restorePlanner: false },
+    }), expect.objectContaining({ extensionId: 'powerline', values: { theme: 'nord' } })]);
+  });
+
+  it('parses structured declarative extension options as JSON', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+    const lines = '[{"segments":{"status":{"enabled":true}}}]';
+    const exitCode = await runCli([
+      `--powerline-lines=${lines}`,
+      'inspect',
+    ], { launch: async (options) => launches.push(options) });
+
+    expect(exitCode).toBe(0);
+    expect(launches[0]?.extensionConfigOverrides).toEqual([expect.objectContaining({
+      extensionId: 'powerline', values: { lines: [{ segments: { status: { enabled: true } } }] },
+    })]);
+  });
 });

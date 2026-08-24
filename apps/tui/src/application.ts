@@ -8,6 +8,8 @@ import { installFelanStartupHeader } from './startup-header.js';
 import { createToolActivityRuntimeView } from './tool-activity/runtime-view.js';
 import { checkForFelanUpdate } from './update.js';
 import { CwdChangeRequested, installFelanCwdCommand } from './cwd-command.js';
+import { installFelanSettingsCommand } from './extension-settings.js';
+import { loadLocalExtensionConfigDefinitions } from './extensions.js';
 
 export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly initialMessage?: string;
@@ -60,6 +62,11 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
     const mode = new InteractiveMode(createToolActivityRuntimeView(runtime), {
       ...(options.initialMessage === undefined ? {} : { initialMessage: options.initialMessage }),
       ...(options.verbose === undefined ? {} : { verbose: options.verbose }),
+    });
+    installFelanSettingsCommand(mode, {
+      agentDir: runtime.services.agentDir,
+      settingsManager: runtime.services.settingsManager,
+      definitions: await loadLocalExtensionConfigDefinitions(),
     });
     installFelanCwdCommand(mode, {
       getCwd: () => runtime.cwd,

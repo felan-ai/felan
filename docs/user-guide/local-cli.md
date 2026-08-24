@@ -80,10 +80,7 @@ The default root is `~/.felan`; override it with `FELAN_AGENT_DIR`.
 $FELAN_AGENT_DIR/
   settings.json
   APPEND_SYSTEM.md
-  powerline.json
   mcp.json
-  codex.json
-  web-search.json
   agents/
   sessions/
   storage/

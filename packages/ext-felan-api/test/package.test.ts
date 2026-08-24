@@ -10,11 +10,11 @@ describe('@felan-ai/ext-felan-api package boundary', () => {
     const notice = await readFile(join(packageRoot, 'NOTICE'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-felan-api',
-      version: '0.1.0',
+      version: '0.2.0',
       license: 'MIT',
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
       dependencies: { typebox: '1.1.38' },
-      peerDependencies: { '@felan-ai/agent-core': '^0.4.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.5.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
     });

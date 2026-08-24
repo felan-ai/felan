@@ -8,15 +8,11 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 
 | Path | Purpose |
 | --- | --- |
-| `settings.json` | Built-in enablement, output style, local TUI behavior, model scope, and subagent limits |
+| `settings.json` | Built-in enablement, extension configuration, local TUI behavior, model scope, and subagent limits |
 | `APPEND_SYSTEM.md` | Optional local application prompt append |
 | `mcp.json` | Felan-owned remote OAuth MCP servers |
 | `<workspace>/.mcp.json` | Project MCP entries; higher precedence by server name |
-| `web-search.json` | Web provider credentials, selection, fetch policy, and limits |
-| `codex.json` | GPT/OpenAI request controls |
-| `powerline.json` | Footer layout, segments, themes, and colors |
 | `agents/*.md` | Felan-specific user agent definitions |
-| `storage/agent/rtk-optimizer/config.json` | RTK rewrite and compaction settings |
 
 The local host does not read Pi project settings. Configuration for ambient Pi
 extensions, prompts, packages, themes, or skills is filtered.
@@ -47,7 +43,11 @@ browser and Powerline extensions:
     "outputStyle": true,
     "powerline": false
   },
-  "outputStyle": "concise",
+  "extensionConfig": {
+    "prewalk": { "entryApproval": "always" },
+    "outputStyle": { "style": "concise" },
+    "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true }
+  },
   "felanSubagents": {
     "concurrency": 4,
     "maxDepth": 3
@@ -114,29 +114,25 @@ format and model-selection behavior.
 
 ### Prewalk
 
-Model-called `enter_prewalk` uses the `ask` approval policy by default. A
-dialog-capable host asks before entering; JSON and print modes deny the request
-instead of waiting for input. `--prewalk-entry-approval` accepts `ask`, `always`,
-or `never`. Explicit `/prewalk` is already user intent and bypasses this gate.
+Model-called `enter_prewalk` uses the resolved `extensionConfig.prewalk`
+settings. A dialog-capable host asks when configured `ask`; JSON and print modes
+deny the request instead of waiting for input. Explicit `/prewalk` is already
+user intent and bypasses this gate. The local `/settings` screen edits these
+values and persists them to `settings.json`.
 
-Platform compositions can set their default when initializing the extension.
-For example, an unattended cloud host can use:
+CLI options are generated from enabled extension declarations. For example:
 
 ```ts
-import { createPrewalkExtension } from '@felan-ai/ext-prewalk';
-
-createPrewalkExtension({ entryApproval: 'always' });
+felan --prewalk-entry-approval always
 ```
 
-The namespaced flag overrides the initialization default.
-Initialization options are validated immediately, so an unsupported
-`entryApproval` value makes `createPrewalkExtension()` throw while the host is
-constructing the extension. Invalid `--prewalk-entry-approval` flag values are
-reported as warnings and fall back to the host initialization defaults.
+The precedence is defaults, then `settings.json`, then CLI invocation values.
+Agent Core consumers can supply a final programmatic override with
+`configureExtension()` and `extensionConfigOverrides`.
 
 ### Output style
 
-The top-level `outputStyle` setting accepts `concise` or `explanatory`.
+The `extensionConfig.outputStyle.style` setting accepts `concise` or `explanatory`.
 `concise` is the default. The output-style extension appends the selected,
 built-in instructions as a bounded `## Output Style` section for root and child
 sessions; it does not load arbitrary prompt text or ambient files.
@@ -148,7 +144,7 @@ the extension.
 
 ### Codex tools
 
-`codex.json` accepts exactly three fields:
+`extensionConfig.codex` accepts exactly three fields:
 
 ```json
 {
@@ -163,9 +159,11 @@ eligible GPT models on the exact `openai` or `openai-codex` provider.
 
 ### Web access
 
-`web-search.json` configures OpenAI, Exa, Brave, and self-hosted SearXNG search,
-plus PDF, repository clone, domain, and SSRF policy. Keep API keys outside
-project files. See [Web, MCP, browser, and documents](web-mcp-and-browser.md).
+`extensionConfig.webAccess` configures OpenAI, Exa, Brave, and self-hosted
+SearXNG search, plus PDF, repository clone, domain, and SSRF policy. Credential
+fields preserve literal values, `$NAME`/`${NAME}` environment references, and
+trusted `!command` sources; sensitive values are redacted in `/settings` and
+are not exposed as CLI options. See [Web, MCP, browser, and documents](web-mcp-and-browser.md).
 
 ### MCP
 
@@ -186,14 +184,47 @@ of using the environment.
 
 ### Powerline
 
-`powerline.json` is read when the extension initializes. Changes take effect in
-a newly constructed process/session. The built-in is enabled by default; set
+All Powerline configuration lives under `extensionConfig.powerline` in
+`settings.json`, through `/settings`, or through the generated scalar CLI
+options. The complete shape is:
+
+```json
+{
+  "theme": "custom",
+  "style": "powerline",
+  "charset": "text",
+  "colorCompatibility": "truecolor",
+  "autoWrap": true,
+  "padding": 1,
+  "colors": {
+    "directory": { "fg": "#ffffff", "bg": "#1d4ed8" }
+  },
+  "lines": [
+    { "segments": { "directory": { "enabled": true, "style": "fish" } } }
+  ]
+}
+```
+
+`lines` contains ordered display lines. Each line contains supported
+`directory`, `git`, `model`, `session`, `subscription`, `context`, and `status`
+segments with their documented segment fields. `colors` accepts custom named
+`#RRGGBB` foreground/background pairs. Changes take effect in a newly
+constructed process/session. The built-in is enabled by default; set
 `builtinExtensions.powerline` to `false` to remove it.
+
+### Extension configuration
+
+Every enabled configurable extension declares typed settings. Felan exposes the
+same declarations through `settings.json`, generated CLI options, `/settings`,
+and the Agent Core programmatic API. Values are validated before activation;
+unknown extension or field names are errors. Type in `/settings` to fuzzy-search
+by extension or setting name.
 
 ### RTK
 
-Use `/rtk` for interactive settings or `/rtk path` to print its agent-scoped
-configuration location. Command rewriting needs the reviewed `rtk` executable;
+Use `/settings` to edit `extensionConfig.rtkOptimizer`. `/rtk` shows operational
+status, verifies availability, installs the reviewed executable, and reports
+metrics. Command rewriting needs the reviewed `rtk` executable;
 binary-independent output compaction does not.
 
 ## Secrets
