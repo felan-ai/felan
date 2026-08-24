@@ -53,6 +53,20 @@ describe('HostAgentRuntime', () => {
     expect(result.code).not.toBe(0);
   });
 
+  it('bounds captured command output without killing a successful process', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const result = await runtime.exec(
+      process.execPath,
+      ['-e', "process.stdout.write('x'.repeat(100_000)); process.stderr.write('y'.repeat(100_000))"],
+      { maxOutputBytes: 1_024 },
+    );
+
+    expect(result).toMatchObject({ code: 0, killed: false, truncated: true });
+    expect(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)).toBeLessThanOrEqual(1_024);
+    await expect(runtime.exec(process.execPath, ['--version'], { maxOutputBytes: -1 }))
+      .rejects.toThrow('maxOutputBytes must be a non-negative safe integer');
+  });
+
   it.skipIf(process.platform === 'win32')(
     'falls back to the child when group termination is not permitted',
     async () => {
@@ -220,6 +234,96 @@ describe('HostAgentRuntime', () => {
     await expect(runtime.remove('nested')).rejects.toThrow();
     await runtime.remove('nested', { recursive: true });
     await expect(runtime.readFile('nested/top.bin')).rejects.toThrow();
+  });
+
+  it('bounds recursive listings and prunes ignored directories', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    await runtime.mkdir('src/nested', { recursive: true });
+    await runtime.mkdir('node_modules/pkg', { recursive: true });
+    await runtime.mkdir('.git/objects', { recursive: true });
+    await Promise.all([
+      runtime.writeFile('root.ts', new Uint8Array([1])),
+      runtime.writeFile('src/app.ts', new Uint8Array([2])),
+      runtime.writeFile('src/nested/deep.ts', new Uint8Array([3])),
+      runtime.writeFile('src/readme.md', new Uint8Array([4])),
+      runtime.writeFile('node_modules/pkg/ignored.ts', new Uint8Array([5])),
+      runtime.writeFile('.git/objects/ignored.ts', new Uint8Array([6])),
+    ]);
+
+    await expect(runtime.listFiles('.', {
+      recursive: true,
+      pattern: '**/*.ts',
+      ignore: ['**/node_modules/**', '**/.git/**'],
+      limit: 2,
+    })).resolves.toEqual(['root.ts', join('src', 'app.ts')]);
+    await expect(runtime.listFiles('.', {
+      recursive: true,
+      pattern: '**/*.ts',
+      ignore: ['**/node_modules/**', '**/.git/**'],
+      maxDepth: 1,
+    })).resolves.toEqual(['root.ts']);
+    await expect(runtime.listFiles('.', {
+      recursive: true,
+      pattern: '**/*.ts',
+      ignore: ['**/node_modules/**', '**/.git/**'],
+      maxDepth: 2,
+    })).resolves.toEqual(['root.ts', join('src', 'app.ts')]);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'supports newline-containing names and pre-cancelled listings',
+    async () => {
+      const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+      const newlineName = 'line\nbreak.ts';
+      await runtime.writeFile(newlineName, new Uint8Array([1]));
+
+      await expect(runtime.listFiles('.', {
+        recursive: true,
+        pattern: '**/*.ts',
+      })).resolves.toEqual([newlineName]);
+
+      const controller = new AbortController();
+      controller.abort();
+      await expect(runtime.listFiles('.', {
+        recursive: true,
+        signal: controller.signal,
+      })).rejects.toThrow('Operation aborted');
+    },
+  );
+
+  it('can return immediate directories without descending into them', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    await runtime.mkdir('empty', { recursive: true });
+    await runtime.mkdir('nested/deep', { recursive: true });
+    await runtime.writeFile('file.txt', new Uint8Array([1]));
+    await runtime.writeFile('nested/deep/value.txt', new Uint8Array([2]));
+
+    await expect(runtime.listFiles('.', {
+      includeDirectories: true,
+      recursive: false,
+    })).resolves.toEqual(['empty', 'file.txt', 'nested']);
+    await expect(runtime.listFiles('.', {
+      includeDirectories: true,
+      recursive: true,
+      maxDepth: 3,
+    })).resolves.toEqual([
+      'empty',
+      'file.txt',
+      'nested',
+      join('nested', 'deep'),
+      join('nested', 'deep', 'value.txt'),
+    ]);
+  });
+
+  it('rejects invalid file-listing bounds', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+
+    await expect(runtime.listFiles('.', { limit: -1 })).rejects.toThrow(
+      'limit must be a non-negative safe integer',
+    );
+    await expect(runtime.listFiles('.', { maxDepth: 1.5 })).rejects.toThrow(
+      'maxDepth must be a non-negative safe integer',
+    );
   });
 
   it('bounds file reads without relying on a separate size check', async () => {

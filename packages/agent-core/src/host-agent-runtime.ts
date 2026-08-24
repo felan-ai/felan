@@ -3,8 +3,8 @@ import {
   lstat,
   mkdir,
   open,
+  opendir,
   readFile,
-  readdir,
   readlink,
   realpath,
   rm,
@@ -15,8 +15,10 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { IDisposable, IPty } from '@lydell/node-pty';
 import type {
   AgentRuntime,
+  AgentRuntimeExecOptions,
   AgentRuntimeFileReadOptions,
   AgentRuntimeFileWriteOptions,
+  AgentRuntimeListFilesOptions,
   AgentRuntimeProcess,
   AgentRuntimeProcesses,
   AgentRuntimeProcessReadOptions,
@@ -25,11 +27,11 @@ import type {
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
   AgentRuntimeTerminals,
-  ExecOptions,
   ExecResult,
 } from './runtime.js';
+import { fileListingGlobMatcher, normalizeFileListingPath } from './file-listing.js';
 
-export type HostShellOptions = ExecOptions & {
+export type HostShellOptions = AgentRuntimeExecOptions & {
   env?: Readonly<Record<string, string>>;
 };
 
@@ -87,7 +89,7 @@ export class HostAgentRuntime implements AgentRuntime {
   async exec(
     command: string,
     args: readonly string[],
-    options?: ExecOptions,
+    options?: AgentRuntimeExecOptions,
   ): Promise<ExecResult> {
     const literalArgs = [...args];
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
@@ -125,7 +127,7 @@ export class HostAgentRuntime implements AgentRuntime {
     await writeFile(resolvedPath, copiedContent, options?.exclusive ? { flag: 'wx' } : undefined);
   }
 
-  async listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]> {
+  async listFiles(path: string, options?: AgentRuntimeListFilesOptions): Promise<string[]> {
     const resolvedPath = this.#pathAccess === 'host'
       ? resolveHostPath(this.#cwd, path)
       : await resolveReadablePath(
@@ -134,15 +136,7 @@ export class HostAgentRuntime implements AgentRuntime {
           this.#agentStorageRoot,
           path,
         );
-    const entries = await readdir(resolvedPath, {
-      recursive: options?.recursive ?? false,
-      withFileTypes: true,
-    });
-
-    return entries
-      .filter((entry) => entry.isFile())
-      .map((entry) => relative(resolvedPath, resolve(entry.parentPath, entry.name)))
-      .sort();
+    return listHostFiles(resolvedPath, options);
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
@@ -210,13 +204,14 @@ export class HostAgentRuntime implements AgentRuntime {
     command: string,
     args: string[],
     cwd: string,
-    options: ExecOptions | undefined,
+    options: AgentRuntimeExecOptions | undefined,
     shell: boolean,
     env?: Readonly<Record<string, string>>,
   ): Promise<ExecResult> {
     if (options?.signal?.aborted) {
       return killedResult();
     }
+    const maxOutputBytes = validateMaxOutputBytes(options?.maxOutputBytes);
 
     return new Promise((resolveResult) => {
       const child = spawn(command, args, {
@@ -229,6 +224,8 @@ export class HostAgentRuntime implements AgentRuntime {
       });
       const stdout: Uint8Array[] = [];
       const stderr: Uint8Array[] = [];
+      let capturedOutputBytes = 0;
+      let outputTruncated = false;
       let killed = false;
       let spawnError: Error | undefined;
       let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -252,11 +249,22 @@ export class HostAgentRuntime implements AgentRuntime {
           stderr: spawnError?.message ?? Buffer.concat(stderr).toString(),
           code: killed ? 143 : (code ?? (spawnError ? 1 : 0)),
           killed,
+          ...(outputTruncated ? { truncated: true } : {}),
         });
       };
 
-      child.stdout.on('data', (chunk: Uint8Array) => stdout.push(chunk));
-      child.stderr.on('data', (chunk: Uint8Array) => stderr.push(chunk));
+      child.stdout.on('data', (chunk: Uint8Array) => {
+        const captured = captureOutputChunk(chunk, maxOutputBytes, capturedOutputBytes);
+        capturedOutputBytes = captured.nextBytes;
+        outputTruncated ||= captured.truncated;
+        if (captured.chunk.length > 0) stdout.push(captured.chunk);
+      });
+      child.stderr.on('data', (chunk: Uint8Array) => {
+        const captured = captureOutputChunk(chunk, maxOutputBytes, capturedOutputBytes);
+        capturedOutputBytes = captured.nextBytes;
+        outputTruncated ||= captured.truncated;
+        if (captured.chunk.length > 0) stderr.push(captured.chunk);
+      });
       child.once('error', (error) => {
         spawnError = error;
       });
@@ -528,14 +536,7 @@ function createHostStorage(root: string): AgentRuntimeStorage {
     },
     async listFiles(path, options) {
       const resolvedPath = await resolveContainedPath(root, path);
-      const entries = await readdir(resolvedPath, {
-        recursive: options?.recursive ?? false,
-        withFileTypes: true,
-      });
-      return entries
-        .filter((entry) => entry.isFile())
-        .map((entry) => relative(resolvedPath, resolve(entry.parentPath, entry.name)))
-        .sort();
+      return listHostFiles(resolvedPath, options);
     },
     async mkdir(path, options) {
       await mkdir(await resolveContainedPath(root, path), {
@@ -548,6 +549,144 @@ function createHostStorage(root: string): AgentRuntimeStorage {
       });
     },
   };
+}
+
+async function listHostFiles(
+  root: string,
+  options: AgentRuntimeListFilesOptions = {},
+): Promise<string[]> {
+  throwIfListingAborted(options.signal);
+  const recursive = options.recursive ?? false;
+  const maximumDepth = validateListingBound(
+    'maxDepth',
+    options.maxDepth,
+    recursive ? Number.MAX_SAFE_INTEGER : 1,
+  );
+  const limit = validateListingBound('limit', options.limit, Number.MAX_SAFE_INTEGER);
+  if (maximumDepth === 0 || limit === 0) {
+    throwIfListingAborted(options.signal);
+    const directory = await opendir(root);
+    await directory.close();
+    return [];
+  }
+
+  if (options.pattern !== undefined && typeof options.pattern !== 'string') {
+    throw new Error('pattern must be a string');
+  }
+  const matcher = options.pattern === undefined
+    ? undefined
+    : fileListingGlobMatcher(options.pattern);
+  const ignoreMatchers = (options.ignore ?? []).map((pattern) => {
+    if (typeof pattern !== 'string') throw new Error('ignore patterns must be strings');
+    return fileListingGlobMatcher(pattern);
+  });
+
+  const candidates = limit === Number.MAX_SAFE_INTEGER
+    ? undefined
+    : new BoundedPathHeap(limit);
+  const unboundedResults: string[] = [];
+  const addResult = (path: string): void => {
+    if (candidates) candidates.push(path);
+    else unboundedResults.push(path);
+  };
+
+  const visitDirectory = async (relativeDirectory = '', depth = 0): Promise<void> => {
+    throwIfListingAborted(options.signal);
+    const absoluteDirectory = relativeDirectory ? join(root, relativeDirectory) : root;
+    if (relativeDirectory) {
+      const stats = await lstat(absoluteDirectory);
+      if (!stats.isDirectory()) return;
+    }
+    const directory = await opendir(absoluteDirectory);
+    for await (const entry of directory) {
+      throwIfListingAborted(options.signal);
+      if (!entry.isDirectory() && !entry.isFile()) continue;
+      const relativePath = relativeDirectory
+        ? join(relativeDirectory, entry.name)
+        : entry.name;
+      const normalizedPath = normalizeFileListingPath(relativePath);
+      const entryDepth = depth + 1;
+      if (isIgnoredListingPath(normalizedPath, entry.isDirectory(), ignoreMatchers)) continue;
+
+      if (entry.isDirectory()) {
+        const canReturn = options.includeDirectories === true
+          && (matcher?.test(normalizedPath) ?? true);
+        if (canReturn) addResult(relativePath);
+        const canDescend = recursive && entryDepth < maximumDepth;
+        if (canDescend) await visitDirectory(relativePath, entryDepth);
+      } else if (matcher?.test(normalizedPath) ?? true) {
+        addResult(relativePath);
+      }
+    }
+  };
+
+  await visitDirectory();
+  const results = candidates?.values() ?? unboundedResults;
+  results.sort();
+  return results;
+}
+
+function validateListingBound(name: string, value: number | undefined, fallback: number): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved < 0) {
+    throw new Error(`${name} must be a non-negative safe integer`);
+  }
+  return resolved;
+}
+
+function throwIfListingAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error('Operation aborted');
+}
+
+function isIgnoredListingPath(
+  path: string,
+  directory: boolean,
+  matchers: readonly RegExp[],
+): boolean {
+  return matchers.some((matcher) => (
+    matcher.test(path) || (directory && matcher.test(`${path}/`))
+  ));
+}
+
+class BoundedPathHeap {
+  readonly #entries: string[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  push(entry: string): void {
+    if (this.#entries.length >= this.limit) {
+      if (entry >= this.#entries[0]!) return;
+      this.#entries[0] = entry;
+      this.#siftDown(0);
+      return;
+    }
+    let index = this.#entries.push(entry) - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (this.#entries[parent]! >= entry) break;
+      this.#entries[index] = this.#entries[parent]!;
+      index = parent;
+    }
+    this.#entries[index] = entry;
+  }
+
+  values(): string[] {
+    return [...this.#entries];
+  }
+
+  #siftDown(index: number): void {
+    while (true) {
+      const left = index * 2 + 1;
+      if (left >= this.#entries.length) return;
+      const right = left + 1;
+      const child = right < this.#entries.length && this.#entries[right]! > this.#entries[left]!
+        ? right
+        : left;
+      if (this.#entries[index]! >= this.#entries[child]!) return;
+      [this.#entries[index], this.#entries[child]] = [this.#entries[child]!, this.#entries[index]!];
+      index = child;
+    }
+  }
 }
 
 let ptyModule: Promise<typeof import('@lydell/node-pty')> | undefined;
@@ -721,6 +860,31 @@ function isPermissionError(error: unknown): boolean {
 
 function killedResult(): ExecResult {
   return { stdout: '', stderr: '', code: 143, killed: true };
+}
+
+function validateMaxOutputBytes(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error('maxOutputBytes must be a non-negative safe integer');
+  }
+  return value;
+}
+
+function captureOutputChunk(
+  chunk: Uint8Array,
+  maximum: number | undefined,
+  captured: number,
+): { readonly chunk: Uint8Array; readonly nextBytes: number; readonly truncated: boolean } {
+  if (maximum === undefined) {
+    return { chunk, nextBytes: captured + chunk.byteLength, truncated: false };
+  }
+  const remaining = Math.max(0, maximum - captured);
+  const retained = chunk.subarray(0, Math.min(remaining, chunk.byteLength));
+  return {
+    chunk: retained,
+    nextBytes: captured + retained.byteLength,
+    truncated: retained.byteLength < chunk.byteLength,
+  };
 }
 
 async function readBoundedFile(path: string, maxBytes: number): Promise<Buffer> {

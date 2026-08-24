@@ -25,6 +25,11 @@ available to the current user. Use `exec(command, args)` for literal argument
 boundaries and `shell(command)` only when shell parsing is intentional. File
 reads and writes use `Uint8Array` so binary content is preserved. Reads accept a
 `maxBytes` bound, and writes support exclusive creation for race-safe new files.
+`listFiles` supports recursive, glob-filtered traversal with ignored-directory,
+depth, and result-count bounds; host implementations enumerate one directory at
+a time rather than materializing an unbounded recursive scan. `exec` and `shell`
+accept an optional `maxOutputBytes` cap; capped results set `truncated` without
+turning normal command completion into cancellation.
 
 Every `AgentRuntime` exposes scoped storage through `storage(scope)`. The
 default `storage()` handle is identical to `storage('session')` and belongs to

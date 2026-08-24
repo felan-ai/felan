@@ -1,23 +1,23 @@
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type {
   AgentRuntime,
+  AgentRuntimeExecOptions,
   AgentRuntimeFileReadOptions,
   AgentRuntimeFileWriteOptions,
   AgentRuntimeKind,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
-  ExecOptions,
   ExecResult,
 } from '../src/runtime.js';
 
-type TestShellOptions = ExecOptions & {
+type TestShellOptions = AgentRuntimeExecOptions & {
   env?: Readonly<Record<string, string>>;
 };
 
 interface TestExecCall {
   readonly command: string;
   readonly args: readonly string[];
-  readonly options?: ExecOptions;
+  readonly options?: AgentRuntimeExecOptions;
 }
 
 interface TestShellCall {
@@ -79,7 +79,7 @@ export class TestAgentRuntime implements AgentRuntime {
     return this.#storage[scope];
   }
 
-  async exec(command: string, args: readonly string[], options?: ExecOptions): Promise<ExecResult> {
+  async exec(command: string, args: readonly string[], options?: AgentRuntimeExecOptions): Promise<ExecResult> {
     const normalizedOptions = this.#normalizeExecOptions(options);
     if (normalizedOptions?.signal?.aborted) return killedResult();
     const call: TestExecCall = normalizedOptions
@@ -239,12 +239,13 @@ export class TestAgentRuntime implements AgentRuntime {
     return resolvedPath;
   }
 
-  #normalizeExecOptions(options?: ExecOptions): ExecOptions | undefined {
+  #normalizeExecOptions(options?: AgentRuntimeExecOptions): AgentRuntimeExecOptions | undefined {
     if (!options) return undefined;
     return {
       ...(options.cwd === undefined ? {} : { cwd: this.#resolvePath(options.cwd) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+      ...(options.maxOutputBytes === undefined ? {} : { maxOutputBytes: options.maxOutputBytes }),
     };
   }
 
@@ -255,7 +256,7 @@ export class TestAgentRuntime implements AgentRuntime {
 
   async #run(
     handler: () => ExecResult | Promise<ExecResult>,
-    options?: ExecOptions,
+    options?: AgentRuntimeExecOptions,
   ): Promise<ExecResult> {
     if ((!options?.timeout || options.timeout <= 0) && !options?.signal) return handler();
     let timeout: ReturnType<typeof setTimeout> | undefined;
