@@ -10,6 +10,10 @@ Active mode replaces `read`, `bash`, `edit`, and `write` with
 restores the ordinary tools. All shell and filesystem operations use the
 current `AgentRuntime`.
 Runtimes without persistent-process support keep Felan's ordinary coding tools.
+Because Pi normally exposes skill metadata only while `read` is active, Codex
+mode restores that metadata from Pi's structured prompt options. Matching
+skills remain progressively disclosed: the model opens the selected `SKILL.md`
+through `exec_command` and loads referenced files only as needed.
 The local TUI presents Codex tool calls with friendly action labels while
 headless modes continue to expose the stable tool names and raw results.
 

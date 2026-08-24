@@ -6,6 +6,7 @@ import {
 import { readCodexConfig } from './config.js';
 import { ExecSessionManager } from './exec-session-manager.js';
 import { supportsCodexModel, supportsImageInput } from './model-policy.js';
+import { injectCodexSkills } from './prompt.js';
 import { applyCodexRequestOptions } from './request-options.js';
 import { CODEX_TOOL_NAMES, createCodexTools, registerPatchResultEvent } from './tools.js';
 
@@ -38,6 +39,11 @@ const codexExtension: FelanExtension = async (pi) => {
 
   pi.on('session_start', (_event, ctx) => synchronizeTools(ctx.model));
   pi.on('model_select', (event) => synchronizeTools(event.model));
+  pi.on('before_agent_start', (event, ctx) => {
+    if (!supportsCodexModel(ctx.model) || !pi.runtime.processes) return undefined;
+    const systemPrompt = injectCodexSkills(event.systemPrompt, event.systemPromptOptions.skills);
+    return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
+  });
   pi.on('before_provider_request', (event, ctx) => (
     applyCodexRequestOptions(event.payload, ctx, config)
   ));

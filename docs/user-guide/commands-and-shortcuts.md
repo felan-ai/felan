@@ -8,6 +8,7 @@ and first-party extensions.
 
 | Command | Purpose |
 | --- | --- |
+| `/cwd [directory]` | Start a fresh session in another directory |
 | `/dependencies` | Inspect, install, enable, or disable external runtime dependencies |
 | `/memory status` | Show local project-memory state |
 | `/memory run` | Process pending memory evidence now |
@@ -18,6 +19,13 @@ and first-party extensions.
 | `/tools` | Inspect complete root-session tool arguments and results |
 
 `/dependencies` and `/memory open` require the interactive TUI.
+
+`/cwd` accepts a path relative to the current agent directory, an absolute
+path, or a `~/...` path. Press Tab after `/cwd ` to complete directories. The
+command disposes the current root runtime and starts a fresh session in the
+target directory, rebuilding cwd-bound settings, instructions, skills, tools,
+memory, and subagents. The parent shell's directory is unchanged; use `/cwd .`
+to start a new session for the current directory.
 
 ## Extension commands
 

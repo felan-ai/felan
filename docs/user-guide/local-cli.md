@@ -97,6 +97,21 @@ Nested subagents work in the same project and share the root session's
 extension storage. They have separate Pi session histories and bounded
 execution lifecycles.
 
+### Change the active directory
+
+Inside the interactive TUI, use `/cwd <directory>` to dispose the current root
+session and start a fresh session in another directory:
+
+```text
+/cwd ../felan-platform
+```
+
+Paths are resolved relative to the active agent cwd; absolute and `~/...`
+paths are also supported. Press Tab after `/cwd ` for directory completion.
+The parent shell is not changed. Felan rebuilds all cwd-bound resources for the
+new session, including settings, instructions, skills, tools, memory, and
+subagents.
+
 ## Resource policy
 
 The local host loads only:
