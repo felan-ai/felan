@@ -1,4 +1,5 @@
 export { runLocalFelan } from './application.js';
+export { openLocalSessionManager, selectLocalSessionManager } from './resume.js';
 export type { RunLocalFelanOptions } from './application.js';
 export { runCli } from './cli-main.js';
 export type { CliDependencies } from './cli-main.js';

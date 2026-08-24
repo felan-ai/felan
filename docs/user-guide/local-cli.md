@@ -10,6 +10,9 @@ and TUI presentation.
 felan [options] [message]
 
 -c, --continue     Continue the most recent session for this directory
+-r, --resume       Pick a session to resume
+--session <id>     Resume a specific session
+--session-dir <dir> Session directory for --session
 --diagnostics      Print runtime versions and configuration mode
 update             Update a global npm installation of Felan
 -h, --help         Show help
@@ -19,6 +22,14 @@ update             Update a global npm installation of Felan
 
 Use `--` before an initial message that begins with a dash. Unknown options are
 rejected before the TUI starts.
+
+### Resume a session
+
+`felan --resume` opens a selection-only picker. Use Tab to switch between the
+current folder and all local sessions, Ctrl+S to change sorting, Ctrl+N to show
+only named sessions, and Ctrl+P to toggle session-file paths. Escape cancels
+without creating or launching a session. `felan --continue` remains the quick
+path for the most recent session in the current directory.
 
 ### Update Felan
 
