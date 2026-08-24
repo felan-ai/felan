@@ -50,6 +50,9 @@ importers:
       '@felan-ai/ext-context':
         specifier: workspace:*
         version: link:../../packages/ext-context
+      '@felan-ai/ext-felan-api':
+        specifier: workspace:*
+        version: link:../../packages/ext-felan-api
       '@felan-ai/ext-markitdown':
         specifier: workspace:*
         version: link:../../packages/ext-markitdown
@@ -159,6 +162,16 @@ importers:
         version: link:../agent-core
 
   packages/ext-context:
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-felan-api:
+    dependencies:
+      typebox:
+        specifier: 1.1.38
+        version: 1.1.38
     devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*

@@ -12,6 +12,7 @@ export const packagePaths = [
   'packages/ext-browser',
   'packages/ext-web-access',
   'packages/ext-mcp',
+  'packages/ext-felan-api',
   'packages/ext-codex',
   'packages/ext-rtk-optimizer',
   'packages/ext-powerline',

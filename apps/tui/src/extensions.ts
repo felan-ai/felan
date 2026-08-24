@@ -22,6 +22,7 @@ import {
 
 export const askUserExtensionPackage = '@felan-ai/ext-ask-user';
 export const mcpExtensionPackage = '@felan-ai/ext-mcp';
+export const felanApiExtensionPackage = '@felan-ai/ext-felan-api';
 export const powerlineExtensionPackage = '@felan-ai/ext-powerline';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const memoryExtensionPackage = '@felan-ai/ext-memory';
@@ -32,6 +33,7 @@ export const builtinExtensionPackages = {
   tasks: '@felan-ai/ext-tasks',
   prewalk: '@felan-ai/ext-prewalk',
   mcp: mcpExtensionPackage,
+  felanApi: felanApiExtensionPackage,
   webAccess: '@felan-ai/ext-web-access',
   browser: '@felan-ai/ext-browser',
   backgroundBash: '@felan-ai/ext-background-bash',

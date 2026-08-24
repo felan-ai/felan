@@ -35,6 +35,7 @@ browser and Powerline extensions:
     "tasks": true,
     "prewalk": true,
     "mcp": true,
+    "felanApi": true,
     "webAccess": true,
     "browser": false,
     "backgroundBash": true,
@@ -149,6 +150,17 @@ project files. See [Web, MCP, browser, and documents](web-mcp-and-browser.md).
 `mcp.json` is global to the agent directory. `<workspace>/.mcp.json` overrides
 same-name global servers. The local host accepts remote HTTP OAuth servers only;
 unsupported stdio, socket, bearer-token, and custom-header entries are skipped.
+
+### Felan API
+
+The `felanApi` built-in registers the single `felan_api` gateway only when
+`FELAN_API_KEY` is set. Set `builtinExtensions.felanApi` to `false` to disable
+it. The gateway uses `FELAN_API_URL` when set, otherwise the production Felan
+API, `FELAN_DOCS_URL` for the optional public documentation target, and
+`FELAN_TEAM_SLUG` as guidance for team-scoped paths. It keeps responses bounded
+and marked as untrusted. A managed host can compose
+`@felan-ai/ext-felan-api` with explicit `apiKey` and `teamSlug` values instead
+of using the environment.
 
 ### Powerline
 

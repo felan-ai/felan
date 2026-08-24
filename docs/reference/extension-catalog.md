@@ -19,6 +19,7 @@ Pi extensions or arbitrary npm packages.
 | [`@felan-ai/ext-output-style`](../../packages/ext-output-style/README.md) | Validated model-response style instructions | Root and child system prompts | Host selects the built-in `concise` or `explanatory` style; no ambient prompt loading |
 | [`@felan-ai/ext-web-access`](../../packages/ext-web-access/README.md) | Bounded search, source checks, fetches, and retained content | Four web tools | Provider configuration and network policy |
 | [`@felan-ai/ext-mcp`](../../packages/ext-mcp/README.md) | OAuth-only remote MCP gateway | `/mcp` | Local host supplies OAuth credentials/callbacks |
+| [`@felan-ai/ext-felan-api`](../../packages/ext-felan-api/README.md) | Single authenticated Felan REST API gateway | `felan_api` | `FELAN_API_KEY` or explicit factory `apiKey`; local built-in is disabled when no key is present |
 | [`@felan-ai/ext-browser`](../../packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration | Model-facing `browser` tool | Reviewed CLI; Chrome is separate |
 | [`@felan-ai/ext-markitdown`](../../packages/ext-markitdown/README.md) | Bounded office-document conversion through `read` | `/markitdown` | Managed `markitdown` executable |
 | [`@felan-ai/ext-background-bash`](../../packages/ext-background-bash/README.md) | Detached process registry and logs | `/background-bash`, `Ctrl+Shift+J` | POSIX process utilities; non-OpenAI-family models |

@@ -169,6 +169,10 @@ for (const requiredNotice of [
     errors.push(`packages/ext-mcp/NOTICE is missing ${requiredNotice}`);
   }
 }
+const felanApiNotice = readFileSync(resolve(root, 'packages/ext-felan-api/NOTICE'), 'utf8');
+if (!felanApiNotice.includes('TypeBox 1.1.38')) {
+  errors.push('packages/ext-felan-api/NOTICE is missing TypeBox 1.1.38');
+}
 const tuiNotice = readFileSync(resolve(root, 'apps/tui/NOTICE'), 'utf8');
 for (const requiredNotice of ['@napi-rs/keyring 1.3.0', 'open 11.0.0']) {
   if (!tuiNotice.includes(requiredNotice)) {

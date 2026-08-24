@@ -1,0 +1,5 @@
+@felan-ai/ext-felan-api
+
+This package uses TypeBox 1.1.38 from
+https://github.com/sinclairzx81/typebox, licensed under the MIT License.
+Copyright (c) 2017-2026 Haydn Paterson.

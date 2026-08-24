@@ -54,6 +54,7 @@ contains:
 | Web search and fetching | Remote text, metadata, images, PDFs, repositories, provider responses, and derived summaries are bounded and marked untrusted |
 | MCP | Server metadata, schemas, descriptions, results, resources, and errors are untrusted; the model receives a bounded gateway surface |
 | Browser | Page content, CLI output, and version-matched skill text are untrusted; screenshot bytes are validated before image delivery |
+| Felan API | Authenticated API responses are bounded, marked untrusted, and never receive the API key in model-visible details |
 | MarkItDown | Extracted office-document text is untrusted and carries a conversion diagnostic |
 | Local memory | Summaries and pages are reference material; canonical source citations remain required |
 | Project instructions | `AGENTS.md` and `CLAUDE.md` are context inputs, not a replacement for system, developer, user, or authorization rules |

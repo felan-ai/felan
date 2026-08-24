@@ -331,6 +331,31 @@ try {
       if (JSON.stringify(mcpCommands) !== JSON.stringify(['mcp'])) {
         throw new Error('Packed MCP commands are unavailable');
       }
+      const felanApi = await import('@felan-ai/ext-felan-api');
+      const felanApiTools = [];
+      const felanApiCapabilities = [];
+      felanApi.createFelanApiExtension({
+        apiKey: 'packed-test-key',
+        baseUrl: 'https://api.example.test',
+        fetch: async () => new Response(JSON.stringify({ data: { ok: true } }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      })({
+        registerCapability: (capability) => felanApiCapabilities.push(capability.id),
+        registerTool: (tool) => felanApiTools.push(tool),
+      });
+      if (JSON.stringify(felanApiTools.map((tool) => tool.name)) !== JSON.stringify(['felan_api'])) {
+        throw new Error('Packed Felan API gateway tool is unavailable');
+      }
+      if (JSON.stringify(felanApiCapabilities) !== JSON.stringify(['felan-api'])) {
+        throw new Error('Packed Felan API capability is unavailable');
+      }
+      const felanApiResult = await felanApiTools[0].execute('packed-api-call', {
+        path: 'openapi.json',
+      });
+      if (felanApiResult.isError || !felanApiResult.content[0]?.text.includes('<untrusted_felan_api_content')) {
+        throw new Error('Packed Felan API gateway request failed');
+      }
       const core = await import('@felan-ai/agent-core');
       const fs = await import('node:fs/promises');
       const ptySessionStorage = process.env.PACKED_SMOKE_WORKSPACE + '/.pty-session';
