@@ -29,7 +29,17 @@ portable detection, optional installation, and safe unavailable behavior;
 | MarkItDown document conversion | `markitdown` 0.1.7 | Read interception is bypassed; the extension can be disabled globally | Managed Python virtual environment |
 | RTK command rewriting | compatible `rtk` | Rewriting is bypassed; binary-independent output compaction remains active | Digest-verified official installer pinned to RTK 0.45.0 on Linux/macOS |
 | Browser automation and screenshots | `agent-browser` 0.31.1 | The browser tool is unavailable; the extension can be disabled | Integrity-verified native CLI package in Felan agent storage; Chrome is installed separately by an explicit agent-browser action |
-| Background Bash detached processes | POSIX shell plus `sh`, `nohup`, `ps`, `tr`, `kill`, `date`, `cat`, and `mv` | Background Bash tools remain inactive | No managed installer; use a compatible runtime |
+| Background Bash detached processes | POSIX shell plus `sh`, `nohup`, `ps`, `tr`, `kill`, `date`, `cat`, `mv`, and `sleep` | Background Bash tools remain inactive | No managed installer; use a compatible runtime |
+
+On native Windows, the ordinary `cmd.exe` shell is not a POSIX runtime. The
+host runtime therefore keeps `cmd.exe` as the default for ordinary shell calls
+but can select a same-host Git Bash executable for POSIX calls. It checks
+`FELAN_POSIX_SHELL`, executable `PATH` entries, and standard Git-for-Windows
+install locations. WSL is not selected automatically because its process and
+path namespace is separate from the native host. If no compatible Git Bash
+installation is available, Background Bash stays inactive and Felan does not
+attempt to install operating-system utilities. Git Bash process inspection
+uses its `ps -l` output when the GNU `ps -o` form is unavailable.
 
 Other process calls are not whole-extension startup dependencies. `git` in web
 repository extraction and the powerline is optional per operation; credential

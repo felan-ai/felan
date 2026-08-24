@@ -65,6 +65,10 @@ describe('background bash extension activation', () => {
 
     expect(harness.registerTool).not.toHaveBeenCalled();
     expect(runtime.shell).toHaveBeenCalledOnce();
+    expect(runtime.shell).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ shellFlavor: 'posix' }),
+    );
   });
 
   it('activates when the selected model changes from OpenAI to another provider', async () => {
@@ -112,7 +116,10 @@ describe('background bash extension activation', () => {
 
     await expect(bash.execute('call', { command: 'sleep 5', timeout: 2 }, undefined, undefined, context('anthropic')))
       .rejects.toThrow('Command timed out after 2 seconds');
-    expect(shell).toHaveBeenCalledWith('sleep 5', expect.objectContaining({ timeout: 2_000 }));
+    expect(shell).toHaveBeenCalledWith(
+      'sleep 5',
+      expect.objectContaining({ shellFlavor: 'posix', timeout: 2_000 }),
+    );
   });
 
   it('steers terminal process completion into the parent session automatically', async () => {

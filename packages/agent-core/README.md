@@ -31,6 +31,14 @@ a time rather than materializing an unbounded recursive scan. `exec` and `shell`
 accept an optional `maxOutputBytes` cap; capped results set `truncated` without
 turning normal command completion into cancellation.
 
+Shell calls use the host's default shell unless they request the explicit
+`shellFlavor: 'posix'` option. POSIX hosts use `/bin/sh`; native Windows hosts
+validate and use a same-host Git Bash installation discovered through
+`FELAN_POSIX_SHELL`, `PATH`, or standard Git-for-Windows locations. The
+`HostAgentRuntimeOptions.posixShell` override is available to embedding hosts.
+The default Windows `cmd.exe` behavior is unchanged, and WSL is not selected
+automatically because its process and path namespace is separate from the host.
+
 Every `AgentRuntime` exposes scoped storage through `storage(scope)`. The
 default `storage()` handle is identical to `storage('session')` and belongs to
 one root session plus all of its subagents. Session storage is readable through

@@ -10,6 +10,8 @@ export type {
   AgentRuntimeProcesses,
   AgentRuntimeProcessReadOptions,
   AgentRuntimeProcessSnapshot,
+  AgentRuntimeShellFlavor,
+  AgentRuntimeShellOptions,
   AgentRuntimeShellProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
@@ -52,6 +54,7 @@ export type {
 export { createAgentCoreResourceLoader } from './resource-loader.js';
 export type { CreateAgentCoreResourceLoaderOptions } from './resource-loader.js';
 export { createRuntimeCodingTools } from './tools.js';
+export type { RuntimeCodingToolsOptions } from './tools.js';
 export {
   createAgentCoreSession,
   createAgentCoreSessionRuntime,

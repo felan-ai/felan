@@ -1,6 +1,6 @@
 import type { AgentRuntime } from '@felan-ai/agent-core';
 
-const REQUIRED_POSIX_COMMANDS = ['sh', 'nohup', 'ps', 'tr', 'kill', 'date', 'cat', 'mv'] as const;
+const REQUIRED_POSIX_COMMANDS = ['sh', 'nohup', 'ps', 'tr', 'kill', 'date', 'cat', 'mv', 'sleep'] as const;
 const PROBE_TIMEOUT_MS = 5_000;
 
 export type BackgroundBashRuntimeStatus = {
@@ -27,6 +27,7 @@ export async function inspectBackgroundBashRuntime(
   try {
     const result = await runtime.shell(script, {
       cwd: runtime.cwd,
+      shellFlavor: 'posix',
       timeout: PROBE_TIMEOUT_MS,
     });
     if (!result.killed && result.code === 0) return { available: true };

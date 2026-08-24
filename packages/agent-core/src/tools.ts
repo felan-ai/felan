@@ -9,13 +9,20 @@ import {
   createWriteToolDefinition,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import type { AgentRuntime } from './runtime.js';
+import type { AgentRuntime, AgentRuntimeShellFlavor } from './runtime.js';
 import { fileListingGlobMatcher, normalizeFileListingPath } from './file-listing.js';
 
 const encoder = new TextEncoder();
 const MAX_RUNTIME_TOOL_OUTPUT_BYTES = 50 * 1024;
 
-export function createRuntimeCodingTools(runtime: AgentRuntime): ToolDefinition<any, any, any>[] {
+export interface RuntimeCodingToolsOptions {
+  readonly shellFlavor?: AgentRuntimeShellFlavor;
+}
+
+export function createRuntimeCodingTools(
+  runtime: AgentRuntime,
+  options?: RuntimeCodingToolsOptions,
+): ToolDefinition<any, any, any>[] {
   const read = createReadToolDefinition(runtime.cwd, {
     operations: {
       access: async (path) => {
@@ -28,6 +35,7 @@ export function createRuntimeCodingTools(runtime: AgentRuntime): ToolDefinition<
   const bash = createBashToolDefinition(runtime.cwd) as ToolDefinition<any, any, any>;
   bash.execute = async (_toolCallId, { command, timeout }, signal) => {
     const result = await runtime.shell(command, {
+      ...(options?.shellFlavor === undefined ? {} : { shellFlavor: options.shellFlavor }),
       ...(signal === undefined ? {} : { signal }),
       ...(timeout === undefined ? {} : { timeout: timeout * 1_000 }),
       maxOutputBytes: MAX_RUNTIME_TOOL_OUTPUT_BYTES,

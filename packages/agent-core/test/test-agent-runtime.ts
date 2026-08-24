@@ -5,14 +5,13 @@ import type {
   AgentRuntimeFileReadOptions,
   AgentRuntimeFileWriteOptions,
   AgentRuntimeKind,
+  AgentRuntimeShellOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
   ExecResult,
 } from '../src/runtime.js';
 
-type TestShellOptions = AgentRuntimeExecOptions & {
-  env?: Readonly<Record<string, string>>;
-};
+type TestShellOptions = AgentRuntimeShellOptions;
 
 interface TestExecCall {
   readonly command: string;
@@ -251,7 +250,12 @@ export class TestAgentRuntime implements AgentRuntime {
 
   #normalizeShellOptions(options?: TestShellOptions): TestShellOptions | undefined {
     const normalized = this.#normalizeExecOptions(options);
-    return options?.env ? { ...normalized, env: { ...options.env } } : normalized;
+    if (!options) return normalized;
+    return {
+      ...normalized,
+      ...(options.env === undefined ? {} : { env: { ...options.env } }),
+      ...(options.shellFlavor === undefined ? {} : { shellFlavor: options.shellFlavor }),
+    };
   }
 
   async #run(
