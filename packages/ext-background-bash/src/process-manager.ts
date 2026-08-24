@@ -276,7 +276,8 @@ export class BackgroundBashManager {
   }
 
   #sendSignal(pid: number, signal: NodeJS.Signals) {
-    return this.runtime.shell(`kill -${signal.slice(3)} -- ${shellQuote(String(pid))}`, {
+    const target = pid < 0 ? String(pid) : `-- ${shellQuote(String(pid))}`;
+    return this.runtime.shell(`kill -${signal.slice(3)} ${target}`, {
       cwd: this.runtime.cwd,
       shellFlavor: 'posix',
     });
