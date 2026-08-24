@@ -43,6 +43,7 @@ export interface LocalRuntimeDependency {
   readonly label: string;
   readonly extension: BuiltinExtensionName;
   readonly purpose: string;
+  readonly unavailableMessage?: (status: RuntimeDependencyStatus) => string;
   readonly installConfirmation?: string;
   readonly unavailableChoice: string;
   readonly unavailableOutcome: 'disable-extension' | 'continue';
@@ -63,6 +64,11 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     label: 'Background Bash',
     extension: 'backgroundBash',
     purpose: 'detached process execution, which requires standard POSIX shell and process utilities',
+    unavailableMessage: (status) => formatUnavailableMessage(
+      'Background Bash is built into Felan, but this runtime is missing required POSIX shell/process utilities.',
+      'Detached background jobs remain inactive until the runtime provides them.',
+      status,
+    ),
     unavailableChoice: 'Disable the Background Bash extension',
     unavailableOutcome: 'disable-extension',
     check: async (runtime) => {
@@ -75,6 +81,11 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     label: 'agent-browser',
     extension: 'browser',
     purpose: 'browser automation, authenticated web-app workflows, and screenshots',
+    unavailableMessage: (status) => formatUnavailableMessage(
+      'Browser automation is built into Felan, but the reviewed agent-browser CLI is not installed or unavailable.',
+      'The browser tool remains unavailable until you install it.',
+      status,
+    ),
     installConfirmation: `Download the reviewed agent-browser ${MANAGED_AGENT_BROWSER_VERSION} package, verify its integrity, and install its native CLI into Felan agent storage?`,
     unavailableChoice: 'Disable the Browser extension',
     unavailableOutcome: 'disable-extension',
@@ -96,6 +107,11 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     label: 'MarkItDown',
     extension: 'markitdown',
     purpose: 'document conversion for DOC/DOCX, PPT/PPTX, XLS/XLSX, RTF, EPUB, and MSG reads',
+    unavailableMessage: (status) => formatUnavailableMessage(
+      'MarkItDown support is built into Felan, but the external markitdown converter is not installed or unavailable.',
+      'Felan can continue normally; Office document reads remain inactive until you install it.',
+      status,
+    ),
     installConfirmation: 'Create a Python virtual environment in Felan agent storage and install the pinned markitdown 0.1.7 document extras?',
     unavailableChoice: 'Disable the MarkItDown extension',
     unavailableOutcome: 'disable-extension',
@@ -117,6 +133,11 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     label: 'RTK',
     extension: 'rtkOptimizer',
     purpose: 'command rewriting; RTK output compaction remains available without the executable',
+    unavailableMessage: (status) => formatUnavailableMessage(
+      'RTK optimization is built into Felan, but the external rtk executable is not installed or unavailable.',
+      'Felan can continue normally; output compaction still works, but command rewriting is inactive until RTK is installed.',
+      status,
+    ),
     installConfirmation: `Download the reviewed official installer, verify its pinned digest, and run it to install RTK ${MANAGED_RTK_VERSION} in Felan agent storage?`,
     unavailableChoice: 'Continue with output compaction only',
     unavailableOutcome: 'continue',
@@ -205,7 +226,11 @@ async function onboardMissingDependencies(
     const installChoice = `Install ${dependency.label}`;
     const laterChoice = 'Decide later';
     const selected = await ctx.ui.select(
-      `${dependency.label} is unavailable — ${dependency.purpose}. ${status.reason ?? ''}`.trim(),
+      dependency.unavailableMessage?.(status) ?? formatUnavailableMessage(
+        `${dependency.label} is unavailable — ${dependency.purpose}.`,
+        undefined,
+        status,
+      ),
       [...(dependency.install ? [installChoice] : []), dependency.unavailableChoice, laterChoice],
     );
     if (!selected || selected === laterChoice) continue;
@@ -349,4 +374,17 @@ async function checkDependency(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatUnavailableMessage(
+  summary: string,
+  detail: string | undefined,
+  status: RuntimeDependencyStatus,
+): string {
+  return [
+    summary,
+    detail,
+    status.reason ? `Detected reason: ${status.reason}` : undefined,
+    'Use /dependencies to manage this later.',
+  ].filter(Boolean).join('\n');
 }
