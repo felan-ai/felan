@@ -1,10 +1,12 @@
 import type { ExtensionAPI, InlineExtension } from '@earendil-works/pi-coding-agent';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   bindFelanExtension,
   loadFelanExtensions,
   type FelanExtensionAPI,
 } from '../src/index.js';
+import { loadFelanSessionExtensions } from '../src/extensions.js';
+import type { ModelSelectionPersistenceScope } from '../src/model-selection.js';
 import { TestAgentRuntime } from './test-agent-runtime.js';
 
 describe('Felan extension bridge', () => {
@@ -53,6 +55,35 @@ describe('Felan extension bridge', () => {
     expect(() => lateRegister!({ id: 'late', instructions: 'Too late' })).toThrow(
       'Capability registration from @felan-ai/test-extension is only available during initialization',
     );
+  });
+
+  it('forwards session-only model selection options through the Felan bridge', async () => {
+    const setModel = vi.fn(async () => true);
+    const setThinkingLevel = vi.fn();
+    const runSelection = vi.fn(<T>(_updateDefault: boolean, operation: () => T): T => operation());
+    const pi = {
+      setModel,
+      setThinkingLevel,
+    } as unknown as ExtensionAPI;
+    const inline = (await loadFelanSessionExtensions(
+      ['@felan-ai/test-selection-extension'],
+      async () => ({
+        default: async (felanPi: FelanExtensionAPI) => {
+          await felanPi.setModel({} as Parameters<ExtensionAPI['setModel']>[0], { updateDefault: false });
+          felanPi.setThinkingLevel('medium', { updateDefault: false });
+        },
+      }),
+      new TestAgentRuntime(),
+      '/agent',
+      { run: runSelection } as unknown as ModelSelectionPersistenceScope,
+    ))[0]!;
+
+    await inlineFactory(inline)(pi);
+
+    expect(runSelection).toHaveBeenNthCalledWith(1, false, expect.any(Function));
+    expect(runSelection).toHaveBeenNthCalledWith(2, false, expect.any(Function));
+    expect(setModel).toHaveBeenCalledWith({});
+    expect(setThinkingLevel).toHaveBeenCalledWith('medium');
   });
 
   it('imports packages sequentially and retains package names on inline factories', async () => {

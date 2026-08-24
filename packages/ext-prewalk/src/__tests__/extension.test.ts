@@ -14,12 +14,13 @@ import {
 
 type Handler = (event: any, ctx: ExtensionContext) => any;
 
-const plannerModel = { provider: 'openai-codex', id: 'gpt-5.6-sol', name: 'Sol' } as any;
-const targetModel = { provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'Luna' } as any;
-const alternateTarget = { provider: 'anthropic', id: 'claude-opus', name: 'Opus' } as any;
-const externalModel = { provider: 'anthropic', id: 'claude-sonnet', name: 'Sonnet' } as any;
-const anthropicPlanner = { provider: 'anthropic', id: 'claude-opus-4-6', name: 'Opus' } as any;
-const anthropicTarget = { provider: 'anthropic', id: 'claude-haiku-4-5', name: 'Haiku' } as any;
+const plannerModel = { provider: 'openai-codex', id: 'gpt-5.6-sol', name: 'Sol', reasoning: true } as any;
+const targetModel = { provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'Luna', reasoning: true } as any;
+const alternateTarget = { provider: 'anthropic', id: 'claude-opus', name: 'Opus', reasoning: true } as any;
+const externalModel = { provider: 'anthropic', id: 'claude-sonnet', name: 'Sonnet', reasoning: true } as any;
+const anthropicPlanner = { provider: 'anthropic', id: 'claude-opus-4-6', name: 'Opus', reasoning: true } as any;
+const anthropicTarget = { provider: 'anthropic', id: 'claude-haiku-4-5', name: 'Haiku', reasoning: true } as any;
+const nonReasoningTarget = { provider: 'openai-codex', id: 'gpt-5.6-fast', name: 'Fast', reasoning: false } as any;
 
 function assistant(
   stopReason: 'stop' | 'toolUse' | 'error' = 'stop',
@@ -66,6 +67,7 @@ function createHarness(
     idle?: boolean;
     mode?: 'tui' | 'rpc' | 'json' | 'print';
     flags?: Record<string, boolean | string>;
+    thinkingLevel?: string;
   } = {},
 ) {
   const handlers = new Map<string, Handler[]>();
@@ -76,7 +78,7 @@ function createHarness(
   const capabilities: Array<{ id: string; instructions: string }> = [];
   const models = options.models ?? [plannerModel, targetModel, alternateTarget, externalModel];
   let currentModel = Object.hasOwn(options, 'currentModel') ? options.currentModel : plannerModel;
-  let thinkingLevel = 'max';
+  let thinkingLevel = options.thinkingLevel ?? 'max';
   let authenticated = options.authenticated ?? true;
   let idle = options.idle ?? true;
 
@@ -115,13 +117,13 @@ function createHarness(
     return result;
   }
 
-  const setModel = vi.fn(async (model: any) => {
+  const setModel = vi.fn(async (model: any, _options?: { updateDefault?: boolean }) => {
     const previousModel = currentModel;
     currentModel = model;
     await emit('model_select', { type: 'model_select', model, previousModel, source: 'set' });
     return true;
   });
-  const setThinkingLevel = vi.fn((level: string) => {
+  const setThinkingLevel = vi.fn((level: string, _options?: { updateDefault?: boolean }) => {
     thinkingLevel = level;
   });
   const sendMessage = vi.fn();
@@ -296,6 +298,10 @@ describe('flags and commands', () => {
       type: 'string',
       default: 'low',
     });
+    expect(harness.registeredFlags.get('prewalk-target-thinking')).toMatchObject({
+      type: 'string',
+      default: 'medium',
+    });
     expect(harness.registeredFlags.get('prewalk-restore-planner')).toMatchObject({
       type: 'boolean',
       default: true,
@@ -358,7 +364,7 @@ describe('flags and commands', () => {
     expect(harness.sendMessage).not.toHaveBeenCalled();
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk: idle | target low | restore planner on',
+      'Prewalk: idle | target low | target thinking medium | restore planner on',
       'info',
     );
   });
@@ -378,12 +384,13 @@ describe('flags and commands', () => {
     const overridden = createHarness({
       flags: {
         'prewalk-target-model': 'anthropic/claude-opus',
+        'prewalk-target-thinking': 'high',
         'prewalk-restore-planner': false,
       },
     });
     await overridden.command.handler('status', overridden.ctx);
     expect(overridden.ui.notify).toHaveBeenCalledWith(
-      'Prewalk: idle | target anthropic/claude-opus | restore planner off',
+      'Prewalk: idle | target anthropic/claude-opus | target thinking high | restore planner off',
       'info',
     );
 
@@ -393,6 +400,13 @@ describe('flags and commands', () => {
     const warnings = malformed.ui.notify.mock.calls.filter(([, type]) => type === 'warning');
     expect(warnings).toHaveLength(1);
     expect(warnings[0]![0]).toContain('Using defaults');
+
+    const malformedThinking = createHarness({ flags: { 'prewalk-target-thinking': 'invalid' } });
+    await malformedThinking.emit('session_start', { type: 'session_start', reason: 'startup' });
+    expect(malformedThinking.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining('prewalk-target-thinking'),
+      'warning',
+    );
   });
 });
 
@@ -403,7 +417,7 @@ describe('model entry', () => {
     const result = await enterPrewalk(harness);
 
     expect(result.isError).not.toBe(true);
-    expect(result.details).toEqual({ phase: 'planning', targetModel: 'low' });
+    expect(result.details).toEqual({ phase: 'planning', targetModel: 'low', targetThinking: 'medium' });
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLANNING_MESSAGE_TYPE);
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', 'Prewalk planning');
@@ -451,7 +465,7 @@ describe('model entry', () => {
     });
     await harness.emit('agent_settled', { type: 'agent_settled' });
 
-    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('max');
+    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('max', { updateDefault: false });
   });
 
   it('requires a later model turn before the first mutation can hand off', async () => {
@@ -484,7 +498,7 @@ describe('model entry', () => {
       toolResults: [...taskGraphResults('planned-task'), toolResult('planned-mutation', 'edit')],
     });
 
-    expect(harness.setModel).toHaveBeenCalledWith(targetModel);
+    expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false });
   });
 
   it('scrubs successful entry control messages but preserves failed calls', async () => {
@@ -537,7 +551,7 @@ describe('planning handoff and context', () => {
 
     expect(harness.sendUserMessage).toHaveBeenCalledWith('Task');
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk armed. The next task will plan, initialize Tasks when both task tools are active, make one mutation, then hand off to low.',
+      'Prewalk armed. The next task will plan, initialize Tasks when both task tools are active, make one mutation, then hand off to low at medium thinking.',
       'info',
     );
   });
@@ -587,7 +601,7 @@ describe('planning handoff and context', () => {
       toolResults: [...taskGraphResults(), toolResult('mutation', 'edit')],
     });
 
-    expect(harness.setModel).toHaveBeenCalledWith(targetModel);
+    expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false });
     expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', 'Prewalk implementing');
     const implementing = await contextMessages(harness, []);
     expect(implementing.at(-1)?.content).toContain('existing session task graph');
@@ -622,7 +636,7 @@ describe('planning handoff and context', () => {
       toolResults: [...taskGraphResults('gated-task'), toolResult('ready-mutation', 'edit')],
     });
 
-    expect(harness.setModel).toHaveBeenCalledWith(targetModel);
+    expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false });
   });
 
   it('does not open the task gate after failed task calls', async () => {
@@ -671,7 +685,7 @@ describe('planning handoff and context', () => {
       toolResults: [toolResult('mutation-only', 'edit')],
     });
 
-    expect(harness.setModel).toHaveBeenCalledWith(targetModel);
+    expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false });
   });
 
   it('preserves unrelated history while replacing only its own phase message', async () => {
@@ -868,7 +882,7 @@ describe('model handoff and restoration', () => {
 
     await qualifyHandoff(harness);
 
-    expect(harness.setModel).toHaveBeenCalledWith(anthropicTarget);
+    expect(harness.setModel).toHaveBeenCalledWith(anthropicTarget, { updateDefault: false });
   });
 
   it('resolves tiers only from the current session model scope', async () => {
@@ -880,23 +894,27 @@ describe('model handoff and restoration', () => {
 
     await qualifyHandoff(harness);
 
-    expect(harness.setModel).toHaveBeenCalledWith(targetModel);
+    expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false });
   });
 
-  it('skips a tier handoff when the target is already the planner model', async () => {
-    const harness = createHarness({ currentModel: targetModel, models: [targetModel] });
+  it('skips a tier handoff when the target and thinking level already match the planner', async () => {
+    const harness = createHarness({
+      currentModel: targetModel,
+      models: [targetModel],
+      thinkingLevel: 'medium',
+    });
 
     await qualifyHandoff(harness);
 
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      `Prewalk target ${targetModel.provider}/${targetModel.id} already matches the planner model; continuing without a model handoff.`,
+      `Prewalk target ${targetModel.provider}/${targetModel.id} at medium thinking already matches the planner; continuing without a handoff.`,
       'info',
     );
     expect(await contextMessages(harness, [])).toEqual([]);
   });
 
-  it('skips an exact-target handoff when the target is already the planner model', async () => {
+  it('hands off effort on an exact same-model target when thinking differs', async () => {
     const harness = createHarness({
       currentModel: targetModel,
       flags: { 'prewalk-target-model': `${targetModel.provider}/${targetModel.id}` },
@@ -905,10 +923,15 @@ describe('model handoff and restoration', () => {
     await qualifyHandoff(harness);
 
     expect(harness.setModel).not.toHaveBeenCalled();
+    expect(harness.setThinkingLevel).toHaveBeenCalledWith('medium', { updateDefault: false });
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      `Prewalk target ${targetModel.provider}/${targetModel.id} already matches the planner model; continuing without a model handoff.`,
+      `Prewalk handed implementation to ${targetModel.provider}/${targetModel.id} at medium thinking without changing models.`,
       'info',
     );
+
+    harness.setThinking('low');
+    await harness.emit('agent_settled', { type: 'agent_settled' });
+    expect(harness.thinkingLevel).toBe('max');
   });
 
   it('switches once at turn_end and restores model before thinking at agent_settled', async () => {
@@ -916,17 +939,18 @@ describe('model handoff and restoration', () => {
 
     await qualifyHandoff(harness);
     expect(harness.setModel).toHaveBeenCalledTimes(1);
-    expect(harness.setModel).toHaveBeenNthCalledWith(1, targetModel);
+    expect(harness.setModel).toHaveBeenNthCalledWith(1, targetModel, { updateDefault: false });
     expect(harness.currentModel).toBe(targetModel);
+    expect(harness.setThinkingLevel).toHaveBeenNthCalledWith(1, 'medium', { updateDefault: false });
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(IMPLEMENTATION_MESSAGE_TYPE);
 
     harness.setThinking('low');
     await harness.emit('agent_settled', { type: 'agent_settled' });
 
-    expect(harness.setModel).toHaveBeenNthCalledWith(2, plannerModel);
-    expect(harness.setThinkingLevel).toHaveBeenCalledWith('max');
+    expect(harness.setModel).toHaveBeenNthCalledWith(2, plannerModel, { updateDefault: false });
+    expect(harness.setThinkingLevel).toHaveBeenNthCalledWith(2, 'max', { updateDefault: false });
     expect(harness.setModel.mock.invocationCallOrder[1]).toBeLessThan(
-      harness.setThinkingLevel.mock.invocationCallOrder[0]!,
+      harness.setThinkingLevel.mock.invocationCallOrder[1]!,
     );
     expect(harness.currentModel).toBe(plannerModel);
     expect(harness.thinkingLevel).toBe('max');
@@ -939,7 +963,7 @@ describe('model handoff and restoration', () => {
 
     await harness.command.handler('off', harness.ctx);
 
-    expect(harness.setModel).toHaveBeenNthCalledWith(2, plannerModel);
+    expect(harness.setModel).toHaveBeenNthCalledWith(2, plannerModel, { updateDefault: false });
     expect(harness.currentModel).toBe(plannerModel);
   });
 
@@ -961,7 +985,7 @@ describe('model handoff and restoration', () => {
     harness.setIdle(true);
     await harness.emit('agent_settled', { type: 'agent_settled' });
 
-    expect(harness.setModel).toHaveBeenNthCalledWith(2, plannerModel);
+    expect(harness.setModel).toHaveBeenNthCalledWith(2, plannerModel, { updateDefault: false });
     expect(harness.currentModel).toBe(plannerModel);
   });
 
@@ -988,7 +1012,7 @@ describe('model handoff and restoration', () => {
     await Promise.all([settling, exit]);
 
     expect(harness.setModel).toHaveBeenCalledTimes(2);
-    expect(harness.setThinkingLevel).toHaveBeenCalledWith('max');
+    expect(harness.setThinkingLevel).toHaveBeenCalledWith('max', { updateDefault: false });
   });
 
   it('uses session_shutdown as a restoration backstop', async () => {
@@ -1010,7 +1034,7 @@ describe('model handoff and restoration', () => {
 
     expect(harness.setModel).toHaveBeenCalledTimes(1);
     expect(harness.currentModel).toBe(targetModel);
-    expect(harness.setThinkingLevel).not.toHaveBeenCalled();
+    expect(harness.setThinkingLevel).toHaveBeenCalledWith('medium', { updateDefault: false });
   });
 
   it('clears after one failed restoration without retrying', async () => {
@@ -1087,7 +1111,7 @@ describe('model failures and manual control', () => {
 
     await qualifyHandoff(harness);
 
-    expect(harness.setModel).toHaveBeenCalledWith(alternateTarget);
+    expect(harness.setModel).toHaveBeenCalledWith(alternateTarget, { updateDefault: false });
   });
 
   it.each([
@@ -1120,6 +1144,24 @@ describe('model failures and manual control', () => {
     expect(await contextMessages(harness, [])).toEqual([]);
   });
 
+  it('cancels planning when the user changes thinking level', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+
+    harness.setThinking('low');
+    await harness.emit('thinking_level_select', {
+      type: 'thinking_level_select',
+      level: 'low',
+      previousLevel: 'max',
+    });
+
+    expect(await contextMessages(harness, [])).toEqual([]);
+    expect(harness.ui.notify).toHaveBeenCalledWith(
+      'Prewalk cancelled after the thinking level changed to low.',
+      'warning',
+    );
+  });
+
   it('does not restore over a manual model selection after handoff', async () => {
     const harness = createHarness();
     await qualifyHandoff(harness);
@@ -1132,6 +1174,23 @@ describe('model failures and manual control', () => {
 
     expect(harness.setModel).toHaveBeenCalledTimes(1);
     expect(harness.currentModel).toBe(externalModel);
+  });
+
+  it('does not restore over a manual thinking selection after handoff', async () => {
+    const harness = createHarness();
+    await qualifyHandoff(harness);
+    harness.setThinking('low');
+    await harness.emit('thinking_level_select', {
+      type: 'thinking_level_select',
+      level: 'low',
+      previousLevel: 'medium',
+    });
+
+    await harness.emit('agent_settled', { type: 'agent_settled' });
+
+    expect(harness.currentModel).toBe(targetModel);
+    expect(harness.thinkingLevel).toBe('low');
+    expect(harness.setModel).toHaveBeenCalledTimes(1);
   });
 
   it('reapplies a manual selection that races an in-flight handoff', async () => {
@@ -1162,7 +1221,7 @@ describe('model failures and manual control', () => {
       message: assistant('toolUse'),
       toolResults: [...taskGraphResults('raced-task'), toolResult('mutation', 'edit')],
     });
-    await vi.waitFor(() => expect(harness.setModel).toHaveBeenCalledWith(targetModel));
+    await vi.waitFor(() => expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false }));
     harness.setCurrentModel(externalModel);
     harness.setThinking('medium');
     await harness.emit('model_select', {
@@ -1171,10 +1230,183 @@ describe('model failures and manual control', () => {
     finishHandoff();
     await turnEnd;
 
-    expect(harness.setModel).toHaveBeenNthCalledWith(2, externalModel);
+    expect(harness.setModel).toHaveBeenNthCalledWith(2, externalModel, { updateDefault: false });
     expect(harness.currentModel).toBe(externalModel);
     expect(harness.thinkingLevel).toBe('medium');
-    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('medium');
+    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('medium', { updateDefault: false });
+    expect(await contextMessages(harness, [])).toEqual([]);
+  });
+
+  it('reapplies a manual thinking selection that races an in-flight handoff', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+    await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+    await recordTaskGraph(harness, 'raced-thinking-task');
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'mutation', toolName: 'edit', input: {},
+    });
+    let finishHandoff!: () => void;
+    const pendingHandoff = new Promise<void>((resolve) => {
+      finishHandoff = resolve;
+    });
+    harness.setModel.mockImplementationOnce(async (model: any) => {
+      await pendingHandoff;
+      const previousModel = harness.currentModel;
+      harness.setCurrentModel(model);
+      await harness.emit('model_select', {
+        type: 'model_select', model, previousModel, source: 'set',
+      });
+      return true;
+    });
+
+    const turnEnd = harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 0,
+      message: assistant('toolUse'),
+      toolResults: [...taskGraphResults('raced-thinking-task'), toolResult('mutation', 'edit')],
+    });
+    await vi.waitFor(() => expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false }));
+    harness.setThinking('low');
+    await harness.emit('thinking_level_select', {
+      type: 'thinking_level_select',
+      level: 'low',
+      previousLevel: 'max',
+    });
+    finishHandoff();
+    await turnEnd;
+
+    expect(harness.currentModel).toBe(targetModel);
+    expect(harness.thinkingLevel).toBe('low');
+    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('low', { updateDefault: false });
+    expect(await contextMessages(harness, [])).toEqual([]);
+  });
+
+  it('ignores Pi thinking clamping emitted during an internal model switch', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+    harness.setModel.mockImplementationOnce(async (model: any) => {
+      const previousModel = harness.currentModel;
+      harness.setCurrentModel(model);
+      harness.setThinking('high');
+      await harness.emit('thinking_level_select', {
+        type: 'thinking_level_select',
+        level: 'high',
+        previousLevel: 'max',
+      });
+      await harness.emit('model_select', {
+        type: 'model_select', model, previousModel, source: 'set',
+      });
+      return true;
+    });
+
+    await handoffPlanningRun(harness);
+
+    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('medium', { updateDefault: false });
+    expect(harness.ui.notify).not.toHaveBeenCalledWith(
+      'Prewalk cancelled after the thinking level changed to high.',
+      'warning',
+    );
+    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(IMPLEMENTATION_MESSAGE_TYPE);
+  });
+
+  it('preserves a manual thinking change after the internal model selection event', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+    let finishModelSwitch!: () => void;
+    const afterModelSelect = new Promise<void>((resolve) => {
+      finishModelSwitch = resolve;
+    });
+    harness.setModel.mockImplementationOnce(async (model: any) => {
+      const previousModel = harness.currentModel;
+      harness.setCurrentModel(model);
+      harness.setThinking('high');
+      await harness.emit('thinking_level_select', {
+        type: 'thinking_level_select',
+        level: 'high',
+        previousLevel: 'max',
+      });
+      await harness.emit('model_select', {
+        type: 'model_select', model, previousModel, source: 'set',
+      });
+      await afterModelSelect;
+      return true;
+    });
+
+    const turnEnd = handoffPlanningRun(harness);
+    await vi.waitFor(() => expect(harness.currentModel).toBe(targetModel));
+    harness.setThinking('low');
+    await harness.emit('thinking_level_select', {
+      type: 'thinking_level_select',
+      level: 'low',
+      previousLevel: 'high',
+    });
+    finishModelSwitch();
+    await turnEnd;
+
+    expect(harness.thinkingLevel).toBe('low');
+    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('low', { updateDefault: false });
+    expect(await contextMessages(harness, [])).toEqual([]);
+  });
+
+  it('preserves a manual thinking change after Pi clamping but before model selection completes', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+    harness.setModel.mockImplementationOnce(async (model: any) => {
+      const previousModel = harness.currentModel;
+      harness.setCurrentModel(model);
+      harness.setThinking('high');
+      await harness.emit('thinking_level_select', {
+        type: 'thinking_level_select',
+        level: 'high',
+        previousLevel: 'max',
+      });
+      harness.setThinking('low');
+      await harness.emit('thinking_level_select', {
+        type: 'thinking_level_select',
+        level: 'low',
+        previousLevel: 'high',
+      });
+      await harness.emit('model_select', {
+        type: 'model_select', model, previousModel, source: 'set',
+      });
+      return true;
+    });
+
+    await handoffPlanningRun(harness);
+
+    expect(harness.thinkingLevel).toBe('low');
+    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('low', { updateDefault: false });
+    expect(await contextMessages(harness, [])).toEqual([]);
+  });
+
+  it('preserves a manual thinking change that wins before Pi emits its clamp', async () => {
+    const harness = createHarness();
+    await startPlanning(harness);
+    harness.setModel.mockImplementationOnce(async (model: any) => {
+      const previousModel = harness.currentModel;
+      harness.setCurrentModel(model);
+      harness.setThinking('low');
+      await harness.emit('thinking_level_select', {
+        type: 'thinking_level_select',
+        level: 'low',
+        previousLevel: 'max',
+      });
+      harness.setThinking('high');
+      await harness.emit('thinking_level_select', {
+        type: 'thinking_level_select',
+        level: 'high',
+        previousLevel: 'low',
+      });
+      await harness.emit('model_select', {
+        type: 'model_select', model, previousModel, source: 'set',
+      });
+      return true;
+    });
+
+    await handoffPlanningRun(harness);
+
+    expect(harness.thinkingLevel).toBe('low');
+    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('low', { updateDefault: false });
     expect(await contextMessages(harness, [])).toEqual([]);
   });
 
@@ -1205,10 +1437,43 @@ describe('model failures and manual control', () => {
     finishRestoration();
     await settling;
 
-    expect(harness.setModel).toHaveBeenNthCalledWith(3, externalModel);
+    expect(harness.setModel).toHaveBeenNthCalledWith(3, externalModel, { updateDefault: false });
     expect(harness.currentModel).toBe(externalModel);
     expect(harness.thinkingLevel).toBe('low');
-    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('low');
+    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('low', { updateDefault: false });
+  });
+
+  it('reapplies a manual thinking selection that races planner restoration', async () => {
+    const harness = createHarness();
+    await qualifyHandoff(harness);
+    let finishRestoration!: () => void;
+    const pendingRestoration = new Promise<void>((resolve) => {
+      finishRestoration = resolve;
+    });
+    harness.setModel.mockImplementationOnce(async (model: any) => {
+      await pendingRestoration;
+      const previousModel = harness.currentModel;
+      harness.setCurrentModel(model);
+      await harness.emit('model_select', {
+        type: 'model_select', model, previousModel, source: 'set',
+      });
+      return true;
+    });
+
+    const settling = harness.emit('agent_settled', { type: 'agent_settled' });
+    await vi.waitFor(() => expect(harness.setModel).toHaveBeenCalledTimes(2));
+    harness.setThinking('low');
+    await harness.emit('thinking_level_select', {
+      type: 'thinking_level_select',
+      level: 'low',
+      previousLevel: 'medium',
+    });
+    finishRestoration();
+    await settling;
+
+    expect(harness.currentModel).toBe(plannerModel);
+    expect(harness.thinkingLevel).toBe('low');
+    expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('low', { updateDefault: false });
   });
 
   it('waits for an in-flight handoff before shutdown restoration', async () => {
@@ -1239,21 +1504,42 @@ describe('model failures and manual control', () => {
       message: assistant('toolUse'),
       toolResults: [...taskGraphResults('shutdown-task'), toolResult('mutation', 'edit')],
     });
-    await vi.waitFor(() => expect(harness.setModel).toHaveBeenCalledWith(targetModel));
+    await vi.waitFor(() => expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false }));
     const shutdown = harness.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' });
     finishHandoff();
     await Promise.all([turnEnd, shutdown]);
 
-    expect(harness.setModel).toHaveBeenNthCalledWith(2, plannerModel);
+    expect(harness.setModel).toHaveBeenNthCalledWith(2, plannerModel, { updateDefault: false });
     expect(harness.currentModel).toBe(plannerModel);
     expect(harness.thinkingLevel).toBe('max');
   });
 
   it('uses the target model selected by the namespaced flag', async () => {
-    const harness = createHarness({ flags: { 'prewalk-target-model': 'anthropic/claude-opus' } });
+    const harness = createHarness({
+      flags: {
+        'prewalk-target-model': 'anthropic/claude-opus',
+        'prewalk-target-thinking': 'high',
+      },
+    });
 
     await qualifyHandoff(harness);
 
-    expect(harness.setModel).toHaveBeenCalledWith(alternateTarget);
+    expect(harness.setModel).toHaveBeenCalledWith(alternateTarget, { updateDefault: false });
+    expect(harness.setThinkingLevel).toHaveBeenCalledWith('high', { updateDefault: false });
+  });
+
+  it('clamps target thinking to off for a non-reasoning implementation model', async () => {
+    const harness = createHarness({
+      models: [plannerModel, nonReasoningTarget],
+      flags: {
+        'prewalk-target-model': `${nonReasoningTarget.provider}/${nonReasoningTarget.id}`,
+      },
+    });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).toHaveBeenCalledWith(nonReasoningTarget, { updateDefault: false });
+    expect(harness.setThinkingLevel).toHaveBeenCalledWith('off', { updateDefault: false });
+    expect(harness.thinkingLevel).toBe('off');
   });
 });

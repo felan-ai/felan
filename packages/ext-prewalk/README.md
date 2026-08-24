@@ -1,8 +1,8 @@
 # @felan-ai/ext-prewalk
 
-Same-session Prewalk for Felan's complex repository work: the current model explores and plans the work in the session task graph, then makes one focused mutation. Felan switches the next model request to the `low` model tier, which finishes and verifies the task with the full conversation and tool history intact. Tier resolution prefers the planner's provider and model family before falling back to another authenticated provider.
+Same-session Prewalk for Felan's complex repository work: the current model explores and plans the work in the session task graph, then makes one focused mutation. Felan switches the next model request to the `low` model tier at exact `medium` thinking by default, which finishes and verifies the task with the full conversation and tool history intact. Tier resolution prefers the planner's provider and model family before falling back to another authenticated provider.
 
-After the run settles, Prewalk restores the original planner model and thinking level by default.
+After the run settles, Prewalk restores the original planner model and thinking level by default. All of these automated changes are scoped to the active session and do not change the user's or project's default model or thinking preference.
 
 For complex repository work that benefits from substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification, the model can enter Prewalk itself by calling `enter_prewalk` before it explores or mutates the repository. Small localized edits and routine one-file fixes should normally stay on the regular path. `/prewalk` remains available when the user wants to enter explicitly. Read-only requests do not use Prewalk.
 
@@ -59,9 +59,15 @@ remain transient, stable-position context messages.
 
 ## Thinking levels
 
-Prewalk does not force a planner or executor thinking level. It snapshots the current level, Pi carries and clamps that preference to the target model's supported levels during handoff, and Prewalk restores the planner model before restoring the exact original level. This keeps user and subagent thinking choices authoritative and avoids assuming that every low-tier executor supports or performs well at the same fixed effort.
-
-The referenced Prewalk design requires deep planning and a cheaper executor, but does not prescribe a separate executor effort. Select the desired thinking level before starting the task; model-tier routing supplies the default cost reduction.
+The planner keeps its current thinking level while exploring. The implementation
+handoff requests exact `medium` thinking by default, rather than carrying a
+planner's potentially expensive `max` effort to the cheaper target. The request
+is clamped by Pi to the target model's supported levels, so a non-reasoning
+model receives `off`. Configure another target level when the task needs a
+different quality/cost balance. A same-model target with a different effective
+level is still a real effort handoff; only matching model and effective effort
+are a no-op. After the run settles, Prewalk restores the planner model before
+restoring its exact original thinking level.
 
 ## Subagents
 
@@ -73,16 +79,22 @@ Prewalk uses Pi's namespaced extension flags and does not read a configuration f
 
 ```text
 --prewalk-target-model <high|medium|low|provider/model-id>
+--prewalk-target-thinking <off|low|medium|high|xhigh|max>
 --prewalk-restore-planner
 --no-prewalk-restore-planner
 ```
 
-`prewalk-target-model` defaults to `low`. Tier selection uses the authenticated models allowed by the current session, preferring the planner's provider and model family. An exact `provider/model-id` overrides tier selection but must remain inside a nonempty session model scope. `prewalk-restore-planner` defaults to `true`.
+`prewalk-target-model` defaults to `low` and `prewalk-target-thinking` defaults
+to exact `medium`. Tier selection uses the authenticated models allowed by the
+current session, preferring the planner's provider and model family. An exact
+`provider/model-id` overrides tier selection but must remain inside a nonempty
+session model scope. `prewalk-restore-planner` defaults to `true`.
 
 ## Failure behavior
 
 - A target tier with no authenticated candidate, or a missing exact target model or authentication, clears the handoff and keeps the existing trajectory.
-- A target that already matches the active planner model clears Prewalk without performing a model handoff.
+- A target that already matches the active planner model and effective target thinking clears Prewalk without performing a handoff.
+- A same-model target with a different effective thinking level changes effort without changing models and then enters implementation.
 - An exact target outside a nonempty session model scope is rejected before switching.
 - A failed target-model switch clears Prewalk and reports the failure once.
 - A failed planner restoration clears Prewalk, reports the failure once, and keeps the current model.

@@ -205,7 +205,8 @@ implementation, and performs a focused mutation. When both task tools are
 active, successful `TaskCreate` and `TaskUpdate` calls claiming `in_progress`
 work are required before that mutation marks the turn for handoff. If the task
 tools are unavailable, a successful explicit mutation marks it directly. The
-next request goes to the configured tier or exact model with
+next request goes to the configured tier or exact model at the configured
+implementation thinking level (exact `medium` by default) with
 the useful transcript and tool history; successful entry controls and stale
 phase guidance are filtered from model context, while the current transient
 guidance stays at a stable position within its phase. The target finishes and

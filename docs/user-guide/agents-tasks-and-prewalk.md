@@ -99,9 +99,12 @@ enter explicitly:
 /prewalk refactor the parser and verify the tests
 ```
 
-The default target is the `low` model tier; hosts or flags can select another
-tier or exact authenticated `provider/model`. The original planner model and
-thinking level are restored after the run settles by default.
+The default target is the `low` model tier at exact `medium` thinking. Hosts or
+flags can select another tier or exact authenticated `provider/model`, and can
+override the implementation effort with `off`, `low`, `medium`, `high`, `xhigh`,
+or `max`. Pi clamps that request to the target model's capabilities. The
+original planner model and thinking level are restored after the run settles by
+default.
 
 ### Lifecycle
 
@@ -110,10 +113,19 @@ thinking level are restored after the run settles by default.
    the first ready task.
 3. It makes one focused successful `edit`, `write`, or Codex `apply_patch`.
 4. At the turn boundary, Felan switches the next model request to the configured
-   target.
+   target and applies the configured implementation thinking level.
 5. The target sees the useful conversation and tool history, completes the
    task graph, and verifies the work.
-6. Felan restores the planner selection after the run settles.
+6. Felan restores the planner selection after the run settles. Prewalk's
+   temporary model and thinking changes are scoped to the active session and do
+   not change the user's or project's default selection, so a new session keeps
+   using the configured default model.
+
+The default `medium` implementation effort prevents a cheaper target from
+inheriting a planner's `max` effort. A same-model target with a different
+effective effort is still handed off; only matching model and effective effort
+are treated as a no-op. Manual thinking changes cancel Prewalk just like manual
+model changes, including when they race an in-flight handoff or restoration.
 
 Within planning or implementation, Prewalk injects the current hidden phase
 guidance once at a stable context position while later responses and tool

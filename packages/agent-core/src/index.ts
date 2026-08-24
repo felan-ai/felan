@@ -50,6 +50,7 @@ export type {
   ExtensionPackageImporter,
   FelanExtension,
   FelanExtensionAPI,
+  FelanModelSelectionOptions,
 } from './extensions.js';
 export { createAgentCoreResourceLoader } from './resource-loader.js';
 export type { CreateAgentCoreResourceLoaderOptions } from './resource-loader.js';
@@ -107,6 +108,7 @@ export type {
 export {
   InMemoryCredentialStore,
   StringEnum,
+  clampThinkingLevel,
   createAssistantMessageEventStream,
   getSupportedThinkingLevels,
   isContextOverflow,

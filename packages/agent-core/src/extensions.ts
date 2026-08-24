@@ -3,16 +3,29 @@ import type {
   InlineExtension,
 } from '@earendil-works/pi-coding-agent';
 import type { AgentRuntime } from './runtime.js';
+import type { ModelSelectionPersistenceScope } from './model-selection.js';
 import {
   associateCapabilityCollector,
   CapabilityCollector,
   type FelanCapability,
 } from './capabilities.js';
 
+export interface FelanModelSelectionOptions {
+  readonly updateDefault?: boolean;
+}
+
 export interface FelanExtensionAPI extends ExtensionAPI {
   readonly agentDir: string;
   readonly runtime: AgentRuntime;
   registerCapability(capability: FelanCapability): void;
+  setModel(
+    model: Parameters<ExtensionAPI['setModel']>[0],
+    options?: FelanModelSelectionOptions,
+  ): ReturnType<ExtensionAPI['setModel']>;
+  setThinkingLevel(
+    level: Parameters<ExtensionAPI['setThinkingLevel']>[0],
+    options?: FelanModelSelectionOptions,
+  ): ReturnType<ExtensionAPI['setThinkingLevel']>;
 }
 
 export type FelanExtension = (
@@ -36,6 +49,7 @@ export function bindFelanExtension(
     agentDir,
     new CapabilityCollector(),
     true,
+    undefined,
   );
 }
 
@@ -46,6 +60,7 @@ function bindFelanExtensionWithCapabilities(
   agentDir: string,
   capabilityCollector: CapabilityCollector,
   resetCapabilities: boolean,
+  modelSelectionScope: ModelSelectionPersistenceScope | undefined,
 ): InlineExtension {
   const inline: InlineExtension = {
     name: packageName,
@@ -64,6 +79,7 @@ function bindFelanExtensionWithCapabilities(
           runtime,
           agentDir,
           registerCapability,
+          modelSelectionScope,
         ));
       } finally {
         initializing = false;
@@ -79,6 +95,38 @@ export async function loadFelanExtensions(
   importExtension: ExtensionPackageImporter,
   runtime: AgentRuntime,
   agentDir: string = runtime.cwd,
+): Promise<InlineExtension[]> {
+  return loadFelanExtensionsWithScope(
+    packageNames,
+    importExtension,
+    runtime,
+    agentDir,
+    undefined,
+  );
+}
+
+export async function loadFelanSessionExtensions(
+  packageNames: readonly string[],
+  importExtension: ExtensionPackageImporter,
+  runtime: AgentRuntime,
+  agentDir: string,
+  modelSelectionScope: ModelSelectionPersistenceScope,
+): Promise<InlineExtension[]> {
+  return loadFelanExtensionsWithScope(
+    packageNames,
+    importExtension,
+    runtime,
+    agentDir,
+    modelSelectionScope,
+  );
+}
+
+async function loadFelanExtensionsWithScope(
+  packageNames: readonly string[],
+  importExtension: ExtensionPackageImporter,
+  runtime: AgentRuntime,
+  agentDir: string,
+  modelSelectionScope: ModelSelectionPersistenceScope | undefined,
 ): Promise<InlineExtension[]> {
   const seen = new Set<string>();
   const extensions: InlineExtension[] = [];
@@ -118,6 +166,7 @@ export async function loadFelanExtensions(
       agentDir,
       capabilityCollector,
       extensions.length === 0,
+      modelSelectionScope,
     ));
   }
 
@@ -129,6 +178,7 @@ function createFelanExtensionAPI(
   runtime: AgentRuntime,
   agentDir: string,
   registerCapability: (capability: FelanCapability) => void,
+  modelSelectionScope: ModelSelectionPersistenceScope | undefined,
 ): FelanExtensionAPI {
   const boundMethods = new Map<PropertyKey, unknown>();
 
@@ -145,6 +195,48 @@ function createFelanExtensionAPI(
           args: string[],
           options?: Parameters<AgentRuntime['exec']>[2],
         ) => runtime.exec(command, args, options);
+      }
+      if (property === 'setModel') {
+        if (!boundMethods.has(property)) {
+          const setModel = target.setModel.bind(target);
+          boundMethods.set(property, (
+            model: Parameters<ExtensionAPI['setModel']>[0],
+            options?: FelanModelSelectionOptions,
+          ) => {
+            const updateDefault = options?.updateDefault !== false;
+            if (!modelSelectionScope) {
+              if (!updateDefault) {
+                return Promise.reject(new Error(
+                  'Session-only model selection requires Agent Core session composition',
+                ));
+              }
+              return setModel(model);
+            }
+            return modelSelectionScope.run(updateDefault, () => setModel(model));
+          });
+        }
+        return boundMethods.get(property);
+      }
+      if (property === 'setThinkingLevel') {
+        if (!boundMethods.has(property)) {
+          const setThinkingLevel = target.setThinkingLevel.bind(target);
+          boundMethods.set(property, (
+            level: Parameters<ExtensionAPI['setThinkingLevel']>[0],
+            options?: FelanModelSelectionOptions,
+          ) => {
+            const updateDefault = options?.updateDefault !== false;
+            if (!modelSelectionScope) {
+              if (!updateDefault) {
+                throw new Error(
+                  'Session-only thinking selection requires Agent Core session composition',
+                );
+              }
+              return setThinkingLevel(level);
+            }
+            return modelSelectionScope.run(updateDefault, () => setThinkingLevel(level));
+          });
+        }
+        return boundMethods.get(property);
       }
 
       const value = Reflect.get(target, property, target);

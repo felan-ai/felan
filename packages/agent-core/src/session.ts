@@ -14,7 +14,8 @@ import {
   type Skill,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { loadFelanExtensions, type ExtensionPackageImporter } from './extensions.js';
+import { loadFelanSessionExtensions, type ExtensionPackageImporter } from './extensions.js';
+import { installModelSelectionPersistenceScope } from './model-selection.js';
 import {
   createAgentCoreResourceLoaderWithContextFiles,
   runtimeToolsExtensionName,
@@ -98,11 +99,13 @@ async function composeAgentCoreSession(
   options: CreateAgentCoreSessionOptions,
 ): Promise<AgentCoreSessionComposition> {
   const agentDir = options.agentDir ?? options.runtime.cwd;
-  const featureExtensions = await loadFelanExtensions(
+  const modelSelectionScope = installModelSelectionPersistenceScope(options.settingsManager);
+  const featureExtensions = await loadFelanSessionExtensions(
     options.extensionPackages,
     options.importExtension,
     options.runtime,
     agentDir,
+    modelSelectionScope,
   );
   const extensionFactories = [
     ...featureExtensions,
