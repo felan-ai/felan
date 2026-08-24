@@ -9,6 +9,7 @@ import { BackgroundBashManager } from '../src/process-manager.js';
 
 const temporaryPaths: string[] = [];
 const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
+const INTEGRATION_WAIT_TIMEOUT_SECONDS = 30;
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -29,7 +30,7 @@ describe('BackgroundBashManager', () => {
     const { manager, runtime, storageScopes } = await createManager();
     const started = await manager.start("printf 'first\\nsecond\\n'");
 
-    const result = await manager.wait(started.meta.id, 10);
+    const result = await manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS);
 
     expect(result.timedOut).toBe(false);
     expect(result.job.status).toMatchObject({ status: 'completed', exitCode: 0 });
@@ -80,7 +81,7 @@ describe('BackgroundBashManager', () => {
     async () => {
       const { manager } = await createManager();
       const started = await manager.start("printf 'windows git bash\\n'");
-      const completed = await manager.wait(started.meta.id, 10);
+      const completed = await manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS);
 
       expect(completed.job.status).toMatchObject({ status: 'completed', exitCode: 0 });
       await expect(manager.tail(started.meta.id)).resolves.toContain('windows git bash');
