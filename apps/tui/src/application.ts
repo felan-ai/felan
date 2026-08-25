@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   InteractiveMode,
   resolveCliModel,
@@ -33,11 +33,24 @@ export interface RunLocalFelanHeadlessOptions extends Omit<CreateLocalFelanRunti
   readonly writeError?: (line: string) => void;
 }
 
-export function brandResumeHint(output: string): string {
-  return output.replace(
+export function brandResumeHint(output: string, usesDefaultSessionDir = false): string {
+  const brandedOutput = output.replace(
     /(To resume this session:(?:\x1b\[[0-9;]*m)*\s*)pi /,
     '$1felan ',
   );
+  if (!usesDefaultSessionDir) return brandedOutput;
+  return brandedOutput.replace(
+    /(To resume this session:(?:\x1b\[[0-9;]*m)*\s*felan )--session-dir (?:[a-zA-Z0-9_\-./~:@]+|'(?:[^']|'\\'')*') (?=--session )/,
+    '$1',
+  );
+}
+
+function pathsEqual(left: string, right: string): boolean {
+  const resolvedLeft = resolve(left);
+  const resolvedRight = resolve(right);
+  return process.platform === 'win32'
+    ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
+    : resolvedLeft === resolvedRight;
 }
 
 export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise<void> {
@@ -149,8 +162,17 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
   process.env.PI_SKIP_VERSION_CHECK = '1';
   process.env.PI_TELEMETRY = '0';
   const previousStdoutWrite = process.stdout.write;
+  const defaultSessionDir = join(runtime.services.agentDir, 'sessions');
   process.stdout.write = ((chunk: string | Uint8Array, ...args: unknown[]) => {
-    if (typeof chunk === 'string') chunk = brandResumeHint(chunk);
+    if (typeof chunk === 'string') {
+      chunk = brandResumeHint(
+        chunk,
+        chunk.includes('To resume this session:') && pathsEqual(
+          runtime.session.sessionManager.getSessionDir(),
+          defaultSessionDir,
+        ),
+      );
+    }
     return previousStdoutWrite.call(process.stdout, chunk, ...args as never[]);
   }) as typeof process.stdout.write;
 
