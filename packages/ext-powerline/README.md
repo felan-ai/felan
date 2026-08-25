@@ -27,28 +27,18 @@ work.
 
 ## Configuration
 
-The extension reads `$FELAN_AGENT_DIR/powerline.json`, which defaults to
-`~/.felan/powerline.json`, when it initializes. It accepts the compatible Pi
-powerline fields for display layout, supported segments, and custom colors.
+All configuration is supplied through the declarative `powerline` extension
+settings. The settings include scalar display fields, ordered `lines` with
+supported segment objects, and named custom color pairs.
 
 The `subscription` segment supports Codex and Claude OAuth plans. Codex values
 show remaining percentage; Claude values show used percentage. The segment can
 configure `showProviderName`, `showReset`, `showPercentage`, and `maxWindows`.
 It refreshes at startup, after turns and model changes, and once per minute.
 
-Configuration is inert for the process lifetime. These Pi flags override the
-file when the TUI footer is installed:
-
-| Flag | Supported values | Default |
-| --- | --- | --- |
-| `--felan-powerline-theme` | `dark`, `light`, `nord`, `tokyo-night`, `rose-pine`, `gruvbox`, `custom` | `dark` |
-| `--felan-powerline-style` | `minimal`, `powerline`, `capsule` | `powerline` |
-| `--felan-powerline-charset` | `text`, `unicode` | `text` |
-| `--felan-powerline-color` | `auto`, `none`, `ansi`, `ansi256`, `truecolor` | `auto` |
-| `--felan-powerline-wrap` | boolean | `true` |
-| `--felan-powerline-directory-style` | `full`, `fish`, `basename` | `fish` |
-| `--felan-powerline-session-type` | `tokens`, `cost`, `both`, `breakdown` | `tokens` |
-| `--felan-powerline-context-style` | `text`, `bar`, `blocks`, `blocks-line`, `dots` | `bar` |
+Scalar display settings are available through generated `felan --powerline-*`
+options and `/settings`; structured `lines` and `colors` values are edited as
+JSON in `settings.json` or `/settings`.
 
 The package default export is hostless and renders no subscription data.
 Consumers enable subscription usage with
@@ -72,7 +62,7 @@ import { createPowerlineExtension } from '@felan-ai/ext-powerline';
 const extension = createPowerlineExtension();
 ```
 
-The package owns width-safe rendering, layout/config parsing, Git-cache
+The package owns width-safe rendering, layout/config validation, Git-cache
 behavior, provider detection, response parsing, caching, and throttling. Hosts
 own credential access, provider requests, TUI installation, and any extra footer
 rows. The footer is installed only in TUI mode; headless sessions do no Git or

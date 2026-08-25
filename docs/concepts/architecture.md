@@ -63,6 +63,8 @@ listeners; Agent Core does not discover a consumer's ambient resources.
 - `shell(command)` is available only when shell parsing is intentional;
 - byte-based reads and writes preserve binary data;
 - bounded reads and exclusive writes support safe extension behavior;
+- bounded file enumeration and command-output capture prevent broad searches
+  from materializing unbounded host data;
 - scoped `storage('session')` and `storage('agent')` contain extension state;
 - optional persistent process and PTY capabilities are explicit; and
 - host implementations decide whether workspace or current-user host paths are

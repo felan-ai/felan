@@ -1,23 +1,22 @@
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type {
   AgentRuntime,
+  AgentRuntimeExecOptions,
   AgentRuntimeFileReadOptions,
   AgentRuntimeFileWriteOptions,
   AgentRuntimeKind,
+  AgentRuntimeShellOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
-  ExecOptions,
   ExecResult,
 } from '../src/runtime.js';
 
-type TestShellOptions = ExecOptions & {
-  env?: Readonly<Record<string, string>>;
-};
+type TestShellOptions = AgentRuntimeShellOptions;
 
 interface TestExecCall {
   readonly command: string;
   readonly args: readonly string[];
-  readonly options?: ExecOptions;
+  readonly options?: AgentRuntimeExecOptions;
 }
 
 interface TestShellCall {
@@ -79,7 +78,7 @@ export class TestAgentRuntime implements AgentRuntime {
     return this.#storage[scope];
   }
 
-  async exec(command: string, args: readonly string[], options?: ExecOptions): Promise<ExecResult> {
+  async exec(command: string, args: readonly string[], options?: AgentRuntimeExecOptions): Promise<ExecResult> {
     const normalizedOptions = this.#normalizeExecOptions(options);
     if (normalizedOptions?.signal?.aborted) return killedResult();
     const call: TestExecCall = normalizedOptions
@@ -239,23 +238,29 @@ export class TestAgentRuntime implements AgentRuntime {
     return resolvedPath;
   }
 
-  #normalizeExecOptions(options?: ExecOptions): ExecOptions | undefined {
+  #normalizeExecOptions(options?: AgentRuntimeExecOptions): AgentRuntimeExecOptions | undefined {
     if (!options) return undefined;
     return {
       ...(options.cwd === undefined ? {} : { cwd: this.#resolvePath(options.cwd) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+      ...(options.maxOutputBytes === undefined ? {} : { maxOutputBytes: options.maxOutputBytes }),
     };
   }
 
   #normalizeShellOptions(options?: TestShellOptions): TestShellOptions | undefined {
     const normalized = this.#normalizeExecOptions(options);
-    return options?.env ? { ...normalized, env: { ...options.env } } : normalized;
+    if (!options) return normalized;
+    return {
+      ...normalized,
+      ...(options.env === undefined ? {} : { env: { ...options.env } }),
+      ...(options.shellFlavor === undefined ? {} : { shellFlavor: options.shellFlavor }),
+    };
   }
 
   async #run(
     handler: () => ExecResult | Promise<ExecResult>,
-    options?: ExecOptions,
+    options?: AgentRuntimeExecOptions,
   ): Promise<ExecResult> {
     if ((!options?.timeout || options.timeout <= 0) && !options?.signal) return handler();
     let timeout: ReturnType<typeof setTimeout> | undefined;

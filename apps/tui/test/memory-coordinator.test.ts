@@ -258,13 +258,110 @@ describe('LocalMemoryCoordinator', () => {
     });
     expect(runs).toBe(1);
     expect(observedSessionIds).toEqual(['valid-session']);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(runs).toBe(1);
 
     await host.recordCheckpoint(checkpointFor(badSessionFile, 'bad-session'));
     await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ pendingCheckpoints: 0 });
     expect(runs).toBe(2);
     await coordinator.dispose();
+  });
+
+  it('runs checkpoints recorded while a scheduled worker is active', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    const firstSessionFile = await writeSession(cwd, 'first-session');
+    const secondSessionFile = await writeSession(cwd, 'second-session');
+    let firstStartedResolve!: () => void;
+    let secondStartedResolve!: () => void;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstStartedResolve = resolve; });
+    const secondStarted = new Promise<void>((resolve) => { secondStartedResolve = resolve; });
+    const firstReleased = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const secondReleased = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    const observedSessionIds: string[] = [];
+    let runs = 0;
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir: join(root, 'agent'),
+      modelRuntime: {} as ModelRuntime,
+      recover: false,
+      debounceMs: 0,
+      dreamRunner: async (input) => {
+        runs += 1;
+        const sessionId = input.manifest.sessions[0]!.checkpoint.sessionId;
+        observedSessionIds.push(sessionId);
+        if (runs === 1) {
+          firstStartedResolve();
+          await firstReleased;
+        } else {
+          secondStartedResolve();
+          await secondReleased;
+        }
+        return updatedArtifact(sessionId);
+      },
+    });
+    const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
+
+    try {
+      await host.recordCheckpoint(checkpointFor(firstSessionFile, 'first-session'));
+      await firstStarted;
+      await host.recordCheckpoint(checkpointFor(secondSessionFile, 'second-session'));
+      const status = coordinator.runNow(cwd);
+      releaseFirst();
+      await secondStarted;
+      releaseSecond();
+
+      await expect(status).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+      expect(runs).toBe(2);
+      expect(observedSessionIds).toEqual(['first-session', 'second-session']);
+    } finally {
+      releaseFirst();
+      releaseSecond();
+      await coordinator.dispose();
+    }
+  });
+
+  it('schedules checkpoints recorded while a forced worker is active', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    const firstSessionFile = await writeSession(cwd, 'first-session');
+    const secondSessionFile = await writeSession(cwd, 'second-session');
+    let firstStartedResolve!: () => void;
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstStartedResolve = resolve; });
+    const firstReleased = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let runs = 0;
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir: join(root, 'agent'),
+      modelRuntime: {} as ModelRuntime,
+      recover: false,
+      debounceMs: 60_000,
+      dreamRunner: async (input) => {
+        runs += 1;
+        if (runs === 1) {
+          firstStartedResolve();
+          await firstReleased;
+        }
+        return updatedArtifact(input.manifest.sessions[0]!.checkpoint.sessionId);
+      },
+    });
+    const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
+
+    try {
+      await host.recordCheckpoint(checkpointFor(firstSessionFile, 'first-session'));
+      const firstRun = coordinator.runNow(cwd);
+      await firstStarted;
+      await host.recordCheckpoint(checkpointFor(secondSessionFile, 'second-session'));
+      releaseFirst();
+
+      await expect(firstRun).resolves.toMatchObject({ state: 'scheduled', pendingCheckpoints: 1 });
+      await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+      expect(runs).toBe(2);
+    } finally {
+      releaseFirst();
+      await coordinator.dispose();
+    }
   });
 
   it('suspends an all-invalid batch until its cursor changes', async () => {

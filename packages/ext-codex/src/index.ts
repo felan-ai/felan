@@ -1,11 +1,13 @@
 import {
+  associateExtensionConfig,
   type Api,
   type FelanExtension,
   type Model,
 } from '@felan-ai/agent-core';
-import { readCodexConfig } from './config.js';
+import { CODEX_CONFIG, DEFAULT_CODEX_CONFIG } from './config.js';
 import { ExecSessionManager } from './exec-session-manager.js';
 import { supportsCodexModel, supportsImageInput } from './model-policy.js';
+import { injectCodexSkills } from './prompt.js';
 import { applyCodexRequestOptions } from './request-options.js';
 import { CODEX_TOOL_NAMES, createCodexTools, registerPatchResultEvent } from './tools.js';
 
@@ -13,7 +15,7 @@ const REPLACED_TOOL_NAMES: ReadonlySet<string> = new Set(['read', 'bash', 'edit'
 const CODEX_TOOL_NAME_SET: ReadonlySet<string> = new Set(CODEX_TOOL_NAMES);
 
 const codexExtension: FelanExtension = async (pi) => {
-  const config = await readCodexConfig(pi.runtime, pi.agentDir);
+  const config = { ...DEFAULT_CODEX_CONFIG, ...pi.config } as import('./config.js').CodexConfig;
   const sessions = new ExecSessionManager(pi.runtime);
   for (const tool of createCodexTools(pi.runtime, sessions)) pi.registerTool(tool);
   registerPatchResultEvent(pi);
@@ -38,6 +40,11 @@ const codexExtension: FelanExtension = async (pi) => {
 
   pi.on('session_start', (_event, ctx) => synchronizeTools(ctx.model));
   pi.on('model_select', (event) => synchronizeTools(event.model));
+  pi.on('before_agent_start', (event, ctx) => {
+    if (!supportsCodexModel(ctx.model) || !pi.runtime.processes) return undefined;
+    const systemPrompt = injectCodexSkills(event.systemPrompt, event.systemPromptOptions.skills);
+    return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
+  });
   pi.on('before_provider_request', (event, ctx) => (
     applyCodexRequestOptions(event.payload, ctx, config)
   ));
@@ -46,7 +53,7 @@ const codexExtension: FelanExtension = async (pi) => {
   });
 };
 
-export { DEFAULT_CODEX_CONFIG, readCodexConfig, validateCodexConfig } from './config.js';
+export { CODEX_CONFIG, DEFAULT_CODEX_CONFIG, validateCodexConfig } from './config.js';
 export type { CodexConfig, CodexVerbosity } from './config.js';
 export { ExecSessionManager, formatExecResult } from './exec-session-manager.js';
 export type { ExecCommandInput, UnifiedExecResult, WriteStdinInput } from './exec-session-manager.js';
@@ -59,3 +66,4 @@ export {
   resolveCodexTransport,
 } from './transport.js';
 export default codexExtension;
+associateExtensionConfig(codexExtension, CODEX_CONFIG);

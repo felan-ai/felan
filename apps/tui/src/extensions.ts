@@ -1,4 +1,10 @@
-import type { ExtensionPackageImporter, ModelRuntime } from '@felan-ai/agent-core';
+import {
+  associateExtensionConfig,
+  getExtensionConfigDefinition,
+  type ExtensionConfigDefinition,
+  type ExtensionPackageImporter,
+  type ModelRuntime,
+} from '@felan-ai/agent-core';
 import { createAskUserExtension } from '@felan-ai/ext-ask-user';
 import { createTuiAskUserHost } from '@felan-ai/ext-ask-user/tui';
 import { createMemoryExtension, type MemoryHost, type MemoryRole } from '@felan-ai/ext-memory';
@@ -6,8 +12,9 @@ import {
   createOutputStyleExtension,
   DEFAULT_OUTPUT_STYLE,
   type OutputStyle,
+  OUTPUT_STYLE_CONFIG,
 } from '@felan-ai/ext-output-style';
-import { createPowerlineExtension } from '@felan-ai/ext-powerline';
+import { createPowerlineExtension, POWERLINE_CONFIG } from '@felan-ai/ext-powerline';
 import {
   createSubagentsExtension,
   type SubagentHost,
@@ -22,6 +29,7 @@ import {
 
 export const askUserExtensionPackage = '@felan-ai/ext-ask-user';
 export const mcpExtensionPackage = '@felan-ai/ext-mcp';
+export const felanApiExtensionPackage = '@felan-ai/ext-felan-api';
 export const powerlineExtensionPackage = '@felan-ai/ext-powerline';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const memoryExtensionPackage = '@felan-ai/ext-memory';
@@ -32,6 +40,7 @@ export const builtinExtensionPackages = {
   tasks: '@felan-ai/ext-tasks',
   prewalk: '@felan-ai/ext-prewalk',
   mcp: mcpExtensionPackage,
+  felanApi: felanApiExtensionPackage,
   webAccess: '@felan-ai/ext-web-access',
   browser: '@felan-ai/ext-browser',
   backgroundBash: '@felan-ai/ext-background-bash',
@@ -45,6 +54,22 @@ export const builtinExtensionPackages = {
   outputStyle: outputStyleExtensionPackage,
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);
+
+export async function loadLocalExtensionConfigDefinitions(
+  packages: readonly string[] = localExtensionPackages,
+): Promise<readonly ExtensionConfigDefinition[]> {
+  const definitions: ExtensionConfigDefinition[] = [];
+  for (const packageName of packages) {
+    const imported = await importLocalExtension(packageName);
+    const extension = (typeof imported === 'object' && imported !== null)
+      ? Reflect.get(imported, 'default')
+      : undefined;
+    if (typeof extension !== 'function') continue;
+    const definition = getExtensionConfigDefinition(extension);
+    if (definition) definitions.push(definition);
+  }
+  return definitions;
+}
 
 export type BuiltinExtensionName = keyof typeof builtinExtensionPackages;
 export type BuiltinExtensionSettings = Partial<Record<BuiltinExtensionName, boolean>>;
@@ -90,6 +115,7 @@ export function createLocalExtensionImporter(
   const powerline = createPowerlineExtension(createLocalSubscriptionUsageHost(modelRuntime), {
     footerRows: (width) => agentRailRenderer?.(width) ?? [],
   });
+  associateExtensionConfig(powerline, POWERLINE_CONFIG);
   return async (packageName) => {
     if (packageName === askUserExtensionPackage) {
       return { default: createAskUserExtension(createTuiAskUserHost()) };
@@ -125,7 +151,11 @@ export function createLocalExtensionImporter(
       return { default: createMemoryExtension(memoryBinding) };
     }
     if (packageName === outputStyleExtensionPackage) {
-      return { default: createOutputStyleExtension(outputStyle) };
+      const extension = ((pi: Parameters<ReturnType<typeof createOutputStyleExtension>>[0]) => (
+        createOutputStyleExtension(pi.config?.style ?? outputStyle)(pi)
+      ));
+      associateExtensionConfig(extension, OUTPUT_STYLE_CONFIG);
+      return { default: extension };
     }
     return importExtension(packageName);
   };

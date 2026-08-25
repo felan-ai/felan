@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createSubagentsExtension,
   type SubagentDescriptor,
+  type SubagentErrorCode,
   type SubagentHost,
   type SubagentRecord,
   type SubagentSpawnRequest,
@@ -42,6 +43,8 @@ describe('@felan-ai/ext-subagents', () => {
       expect.objectContaining({ const: 'reviewer' }),
     ]);
     expect(schema.properties.thinking.enum).toEqual(FELAN_THINKING_LEVELS);
+    expect(schema.properties.max_turns.description).toContain('final result');
+    expect(schema.properties.timeout_seconds.description).toContain('Wall-clock');
     expect(Object.keys(schema.properties)).toEqual([
       'prompt',
       'description',
@@ -57,7 +60,7 @@ describe('@felan-ai/ext-subagents', () => {
     expect(harness.capabilities).toEqual([
       expect.objectContaining({
         id: 'subagents',
-        instructions: expect.stringMatching(/reviewer \(Review changes; thinking: high\).*always run asynchronously.*Completion notices/s),
+        instructions: expect.stringMatching(/reviewer \(Review changes; thinking: high\).*always run asynchronously.*hard assistant-turn budget.*Completion notices/s),
       }),
     ]);
     expect(harness.tools.get('Agent')!.description).toContain(
@@ -297,6 +300,36 @@ describe('@felan-ai/ext-subagents', () => {
     expect(harness.host.getResult).toHaveBeenCalledWith('child');
     expect(harness.host.steer).toHaveBeenCalledWith('child', 'focus');
     expect(harness.host.cancel).toHaveBeenCalledWith('child', 'stop');
+  });
+
+  it('renders normalized terminal error codes without changing the tool surface', async () => {
+    const supportedCodes: SubagentErrorCode[] = [
+      'turn_limit_reached',
+      'model_request_failed',
+      'cancelled_by_parent',
+      'timed_out',
+      'host_shutdown',
+    ];
+    const harness = createHarness();
+    (harness.host.getResult as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      value: {
+        agentId: 'child',
+        parentSessionId: 'parent',
+        rootSessionId: 'root',
+        type: 'reviewer',
+        description: 'review',
+        status: 'failed',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        completedAt: '2026-01-01T00:01:00.000Z',
+        error: { code: supportedCodes[1]!, message: 'Model transport failed' },
+      },
+    });
+
+    const result = await execute(harness, 'get_subagent_result', { agent_id: 'child' });
+
+    expect(resultText(result)).toContain('model_request_failed — Model transport failed');
+    expect([...harness.tools.keys()]).toHaveLength(5);
   });
 
   it('keeps the canonical surface available when no agent types are configured', async () => {

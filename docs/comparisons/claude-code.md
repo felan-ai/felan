@@ -24,7 +24,7 @@ policy and Claude Code's broader first-party ecosystem.
 | Primary surface | Local interactive TUI and `felan` binary | Terminal CLI plus documented SDK, background, team, and browser integrations |
 | Providers | Host-supplied authenticated model scope; Felan adapts tools for eligible GPT models and keeps other models on ordinary tools | Anthropic-centered model and account surface, with provider/API deployment options documented by Anthropic |
 | Task state | Shared graph with prerequisites, claims, acceptance criteria, ownership, ready/blocked views, and verified results | Task tools with IDs, dependencies, owners, and metadata when available; availability is model/version dependent |
-| Planning | Prewalk routes the same session after a focused mutation; no approval gate | Plan permission mode and explicit plan transition; additional plan/review workflows |
+| Planning | Prewalk routes the same session after a focused mutation; model-requested entry asks by default, but there is no plan-review gate | Plan permission mode and explicit plan transition; additional plan/review workflows |
 | Memory and context | One cwd instruction file plus progressive nested context and local Markdown memory outside the repository | `CLAUDE.md` hierarchy, memory features, path-scoped rules, and checkpointing workflows |
 | Subagents | Asynchronous bounded children, live navigator, steering, continuation, cancellation; text results | Built-in/custom subagents, background work, worktree isolation options, and agent teams/messaging features |
 | Web/browser | Bounded HTTP evidence tools; reviewed browser CLI integration with explicit attachment guidance | Web tools plus separate Claude-in-Chrome integration; capabilities depend on enabled integrations |
@@ -56,7 +56,8 @@ Claude Code's Plan permission mode is intended to keep work read-only or
 edit-restricted until the user approves a plan transition. Felan Prewalk is a
 same-session model handoff: the planner explores, creates a prompted graph,
 makes a focused mutation, and the next request runs on a configured target
-model with useful history. There is no separate plan artifact or approval gate.
+model with useful history. Model-requested entry asks by default, but there is
+no separate plan artifact or approval checkpoint before edits.
 
 Choose Claude Code when approval before edits is central. Choose Felan when
 preserving the planner's grounded trajectory while switching model strength is

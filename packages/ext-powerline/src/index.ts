@@ -1,5 +1,5 @@
-import type { ExtensionContext, FelanExtension } from '@felan-ai/agent-core';
-import { configFromFlags, loadPowerlineConfig, registerPowerlineFlags } from './config.js';
+import { associateExtensionConfig, type ExtensionContext, type FelanExtension } from '@felan-ai/agent-core';
+import { powerlineConfigFromSettings, POWERLINE_CONFIG } from './config.js';
 import { PowerlineFooter, type FooterRowsRenderer } from './footer.js';
 import {
   createSubscriptionController,
@@ -23,18 +23,15 @@ export function createPowerlineExtension(
     let subscriptionContext: ExtensionContext | undefined;
     let subscriptionTimer: ReturnType<typeof setInterval> | undefined;
     const emptySubscription: SubscriptionState = { loading: false };
-    const loadedConfig = loadPowerlineConfig(pi.agentDir);
-    const subscription = subscriptionHost && loadedConfig.config.display.lines.some(
+    const config = powerlineConfigFromSettings(pi.config ?? {});
+    const subscription = subscriptionHost && config.display.lines.some(
       (line) => line.segments.subscription?.enabled,
     )
       ? createSubscriptionController(subscriptionHost, redraw)
       : undefined;
 
-    registerPowerlineFlags(pi, loadedConfig.config);
-
     function installFooter(ctx: ExtensionContext): void {
       if (ctx.mode !== 'tui') return;
-      if (loadedConfig.warning) ctx.ui.notify(loadedConfig.warning, 'warning');
       footer?.dispose();
       ctx.ui.setFooter((tui, _theme, footerData) => {
         footer = new PowerlineFooter({
@@ -42,7 +39,7 @@ export function createPowerlineExtension(
           ctx,
           tui,
           footerData,
-          config: configFromFlags(pi, loadedConfig.config),
+          config,
           subscription: subscription?.state ?? emptySubscription,
           ...(options.footerRows === undefined ? {} : { footerRows: options.footerRows }),
         });
@@ -112,12 +109,13 @@ export function createPowerlineExtension(
 
 const powerlineExtension = createPowerlineExtension();
 
+associateExtensionConfig(powerlineExtension, POWERLINE_CONFIG);
+
 export default powerlineExtension;
 export {
-  POWERLINE_CONFIG_FILENAME,
-  POWERLINE_FLAGS,
-  configFromFlags,
-  loadPowerlineConfig,
+  DEFAULT_CONFIG,
+  POWERLINE_CONFIG,
+  powerlineConfigFromSettings,
 } from './config.js';
 export { PowerlineFooter, renderFooterLine, renderStyledSegments } from './footer.js';
 export type { FooterRowsRenderer } from './footer.js';

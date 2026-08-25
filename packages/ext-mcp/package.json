@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-mcp",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Portable OAuth-only MCP gateway for Felan",
   "license": "MIT",
   "type": "module",
@@ -35,7 +35,7 @@
     "typebox": "1.1.38"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.4.0"
+    "@felan-ai/agent-core": "^0.5.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

@@ -1,7 +1,7 @@
 import {
   resizeImage,
   type AgentRuntime,
-  type ExtensionAPI,
+  type FelanExtensionAPI,
   type ToolDefinition,
 } from '@felan-ai/agent-core';
 import { Text } from '@earendil-works/pi-tui';
@@ -188,7 +188,7 @@ export function createCodexTools(
   return [execCommand, writeStdin, applyPatchTool, viewImage];
 }
 
-export function registerPatchResultEvent(pi: ExtensionAPI): void {
+export function registerPatchResultEvent(pi: Pick<FelanExtensionAPI, 'on'>): void {
   pi.on('tool_result', (event) => {
     if (
       event.toolName === 'apply_patch'

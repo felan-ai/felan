@@ -2,6 +2,7 @@ import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { AgentRuntime } from '../src/runtime.js';
 import { describe, expect, it } from 'vitest';
 import { createRuntimeCodingTools } from '../src/index.js';
 import { TestAgentRuntime } from './test-agent-runtime.js';
@@ -38,6 +39,21 @@ describe('runtime-backed coding tools', () => {
     } finally {
       await rm(hostDirectory, { recursive: true });
     }
+  });
+
+  it('can route the Bash coding tool through an explicit POSIX shell', async () => {
+    const runtime = new TestAgentRuntime('/virtual-felan-workspace');
+    const tools = toolsByName(createRuntimeCodingTools(runtime, { shellFlavor: 'posix' }));
+
+    await tools.bash!.execute(
+      'bash-posix',
+      { command: 'printf posix' },
+      undefined,
+      undefined,
+      context,
+    );
+
+    expect(runtime.shellCalls[0]?.options).toMatchObject({ shellFlavor: 'posix' });
   });
 
   it('routes shell and grep execution through runtime operations with safe argv boundaries', async () => {
@@ -79,6 +95,59 @@ describe('runtime-backed coding tools', () => {
         'two words; $HOME',
         '.',
       ],
+    });
+  });
+
+  it('requests bounded output and reports runtime truncation', async () => {
+    const runtime = new TestAgentRuntime('/virtual-felan-workspace', {
+      shell: ({ options }) => ({
+        stdout: 'x'.repeat(60_000),
+        stderr: '',
+        code: 0,
+        killed: false,
+        ...(options?.maxOutputBytes === 50 * 1024 ? { truncated: true } : {}),
+      }),
+      exec: ({ command, options }) => command === 'rg'
+        ? {
+            stdout: 'one\ntwo\nthree\n',
+            stderr: '',
+            code: 0,
+            killed: false,
+            ...(options?.maxOutputBytes === 50 * 1024 ? { truncated: true } : {}),
+          }
+        : { stdout: '', stderr: '', code: 0, killed: false },
+    });
+    const tools = toolsByName(createRuntimeCodingTools(runtime));
+
+    const bashResult = await tools.bash!.execute(
+      'bash-bounded',
+      { command: 'printf output' },
+      undefined,
+      undefined,
+      context,
+    );
+    const grepResult = await tools.grep!.execute(
+      'grep-bounded',
+      { pattern: 'needle', path: '.', limit: 2 },
+      undefined,
+      undefined,
+      context,
+    );
+
+    expect(runtime.shellCalls[0]?.options).toMatchObject({ maxOutputBytes: 50 * 1024 });
+    expect(runtime.execCalls.at(-1)?.options).toMatchObject({ maxOutputBytes: 50 * 1024 });
+    expect(bashResult).toMatchObject({
+      details: { outputTruncated: true, maxOutputBytes: 50 * 1024 },
+    });
+    expect(bashResult.content[0]).toMatchObject({
+      text: expect.stringContaining('[Output truncated at 51200 bytes]'),
+    });
+    expect(grepResult).toMatchObject({
+      details: {
+        matchLimitReached: 2,
+        outputTruncated: true,
+        maxOutputBytes: 50 * 1024,
+      },
     });
   });
 
@@ -136,6 +205,75 @@ describe('runtime-backed coding tools', () => {
     )).rejects.toThrow('File access denied');
     expect(runtime.execCalls).toHaveLength(0);
   });
+
+  it('passes bounded search options to the runtime file listing', async () => {
+    const runtime = new RecordingListRuntime('/virtual-felan-workspace');
+    await runtime.mkdir('src');
+    await runtime.mkdir('.git');
+    await runtime.mkdir('node_modules');
+    await runtime.writeFile('src/app.ts', new TextEncoder().encode('app'));
+    await runtime.writeFile('src/readme.md', new TextEncoder().encode('readme'));
+    await runtime.writeFile('.git/ignored.ts', new TextEncoder().encode('ignored'));
+    await runtime.writeFile('node_modules/ignored.ts', new TextEncoder().encode('ignored'));
+    const tools = toolsByName(createRuntimeCodingTools(runtime));
+
+    const result = await tools.find!.execute(
+      'find-1',
+      { pattern: '**/*.ts', path: 'src', limit: 7 },
+      undefined,
+      undefined,
+      context,
+    );
+
+    expect(result.content[0]).toMatchObject({ type: 'text', text: 'app.ts' });
+    expect(result.content[0]).not.toMatchObject({ type: 'text', text: expect.stringContaining('readme.md') });
+    expect(runtime.listFilesCalls.at(-1)).toMatchObject({
+      path: expect.stringContaining('src'),
+      options: {
+        recursive: true,
+        ignore: ['**/node_modules/**', '**/.git/**'],
+        limit: 7,
+        pattern: '**/*.ts',
+      },
+    });
+
+    const rootResult = await tools.find!.execute(
+      'find-2',
+      { pattern: '**/*.ts', path: '.', limit: 7 },
+      undefined,
+      undefined,
+      context,
+    );
+    expect(rootResult.content[0]).not.toMatchObject({ type: 'text', text: expect.stringContaining('.git') });
+    expect(rootResult.content[0]).not.toMatchObject({ type: 'text', text: expect.stringContaining('node_modules') });
+
+    const findSignal = new AbortController();
+    await tools.find!.execute(
+      'find-signal',
+      { pattern: '**/*.ts', path: 'src', limit: 1 },
+      findSignal.signal,
+      undefined,
+      context,
+    );
+    expect(runtime.listFilesCalls).toContainEqual(expect.objectContaining({
+      options: expect.objectContaining({
+        recursive: true,
+        signal: findSignal.signal,
+      }),
+    }));
+
+    await tools.ls!.execute(
+      'ls-1',
+      { path: 'src' },
+      undefined,
+      undefined,
+      context,
+    );
+    expect(runtime.listFilesCalls).toContainEqual(expect.objectContaining({
+      path: expect.stringContaining('src'),
+      options: expect.objectContaining({ recursive: false, includeDirectories: true }),
+    }));
+  });
 });
 
 class FilePolicyRuntime extends TestAgentRuntime {
@@ -150,6 +288,21 @@ class FilePolicyRuntime extends TestAgentRuntime {
   ): Promise<string[]> {
     if (path === 'secret.txt') throw new Error('File listing denied');
     if (path === '.') return ['secret.txt'];
+    return super.listFiles(path, options);
+  }
+}
+
+class RecordingListRuntime extends TestAgentRuntime {
+  readonly listFilesCalls: Array<{
+    readonly path: string;
+    readonly options?: Parameters<AgentRuntime['listFiles']>[1];
+  }> = [];
+
+  override async listFiles(
+    path: string,
+    options?: Parameters<AgentRuntime['listFiles']>[1],
+  ): Promise<string[]> {
+    this.listFilesCalls.push({ path, options });
     return super.listFiles(path, options);
   }
 }

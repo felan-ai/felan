@@ -1,6 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { FelanExtensionAPI } from '@felan-ai/agent-core';
+import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 
 export type ThemeName = 'dark' | 'light' | 'nord' | 'tokyo-night' | 'rose-pine' | 'gruvbox' | 'custom';
 export type FooterStyle = 'minimal' | 'powerline' | 'capsule';
@@ -49,7 +47,7 @@ export interface ThemeColorConfig {
 export interface PowerlineConfig {
   theme: ThemeName;
   colors?: {
-    custom?: Partial<Record<ThemeColorKey, ThemeColorConfig>>;
+    custom?: Record<string, ThemeColorConfig>;
   };
   display: {
     style: FooterStyle;
@@ -61,18 +59,7 @@ export interface PowerlineConfig {
   };
 }
 
-export const POWERLINE_FLAGS = {
-  theme: 'felan-powerline-theme',
-  style: 'felan-powerline-style',
-  charset: 'felan-powerline-charset',
-  color: 'felan-powerline-color',
-  wrap: 'felan-powerline-wrap',
-  directoryStyle: 'felan-powerline-directory-style',
-  sessionType: 'felan-powerline-session-type',
-  contextStyle: 'felan-powerline-context-style',
-} as const;
-
-const DEFAULT_CONFIG: PowerlineConfig = {
+export const DEFAULT_CONFIG: PowerlineConfig = {
   theme: 'dark',
   display: {
     style: 'powerline',
@@ -100,8 +87,6 @@ const DEFAULT_CONFIG: PowerlineConfig = {
   },
 };
 
-export const POWERLINE_CONFIG_FILENAME = 'powerline.json';
-
 const THEMES = new Set<ThemeName>(['dark', 'light', 'nord', 'tokyo-night', 'rose-pine', 'gruvbox', 'custom']);
 const STYLES = new Set<FooterStyle>(['minimal', 'powerline', 'capsule']);
 const CHARSETS = new Set<Charset>(['unicode', 'text']);
@@ -111,16 +96,6 @@ const SESSION_TYPES = new Set<SessionDisplayType>(['cost', 'tokens', 'both', 'br
 const CONTEXT_STYLES = new Set<ContextDisplayStyle>(['text', 'bar', 'blocks', 'blocks-line', 'dots']);
 const ALIGNMENTS = new Set<SegmentAlignment>(['left', 'right']);
 const SEGMENT_NAMES = new Set<SegmentName>(['directory', 'git', 'model', 'session', 'subscription', 'context', 'status']);
-const THEME_COLOR_KEYS = new Set<ThemeColorKey>([
-  ...SEGMENT_NAMES,
-  'warning',
-  'critical',
-  'muted',
-  'extensionStatus1',
-  'extensionStatus2',
-  'extensionStatus3',
-  'extensionStatus4',
-]);
 const BOOLEAN_SEGMENT_FIELDS = [
   'showSha',
   'showWorkingTree',
@@ -137,78 +112,34 @@ const BOOLEAN_SEGMENT_FIELDS = [
 ] as const;
 const NUMBER_SEGMENT_FIELDS = ['maxWindows', 'width', 'warningThreshold', 'criticalThreshold'] as const;
 
-export interface LoadPowerlineConfigResult {
-  readonly path: string;
-  readonly config: PowerlineConfig;
-  readonly warning?: string;
-}
+export const POWERLINE_CONFIG = defineExtensionConfig({
+  id: 'powerline',
+  title: 'Powerline',
+  fields: {
+    theme: configField.enum(['dark', 'light', 'nord', 'tokyo-night', 'rose-pine', 'gruvbox', 'custom'], { default: DEFAULT_CONFIG.theme, description: 'Powerline color theme' }),
+    style: configField.enum(['minimal', 'powerline', 'capsule'], { default: DEFAULT_CONFIG.display.style, description: 'Powerline footer style' }),
+    charset: configField.enum(['text', 'unicode'], { default: DEFAULT_CONFIG.display.charset, description: 'Powerline footer charset' }),
+    colorCompatibility: configField.enum(['auto', 'none', 'ansi', 'ansi256', 'truecolor'], { default: DEFAULT_CONFIG.display.colorCompatibility, description: 'Powerline ANSI color mode' }),
+    autoWrap: configField.boolean({ default: DEFAULT_CONFIG.display.autoWrap, description: 'Wrap long powerline segments' }),
+    padding: configField.number({ default: DEFAULT_CONFIG.display.padding, description: 'Horizontal segment padding', validate: validatePadding }),
+    lines: configField.json({ default: DEFAULT_CONFIG.display.lines, description: 'Ordered powerline lines and segments', validate: validateLines }),
+    colors: configField.json({ default: {}, description: 'Custom powerline colors', validate: validateColors }),
+  },
+});
 
-export function loadPowerlineConfig(agentDir: string): LoadPowerlineConfigResult {
-  const path = join(agentDir, POWERLINE_CONFIG_FILENAME);
-  try {
-    return {
-      path,
-      config: parsePowerlineConfig(JSON.parse(readFileSync(path, 'utf8'))),
-    };
-  } catch (error) {
-    const config = cloneConfig(DEFAULT_CONFIG);
-    if (isNodeError(error) && error.code === 'ENOENT') return { path, config };
-    return {
-      path,
-      config,
-      warning: `Could not load powerline config ${path}: ${errorMessage(error)}`,
-    };
-  }
-}
-
-export function registerPowerlineFlags(
-  pi: FelanExtensionAPI,
-  defaults: PowerlineConfig = DEFAULT_CONFIG,
-): void {
-  pi.registerFlag(POWERLINE_FLAGS.theme, { type: 'string', default: defaults.theme, description: 'Powerline color theme' });
-  pi.registerFlag(POWERLINE_FLAGS.style, { type: 'string', default: defaults.display.style, description: 'Powerline footer style' });
-  pi.registerFlag(POWERLINE_FLAGS.charset, { type: 'string', default: defaults.display.charset, description: 'Powerline footer charset' });
-  pi.registerFlag(POWERLINE_FLAGS.color, { type: 'string', default: defaults.display.colorCompatibility, description: 'Powerline ANSI color mode' });
-  pi.registerFlag(POWERLINE_FLAGS.wrap, { type: 'boolean', default: defaults.display.autoWrap, description: 'Wrap long powerline segments' });
-  pi.registerFlag(POWERLINE_FLAGS.directoryStyle, { type: 'string', default: findSegment(defaults, 'directory')?.style ?? 'fish', description: 'Powerline directory display style' });
-  pi.registerFlag(POWERLINE_FLAGS.sessionType, { type: 'string', default: findSegment(defaults, 'session')?.type ?? 'tokens', description: 'Powerline session usage display' });
-  pi.registerFlag(POWERLINE_FLAGS.contextStyle, { type: 'string', default: findSegment(defaults, 'context')?.displayStyle ?? 'bar', description: 'Powerline context usage display' });
-}
-
-export function configFromFlags(
-  pi: Pick<FelanExtensionAPI, 'getFlag'>,
-  defaults: PowerlineConfig = DEFAULT_CONFIG,
-): PowerlineConfig {
-  const config = cloneConfig(defaults);
-  config.theme = enumFlag(pi, POWERLINE_FLAGS.theme, THEMES, config.theme);
-  config.display.style = enumFlag(pi, POWERLINE_FLAGS.style, STYLES, config.display.style);
-  config.display.charset = enumFlag(pi, POWERLINE_FLAGS.charset, CHARSETS, config.display.charset);
-  config.display.colorCompatibility = enumFlag(pi, POWERLINE_FLAGS.color, COLORS, config.display.colorCompatibility);
-  config.display.autoWrap = booleanFlag(pi, POWERLINE_FLAGS.wrap, config.display.autoWrap);
-
-  const directory = findSegment(config, 'directory');
-  if (directory) directory.style = enumFlag(pi, POWERLINE_FLAGS.directoryStyle, DIRECTORY_STYLES, directory.style ?? 'fish');
-  const session = findSegment(config, 'session');
-  if (session) session.type = enumFlag(pi, POWERLINE_FLAGS.sessionType, SESSION_TYPES, session.type ?? 'tokens');
-  const context = findSegment(config, 'context');
-  if (context) context.displayStyle = enumFlag(pi, POWERLINE_FLAGS.contextStyle, CONTEXT_STYLES, context.displayStyle ?? 'bar');
+export function powerlineConfigFromSettings(values: Readonly<Record<string, unknown>>): PowerlineConfig {
+  const config = cloneConfig(DEFAULT_CONFIG);
+  if (typeof values.theme === 'string' && THEMES.has(values.theme as ThemeName)) config.theme = values.theme as ThemeName;
+  if (typeof values.style === 'string' && STYLES.has(values.style as FooterStyle)) config.display.style = values.style as FooterStyle;
+  if (typeof values.charset === 'string' && CHARSETS.has(values.charset as Charset)) config.display.charset = values.charset as Charset;
+  if (typeof values.colorCompatibility === 'string' && COLORS.has(values.colorCompatibility as ColorCompatibility)) config.display.colorCompatibility = values.colorCompatibility as ColorCompatibility;
+  if (typeof values.autoWrap === 'boolean') config.display.autoWrap = values.autoWrap;
+  if (typeof values.padding === 'number') config.display.padding = values.padding;
+  if (values.lines !== undefined) config.display.lines = parseDisplayLines(values.lines);
+  if (values.colors !== undefined) config.colors = { custom: parseCustomColors(values.colors) };
   return config;
 }
 
-function enumFlag<T extends string>(
-  pi: Pick<FelanExtensionAPI, 'getFlag'>,
-  name: string,
-  values: ReadonlySet<T>,
-  fallback: T,
-): T {
-  const value = pi.getFlag(name);
-  return typeof value === 'string' && values.has(value as T) ? value as T : fallback;
-}
-
-function booleanFlag(pi: Pick<FelanExtensionAPI, 'getFlag'>, name: string, fallback: boolean): boolean {
-  const value = pi.getFlag(name);
-  return typeof value === 'boolean' ? value : fallback;
-}
 
 function cloneConfig(config: PowerlineConfig): PowerlineConfig {
   return {
@@ -233,80 +164,87 @@ function cloneConfig(config: PowerlineConfig): PowerlineConfig {
   };
 }
 
-function parsePowerlineConfig(value: unknown): PowerlineConfig {
-  if (!isRecord(value)) throw new Error('configuration root must be an object');
-  const config = cloneConfig(DEFAULT_CONFIG);
-  if (typeof value.theme === 'string' && THEMES.has(value.theme as ThemeName)) {
-    config.theme = value.theme as ThemeName;
-  }
-
-  if (isRecord(value.colors) && isRecord(value.colors.custom)) {
-    const custom = parseCustomColors(value.colors.custom);
-    if (Object.keys(custom).length > 0) config.colors = { custom };
-  }
-
-  if (!isRecord(value.display)) return config;
-  const display = value.display;
-  if (typeof display.style === 'string' && STYLES.has(display.style as FooterStyle)) {
-    config.display.style = display.style as FooterStyle;
-  }
-  if (typeof display.charset === 'string' && CHARSETS.has(display.charset as Charset)) {
-    config.display.charset = display.charset as Charset;
-  }
-  if (typeof display.colorCompatibility === 'string' && COLORS.has(display.colorCompatibility as ColorCompatibility)) {
-    config.display.colorCompatibility = display.colorCompatibility as ColorCompatibility;
-  }
-  if (typeof display.autoWrap === 'boolean') config.display.autoWrap = display.autoWrap;
-  if (typeof display.padding === 'number' && Number.isFinite(display.padding) && display.padding >= 0) {
-    config.display.padding = display.padding;
-  }
-  if (Array.isArray(display.lines)) config.display.lines = display.lines.map(parseDisplayLine);
-  return config;
+function validatePadding(value: unknown): string | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? undefined
+    : 'must be a finite non-negative number';
 }
 
-function parseDisplayLine(value: unknown): DisplayLineConfig {
+function validateLines(value: unknown): string | undefined {
+  try {
+    parseDisplayLines(value);
+    return undefined;
+  } catch (error) {
+    return errorMessage(error);
+  }
+}
+
+function validateColors(value: unknown): string | undefined {
+  try {
+    parseCustomColors(value);
+    return undefined;
+  } catch (error) {
+    return errorMessage(error);
+  }
+}
+
+function parseDisplayLines(value: unknown): DisplayLineConfig[] {
+  if (!Array.isArray(value)) throw new Error('must be an array');
+  return value.map((line, index) => parseDisplayLine(line, `lines[${index}]`));
+}
+
+function parseDisplayLine(value: unknown, source: string): DisplayLineConfig {
   const segments: Partial<Record<SegmentName, SegmentConfig>> = {};
-  if (!isRecord(value) || !isRecord(value.segments)) return { segments };
+  if (!isRecord(value)) throw new Error(`${source} must be an object`);
+  if (!isRecord(value.segments)) throw new Error(`${source}.segments must be an object`);
   for (const [name, segment] of Object.entries(value.segments)) {
-    if (!SEGMENT_NAMES.has(name as SegmentName)) continue;
-    const parsed = parseSegmentConfig(segment);
-    if (parsed) segments[name as SegmentName] = parsed;
+    if (!SEGMENT_NAMES.has(name as SegmentName)) throw new Error(`${source}.segments contains unknown segment: ${name}`);
+    const parsed = parseSegmentConfig(segment, `${source}.segments.${name}`);
+    segments[name as SegmentName] = parsed;
   }
   return { segments };
 }
 
-function parseSegmentConfig(value: unknown): SegmentConfig | undefined {
-  if (!isRecord(value)) return undefined;
+function parseSegmentConfig(value: unknown, source: string): SegmentConfig {
+  if (!isRecord(value)) throw new Error(`${source} must be an object`);
+  const allowed = new Set(['enabled', 'align', 'style', 'type', 'displayStyle', ...BOOLEAN_SEGMENT_FIELDS, ...NUMBER_SEGMENT_FIELDS]);
+  for (const field of Object.keys(value)) {
+    if (!allowed.has(field)) throw new Error(`${source} contains unknown field: ${field}`);
+  }
   const config: SegmentConfig = {
-    enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
+    enabled: value.enabled === undefined ? true : value.enabled as boolean,
   };
+  if (typeof config.enabled !== 'boolean') throw new Error(`${source}.enabled must be a boolean`);
   if (typeof value.align === 'string' && ALIGNMENTS.has(value.align as SegmentAlignment)) {
     config.align = value.align as SegmentAlignment;
-  }
+  } else if (value.align !== undefined) throw new Error(`${source}.align is invalid`);
   if (typeof value.style === 'string' && DIRECTORY_STYLES.has(value.style as DirectoryStyle)) {
     config.style = value.style as DirectoryStyle;
-  }
+  } else if (value.style !== undefined) throw new Error(`${source}.style is invalid`);
   if (typeof value.type === 'string' && SESSION_TYPES.has(value.type as SessionDisplayType)) {
     config.type = value.type as SessionDisplayType;
-  }
+  } else if (value.type !== undefined) throw new Error(`${source}.type is invalid`);
   if (typeof value.displayStyle === 'string' && CONTEXT_STYLES.has(value.displayStyle as ContextDisplayStyle)) {
     config.displayStyle = value.displayStyle as ContextDisplayStyle;
-  }
+  } else if (value.displayStyle !== undefined) throw new Error(`${source}.displayStyle is invalid`);
   for (const field of BOOLEAN_SEGMENT_FIELDS) {
+    if (value[field] !== undefined && typeof value[field] !== 'boolean') throw new Error(`${source}.${field} must be a boolean`);
     if (typeof value[field] === 'boolean') config[field] = value[field];
   }
   for (const field of NUMBER_SEGMENT_FIELDS) {
-    if (typeof value[field] === 'number' && Number.isFinite(value[field])) config[field] = value[field];
+    if (value[field] !== undefined && (typeof value[field] !== 'number' || !Number.isFinite(value[field]))) throw new Error(`${source}.${field} must be a finite number`);
+    if (typeof value[field] === 'number') config[field] = value[field];
   }
   return config;
 }
 
-function parseCustomColors(value: Record<string, unknown>): Partial<Record<ThemeColorKey, ThemeColorConfig>> {
-  const colors: Partial<Record<ThemeColorKey, ThemeColorConfig>> = {};
+function parseCustomColors(value: unknown): Record<string, ThemeColorConfig> {
+  if (!isRecord(value)) throw new Error('must be an object');
+  const colors: Record<string, ThemeColorConfig> = {};
   for (const [name, pair] of Object.entries(value)) {
-    if (!THEME_COLOR_KEYS.has(name as ThemeColorKey) || !isRecord(pair)) continue;
-    if (!isHexColor(pair.fg) || !isHexColor(pair.bg)) continue;
-    colors[name as ThemeColorKey] = { fg: pair.fg, bg: pair.bg };
+    if (!isRecord(pair)) throw new Error(`${name} must be an object`);
+    if (!isHexColor(pair.fg) || !isHexColor(pair.bg)) throw new Error(`${name}.fg and ${name}.bg must be #RRGGBB colors`);
+    colors[name] = { fg: pair.fg, bg: pair.bg };
   }
   return colors;
 }

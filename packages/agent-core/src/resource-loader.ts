@@ -15,7 +15,6 @@ export interface CreateAgentCoreResourceLoaderOptions {
   readonly cwd: string;
   readonly agentDir: string;
   readonly extensionFactories: readonly InlineExtension[];
-  readonly extensionFlagValues?: ReadonlyMap<string, boolean | string>;
   readonly skillPaths?: readonly string[];
   readonly skills?: readonly Skill[];
   readonly appendSystemPrompt?: readonly string[];
@@ -92,30 +91,5 @@ export async function createAgentCoreResourceLoaderWithContextFiles(
     throw new Error(`${first.path}: ${first.error}`);
   }
 
-  applyExtensionFlagValues(loader, options.extensionFlagValues);
   return loader;
-}
-
-function applyExtensionFlagValues(
-  loader: ResourceLoader,
-  values?: ReadonlyMap<string, boolean | string>,
-): void {
-  if (!values) return;
-
-  const extensionsResult = loader.getExtensions();
-  const registeredFlags = new Map<string, 'boolean' | 'string'>();
-  for (const extension of extensionsResult.extensions) {
-    for (const [name, flag] of extension.flags) {
-      registeredFlags.set(name, flag.type);
-    }
-  }
-
-  for (const [name, value] of values) {
-    const type = registeredFlags.get(name);
-    if (!type) throw new Error(`Unknown extension flag: ${name}`);
-    if (type !== typeof value) {
-      throw new Error(`Extension flag ${name} requires a ${type} value`);
-    }
-    extensionsResult.runtime.flagValues.set(name, value);
-  }
 }

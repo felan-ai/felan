@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-rtk-optimizer",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "description": "RTK command rewriting and tool-output compaction for Felan",
   "license": "MIT",
   "type": "module",
@@ -31,7 +31,7 @@
     "prepack": "pnpm build"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.4.3"
+    "@felan-ai/agent-core": "^0.5.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

@@ -45,8 +45,10 @@ interface ProjectContext {
   recoveryStarted: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
   run: Promise<void> | undefined;
+  readonly followUps: Set<Promise<void>>;
   abort: AbortController | undefined;
   blocked: Map<string, MemoryCheckpointCursor>;
+  checkpointVersion: number;
   state: MemoryProcessingState;
   message: string | undefined;
 }
@@ -124,7 +126,7 @@ export class LocalMemoryCoordinator {
     }
     if (enabled) {
       for (const context of this.#contexts.values()) {
-        void this.#scheduleIfPending(context, 0);
+        void this.#trackScheduleIfPending(context, 0);
       }
     }
     this.#emitStatusChange();
@@ -173,6 +175,7 @@ export class LocalMemoryCoordinator {
   async recordCheckpoint(cwd: string, checkpoint: SessionCheckpoint): Promise<void> {
     const context = await this.#context(cwd);
     if (await context.store.recordCheckpoint(checkpoint)) {
+      context.checkpointVersion += 1;
       context.blocked.delete(checkpoint.sessionId);
       await this.#schedule(context);
       this.#emitStatusChange();
@@ -182,20 +185,24 @@ export class LocalMemoryCoordinator {
   async runNow(cwd: string): Promise<MemoryStatus> {
     if (!this.#enabled) return this.status(cwd);
     const context = await this.#context(cwd);
-    if (context.timer) {
-      clearTimeout(context.timer);
-      context.timer = undefined;
+    this.#cancelScheduledRun(context);
+    while (context.run || context.followUps.size > 0) {
+      await Promise.allSettled([
+        ...(context.run ? [context.run] : []),
+        ...context.followUps,
+      ]);
+      this.#cancelScheduledRun(context);
     }
-    if (context.run) {
-      await context.run;
-    } else {
-      context.blocked.clear();
-      const run = this.#run(context);
-      context.run = run;
-      try {
-        await run;
-      } finally {
-        if (context.run === run) context.run = undefined;
+    context.blocked.clear();
+    const checkpointVersion = context.checkpointVersion;
+    const run = this.#run(context);
+    context.run = run;
+    try {
+      await run;
+    } finally {
+      if (context.run === run) context.run = undefined;
+      if (context.checkpointVersion !== checkpointVersion) {
+        await this.#trackScheduleIfPending(context);
       }
     }
     return this.status(cwd);
@@ -209,14 +216,19 @@ export class LocalMemoryCoordinator {
   async dispose(): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
-    const runs: Promise<void>[] = [];
     for (const context of this.#contexts.values()) {
       if (context.timer) clearTimeout(context.timer);
       context.timer = undefined;
       context.abort?.abort();
-      if (context.run) runs.push(context.run);
     }
-    await Promise.allSettled(runs);
+    while (true) {
+      const work = [...this.#contexts.values()].flatMap((context) => [
+        ...(context.run ? [context.run] : []),
+        ...context.followUps,
+      ]);
+      if (work.length === 0) break;
+      await Promise.allSettled(work);
+    }
     this.#statusListeners.clear();
   }
 
@@ -235,14 +247,16 @@ export class LocalMemoryCoordinator {
       recoveryStarted: false,
       timer: undefined,
       run: undefined,
+      followUps: new Set(),
       abort: undefined,
       blocked: new Map(),
+      checkpointVersion: 0,
       state: this.#enabled ? 'idle' : 'disabled',
       message: undefined,
     };
     this.#contexts.set(project.key, context);
     await context.ready;
-    if (this.#enabled) void this.#scheduleIfPending(context);
+    if (this.#enabled) void this.#trackScheduleIfPending(context);
     if (this.#options.recover !== false && !context.recoveryStarted) {
       context.recoveryStarted = true;
       void this.#recover(context).catch(() => {
@@ -255,14 +269,17 @@ export class LocalMemoryCoordinator {
   async #schedule(context: ProjectContext, delay = this.#options.debounceMs ?? 2_000): Promise<void> {
     if (this.#disposed || !this.#enabled || context.run || context.timer) return;
     context.state = 'scheduled';
-    context.timer = setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (context.timer !== timer) return;
       context.timer = undefined;
-      context.run = this.#run(context).finally(() => {
+      const run = this.#run(context).finally(async () => {
         context.run = undefined;
-        void this.#scheduleIfPending(context);
+        await this.#trackScheduleIfPending(context);
       });
+      context.run = run;
     }, delay);
-    context.timer.unref?.();
+    context.timer = timer;
+    timer.unref?.();
   }
 
   async #scheduleIfPending(context: ProjectContext, delay = this.#options.debounceMs ?? 2_000): Promise<void> {
@@ -280,6 +297,17 @@ export class LocalMemoryCoordinator {
       context.state = 'error';
       context.message = 'Local memory storage is unavailable';
     }
+  }
+
+  #trackScheduleIfPending(
+    context: ProjectContext,
+    delay = this.#options.debounceMs ?? 2_000,
+  ): Promise<void> {
+    const followUp = this.#scheduleIfPending(context, delay).finally(() => {
+      context.followUps.delete(followUp);
+    });
+    context.followUps.add(followUp);
+    return followUp;
   }
 
   async #run(context: ProjectContext): Promise<void> {
@@ -363,8 +391,12 @@ export class LocalMemoryCoordinator {
       });
       if (!validation.ok || !validation.artifact) throw new Error('Memory output validation failed');
       await context.store.commit(lease, snapshot.fingerprint, validation.artifact, processedCheckpoints);
-      context.state = 'idle';
-      if (manifest.failures.length > 0) context.message = MEMORY_INPUT_BLOCKED_MESSAGE;
+      if (manifest.failures.length > 0) {
+        context.state = 'blocked';
+        context.message = MEMORY_INPUT_BLOCKED_MESSAGE;
+      } else {
+        context.state = 'idle';
+      }
       this.#emitStatusChange();
     } catch (error) {
       context.state = 'error';
@@ -412,6 +444,12 @@ export class LocalMemoryCoordinator {
         listener();
       } catch {}
     }
+  }
+
+  #cancelScheduledRun(context: ProjectContext): void {
+    if (!context.timer) return;
+    clearTimeout(context.timer);
+    context.timer = undefined;
   }
 }
 

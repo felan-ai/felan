@@ -27,6 +27,20 @@ The local host owns admission, persistence, nesting, cancellation, model
 selection, and completion delivery. `/agents` or `Alt+A` opens live and stored
 child transcripts in the TUI.
 
+`max_turns` is a hard assistant-turn budget, not a guarantee of a final prose
+answer. Leave a final turn available for the child to summarize its work. If a
+child reaches the budget while continuing tool work, it is reported as
+`cancelled` with `turn_limit_reached`; a provider failure is reported as
+`failed` with `model_request_failed` instead. Parent cancellation, timeout,
+and host shutdown have their own terminal error codes.
+
+Felan persists child session paths before the first model request. If the host
+or process exits unexpectedly, a retained JSONL session can be continued
+explicitly with `steer_subagent` under the same child identity. Interrupted
+work is never replayed automatically, because tool side effects may already
+have occurred. Completion notices are durable and retried after transient
+parent delivery failures.
+
 ### Bundled agent types
 
 - `general` — implementation and investigation using the inherited model and
@@ -87,33 +101,70 @@ tracker or durable cross-session backlog.
 ## Prewalk
 
 Prewalk is a same-session planner-to-implementer handoff. It is not a read-only
-plan mode and does not introduce an approval gate.
+plan mode or an approval checkpoint before edits. Model-requested entry asks
+for user approval by default.
 
-For an ordinary file-changing request the model can call `enter_prewalk` before
-exploration. You can also enter explicitly:
+For complex repository work that benefits from substantial exploration,
+coordinated multi-file changes, dependency-aware planning, or broad verification,
+the model can call `enter_prewalk` before exploration. In a dialog-capable host,
+the default `ask` policy prompts before entering; a denial leaves the model on
+the regular path. JSON and print modes deny `ask` because interactive approval
+is unavailable. Small localized edits and routine one-file fixes should
+normally stay on the regular path. You can also enter explicitly without a
+redundant approval prompt:
 
 ```text
 /prewalk refactor the parser and verify the tests
 ```
 
-The default target is the `low` model tier; hosts or flags can select another
-tier or exact authenticated `provider/model`. The original planner model and
-thinking level are restored after the run settles by default.
+The default target is the `low` model tier at exact `medium` thinking. Hosts or
+the declarative extension configuration can select another tier or exact authenticated `provider/model`, and can
+override the implementation effort with `off`, `low`, `medium`, `high`, `xhigh`,
+or `max`. Pi clamps that request to the target model's capabilities. The
+original planner model and thinking level are restored after the run settles by
+default.
+
+The `extensionConfig.prewalk.entryApproval` setting accepts `ask`, `always`, or
+`never`. `ask` is the default; cloud or other unattended hosts can choose
+`always`. Felan also exposes it as the generated
+`--prewalk-entry-approval` option and in `/settings`. This policy gates only
+model-called `enter_prewalk`, not explicit `/prewalk`.
 
 ### Lifecycle
 
 1. The planner explores the relevant repository surface.
-2. It creates a concise task graph and claims the first ready task.
+2. When both task tools are active, it creates a concise task graph and claims
+   the first ready task.
 3. It makes one focused successful `edit`, `write`, or Codex `apply_patch`.
 4. At the turn boundary, Felan switches the next model request to the configured
-   target.
+   target and applies the configured implementation thinking level.
 5. The target sees the useful conversation and tool history, completes the
    task graph, and verifies the work.
-6. Felan restores the planner selection after the run settles.
+6. Felan restores the planner selection after the run settles. Prewalk's
+   temporary model and thinking changes are scoped to the active session and do
+   not change the user's or project's default selection, so a new session keeps
+   using the configured default model.
+
+The default `medium` implementation effort prevents a cheaper target from
+inheriting a planner's `max` effort. A same-model target with a different
+effective effort is still handed off; only matching model and effective effort
+are treated as a no-op. Manual thinking changes cancel Prewalk just like manual
+model changes, including when they race an in-flight handoff or restoration.
+
+Within planning or implementation, Prewalk injects the current hidden phase
+guidance once at a stable context position while later responses and tool
+results append after it. If the planner stops before useful tool progress,
+Prewalk can append a short hidden continuation instead of repeating the full
+planning instructions. Phase guidance is replaced at handoff and removed after
+the run.
 
 Shell commands do not qualify as the first mutation because they are also used
-for exploration and verification. A failed mutation does not trigger handoff.
-Task use is directed by Prewalk guidance but not enforced by its state machine.
+for exploration and verification. When both task tools are active, successful
+`TaskCreate` and `TaskUpdate` calls claiming `in_progress` work must precede the
+successful mutation; failed or unrelated task calls do not open that gate. If
+the task tools are unavailable, mutation-only handoff remains available. A
+failed mutation does not trigger handoff. Prewalk does not inspect `TaskList`,
+`TaskGet`, todo, or Beads activity.
 
 ### When not to use it
 

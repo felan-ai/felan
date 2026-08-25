@@ -7,13 +7,44 @@ import {
 import { installFelanStartupHeader } from './startup-header.js';
 import { createToolActivityRuntimeView } from './tool-activity/runtime-view.js';
 import { checkForFelanUpdate } from './update.js';
+import { CwdChangeRequested, installFelanCwdCommand } from './cwd-command.js';
+import { installFelanSettingsCommand } from './extension-settings.js';
+import { loadLocalExtensionConfigDefinitions } from './extensions.js';
 
 export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly initialMessage?: string;
   readonly verbose?: boolean;
 }
 
+export function brandResumeHint(output: string): string {
+  return output.replace(
+    /(To resume this session:(?:\x1b\[[0-9;]*m)*\s*)pi /,
+    '$1felan ',
+  );
+}
+
 export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise<void> {
+  let nextOptions = options;
+  while (true) {
+    const nextCwd = await runLocalFelanSession(nextOptions);
+    if (nextCwd === undefined) return;
+    const {
+      continueRecent: _continueRecent,
+      initialMessage: _initialMessage,
+      memoryCoordinator: _memoryCoordinator,
+      sessionManager: _sessionManager,
+      skillPaths: _skillPaths,
+      ...restartOptions
+    } = nextOptions;
+    nextOptions = {
+      ...restartOptions,
+      cwd: nextCwd,
+      continueRecent: false,
+    };
+  }
+}
+
+async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<string | undefined> {
   const runtime = await createLocalFelanRuntime(options);
   const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
   const previousPiSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
@@ -21,11 +52,26 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
   process.env.PI_CODING_AGENT_DIR = runtime.services.agentDir;
   process.env.PI_SKIP_VERSION_CHECK = '1';
   process.env.PI_TELEMETRY = '0';
+  const previousStdoutWrite = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array, ...args: unknown[]) => {
+    if (typeof chunk === 'string') chunk = brandResumeHint(chunk);
+    return previousStdoutWrite.call(process.stdout, chunk, ...args as never[]);
+  }) as typeof process.stdout.write;
 
   try {
     const mode = new InteractiveMode(createToolActivityRuntimeView(runtime), {
       ...(options.initialMessage === undefined ? {} : { initialMessage: options.initialMessage }),
       ...(options.verbose === undefined ? {} : { verbose: options.verbose }),
+    });
+    installFelanSettingsCommand(mode, {
+      agentDir: runtime.services.agentDir,
+      settingsManager: runtime.services.settingsManager,
+      definitions: await loadLocalExtensionConfigDefinitions(),
+    });
+    installFelanCwdCommand(mode, {
+      getCwd: () => runtime.cwd,
+      isIdle: () => runtime.session.isIdle,
+      ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
     });
     installFelanStartupHeader(mode, {
       expanded: options.verbose === true,
@@ -54,7 +100,12 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
       })
       .catch(() => {});
     try {
-      await mode.run();
+      try {
+        await mode.run();
+      } catch (error) {
+        if (error instanceof CwdChangeRequested) return error.cwd;
+        throw error;
+      }
     } finally {
       modeActive = false;
       updateCheckController.abort();
@@ -79,6 +130,7 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
       } else {
         process.env.PI_TELEMETRY = previousPiTelemetry;
       }
+      process.stdout.write = previousStdoutWrite;
     }
   }
 }

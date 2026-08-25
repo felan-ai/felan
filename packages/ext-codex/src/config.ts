@@ -1,4 +1,4 @@
-import type { AgentRuntime } from '@felan-ai/agent-core';
+import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 
 export type CodexVerbosity = 'low' | 'medium' | 'high';
 
@@ -14,39 +14,18 @@ export const DEFAULT_CODEX_CONFIG: CodexConfig = {
   forceCachedWebSockets: true,
 };
 
-const CONFIG_FIELDS: ReadonlySet<string> = new Set([
-  'fast',
-  'verbosity',
-  'forceCachedWebSockets',
-]);
+export const CODEX_CONFIG = defineExtensionConfig({
+  id: 'codex',
+  title: 'Codex tools',
+  fields: {
+    fast: configField.boolean({ default: false, description: 'Request priority service tier' }),
+    verbosity: configField.enum(['low', 'medium', 'high'], { default: 'low', description: 'Codex response verbosity' }),
+    forceCachedWebSockets: configField.boolean({ default: true, description: 'Prefer cached WebSocket transport' }),
+  },
+});
 
-export async function readCodexConfig(
-  runtime: AgentRuntime,
-  agentDir: string,
-): Promise<CodexConfig> {
-  if (!runtime.readAgentFile) return DEFAULT_CODEX_CONFIG;
-  let content: Uint8Array;
-  try {
-    content = await runtime.readAgentFile('codex.json');
-  } catch (error) {
-    if (isMissingFile(error)) return DEFAULT_CODEX_CONFIG;
-    throw new Error(`Failed to read ${agentDir}/codex.json: ${errorMessage(error)}`, { cause: error });
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(content));
-  } catch (error) {
-    throw new Error(`Invalid ${agentDir}/codex.json: ${errorMessage(error)}`, { cause: error });
-  }
-  return validateCodexConfig(parsed, `${agentDir}/codex.json`);
-}
-
-export function validateCodexConfig(value: unknown, source = 'codex.json'): CodexConfig {
+export function validateCodexConfig(value: unknown, source = 'settings.json.extensionConfig.codex'): CodexConfig {
   if (!isRecord(value)) throw new Error(`${source} must contain a JSON object`);
-  for (const field of Object.keys(value)) {
-    if (!CONFIG_FIELDS.has(field)) throw new Error(`${source} contains unknown field: ${field}`);
-  }
   if (value.fast !== undefined && typeof value.fast !== 'boolean') {
     throw new Error(`${source}.fast must be a boolean`);
   }
@@ -73,10 +52,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isMissingFile(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

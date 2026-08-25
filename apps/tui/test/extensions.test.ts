@@ -19,6 +19,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-tasks',
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-mcp',
+      '@felan-ai/ext-felan-api',
       '@felan-ai/ext-web-access',
       '@felan-ai/ext-browser',
       '@felan-ai/ext-background-bash',
@@ -159,6 +160,7 @@ describe('local extension importer', () => {
       codex: false,
       rtkOptimizer: false,
       memory: false,
+      felanApi: false,
       powerline: false,
       outputStyle: false,
     })).toEqual([

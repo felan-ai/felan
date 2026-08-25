@@ -29,7 +29,9 @@ extractors, browser-cookie authentication, or feature gates.
 
 ## Configuration
 
-Create `web-search.json` in Pi's agent directory. Every field is optional.
+Configure `extensionConfig.webAccess` in Felan's `settings.json`. Every field is
+optional and the same declaration is available through `/settings` and the
+Agent Core programmatic API.
 
 ```json
 {
@@ -80,9 +82,9 @@ const extension = webAccessExtension;
 
 The extension owns provider selection, host-side HTTP/DNS validation, bounded
 fetching, session cache storage, source-check artifacts, and untrusted-content
-wrapping. The host supplies `AgentRuntime`, agent-directory configuration, and
-credential policy. Direct network/DNS and agent-directory config access are
-intentional host-boundary exceptions documented by the package contract.
+wrapping. The host supplies `AgentRuntime`, declarative configuration, and
+credential policy. Direct network/DNS are intentional network-boundary behavior
+documented by the package contract.
 
 ## Requirements and security
 

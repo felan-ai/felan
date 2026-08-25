@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { SettingsManager } from '@felan-ai/agent-core';
+import type { ExtensionConfigOverride } from '@felan-ai/agent-core';
 import {
   parseOutputStyle,
   type OutputStyle,
@@ -20,6 +21,32 @@ export interface FelanSettings {
   readonly outputStyle?: OutputStyle;
   readonly felanSubagents?: LocalSubagentSettings;
   readonly felanTui?: FelanTuiSettings;
+  readonly extensionConfig?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
+export function getExtensionConfigOverrides(settings: FelanSettings): readonly ExtensionConfigOverride[] {
+  return Object.entries(settings.extensionConfig ?? {}).map(([extensionId, values]) => ({
+    extensionId,
+    values,
+    source: `settings.json.extensionConfig.${extensionId}`,
+  }));
+}
+
+export async function setExtensionConfigValue(
+  agentDir: string,
+  extensionId: string,
+  field: string,
+  value: unknown,
+): Promise<void> {
+  await updateGlobalFelanSettings(agentDir, (settings) => {
+    const current = settings.extensionConfig;
+    if (current !== undefined && !isRecord(current)) throw new Error('extensionConfig must be an object');
+    const extensionConfig = { ...(current ?? {}) };
+    const existing = extensionConfig[extensionId];
+    if (existing !== undefined && !isRecord(existing)) throw new Error(`extensionConfig.${extensionId} must be an object`);
+    extensionConfig[extensionId] = { ...(existing ?? {}), [field]: value };
+    settings.extensionConfig = extensionConfig;
+  });
 }
 
 export interface FelanTuiSettings {
@@ -33,6 +60,10 @@ export type LocalDependencyOnboardingChoice = 'continue';
 
 export function getLocalOutputStyle(settingsManager: SettingsManager): OutputStyle {
   const rawSettings = settingsManager.getGlobalSettings() as Record<string, unknown>;
+  const extensionConfig = rawSettings.extensionConfig;
+  if (isRecord(extensionConfig) && isRecord(extensionConfig.outputStyle) && extensionConfig.outputStyle.style !== undefined) {
+    return parseOutputStyle(extensionConfig.outputStyle.style);
+  }
   return parseOutputStyle(rawSettings.outputStyle);
 }
 
@@ -160,6 +191,7 @@ export function getDependencyOnboardingChoice(
 type MutableSettings = Record<string, unknown> & {
   builtinExtensions?: Record<string, unknown>;
   felanTui?: Record<string, unknown>;
+  extensionConfig?: Record<string, unknown>;
 };
 
 async function updateGlobalFelanSettings(

@@ -57,7 +57,7 @@ Sources: Felan [tasks][felan-tasks], [subagents][felan-subagents], and
 | State shared with child agents | **Ships:** one graph for the root and every nested child | Parent checklist is not documented as shared subagent execution state | Built-in subagents are denied `todowrite` by default and use child sessions | Agent teams can share the task list; ordinary subagents primarily report results to their caller | No core task state | Parent/child agents share session artifacts, registry, messaging, and job state; todo and task fan-out remain separate mechanisms |
 | Task presentation | `/tasks` list, detail, ready-state, and dependency-graph views | Plan/checklist rendering in the conversation | Todo rendering in the TUI | Toggleable task checklist plus task tools | No core task state | Phase/task tree plus Agent Hub and job views |
 | Conventional plan mode | **No** | **Ships:** non-mutating conversational Plan mode with a final proposed plan | **Ships:** Plan agent writes a plan artifact; `plan_exit` asks before switching to Build | **Ships:** Plan permission mode and `ExitPlanMode` approval | **No core feature** | **Ships:** protected plan artifact and explicit execution choices |
-| Automatic planner-to-implementer routing | **Prewalk:** model- or user-entered, same session and useful full history; switches models after the first recognized edit | No equivalent first-mutation handoff | No equivalent first-mutation handoff | No equivalent first-mutation handoff | No core feature | Has its own Prewalk model handoff in addition to plan mode |
+| Automatic planner-to-implementer routing | **Prewalk:** model- or user-entered, same session and useful full history; when task tools are active, requires task creation/claiming before switching after the first recognized edit | No equivalent first-mutation handoff | No equivalent first-mutation handoff | No equivalent first-mutation handoff | No core feature | Has its own Prewalk model handoff in addition to plan mode |
 | Built-in subagents | **Ships:** custom and bundled types | **Ships:** default, worker, explorer, and custom TOML agents | **Ships:** general, explore, scout, and custom agents | **Ships:** built-in and custom agents | **No core feature** | **Ships:** configurable task agents plus specialized roles |
 | Parallel/asynchronous children | Every launch is asynchronous; default concurrency four | Parallel threads; caller can wait, steer, stop, resume, and close | Foreground by default; background subagents are experimental and environment-gated | Foreground or background subagents | **Integration:** required | Background execution is normally enabled; batch fan-out and mixed blocking/non-blocking agents are supported |
 | Nested agents | Bounded nesting; default depth three | The reviewed docs do not promise nested spawning | Configurable depth; default depth one | Subagents can be resumed; teams coordinate peers | **Integration:** implementation-defined | Nested agents and parent/child lineage are first-class |
@@ -194,17 +194,25 @@ comments, or due dates.
 
 ### Prewalk still is not plan mode
 
-Prewalk is automatic model routing within one session—not a review gate,
-separate planning agent, or read-only mode.
+Prewalk is automatic model routing within one session—not a plan-review gate,
+separate planning agent, or read-only mode. Model-requested entry asks for user
+approval by default, but that approval starts Prewalk rather than approving a
+non-mutating plan artifact or later edits.
 
-The model can call `enter_prewalk` before a file-changing task, or the user can
-invoke `/prewalk`. Once active, the current model explores, creates and claims a
-prompted task graph of at most nine tasks, begins implementation, and performs a
-focused mutation. A successful `edit`, `write`, or `apply_patch` marks the turn
-for handoff. The next request goes to the configured tier or exact model with
-the useful transcript and tool history; transient phase guidance and the
-successful entry control call are filtered from model context. The target
-finishes and verifies the work, after which Felan normally restores the planner
+The model can call `enter_prewalk` before complex repository work, or the user
+can invoke `/prewalk`. Small localized edits and routine one-file fixes should
+normally stay on the regular path. Once active, the current model explores,
+creates and claims a prompted task graph of at most nine tasks, begins
+implementation, and performs a focused mutation. When both task tools are
+active, successful `TaskCreate` and `TaskUpdate` calls claiming `in_progress`
+work are required before that mutation marks the turn for handoff. If the task
+tools are unavailable, a successful explicit mutation marks it directly. The
+next request goes to the configured tier or exact model at the configured
+implementation thinking level (exact `medium` by default) with
+the useful transcript and tool history; successful entry controls and stale
+phase guidance are filtered from model context, while the current transient
+guidance stays at a stable position within its phase. The target finishes and
+verifies the work, after which Felan normally restores the planner
 model and thinking level. `/prewalk exit` cancels a pending handoff or defers
 restoration until active target inference settles.
 
@@ -212,7 +220,7 @@ Important limits:
 
 - there is no read-only planning phase or plan artifact;
 - there is no approval checkpoint before edits;
-- task-tool usage is prompted, not enforced by the Prewalk state machine;
+- when both task tools are active, successful task creation and claiming gate the handoff;
 - shell mutations do not trigger handoff; and
 - more than one explicit mutation can occur in the qualifying turn.
 

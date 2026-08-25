@@ -157,6 +157,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 | [`@felan-ai/ext-output-style`](packages/ext-output-style/README.md) | Validated concise and explanatory response instructions | [Configuration](docs/user-guide/configuration.md#output-style) |
 | [`@felan-ai/ext-web-access`](packages/ext-web-access/README.md) | Bounded web search, source checking, and content retrieval | [Web access](docs/user-guide/web-mcp-and-browser.md) |
 | [`@felan-ai/ext-mcp`](packages/ext-mcp/README.md) | Portable OAuth-only remote MCP gateway | [MCP](docs/user-guide/web-mcp-and-browser.md) |
+| [`@felan-ai/ext-felan-api`](packages/ext-felan-api/README.md) | Single authenticated Felan API gateway | [Configuration](docs/user-guide/configuration.md#felan-api) |
 | [`@felan-ai/ext-browser`](packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration | [Browser](docs/user-guide/web-mcp-and-browser.md) |
 | [`@felan-ai/ext-markitdown`](packages/ext-markitdown/README.md) | Bounded office-document conversion | [Documents](docs/user-guide/web-mcp-and-browser.md) |
 | [`@felan-ai/ext-background-bash`](packages/ext-background-bash/README.md) | Detached Bash processes and logs | [Commands](docs/user-guide/commands-and-shortcuts.md) |

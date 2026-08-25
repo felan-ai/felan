@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONTINUATION_INSTRUCTION,
   MAX_AUTOMATIC_CONTINUATIONS,
   PLANNING_INSTRUCTION,
   VERIFICATION_INSTRUCTION,
@@ -14,8 +15,13 @@ import {
   type ToolResultSummary,
 } from '../state.js';
 
-function call(state: PrewalkRunState, toolCallId: string, toolName: string): PrewalkRunState {
-  return recordToolCall(state, { toolCallId, toolName });
+function call(
+  state: PrewalkRunState,
+  toolCallId: string,
+  toolName: string,
+  input?: unknown,
+): PrewalkRunState {
+  return recordToolCall(state, { toolCallId, toolName, input });
 }
 
 function ok(toolCallId: string): ToolResultSummary {
@@ -84,6 +90,63 @@ describe('turn reduction', () => {
   });
 });
 
+describe('task graph handoff gate', () => {
+  it('requires successful TaskCreate and in-progress TaskUpdate calls when enabled', () => {
+    let state = createRunState({ taskGateRequired: true });
+    state = call(state, 'mutation', 'edit');
+
+    const beforeTasks = reduceTurn(state, [ok('mutation')]);
+    expect(beforeTasks.shouldHandoff).toBe(false);
+
+    state = beginTurn(beforeTasks.state);
+    state = call(state, 'create', 'TaskCreate');
+    state = call(state, 'claim', 'TaskUpdate', { task_id: 'T-ABC123', status: 'in_progress' });
+    state = call(state, 'next-mutation', 'edit');
+
+    const ready = reduceTurn(state, [ok('create'), ok('claim'), ok('next-mutation')]);
+    expect(ready.shouldHandoff).toBe(true);
+    expect(ready.state.taskGraphReady).toBe(true);
+  });
+
+  it('does not open the task gate after failed TaskCreate or TaskUpdate calls', () => {
+    let state = createRunState({ taskGateRequired: true });
+    state = call(state, 'create', 'TaskCreate');
+    state = call(state, 'claim', 'TaskUpdate', { task_id: 'T-ABC123', status: 'in_progress' });
+    state = call(state, 'mutation', 'edit');
+
+    const decision = reduceTurn(state, [error('create'), error('claim'), ok('mutation')]);
+
+    expect(decision.shouldHandoff).toBe(false);
+    expect(decision.state.taskGraphReady).toBe(false);
+  });
+
+  it('preserves successful task progress across turns', () => {
+    let state = createRunState({ taskGateRequired: true });
+    state = call(state, 'create', 'TaskCreate');
+    const created = reduceTurn(state, [ok('create')]);
+    expect(created.state.taskGraphReady).toBe(false);
+
+    state = beginTurn(created.state);
+    state = call(state, 'claim', 'TaskUpdate', { task_id: 'T-ABC123', status: 'in_progress' });
+    state = call(state, 'mutation', 'edit');
+
+    expect(reduceTurn(state, [ok('claim'), ok('mutation')]).shouldHandoff).toBe(true);
+  });
+
+  it('ignores non-claim task updates and unrelated task tools', () => {
+    let state = createRunState({ taskGateRequired: true });
+    state = call(state, 'update', 'TaskUpdate', { task_id: 'T-ABC123', status: 'completed' });
+    state = call(state, 'list', 'TaskList');
+    state = call(state, 'get', 'TaskGet');
+    state = call(state, 'mutation', 'edit');
+
+    const decision = reduceTurn(state, [ok('update'), ok('list'), ok('get'), ok('mutation')]);
+
+    expect(decision.shouldHandoff).toBe(false);
+    expect(decision.state.taskGraphReady).toBe(false);
+  });
+});
+
 describe('bounded planning continuations', () => {
   it('queues only once during a no-progress stretch', () => {
     const first = reduceTurn(createRunState(), []);
@@ -145,6 +208,13 @@ describe('bounded planning continuations', () => {
 });
 
 describe('phase prompts', () => {
+  it('continues from existing progress without repeating the planning prompt', () => {
+    expect(CONTINUATION_INSTRUCTION).toContain('existing findings and task progress');
+    expect(CONTINUATION_INSTRUCTION).toContain('without repeating prior analysis');
+    expect(CONTINUATION_INSTRUCTION).toContain('next required tool action');
+    expect(CONTINUATION_INSTRUCTION).not.toContain(PLANNING_INSTRUCTION);
+  });
+
   it('requires repository exploration and dependency-aware Tasks', () => {
     expect(PLANNING_INSTRUCTION).toContain('Explore the repository thoroughly');
     expect(PLANNING_INSTRUCTION).toContain('affected files and symbols');

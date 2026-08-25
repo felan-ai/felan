@@ -1,9 +1,20 @@
-import type { FelanExtension } from '@felan-ai/agent-core';
+import { associateExtensionConfig, configField, defineExtensionConfig, type FelanExtension, type FelanExtensionAPI } from '@felan-ai/agent-core';
 
 export const OUTPUT_STYLES = ['concise', 'explanatory'] as const;
 export type OutputStyle = typeof OUTPUT_STYLES[number];
 
 export const DEFAULT_OUTPUT_STYLE: OutputStyle = 'concise';
+export const OUTPUT_STYLE_CONFIG = defineExtensionConfig({
+  id: 'outputStyle',
+  title: 'Output style',
+  fields: {
+    style: configField.enum(['concise', 'explanatory'], {
+      default: DEFAULT_OUTPUT_STYLE,
+      description: 'Response detail and explanation style',
+      cliName: 'output-style',
+    }),
+  },
+});
 
 const OUTPUT_STYLE_START = '<output_style>';
 const OUTPUT_STYLE_END = '</output_style>';
@@ -49,6 +60,9 @@ export function createOutputStyleExtension(value: unknown = DEFAULT_OUTPUT_STYLE
   };
 }
 
-const outputStyleExtension = createOutputStyleExtension();
+const outputStyleExtension: FelanExtension = ((pi: FelanExtensionAPI) => createOutputStyleExtension(
+  pi.config?.style ?? DEFAULT_OUTPUT_STYLE,
+)(pi));
+associateExtensionConfig(outputStyleExtension, OUTPUT_STYLE_CONFIG);
 
 export default outputStyleExtension;

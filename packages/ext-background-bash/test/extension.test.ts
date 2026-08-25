@@ -14,6 +14,7 @@ import backgroundBashExtension from '../src/index.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 const temporaryPaths: string[] = [];
+const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -65,6 +66,10 @@ describe('background bash extension activation', () => {
 
     expect(harness.registerTool).not.toHaveBeenCalled();
     expect(runtime.shell).toHaveBeenCalledOnce();
+    expect(runtime.shell).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ shellFlavor: 'posix' }),
+    );
   });
 
   it('activates when the selected model changes from OpenAI to another provider', async () => {
@@ -112,7 +117,10 @@ describe('background bash extension activation', () => {
 
     await expect(bash.execute('call', { command: 'sleep 5', timeout: 2 }, undefined, undefined, context('anthropic')))
       .rejects.toThrow('Command timed out after 2 seconds');
-    expect(shell).toHaveBeenCalledWith('sleep 5', expect.objectContaining({ timeout: 2_000 }));
+    expect(shell).toHaveBeenCalledWith(
+      'sleep 5',
+      expect.objectContaining({ shellFlavor: 'posix', timeout: 2_000 }),
+    );
   });
 
   it('steers terminal process completion into the parent session automatically', async () => {
@@ -143,7 +151,7 @@ describe('background bash extension activation', () => {
     expect(JSON.stringify(message.details)).not.toContain('processToken');
 
     await harness.emit('session_shutdown', {}, ctx);
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('reads stored output without sending a second completion after wait finishes', async () => {
     const harness = createHarness(await createHostRuntime());

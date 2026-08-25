@@ -18,7 +18,8 @@ The Web Access extension provides four tools:
 Search can run up to four queries per call. Retrieved content is bounded,
 externalized when large, and marked as untrusted before model delivery.
 
-Configure providers in `$FELAN_AGENT_DIR/web-search.json`. Provider selection
+Configure providers in `$FELAN_AGENT_DIR/settings.json` under
+`extensionConfig.webAccess`. Provider selection
 can be `auto`, `all`, one named provider, or a non-empty array of named
 providers. Keep API credentials in this user-owned file rather than a project
 repository.

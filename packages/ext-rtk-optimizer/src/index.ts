@@ -1,7 +1,8 @@
 import type { AgentRuntime, ExtensionContext, FelanExtension } from '@felan-ai/agent-core';
 import { registerRtkCommand } from './command.js';
 import { computeRewriteDecision, inspectRtkRuntime } from './command-rewriter.js';
-import { loadRtkOptimizerConfig, saveRtkOptimizerConfig } from './config.js';
+import { associateExtensionConfig } from '@felan-ai/agent-core';
+import { RTK_OPTIMIZER_CONFIG, rtkOptimizerConfigFromSettings } from './config.js';
 import { installManagedRtk } from './installer.js';
 import { compactToolResult, type ToolResultCompactionMetadata } from './output-compactor.js';
 import { OutputMetrics } from './output-metrics.js';
@@ -29,9 +30,7 @@ export async function refreshActiveRtkRuntime(runtime: AgentRuntime): Promise<Ru
 }
 
 const rtkOptimizerExtension: FelanExtension = async (pi) => {
-  const initialLoad = await loadRtkOptimizerConfig(pi.runtime);
-  let config = initialLoad.config;
-  let pendingConfigWarning = initialLoad.warning;
+  const config = rtkOptimizerConfigFromSettings(pi.config ?? {});
   let runtimeStatus: RuntimeStatus = { rtkAvailable: false };
   let statusRefresh: Promise<RuntimeStatus> | undefined;
   let missingRtkWarningShown = false;
@@ -81,9 +80,6 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
 
   registerRtkCommand(pi, {
     getConfig: () => config,
-    setConfig: async (next) => {
-      config = await saveRtkOptimizerConfig(pi.runtime, next);
-    },
     getRuntimeStatus: () => runtimeStatus,
     refreshRuntimeStatus,
     install: async (onStatus) => {
@@ -104,13 +100,6 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
     metrics.clear();
     missingRtkWarningShown = false;
 
-    const loaded = await loadRtkOptimizerConfig(pi.runtime);
-    config = loaded.config;
-    pendingConfigWarning = loaded.warning ?? pendingConfigWarning;
-    if (pendingConfigWarning) {
-      warnOnce(ctx, pendingConfigWarning);
-      pendingConfigWarning = undefined;
-    }
     if (config.enabled) {
       await refreshRuntimeStatus();
       maybeWarnRtkMissing(ctx);
@@ -395,12 +384,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export {
-  getRtkOptimizerConfigPath,
-  loadRtkOptimizerConfig,
-  saveRtkOptimizerConfig,
-  validateRtkOptimizerConfig,
-} from './config.js';
+export { RTK_OPTIMIZER_CONFIG, rtkOptimizerConfigFromSettings, validateRtkOptimizerConfig } from './config.js';
 export { computeRewriteDecision, inspectRtkRuntime, resolveRtkRewrite } from './command-rewriter.js';
 export {
   installManagedRtk,
@@ -420,3 +404,4 @@ export type {
   RuntimeStatus,
 } from './types.js';
 export default rtkOptimizerExtension;
+associateExtensionConfig(rtkOptimizerExtension, RTK_OPTIMIZER_CONFIG);

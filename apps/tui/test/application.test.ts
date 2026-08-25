@@ -15,8 +15,11 @@ const interactive = vi.hoisted(() => ({
   initializations: 0,
   latestUpdate: undefined as string | undefined,
   modeOptions: [] as unknown[],
+  constructorDisposals: [] as number[],
+  restartCwd: undefined as string | undefined,
   runError: undefined as Error | undefined,
   runs: 0,
+  runCwds: [] as string[],
   toolRenderShells: [] as Array<string | undefined>,
   toolNames: [] as string[],
   updateCheckSignals: [] as AbortSignal[],
@@ -29,6 +32,12 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
     ...original,
     InteractiveMode: class {
       builtInHeader: unknown = undefined;
+      defaultEditor = {
+        onSubmit: undefined as ((text: string) => void) | undefined,
+        addToHistory: vi.fn(),
+        setText: vi.fn(),
+      };
+      editor = this.defaultEditor;
 
       constructor(
         private runtime: InstanceType<typeof original.AgentSessionRuntime>,
@@ -38,6 +47,7 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
         interactive.piTelemetry.push(process.env.PI_TELEMETRY);
         interactive.piVersionChecks.push(process.env.PI_SKIP_VERSION_CHECK);
         interactive.modeOptions.push(options);
+        interactive.constructorDisposals.push(interactive.disposals);
         const dispose = runtime.dispose.bind(runtime);
         runtime.dispose = async () => {
           interactive.disposals += 1;
@@ -51,14 +61,38 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
         interactive.events.push('init');
       }
 
+      createBaseAutocompleteProvider() {
+        return {
+          triggerCharacters: [],
+          getSuggestions: async () => null,
+          applyCompletion: (lines: string[], cursorLine: number, cursorCol: number) => ({
+            lines,
+            cursorLine,
+            cursorCol,
+          }),
+        };
+      }
+
+      async getUserInput() {
+        return '';
+      }
+
+      setupEditorSubmitHandler() {
+        this.defaultEditor.onSubmit = () => {};
+      }
+
       async run() {
         interactive.runs += 1;
         interactive.events.push('run');
+        interactive.runCwds.push(this.runtime.cwd);
         interactive.headerAdapters.push(
           typeof Object.getOwnPropertyDescriptor(this, 'builtInHeader')?.get === 'function',
         );
         interactive.toolRenderShells.push(this.runtime.session.getToolDefinition('read')?.renderShell);
         interactive.toolNames = this.runtime.session.agent.state.tools.map((tool) => tool.name);
+        if (interactive.restartCwd && interactive.runs === 1) {
+          throw new CwdChangeRequested(interactive.restartCwd);
+        }
         if (interactive.runError) throw interactive.runError;
       }
 
@@ -97,7 +131,8 @@ vi.mock('../src/update.js', async (importOriginal) => {
   };
 });
 
-import { runLocalFelan } from '../src/application.js';
+import { brandResumeHint, runLocalFelan } from '../src/application.js';
+import { CwdChangeRequested } from '../src/cwd-command.js';
 
 const temporaryPaths: string[] = [];
 
@@ -113,8 +148,11 @@ afterEach(async () => {
   interactive.initializations = 0;
   interactive.latestUpdate = undefined;
   interactive.modeOptions = [];
+  interactive.constructorDisposals = [];
+  interactive.restartCwd = undefined;
   interactive.runError = undefined;
   interactive.runs = 0;
+  interactive.runCwds = [];
   interactive.toolRenderShells = [];
   interactive.toolNames = [];
   interactive.updateCheckSignals = [];
@@ -123,6 +161,20 @@ afterEach(async () => {
 });
 
 describe('interactive application', () => {
+  it('brands Pi resume hints as runnable Felan commands', () => {
+    expect(brandResumeHint(
+      "To resume this session: pi --session-dir 'C:\\Users\\35988\\.felan\\sessions' --session 01a033a6-db3c-7094-993f-0aad3b3dadfd\n",
+    )).toBe(
+      "To resume this session: felan --session-dir 'C:\\Users\\35988\\.felan\\sessions' --session 01a033a6-db3c-7094-993f-0aad3b3dadfd\n",
+    );
+    expect(brandResumeHint('ordinary output\n')).toBe('ordinary output\n');
+    expect(brandResumeHint(
+      '\x1b[2mTo resume this session:\x1b[22m pi --session session-id\n',
+    )).toBe(
+      '\x1b[2mTo resume this session:\x1b[22m felan --session session-id\n',
+    );
+  });
+
   it('runs Pi InteractiveMode with the composed local Agent Core runtime', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -130,6 +182,7 @@ describe('interactive application', () => {
     const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
     const previousPiSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
     const previousPiTelemetry = process.env.PI_TELEMETRY;
+    const previousStdoutWrite = process.stdout.write;
     await mkdir(cwd, { recursive: true });
 
     await runLocalFelan({ cwd, agentDir });
@@ -145,6 +198,7 @@ describe('interactive application', () => {
     expect(process.env.PI_CODING_AGENT_DIR).toBe(previousPiAgentDir);
     expect(process.env.PI_SKIP_VERSION_CHECK).toBe(previousPiSkipVersionCheck);
     expect(process.env.PI_TELEMETRY).toBe(previousPiTelemetry);
+    expect(process.stdout.write).toBe(previousStdoutWrite);
     expect(interactive.toolNames).toEqual(expect.arrayContaining([
       'read',
       'bash',
@@ -174,6 +228,25 @@ describe('interactive application', () => {
     expect(interactive.warnings).toEqual([
       'Felan 0.13.2 is available. Exit all Felan sessions, then run felan update '
         + '(global npm) or update with your package manager.',
+    ]);
+  });
+
+  it('restarts in a new cwd only after disposing the previous runtime', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const targetCwd = join(root, 'target');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, targetCwd].map((path) => mkdir(path, { recursive: true })));
+    interactive.restartCwd = targetCwd;
+
+    await runLocalFelan({ cwd, agentDir, initialMessage: 'only the first session' });
+
+    expect(interactive.runCwds).toEqual([cwd, targetCwd]);
+    expect(interactive.constructorDisposals).toEqual([0, 1]);
+    expect(interactive.disposals).toBe(2);
+    expect(interactive.modeOptions).toEqual([
+      { initialMessage: 'only the first session' },
+      {},
     ]);
   });
 

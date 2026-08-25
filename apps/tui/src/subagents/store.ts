@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { SubagentRecord, SubagentSpawnRequest } from '@felan-ai/ext-subagents';
@@ -36,7 +37,7 @@ export class LocalSubagentStore {
 
   async save(children: readonly LocalStoredChild[]): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true });
-    const temporary = `${this.#path}.${process.pid}.tmp`;
+    const temporary = `${this.#path}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify({ version: 1, children }, null, 2)}\n`);
     await rename(temporary, this.#path);
   }

@@ -3,14 +3,14 @@ import { isRuntimePathUnderRoot, joinRuntimePath, normalizeRuntimePath } from '.
 
 describe('runtime-owned path handling', () => {
   it('joins POSIX and Windows runtime roots without controller-OS reinterpretation', () => {
-    expect(joinRuntimePath('/agent/storage', 'rtk-optimizer/config.json')).toBe(
-      '/agent/storage/rtk-optimizer/config.json',
+    expect(joinRuntimePath('/agent/storage', 'rtk-optimizer/bin/rtk')).toBe(
+      '/agent/storage/rtk-optimizer/bin/rtk',
     );
-    expect(joinRuntimePath('C:\\Users\\agent\\storage', 'rtk-optimizer/config.json')).toBe(
-      'C:\\Users\\agent\\storage\\rtk-optimizer\\config.json',
+    expect(joinRuntimePath('C:\\Users\\agent\\storage', 'rtk-optimizer/bin/rtk')).toBe(
+      'C:\\Users\\agent\\storage\\rtk-optimizer\\bin\\rtk',
     );
-    expect(joinRuntimePath('C:/Users/agent/storage', 'rtk-optimizer/config.json')).toBe(
-      'C:\\Users\\agent\\storage\\rtk-optimizer\\config.json',
+    expect(joinRuntimePath('C:/Users/agent/storage', 'rtk-optimizer/bin/rtk')).toBe(
+      'C:\\Users\\agent\\storage\\rtk-optimizer\\bin\\rtk',
     );
   });
 

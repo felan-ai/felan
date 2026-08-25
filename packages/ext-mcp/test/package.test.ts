@@ -10,13 +10,13 @@ describe('@felan-ai/ext-mcp package boundary', () => {
     const managerSource = await readFile(join(packageRoot, 'src', 'manager.ts'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-mcp',
-      version: '0.1.2',
+      version: '0.2.0',
       license: 'MIT',
       dependencies: {
         '@modelcontextprotocol/client': '2.0.0',
         typebox: '1.1.38',
       },
-      peerDependencies: { '@felan-ai/agent-core': '^0.4.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.5.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
     });
     expect(managerSource).toContain(`version: '${manifest.version}'`);

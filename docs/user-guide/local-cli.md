@@ -10,6 +10,9 @@ and TUI presentation.
 felan [options] [message]
 
 -c, --continue     Continue the most recent session for this directory
+-r, --resume       Pick a session to resume
+--session <id>     Resume a specific session
+--session-dir <dir> Session directory for --session
 --diagnostics      Print runtime versions and configuration mode
 update             Update a global npm installation of Felan
 -h, --help         Show help
@@ -19,6 +22,14 @@ update             Update a global npm installation of Felan
 
 Use `--` before an initial message that begins with a dash. Unknown options are
 rejected before the TUI starts.
+
+### Resume a session
+
+`felan --resume` opens a selection-only picker. Use Tab to switch between the
+current folder and all local sessions, Ctrl+S to change sorting, Ctrl+N to show
+only named sessions, and Ctrl+P to toggle session-file paths. Escape cancels
+without creating or launching a session. `felan --continue` remains the quick
+path for the most recent session in the current directory.
 
 ### Update Felan
 
@@ -69,10 +80,7 @@ The default root is `~/.felan`; override it with `FELAN_AGENT_DIR`.
 $FELAN_AGENT_DIR/
   settings.json
   APPEND_SYSTEM.md
-  powerline.json
   mcp.json
-  codex.json
-  web-search.json
   agents/
   sessions/
   storage/
@@ -96,6 +104,21 @@ active session working directory and maps relative paths from there.
 Nested subagents work in the same project and share the root session's
 extension storage. They have separate Pi session histories and bounded
 execution lifecycles.
+
+### Change the active directory
+
+Inside the interactive TUI, use `/cwd <directory>` to dispose the current root
+session and start a fresh session in another directory:
+
+```text
+/cwd ../felan-platform
+```
+
+Paths are resolved relative to the active agent cwd; absolute and `~/...`
+paths are also supported. Press Tab after `/cwd ` for directory completion.
+The parent shell is not changed. Felan rebuilds all cwd-bound resources for the
+new session, including settings, instructions, skills, tools, memory, and
+subagents.
 
 ## Resource policy
 

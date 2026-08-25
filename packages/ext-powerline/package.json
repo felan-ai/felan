@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-powerline",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Terminal powerline extension for Felan",
   "license": "MIT",
   "type": "module",
@@ -12,7 +12,12 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -29,7 +34,7 @@
     "@earendil-works/pi-tui": "0.84.3"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.4.0"
+    "@felan-ai/agent-core": "^0.5.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

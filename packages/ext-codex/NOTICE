@@ -5,7 +5,8 @@ Includes selected code and behavior adapted from
 62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91,
 https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91/packages/pi-codex-conversion.
 
-Additional patch replacement and exec shutdown behavior is adapted from
+Additional patch replacement, exec shutdown, and structured skill-prompt
+preservation behavior is adapted from
 @howaboua/pi-codex-conversion 3.0.15 at npm gitHead
 b4b99630cda3c066749af0fb3ac9b8184b2a4c7d,
 https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/b4b99630cda3c066749af0fb3ac9b8184b2a4c7d/packages/pi-codex-conversion.
@@ -14,11 +15,11 @@ Copyright (c) 2026 Umberto B.
 Licensed under the MIT License included in this package.
 
 Adapted portions include structured tool schemas and output conventions,
-patch parsing and matching, model activation policy, OpenAI request options,
-cached WebSocket transport selection, and local TUI tool labels. Felan
-implements process and file operations against AgentRuntime and uses Pi
-0.84.3's native OpenAI Codex transport for connection reuse and cached
-continuation.
+patch parsing and matching, model activation policy, structured skill-prompt
+preservation, OpenAI request options, cached WebSocket transport selection,
+and local TUI tool labels. Felan implements process and file operations against
+AgentRuntime and uses Pi 0.84.3's native OpenAI Codex transport for connection
+reuse and cached continuation.
 
 This package uses @earendil-works/pi-tui 0.84.3 from
 https://github.com/earendil-works/pi, licensed under the MIT License.

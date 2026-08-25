@@ -8,6 +8,7 @@ import {
   type ExtensionPackageImporter,
   type ModelRuntime,
   type SettingsManager,
+  type ExtensionConfigOverride,
 } from '@felan-ai/agent-core';
 import {
   bindSubagentSession,
@@ -68,6 +69,7 @@ export interface CreateLocalSubagentHostOptions {
     readonly sessionStorageRoot: string;
   }) => MemoryHost;
   readonly settings?: LocalSubagentSettings;
+  readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly runChild?: LocalSubagentRunner;
 }
 
@@ -212,6 +214,8 @@ export class LocalSubagentManager {
   readonly #queue: Job[] = [];
   readonly #listeners = new Set<(records: readonly LocalSubagentView[]) => void>();
   readonly #deliveries = new Map<string, Promise<void>>();
+  readonly #deliveryAttempts = new Map<string, number>();
+  readonly #deliveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly #concurrency: number;
   readonly #maxDepth: number;
   #active = 0;
@@ -248,7 +252,7 @@ export class LocalSubagentManager {
       const child = fromStored(stored);
       if (child.record.status === 'queued' || child.record.status === 'running') {
         child.record = terminalRecord(child.record, 'cancelled', {
-          code: 'host_unavailable',
+          code: 'host_shutdown',
           message: 'Local subagent was interrupted when the previous Felan process exited',
         });
         child.completionPending = child.deliveryId !== undefined;
@@ -446,8 +450,8 @@ export class LocalSubagentManager {
         const steered = await this.#steerActive(child, message);
         return steered.ok ? success({ kind: 'active' as const, child: steered.value }) : steered;
       }
-      if (child.record.status !== 'completed' || !child.sessionFile) {
-        return failure('not_steerable', 'Only retained completed subagents can be continued');
+      if (!isContinuable(child)) {
+        return failure('not_steerable', 'Only retained completed or recoverable subagents can be continued');
       }
 
       return success({
@@ -460,33 +464,28 @@ export class LocalSubagentManager {
     if (!prepared.ok) return prepared;
     if (prepared.value.kind === 'active') return success(cloneRecord(prepared.value.child.record));
     const completion = prepared.value;
+    const sessionFile = completion.sessionFile;
+    if (!sessionFile) return failure('not_steerable', 'The retained subagent session is unavailable');
 
     try {
-      await preflightSessionFile(completion.sessionFile, agentId);
+      await preflightSessionFile(sessionFile, agentId);
     } catch {
       return failure('not_steerable', 'The retained subagent session is unavailable');
     }
-    if (completion.deliveryId) {
-      await this.#deliver(completion.child, completion.deliveryId).catch(() => {});
-    }
-
     const continued = await this.#serializeControl(async () => {
       if (this.#closed) return failure('host_unavailable', 'Local subagent host is closed');
       const authorized = this.#directChild(parentSessionId, agentId);
       if (!authorized.ok) return authorized;
       const child = authorized.value;
-      if (child.sessionFile !== completion.sessionFile) {
+      if (child.sessionFile !== sessionFile) {
         return failure('not_steerable', 'The retained subagent session changed before continuation');
       }
       if (child.record.status === 'queued' || child.record.status === 'running') {
         const steered = await this.#steerActive(child, message);
         return steered.ok ? success({ child: steered.value, job: undefined }) : steered;
       }
-      if (child.record.status !== 'completed') {
+      if (!isContinuable(child)) {
         return failure('not_steerable', 'The retained subagent session changed before continuation');
-      }
-      if (child.completionPending) {
-        return failure('not_steerable', 'The previous subagent completion is still pending delivery');
       }
       const previousRecord = child.record;
       const previousDeliveryId = child.deliveryId;
@@ -502,6 +501,12 @@ export class LocalSubagentManager {
       };
       child.deliveryId = randomUUID();
       child.completionPending = false;
+      if (previousDeliveryId !== undefined) {
+        this.#deliveryAttempts.delete(previousDeliveryId);
+        const timer = this.#deliveryTimers.get(previousDeliveryId);
+        if (timer !== undefined) clearTimeout(timer);
+        this.#deliveryTimers.delete(previousDeliveryId);
+      }
       const job = this.#job(child, message);
       this.#jobs.set(agentId, job);
       try {
@@ -530,7 +535,7 @@ export class LocalSubagentManager {
   ): Promise<SubagentHostResult<SubagentRecord>> {
     const authorized = this.#directChild(parentSessionId, agentId);
     if (!authorized.ok) return authorized;
-    await this.#cancelTree(agentId, reason);
+    await this.#cancelTree(agentId, reason, 'cancelled', 'cancelled_by_parent');
     return success(cloneRecord(this.#latest(agentId)!.record));
   }
 
@@ -547,6 +552,8 @@ export class LocalSubagentManager {
 
   async #performShutdown(): Promise<void> {
     this.#closed = true;
+    for (const timer of this.#deliveryTimers.values()) clearTimeout(timer);
+    this.#deliveryTimers.clear();
     await this.#serializeControl(async () => {});
     for (const child of this.#latestChildren()) {
       if (!isTerminal(child.record.status)) await this.#cancelTree(child.record.agentId, 'Local host exited');
@@ -619,6 +626,7 @@ export class LocalSubagentManager {
             child.record.agentId,
             `Subagent timed out after ${child.request.timeoutSeconds} seconds`,
             'timed_out',
+            'timed_out',
           ).catch(() => {});
         }, child.request.timeoutSeconds * 1_000);
         timeout.unref();
@@ -649,8 +657,10 @@ export class LocalSubagentManager {
         };
         outcome = this.#options.runChild
           ? await this.#options.runChild(input)
-          : await this.#runAgentCore(input, (session) => {
+          : await this.#runAgentCore(input, async (session, sessionFile) => {
             child.session = session;
+            child.sessionFile = sessionFile;
+            await this.#persist();
             this.#emit();
           });
       }
@@ -711,7 +721,7 @@ export class LocalSubagentManager {
 
   async #runAgentCore(
     input: LocalSubagentRunInput,
-    onSession: (session: AgentSession) => void,
+    onSession: (session: AgentSession, sessionFile: string) => Promise<void>,
   ): Promise<LocalSubagentRunOutcome> {
     const runtimeRequest = createLocalAgentRuntimeFactoryRequest(
       input.cwd,
@@ -731,6 +741,12 @@ export class LocalSubagentManager {
     const sessionManager = input.sessionFile
       ? SessionManager.open(input.sessionFile, this.#store.sessionDirectory(), input.cwd)
       : SessionManager.create(input.cwd, this.#store.sessionDirectory(), { id: input.sessionId });
+    const sessionFile = sessionManager.getSessionFile();
+    if (!sessionFile) {
+      return {
+        error: { code: 'internal_error', message: 'Subagent session file could not be created' },
+      };
+    }
     const model = input.request.model ? this.#exactModel(input.request.model) : undefined;
     if (input.request.model && !model) {
       return { error: { code: 'unsupported_model', message: 'The requested model is unavailable' } };
@@ -770,10 +786,13 @@ export class LocalSubagentManager {
       ...(this.#options.scopedModels === undefined
         ? {}
         : { scopedModels: this.#options.scopedModels }),
+      ...(this.#options.extensionConfigOverrides === undefined
+        ? {}
+        : { extensionConfigOverrides: this.#options.extensionConfigOverrides }),
     });
-    onSession(created.session);
-    bindSubagentSession({ host: input.subagents, session: created.session });
     try {
+      await onSession(created.session, sessionFile);
+      bindSubagentSession({ host: input.subagents, session: created.session });
       if (input.signal.aborted) return sessionFileOutcome(created.session.sessionFile);
       await created.session.bindExtensions({ mode: 'print' });
       if (input.definition.toolProfile === 'inspection') {
@@ -795,7 +814,7 @@ export class LocalSubagentManager {
           input.request.maxTurns
           && turns >= input.request.maxTurns
           && event.message.role === 'assistant'
-          && event.message.stopReason !== 'stop'
+          && event.message.stopReason === 'toolUse'
         ) {
           turnLimitReached = true;
           cancel().catch(() => {});
@@ -821,15 +840,26 @@ export class LocalSubagentManager {
         await created.session.prompt(input.initialMessage);
         await cancellation;
         const assistant = [...created.session.messages].reverse().find((message) => message.role === 'assistant');
+        if (turnLimitReached) {
+          return {
+            ...sessionFileOutcome(created.session.sessionFile),
+            turnLimitReached: true,
+          };
+        }
         if (!assistant) {
           return {
             error: { code: 'internal_error', message: 'Subagent completed without an assistant response' },
             ...sessionFileOutcome(created.session.sessionFile),
           };
         }
-        if (assistant.stopReason === 'error') {
+        if (assistant.stopReason !== 'stop') {
           return {
-            error: { code: 'internal_error', message: 'Subagent model request failed' },
+            error: {
+              code: assistant.stopReason === 'error' ? 'model_request_failed' : 'internal_error',
+              message: assistant.stopReason === 'error'
+                ? `Model request failed: ${sanitizeModelError(assistant.errorMessage)}`
+                : `Subagent ended without a final response (${assistant.stopReason})`,
+            },
             ...sessionFileOutcome(created.session.sessionFile),
           };
         }
@@ -837,6 +867,12 @@ export class LocalSubagentManager {
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join('\n');
+        if (!result.trim()) {
+          return {
+            error: { code: 'internal_error', message: 'Subagent completed without a final result' },
+            ...sessionFileOutcome(created.session.sessionFile),
+          };
+        }
         return {
           result,
           ...sessionFileOutcome(created.session.sessionFile),
@@ -918,6 +954,7 @@ export class LocalSubagentManager {
     agentId: string,
     reason: string,
     status: 'timed_out' | 'cancelled' = 'cancelled',
+    errorCode: SubagentError['code'] = 'host_shutdown',
   ): Promise<void> {
     const cancellation = await this.#serializeControl(async () => {
       const descendants = this.#latestChildren()
@@ -937,7 +974,7 @@ export class LocalSubagentManager {
           this.#active -= 1;
         }
         child.record = terminalRecord(child.record, status, {
-          code: 'host_unavailable',
+          code: errorCode,
           message: reason,
         });
         if (child.deliveryId) child.completionPending = true;
@@ -948,12 +985,14 @@ export class LocalSubagentManager {
       }
       if (!job) return { descendants, cleanup: Promise.resolve(), deliveryId: undefined };
       this.#requestCancellation(job, status, {
-        code: 'host_unavailable',
+        code: errorCode,
         message: reason,
       });
       return { descendants, cleanup: job.runPromise ?? Promise.resolve(), deliveryId: undefined };
     });
-    await Promise.all(cancellation.descendants.map((childId) => this.#cancelTree(childId, reason, status)));
+    await Promise.all(cancellation.descendants.map((childId) => (
+      this.#cancelTree(childId, reason, status, errorCode)
+    )));
     await cancellation.cleanup;
     if (cancellation.deliveryId) {
       const child = this.#latest(agentId);
@@ -972,16 +1011,25 @@ export class LocalSubagentManager {
       if (!port) return;
       const outcome = await port.deliverCompletion(notice);
       if (outcome === 'delivered') {
+        this.#deliveryAttempts.delete(deliveryId);
+        const timer = this.#deliveryTimers.get(deliveryId);
+        if (timer !== undefined) clearTimeout(timer);
+        this.#deliveryTimers.delete(deliveryId);
         await this.#serializeControl(async () => {
           if (child.deliveryId !== deliveryId) return;
           child.completionPending = false;
           await this.#persist();
         });
-      } else if (outcome === 'queued' && !this.#closed) {
+      } else if (!this.#closed) {
+        const attempt = (this.#deliveryAttempts.get(deliveryId) ?? 0) + 1;
+        this.#deliveryAttempts.set(deliveryId, attempt);
+        const delay = Math.min(5_000, 100 * (2 ** Math.min(attempt - 1, 5)));
         const retry = setTimeout(() => {
+          this.#deliveryTimers.delete(deliveryId);
           this.#deliver(child, deliveryId).catch(() => {});
-        }, 10);
+        }, delay);
         retry.unref();
+        this.#deliveryTimers.set(deliveryId, retry);
       }
     })();
     this.#deliveries.set(deliveryId, delivery);
@@ -1015,7 +1063,7 @@ export class LocalSubagentManager {
 
   async #persist(): Promise<void> {
     const snapshot = [...this.#children.values()].map(toStored);
-    this.#save = this.#save.then(() => this.#store.save(snapshot));
+    this.#save = this.#save.catch(() => {}).then(() => this.#store.save(snapshot));
     await this.#save;
   }
 
@@ -1087,6 +1135,24 @@ function terminalRecord(
 
 function isTerminal(status: SubagentStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'timed_out' || status === 'cancelled';
+}
+
+function isContinuable(child: MutableChild): boolean {
+  if (!child.sessionFile) return false;
+  if (child.record.status === 'completed') return true;
+  if (child.record.status === 'failed' && child.record.error?.code === 'model_request_failed') return true;
+  if (child.record.status !== 'cancelled') return false;
+  return child.record.error?.code === 'turn_limit_reached'
+    || child.record.error?.code === 'host_shutdown';
+}
+
+function sanitizeModelError(value: string | undefined): string {
+  const normalized = (value ?? 'unknown provider error')
+    .replace(/[\u0000-\u001F\u007F-\u009F]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!normalized) return 'unknown provider error';
+  return normalized.length <= 300 ? normalized : `${normalized.slice(0, 299)}…`;
 }
 
 function success<T>(value: T): SubagentHostResult<T> {

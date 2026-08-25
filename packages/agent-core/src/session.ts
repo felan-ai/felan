@@ -14,13 +14,15 @@ import {
   type Skill,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { loadFelanExtensions, type ExtensionPackageImporter } from './extensions.js';
+import { loadFelanSessionExtensions, type ExtensionPackageImporter } from './extensions.js';
+import { installModelSelectionPersistenceScope } from './model-selection.js';
 import {
   createAgentCoreResourceLoaderWithContextFiles,
   runtimeToolsExtensionName,
 } from './resource-loader.js';
 import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
+import type { ExtensionConfigOverride } from './extension-config.js';
 
 export type StreamFunction = AgentSession['agent']['streamFunction'];
 const PROJECT_INSTRUCTION_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const;
@@ -31,7 +33,7 @@ export interface CreateAgentCoreSessionOptions {
   readonly wrapStreamFunction?: (original: StreamFunction) => StreamFunction;
   readonly extensionPackages: readonly string[];
   readonly importExtension: ExtensionPackageImporter;
-  readonly extensionFlagValues?: ReadonlyMap<string, boolean | string>;
+  readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly modelRuntime: ModelRuntime;
   readonly settingsManager: SettingsManager;
   readonly sessionManager: SessionManager;
@@ -98,11 +100,14 @@ async function composeAgentCoreSession(
   options: CreateAgentCoreSessionOptions,
 ): Promise<AgentCoreSessionComposition> {
   const agentDir = options.agentDir ?? options.runtime.cwd;
-  const featureExtensions = await loadFelanExtensions(
+  const modelSelectionScope = installModelSelectionPersistenceScope(options.settingsManager);
+  const featureExtensions = await loadFelanSessionExtensions(
     options.extensionPackages,
     options.importExtension,
     options.runtime,
     agentDir,
+    modelSelectionScope,
+    options.extensionConfigOverrides,
   );
   const extensionFactories = [
     ...featureExtensions,
@@ -114,9 +119,6 @@ async function composeAgentCoreSession(
     cwd: options.runtime.cwd,
     agentDir,
     extensionFactories,
-    ...(options.extensionFlagValues === undefined
-      ? {}
-      : { extensionFlagValues: options.extensionFlagValues }),
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
     ...(projectInstructions === undefined ? {} : { contextFiles: [projectInstructions] }),

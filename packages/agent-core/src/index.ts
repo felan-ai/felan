@@ -2,11 +2,16 @@ export type {
   AgentRuntime,
   AgentRuntimeFileReadOptions,
   AgentRuntimeFileWriteOptions,
+  AgentRuntimeExecOptions,
+  AgentRuntimeExecResult,
+  AgentRuntimeListFilesOptions,
   AgentRuntimeKind,
   AgentRuntimeProcess,
   AgentRuntimeProcesses,
   AgentRuntimeProcessReadOptions,
   AgentRuntimeProcessSnapshot,
+  AgentRuntimeShellFlavor,
+  AgentRuntimeShellOptions,
   AgentRuntimeShellProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
@@ -38,6 +43,31 @@ export {
   bindFelanExtension,
   loadFelanExtensions,
 } from './extensions.js';
+export {
+  associateExtensionConfig,
+  configField,
+  configureExtension,
+  defineExtensionConfig,
+  extensionConfigOverridesFromObject,
+  getExtensionConfigCliOptions,
+  getExtensionConfigDefinition,
+  parseExtensionConfigCliValue,
+  resolveExtensionConfigs,
+  validateExtensionConfigValue,
+} from './extension-config.js';
+export type {
+  ExtensionConfigCliOption,
+  ExtensionConfigDefinition,
+  ExtensionConfigField,
+  ExtensionConfigFieldOptions,
+  ExtensionConfigFields,
+  ExtensionConfigOverride,
+  ExtensionConfigPrimitive,
+  ExtensionConfigValue,
+  ExtensionConfigJsonObject,
+  ExtensionConfigJsonArray,
+  InferExtensionConfig,
+} from './extension-config.js';
 export { formatCapabilitiesSection } from './capabilities.js';
 export type { FelanCapability, RegisteredFelanCapability } from './capabilities.js';
 export { FELAN_BASE_SYSTEM_PROMPT } from './system-prompt.js';
@@ -45,10 +75,12 @@ export type {
   ExtensionPackageImporter,
   FelanExtension,
   FelanExtensionAPI,
+  FelanModelSelectionOptions,
 } from './extensions.js';
 export { createAgentCoreResourceLoader } from './resource-loader.js';
 export type { CreateAgentCoreResourceLoaderOptions } from './resource-loader.js';
 export { createRuntimeCodingTools } from './tools.js';
+export type { RuntimeCodingToolsOptions } from './tools.js';
 export {
   createAgentCoreSession,
   createAgentCoreSessionRuntime,
@@ -101,6 +133,7 @@ export type {
 export {
   InMemoryCredentialStore,
   StringEnum,
+  clampThinkingLevel,
   createAssistantMessageEventStream,
   getSupportedThinkingLevels,
   isContextOverflow,

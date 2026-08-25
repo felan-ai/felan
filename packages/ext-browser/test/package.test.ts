@@ -12,7 +12,7 @@ describe('@felan-ai/ext-browser package boundary', () => {
 
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-browser',
-      version: '0.1.0',
+      version: '0.2.0',
       license: 'MIT',
       repository: {
         type: 'git',

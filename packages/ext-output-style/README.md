@@ -13,8 +13,9 @@ import { createOutputStyleExtension } from '@felan-ai/ext-output-style';
 const extension = createOutputStyleExtension('explanatory');
 ```
 
-The Felan TUI validates its global `outputStyle` setting and binds the selected
-style to this extension for root and child sessions.
+Felan declares the style as `extensionConfig.outputStyle.style`. The local TUI,
+CLI, `/settings`, and Agent Core consumers all resolve this setting before
+activating the extension for root and child sessions.
 
 ## Package boundary and requirements
 

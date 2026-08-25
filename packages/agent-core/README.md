@@ -25,6 +25,19 @@ available to the current user. Use `exec(command, args)` for literal argument
 boundaries and `shell(command)` only when shell parsing is intentional. File
 reads and writes use `Uint8Array` so binary content is preserved. Reads accept a
 `maxBytes` bound, and writes support exclusive creation for race-safe new files.
+`listFiles` supports recursive, glob-filtered traversal with ignored-directory,
+depth, and result-count bounds; host implementations enumerate one directory at
+a time rather than materializing an unbounded recursive scan. `exec` and `shell`
+accept an optional `maxOutputBytes` cap; capped results set `truncated` without
+turning normal command completion into cancellation.
+
+Shell calls use the host's default shell unless they request the explicit
+`shellFlavor: 'posix'` option. POSIX hosts use `/bin/sh`; native Windows hosts
+validate and use a same-host Git Bash installation discovered through
+`FELAN_POSIX_SHELL`, `PATH`, or standard Git-for-Windows locations. The
+`HostAgentRuntimeOptions.posixShell` override is available to embedding hosts.
+The default Windows `cmd.exe` behavior is unchanged, and WSL is not selected
+automatically because its process and path namespace is separate from the host.
 
 Every `AgentRuntime` exposes scoped storage through `storage(scope)`. The
 default `storage()` handle is identical to `storage('session')` and belongs to
@@ -57,9 +70,13 @@ and runtime-backed coding tools. `createAgentCoreSession` returns a headless,
 inactive session, while `createAgentCoreSessionRuntimeFactory` provides the
 typed seam used with Pi's `createAgentSessionRuntime`. Applications retain
 ownership of model credentials, settings, session storage, stream wrappers,
-feature extensions, and presentation listeners. `FelanExtensionAPI` adds only
-the selected `AgentRuntime` and application agent directory to Pi's extension
-API; feature-specific contracts remain in their owning extension packages.
+feature extensions, and presentation listeners. `FelanExtensionAPI` adds the
+selected `AgentRuntime`, application agent directory, and session-aware model
+selection options to Pi's extension API; feature-specific contracts remain in
+their owning extension packages. Feature automation can pass
+`{ updateDefault: false }` to `setModel` or `setThinkingLevel` to update the
+active session without changing the user's default model or thinking
+preference. Ordinary selections retain Pi's default-updating behavior.
 Applications may also pass adapter-neutral `inlineExtensions` directly into
 session composition for host-owned integration such as presentation controls;
 these remain opt-in and are not discovered from ambient configuration.
@@ -99,7 +116,10 @@ Unknown naming schemes default to `medium`, and hosts can pass a custom
 `classifyModel` function to `selectModelForTier`. Model tiers do not imply a
 thinking level. `FELAN_THINKING_LEVELS` separately defines `off`, `low`,
 `medium`, `high`, `xhigh`, and `max`; `minimal` is outside the Felan-facing
-scale. Agent Core does not load model-tier configuration or resolve credentials.
+scale. Agent Core also re-exports Pi's `clampThinkingLevel` so extensions can
+resolve a requested effort against a host-provided model without duplicating
+provider capability rules. Agent Core does not load model-tier configuration or
+resolve credentials.
 
 Agent Core owns the runtime-neutral Felan base system prompt. Every composed
 session uses this prompt; consumers extend it with `appendSystemPrompt` and

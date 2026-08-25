@@ -4,6 +4,7 @@ import type {
   ExtensionContext,
   FelanExtensionAPI,
   Model,
+  Skill,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import codexExtension from '../src/index.js';
@@ -76,6 +77,52 @@ describe('Codex extension activation', () => {
     ]));
   });
 
+  it('preserves structured skills in the Codex prompt after replacing read', async () => {
+    const harness = createHarness();
+    const ctx = context('openai-codex', 'gpt-5.3-codex');
+    await codexExtension(harness.pi);
+    await harness.emit('session_start', {}, ctx);
+
+    const [result] = await harness.emit('before_agent_start', {
+      systemPrompt: 'Felan base prompt\nCurrent working directory: /workspace',
+      systemPromptOptions: {
+        cwd: '/workspace',
+        skills: [
+          skill('linear', 'Manage <Linear> issues', '/home/user/.agents/skills/linear/SKILL.md'),
+          { ...skill('manual', 'Manual only', '/skills/manual/SKILL.md'), disableModelInvocation: true },
+        ],
+      },
+    }, ctx);
+
+    const systemPrompt = (result as { systemPrompt: string }).systemPrompt;
+    expect(systemPrompt).toContain('<skills_instructions>');
+    expect(systemPrompt).toContain('<name>linear</name>');
+    expect(systemPrompt).toContain('<description>Manage &lt;Linear&gt; issues</description>');
+    expect(systemPrompt).toContain('<location>/home/user/.agents/skills/linear/SKILL.md</location>');
+    expect(systemPrompt).not.toContain('<name>manual</name>');
+    expect(systemPrompt.indexOf('<skills_instructions>')).toBeLessThan(
+      systemPrompt.indexOf('Current working directory:'),
+    );
+  });
+
+  it('does not duplicate Pi skill guidance when ordinary tools remain active', async () => {
+    const harness = createHarness(false);
+    const ctx = context('openai-codex', 'gpt-5.3-codex');
+    await codexExtension(harness.pi);
+    await harness.emit('session_start', {}, ctx);
+    const prompt = 'The following skills are available.\n<available_skills>...</available_skills>';
+
+    const results = await harness.emit('before_agent_start', {
+      systemPrompt: prompt,
+      systemPromptOptions: {
+        cwd: '/workspace',
+        skills: [skill('linear', 'Manage Linear issues', '/skills/linear/SKILL.md')],
+      },
+    }, ctx);
+
+    expect(results).toEqual([undefined]);
+  });
+
   it('does not register or unregister shared providers', async () => {
     const harness = createHarness();
     await codexExtension(harness.pi);
@@ -115,7 +162,9 @@ function createHarness(processSupport = true) {
     registerProvider,
     unregisterProvider,
     async emit(name: string, event: unknown, ctx: ExtensionContext) {
-      for (const handler of handlers.get(name) ?? []) await handler(event, ctx);
+      const results: unknown[] = [];
+      for (const handler of handlers.get(name) ?? []) results.push(await handler(event, ctx));
+      return results;
     },
   };
 }
@@ -126,6 +175,22 @@ function context(provider: string, id: string): ExtensionContext {
 
 function model(provider: string, id: string): Model<Api> {
   return { provider, id, api: 'openai-responses', input: ['text', 'image'] } as Model<Api>;
+}
+
+function skill(name: string, description: string, filePath: string): Skill {
+  return {
+    name,
+    description,
+    filePath,
+    baseDir: filePath.replace(/\/SKILL\.md$/u, ''),
+    sourceInfo: {
+      path: filePath,
+      source: 'local',
+      scope: 'user',
+      origin: 'top-level',
+    },
+    disableModelInvocation: false,
+  };
 }
 
 function unusedRuntime(processSupport: boolean): AgentRuntime {

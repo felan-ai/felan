@@ -1,6 +1,28 @@
-import type { ExecOptions, ExecResult } from '@earendil-works/pi-coding-agent';
+import type {
+  ExecOptions as PiExecOptions,
+  ExecResult as PiExecResult,
+} from '@earendil-works/pi-coding-agent';
 
-export type { ExecOptions, ExecResult } from '@earendil-works/pi-coding-agent';
+export type ExecOptions = PiExecOptions;
+
+export interface AgentRuntimeExecOptions extends PiExecOptions {
+  /** Maximum combined stdout/stderr bytes retained by the host adapter. */
+  readonly maxOutputBytes?: number;
+}
+
+export interface AgentRuntimeExecResult extends PiExecResult {
+  /** True when the host discarded output after reaching maxOutputBytes. */
+  readonly truncated?: boolean;
+}
+
+export type ExecResult = AgentRuntimeExecResult;
+
+export type AgentRuntimeShellFlavor = 'default' | 'posix';
+
+export interface AgentRuntimeShellOptions extends AgentRuntimeExecOptions {
+  readonly env?: Readonly<Record<string, string>>;
+  readonly shellFlavor?: AgentRuntimeShellFlavor;
+}
 
 export type AgentRuntimeKind = 'host' | 'docker' | 'daytona';
 
@@ -53,7 +75,7 @@ export interface AgentRuntimeStorage {
 
   readFile(path: string): Promise<Uint8Array>;
   writeFile(path: string, content: Uint8Array): Promise<void>;
-  listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]>;
+  listFiles(path: string, options?: AgentRuntimeListFilesOptions): Promise<string[]>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 }
@@ -64,6 +86,23 @@ export interface AgentRuntimeFileReadOptions {
 
 export interface AgentRuntimeFileWriteOptions {
   readonly exclusive?: boolean;
+}
+
+export interface AgentRuntimeListFilesOptions {
+  /** Traverse descendants instead of returning only immediate entries. */
+  readonly recursive?: boolean;
+  /** Include directories as well as regular files in the returned paths. */
+  readonly includeDirectories?: boolean;
+  /** Maximum entry depth below the requested directory; immediate entries have depth 1. */
+  readonly maxDepth?: number;
+  /** Match returned paths with `/`-separated glob syntax. */
+  readonly pattern?: string;
+  /** Omit matching paths and prune matching directories before traversal. */
+  readonly ignore?: readonly string[];
+  /** Return at most this many entries, ordered by relative path. */
+  readonly limit?: number;
+  /** Stop traversal when the operation is cancelled. */
+  readonly signal?: AbortSignal;
 }
 
 export interface AgentRuntime {
@@ -77,12 +116,12 @@ export interface AgentRuntime {
   exec(
     command: string,
     args: readonly string[],
-    options?: ExecOptions,
+    options?: AgentRuntimeExecOptions,
   ): Promise<ExecResult>;
 
   shell(
     command: string,
-    options?: ExecOptions & { env?: Readonly<Record<string, string>> },
+    options?: AgentRuntimeShellOptions,
   ): Promise<ExecResult>;
 
   readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array>;
@@ -91,7 +130,7 @@ export interface AgentRuntime {
     content: Uint8Array,
     options?: AgentRuntimeFileWriteOptions,
   ): Promise<void>;
-  listFiles(path: string, options?: { recursive?: boolean }): Promise<string[]>;
+  listFiles(path: string, options?: AgentRuntimeListFilesOptions): Promise<string[]>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-web-access",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "Secure native web search and content access for Felan",
   "license": "MIT",
   "type": "module",
@@ -40,7 +40,7 @@
     "unpdf": "1.6.2"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.4.0"
+    "@felan-ai/agent-core": "^0.5.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*",
