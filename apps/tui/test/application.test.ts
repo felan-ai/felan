@@ -23,7 +23,7 @@ const interactive = vi.hoisted(() => ({
   toolRenderShells: [] as Array<string | undefined>,
   toolNames: [] as string[],
   updateCheckSignals: [] as AbortSignal[],
-  warnings: [] as string[],
+  updateNotifications: [] as string[],
 }));
 
 vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
@@ -32,6 +32,7 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
     ...original,
     InteractiveMode: class {
       builtInHeader: unknown = undefined;
+      chatContainer = { addChild: (_component: unknown) => {} };
       defaultEditor = {
         onSubmit: undefined as ((text: string) => void) | undefined,
         addToHistory: vi.fn(),
@@ -96,9 +97,9 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
         if (interactive.runError) throw interactive.runError;
       }
 
-      showWarning(message: string) {
-        interactive.warnings.push(message);
-        interactive.events.push('warning');
+      showNewVersionNotification(release: { version: string }) {
+        interactive.updateNotifications.push(release.version);
+        interactive.events.push('update-notification');
       }
     },
   };
@@ -156,7 +157,7 @@ afterEach(async () => {
   interactive.toolRenderShells = [];
   interactive.toolNames = [];
   interactive.updateCheckSignals = [];
-  interactive.warnings = [];
+  interactive.updateNotifications = [];
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
@@ -227,11 +228,8 @@ describe('interactive application', () => {
 
     await runLocalFelan({ cwd, agentDir });
 
-    expect(interactive.events).toEqual(['init', 'check', 'run', 'warning']);
-    expect(interactive.warnings).toEqual([
-      'Felan 0.13.2 is available. Exit all Felan sessions, then run felan update '
-        + '(global npm) or update with your package manager.',
-    ]);
+    expect(interactive.events).toEqual(['init', 'check', 'run', 'update-notification']);
+    expect(interactive.updateNotifications).toEqual(['0.13.2']);
   });
 
   it('restarts in a new cwd only after disposing the previous runtime', async () => {
@@ -265,7 +263,7 @@ describe('interactive application', () => {
     expect(interactive.events).toEqual(['init', 'check', 'run', 'check-abort']);
     expect(interactive.updateCheckSignals).toHaveLength(1);
     expect(interactive.updateCheckSignals[0]?.aborted).toBe(true);
-    expect(interactive.warnings).toEqual([]);
+    expect(interactive.updateNotifications).toEqual([]);
     expect(interactive.disposals).toBe(1);
   });
 
