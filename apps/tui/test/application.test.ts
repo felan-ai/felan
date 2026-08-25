@@ -161,15 +161,18 @@ afterEach(async () => {
 });
 
 describe('interactive application', () => {
-  it('brands Pi resume hints as runnable Felan commands', () => {
-    expect(brandResumeHint(
-      "To resume this session: pi --session-dir 'C:\\Users\\35988\\.felan\\sessions' --session 01a033a6-db3c-7094-993f-0aad3b3dadfd\n",
-    )).toBe(
+  it('brands Pi resume hints and omits the default Felan session directory', () => {
+    const resumeHint = "To resume this session: pi --session-dir 'C:\\Users\\35988\\.felan\\sessions' --session 01a033a6-db3c-7094-993f-0aad3b3dadfd\n";
+    expect(brandResumeHint(resumeHint, true)).toBe(
+      'To resume this session: felan --session 01a033a6-db3c-7094-993f-0aad3b3dadfd\n',
+    );
+    expect(brandResumeHint(resumeHint)).toBe(
       "To resume this session: felan --session-dir 'C:\\Users\\35988\\.felan\\sessions' --session 01a033a6-db3c-7094-993f-0aad3b3dadfd\n",
     );
     expect(brandResumeHint('ordinary output\n')).toBe('ordinary output\n');
     expect(brandResumeHint(
-      '\x1b[2mTo resume this session:\x1b[22m pi --session session-id\n',
+      "\x1b[2mTo resume this session:\x1b[22m pi --session-dir '/tmp/felan --session archives' --session session-id\n",
+      true,
     )).toBe(
       '\x1b[2mTo resume this session:\x1b[22m felan --session session-id\n',
     );
