@@ -43,7 +43,7 @@ export function installFelanStartupHeader(
     readonly memorySummaryPath?: () => string;
   } = {},
 ): void {
-  // Pi 0.84.2 has no pre-render header hook. Intercepting this assignment keeps
+  // Pi 0.84.3 has no pre-render header hook. Intercepting this assignment keeps
   // its own expandable component and keybinding behavior without showing it first.
   const internals = mode as unknown as InteractiveModeHeaderInternals;
   const descriptor = Object.getOwnPropertyDescriptor(internals, 'builtInHeader');

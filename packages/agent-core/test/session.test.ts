@@ -257,7 +257,7 @@ describe('Agent Core session composition', () => {
     result.session.dispose();
   });
 
-  it('provides a Pi 0.84.2 CreateAgentSessionRuntimeFactory seam', async () => {
+  it('provides a Pi 0.84.3 CreateAgentSessionRuntimeFactory seam', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent-dir');

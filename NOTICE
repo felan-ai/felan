@@ -10,7 +10,7 @@ packages/ext-memory/LICENSE and NOTICE.
 portable, validated output-style instructions. Its package-level license and
 notice are included in packages/ext-output-style/LICENSE and NOTICE.
 
-This product uses Pi 0.84.2 from https://github.com/earendil-works/pi,
+This product uses Pi 0.84.3 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 
 @felan-ai/ext-subagents, @felan-ai/ext-ask-user, @felan-ai/ext-tasks,

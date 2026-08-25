@@ -2,8 +2,8 @@
 
 Copyright (c) 2026 Felan contributors
 
-This package uses @earendil-works/pi-ai 0.84.2 and
-@earendil-works/pi-coding-agent 0.84.2 from
+This package uses @earendil-works/pi-ai 0.84.3 and
+@earendil-works/pi-coding-agent 0.84.3 from
 https://github.com/earendil-works/pi, licensed under the MIT License.
 Copyright (c) 2025 Mario Zechner.
 
