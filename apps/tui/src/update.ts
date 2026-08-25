@@ -91,7 +91,7 @@ export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promi
     return 1;
   }
 
-  const latestResult = await runNpm(['view', `${PACKAGE_NAME}@latest`, 'version'], packageDirectory);
+  const latestResult = await runNpm(['view', `${PACKAGE_NAME}@latest`, 'version'], globalRoot);
   if (latestResult.status !== 0) {
     writeError(`Could not check for a newer Felan release: ${commandError(latestResult)}`);
     return 1;
@@ -111,10 +111,16 @@ export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promi
 
   const installResult = await runNpm(
     ['install', '--global', `${PACKAGE_NAME}@${latestVersion}`],
-    packageDirectory,
+    globalRoot,
   );
   if (installResult.status !== 0) {
-    writeError(`Felan update failed: ${commandError(installResult)}`);
+    const details = commandError(installResult);
+    writeError(
+      `Felan update failed: ${details}`
+        + (isBusyRenameFailure(installResult)
+          ? ' Exit all Felan processes and retry from another directory, such as `%TEMP%`.'
+          : ''),
+    );
     return 1;
   }
 
@@ -231,6 +237,12 @@ function compareVersions(left: string, right: string): number {
 
 function commandError(result: NpmResult): string {
   return result.stderr.trim() || result.stdout.trim() || `npm exited with status ${result.status}`;
+}
+
+function isBusyRenameFailure(result: NpmResult): boolean {
+  return result.status === -4082 || /\bEBUSY\b|resource busy|resource is locked/iu.test(
+    `${result.stderr}\n${result.stdout}`,
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
