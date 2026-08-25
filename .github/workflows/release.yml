@@ -29,8 +29,7 @@ jobs:
       - name: Select unpublished package versions
         id: release
         run: pnpm select:release-packages
-      - if: steps.release.outputs.has_packages == 'true'
-        run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - if: steps.release.outputs.has_packages == 'true'
         run: pnpm verify
       - if: steps.release.outputs.has_packages == 'true'
