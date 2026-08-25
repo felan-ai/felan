@@ -15,6 +15,7 @@ import {
 import { installFelanStartupHeader } from './startup-header.js';
 import { createToolActivityRuntimeView } from './tool-activity/runtime-view.js';
 import { checkForFelanUpdate } from './update.js';
+import { showFelanUpdateNotification } from './update-notification.js';
 import { CwdChangeRequested, installFelanCwdCommand } from './cwd-command.js';
 import { installFelanSettingsCommand } from './extension-settings.js';
 import { loadLocalExtensionConfigDefinitions } from './extensions.js';
@@ -210,10 +211,7 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
     const updateNotification = checkForFelanUpdate({ signal: updateCheckController.signal })
       .then((latestVersion) => {
         if (modeActive && latestVersion) {
-          mode.showWarning(
-            `Felan ${latestVersion} is available. Exit all Felan sessions, then run felan update `
-              + '(global npm) or update with your package manager.',
-          );
+          showFelanUpdateNotification(mode, latestVersion);
         }
       })
       .catch(() => {});
