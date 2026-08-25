@@ -217,8 +217,9 @@ constructed process/session. The built-in is enabled by default; set
 Every enabled configurable extension declares typed settings. Felan exposes the
 same declarations through `settings.json`, generated CLI options, `/settings`,
 and the Agent Core programmatic API. Values are validated before activation;
-unknown extension or field names are errors. Type in `/settings` to fuzzy-search
-by extension or setting name.
+unknown extension or field names are errors. `/settings` first lists Pi settings
+and configurable extensions; select an extension to view its fields. Type to
+fuzzy-search either list; activating a field with declared options cycles them.
 
 ### RTK
 

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { ExtensionConfigDefinition, SettingsManager } from '@felan-ai/agent-core';
 import type { Component, Focusable } from '@earendil-works/pi-tui';
 import { initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createLocalSettingsManager,
   getDependencyOnboardingChoice,
@@ -184,7 +184,86 @@ describe('local settings', () => {
     expect(parseExtensionSettingValue(field, '$OPENAI_API_KEY')).toBe('$OPENAI_API_KEY');
   });
 
-  it('fuzzy-searches extension settings by extension and setting names', () => {
+  it('preserves a configured sensitive value when its blank editor is submitted', () => {
+    const definitions: readonly ExtensionConfigDefinition[] = [{
+      id: 'webAccess',
+      title: 'Web Access',
+      fields: {
+        openaiApiKey: {
+          type: 'string',
+          default: '',
+          label: 'OpenAI API key',
+          description: 'OpenAI credential source',
+          sensitive: true,
+        },
+      },
+    }];
+    const settings = openExtensionSettings(
+      definitions,
+      '/tmp/felan-settings-test-unused',
+      settingsWith({ extensionConfig: { webAccess: { openaiApiKey: '$OPENAI_API_KEY' } } }),
+    );
+    settings.handleInput?.('web');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('configured');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('Enter a value:');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('configured');
+  });
+
+  it('keeps an editor open and reports invalid scalar input', () => {
+    const definitions: readonly ExtensionConfigDefinition[] = [{
+      id: 'powerline',
+      title: 'Powerline',
+      fields: {
+        padding: {
+          type: 'number',
+          default: 1,
+          description: 'Horizontal padding',
+        },
+      },
+    }];
+    const settings = openExtensionSettings(definitions);
+    settings.handleInput?.('powerline');
+    settings.handleInput?.('\r');
+    settings.handleInput?.('\r');
+    settings.handleInput?.('x');
+    settings.handleInput?.('\r');
+    const rendered = settings.render(100).join('\n');
+    expect(rendered).toContain('Enter a value:');
+    expect(rendered).toContain('Invalid value: Setting value must be a number');
+  });
+
+  it('rolls back an enum value when persistence fails', async () => {
+    const root = await temporaryDirectory();
+    const invalidAgentDir = join(root, 'not-a-directory');
+    await writeFile(invalidAgentDir, 'file');
+    const definitions: readonly ExtensionConfigDefinition[] = [{
+      id: 'prewalk',
+      title: 'Prewalk',
+      fields: {
+        entryApproval: {
+          type: 'string',
+          default: 'ask',
+          description: 'Approval policy for model-entered Prewalk',
+          values: ['ask', 'always', 'never'],
+        },
+      },
+    }];
+    const settings = openExtensionSettings(definitions, invalidAgentDir);
+    settings.handleInput?.('prewalk');
+    settings.handleInput?.('\r');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('always');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('never');
+    await vi.waitFor(() => {
+      expect(settings.render(100).join('\n')).toContain('ask (save failed)');
+    });
+  });
+
+  it('groups extension settings into fuzzy-searchable submenus', () => {
     const definitions: readonly ExtensionConfigDefinition[] = [
       {
         id: 'webAccess',
@@ -207,41 +286,142 @@ describe('local settings', () => {
             default: 'rewrite',
             label: 'Rewrite mode',
             description: 'Command rewrite mode',
+            values: ['rewrite', 'suggest'],
           },
         },
       },
     ];
-    const openSettings = (): Component => {
-      let selector: { component: Component; focus: Focusable } | undefined;
-      const mode = {
-        showSettingsSelector() {},
-        showSelector(create: (done: () => void) => { component: Component; focus: Focusable }) {
-          selector = create(() => {});
-        },
-      };
-      installFelanSettingsCommand(mode, {
-        agentDir: '/tmp/.felan',
-        settingsManager: settingsWith({}),
-        definitions,
-      });
-      mode.showSettingsSelector();
-      if (!selector) throw new Error('Settings selector was not created');
-      return selector.component;
-    };
+    const navigation = createExtensionSettingsHarness(definitions);
+    navigation.current().handleInput?.('\r');
+    expect(navigation.current().render(100).join('\n')).toContain('Native Pi settings');
+    navigation.current().handleInput?.('\x1b');
+    expect(navigation.current().render(100).join('\n')).toContain('Pi settings');
 
-    const extensionSearch = openSettings();
+    const extensionSearch = openExtensionSettings(definitions);
+    const rootItems = extensionSearch.render(100).join('\n');
+    expect(rootItems).toContain('Pi settings');
+    expect(rootItems).toContain('Web Access');
+    expect(rootItems).toContain('RTK Optimizer');
+    expect(rootItems).not.toContain('OpenAI API key');
+
     extensionSearch.handleInput?.('wbacc');
     const extensionResults = extensionSearch.render(100).join('\n');
-    expect(extensionResults).toContain('Web Access: OpenAI API key');
-    expect(extensionResults).not.toContain('RTK Optimizer: Rewrite mode');
+    expect(extensionResults).toContain('Web Access');
+    expect(extensionResults).not.toContain('RTK Optimizer');
+    extensionSearch.handleInput?.('\r');
+    const webAccessSettings = extensionSearch.render(100).join('\n');
+    expect(webAccessSettings).toContain('OpenAI API key');
+    expect(webAccessSettings).not.toContain('RTK Optimizer');
+    extensionSearch.handleInput?.('\x1b');
+    expect(extensionSearch.render(100).join('\n')).toContain('Web Access');
 
-    const settingSearch = openSettings();
-    settingSearch.handleInput?.('rtk mode');
+    const settingSearch = openExtensionSettings(definitions);
+    settingSearch.handleInput?.('rtk');
+    settingSearch.handleInput?.('\r');
+    settingSearch.handleInput?.('mode');
     const settingResults = settingSearch.render(100).join('\n');
-    expect(settingResults).toContain('RTK Optimizer: Rewrite mode');
-    expect(settingResults).not.toContain('Web Access: OpenAI API key');
+    expect(settingResults).toContain('Rewrite mode');
+    expect(settingResults).not.toContain('OpenAI API key');
+  });
+
+  it('cycles and persists enum values from an extension submenu', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), '{}\n');
+    const manager = createLocalSettingsManager(root, agentDir);
+    const definitions: readonly ExtensionConfigDefinition[] = [{
+      id: 'prewalk',
+      title: 'Prewalk',
+      fields: {
+        entryApproval: {
+          type: 'string',
+          default: 'ask',
+          description: 'Approval policy for model-entered Prewalk',
+          values: ['ask', 'always', 'never'],
+        },
+      },
+    }];
+    const harness = createExtensionSettingsHarness(definitions, agentDir, manager);
+    const settings = harness.current();
+    settings.handleInput?.('prewalk');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('ask');
+
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('always');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('never');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('ask');
+    await vi.waitFor(async () => {
+      const persisted = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8'));
+      expect(persisted.extensionConfig.prewalk.entryApproval).toBe('ask');
+    });
+    await vi.waitFor(() => {
+      expect(getFelanSettings(manager).extensionConfig?.prewalk?.entryApproval).toBe('ask');
+    });
+
+    harness.open();
+    harness.current().handleInput?.('prewalk');
+    harness.current().handleInput?.('\r');
+    expect(harness.current().render(100).join('\n')).toContain('ask');
   });
 });
+
+interface ExtensionSettingsHarness {
+  current(): Component;
+  open(): void;
+}
+
+function createExtensionSettingsHarness(
+  definitions: readonly ExtensionConfigDefinition[],
+  agentDir = '/tmp/felan-settings-test-unused',
+  settingsManager: SettingsManager = settingsWith({}),
+): ExtensionSettingsHarness {
+  let selector: { component: Component; focus: Focusable } | undefined;
+  let nativeDone = () => {};
+  const nativeSettings: Component & Focusable = {
+    focused: false,
+    render: () => ['Native Pi settings'],
+    handleInput(data: string) {
+      if (data === '\x1b') nativeDone();
+    },
+  };
+  const mode: {
+    showSettingsSelector(): void;
+    showSelector(create: (done: () => void) => { component: Component; focus: Focusable }): void;
+  } = {
+    showSettingsSelector() {
+      mode.showSelector((done) => {
+        nativeDone = done;
+        return { component: nativeSettings, focus: nativeSettings };
+      });
+    },
+    showSelector(create: (done: () => void) => { component: Component; focus: Focusable }) {
+      selector = create(() => {});
+    },
+  };
+  installFelanSettingsCommand(mode, {
+    agentDir,
+    settingsManager,
+    definitions,
+  });
+  const current = (): Component => {
+    if (!selector) throw new Error('Settings selector was not created');
+    return selector.component;
+  };
+  mode.showSettingsSelector();
+  return { current, open: () => mode.showSettingsSelector() };
+}
+
+function openExtensionSettings(
+  definitions: readonly ExtensionConfigDefinition[],
+  agentDir = '/tmp/felan-settings-test-unused',
+  settingsManager: SettingsManager = settingsWith({}),
+): Component {
+  return createExtensionSettingsHarness(definitions, agentDir, settingsManager).current();
+}
 
 function settingsWith(settings: Record<string, unknown>): SettingsManager {
   return { getGlobalSettings: () => settings } as unknown as SettingsManager;
