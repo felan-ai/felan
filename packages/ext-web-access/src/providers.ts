@@ -173,9 +173,10 @@ function isOfficialOpenAIModel(model: { provider: string; baseUrl?: string }): b
     const url = new URL(model.baseUrl);
     if (model.provider === 'openai') return url.protocol === 'https:' && url.hostname === 'api.openai.com';
     return model.provider === 'openai-codex'
-      && url.protocol === 'https:'
-      && url.hostname === 'chatgpt.com'
-      && url.pathname.startsWith('/backend-api/codex');
+      && url.origin === 'https://chatgpt.com'
+      && !url.username
+      && !url.password
+      && (url.pathname === '/backend-api' || url.pathname.startsWith('/backend-api/'));
   } catch {
     return false;
   }

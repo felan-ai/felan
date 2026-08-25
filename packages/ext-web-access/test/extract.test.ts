@@ -5,6 +5,10 @@ import { extractContent } from '../src/extract.js';
 vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
 }));
+vi.mock('undici', async (importOriginal) => ({
+  ...await importOriginal<typeof import('undici')>(),
+  fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
+}));
 import { extractGitHubRepository, parseGitHubUrl } from '../src/github.js';
 import { readResponseBytes } from '../src/http.js';
 

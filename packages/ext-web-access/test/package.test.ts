@@ -10,7 +10,7 @@ describe('@felan-ai/ext-web-access package boundary', () => {
     const notice = await readFile(join(packageRoot, 'NOTICE'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-web-access',
-      version: '0.4.0',
+      version: '0.4.1',
       license: 'MIT',
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
       peerDependencies: { '@felan-ai/agent-core': '^0.5.0' },

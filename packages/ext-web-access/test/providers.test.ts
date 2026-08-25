@@ -5,6 +5,10 @@ import { searchProviders, type ProviderEnvironment } from '../src/providers.js';
 vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
 }));
+vi.mock('undici', async (importOriginal) => ({
+  ...await importOriginal<typeof import('undici')>(),
+  fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
+}));
 
 describe('search providers and routing', () => {
   const saved = {
@@ -46,7 +50,7 @@ describe('search providers and routing', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('https://search.internal.example/search');
   });
 
-  it('reuses Pi OpenAI-Codex auth before config or environment credentials', async () => {
+  it('reuses Pi OpenAI-Codex auth in auto mode before config or environment credentials', async () => {
     const getApiKeyAndHeaders = vi.fn(async () => ({
       ok: true as const,
       apiKey: codexToken(),
@@ -64,11 +68,11 @@ describe('search providers and routing', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
     const env = environment({ openaiApiKey: '!should-not-run' }, {
-      getAll: () => [{ provider: 'openai-codex', id: 'gpt-5.6-terra', baseUrl: 'https://chatgpt.com/backend-api/codex' }],
+      getAll: () => [{ provider: 'openai-codex', id: 'gpt-5.6-terra', baseUrl: 'https://chatgpt.com/backend-api' }],
       hasConfiguredAuth: () => true,
       getApiKeyAndHeaders,
     });
-    const result = await searchProviders('query', 'openai', { numResults: 5 }, env);
+    const result = await searchProviders('query', 'auto', { numResults: 5 }, env);
 
     expect(result.responses[0]?.provider).toBe('openai');
     expect(getApiKeyAndHeaders).toHaveBeenCalledOnce();

@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { Agent } from 'undici';
 import { createPinnedLookup, fetchRemoteUrl, validateRemoteUrl, type SsrfSettings } from '../src/ssrf.js';
 
+const undiciFetch = vi.hoisted(() => vi.fn());
+vi.mock('undici', async (importOriginal) => ({
+  ...await importOriginal<typeof import('undici')>(),
+  fetch: undiciFetch,
+}));
+
 const settings: SsrfSettings = {
   allowRanges: [],
   domainPolicy: { allow: [], deny: [] },
@@ -46,6 +52,21 @@ describe('SSRF protection', () => {
     const lookup = createPinnedLookup('public.example', addresses);
     await expect(runLookup(lookup, 'public.example')).resolves.toEqual(addresses[0]);
     await expect(runLookup(lookup, 'other.example')).rejects.toThrow('hostname mismatch');
+  });
+
+  it('uses the package-matched Undici fetch with the pinned dispatcher', async () => {
+    const dispatcher = new Agent();
+    undiciFetch.mockResolvedValueOnce(new Response('ok'));
+
+    await fetchRemoteUrl('https://public.example/path', {}, settings, {
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      dispatcherFactory: () => dispatcher,
+    });
+
+    expect(undiciFetch).toHaveBeenCalledWith(
+      expect.objectContaining({ hostname: 'public.example' }),
+      expect.objectContaining({ dispatcher, redirect: 'manual' }),
+    );
   });
 
   it('permits only a narrow trusted CIDR exception', async () => {

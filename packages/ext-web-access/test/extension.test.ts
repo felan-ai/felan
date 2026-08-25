@@ -1,6 +1,11 @@
 import type { AgentRuntime, FelanExtensionAPI } from '@felan-ai/agent-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import webAccessExtension from '../src/index.js';
+
+vi.mock('undici', async (importOriginal) => ({
+  ...await importOriginal<typeof import('undici')>(),
+  fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
+}));
 import { IMAGE_WARNING } from '../src/boundary.js';
 
 vi.mock('node:dns/promises', () => ({

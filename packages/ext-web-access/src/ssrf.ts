@@ -1,6 +1,6 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import net from 'node:net';
-import { Agent, type Dispatcher } from 'undici';
+import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
 import type { WebAccessConfig } from './config.js';
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -127,7 +127,7 @@ export async function fetchRemoteUrl(
   settings: SsrfSettings,
   options: FetchOptions = {},
 ): Promise<Response> {
-  const fetchImpl = options.fetchImpl ?? (fetch as FetchImplementation);
+  const fetchImpl = options.fetchImpl ?? (undiciFetch as unknown as FetchImplementation);
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   let resolved = await resolveRemoteUrl(input, settings, options);
   let url = resolved.url;
