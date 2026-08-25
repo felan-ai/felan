@@ -12,7 +12,7 @@ class TestContainer {
 }
 
 describe('Felan update notification', () => {
-  it('uses Pi update styling with Felan instructions and no changelog', () => {
+  it('uses bordered update styling with Felan instructions and no changelog', () => {
     initTheme(undefined, false);
     const chatContainer = new TestContainer();
     const mode = {
@@ -41,11 +41,11 @@ describe('Felan update notification', () => {
     expect(Object.hasOwn(chatContainer, 'addChild')).toBe(false);
   });
 
-  it('falls back to an accurate warning when Pi internals are unavailable', () => {
+  it('falls back to an accurate warning when notification internals are unavailable', () => {
     const warnings: string[] = [];
     const mode = {
       showNewVersionNotification: () => {
-        throw new Error('unexpected Pi notification');
+        throw new Error('unexpected upstream notification');
       },
       showWarning: (warning: string) => warnings.push(warning),
     } as unknown as InteractiveMode;

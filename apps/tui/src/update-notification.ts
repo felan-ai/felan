@@ -25,21 +25,25 @@ export function showFelanUpdateNotification(mode: InteractiveMode, version: stri
 
   const ownAddChild = Object.getOwnPropertyDescriptor(container, 'addChild');
   const addChild = container.addChild;
-  // Pi does not expose a customizable update notification yet. Adapt the
-  // components it adds so Felan retains Pi's active theme and border styling.
+  // The upstream API does not expose a customizable update notification yet.
+  // Adapt its components so Felan retains the active theme and border styling.
   container.addChild = (component) => {
     const text = Reflect.get(component, 'text');
     if (typeof text === 'string') {
       if (text.includes('Changelog:')) return;
 
       const setText = Reflect.get(component, 'setText');
-      if (typeof setText === 'function' && text.includes('pi update')) {
-        const instruction = text
-          .replace(
-            `New version ${version} is available. Run `,
-            `New version ${version} is available. Exit all Felan sessions, then run `,
-          )
-          .replace('pi update', 'felan update');
+      const instructionPrefix = `New version ${version} is available. Run `;
+      const instructionStart = text.indexOf(instructionPrefix);
+      if (typeof setText === 'function' && instructionStart >= 0) {
+        const actionStart = instructionStart + instructionPrefix.length;
+        const styledAction = text.slice(actionStart).replace(
+          /(\x1b\[[0-9;]*m)[^\x1b]+(?=\x1b\[[0-9;]*m$)/u,
+          '$1felan update',
+        );
+        const instruction = text.slice(0, instructionStart)
+          + `New version ${version} is available. Exit all Felan sessions, then run `
+          + styledAction;
         setText.call(component as TextComponent, instruction);
       }
     }
