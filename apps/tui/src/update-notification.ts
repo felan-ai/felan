@@ -17,7 +17,9 @@ export function showFelanUpdateNotification(mode: InteractiveMode, version: stri
   const internals = mode as unknown as InteractiveModeNotificationInternals;
   const container = internals.chatContainer;
   if (!container) {
-    mode.showNewVersionNotification({ version });
+    mode.showWarning(
+      `Felan ${version} is available. Exit all Felan sessions, then run felan update.`,
+    );
     return;
   }
 

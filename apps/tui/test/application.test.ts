@@ -32,6 +32,7 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
     ...original,
     InteractiveMode: class {
       builtInHeader: unknown = undefined;
+      chatContainer = { addChild: (_component: unknown) => {} };
       defaultEditor = {
         onSubmit: undefined as ((text: string) => void) | undefined,
         addToHistory: vi.fn(),
