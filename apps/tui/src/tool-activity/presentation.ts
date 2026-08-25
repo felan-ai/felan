@@ -341,6 +341,8 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
     value = browserArgumentPreview(args);
   } else if (normalized.startsWith('mcp__')) {
     value = formatToolName(call.name);
+  } else if (normalized === 'apply_patch') {
+    value = patchPathPreview(firstString(args, ['input', 'patchText', 'patch']));
   } else if (['read', 'read_file', 'edit', 'write', 'view_image'].includes(normalized)) {
     value = firstString(args, ['path', 'file_path']);
   } else if (normalized === 'grep') {
@@ -377,6 +379,15 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
     value = firstString(args, ['description', 'query', 'path', 'name', 'id']);
   }
   return value ? truncate(oneLine(value), 88) : undefined;
+}
+
+function patchPathPreview(patch: string | undefined): string | undefined {
+  if (!patch) return undefined;
+  const paths = Array.from(
+    patch.matchAll(/^\*\*\* (?:(?:Add|Delete|Update) File|Move to): (.+)$/gmu),
+    (match) => match[1]!.trim(),
+  ).filter((path, index, all) => path.length > 0 && all.indexOf(path) === index);
+  return paths.length > 0 ? paths.join(', ') : undefined;
 }
 
 function isMemoryRecall(call: ToolActivityCall): boolean {

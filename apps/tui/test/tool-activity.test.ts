@@ -385,6 +385,30 @@ describe('tool activity rendering', () => {
     expect(output).not.toContain('59967');
   });
 
+  it('shows the files touched by apply_patch', () => {
+    const harness = activityHarness([
+      assistant([toolCall('patch-1', 'apply_patch', {
+        input: `*** Begin Patch
+*** Update File: src/a.ts
+*** Move to: src/renamed.ts
+@@
+-old
++new
+*** Delete File: src/b.ts
+*** Add File: src/b.ts
++content
+*** End Patch`,
+      })], 10),
+      toolResult('patch-1', 'apply_patch', 'Applied patch successfully', false, 20),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'patch-1', theme, false);
+    expect(output).toContain('Edited · src/a.ts, src/renamed.ts, src/b.ts');
+    expect(output).not.toContain('old');
+    expect(output).not.toContain('new');
+    expect(output).not.toContain('content');
+  });
+
   it('does not expose an unresolved write_stdin session ID', () => {
     const harness = activityHarness([
       assistant([toolCall('poll-1', 'write_stdin', { session_id: 59967 })], 10),
