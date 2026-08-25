@@ -1,7 +1,7 @@
 # @felan-ai/felan
 
 Local, account-free Felan terminal agent built on `@felan-ai/agent-core` and
-Pi's interactive TUI.
+Pi's interactive TUI and print modes.
 
 ```sh
 npx @felan-ai/felan
@@ -32,6 +32,8 @@ directory:
 ```sh
 felan "inspect this project"
 felan --continue
+felan --mode text "summarize the current work"
+felan --mode json --provider openai --model gpt-5.5 --thinking high "run the tests"
 ```
 
 ## CLI
@@ -39,6 +41,10 @@ felan --continue
 ```text
 felan [options] [message]
 
+--mode <text|json>  Run one headless session; JSON emits machine-readable JSONL
+--provider <name>   Select a headless model provider
+--model <name>      Select a headless model or provider/model reference
+--thinking <level>  Select headless thinking: off|minimal|low|medium|high|xhigh|max
 -c, --continue     Continue the most recent session for this directory
 -r, --resume       Pick a session to resume
 --session <id>     Resume a specific session
@@ -63,10 +69,13 @@ that launched Felan. Offline, failed, and malformed responses stay silent, and
 Felan never installs an update automatically. Set
 `FELAN_SKIP_VERSION_CHECK=1` to disable this startup request.
 
-Invocations that start or continue an agent session launch the interactive TUI.
-`felan update` and informational flags exit without starting a session. Internal
-headless modes used by subagents and extension adapters are not public CLI entry
-points.
+Invocations without `--mode` start the interactive TUI. `--mode text` runs one
+headless session and prints the final response; `--mode json` emits Pi-compatible
+JSONL session events. JSONL stdout is machine-readable, while diagnostics and
+failures go to stderr with a non-zero exit status. Both modes require a prompt,
+support `--continue` and `--session`, and accept `--provider`, `--model`, and
+`--thinking` for reproducible model selection. `--resume` remains interactive-only.
+Headless startup never runs dependency onboarding or the interactive update check.
 
 `felan --resume` opens a selection-only session picker. Press Tab to switch
 between the current folder and all local sessions, Ctrl+S to change sorting,

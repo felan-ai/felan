@@ -53,8 +53,10 @@ felan --diagnostics
 felan update
 ```
 
-Initial messages start the interactive TUI; they are not separate print or
-one-shot modes. A verified global npm installation also supports the finite
+Initial messages start the interactive TUI by default. Use `--mode text` for a
+one-shot final response or `--mode json` for Pi-compatible JSONL session events.
+Both modes support `--continue` and exact `--provider`, `--model`, and
+`--thinking` selection. A verified global npm installation also supports the finite
 `felan update` command. See [Getting started](docs/getting-started.md) for
 first-run setup and [Local CLI](docs/user-guide/local-cli.md) for all accepted
 commands, flags, and local state.

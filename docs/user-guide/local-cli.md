@@ -9,6 +9,10 @@ and TUI presentation.
 ```text
 felan [options] [message]
 
+--mode <text|json>  Run one headless session; JSON emits machine-readable JSONL
+--provider <name>   Select a headless model provider
+--model <name>      Select a headless model or provider/model reference
+--thinking <level>  Select headless thinking: off|minimal|low|medium|high|xhigh|max
 -c, --continue     Continue the most recent session for this directory
 -r, --resume       Pick a session to resume
 --session <id>     Resume a specific session
@@ -57,10 +61,24 @@ the running `felan` command. `npx`, local/source, pnpm, yarn, and bun
 installations are not changed; update those with their normal package-manager
 command instead. To send `update` as an initial prompt, use `felan -- update`.
 
-Invocations that start or continue an agent session launch the interactive TUI.
-`felan update` and informational flags exit without starting a session. Internal
-headless modes used by subagents and extension adapters are not public CLI entry
-points.
+Without `--mode`, invocations that start or continue an agent session launch the
+interactive TUI. `felan update` and informational flags exit without starting a
+session. `--mode text` and `--mode json` are one-shot headless modes and require
+an initial prompt:
+
+```sh
+felan --mode text "inspect this project and summarize the risks"
+felan --mode json --provider openai --model gpt-5.5 --thinking high "run the tests"
+felan --mode text --continue "continue the previous task"
+```
+
+Text mode prints the final assistant response. JSON mode emits the Pi-compatible
+session header and JSONL events, including assistant, tool, and usage events.
+Stdout contains only the requested response/event stream; diagnostics and
+failures go to stderr. Missing prompts, unavailable models, model errors, and
+extension failures return a non-zero status. `--resume` and UI-only commands are
+interactive-only. Headless startup does not open the TUI, run the update check,
+or wait for dependency onboarding.
 
 ## Diagnostics
 

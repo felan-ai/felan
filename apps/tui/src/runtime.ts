@@ -12,6 +12,7 @@ import {
   createAgentCoreSessionRuntimeFactory,
   createAgentSessionRuntime,
   type AgentSessionServices,
+  type CreateAgentSessionOptions,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionPackageImporter,
   type ExtensionConfigOverride,
@@ -85,6 +86,8 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly memoryCoordinator?: LocalMemoryCoordinator;
   readonly onSessionModel?: (model: AgentSession['model']) => void;
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
+  readonly model?: CreateAgentSessionOptions['model'];
+  readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
 }
 
 export interface CreateLocalFelanRuntimeOptions {
@@ -100,6 +103,8 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly subagentSettings?: LocalSubagentSettings;
   readonly memoryCoordinator?: LocalMemoryCoordinator;
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
+  readonly model?: CreateAgentSessionOptions['model'];
+  readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
 }
 
 export function getLocalAgentDir(): string {
@@ -248,6 +253,8 @@ export function createLocalSessionRuntimeFactory(
       modelRuntime: options.modelRuntime,
       settingsManager,
       skillPaths,
+      ...(options.model === undefined ? {} : { model: options.model }),
+      ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
       inlineExtensions: [
         dependencyExtension,
         createToolActivityExtension(toolActivityState),
@@ -327,6 +334,8 @@ export async function createLocalFelanRuntime(
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.subagentSettings === undefined ? {} : { subagentSettings: options.subagentSettings }),
     ...(options.extensionConfigOverrides === undefined ? {} : { extensionConfigOverrides: options.extensionConfigOverrides }),
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
     memoryCoordinator,
     onSessionModel: (model) => memoryCoordinator.setSelectedModel(model),
   });

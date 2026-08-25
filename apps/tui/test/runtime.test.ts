@@ -7,6 +7,7 @@ import {
   HostAgentRuntime,
   SessionManager,
   createAgentSessionRuntime,
+  getSupportedThinkingLevels,
 } from '@felan-ai/agent-core';
 import { InteractiveMode } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -142,6 +143,35 @@ describe('local Agent Core lifecycle', () => {
 
     expect(modelScope.resolutions).toBe(1);
 
+    await runtime.dispose();
+  });
+
+  it('applies explicit model and thinking selection when resuming a session', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const model = modelRuntime.getModels().find((candidate) => (
+      getSupportedThinkingLevels(candidate).includes('high')
+    ));
+    expect(model).toBeDefined();
+    const sessionManager = SessionManager.inMemory(cwd);
+    sessionManager.appendMessage({ role: 'user', content: 'previous prompt', timestamp: Date.now() });
+    sessionManager.appendMessage(completedAssistantMessage('previous response'));
+
+    const runtime = await createLocalFelanRuntime({
+      cwd,
+      agentDir,
+      homeDir: root,
+      modelRuntime,
+      sessionManager,
+      model: model!,
+      thinkingLevel: 'high',
+    });
+
+    expect(runtime.session.model).toBe(model);
+    expect(runtime.session.thinkingLevel).toBe('high');
     await runtime.dispose();
   });
 

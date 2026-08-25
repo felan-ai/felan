@@ -61,8 +61,18 @@ line:
 felan "inspect this project and explain how to run its tests"
 ```
 
-Supplying a message starts the interactive TUI with that message; it is not a
-separate one-shot or print mode.
+Without `--mode`, supplying a message starts the interactive TUI with that
+message. For automation, use the one-shot text or JSONL modes:
+
+```sh
+felan --mode text "inspect this project and explain how to run its tests"
+felan --mode json --provider openai --model gpt-5.5 --thinking high "run the tests"
+```
+
+Text mode prints the final response. JSON mode emits Pi-compatible JSONL events
+on stdout and keeps diagnostics on stderr. Both modes require a prompt and can
+continue the most recent session with `--continue`; `--resume` remains an
+interactive picker.
 
 For implementation work, Felan can split work among asynchronous subagents,
 track it in a shared dependency graph, and use Prewalk to hand the same session

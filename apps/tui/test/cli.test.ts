@@ -236,4 +236,70 @@ describe('felan CLI', () => {
       extensionId: 'powerline', values: { lines: [{ segments: { status: { enabled: true } } }] },
     })]);
   });
+
+  it('routes text and JSON modes to the headless launcher with model selection', async () => {
+    const launches: unknown[] = [];
+    const exitCode = await runCli([
+      '--mode', 'json',
+      '--provider', 'openai',
+      '--model', 'gpt-test',
+      '--thinking', 'high',
+      '--continue',
+      'inspect', 'this',
+    ], {
+      launchHeadless: async (options) => {
+        launches.push(options);
+        return 7;
+      },
+    });
+
+    expect(exitCode).toBe(7);
+    expect(launches).toEqual([expect.objectContaining({
+      mode: 'json',
+      provider: 'openai',
+      model: 'gpt-test',
+      thinkingLevel: 'high',
+      continueRecent: true,
+      initialMessage: 'inspect this',
+    })]);
+  });
+
+  it('requires a prompt for headless mode', async () => {
+    const errors: string[] = [];
+    let launched = false;
+
+    const exitCode = await runCli(['--mode', 'text'], {
+      writeError: (line) => errors.push(line),
+      launchHeadless: async () => {
+        launched = true;
+        return 0;
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors).toEqual(['--mode text requires an initial prompt']);
+    expect(launched).toBe(false);
+  });
+
+  it('validates headless values and rejects the interactive session picker', async () => {
+    const errors: string[] = [];
+    expect(await runCli(['--mode', 'yaml', 'prompt'], {
+      writeError: (line) => errors.push(line),
+    })).toBe(1);
+    expect(await runCli(['--mode', 'text', '--thinking', 'invalid', 'prompt'], {
+      writeError: (line) => errors.push(line),
+    })).toBe(1);
+    expect(await runCli(['--mode', 'text', '--resume', 'prompt'], {
+      writeError: (line) => errors.push(line),
+      pickSession: async () => {
+        throw new Error('picker should not run');
+      },
+    })).toBe(1);
+
+    expect(errors).toEqual([
+      '--mode requires text or json',
+      'Invalid thinking level "invalid". Valid values: off|minimal|low|medium|high|xhigh|max',
+      '--resume is interactive-only; use --continue or --session in headless mode',
+    ]);
+  });
 });

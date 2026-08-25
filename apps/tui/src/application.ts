@@ -1,7 +1,15 @@
 import { join } from 'node:path';
-import { InteractiveMode } from '@earendil-works/pi-coding-agent';
+import {
+  InteractiveMode,
+  resolveCliModel,
+  runPrintMode,
+  type PrintModeOptions,
+} from '@earendil-works/pi-coding-agent';
+import type { CreateAgentSessionOptions } from '@felan-ai/agent-core';
 import {
   createLocalFelanRuntime,
+  createLocalModelRuntime,
+  getLocalAgentDir,
   type CreateLocalFelanRuntimeOptions,
 } from './runtime.js';
 import { installFelanStartupHeader } from './startup-header.js';
@@ -14,6 +22,15 @@ import { loadLocalExtensionConfigDefinitions } from './extensions.js';
 export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly initialMessage?: string;
   readonly verbose?: boolean;
+}
+
+export interface RunLocalFelanHeadlessOptions extends Omit<CreateLocalFelanRuntimeOptions, 'model'> {
+  readonly mode: PrintModeOptions['mode'];
+  readonly initialMessage: string;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
+  readonly writeError?: (line: string) => void;
 }
 
 export function brandResumeHint(output: string): string {
@@ -42,6 +59,85 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
       continueRecent: false,
     };
   }
+}
+
+export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOptions): Promise<number> {
+  const writeError = options.writeError ?? ((line: string) => console.error(line));
+  if (options.provider !== undefined && options.model === undefined) {
+    writeError('--provider requires --model in headless mode');
+    return 1;
+  }
+  let runtime: Awaited<ReturnType<typeof createLocalFelanRuntime>> | undefined;
+  let printModeOwnsRuntime = false;
+  const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const previousPiSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+  const previousPiTelemetry = process.env.PI_TELEMETRY;
+  try {
+    const modelRuntime = options.modelRuntime ?? await createLocalModelRuntimeForHeadless(options);
+    const resolved = options.model === undefined
+      ? { model: undefined, warning: undefined, error: undefined }
+      : resolveCliModel({
+        ...(options.provider === undefined ? {} : { cliProvider: options.provider }),
+        cliModel: options.model,
+        ...(options.thinkingLevel === undefined ? {} : { cliThinking: options.thinkingLevel }),
+        modelRuntime,
+      });
+    if (resolved.warning) writeError(`Warning: ${resolved.warning}`);
+    if (resolved.error) {
+      writeError(resolved.error);
+      return 1;
+    }
+    const {
+      mode: _mode,
+      initialMessage: _initialMessage,
+      provider: _provider,
+      model: _model,
+      writeError: _writeError,
+      ...runtimeOptions
+    } = options;
+    runtime = await createLocalFelanRuntime({
+      ...runtimeOptions,
+      modelRuntime,
+      ...(resolved.model === undefined ? {} : { model: resolved.model }),
+      ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
+    });
+    process.env.PI_CODING_AGENT_DIR = runtime.services.agentDir;
+    process.env.PI_SKIP_VERSION_CHECK = '1';
+    process.env.PI_TELEMETRY = '0';
+    if (runtime.diagnostics.some((diagnostic) => diagnostic.type === 'error')) {
+      for (const diagnostic of runtime.diagnostics) {
+        if (diagnostic.type === 'error') writeError(`Error: ${diagnostic.message}`);
+      }
+      return 1;
+    }
+    for (const diagnostic of runtime.diagnostics) {
+      if (diagnostic.type !== 'info') writeError(`${diagnostic.type === 'warning' ? 'Warning' : 'Error'}: ${diagnostic.message}`);
+    }
+    printModeOwnsRuntime = true;
+    return await runPrintMode(runtime, {
+      mode: options.mode,
+      initialMessage: options.initialMessage,
+    });
+  } catch (error) {
+    writeError(error instanceof Error ? error.message : String(error));
+    return 1;
+  } finally {
+    if (runtime !== undefined && !printModeOwnsRuntime) await runtime.dispose().catch((error) => {
+      writeError(error instanceof Error ? error.message : String(error));
+    });
+    if (previousPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+    if (previousPiSkipVersionCheck === undefined) delete process.env.PI_SKIP_VERSION_CHECK;
+    else process.env.PI_SKIP_VERSION_CHECK = previousPiSkipVersionCheck;
+    if (previousPiTelemetry === undefined) delete process.env.PI_TELEMETRY;
+    else process.env.PI_TELEMETRY = previousPiTelemetry;
+  }
+}
+
+async function createLocalModelRuntimeForHeadless(
+  options: RunLocalFelanHeadlessOptions,
+) {
+  return createLocalModelRuntime(options.agentDir ?? getLocalAgentDir());
 }
 
 async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<string | undefined> {

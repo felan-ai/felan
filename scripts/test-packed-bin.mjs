@@ -428,9 +428,16 @@ try {
   if (
     !help.stdout.includes('Usage: felan [options] [message]')
     || !help.stdout.includes('-r, --resume')
+    || !help.stdout.includes('--mode <text|json>')
     || !help.stdout.includes('update')
   ) {
     throw new Error('Packed felan --help did not start the local TUI CLI');
+  }
+  const headless = runFelanAllowFailure([
+    '--mode', 'text', '--provider', 'missing-provider', '--model', 'missing-model', 'packed smoke prompt',
+  ], cleanEnvironment);
+  if (headless.status === 0 || headless.stdout.trim() !== '' || !headless.stderr.includes('Unknown provider')) {
+    throw new Error('Packed headless Felan invocation did not fail cleanly without credentials');
   }
   const update = runFelanAllowFailure(['update'], cleanEnvironment);
   if (update.status === 0 || !update.stderr.includes('only supports a verified global npm installation')) {

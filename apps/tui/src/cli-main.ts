@@ -1,5 +1,5 @@
 import type { SessionManager } from '@earendil-works/pi-coding-agent';
-import type { RunLocalFelanOptions } from './application.js';
+import type { RunLocalFelanHeadlessOptions, RunLocalFelanOptions } from './application.js';
 import {
   getExtensionConfigCliOptions,
   parseExtensionConfigCliValue,
@@ -15,6 +15,7 @@ export interface CliDependencies {
   readonly writeOutput?: (line: string) => void;
   readonly writeError?: (line: string) => void;
   readonly launch?: (options: RunLocalFelanOptions) => Promise<void>;
+  readonly launchHeadless?: (options: RunLocalFelanHeadlessOptions) => Promise<number>;
   readonly pickSession?: () => Promise<SessionManager | undefined>;
   readonly openSession?: (sessionId: string, sessionDir?: string) => Promise<SessionManager>;
   readonly update?: () => Promise<number>;
@@ -23,6 +24,10 @@ export interface CliDependencies {
 const help = (configOptions: readonly ReturnType<typeof getExtensionConfigCliOptions>[number][] = []) => `Usage: felan [options] [message]
 
 Options:
+  --mode <text|json>  Run one headless session (JSON emits machine-readable JSONL)
+  --provider <name>   Select a headless model provider
+  --model <name>      Select a headless model or provider/model reference
+  --thinking <level>  Select headless thinking: off|minimal|low|medium|high|xhigh|max
   -c, --continue     Continue the most recent session for this directory
   -r, --resume       Pick a session to resume
   --session <id>     Resume a specific session
@@ -50,6 +55,10 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   let sessionId: string | undefined;
   let sessionDir: string | undefined;
   let verbose = false;
+  let mode: 'text' | 'json' | undefined;
+  let provider: string | undefined;
+  let model: string | undefined;
+  let thinkingLevel: RunLocalFelanHeadlessOptions['thinkingLevel'];
   const messageParts: string[] = [];
   let positionalOnly = false;
   const cliOverrides = new Map<string, Record<string, unknown>>();
@@ -68,6 +77,25 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       positionalOnly = true;
     } else if (argument === '-c' || argument === '--continue') {
       continueRecent = true;
+    } else if (argument === '--mode') {
+      const value = args[index + 1];
+      if (value !== 'text' && value !== 'json') {
+        writeError('--mode requires text or json');
+        return 1;
+      }
+      mode = value;
+      index += 1;
+    } else if (argument === '--provider' || argument === '--model' || argument === '--thinking') {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('-')) {
+        writeError(`${argument} requires a value`);
+        return 1;
+      }
+      if (argument === '--provider') provider = value;
+      else if (argument === '--model') model = value;
+      else thinkingLevel = parseThinkingLevel(value, writeError);
+      if (argument === '--thinking' && thinkingLevel === undefined) return 1;
+      index += 1;
     } else if (argument === '-r' || argument === '--resume') {
       resume = true;
     } else if (argument === '--session') {
@@ -164,6 +192,23 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     writeError('--session-dir requires --session');
     return 1;
   }
+  if (mode !== undefined) {
+    if (provider !== undefined && model === undefined) {
+      writeError('--provider requires --model in headless mode');
+      return 1;
+    }
+    if (resume) {
+      writeError('--resume is interactive-only; use --continue or --session in headless mode');
+      return 1;
+    }
+    if (messageParts.length === 0) {
+      writeError(`--mode ${mode} requires an initial prompt`);
+      return 1;
+    }
+  } else if (provider !== undefined || model !== undefined || thinkingLevel !== undefined) {
+    writeError('--provider, --model, and --thinking require --mode text or --mode json');
+    return 1;
+  }
 
   let sessionManager: SessionManager | undefined;
   if (resume) {
@@ -175,6 +220,29 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     const openSession = dependencies.openSession
       ?? (await import('./resume.js')).openLocalSessionManager;
     sessionManager = await openSession(sessionId, sessionDir);
+  }
+
+  if (mode !== undefined) {
+    const launchHeadless = dependencies.launchHeadless ?? (async (options: RunLocalFelanHeadlessOptions) => {
+      const { runLocalFelanHeadless } = await import('./application.js');
+      return runLocalFelanHeadless(options);
+    });
+    return launchHeadless({
+      mode,
+      initialMessage: messageParts.join(' '),
+      ...(provider === undefined ? {} : { provider }),
+      ...(model === undefined ? {} : { model }),
+      ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+      continueRecent,
+      ...(sessionManager === undefined ? {} : { sessionManager }),
+      ...(cliOverrides.size === 0 ? {} : {
+        extensionConfigOverrides: [...cliOverrides].map(([extensionId, values]) => ({
+          extensionId,
+          values,
+          source: 'CLI',
+        })) satisfies ExtensionConfigOverride[],
+      }),
+    });
   }
 
   const launch = dependencies.launch ?? (async (options: RunLocalFelanOptions) => {
@@ -195,4 +263,19 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     }),
   });
   return 0;
+}
+
+const THINKING_LEVELS = new Set<NonNullable<RunLocalFelanHeadlessOptions['thinkingLevel']>>([
+  'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
+]);
+
+function parseThinkingLevel(
+  value: string,
+  writeError: (line: string) => void,
+): NonNullable<RunLocalFelanHeadlessOptions['thinkingLevel']> | undefined {
+  if (THINKING_LEVELS.has(value as NonNullable<RunLocalFelanHeadlessOptions['thinkingLevel']>)) {
+    return value as NonNullable<RunLocalFelanHeadlessOptions['thinkingLevel']>;
+  }
+  writeError(`Invalid thinking level "${value}". Valid values: ${[...THINKING_LEVELS].join('|')}`);
+  return undefined;
 }
