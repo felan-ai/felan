@@ -61,6 +61,17 @@ the running `felan` command. `npx`, local/source, pnpm, yarn, and bun
 installations are not changed; update those with their normal package-manager
 command instead. To send `update` as an initial prompt, use `felan -- update`.
 
+On Windows, exit every running Felan process before updating. npm replaces the
+installed package directory, and another Felan process, antivirus scanner, or
+file indexer holding a file or the directory can cause an `EBUSY` rename error.
+The updater runs npm from outside that directory; if the error persists, retry
+manually from another directory:
+
+```bat
+cd /d %TEMP%
+npm install --global @felan-ai/felan
+```
+
 Without `--mode`, invocations that start or continue an agent session launch the
 interactive TUI. `felan update` and informational flags exit without starting a
 session. `--mode text` and `--mode json` are one-shot headless modes and require

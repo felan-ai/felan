@@ -145,12 +145,13 @@ describe('Felan update', () => {
   it('installs the exact newer stable version and verifies the package afterward', async () => {
     const fixture = await packageFixture('0.12.11');
     const calls: string[][] = [];
+    const workingDirectories: string[] = [];
     const output: string[] = [];
 
     const exitCode = await runFelanUpdate({
       packageDirectory: fixture.packageDirectory,
       currentVersion: '0.12.11',
-      runNpm: npmRunner(fixture.globalRoot, calls, '0.12.12', true),
+      runNpm: npmRunner(fixture.globalRoot, calls, '0.12.12', true, workingDirectories),
       writeOutput: (line) => output.push(line),
     });
 
@@ -159,6 +160,11 @@ describe('Felan update', () => {
       ['root', '--global'],
       ['view', '@felan-ai/felan@latest', 'version'],
       ['install', '--global', '@felan-ai/felan@0.12.12'],
+    ]);
+    expect(workingDirectories).toEqual([
+      fixture.packageDirectory,
+      fixture.globalRoot,
+      fixture.globalRoot,
     ]);
     expect(output).toEqual([
       'Updated Felan from 0.12.11 to 0.12.12. Restart Felan to use the new version.',
@@ -267,6 +273,27 @@ describe('Felan update', () => {
     })).resolves.toBe(1);
     expect(errors).toEqual(['Felan update could not verify version 0.12.12. Update Felan manually.']);
   });
+
+  it('adds recovery guidance when Windows cannot rename the installed package', async () => {
+    const fixture = await packageFixture('0.12.11');
+    const errors: string[] = [];
+
+    await expect(runFelanUpdate({
+      packageDirectory: fixture.packageDirectory,
+      currentVersion: '0.12.11',
+      runNpm: async (args) => args[0] === 'root'
+        ? npmSuccess(fixture.globalRoot)
+        : args[0] === 'view'
+          ? npmSuccess('0.12.12')
+          : npmFailure('EBUSY: resource busy or locked', -4082),
+      writeError: (line) => errors.push(line),
+    })).resolves.toBe(1);
+
+    expect(errors).toEqual([
+      'Felan update failed: EBUSY: resource busy or locked '
+        + 'Exit all Felan processes and retry from another directory, such as `%TEMP%`.',
+    ]);
+  });
 });
 
 interface PackageFixture {
@@ -287,9 +314,11 @@ function npmRunner(
   calls: string[][],
   latestVersion: string,
   updateManifest = false,
+  workingDirectories?: string[],
 ): (args: readonly string[], cwd: string) => Promise<NpmResult> {
-  return async (args) => {
+  return async (args, cwd) => {
     calls.push([...args]);
+    workingDirectories?.push(cwd);
     if (args[0] === 'root') return npmSuccess(globalRoot);
     if (args[0] === 'view') return npmSuccess(latestVersion);
     if (args[0] === 'install' && updateManifest) {
@@ -306,8 +335,8 @@ function npmSuccess(stdout: string): NpmResult {
   return { status: 0, stdout, stderr: '' };
 }
 
-function npmFailure(stderr: string): NpmResult {
-  return { status: 1, stdout: '', stderr };
+function npmFailure(stderr: string, status = 1): NpmResult {
+  return { status, stdout: '', stderr };
 }
 
 function jsonResponse(value: unknown): Response {
