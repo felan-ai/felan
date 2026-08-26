@@ -130,6 +130,9 @@ The `extensionConfig.prewalk.entryApproval` setting accepts `ask`, `allow`, or
 `--prewalk-entry-approval` option and in `/settings`. This policy gates only
 model-called `enter_prewalk`, not explicit `/prewalk`.
 
+If a persisted value is no longer valid, the local host warns at startup and
+uses the default `ask` without rewriting `settings.json`.
+
 The `extensionConfig.prewalk.planReview` setting accepts `inherit`, `ask`, or
 `skip`. The default `inherit` asks for plan review when `entryApproval` is
 `ask`, and skips review otherwise. Explicit `ask` applies to every entry path,

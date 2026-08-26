@@ -2,8 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
-import { SettingsManager } from '@felan-ai/agent-core';
-import type { ExtensionConfigOverride } from '@felan-ai/agent-core';
+import {
+  SettingsManager,
+  resolveExtensionConfigs,
+  validateExtensionConfigValue,
+  type ExtensionConfigDefinition,
+  type ExtensionConfigOverride,
+  type ExtensionConfigValue,
+} from '@felan-ai/agent-core';
 import {
   parseOutputStyle,
   type OutputStyle,
@@ -24,12 +30,56 @@ export interface FelanSettings {
   readonly extensionConfig?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 }
 
-export function getExtensionConfigOverrides(settings: FelanSettings): readonly ExtensionConfigOverride[] {
-  return Object.entries(settings.extensionConfig ?? {}).map(([extensionId, values]) => ({
-    extensionId,
-    values,
-    source: `settings.json.extensionConfig.${extensionId}`,
-  }));
+export interface ResolvedExtensionConfigSettings {
+  readonly overrides: readonly ExtensionConfigOverride[];
+  readonly configs: ReadonlyMap<string, Readonly<Record<string, ExtensionConfigValue>>>;
+  readonly warnings: readonly string[];
+}
+
+export function resolveExtensionConfigSettings(
+  settings: FelanSettings,
+  definitions: readonly ExtensionConfigDefinition[],
+): ResolvedExtensionConfigSettings {
+  const configuredExtensions: unknown = settings.extensionConfig;
+  if (configuredExtensions === undefined) {
+    return { overrides: [], configs: resolveExtensionConfigs(definitions), warnings: [] };
+  }
+  if (!isRecord(configuredExtensions)) {
+    return {
+      overrides: [],
+      configs: resolveExtensionConfigs(definitions),
+      warnings: ['settings.json.extensionConfig must be an object; using extension defaults.'],
+    };
+  }
+
+  const overrides: ExtensionConfigOverride[] = [];
+  const warnings: string[] = [];
+  for (const definition of definitions) {
+    const configured = configuredExtensions[definition.id];
+    if (configured === undefined) continue;
+    const source = `settings.json.extensionConfig.${definition.id}`;
+    if (!isRecord(configured)) {
+      warnings.push(`${source} must be an object; using extension defaults.`);
+      continue;
+    }
+
+    const values: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(configured)) {
+      if (!Object.hasOwn(definition.fields, field)) {
+        warnings.push(`${source} contains unknown field: ${definition.id}.${field}; ignoring it.`);
+        continue;
+      }
+      try {
+        values[field] = validateExtensionConfigValue(definition, field, value, `${source}.${field}`);
+      } catch (error) {
+        warnings.push(`${errorMessage(error)}; using the default value.`);
+      }
+    }
+    if (Object.keys(values).length > 0) {
+      overrides.push({ extensionId: definition.id, values, source });
+    }
+  }
+  return { overrides, configs: resolveExtensionConfigs(definitions, overrides), warnings };
 }
 
 export async function setExtensionConfigValue(
@@ -58,11 +108,18 @@ export interface FelanTuiSettings {
 export type LocalToolDisplayMode = 'grouped' | 'full';
 export type LocalDependencyOnboardingChoice = 'continue';
 
-export function getLocalOutputStyle(settingsManager: SettingsManager): OutputStyle {
+export function getLocalOutputStyle(
+  settingsManager: SettingsManager,
+  resolvedConfig?: Readonly<Record<string, ExtensionConfigValue>> | null,
+): OutputStyle {
   const rawSettings = settingsManager.getGlobalSettings() as Record<string, unknown>;
-  const extensionConfig = rawSettings.extensionConfig;
-  if (isRecord(extensionConfig) && isRecord(extensionConfig.outputStyle) && extensionConfig.outputStyle.style !== undefined) {
-    return parseOutputStyle(extensionConfig.outputStyle.style);
+  if (resolvedConfig !== undefined) {
+    if (resolvedConfig?.style !== undefined) return parseOutputStyle(resolvedConfig.style);
+  } else {
+    const extensionConfig = rawSettings.extensionConfig;
+    if (isRecord(extensionConfig) && isRecord(extensionConfig.outputStyle) && extensionConfig.outputStyle.style !== undefined) {
+      return parseOutputStyle(extensionConfig.outputStyle.style);
+    }
   }
   return parseOutputStyle(rawSettings.outputStyle);
 }
@@ -255,4 +312,8 @@ function isAlreadyExistsFile(error: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

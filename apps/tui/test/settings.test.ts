@@ -1,7 +1,12 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ExtensionConfigDefinition, SettingsManager } from '@felan-ai/agent-core';
+import {
+  configField,
+  defineExtensionConfig,
+  type ExtensionConfigDefinition,
+  type SettingsManager,
+} from '@felan-ai/agent-core';
 import type { Component, Focusable } from '@earendil-works/pi-tui';
 import { initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -15,7 +20,7 @@ import {
   isBuiltinExtensionEnabled,
   setBuiltinExtensionEnabled,
   setDependencyOnboardingChoice,
-  getExtensionConfigOverrides,
+  resolveExtensionConfigSettings,
   setExtensionConfigValue,
   setLocalMemoryProcessingEnabled,
 } from '../src/settings.js';
@@ -164,11 +169,64 @@ describe('local settings', () => {
 
     const settings = getFelanSettings(createLocalSettingsManager(root, agentDir));
     expect(settings.extensionConfig?.prewalk?.entryApproval).toBe('allow');
-    expect(getExtensionConfigOverrides(settings)).toEqual([{
+    const config = defineExtensionConfig({
+      id: 'prewalk',
+      title: 'Prewalk',
+      fields: {
+        entryApproval: configField.enum(['ask', 'allow', 'deny'], {
+          default: 'ask',
+          description: 'Approval policy for model-entered Prewalk',
+        }),
+      },
+    });
+    const resolved = resolveExtensionConfigSettings(settings, [config]);
+    expect(resolved.overrides).toEqual([{
       extensionId: 'prewalk',
       values: { entryApproval: 'allow' },
       source: 'settings.json.extensionConfig.prewalk',
     }]);
+    expect(resolved.configs.get('prewalk')).toEqual({ entryApproval: 'allow' });
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it('warns and uses defaults for invalid persisted extension configuration', () => {
+    const config = defineExtensionConfig({
+      id: 'prewalk',
+      title: 'Prewalk',
+      fields: {
+        entryApproval: configField.enum(['ask', 'allow', 'deny'], {
+          default: 'ask',
+          description: 'Approval policy for model-entered Prewalk',
+        }),
+        restorePlanner: configField.boolean({
+          default: true,
+          description: 'Restore the planner after implementation',
+        }),
+      },
+    });
+    const resolved = resolveExtensionConfigSettings({
+      extensionConfig: {
+        prewalk: {
+          entryApproval: 'always',
+          restorePlanner: false,
+          removedField: true,
+        },
+      },
+    }, [config]);
+
+    expect(resolved.overrides).toEqual([{
+      extensionId: 'prewalk',
+      values: { restorePlanner: false },
+      source: 'settings.json.extensionConfig.prewalk',
+    }]);
+    expect(resolved.configs.get('prewalk')).toEqual({
+      entryApproval: 'ask',
+      restorePlanner: false,
+    });
+    expect(resolved.warnings).toEqual([
+      'settings.json.extensionConfig.prewalk.entryApproval must be one of: ask, allow, deny; using the default value.',
+      'settings.json.extensionConfig.prewalk contains unknown field: prewalk.removedField; ignoring it.',
+    ]);
   });
 
   it('redacts sensitive extension values in settings presentation', async () => {

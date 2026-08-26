@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -290,6 +290,25 @@ describe('interactive application', () => {
 
     expect(interactive.modeOptions).toEqual([{ verbose: true }]);
     expect(interactive.headerAdapters).toEqual([true]);
+  });
+
+  it('forwards non-info runtime diagnostics as visible startup notices', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      extensionConfig: { prewalk: { entryApproval: 'always' } },
+    }));
+
+    await runLocalFelan({ cwd, agentDir });
+
+    expect(interactive.modeOptions).toEqual([{
+      startupDiagnostics: [{
+        type: 'warning',
+        message: 'settings.json.extensionConfig.prewalk.entryApproval must be one of: ask, allow, deny; using the default value.',
+      }],
+    }]);
   });
 
   it('disposes the runtime when InteractiveMode.run fails', async () => {

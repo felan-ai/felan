@@ -135,6 +135,12 @@ The precedence is defaults, then `settings.json`, then CLI invocation values.
 Agent Core consumers can supply a final programmatic override with
 `configureExtension()` and `extensionConfigOverrides`.
 
+Invalid persisted extension fields do not block local startup. Felan reports a
+warning, ignores each invalid field, and uses that field's declared default;
+other valid fields in the same extension remain active. Invalid CLI and
+programmatic overrides remain errors. Felan does not rewrite invalid persisted
+values automatically.
+
 ### Output style
 
 The `extensionConfig.outputStyle.style` setting accepts `concise` or `explanatory`.
@@ -142,10 +148,9 @@ The `extensionConfig.outputStyle.style` setting accepts `concise` or `explanator
 built-in instructions as a bounded `## Output Style` section for root and child
 sessions; it does not load arbitrary prompt text or ambient files.
 
-Invalid values stop session construction with a settings error. The local host
-captures the selection when it creates a session runtime, so restart Felan
-after changing it. Set `builtinExtensions.outputStyle` to `false` to disable
-the extension.
+The local host captures the selection when it creates a session runtime, so
+restart Felan after changing it. Set `builtinExtensions.outputStyle` to `false`
+to disable the extension.
 
 ### Codex tools
 

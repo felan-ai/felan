@@ -178,9 +178,11 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
   }) as typeof process.stdout.write;
 
   try {
+    const startupDiagnostics = runtime.diagnostics.filter(({ type }) => type !== 'info');
     const mode = new InteractiveMode(createToolActivityRuntimeView(runtime), {
       ...(options.initialMessage === undefined ? {} : { initialMessage: options.initialMessage }),
       ...(options.verbose === undefined ? {} : { verbose: options.verbose }),
+      ...(startupDiagnostics.length === 0 ? {} : { startupDiagnostics }),
     });
     installFelanSettingsCommand(mode, {
       agentDir: runtime.services.agentDir,

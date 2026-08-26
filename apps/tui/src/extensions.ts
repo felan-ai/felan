@@ -57,10 +57,11 @@ export const localExtensionPackages = Object.values(builtinExtensionPackages);
 
 export async function loadLocalExtensionConfigDefinitions(
   packages: readonly string[] = localExtensionPackages,
+  importExtension: ExtensionPackageImporter = importLocalExtension,
 ): Promise<readonly ExtensionConfigDefinition[]> {
   const definitions: ExtensionConfigDefinition[] = [];
   for (const packageName of packages) {
-    const imported = await importLocalExtension(packageName);
+    const imported = await importExtension(packageName);
     const extension = (typeof imported === 'object' && imported !== null)
       ? Reflect.get(imported, 'default')
       : undefined;

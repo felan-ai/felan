@@ -30,6 +30,7 @@ import {
 import {
   createLocalExtensionImporter,
   importLocalExtension,
+  loadLocalExtensionConfigDefinitions,
   resolveBuiltinExtensionPackages,
 } from './extensions.js';
 import {
@@ -39,7 +40,7 @@ import {
   getLocalOutputStyle,
   getLocalToolDisplayMode,
   isBuiltinExtensionEnabled,
-  getExtensionConfigOverrides,
+  resolveExtensionConfigSettings,
 } from './settings.js';
 import { loadLocalAppendSystemPrompt } from './system-prompt.js';
 import {
@@ -129,6 +130,7 @@ export function createLocalSessionRuntimeFactory(
     modelScope: Awaited<ReturnType<typeof resolveModelScopeWithDiagnostics>>;
     shutdownState: LocalSubagentShutdownState;
     toolActivityState: ToolActivityState;
+    extensionConfigWarnings: readonly string[];
   }>();
   const createCoreRuntime = createAgentCoreSessionRuntimeFactory(async ({ cwd, sessionManager }) => {
     const runtimeRequest = createLocalAgentRuntimeFactoryRequest(
@@ -142,11 +144,21 @@ export function createLocalSessionRuntimeFactory(
     ]);
     const settingsManager = createLocalSettingsManager(cwd, options.agentDir);
     const felanSettings = getFelanSettings(settingsManager);
+    const extensionPackages = options.extensionPackages
+      ?? resolveBuiltinExtensionPackages(felanSettings.builtinExtensions);
+    const importExtension = options.importExtension ?? importLocalExtension;
+    const extensionConfigSettings = resolveExtensionConfigSettings(
+      felanSettings,
+      await loadLocalExtensionConfigDefinitions(extensionPackages, importExtension),
+    );
     const extensionConfigOverrides = [
-      ...getExtensionConfigOverrides(felanSettings),
+      ...extensionConfigSettings.overrides,
       ...(options.extensionConfigOverrides ?? []),
     ];
-    const outputStyle = getLocalOutputStyle(settingsManager);
+    const outputStyle = getLocalOutputStyle(
+      settingsManager,
+      extensionConfigSettings.configs.get('outputStyle') ?? null,
+    );
     const toolActivityState = new ToolActivityState(getLocalToolDisplayMode(settingsManager));
     const reloadSettings = settingsManager.reload.bind(settingsManager);
     settingsManager.reload = async () => {
@@ -157,9 +169,6 @@ export function createLocalSessionRuntimeFactory(
     const modelScope = modelPatterns && modelPatterns.length > 0
       ? await resolveModelScopeWithDiagnostics(modelPatterns, options.modelRuntime)
       : { scopedModels: [], diagnostics: [] };
-    const extensionPackages = options.extensionPackages
-      ?? resolveBuiltinExtensionPackages(felanSettings.builtinExtensions);
-    const importExtension = options.importExtension ?? importLocalExtension;
     const memoryHost = options.memoryCoordinator?.createSessionHost({
       cwd,
       sessionStorageRoot: runtimeRequest.sessionStorageRoot,
@@ -206,7 +215,7 @@ export function createLocalSessionRuntimeFactory(
       extensionPackages,
       runtime,
       options.agentDir,
-      felanSettings.extensionConfig?.codex ?? undefined,
+      extensionConfigSettings.configs.get('codex'),
     );
     const memoryControlExtension = options.memoryCoordinator === undefined
       ? undefined
@@ -265,6 +274,7 @@ export function createLocalSessionRuntimeFactory(
       modelScope,
       shutdownState,
       toolActivityState,
+      extensionConfigWarnings: extensionConfigSettings.warnings,
     });
 
     return {
@@ -312,6 +322,7 @@ export function createLocalSessionRuntimeFactory(
       modelScope,
       shutdownState,
       toolActivityState,
+      extensionConfigWarnings,
     } = sessions.get(request.sessionManager)!;
     toolActivityState.attach(result.session);
     registerToolActivitySession(result.session, toolActivityState);
@@ -326,6 +337,10 @@ export function createLocalSessionRuntimeFactory(
         { type: 'info', message: `Agent Core version: ${AGENT_CORE_VERSION}` },
         ...result.diagnostics,
         ...modelScope.diagnostics,
+        ...extensionConfigWarnings.map((message) => ({
+          type: 'warning' as const,
+          message,
+        })),
         ...settingsErrors.map(({ scope, error }) => ({
           type: 'warning' as const,
           message: `${scope} settings: ${error.message}`,

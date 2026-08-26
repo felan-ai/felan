@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -6,8 +6,12 @@ import {
   AGENT_CORE_VERSION,
   HostAgentRuntime,
   SessionManager,
+  associateExtensionConfig,
+  configField,
   createAgentSessionRuntime,
+  defineExtensionConfig,
   getSupportedThinkingLevels,
+  type FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import { InteractiveMode } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -142,6 +146,65 @@ describe('local Agent Core lifecycle', () => {
     });
 
     expect(modelScope.resolutions).toBe(1);
+
+    await runtime.dispose();
+  });
+
+  it('warns and starts with defaults when persisted extension configuration is invalid', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      extensionConfig: {
+        prewalk: {
+          entryApproval: 'always',
+          restorePlanner: false,
+        },
+      },
+    }));
+    const definition = defineExtensionConfig({
+      id: 'prewalk',
+      title: 'Prewalk',
+      fields: {
+        entryApproval: configField.enum(['ask', 'allow', 'deny'], {
+          default: 'ask',
+          description: 'Approval policy for model-entered Prewalk',
+        }),
+        restorePlanner: configField.boolean({
+          default: true,
+          description: 'Restore the planner after implementation',
+        }),
+      },
+    });
+    let receivedConfig: FelanExtensionAPI['config'] | undefined;
+    const extension = (pi: FelanExtensionAPI) => {
+      receivedConfig = pi.config;
+    };
+    associateExtensionConfig(extension, definition);
+    const packageName = '@felan-ai/test-invalid-config';
+    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
+      agentDir,
+      homeDir: root,
+      modelRuntime: await createLocalModelRuntime(agentDir),
+      extensionPackages: [packageName],
+      importExtension: async (requestedPackage) => {
+        expect(requestedPackage).toBe(packageName);
+        return { default: extension };
+      },
+    }), {
+      cwd,
+      agentDir,
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+
+    expect(receivedConfig).toEqual({ entryApproval: 'ask', restorePlanner: false });
+    expect(runtime.diagnostics).toContainEqual({
+      type: 'warning',
+      message: 'settings.json.extensionConfig.prewalk.entryApproval must be one of: ask, allow, deny; using the default value.',
+    });
+    expect(JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8')))
+      .toMatchObject({ extensionConfig: { prewalk: { entryApproval: 'always' } } });
 
     await runtime.dispose();
   });
