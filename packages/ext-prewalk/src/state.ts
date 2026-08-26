@@ -1,6 +1,6 @@
 import { MAX_AUTOMATIC_CONTINUATIONS } from './prompts.js';
 
-export type PrewalkPhase = 'idle' | 'armed' | 'planning' | 'handoff' | 'implementing' | 'restoring';
+export type PrewalkPhase = 'idle' | 'armed' | 'planning' | 'reviewing' | 'handoff' | 'implementing' | 'restoring';
 
 export interface PrewalkState {
   phase: PrewalkPhase;
@@ -18,6 +18,8 @@ export interface PrewalkRunState {
   continuationCount: number;
   continuationArmed: boolean;
   handoffArmed: boolean;
+  reviewRequired: boolean;
+  reviewApproved: boolean;
 }
 
 export interface ToolCallSummary {
@@ -35,6 +37,7 @@ export interface TurnDecision {
   state: PrewalkRunState;
   shouldHandoff: boolean;
   shouldContinue: boolean;
+  shouldReview: boolean;
 }
 
 export type ValidationResult = { ok: true } | { ok: false; reason: string };
@@ -52,6 +55,7 @@ export function validateArmingTools(activeTools: readonly string[]): ValidationR
 export function createRunState(options: {
   handoffArmed?: boolean;
   taskGateRequired?: boolean;
+  reviewRequired?: boolean;
 } = {}): PrewalkRunState {
   const taskGateRequired = options.taskGateRequired ?? false;
   return {
@@ -65,6 +69,8 @@ export function createRunState(options: {
     continuationCount: 0,
     continuationArmed: true,
     handoffArmed: options.handoffArmed ?? true,
+    reviewRequired: options.reviewRequired ?? false,
+    reviewApproved: false,
   };
 }
 
@@ -101,7 +107,7 @@ export function recordToolCall(state: PrewalkRunState, call: ToolCallSummary): P
 export function reduceTurn(
   state: PrewalkRunState,
   results: readonly ToolResultSummary[],
-  options: { allowContinuation?: boolean } = {},
+  options: { allowContinuation?: boolean; planPresented?: boolean } = {},
 ): TurnDecision {
   const successfulIds = new Set(results.filter((result) => !result.isError).map((result) => result.toolCallId));
   const taskCreateSucceeded = state.taskCreateSucceeded
@@ -111,7 +117,12 @@ export function reduceTurn(
   const taskGraphReady = !state.taskGateRequired || (taskCreateSucceeded && taskClaimSucceeded);
   const shouldHandoff = state.handoffArmed
     && taskGraphReady
+    && (!state.reviewRequired || state.reviewApproved)
     && state.mutationCallIds.some((toolCallId) => successfulIds.has(toolCallId));
+  const shouldReview = state.reviewRequired
+    && !state.reviewApproved
+    && taskGraphReady
+    && options.planPresented === true;
 
   let continuationArmed = results.some((result) => !result.isError) || state.continuationArmed;
   let continuationCount = state.continuationCount;
@@ -119,6 +130,7 @@ export function reduceTurn(
 
   if (
     !shouldHandoff
+    && !shouldReview
     && options.allowContinuation !== false
     && results.length === 0
     && continuationArmed
@@ -141,9 +153,12 @@ export function reduceTurn(
       continuationCount,
       continuationArmed,
       handoffArmed: state.handoffArmed,
+      reviewRequired: state.reviewRequired,
+      reviewApproved: state.reviewApproved,
     },
     shouldHandoff,
     shouldContinue,
+    shouldReview,
   };
 }
 

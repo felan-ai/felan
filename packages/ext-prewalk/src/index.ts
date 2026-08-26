@@ -21,6 +21,11 @@ import {
   CONTINUATION_MESSAGE_TYPE,
   CONTROL_MESSAGE_PREFIX,
   IMPLEMENTATION_MESSAGE_TYPE,
+  PLAN_APPROVED_INSTRUCTION,
+  PLAN_APPROVED_MESSAGE_TYPE,
+  PLAN_REVIEW_INSTRUCTION,
+  PLAN_REVIEW_MESSAGE_TYPE,
+  PLAN_REVIEW_PLANNING_INSTRUCTION,
   PLANNING_INSTRUCTION,
   PLANNING_MESSAGE_TYPE,
   VERIFICATION_INSTRUCTION,
@@ -44,9 +49,11 @@ interface PrewalkConfig {
   targetThinking: FelanThinkingLevel;
   restorePlanner: boolean;
   entryApproval: PrewalkEntryApprovalPolicy;
+  planReview: PrewalkPlanReviewPolicy;
 }
 
-export type PrewalkEntryApprovalPolicy = 'ask' | 'always' | 'never';
+export type PrewalkEntryApprovalPolicy = 'ask' | 'allow' | 'deny';
+export type PrewalkPlanReviewPolicy = 'inherit' | 'ask' | 'skip';
 export const PREWALK_CONFIG = defineExtensionConfig({
   id: 'prewalk',
   title: 'Prewalk',
@@ -60,8 +67,11 @@ export const PREWALK_CONFIG = defineExtensionConfig({
       default: 'medium', description: 'Implementation thinking level',
     }),
     restorePlanner: configField.boolean({ default: true, description: 'Restore the planner after implementation' }),
-    entryApproval: configField.enum(['ask', 'always', 'never'], {
+    entryApproval: configField.enum(['ask', 'allow', 'deny'], {
       default: 'ask', description: 'Approval policy for model-entered Prewalk',
+    }),
+    planReview: configField.enum(['inherit', 'ask', 'skip'], {
+      default: 'inherit', description: 'Plan review policy; inherit asks when entry approval asks',
     }),
   },
 });
@@ -90,7 +100,7 @@ interface ModelTransitionResult {
   externalThinkingLevel?: PlannerThinkingLevel;
 }
 
-type GuidedPhase = Extract<PrewalkPhase, 'planning' | 'implementing'>;
+type GuidedPhase = Extract<PrewalkPhase, 'planning' | 'reviewing' | 'implementing'>;
 
 interface PhaseContextAnchor {
   phase: GuidedPhase;
@@ -106,7 +116,9 @@ interface ContextBuildResult {
 
 const HEADLESS_TASK_MESSAGE_TYPE = 'pi-prewalk-task';
 const ENTER_PREWALK_TOOL = 'enter_prewalk';
+const APPROVE_PREWALK_PLAN_TOOL = 'approve_prewalk_plan';
 const EnterPrewalkParams = Type.Object({}, { additionalProperties: false });
+const ApprovePrewalkPlanParams = Type.Object({}, { additionalProperties: false });
 
 function registerPrewalk(pi: FelanExtensionAPI): void {
   pi.registerCapability({
@@ -160,7 +172,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     const exit = exitRequested ? ' | exit pending' : '';
     notify(
       ctx,
-      `Prewalk: ${state.phase} | target ${targetModel.key} | target thinking ${config.targetThinking} | restore planner ${config.restorePlanner ? 'on' : 'off'} | model entry ${config.entryApproval}${planner}${exit}`,
+      `Prewalk: ${state.phase} | target ${targetModel.key} | target thinking ${config.targetThinking} | restore planner ${config.restorePlanner ? 'on' : 'off'} | model entry ${config.entryApproval} | plan review ${config.planReview} (${effectivePlanReview(config)})${planner}${exit}`,
     );
   }
 
@@ -196,7 +208,10 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
 
     state = { phase: 'armed' };
     updateStatus(ctx);
-    notify(ctx, `Prewalk armed. The next task will plan, initialize Tasks when both task tools are active, make one mutation, then hand off to ${targetModel.key} at ${config.targetThinking} thinking.`);
+    const planningSteps = effectivePlanReview(config) === 'ask'
+      ? 'initialize Tasks when both task tools are active, review the plan with you, make one mutation'
+      : 'initialize Tasks when both task tools are active, make one mutation';
+    notify(ctx, `Prewalk armed. The next task will plan, ${planningSteps}, then hand off to ${targetModel.key} at ${config.targetThinking} thinking.`);
     return true;
   }
 
@@ -219,6 +234,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       run: createRunState({
         handoffArmed,
         taskGateRequired: activeTools.includes('TaskCreate') && activeTools.includes('TaskUpdate'),
+        reviewRequired: effectivePlanReview(config) === 'ask',
       }),
     };
     updateStatus(ctx);
@@ -461,8 +477,8 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   }
 
   async function approveModelEntry(ctx: ExtensionContext): Promise<{ approved: true } | { approved: false; reason: string }> {
-    if (config.entryApproval === 'always') return { approved: true };
-    if (config.entryApproval === 'never') {
+    if (config.entryApproval === 'allow') return { approved: true };
+    if (config.entryApproval === 'deny') {
       return {
         approved: false,
         reason: 'Model-requested Prewalk entry is disabled. Continue the current task without Prewalk.',
@@ -485,6 +501,24 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
           approved: false,
           reason: 'The user declined Prewalk entry. Continue the current task without Prewalk.',
         };
+  }
+
+  function approvePlan(ctx: ExtensionContext): boolean {
+    if (state.phase !== 'reviewing' || !state.run) return false;
+    state = {
+      phase: 'planning',
+      run: {
+        ...state.run,
+        mutationCallIds: [],
+        taskCreateCallIds: [],
+        taskClaimCallIds: [],
+        handoffArmed: false,
+        reviewApproved: true,
+      },
+    };
+    phaseContextAnchor = undefined;
+    updateStatus(ctx);
+    return true;
   }
 
   pi.registerTool({
@@ -512,16 +546,43 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       if (!approval.approved) return prewalkToolError(approval.reason, state.phase);
 
       startRun(ctx, false);
+      const reviewText = effectivePlanReview(config) === 'ask'
+        ? ' present the plan for explicit user approval,'
+        : '';
       return {
         content: [{
           type: 'text',
-          text: `Prewalk entered for the current task. Follow the injected planning guidance, initialize Tasks when both task tools are active, keep the task graph concise, and make one focused mutation before the handoff to ${targetModel.key} at ${config.targetThinking} thinking.`,
+          text: `Prewalk entered for the current task. Follow the injected planning guidance, initialize Tasks when both task tools are active, keep the task graph concise,${reviewText} and make one focused mutation before the handoff to ${targetModel.key} at ${config.targetThinking} thinking.`,
         }],
         details: {
           phase: 'planning',
           targetModel: targetModel.key,
           targetThinking: config.targetThinking,
         },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: APPROVE_PREWALK_PLAN_TOOL,
+    label: 'Approve Prewalk Plan',
+    description: 'Record explicit user approval of the plan currently under Prewalk review. Call only after the user explicitly approves, and call it as the only tool in the response.',
+    promptSnippet: 'Approve the reviewed Prewalk plan after explicit user approval',
+    executionMode: 'sequential',
+    parameters: ApprovePrewalkPlanParams,
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      if (!approvePlan(ctx)) {
+        return prewalkToolError(
+          'No Prewalk plan is awaiting approval. Continue the current phase without calling approve_prewalk_plan.',
+          state.phase,
+        );
+      }
+      return {
+        content: [{
+          type: 'text',
+          text: 'The Prewalk plan is approved. On the next model turn, make one focused mutation that establishes the implementation direction before handoff.',
+        }],
+        details: { phase: 'planning', approved: true },
       };
     },
   });
@@ -572,7 +633,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   });
 
   pi.on('context', (event) => {
-    const result = buildContextMessages(event.messages, state.phase, phaseContextAnchor);
+    const result = buildContextMessages(event.messages, state, phaseContextAnchor);
     phaseContextAnchor = result.anchor;
     return { messages: result.messages as typeof event.messages };
   });
@@ -597,11 +658,32 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   pi.on('turn_end', async (event, ctx) => {
     if (state.phase !== 'planning' || !state.run) return;
 
+    const textOnlyCompletion = isTextOnlyCompletion(event.message);
     const decision = reduceTurn(state.run, event.toolResults, {
-      allowContinuation: isTextOnlyCompletion(event.message),
+      allowContinuation: textOnlyCompletion,
+      planPresented: textOnlyCompletion,
     });
     state = { phase: 'planning', run: decision.state };
     updateStatus(ctx);
+
+    if (decision.shouldReview) {
+      state = { phase: 'reviewing', run: decision.state };
+      phaseContextAnchor = undefined;
+      updateStatus(ctx);
+      if (!ctx.hasUI) {
+        notify(ctx, `Prewalk auto-approved plan review because interactive input is unavailable in ${ctx.mode} mode.`, 'warning');
+        approvePlan(ctx);
+        pi.sendMessage(
+          {
+            customType: PLAN_APPROVED_MESSAGE_TYPE,
+            content: PLAN_APPROVED_INSTRUCTION,
+            display: false,
+          },
+          { deliverAs: 'followUp' },
+        );
+      }
+      return;
+    }
 
     if (decision.shouldHandoff) {
       const handoff = switchToTarget(ctx).finally(() => {
@@ -685,6 +767,8 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       return;
     }
 
+    if (state.phase === 'reviewing') return;
+
     if (state.phase === 'planning') {
       clearAutomation(ctx);
       notify(ctx, 'Prewalk ended before a qualifying first mutation.', 'warning');
@@ -707,29 +791,38 @@ export const createPrewalkExtension = (): FelanExtension => registerPrewalk;
 
 function buildContextMessages(
   messages: readonly unknown[],
-  phase: PrewalkPhase,
+  state: PrewalkState,
   currentAnchor?: PhaseContextAnchor,
 ): ContextBuildResult {
-  const successfulEntries = successfulEntryCallIds(messages);
+  const { phase } = state;
+  const successfulControls = successfulControlCallIds(messages);
   const filtered: unknown[] = [];
   for (const message of structuredClone(messages)) {
     if (isControlMessage(message)) {
       if (phase === 'planning' && isCurrentContinuationMessage(message)) filtered.push(message);
       continue;
     }
-    if (isSuccessfulEntryResult(message, successfulEntries)) continue;
-    const stripped = stripSuccessfulEntryCall(message, successfulEntries);
+    if (isSuccessfulControlResult(message, successfulControls)) continue;
+    const stripped = stripSuccessfulControlCalls(message, successfulControls);
     if (stripped !== undefined) filtered.push(stripped);
   }
-  const guidedPhase = phase === 'planning' || phase === 'implementing' ? phase : undefined;
+  const guidedPhase = phase === 'planning' || phase === 'reviewing' || phase === 'implementing'
+    ? phase
+    : undefined;
   const instruction = guidedPhase === 'planning'
-    ? { customType: PLANNING_MESSAGE_TYPE, content: PLANNING_INSTRUCTION }
-    : guidedPhase === 'implementing'
-      ? {
-          customType: IMPLEMENTATION_MESSAGE_TYPE,
-          content: VERIFICATION_INSTRUCTION,
-        }
-      : undefined;
+    ? state.run?.reviewRequired && !state.run.reviewApproved
+      ? { customType: PLAN_REVIEW_MESSAGE_TYPE, content: PLAN_REVIEW_PLANNING_INSTRUCTION }
+      : state.run?.reviewApproved
+        ? { customType: PLAN_APPROVED_MESSAGE_TYPE, content: PLAN_APPROVED_INSTRUCTION }
+        : { customType: PLANNING_MESSAGE_TYPE, content: PLANNING_INSTRUCTION }
+    : guidedPhase === 'reviewing'
+      ? { customType: PLAN_REVIEW_MESSAGE_TYPE, content: PLAN_REVIEW_INSTRUCTION }
+      : guidedPhase === 'implementing'
+        ? {
+            customType: IMPLEMENTATION_MESSAGE_TYPE,
+            content: VERIFICATION_INSTRUCTION,
+          }
+        : undefined;
 
   if (guidedPhase === undefined || instruction === undefined) return { messages: filtered };
 
@@ -810,53 +903,58 @@ function isCurrentContinuationMessage(message: unknown): boolean {
     && message.content === CONTINUATION_INSTRUCTION;
 }
 
-function successfulEntryCallIds(messages: readonly unknown[]): ReadonlySet<string> {
-  const callIds = new Set<string>();
+function successfulControlCallIds(messages: readonly unknown[]): ReadonlyMap<string, ReadonlySet<string>> {
+  const callIds = new Map<string, Set<string>>();
   for (const message of messages) {
     if (
       isRecord(message)
       && message.role === 'toolResult'
-      && message.toolName === ENTER_PREWALK_TOOL
+      && (message.toolName === ENTER_PREWALK_TOOL || message.toolName === APPROVE_PREWALK_PLAN_TOOL)
       && message.isError !== true
       && typeof message.toolCallId === 'string'
     ) {
-      callIds.add(message.toolCallId);
+      const ids = callIds.get(message.toolName) ?? new Set<string>();
+      ids.add(message.toolCallId);
+      callIds.set(message.toolName, ids);
     }
   }
   return callIds;
 }
 
-function isSuccessfulEntryResult(message: unknown, callIds: ReadonlySet<string>): boolean {
+function isSuccessfulControlResult(
+  message: unknown,
+  callIds: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
   return isRecord(message)
     && message.role === 'toolResult'
-    && message.toolName === ENTER_PREWALK_TOOL
+    && typeof message.toolName === 'string'
     && typeof message.toolCallId === 'string'
-    && callIds.has(message.toolCallId);
+    && callIds.get(message.toolName)?.has(message.toolCallId) === true;
 }
 
-function stripSuccessfulEntryCall(
+function stripSuccessfulControlCalls(
   message: unknown,
-  callIds: ReadonlySet<string>,
+  callIds: ReadonlyMap<string, ReadonlySet<string>>,
 ): unknown | undefined {
   if (!isRecord(message) || message.role !== 'assistant' || !Array.isArray(message.content)) {
     return message;
   }
 
-  const isEntryCall = (item: unknown): boolean => (
+  const isControlCall = (item: unknown): boolean => (
     isRecord(item)
     && item.type === 'toolCall'
-    && item.name === ENTER_PREWALK_TOOL
+    && typeof item.name === 'string'
     && typeof item.id === 'string'
-    && callIds.has(item.id)
+    && callIds.get(item.name)?.has(item.id) === true
   );
-  if (!message.content.some(isEntryCall)) return message;
+  if (!message.content.some(isControlCall)) return message;
 
   const hasOtherToolCalls = message.content.some((item) => (
-    isRecord(item) && item.type === 'toolCall' && !isEntryCall(item)
+    isRecord(item) && item.type === 'toolCall' && !isControlCall(item)
   ));
   if (!hasOtherToolCalls) return undefined;
 
-  const content = message.content.filter((item) => !isEntryCall(item));
+  const content = message.content.filter((item) => !isControlCall(item));
   return content.length === 0 ? undefined : { ...message, content };
 }
 
@@ -875,6 +973,11 @@ function parseTargetModel(value: string): TargetModel | undefined {
   if (isModelTier(normalized)) return { kind: 'tier', tier: normalized, key: normalized };
   const model = parseModelReference(normalized);
   return model ? { kind: 'model', model, key: formatModelReference(model) } : undefined;
+}
+
+function effectivePlanReview(config: PrewalkConfig): Exclude<PrewalkPlanReviewPolicy, 'inherit'> {
+  if (config.planReview !== 'inherit') return config.planReview;
+  return config.entryApproval === 'ask' ? 'ask' : 'skip';
 }
 
 function effectiveThinkingLevel(

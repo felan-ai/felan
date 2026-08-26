@@ -10,6 +10,8 @@ import {
   CONTINUATION_MESSAGE_TYPE,
   CONTROL_MESSAGE_PREFIX,
   IMPLEMENTATION_MESSAGE_TYPE,
+  PLAN_APPROVED_MESSAGE_TYPE,
+  PLAN_REVIEW_MESSAGE_TYPE,
   PLANNING_MESSAGE_TYPE,
 } from '../prompts.js';
 
@@ -70,7 +72,7 @@ function createHarness(
     flags?: Record<string, boolean | string>;
     thinkingLevel?: string;
     entryApproved?: boolean;
-    prewalkOptions?: { entryApproval?: string };
+    prewalkOptions?: { entryApproval?: string; planReview?: string };
   } = {},
 ) {
   const handlers = new Map<string, Handler[]>();
@@ -78,23 +80,29 @@ function createHarness(
   const tools = new Map<string, any>();
   const flags = new Map(Object.entries(options.flags ?? {}));
   const configValues: Record<string, unknown> = {
-    targetModel: 'low', targetThinking: 'medium', restorePlanner: true, entryApproval: 'ask',
+    targetModel: 'low', targetThinking: 'medium', restorePlanner: true, entryApproval: 'ask', planReview: 'skip',
   };
   for (const [name, value] of flags) {
     if (name === 'prewalk-target-model') configValues.targetModel = value;
     if (name === 'prewalk-target-thinking') configValues.targetThinking = value;
     if (name === 'prewalk-restore-planner') configValues.restorePlanner = value;
     if (name === 'prewalk-entry-approval') configValues.entryApproval = value;
+    if (name === 'prewalk-plan-review') configValues.planReview = value;
   }
   if (options.prewalkOptions && 'entryApproval' in options.prewalkOptions) {
     configValues.entryApproval = options.prewalkOptions.entryApproval;
   }
+  if (options.prewalkOptions && 'planReview' in options.prewalkOptions) {
+    configValues.planReview = options.prewalkOptions.planReview;
+  }
   if (flags.has('prewalk-entry-approval')) configValues.entryApproval = flags.get('prewalk-entry-approval');
+  if (flags.has('prewalk-plan-review')) configValues.planReview = flags.get('prewalk-plan-review');
   const registeredFlags = new Map([
     ['prewalk-target-model', { type: 'string', default: 'low' }],
     ['prewalk-target-thinking', { type: 'string', default: 'medium' }],
     ['prewalk-restore-planner', { type: 'boolean', default: true }],
     ['prewalk-entry-approval', { type: 'string', default: 'ask' }],
+    ['prewalk-plan-review', { type: 'string', default: 'inherit' }],
   ]);
   const capabilities: Array<{ id: string; instructions: string }> = [];
   const models = options.models ?? [plannerModel, targetModel, alternateTarget, externalModel];
@@ -241,6 +249,24 @@ async function recordTaskGraph(harness: ReturnType<typeof createHarness>, prefix
   });
 }
 
+async function presentPlanForReview(harness: ReturnType<typeof createHarness>) {
+  await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+  await recordTaskGraph(harness, 'review-task');
+  await harness.emit('turn_end', {
+    type: 'turn_end',
+    turnIndex: 0,
+    message: assistant('toolUse'),
+    toolResults: taskGraphResults('review-task'),
+  });
+  await harness.emit('turn_start', { type: 'turn_start', turnIndex: 1, timestamp: Date.now() });
+  await harness.emit('turn_end', {
+    type: 'turn_end',
+    turnIndex: 1,
+    message: assistant('stop', [{ type: 'text', text: '1. Update implementation\n2. Verify behavior\n\nApprove?' }]),
+    toolResults: [],
+  });
+}
+
 function taskGraphResults(prefix = 'task') {
   return [
     toolResult(`${prefix}-create`, 'TaskCreate'),
@@ -299,7 +325,7 @@ describe('flags and commands', () => {
     const harness = createHarness();
     const tool = harness.tools.get('enter_prewalk');
 
-    expect([...harness.tools.keys()]).toEqual(['enter_prewalk']);
+    expect([...harness.tools.keys()]).toEqual(['enter_prewalk', 'approve_prewalk_plan']);
     expect(tool.executionMode).toBe('sequential');
     expect(tool.parameters).toMatchObject({
       type: 'object',
@@ -328,6 +354,10 @@ describe('flags and commands', () => {
     expect(harness.registeredFlags.get('prewalk-entry-approval')).toMatchObject({
       type: 'string',
       default: 'ask',
+    });
+    expect(harness.registeredFlags.get('prewalk-plan-review')).toMatchObject({
+      type: 'string',
+      default: 'inherit',
     });
   });
 
@@ -387,7 +417,7 @@ describe('flags and commands', () => {
     expect(harness.sendMessage).not.toHaveBeenCalled();
     expect(harness.setModel).not.toHaveBeenCalled();
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk: idle | target low | target thinking medium | restore planner on | model entry ask',
+      'Prewalk: idle | target low | target thinking medium | restore planner on | model entry ask | plan review skip (skip)',
       'info',
     );
   });
@@ -409,12 +439,12 @@ describe('flags and commands', () => {
         'prewalk-target-model': 'anthropic/claude-opus',
         'prewalk-target-thinking': 'high',
         'prewalk-restore-planner': false,
-        'prewalk-entry-approval': 'always',
+        'prewalk-entry-approval': 'allow',
       },
     });
     await overridden.command.handler('status', overridden.ctx);
     expect(overridden.ui.notify).toHaveBeenCalledWith(
-      'Prewalk: idle | target anthropic/claude-opus | target thinking high | restore planner off | model entry always',
+      'Prewalk: idle | target anthropic/claude-opus | target thinking high | restore planner off | model entry allow | plan review skip (skip)',
       'info',
     );
 
@@ -438,7 +468,7 @@ describe('model entry', () => {
   it('uses an initialization policy to allow model entry without prompting', async () => {
     const harness = createHarness({
       idle: false,
-      prewalkOptions: { entryApproval: 'always' },
+      prewalkOptions: { entryApproval: 'allow' },
     });
 
     const result = await enterPrewalk(harness);
@@ -446,7 +476,7 @@ describe('model entry', () => {
     expect(result.isError).not.toBe(true);
     expect(result.details.phase).toBe('planning');
     expect(harness.ui.confirm).not.toHaveBeenCalled();
-    expect(harness.pi.config).toMatchObject({ entryApproval: 'always' });
+    expect(harness.pi.config).toMatchObject({ entryApproval: 'allow' });
   });
 
   it('denies model entry when the user declines approval', async () => {
@@ -459,10 +489,10 @@ describe('model entry', () => {
     expect(await contextMessages(harness, [])).toEqual([]);
   });
 
-  it('denies model entry without prompting when configured never', async () => {
+  it('denies model entry without prompting when configured deny', async () => {
     const harness = createHarness({
       idle: false,
-      prewalkOptions: { entryApproval: 'never' },
+      prewalkOptions: { entryApproval: 'deny' },
     });
 
     const result = await enterPrewalk(harness);
@@ -475,8 +505,8 @@ describe('model entry', () => {
   it('lets the namespaced flag override the initialization policy', async () => {
     const harness = createHarness({
       idle: false,
-      flags: { 'prewalk-entry-approval': 'never' },
-      prewalkOptions: { entryApproval: 'always' },
+      flags: { 'prewalk-entry-approval': 'deny' },
+      prewalkOptions: { entryApproval: 'allow' },
     });
 
     const result = await enterPrewalk(harness);
@@ -499,7 +529,7 @@ describe('model entry', () => {
   it('does not prompt when the user enters Prewalk explicitly', async () => {
     const harness = createHarness({
       entryApproved: false,
-      prewalkOptions: { entryApproval: 'never' },
+      prewalkOptions: { entryApproval: 'deny' },
     });
 
     await harness.command.handler('Implement the parser', harness.ctx);
@@ -625,6 +655,101 @@ describe('model entry', () => {
 
     expect(await contextMessages(harness, [])).toEqual([]);
     expect(harness.setModel).not.toHaveBeenCalled();
+  });
+});
+
+describe('plan review', () => {
+  it('inherits ask from entry approval and waits for explicit approval before mutation handoff', async () => {
+    const harness = createHarness({ prewalkOptions: { planReview: 'inherit' } });
+    await startPlanning(harness);
+
+    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_REVIEW_MESSAGE_TYPE);
+    await presentPlanForReview(harness);
+    await harness.emit('agent_settled', { type: 'agent_settled' });
+
+    expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', 'Prewalk reviewing');
+    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_REVIEW_MESSAGE_TYPE);
+    expect(harness.setModel).not.toHaveBeenCalled();
+
+    const approval = await harness.tools.get('approve_prewalk_plan').execute(
+      'approve-plan', {}, undefined, undefined, harness.ctx,
+    );
+    expect(approval).toMatchObject({ details: { phase: 'planning', approved: true } });
+    const approvedContext = await contextMessages(harness, [
+      assistant('toolUse', [{
+        type: 'toolCall', id: 'approve-plan', name: 'approve_prewalk_plan', arguments: {},
+      }]),
+      toolResult('approve-plan', 'approve_prewalk_plan'),
+    ]);
+    expect(approvedContext).toHaveLength(1);
+    expect(approvedContext.at(-1)?.customType).toBe(PLAN_APPROVED_MESSAGE_TYPE);
+
+    await harness.emit('turn_start', { type: 'turn_start', turnIndex: 2, timestamp: Date.now() });
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'approved-mutation', toolName: 'edit', input: {},
+    });
+    await harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 2,
+      message: assistant('toolUse'),
+      toolResults: [toolResult('approved-mutation', 'edit')],
+    });
+
+    expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false });
+  });
+
+  it('does not hand off for a mutation before plan approval', async () => {
+    const harness = createHarness({ prewalkOptions: { planReview: 'ask' } });
+    await startPlanning(harness);
+    await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
+    await recordTaskGraph(harness, 'premature-task');
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'premature-mutation', toolName: 'edit', input: {},
+    });
+    await harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 0,
+      message: assistant('toolUse'),
+      toolResults: [...taskGraphResults('premature-task'), toolResult('premature-mutation', 'edit')],
+    });
+
+    expect(harness.setModel).not.toHaveBeenCalled();
+  });
+
+  it('rejects approval outside the review phase', async () => {
+    const harness = createHarness({ prewalkOptions: { planReview: 'ask' } });
+
+    const result = await harness.tools.get('approve_prewalk_plan').execute(
+      'approve-plan', {}, undefined, undefined, harness.ctx,
+    );
+
+    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
+  });
+
+  it('skips inherited review when entry approval allows entry', async () => {
+    const harness = createHarness({
+      prewalkOptions: { entryApproval: 'allow', planReview: 'inherit' },
+    });
+    await startPlanning(harness);
+
+    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLANNING_MESSAGE_TYPE);
+  });
+
+  it.each(['json', 'print'] as const)('auto-approves ask review with a trace in %s mode', async (mode) => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({ mode, prewalkOptions: { planReview: 'ask' } });
+    await startPlanning(harness);
+    await presentPlanForReview(harness);
+
+    expect(log).toHaveBeenCalledWith(
+      `Prewalk auto-approved plan review because interactive input is unavailable in ${mode} mode.`,
+    );
+    expect(harness.sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ customType: PLAN_APPROVED_MESSAGE_TYPE }),
+      { deliverAs: 'followUp' },
+    );
+    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_APPROVED_MESSAGE_TYPE);
+    log.mockRestore();
   });
 });
 

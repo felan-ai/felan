@@ -211,7 +211,7 @@ describe('felan CLI', () => {
   it('parses declarative extension options and passes them to the runtime', async () => {
     const launches: RunLocalFelanOptions[] = [];
     const exitCode = await runCli([
-      '--prewalk-entry-approval', 'always',
+      '--prewalk-entry-approval', 'allow',
       '--no-prewalk-restore-planner',
       '--powerline-theme=nord',
       'inspect',
@@ -219,7 +219,7 @@ describe('felan CLI', () => {
 
     expect(exitCode).toBe(0);
     expect(launches[0]?.extensionConfigOverrides).toEqual([expect.objectContaining({
-      extensionId: 'prewalk', values: { entryApproval: 'always', restorePlanner: false },
+      extensionId: 'prewalk', values: { entryApproval: 'allow', restorePlanner: false },
     }), expect.objectContaining({ extensionId: 'powerline', values: { theme: 'nord' } })]);
   });
 

@@ -100,9 +100,9 @@ tracker or durable cross-session backlog.
 
 ## Prewalk
 
-Prewalk is a same-session planner-to-implementer handoff. It is not a read-only
-plan mode or an approval checkpoint before edits. Model-requested entry asks
-for user approval by default.
+Prewalk is a same-session planner-to-implementer handoff. It can include a
+conversational plan-approval checkpoint before its first focused edit.
+Model-requested entry asks for user approval by default.
 
 For complex repository work that benefits from substantial exploration,
 coordinated multi-file changes, dependency-aware planning, or broad verification,
@@ -124,23 +124,34 @@ or `max`. Pi clamps that request to the target model's capabilities. The
 original planner model and thinking level are restored after the run settles by
 default.
 
-The `extensionConfig.prewalk.entryApproval` setting accepts `ask`, `always`, or
-`never`. `ask` is the default; cloud or other unattended hosts can choose
-`always`. Felan also exposes it as the generated
+The `extensionConfig.prewalk.entryApproval` setting accepts `ask`, `allow`, or
+`deny`. `ask` is the default; cloud or other unattended hosts can choose
+`allow`. Felan also exposes it as the generated
 `--prewalk-entry-approval` option and in `/settings`. This policy gates only
 model-called `enter_prewalk`, not explicit `/prewalk`.
+
+The `extensionConfig.prewalk.planReview` setting accepts `inherit`, `ask`, or
+`skip`. The default `inherit` asks for plan review when `entryApproval` is
+`ask`, and skips review otherwise. Explicit `ask` applies to every entry path,
+including `/prewalk`. During review, the planner presents a concise numbered
+summary, discusses and revises it, and calls `approve_prewalk_plan` only after
+explicit user approval. The review boundary is model guidance rather than a
+tool sandbox. JSON and print modes auto-approve required review with a warning
+because they cannot accept interactive discussion.
 
 ### Lifecycle
 
 1. The planner explores the relevant repository surface.
 2. When both task tools are active, it creates a concise task graph and claims
    the first ready task.
-3. It makes one focused successful `edit`, `write`, or Codex `apply_patch`.
-4. At the turn boundary, Felan switches the next model request to the configured
+3. When plan review is active, it presents and discusses a concise numbered
+   summary until the user explicitly approves it.
+4. It makes one focused successful `edit`, `write`, or Codex `apply_patch`.
+5. At the turn boundary, Felan switches the next model request to the configured
    target and applies the configured implementation thinking level.
-5. The target sees the useful conversation and tool history, completes the
+6. The target sees the useful conversation and tool history, completes the
    task graph, and verifies the work.
-6. Felan restores the planner selection after the run settles. Prewalk's
+7. Felan restores the planner selection after the run settles. Prewalk's
    temporary model and thinking changes are scoped to the active session and do
    not change the user's or project's default selection, so a new session keeps
    using the configured default model.
@@ -169,8 +180,8 @@ failed mutation does not trigger handoff. Prewalk does not inspect `TaskList`,
 ### When not to use it
 
 Skip Prewalk for read-only research, explanation, review, or when you want one
-model to perform the entire task. Use a conventional plan/approval workflow in
-another host if you require a non-mutating plan artifact before any edit.
+model to perform the entire task. Plan review prevents the handoff mutation
+through model guidance, not by disabling every tool capable of changing files.
 
 See the package references for the [subagent protocol](../../packages/ext-subagents/README.md),
 [task graph](../../packages/ext-tasks/README.md), and

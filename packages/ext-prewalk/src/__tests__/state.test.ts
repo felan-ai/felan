@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   CONTINUATION_INSTRUCTION,
   MAX_AUTOMATIC_CONTINUATIONS,
+  PLAN_REVIEW_INSTRUCTION,
+  PLAN_REVIEW_PLANNING_INSTRUCTION,
   PLANNING_INSTRUCTION,
   VERIFICATION_INSTRUCTION,
 } from '../prompts.js';
@@ -87,6 +89,37 @@ describe('turn reduction', () => {
     state = call(state, 'read', 'read');
 
     expect(reduceTurn(state, [ok('read')]).shouldHandoff).toBe(false);
+  });
+
+  it('requires review approval before a mutation can hand off', () => {
+    let state = createRunState({ reviewRequired: true });
+    state = call(state, 'mutation', 'edit');
+
+    expect(reduceTurn(state, [ok('mutation')]).shouldHandoff).toBe(false);
+
+    state = { ...beginTurn(state), reviewApproved: true };
+    state = call(state, 'approved-mutation', 'edit');
+    expect(reduceTurn(state, [ok('approved-mutation')]).shouldHandoff).toBe(true);
+  });
+
+  it('enters review after the ready plan is presented', () => {
+    const decision = reduceTurn(createRunState({ reviewRequired: true }), [], {
+      allowContinuation: true,
+      planPresented: true,
+    });
+
+    expect(decision.shouldReview).toBe(true);
+    expect(decision.shouldContinue).toBe(false);
+  });
+
+  it('does not enter review before the task graph is ready', () => {
+    const decision = reduceTurn(createRunState({ reviewRequired: true, taskGateRequired: true }), [], {
+      allowContinuation: true,
+      planPresented: true,
+    });
+
+    expect(decision.shouldReview).toBe(false);
+    expect(decision.shouldContinue).toBe(true);
   });
 });
 
@@ -232,6 +265,12 @@ describe('phase prompts', () => {
     expect(VERIFICATION_INSTRUCTION).toContain('limited to the requested scope');
     expect(VERIFICATION_INSTRUCTION).toContain('full relevant test module or suite');
     expect(VERIFICATION_INSTRUCTION).toContain('verified result');
+  });
+
+  it('keeps review concise, non-mutating, and explicitly approved', () => {
+    expect(PLAN_REVIEW_PLANNING_INSTRUCTION).toContain('Do not edit files');
+    expect(PLAN_REVIEW_INSTRUCTION).toContain('explicitly approved');
+    expect(PLAN_REVIEW_INSTRUCTION).toContain('approve_prewalk_plan');
   });
 
   it('keeps orchestration details out of the phase guidance', () => {

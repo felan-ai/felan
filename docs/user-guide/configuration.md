@@ -44,7 +44,7 @@ browser and Powerline extensions:
     "powerline": false
   },
   "extensionConfig": {
-    "prewalk": { "entryApproval": "always" },
+    "prewalk": { "entryApproval": "allow", "planReview": "skip" },
     "outputStyle": { "style": "concise" },
     "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true }
   },
@@ -120,10 +120,15 @@ deny the request instead of waiting for input. Explicit `/prewalk` is already
 user intent and bypasses this gate. The local `/settings` screen edits these
 values and persists them to `settings.json`.
 
+`entryApproval` accepts `ask`, `allow`, or `deny`. `planReview` accepts
+`inherit`, `ask`, or `skip`: `inherit` asks when `entryApproval` is `ask` and
+skips otherwise. The example above uses the unattended policy explicitly, so
+model entry is allowed and plan review is skipped.
+
 CLI options are generated from enabled extension declarations. For example:
 
 ```ts
-felan --prewalk-entry-approval always
+felan --prewalk-entry-approval allow --prewalk-plan-review skip
 ```
 
 The precedence is defaults, then `settings.json`, then CLI invocation values.

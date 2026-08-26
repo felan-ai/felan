@@ -160,13 +160,13 @@ describe('local settings', () => {
     await mkdir(agentDir, { recursive: true });
     await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ defaultModel: 'model', outputStyle: 'concise' }));
 
-    await setExtensionConfigValue(agentDir, 'prewalk', 'entryApproval', 'always');
+    await setExtensionConfigValue(agentDir, 'prewalk', 'entryApproval', 'allow');
 
     const settings = getFelanSettings(createLocalSettingsManager(root, agentDir));
-    expect(settings.extensionConfig?.prewalk?.entryApproval).toBe('always');
+    expect(settings.extensionConfig?.prewalk?.entryApproval).toBe('allow');
     expect(getExtensionConfigOverrides(settings)).toEqual([{
       extensionId: 'prewalk',
-      values: { entryApproval: 'always' },
+      values: { entryApproval: 'allow' },
       source: 'settings.json.extensionConfig.prewalk',
     }]);
   });
@@ -247,7 +247,7 @@ describe('local settings', () => {
           type: 'string',
           default: 'ask',
           description: 'Approval policy for model-entered Prewalk',
-          values: ['ask', 'always', 'never'],
+          values: ['ask', 'allow', 'deny'],
         },
       },
     }];
@@ -255,9 +255,9 @@ describe('local settings', () => {
     settings.handleInput?.('prewalk');
     settings.handleInput?.('\r');
     settings.handleInput?.('\r');
-    expect(settings.render(100).join('\n')).toContain('always');
+    expect(settings.render(100).join('\n')).toContain('allow');
     settings.handleInput?.('\r');
-    expect(settings.render(100).join('\n')).toContain('never');
+    expect(settings.render(100).join('\n')).toContain('deny');
     await vi.waitFor(() => {
       expect(settings.render(100).join('\n')).toContain('ask (save failed)');
     });
@@ -338,7 +338,7 @@ describe('local settings', () => {
           type: 'string',
           default: 'ask',
           description: 'Approval policy for model-entered Prewalk',
-          values: ['ask', 'always', 'never'],
+          values: ['ask', 'allow', 'deny'],
         },
       },
     }];
@@ -349,9 +349,9 @@ describe('local settings', () => {
     expect(settings.render(100).join('\n')).toContain('ask');
 
     settings.handleInput?.('\r');
-    expect(settings.render(100).join('\n')).toContain('always');
+    expect(settings.render(100).join('\n')).toContain('allow');
     settings.handleInput?.('\r');
-    expect(settings.render(100).join('\n')).toContain('never');
+    expect(settings.render(100).join('\n')).toContain('deny');
     settings.handleInput?.('\r');
     expect(settings.render(100).join('\n')).toContain('ask');
     await vi.waitFor(async () => {
