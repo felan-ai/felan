@@ -18,6 +18,7 @@ export interface WebAccessConfig {
     enabled?: unknown;
     maxRepoSizeMB?: unknown;
     cloneTimeoutSeconds?: unknown;
+    maxCheckouts?: unknown;
   };
   fetchContent?: {
     domainPolicy?: {
@@ -134,7 +135,7 @@ function validatePdf(value: unknown): string | undefined {
 }
 
 function validateGithubClone(value: unknown): string | undefined {
-  return validateOptionalNumberObject(value, new Set(['maxRepoSizeMB', 'cloneTimeoutSeconds']), new Set(['enabled']));
+  return validateOptionalNumberObject(value, new Set(['maxRepoSizeMB', 'cloneTimeoutSeconds', 'maxCheckouts']), new Set(['enabled']));
 }
 
 function validateFetchContent(value: unknown): string | undefined {

@@ -18,6 +18,15 @@ export interface SearchResult {
   snippet: string;
 }
 
+export interface GitHubRepositoryProvenance {
+  owner: string;
+  repo: string;
+  mode: 'local-checkout' | 'github-api';
+  commit: string;
+  requestedRef?: string;
+  checkoutPath?: string;
+}
+
 export interface ExtractedContent {
   url: string;
   title: string;
@@ -29,6 +38,7 @@ export interface ExtractedContent {
     data: string;
     mimeType: string;
   };
+  repository?: GitHubRepositoryProvenance;
 }
 
 export interface SearchResponse {

@@ -12,7 +12,7 @@ The Web Access extension provides four tools:
 | --- | --- |
 | `web_search` | Search one or more OpenAI, Exa, Brave, or SearXNG providers |
 | `source_check` | Check a claim and retain bounded exact passages |
-| `fetch_content` | Fetch readable/raw pages, grounded answers, PDF text, images, or GitHub content |
+| `fetch_content` | Fetch readable/raw pages, grounded answers, PDF text, images, or GitHub content; local hosts expose a bounded exact checkout and managed runtimes use the GitHub API |
 | `get_search_content` | Page or search content retained from an earlier response |
 
 Search can run up to four queries per call. Retrieved content is bounded,
@@ -30,6 +30,14 @@ user-owned `ssrf.allowRanges` configuration should relax that boundary.
 
 Web fetching is HTTP/content extraction, not a JavaScript browser and not an
 authenticated-tab reader.
+
+GitHub repository URLs are handled specially. On the local host, Felan creates
+a shallow checkout verified at an exact commit and returns a trusted path for
+ordinary inspection tools, alongside a concise tree/README or requested file.
+Managed runtimes do not execute Git; they receive a bounded GitHub API view.
+Checkout paths are session-local, capped by the Web Access `maxCheckouts`
+setting, and removed when the session ends. Repository content is still
+untrusted external data.
 
 ## Remote MCP
 

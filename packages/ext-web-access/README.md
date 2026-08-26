@@ -6,7 +6,7 @@ The extension registers exactly four tools:
 
 - `web_search` searches with configured SearXNG, Pi OpenAI/OpenAI-Codex auth, Exa, or Brave.
 - `source_check` builds a bounded research artifact with exact passages.
-- `fetch_content` reads HTTP(S), HTML, text, JSON, PDF, images, and GitHub repositories.
+- `fetch_content` reads HTTP(S), HTML, text, JSON, PDF, images, and GitHub repositories. Local hosts receive an exact, inspectable checkout; managed runtimes receive a bounded GitHub API view.
 - `get_search_content` retrieves stored full content with paging and bounded text matching.
 
 All remote material is marked as untrusted external data before it reaches a
@@ -20,7 +20,18 @@ only versioned metadata references, and tool result details contain compact
 response IDs, counts, and image trust metadata rather than remote page bodies.
 The cache is limited to 32 MiB per result, 64 MiB total, and 128 entries, with
 oldest-first eviction; `get_search_content` continues to retrieve the full
-stored result while it is available.
+stored result while it is available. Local checkout paths are intentionally
+omitted from persisted result pages and session references.
+
+GitHub URLs use a shallow checkout on local host runtimes. The checkout is
+resolved to and verified at an exact commit, and the response contains a
+bounded structure plus README (or the requested blob), followed by a trusted
+path for `read`, `grep`, `find`, `ls`, and `bash` inspection. Full commit-SHA
+URLs are fetched and detached explicitly rather than passed as branch names.
+Checkouts are capped by `maxCheckouts`, evicted by least-recent access, and
+removed when the session ends. Managed runtimes never execute Git; they use
+bounded, SSRF-protected GitHub API metadata, tree, README, and file requests.
+Repository content remains untrusted external data in every mode.
 
 The latest reviewed upstream release is pi-web-access 0.23.0 at commit
 `c77b28221d527f298d409d7e61ade661e548f50c`. This package selectively adapts
@@ -46,7 +57,8 @@ Agent Core programmatic API.
   "githubClone": {
     "enabled": true,
     "maxRepoSizeMB": 350,
-    "cloneTimeoutSeconds": 30
+    "cloneTimeoutSeconds": 30,
+    "maxCheckouts": 4
   },
   "fetchContent": {
     "domainPolicy": {

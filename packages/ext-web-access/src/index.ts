@@ -22,6 +22,7 @@ import {
 } from './config.js';
 import { findContent, type FindMode } from './content-find.js';
 import { extractContent, fetchWithConcurrency } from './extract.js';
+import { cleanupGitHubRepositories } from './github.js';
 import { combinedSignal } from './http.js';
 import { searchProviders, type ProviderEnvironment } from './providers.js';
 import { buildResearchArtifact } from './source-check.js';
@@ -110,8 +111,9 @@ const webAccessExtension: FelanExtension = (pi) => {
   pi.on('session_start', async (_event, ctx) => {
     await store.restore(ctx);
   });
-  pi.on('session_shutdown', async () => {
+  pi.on('session_shutdown', async (event) => {
     await store.clear();
+    if (event.reason !== 'reload') await cleanupGitHubRepositories(pi.runtime);
   });
 
   pi.registerTool({
@@ -223,11 +225,12 @@ const webAccessExtension: FelanExtension = (pi) => {
         ? await answerFromPages(pages, params.prompt!.trim(), ctx, signal)
         : undefined;
       const id = generateResponseId();
+      const storedPages = pages.map((page) => pageWithoutCheckoutPath(page));
       const stored: StoredResult = {
         id,
         type: 'fetch',
         timestamp: Date.now(),
-        urls: pages,
+        urls: storedPages,
         ...(answer !== undefined ? { answer } : {}),
       };
       await store.put(stored);
@@ -454,6 +457,12 @@ function pageMetadata(page: ExtractedContent) {
   };
 }
 
+function pageWithoutCheckoutPath(page: ExtractedContent): ExtractedContent {
+  if (!page.repository?.checkoutPath) return page;
+  const { checkoutPath: _checkoutPath, ...repository } = page.repository;
+  return { ...page, repository };
+}
+
 function imageTrust(page: ExtractedContent) {
   return { source: 'remote-web', untrusted: true, mimeType: page.image?.mimeType ?? page.contentType };
 }
@@ -487,12 +496,16 @@ function researchDetails(stored: StoredResult) {
 }
 
 function fetchDetails(stored: StoredResult, pages: ExtractedContent[]) {
+  const checkouts = pages.flatMap((page, urlIndex) => page.repository?.checkoutPath
+    ? [{ urlIndex, path: page.repository.checkoutPath, commit: page.repository.commit }]
+    : []);
   return withImageTrust({
     responseId: stored.id,
     type: stored.type,
     urlCount: pages.length,
     successfulCount: pages.filter((page) => page.error === null).length,
     totalCharacters: pages.reduce((total, page) => total + page.content.length, 0),
+    ...(checkouts.length > 0 ? { checkouts } : {}),
   }, pages);
 }
 
@@ -541,7 +554,10 @@ function trustedStorageInstruction(pages: ExtractedContent[]): string {
   const truncation = pages.some((page) => page.truncated)
     ? ' Some content was truncated to bounded extraction limits.'
     : '';
-  return `Use get_search_content with this response ID for stored full content.${truncation}`;
+  const checkouts = pages.flatMap((page) => page.repository?.checkoutPath
+    ? [`Local checkout available at ${page.repository.checkoutPath}; use read, grep, find, ls, or bash there for deeper inspection.`]
+    : []);
+  return [`Use get_search_content with this response ID for stored full content.${truncation}`, ...checkouts].join(' ');
 }
 
 function deduplicateResults(results: SearchResult[]): SearchResult[] {

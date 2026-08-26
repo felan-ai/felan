@@ -447,7 +447,15 @@ function isExtractedContent(value: unknown): boolean {
     && (value.truncated === undefined || typeof value.truncated === 'boolean')
     && (value.image === undefined || (isRecord(value.image)
       && typeof value.image.data === 'string'
-      && typeof value.image.mimeType === 'string'));
+      && typeof value.image.mimeType === 'string'))
+    && (value.repository === undefined || (isRecord(value.repository)
+      && typeof value.repository.owner === 'string'
+      && typeof value.repository.repo === 'string'
+      && (value.repository.mode === 'local-checkout' || value.repository.mode === 'github-api')
+      && typeof value.repository.commit === 'string'
+      && /^[0-9a-f]{40}$/iu.test(value.repository.commit)
+      && (value.repository.requestedRef === undefined || typeof value.repository.requestedRef === 'string')
+      && (value.repository.checkoutPath === undefined || typeof value.repository.checkoutPath === 'string')));
 }
 
 function isResearchArtifact(value: unknown): boolean {
