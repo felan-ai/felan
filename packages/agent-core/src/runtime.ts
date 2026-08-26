@@ -73,7 +73,7 @@ export interface AgentRuntimeTerminals {
 export interface AgentRuntimeStorage {
   readonly root: string;
 
-  readFile(path: string): Promise<Uint8Array>;
+  readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array>;
   writeFile(path: string, content: Uint8Array): Promise<void>;
   listFiles(path: string, options?: AgentRuntimeListFilesOptions): Promise<string[]>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;

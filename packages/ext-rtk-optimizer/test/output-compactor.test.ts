@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { compactToolResult } from '../src/output-compactor.js';
-import { OutputMetrics } from '../src/output-metrics.js';
 import { DEFAULT_RTK_OPTIMIZER_CONFIG } from '../src/types.js';
 
 const options = { cwd: '/workspace', agentDir: '/agent' };
@@ -15,7 +14,7 @@ describe('tool output compaction', () => {
         content: [{ type: 'text', text: '\u001b[32m12 passed, 0 failed\u001b[0m' }],
       },
       config,
-      { ...options, metrics: new OutputMetrics() },
+      options,
     );
 
     expect(text(outcome.content)).toContain('Test Results:');
@@ -194,6 +193,59 @@ describe('tool output compaction', () => {
 
     expect(text(outcome.content)).toContain('3 matches in 2 files');
     expect(outcome.techniques).toEqual(['search']);
+  });
+
+  it('retains both ends of a large command result', () => {
+    const config = structuredClone(DEFAULT_RTK_OPTIMIZER_CONFIG);
+    config.outputCompaction.truncate.maxChars = 120;
+    const outcome = compactToolResult(
+      {
+        toolName: 'bash',
+        input: { command: 'echo output' },
+        content: [{ type: 'text', text: `HEAD\n${'middle\n'.repeat(40)}TAIL` }],
+      },
+      config,
+      options,
+    );
+
+    const compacted = text(outcome.content);
+    expect(compacted).toContain('HEAD');
+    expect(compacted).toContain('TAIL');
+    expect(compacted).toContain('head and tail retained');
+    expect(compacted.length).toBeLessThanOrEqual(120);
+  });
+
+  it('does not turn failed output into a synthetic success', () => {
+    const config = structuredClone(DEFAULT_RTK_OPTIMIZER_CONFIG);
+    const outcome = compactToolResult(
+      {
+        toolName: 'bash',
+        input: { command: 'npm run build' },
+        content: [{ type: 'text', text: 'Build finished\n' }],
+      },
+      config,
+      { ...options, failed: true },
+    );
+
+    expect(outcome.changed).toBe(false);
+  });
+
+  it('preserves complete JSON instead of cutting it', () => {
+    const config = structuredClone(DEFAULT_RTK_OPTIMIZER_CONFIG);
+    config.outputCompaction.truncate.maxChars = 120;
+    const json = JSON.stringify({ values: Array.from({ length: 100 }, (_, index) => index) });
+    const outcome = compactToolResult(
+      {
+        toolName: 'bash',
+        input: { command: 'cat result.json' },
+        content: [{ type: 'text', text: json }],
+      },
+      config,
+      options,
+    );
+
+    expect(outcome.changed).toBe(false);
+    expect(outcome.content).toBeUndefined();
   });
 
   it('leaves unrelated tools untouched', () => {

@@ -55,6 +55,9 @@ import { registerToolActivitySession } from './tool-activity/runtime-view.js';
 import { ToolActivityState } from './tool-activity/state.js';
 import { createLocalMemoryControlExtension } from './memory/control.js';
 import { LocalMemoryCoordinator } from './memory/coordinator.js';
+import { createGainExtension } from './gain.js';
+import { SavingsService, createModelPriceSource } from './savings.js';
+import { createHash } from 'node:crypto';
 
 const localSubagentHost = Symbol('localSubagentHost');
 const localSubagentShutdown = Symbol('localSubagentShutdown');
@@ -166,6 +169,32 @@ export function createLocalSessionRuntimeFactory(
     const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
     const runtime = options.runtimeFactory?.(runtimeRequest)
       ?? new HostAgentRuntime(cwd, runtimeRequest);
+    const savings = new SavingsService({
+      runtime,
+      rootSessionId: runtimeRequest.rootSessionId,
+      projectKey: createHash('sha256').update(cwd, 'utf8').digest('hex'),
+      priceSource: createModelPriceSource((reference) => {
+        const model = options.modelRuntime.getModel(reference.provider, reference.id);
+        if (!model) return undefined;
+        return {
+          model: reference,
+          input: model.cost.input,
+          output: model.cost.output,
+          cacheRead: model.cost.cacheRead,
+          cacheWrite: model.cost.cacheWrite,
+          ...(model.cost.tiers === undefined ? {} : {
+            tiers: model.cost.tiers.map((tier) => ({
+              input: tier.input,
+              output: tier.output,
+              cacheRead: tier.cacheRead,
+              cacheWrite: tier.cacheWrite,
+              inputTokensAbove: tier.inputTokensAbove,
+            })),
+          }),
+          fingerprint: createHash('sha256').update(JSON.stringify(model.cost), 'utf8').digest('hex'),
+        };
+      }),
+    });
     const dependencyExtension = bindFelanExtension(
       localDependencyExtensionName,
       createLocalDependencyExtension({ agentDir: options.agentDir, settingsManager }),
@@ -206,6 +235,7 @@ export function createLocalSessionRuntimeFactory(
       extensionPackages,
       importExtension,
       extensionConfigOverrides,
+      savings,
       outputStyle,
       skillPaths,
       ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
@@ -242,6 +272,7 @@ export function createLocalSessionRuntimeFactory(
       ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
       extensionConfigOverrides,
+      savings,
       importExtension: createLocalExtensionImporter(
         host,
         options.modelRuntime,
@@ -257,6 +288,14 @@ export function createLocalSessionRuntimeFactory(
       ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
       inlineExtensions: [
         dependencyExtension,
+        ...(extensionPackages.length === 0 ? [] : [bindFelanExtension(
+          '@felan-ai/felan/gain',
+          createGainExtension(savings),
+          runtime,
+          options.agentDir,
+          {},
+          savings,
+        )]),
         createToolActivityExtension(toolActivityState),
         ...(memoryControlExtension === undefined ? [] : [memoryControlExtension]),
       ],

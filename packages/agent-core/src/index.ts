@@ -19,6 +19,15 @@ export type {
   ExecOptions,
   ExecResult,
 } from './runtime.js';
+export type {
+  SavingsCategory,
+  SavingsMeasurement,
+  SavingsModelReference,
+  SavingsOutcome,
+  SavingsReporter,
+  SavingsReporterProvider,
+  SavingsTokenUsage,
+} from './savings.js';
 export { AGENT_CORE_VERSION } from './version.js';
 export {
   MODEL_TIERS,
@@ -133,6 +142,7 @@ export type {
 export {
   InMemoryCredentialStore,
   StringEnum,
+  calculateCost,
   clampThinkingLevel,
   createAssistantMessageEventStream,
   getSupportedThinkingLevels,
@@ -150,8 +160,12 @@ export type {
   CredentialInfo,
   CredentialStore,
   Model,
+  ModelCost,
+  ModelCostRates,
+  ModelCostTier,
   Provider,
   SimpleStreamOptions,
   Transport,
+  Usage,
 } from '@earendil-works/pi-ai';
 export { builtinProviders } from '@earendil-works/pi-ai/providers/all';

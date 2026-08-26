@@ -4,9 +4,17 @@ import { computeRewriteDecision, inspectRtkRuntime } from './command-rewriter.js
 import { associateExtensionConfig } from '@felan-ai/agent-core';
 import { RTK_OPTIMIZER_CONFIG, rtkOptimizerConfigFromSettings } from './config.js';
 import { installManagedRtk } from './installer.js';
-import { compactToolResult, type ToolResultCompactionMetadata } from './output-compactor.js';
-import { OutputMetrics } from './output-metrics.js';
-import { toRecord } from './record-utils.js';
+import { addRecoveryPath, compactToolResult, type ToolResultCompactionMetadata } from './output-compactor.js';
+import { persistRecoveryArtifact } from './recovery.js';
+import {
+  createRtkGainSegment,
+  discoverRtkGainSegments,
+  discardRtkGainSegment,
+  readRtkGainSegment,
+  wrapCommandWithRtkGain,
+  type RtkGainSegment,
+} from './rtk-gain.js';
+import { isTextContentBlock, toRecord } from './record-utils.js';
 import { sanitizeStreamingCommandResult } from './tool-execution-sanitizer.js';
 import {
   codexResultHasExited,
@@ -18,6 +26,7 @@ import {
   writeToolCommand,
 } from './tool-shapes.js';
 import type { RtkOptimizerConfig, RuntimeStatus } from './types.js';
+import type { SavingsModelReference } from '@felan-ai/agent-core';
 
 const EXTENSION_NAME = 'RTK optimizer';
 const RUNTIME_STATUS_MAX_AGE_MS = 30_000;
@@ -35,11 +44,13 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
   let statusRefresh: Promise<RuntimeStatus> | undefined;
   let missingRtkWarningShown = false;
 
-  const metrics = new OutputMetrics();
   const warnedMessages = createBoundedNoticeTracker(100);
   const suggestionNotices = createBoundedNoticeTracker(200);
   const codexSessionCommands = new Map<number, string>();
+  const codexSessionModels = new Map<number, SavingsModelReference>();
+  const toolCallModels = new Map<string, SavingsModelReference>();
   const activeCodexCommands = new Map<string, string>();
+  const rtkSegments = new Map<string, RtkGainSegment>();
 
   const refreshRuntimeStatus = (): Promise<RuntimeStatus> => {
     statusRefresh ??= inspectRtkRuntime(pi.runtime)
@@ -88,8 +99,6 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
       if (status.rtkAvailable) missingRtkWarningShown = false;
       return status;
     },
-    getMetricsSummary: () => metrics.summary(),
-    clearMetrics: () => metrics.clear(),
   });
 
   pi.on('session_start', async (_event, ctx) => {
@@ -97,21 +106,25 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
     suggestionNotices.reset();
     codexSessionCommands.clear();
     activeCodexCommands.clear();
-    metrics.clear();
+    toolCallModels.clear();
+    codexSessionModels.clear();
     missingRtkWarningShown = false;
-
     if (config.enabled) {
       await refreshRuntimeStatus();
       maybeWarnRtkMissing(ctx);
     }
   });
 
-  pi.on('session_shutdown', () => {
+  pi.on('session_shutdown', async () => {
     if (activeRuntimeRefreshers.get(pi.runtime) === refreshRuntimeStatus) {
       activeRuntimeRefreshers.delete(pi.runtime);
     }
     codexSessionCommands.clear();
+    codexSessionModels.clear();
+    toolCallModels.clear();
     activeCodexCommands.clear();
+    rtkSegments.clear();
+    await flushRtkGainSegments(pi, runtimeStatus.command ?? 'rtk');
   });
 
   pi.on('agent_end', () => {
@@ -129,6 +142,9 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
   });
 
   pi.on('tool_call', async (event, ctx) => {
+    if (isCompactionToolName(event.toolName) && ctx.model) {
+      toolCallModels.set(event.toolCallId, { provider: ctx.model.provider, id: ctx.model.id });
+    }
     if (!config.enabled || !isCommandToolName(event.toolName)) return undefined;
     const command = readToolCommand(event.toolName, event.input);
     if (!command) return undefined;
@@ -153,7 +169,18 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
     }
 
     if (config.mode === 'rewrite') {
-      writeToolCommand(event.toolName, event.input, decision.rewrittenCommand);
+      let rewrittenCommand = decision.rewrittenCommand;
+      if (config.outputCompaction.trackSavings && pi.savings) {
+        const model = toolCallModels.get(event.toolCallId);
+        const modelKey = JSON.stringify(model ?? null);
+        let segment = rtkSegments.get(modelKey);
+        if (!segment) {
+          segment = await createRtkGainSegment(pi.runtime, model);
+          if (segment) rtkSegments.set(modelKey, segment);
+        }
+        if (segment) rewrittenCommand = wrapCommandWithRtkGain(rewrittenCommand, segment);
+      }
+      writeToolCommand(event.toolName, event.input, rewrittenCommand);
       if (config.showRewriteNotifications && ctx.hasUI) {
         ctx.ui.notify(
           `RTK rewrite: ${trimMessage(command, 100)} -> ${trimMessage(decision.rewrittenCommand, 120)}`,
@@ -183,6 +210,8 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
       event.partialResult,
       activeCodexCommands,
       codexSessionCommands,
+      codexSessionModels,
+      toolCallModels,
     );
     if (
       !config.enabled ||
@@ -202,6 +231,8 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
       event.result,
       activeCodexCommands,
       codexSessionCommands,
+      codexSessionModels,
+      toolCallModels,
     );
     activeCodexCommands.delete(event.toolCallId);
     if (
@@ -217,12 +248,13 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
 
   pi.on('tool_result', async (event, ctx) => {
     const originatingCommand = commandForResult(event.toolName, event.input, codexSessionCommands);
-    updateCodexSessionCommands(event.toolName, event.input, event.details, originatingCommand, codexSessionCommands);
+    const resultModel = modelForResult(event.toolName, event.input, event.toolCallId, toolCallModels, codexSessionModels);
+    updateCodexSessionCommands(event.toolName, event.input, event.details, originatingCommand, codexSessionCommands, codexSessionModels);
 
     if (!config.enabled || !config.outputCompaction.enabled) return undefined;
 
     try {
-      const outcome = compactToolResult(
+      let outcome = compactToolResult(
         {
           toolName: event.toolName,
           input: event.input,
@@ -233,10 +265,40 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
           cwd: ctx.cwd,
           agentDir: pi.agentDir,
           ...(originatingCommand === undefined ? {} : { command: originatingCommand }),
-          metrics,
+          failed: event.isError || hasNonZeroExitCode(event.details),
         },
       );
-      if (!outcome.changed || !outcome.content) return undefined;
+      if (!outcome.changed || !outcome.content) {
+        if (config.outputCompaction.trackSavings && isCompactionToolName(event.toolName)) {
+          reportSavings(pi.savings, event.toolName, event.content, event.content, resultModel);
+        }
+        toolCallModels.delete(event.toolCallId);
+        return undefined;
+      }
+      if (outcome.metadata?.truncated) {
+        const originalText = event.content
+          .filter(isTextContentBlock)
+          .map((block) => toRecord(block).text)
+          .filter((text): text is string => typeof text === 'string')
+          .join('\n');
+        const recoveryPath = await persistRecoveryArtifact(pi.runtime, originalText);
+        if (!recoveryPath) {
+          warnOnce(ctx, `${EXTENSION_NAME}: output was not compacted because a recovery copy could not be stored.`);
+          return undefined;
+        }
+        outcome = addRecoveryPath(outcome, recoveryPath);
+      }
+      if (config.outputCompaction.trackSavings && isCompactionToolName(event.toolName)) {
+        reportSavings(
+          pi.savings,
+          event.toolName,
+          event.content,
+          outcome.content,
+          resultModel,
+          outcome.techniques,
+        );
+      }
+      toolCallModels.delete(event.toolCallId);
       return {
         content: outcome.content as typeof event.content,
         ...(outcome.metadata === undefined ? {} : { details: mergeCompactionDetails(event.details, outcome.metadata) }),
@@ -250,6 +312,87 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
     }
   });
 };
+
+function hasNonZeroExitCode(details: unknown): boolean {
+  const value = toRecord(details).exit_code;
+  return Number.isSafeInteger(value) && (value as number) !== 0;
+}
+
+function textBlocks(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  return content.filter(isTextContentBlock).map((block) => toRecord(block).text as string);
+}
+
+function reportSavings(
+  reporter: NonNullable<import('@felan-ai/agent-core').FelanExtensionAPI['savings']> | undefined,
+  tool: string,
+  original: readonly string[] | unknown,
+  compacted: readonly string[] | unknown,
+  model: SavingsModelReference | undefined,
+  techniques: readonly string[] = [],
+): void {
+  if (!reporter) return;
+  const baseline = textBlocks(original);
+  const actual = textBlocks(compacted);
+  void reporter.report({
+    category: 'output-optimization',
+    operation: 'post-tool-compaction',
+    baseline: { ...(model === undefined ? {} : { model }), tokens: { input: estimateUtf8Tokens(baseline), output: 0 } },
+    actual: { ...(model === undefined ? {} : { model }), tokens: { input: estimateUtf8Tokens(actual), output: 0 } },
+    basis: { kind: 'estimated-baseline', method: 'utf8-bytes/4-ceil-v1' },
+    dimensions: { tool, ...(techniques.length === 0 ? {} : { techniques }) },
+  }).catch(() => {});
+}
+
+async function flushRtkGainSegments(
+  pi: { readonly runtime: AgentRuntime; readonly savings?: NonNullable<import('@felan-ai/agent-core').FelanExtensionAPI['savings']> },
+  executable: string,
+): Promise<void> {
+  const segments = await discoverRtkGainSegments(pi.runtime);
+  await Promise.allSettled(segments.map(async (segment) => {
+    const totals = await readRtkGainSegment(pi.runtime, executable, segment);
+    if (!totals) return;
+    if (totals.calls === 0 || !pi.savings) {
+      await discardRtkGainSegment(pi.runtime, segment);
+      return;
+    }
+    await pi.savings.report({
+      category: 'output-optimization',
+      operation: 'rtk-command-output',
+      baseline: { ...(segment.model === undefined ? {} : { model: segment.model }), tokens: { input: totals.inputTokens, output: 0 } },
+      actual: { ...(segment.model === undefined ? {} : { model: segment.model }), tokens: { input: totals.outputTokens, output: 0 } },
+      basis: { kind: 'observed-comparison', method: 'rtk-tracking-byte4-v1' },
+      calls: totals.calls,
+    });
+    await discardRtkGainSegment(pi.runtime, segment);
+  }));
+}
+
+export function estimateUtf8Tokens(values: readonly string[]): number {
+  const bytes = values.reduce((total, value) => total + new TextEncoder().encode(value).byteLength, 0);
+  return Math.ceil(bytes / 4);
+}
+
+function modelForCodexResult(input: unknown, models: ReadonlyMap<number, SavingsModelReference>): SavingsModelReference | undefined {
+  const sessionId = readCodexSessionId(input);
+  return sessionId === undefined ? undefined : models.get(sessionId);
+}
+
+function modelForResult(
+  toolName: string,
+  input: unknown,
+  toolCallId: string,
+  toolCallModels: ReadonlyMap<string, SavingsModelReference>,
+  codexSessionModels: ReadonlyMap<number, SavingsModelReference>,
+): SavingsModelReference | undefined {
+  return toolName === 'write_stdin'
+    ? modelForCodexResult(input, codexSessionModels)
+    : toolCallModels.get(toolCallId);
+}
+
+function isCompactionToolName(toolName: string): boolean {
+  return isCommandToolName(toolName) || toolName === 'write_stdin' || toolName === 'read' || toolName === 'grep';
+}
 
 export function shouldInjectSourceFilterTroubleshootingNote(config: RtkOptimizerConfig): boolean {
   const compaction = config.outputCompaction;
@@ -307,12 +450,16 @@ function recordCodexSessionFromExecution(
   result: unknown,
   activeCodexCommands: ReadonlyMap<string, string>,
   codexSessionCommands: Map<number, string>,
+  codexSessionModels: Map<number, SavingsModelReference>,
+  toolCallModels: ReadonlyMap<string, SavingsModelReference>,
 ): void {
   if (toolName !== 'exec_command') return;
   const command = activeCodexCommands.get(toolCallId);
   if (!command) return;
   const sessionId = readRunningCodexSessionId(toRecord(result).details);
   if (sessionId !== undefined) codexSessionCommands.set(sessionId, command);
+  const model = toolCallModels.get(toolCallId);
+  if (sessionId !== undefined && model) codexSessionModels.set(sessionId, model);
 }
 
 function updateCodexSessionCommands(
@@ -321,6 +468,7 @@ function updateCodexSessionCommands(
   details: unknown,
   command: string | undefined,
   codexSessionCommands: Map<number, string>,
+  codexSessionModels: Map<number, SavingsModelReference>,
 ): void {
   if (toolName === 'exec_command' && command) {
     const runningSessionId = readRunningCodexSessionId(details);
@@ -332,6 +480,7 @@ function updateCodexSessionCommands(
   const requestedSessionId = readCodexSessionId(input);
   if (requestedSessionId === undefined) return;
   if (codexResultHasExited(details)) codexSessionCommands.delete(requestedSessionId);
+  if (codexResultHasExited(details)) codexSessionModels.delete(requestedSessionId);
 }
 
 function mergeCompactionDetails(
@@ -394,7 +543,6 @@ export {
   supportsManagedRtk,
 } from './installer.js';
 export { compactToolResult } from './output-compactor.js';
-export { OutputMetrics } from './output-metrics.js';
 export { DEFAULT_RTK_OPTIMIZER_CONFIG } from './types.js';
 export type {
   RtkMode,

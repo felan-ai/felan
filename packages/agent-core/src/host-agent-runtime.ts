@@ -584,8 +584,11 @@ class HostProcessOutput {
 function createHostStorage(root: string): AgentRuntimeStorage {
   return {
     root,
-    async readFile(path) {
-      const content = await readFile(await resolveContainedPath(root, path));
+    async readFile(path, options) {
+      const resolvedPath = await resolveContainedPath(root, path);
+      const content = options?.maxBytes === undefined
+        ? await readFile(resolvedPath)
+        : await readBoundedFile(resolvedPath, options.maxBytes);
       return new Uint8Array(content);
     },
     async writeFile(path, content) {

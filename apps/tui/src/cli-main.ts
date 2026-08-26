@@ -10,6 +10,9 @@ import { createLocalSettingsManager, getFelanSettings } from './settings.js';
 import { getLocalAgentDir } from './runtime.js';
 import { runFelanUpdate } from './update.js';
 import { FELAN_VERSION } from './version.js';
+import { runLocalGainCli } from './gain.js';
+import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
 
 export interface CliDependencies {
   readonly writeOutput?: (line: string) => void;
@@ -34,6 +37,7 @@ Options:
   --session-dir <dir> Session directory for --session
   --diagnostics      Print local runtime versions and configuration mode
   update             Update a global npm installation of Felan
+  gain               Show persisted Felan savings
   -h, --help         Show this help
   -v, --version      Print the Felan version
   --verbose          Show verbose startup details
@@ -48,6 +52,9 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       return 1;
     }
     return dependencies.update?.() ?? runFelanUpdate({ writeOutput, writeError });
+  }
+  if (args[0] === 'gain') {
+    return runGainCommand(args.slice(1), writeOutput, writeError);
   }
 
   let continueRecent = false;
@@ -263,6 +270,53 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     }),
   });
   return 0;
+}
+
+async function runGainCommand(
+  args: readonly string[],
+  writeOutput: (line: string) => void,
+  writeError: (line: string) => void,
+): Promise<number> {
+  let project = false;
+  let sessionId: string | undefined;
+  let from: Date | undefined;
+  let to: Date | undefined;
+  let format: 'text' | 'json' = 'text';
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === '--project') project = true;
+    else if (argument === '--daily' || argument === '--monthly') {
+      const now = new Date();
+      const start = argument === '--daily'
+        ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+        : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      from = start;
+      to = now;
+    } else if (argument === '--session') {
+      const value = args[++index];
+      if (!value || value.startsWith('-')) { writeError('--session requires an id'); return 1; }
+      sessionId = value;
+    } else if (argument === '--format') {
+      const value = args[++index];
+      if (value !== 'text' && value !== 'json') { writeError('--format requires text or json'); return 1; }
+      format = value;
+    } else if (argument === '--help') {
+      writeOutput('Usage: felan gain [--project|--session <id>] [--daily|--monthly] [--format text|json]');
+      return 0;
+    } else {
+      writeError(`Unknown gain option: ${argument}`);
+      return 1;
+    }
+  }
+  if (project && sessionId !== undefined) { writeError('Cannot combine --project with --session'); return 1; }
+  const cwd = resolve(process.cwd());
+  const projectKey = createHash('sha256').update(cwd, 'utf8').digest('hex');
+  const scope = sessionId !== undefined ? 'session' : project ? 'project' : 'all';
+  return runLocalGainCli({
+    agentDir: getLocalAgentDir(), cwd, projectKey, format, ...(sessionId === undefined ? {} : { sessionId }),
+    query: { scope, ...(sessionId === undefined ? {} : { sessionId }), ...(project ? { projectKey } : {}), ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) },
+    writeOutput,
+  });
 }
 
 const THINKING_LEVELS = new Set<NonNullable<RunLocalFelanHeadlessOptions['thinkingLevel']>>([

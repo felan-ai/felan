@@ -6,17 +6,13 @@ export interface RtkOptimizerController {
   getRuntimeStatus(): RuntimeStatus;
   refreshRuntimeStatus(): Promise<RuntimeStatus>;
   install(onStatus: (message: string) => void): Promise<RuntimeStatus>;
-  getMetricsSummary(): string;
-  clearMetrics(): void;
 }
 
-const USAGE = 'Usage: /rtk [show|verify|install|stats|clear-stats|help]';
+const USAGE = 'Usage: /rtk [show|verify|install|help]';
 const SUBCOMMANDS = [
   ['show', 'Show current RTK configuration and runtime status'],
   ['verify', 'Check whether rtk is available in the runtime'],
   ['install', 'Run the pinned official RTK installer'],
-  ['stats', 'Show output-compaction metrics'],
-  ['clear-stats', 'Clear output-compaction metrics'],
   ['help', 'Show command usage'],
 ] as const;
 
@@ -65,11 +61,6 @@ export function registerRtkCommand(pi: FelanExtensionAPI, controller: RtkOptimiz
         } finally {
           ctx.ui.setStatus('rtk-install', undefined);
         }
-      } else if (subcommand === 'stats') {
-        ctx.ui.notify(controller.getMetricsSummary(), 'info');
-      } else if (subcommand === 'clear-stats') {
-        controller.clearMetrics();
-        ctx.ui.notify('RTK metrics cleared.', 'info');
       } else {
         ctx.ui.notify(USAGE, 'warning');
       }
@@ -90,8 +81,4 @@ function formatSummary(config: RtkOptimizerConfig, status: RuntimeStatus): strin
     `sourceFilter=${config.outputCompaction.sourceCodeFiltering}`,
     'commandTools=bash,exec_command,write_stdin',
   ].join(', ');
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

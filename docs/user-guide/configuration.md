@@ -230,9 +230,17 @@ fuzzy-search either list; activating a field with declared options cycles them.
 ### RTK
 
 Use `/settings` to edit `extensionConfig.rtkOptimizer`. `/rtk` shows operational
-status, verifies availability, installs the reviewed executable, and reports
-metrics. Command rewriting needs the reviewed `rtk` executable;
-binary-independent output compaction does not.
+status, verifies availability, and installs the reviewed executable. `/gain`
+reports Felan's savings. Command rewriting needs the reviewed `rtk` executable;
+binary-independent output compaction does not. Felan's post-tool metrics include
+command, read, grep, and Codex result compaction (including non-RTK compaction),
+and RTK command-output savings are reported separately from Felan's post-tool
+compaction. Felan uses one isolated temporary RTK tracker per root session and
+model, queries each tracker during session shutdown, and never imports RTK's
+global history or exposes `rtk gain`. Active-session `/gain` may not yet include
+unflushed RTK command-output savings.
+Large lossy results use a recoverable head-and-tail preview; failed results and
+complete JSON payloads are protected from false-success or mid-document cuts.
 
 ## Secrets
 

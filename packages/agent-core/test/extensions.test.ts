@@ -86,6 +86,35 @@ describe('Felan extension bridge', () => {
     expect(setThinkingLevel).toHaveBeenCalledWith('medium');
   });
 
+  it('binds savings reporting to the loaded extension package', async () => {
+    const report = vi.fn(async () => {});
+    const provider = {
+      createReporter: vi.fn(() => ({ report })),
+    };
+    const inline = (await loadFelanExtensions(
+      ['@felan-ai/example-extension'],
+      async () => ({
+        default: async (felanPi: FelanExtensionAPI) => {
+          await felanPi.savings?.report({
+            category: 'other',
+            baseline: { costUsd: 2 },
+            actual: { costUsd: 1 },
+            basis: { kind: 'observed-comparison', method: 'test' },
+          });
+        },
+      }),
+      new TestAgentRuntime(),
+      '/agent',
+      [],
+      provider,
+    ))[0]!;
+
+    await inlineFactory(inline)({} as ExtensionAPI);
+
+    expect(provider.createReporter).toHaveBeenCalledWith('@felan-ai/example-extension');
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({ category: 'other' }));
+  });
+
   it('imports packages sequentially and retains package names on inline factories', async () => {
     const calls: string[] = [];
     const extension = (_pi: FelanExtensionAPI): void => {};

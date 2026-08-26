@@ -19,10 +19,12 @@ work.
   when ANSI stripping is enabled.
 
 Build, test, Git, and linter commands receive command-aware compaction. Search
-results can be grouped by file. A final character limit protects the context
-from unusually large command results. Lossy source filtering and smart
-truncation for `read` are disabled by default; explicit read ranges and reads
-of at most 80 lines stay exact even when read compaction is enabled.
+results can be grouped by file. A final head-and-tail character limit protects
+the context from unusually large command results and stores a recoverable copy
+in session storage. Failed results retain their original evidence, and complete
+JSON is never cut. Lossy source filtering and smart truncation for `read` are
+disabled by default; explicit read ranges and reads of at most 80 lines stay
+exact even when read compaction is enabled.
 
 ## Requirements
 
@@ -89,12 +91,20 @@ commands. Subcommands are:
 - `/rtk show`
 - `/rtk verify`
 - `/rtk install`
-- `/rtk stats`
-- `/rtk clear-stats`
 - `/rtk help`
 
-Metrics are scoped to the current Felan extension session and reset at session
-start.
+RTK and post-tool savings are reported to Felan's persistent savings service when the
+host provides it. They report two distinct sequential stages: RTK command-output
+optimization from an isolated session/model tracker, and Felan post-tool
+compaction for every supported result. Both use bounded token estimates and are
+reported as separate Felan-owned savings measurements; they are not added twice.
+The session tracker is queried once per model shard during session shutdown and
+then deleted. A crashed session can recover its unfinished tracker on resume;
+rare duplicate or skipped indicative measurements are acceptable. The global RTK
+history is never imported. RTK command-output captures use the
+`rtk-tracking-byte4-v1` estimator and are available on POSIX runtimes; on
+Windows, rewriting remains available but the isolated RTK gain capture is
+skipped because the POSIX environment wrapper is not used.
 
 ## Development
 

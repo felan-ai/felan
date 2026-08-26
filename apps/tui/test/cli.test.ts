@@ -25,6 +25,34 @@ describe('felan CLI', () => {
     expect(launched).toBe(false);
   });
 
+  it('runs gain without starting a model session', async () => {
+    const output: string[] = [];
+    let launched = false;
+    const exitCode = await runCli(['gain', '--help'], {
+      writeOutput: (line) => output.push(line),
+      launch: async () => { launched = true; },
+      launchHeadless: async () => { launched = true; return 1; },
+    });
+
+    expect(exitCode).toBe(0);
+    expect(launched).toBe(false);
+    expect(output[0]).toContain('Usage: felan gain');
+  });
+
+  it('validates gain options before reading storage', async () => {
+    const errors: string[] = [];
+    expect(await runCli(['gain', '--project', '--session', 'session'], {
+      writeError: (line) => errors.push(line),
+    })).toBe(1);
+    expect(await runCli(['gain', '--format', 'yaml'], {
+      writeError: (line) => errors.push(line),
+    })).toBe(1);
+    expect(errors).toEqual([
+      'Cannot combine --project with --session',
+      '--format requires text or json',
+    ]);
+  });
+
   it('rejects extra update arguments without starting the interactive application', async () => {
     const errors: string[] = [];
     let launched = false;

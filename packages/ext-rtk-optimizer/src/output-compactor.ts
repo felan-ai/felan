@@ -8,12 +8,11 @@ import {
   groupSearchResults,
   smartTruncate,
   stripAnsiFast,
-  truncate,
 } from './techniques/index.js';
-import type { OutputMetrics } from './output-metrics.js';
-import { mapTextContentBlocks, toRecord } from './record-utils.js';
+import { isTextContentBlock, mapTextContentBlocks, toRecord } from './record-utils.js';
 import { isRuntimePathUnderRoot, joinRuntimePath, normalizeRuntimePath } from './runtime-path.js';
 import { isCommandToolName, readToolCommand } from './tool-shapes.js';
+import { truncateHeadTail } from './techniques/truncate.js';
 import type { RtkOptimizerConfig } from './types.js';
 
 interface ToolResultLikeEvent {
@@ -26,7 +25,8 @@ export interface ToolResultCompactionOptions {
   readonly cwd: string;
   readonly agentDir: string;
   readonly command?: string;
-  readonly metrics?: OutputMetrics;
+  /** True when the tool failed or reported a non-zero process exit. */
+  readonly failed?: boolean;
 }
 
 export interface ToolResultCompactionMetadata {
@@ -37,6 +37,26 @@ export interface ToolResultCompactionMetadata {
   compactedCharCount: number;
   originalLineCount: number;
   compactedLineCount: number;
+  recoveryPath?: string;
+}
+
+export function addRecoveryPath(
+  outcome: ToolResultCompactionOutcome,
+  recoveryPath: string,
+): ToolResultCompactionOutcome {
+  if (!outcome.changed || !outcome.content || !outcome.metadata?.truncated) return outcome;
+  const content = outcome.content.map((block, index) => {
+    if (index !== 0 || !isTextContentBlock(block)) return block;
+    return {
+      ...block,
+      text: `${block.text}\n[RTK recovery: full original output at ${recoveryPath}]`,
+    };
+  });
+  return {
+    ...outcome,
+    content,
+    metadata: { ...outcome.metadata, recoveryPath },
+  };
 }
 
 export interface ToolResultCompactionOutcome {
@@ -451,7 +471,9 @@ function applyAnsiStripping(state: CompactionState, compaction: RtkOptimizerConf
 /** Applies hard character truncation when enabled and the threshold is exceeded. */
 function applyTruncation(state: CompactionState, compaction: RtkOptimizerConfig['outputCompaction']): void {
   if (compaction.truncate.enabled && state.text.length > compaction.truncate.maxChars) {
-    state.text = truncate(state.text, compaction.truncate.maxChars);
+    state.text = truncateHeadTail(state.text, compaction.truncate.maxChars, {
+      marker: (omitted) => `\n[RTK truncated: ${omitted} characters omitted; head and tail retained]\n`,
+    }).text;
     state.techniques.push('truncate');
   }
 }
@@ -505,8 +527,25 @@ function compactCommandText(
   text: string,
   command: string | undefined,
   config: RtkOptimizerConfig,
+  failed = false,
 ): { text: string; techniques: string[] } {
   const { state, compaction } = beginCompaction(text, config);
+
+  // A complete JSON document is a structured payload, not prose. Preserve it
+  // before semantic filters or truncation can make it invalid. This is checked
+  // after ANSI removal so ordinary terminal decoration does not bypass the guard.
+  if (isCompleteJson(state.text)) {
+    return { text: state.text, techniques: state.techniques };
+  }
+
+  // Synthetic success summaries are unsafe on failures: the original output
+  // may contain the only useful diagnostic, and a parser that did not recognize
+  // it must never turn it into an apparent success. The final head/tail cap still
+  // bounds unusually large failures while retaining evidence from both ends.
+  if (failed) {
+    applyTruncation(state, compaction);
+    return { text: state.text, techniques: state.techniques };
+  }
 
   applyConditionalTechnique(state, compaction.filterBuildOutput, (t) => filterBuildOutput(t, command), 'build');
   applyConditionalTechnique(state, compaction.aggregateTestOutput, (t) => aggregateTestOutput(t, command), 'test');
@@ -527,13 +566,14 @@ function compactCodexCommandText(
   text: string,
   command: string | undefined,
   config: RtkOptimizerConfig,
+  failed = false,
 ): { text: string; techniques: string[] } {
   const markerIndex = text.indexOf(CODEX_OUTPUT_MARKER);
-  if (markerIndex === -1) return compactCommandText(text, command, config);
+  if (markerIndex === -1) return compactCommandText(text, command, config, failed);
 
   const outputStart = markerIndex + CODEX_OUTPUT_MARKER.length;
   const prefix = text.slice(0, outputStart);
-  const transformed = compactCommandText(text.slice(outputStart), command, config);
+  const transformed = compactCommandText(text.slice(outputStart), command, config, failed);
   return { ...transformed, text: `${prefix}${transformed.text}` };
 }
 
@@ -628,10 +668,10 @@ export function compactToolResult(
       const command = options.command ?? readToolCommand(event.toolName, input);
       transformed =
         event.toolName === 'exec_command'
-          ? compactCodexCommandText(contentBlock.text, command, config)
-          : compactCommandText(contentBlock.text, command, config);
+          ? compactCodexCommandText(contentBlock.text, command, config, options.failed)
+          : compactCommandText(contentBlock.text, command, config, options.failed);
     } else if (event.toolName === 'write_stdin') {
-      transformed = compactCodexCommandText(contentBlock.text, options.command, config);
+      transformed = compactCodexCommandText(contentBlock.text, options.command, config, options.failed);
     } else if (event.toolName === 'read') {
       const normalizedPath = normalizePath(input);
       transformed = compactReadText(
@@ -662,10 +702,6 @@ export function compactToolResult(
   const originalText = originalChunks.join('\n');
   const compactedText = filteredChunks.join('\n');
 
-  if (config.outputCompaction.trackSavings) {
-    options.metrics?.track(originalText, compactedText, event.toolName, techniques);
-  }
-
   const metadata: ToolResultCompactionMetadata = {
     applied: true,
     techniques,
@@ -682,4 +718,15 @@ export function compactToolResult(
     techniques,
     metadata,
   };
+}
+
+function isCompleteJson(text: string): boolean {
+  const trimmed = text.trimStart();
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return false;
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
 }

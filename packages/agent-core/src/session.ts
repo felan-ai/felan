@@ -23,6 +23,7 @@ import {
 import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
 import type { ExtensionConfigOverride } from './extension-config.js';
+import type { SavingsReporterProvider } from './savings.js';
 
 export type StreamFunction = AgentSession['agent']['streamFunction'];
 const PROJECT_INSTRUCTION_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const;
@@ -47,6 +48,7 @@ export interface CreateAgentCoreSessionOptions {
   readonly skillPaths?: readonly string[];
   readonly skills?: readonly Skill[];
   readonly appendSystemPrompt?: readonly string[];
+  readonly savings?: SavingsReporterProvider;
 }
 
 export async function createAgentCoreSession(
@@ -108,6 +110,7 @@ async function composeAgentCoreSession(
     agentDir,
     modelSelectionScope,
     options.extensionConfigOverrides,
+    options.savings,
   );
   const extensionFactories = [
     ...featureExtensions,

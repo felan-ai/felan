@@ -9,6 +9,7 @@ import {
   type ModelRuntime,
   type SettingsManager,
   type ExtensionConfigOverride,
+  type SavingsReporterProvider,
 } from '@felan-ai/agent-core';
 import {
   bindSubagentSession,
@@ -70,6 +71,7 @@ export interface CreateLocalSubagentHostOptions {
   }) => MemoryHost;
   readonly settings?: LocalSubagentSettings;
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
+  readonly savings?: SavingsReporterProvider;
   readonly runChild?: LocalSubagentRunner;
 }
 
@@ -789,6 +791,7 @@ export class LocalSubagentManager {
       ...(this.#options.extensionConfigOverrides === undefined
         ? {}
         : { extensionConfigOverrides: this.#options.extensionConfigOverrides }),
+      ...(this.#options.savings === undefined ? {} : { savings: this.#options.savings }),
     });
     try {
       await onSession(created.session, sessionFile);

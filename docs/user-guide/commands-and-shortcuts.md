@@ -17,6 +17,7 @@ and first-party extensions.
 | `/memory open` | Open canonical project memory in the local TUI |
 | `/agents` | Open the subagent navigator |
 | `/tools` | Inspect complete root-session tool arguments and results |
+| `/gain` | Show Felan savings for the current root session (`project`, `all`, or `details` also supported) |
 
 `/dependencies` and `/memory open` require the interactive TUI.
 
@@ -44,7 +45,6 @@ to start a new session for the current directory.
 | `/rtk show` | Show RTK configuration and runtime status |
 | `/rtk verify` | Recheck the active runtime for RTK |
 | `/rtk install` | Explicitly install the pinned reviewed RTK release |
-| `/rtk stats` | Show session savings metrics |
 
 The Browser extension is model-facing and does not add a user slash command.
 Use `/dependencies` to manage its external CLI.

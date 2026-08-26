@@ -4,6 +4,7 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import type { AgentRuntime } from './runtime.js';
 import type { ModelSelectionPersistenceScope } from './model-selection.js';
+import type { SavingsReporter, SavingsReporterProvider } from './savings.js';
 import {
   associateCapabilityCollector,
   CapabilityCollector,
@@ -25,6 +26,7 @@ export interface FelanExtensionAPI extends Omit<ExtensionAPI, 'getFlag' | 'regis
   readonly agentDir: string;
   readonly runtime: AgentRuntime;
   readonly config: Readonly<Record<string, ExtensionConfigValue>>;
+  readonly savings?: SavingsReporter;
   registerCapability(capability: FelanCapability): void;
   setModel(
     model: Parameters<ExtensionAPI['setModel']>[0],
@@ -54,6 +56,7 @@ export function bindFelanExtension(
   runtime: AgentRuntime,
   agentDir: string = runtime.cwd,
   config: Readonly<Record<string, ExtensionConfigValue>> = {},
+  savings?: SavingsReporterProvider,
 ): InlineExtension {
   return bindFelanExtensionWithCapabilities(
     packageName,
@@ -64,6 +67,7 @@ export function bindFelanExtension(
     true,
     undefined,
     config,
+    savings,
   );
 }
 
@@ -76,6 +80,7 @@ function bindFelanExtensionWithCapabilities(
   resetCapabilities: boolean,
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
   config: Readonly<Record<string, ExtensionConfigValue>>,
+  savings: SavingsReporterProvider | undefined,
 ): InlineExtension {
   const inline: InlineExtension = {
     name: packageName,
@@ -96,6 +101,7 @@ function bindFelanExtensionWithCapabilities(
           registerCapability,
           modelSelectionScope,
           config,
+          savings?.createReporter(packageName),
         ));
       } finally {
         initializing = false;
@@ -112,6 +118,7 @@ export async function loadFelanExtensions(
   runtime: AgentRuntime,
   agentDir: string = runtime.cwd,
   configOverrides: readonly ExtensionConfigOverride[] = [],
+  savings?: SavingsReporterProvider,
 ): Promise<InlineExtension[]> {
   return loadFelanExtensionsWithScope(
     packageNames,
@@ -120,6 +127,7 @@ export async function loadFelanExtensions(
     agentDir,
     undefined,
     configOverrides,
+    savings,
   );
 }
 
@@ -130,6 +138,7 @@ export async function loadFelanSessionExtensions(
   agentDir: string,
   modelSelectionScope: ModelSelectionPersistenceScope,
   configOverrides: readonly ExtensionConfigOverride[] = [],
+  savings?: SavingsReporterProvider,
 ): Promise<InlineExtension[]> {
   return loadFelanExtensionsWithScope(
     packageNames,
@@ -138,6 +147,7 @@ export async function loadFelanSessionExtensions(
     agentDir,
     modelSelectionScope,
     configOverrides,
+    savings,
   );
 }
 
@@ -148,6 +158,7 @@ async function loadFelanExtensionsWithScope(
   agentDir: string,
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
   configOverrides: readonly ExtensionConfigOverride[],
+  savings: SavingsReporterProvider | undefined,
 ): Promise<InlineExtension[]> {
   const seen = new Set<string>();
   const extensions: InlineExtension[] = [];
@@ -194,6 +205,7 @@ async function loadFelanExtensionsWithScope(
       extensions.length === 0,
       modelSelectionScope,
       config,
+      savings,
     ));
   }
 
@@ -207,6 +219,7 @@ function createFelanExtensionAPI(
   registerCapability: (capability: FelanCapability) => void,
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
   config: Readonly<Record<string, ExtensionConfigValue>>,
+  savings: SavingsReporter | undefined,
 ): FelanExtensionAPI {
   const boundMethods = new Map<PropertyKey, unknown>();
 
@@ -215,6 +228,7 @@ function createFelanExtensionAPI(
       if (property === 'agentDir') return agentDir;
       if (property === 'runtime') return runtime;
       if (property === 'config') return config;
+      if (property === 'savings') return savings;
       if (property === 'registerCapability') {
         return registerCapability;
       }
@@ -277,7 +291,13 @@ function createFelanExtensionAPI(
       return boundMethods.get(property);
     },
     set(target, property, value) {
-      if (property === 'agentDir' || property === 'runtime' || property === 'registerCapability') return false;
+      if (
+        property === 'agentDir'
+        || property === 'runtime'
+        || property === 'config'
+        || property === 'savings'
+        || property === 'registerCapability'
+      ) return false;
       return Reflect.set(target, property, value, target);
     },
   });

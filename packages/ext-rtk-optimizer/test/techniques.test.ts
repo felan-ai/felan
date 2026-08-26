@@ -8,7 +8,7 @@ import { compactPath } from '../src/techniques/path-utils.js';
 import { groupSearchResults } from '../src/techniques/search.js';
 import { detectLanguage, filterAggressive, filterMinimal, smartTruncate } from '../src/techniques/source.js';
 import { aggregateTestOutput, isTestCommand } from '../src/techniques/test-output.js';
-import { truncate } from '../src/techniques/truncate.js';
+import { truncate, truncateHeadTail } from '../src/techniques/truncate.js';
 
 describe('output compaction techniques', () => {
   it('strips CSI and OSC ANSI sequences without copying plain text', () => {
@@ -106,12 +106,19 @@ describe('output compaction techniques', () => {
     expect(filterAggressive(source, 'typescript')).not.toContain('return value');
   });
 
-  it('applies smart line truncation and hard character truncation', () => {
+  it('applies smart line truncation and hard head-tail character truncation', () => {
     const source = Array.from({ length: 20 }, (_, index) => `const value${index} = ${index};`).join('\n');
     const compacted = smartTruncate(source, 6, 'typescript');
     expect(compacted.split('\n').length).toBeLessThanOrEqual(6);
     expect(compacted).toContain('more lines (total: 20)');
-    expect(truncate('abcdefghij', 7)).toBe('abcd...');
-    expect(truncate('abc', 2)).toBe('...');
+    expect(truncate('abcdefghij', 7)).toBe('abc...j');
+    expect(truncate('abc', 2)).toBe('..');
+    const result = truncateHeadTail('head\nmiddle one\nmiddle two\ntail', 28, {
+      marker: (omitted) => `\n[${omitted} omitted]\n`,
+    });
+    expect(result.text).toContain('head\n');
+    expect(result.text).toContain('tail');
+    expect(result.text.length).toBeLessThanOrEqual(28);
+    expect(result.omittedCharacters).toBeGreaterThan(0);
   });
 });

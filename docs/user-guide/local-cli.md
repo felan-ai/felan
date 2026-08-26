@@ -19,6 +19,7 @@ felan [options] [message]
 --session-dir <dir> Session directory for --session
 --diagnostics      Print runtime versions and configuration mode
 update             Update a global npm installation of Felan
+gain               Show persisted savings without starting a model session
 -h, --help         Show help
 -v, --version      Print the Felan version
 --verbose          Show verbose startup details
@@ -60,6 +61,20 @@ Self-update is limited to the verified global npm installation that provides
 the running `felan` command. `npx`, local/source, pnpm, yarn, and bun
 installations are not changed; update those with their normal package-manager
 command instead. To send `update` as an initial prompt, use `felan -- update`.
+
+### Savings
+
+Read the same persisted savings used by `/gain` without starting a model
+session:
+
+```sh
+felan gain
+felan gain --project
+felan gain --session <id>
+felan gain --daily
+felan gain --monthly
+felan gain --format json
+```
 
 On Windows, exit every running Felan process before updating. npm replaces the
 installed package directory, and another Felan process, antivirus scanner, or
