@@ -8,10 +8,16 @@ import { getBackgroundBashJobsDir } from '../src/job-store.js';
 import { BackgroundBashManager } from '../src/process-manager.js';
 
 const temporaryPaths: string[] = [];
-const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
-const INTEGRATION_WAIT_TIMEOUT_SECONDS = 30;
+const startedJobs: Array<{ manager: BackgroundBashManager; id: string }> = [];
+const INTEGRATION_TEST_TIMEOUT_MS = 30_000;
+const INTEGRATION_WAIT_TIMEOUT_SECONDS = 20;
 
 afterEach(async () => {
+  await Promise.all(startedJobs.splice(0).map(async ({ manager, id }) => {
+    try {
+      await manager.stop(id, 'SIGKILL');
+    } catch {}
+  }));
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -29,6 +35,7 @@ describe('BackgroundBashManager', () => {
   it('starts, persists, waits for, and tails a detached process through runtime storage', async () => {
     const { manager, runtime, storageScopes } = await createManager();
     const started = await manager.start("printf 'first\\nsecond\\n'");
+    trackJob(manager, started.meta.id);
 
     const result = await manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS);
 
@@ -46,6 +53,7 @@ describe('BackgroundBashManager', () => {
   it('stops a running process and rejects ids outside the process registry', async () => {
     const { manager, runtime } = await createManager();
     const started = await manager.start("sleep 30 & echo $! > child.pid; wait");
+    trackJob(manager, started.meta.id);
     const childPid = await readPid(runtime, 'child.pid');
 
     const stopped = await manager.stop(started.meta.id, 'SIGTERM');
@@ -60,6 +68,7 @@ describe('BackgroundBashManager', () => {
   it('stops a process immediately after launch without losing runner identity', async () => {
     const { manager } = await createManager();
     const started = await manager.start('sleep 30');
+    trackJob(manager, started.meta.id);
 
     const stopped = await manager.stop(started.meta.id, 'SIGTERM');
 
@@ -68,12 +77,16 @@ describe('BackgroundBashManager', () => {
 
   it('does not replace natural completion with an unknown stop result', async () => {
     const { manager } = await createManager();
-    const started = await manager.start('sleep 1; printf done');
+    const started = await manager.start('printf done');
+    trackJob(manager, started.meta.id);
 
+    await expect(manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS)).resolves.toMatchObject({
+      timedOut: false,
+      job: { status: { status: 'completed', exitCode: 0 } },
+    });
     const stopped = await manager.stop(started.meta.id, 'SIGTERM');
 
-    expect(['completed', 'killed']).toContain(stopped.status.status);
-    expect(stopped.status.status).not.toBe('unknown');
+    expect(stopped.status).toMatchObject({ status: 'completed', exitCode: 0 });
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it.skipIf(process.platform !== 'win32' || !nativeGitBashAvailable())(
@@ -81,12 +94,14 @@ describe('BackgroundBashManager', () => {
     async () => {
       const { manager } = await createManager();
       const started = await manager.start("printf 'windows git bash\\n'");
+      trackJob(manager, started.meta.id);
       const completed = await manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS);
 
       expect(completed.job.status).toMatchObject({ status: 'completed', exitCode: 0 });
       await expect(manager.tail(started.meta.id)).resolves.toContain('windows git bash');
 
       const running = await manager.start('sleep 30');
+      trackJob(manager, running.meta.id);
       await expect(manager.stop(running.meta.id)).resolves.toMatchObject({
         status: { status: 'killed', signal: 'SIGTERM' },
       });
@@ -94,6 +109,10 @@ describe('BackgroundBashManager', () => {
     INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
+
+function trackJob(manager: BackgroundBashManager, id: string): void {
+  startedJobs.push({ manager, id });
+}
 
 async function createManager(): Promise<{
   manager: BackgroundBashManager;

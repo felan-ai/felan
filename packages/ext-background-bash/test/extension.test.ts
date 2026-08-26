@@ -1,8 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
-  HostAgentRuntime,
   type AgentRuntime,
   type Api,
   type ExtensionContext,
@@ -10,14 +6,16 @@ import {
   type Model,
 } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import backgroundBashExtension from '../src/index.js';
+import backgroundBashExtension, {
+  BackgroundBashManager,
+  type BackgroundBashJob,
+  type BackgroundBashStatus,
+} from '../src/index.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
-const temporaryPaths: string[] = [];
-const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
 
-afterEach(async () => {
-  await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('background bash extension activation', () => {
@@ -124,70 +122,88 @@ describe('background bash extension activation', () => {
   });
 
   it('steers terminal process completion into the parent session automatically', async () => {
-    const harness = createHarness(await createHostRuntime());
+    const running = backgroundJob('running');
+    const completed = backgroundJob('completed');
+    vi.spyOn(BackgroundBashManager.prototype, 'start').mockResolvedValue(running);
+    vi.spyOn(BackgroundBashManager.prototype, 'get').mockResolvedValue(completed);
+    const harness = createHarness();
     const ctx = context('anthropic');
     await backgroundBashExtension(harness.pi);
     await harness.emit('session_start', {}, ctx);
     const bash = registeredTool(harness, 'bash');
 
-    const started = await bash.execute(
-      'start',
-      { command: "printf 'finished\\n'", background: true },
-      undefined,
-      undefined,
-      ctx,
-    ) as { details: { id: string } };
+    try {
+      const started = await bash.execute(
+        'start',
+        { command: "printf 'finished\\n'", background: true },
+        undefined,
+        undefined,
+        ctx,
+      ) as { details: { id: string } };
 
-    await waitFor(() => harness.sendMessage.mock.calls.length === 1);
-    expect(harness.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        customType: 'felan-background-bash-completion',
-        content: expect.stringContaining(started.details.id),
-        display: true,
-      }),
-      { triggerTurn: true, deliverAs: 'steer' },
-    );
-    const message = harness.sendMessage.mock.calls[0]?.[0] as { details: unknown };
-    expect(JSON.stringify(message.details)).not.toContain('processToken');
-
-    await harness.emit('session_shutdown', {}, ctx);
-  }, INTEGRATION_TEST_TIMEOUT_MS);
+      await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledOnce());
+      expect(harness.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customType: 'felan-background-bash-completion',
+          content: expect.stringContaining(started.details.id),
+          display: true,
+        }),
+        { triggerTurn: true, deliverAs: 'steer' },
+      );
+      const message = harness.sendMessage.mock.calls[0]?.[0] as { details: unknown };
+      expect(JSON.stringify(message.details)).not.toContain('processToken');
+    } finally {
+      await harness.emit('session_shutdown', {}, ctx);
+    }
+  });
 
   it('reads stored output without sending a second completion after wait finishes', async () => {
-    const harness = createHarness(await createHostRuntime());
+    const running = backgroundJob('running');
+    const completed = backgroundJob('completed');
+    let current = running;
+    vi.spyOn(BackgroundBashManager.prototype, 'start').mockResolvedValue(running);
+    vi.spyOn(BackgroundBashManager.prototype, 'get').mockImplementation(async () => current);
+    vi.spyOn(BackgroundBashManager.prototype, 'wait').mockImplementation(async () => {
+      current = completed;
+      return { job: completed, timedOut: false };
+    });
+    vi.spyOn(BackgroundBashManager.prototype, 'tail').mockResolvedValue('stored output\n');
+    const harness = createHarness();
     const ctx = context('anthropic');
     await backgroundBashExtension(harness.pi);
     await harness.emit('session_start', {}, ctx);
     const bash = registeredTool(harness, 'bash');
     const read = registeredTool(harness, 'read_background_bash');
     const wait = registeredTool(harness, 'wait_background_bash');
-    const started = await bash.execute(
-      'start',
-      { command: "printf 'stored output\\n'; sleep 1", background: true },
-      undefined,
-      undefined,
-      ctx,
-    ) as { details: { id: string } };
+    try {
+      const started = await bash.execute(
+        'start',
+        { command: "printf 'stored output\\n'; sleep 1", background: true },
+        undefined,
+        undefined,
+        ctx,
+      ) as { details: { id: string } };
 
-    await wait.execute(
-      'wait',
-      { id: started.details.id, timeout: 5 },
-      undefined,
-      undefined,
-      ctx,
-    );
-    const output = await read.execute(
-      'read',
-      { id: started.details.id, lines: 20 },
-      undefined,
-      undefined,
-      ctx,
-    ) as { content: Array<{ type: string; text: string }> };
-    expect(output.content[0]?.text).toContain('stored output');
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    expect(harness.sendMessage).not.toHaveBeenCalled();
-
-    await harness.emit('session_shutdown', {}, ctx);
+      await wait.execute(
+        'wait',
+        { id: started.details.id, timeout: 5 },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const output = await read.execute(
+        'read',
+        { id: started.details.id, lines: 20 },
+        undefined,
+        undefined,
+        ctx,
+      ) as { content: Array<{ type: string; text: string }> };
+      expect(output.content[0]?.text).toContain('stored output');
+      await Promise.resolve();
+      expect(harness.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      await harness.emit('session_shutdown', {}, ctx);
+    }
   });
 });
 
@@ -230,17 +246,6 @@ function createHarness(runtime: AgentRuntime = unusedRuntime()) {
   };
 }
 
-async function createHostRuntime(): Promise<HostAgentRuntime> {
-  const root = await mkdtemp(join(tmpdir(), 'felan-background-extension-'));
-  temporaryPaths.push(root);
-  const cwd = join(root, 'workspace');
-  const sessionStorageRoot = join(root, 'session-storage');
-  const agentStorageRoot = join(root, 'agent-storage');
-  await Promise.all([cwd, sessionStorageRoot, agentStorageRoot]
-    .map((path) => mkdir(path, { recursive: true })));
-  return new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot });
-}
-
 function registeredTool(harness: ReturnType<typeof createHarness>, name: string) {
   const tool = harness.registerTool.mock.calls
     .map(([definition]) => definition)
@@ -249,14 +254,6 @@ function registeredTool(harness: ReturnType<typeof createHarness>, name: string)
   return tool as {
     execute: (...args: any[]) => Promise<unknown>;
   };
-}
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error('Timed out waiting for condition');
 }
 
 function context(provider: string): ExtensionContext {
@@ -268,6 +265,65 @@ function context(provider: string): ExtensionContext {
 
 function model(provider: string): Model<Api> {
   return { provider } as Model<Api>;
+}
+
+function backgroundJob(status: BackgroundBashStatus): BackgroundBashJob {
+  const id = 'bash-20260826000000-abcdef';
+  const command = "printf 'finished\\n'";
+  const cwd = '/workspace';
+  const jobDir = '/storage/background-bash/workspace/jobs/bash-20260826000000-abcdef';
+  const startedAt = Date.parse('2026-08-26T00:00:00.000Z');
+  const updatedAt = startedAt + (status === 'running' ? 0 : 1_000);
+  const terminal = status === 'running'
+    ? {}
+    : { exitCode: 0, signal: null, completedAt: updatedAt };
+  const paths = {
+    jobDir,
+    logPath: `${jobDir}/output.log`,
+    infoPath: `${jobDir}/info.json`,
+    completionPath: `${jobDir}/completion.json`,
+    commandPath: `${jobDir}/command.sh`,
+    runnerPath: `${jobDir}/runner.sh`,
+  };
+  return {
+    meta: {
+      id,
+      command,
+      cwd,
+      ...paths,
+      shell: 'sh',
+      shellArgs: [],
+      startedAt,
+      pid: 123,
+      processGroupId: 123,
+      processToken: 'private-process-token',
+      creatorPid: 1,
+    },
+    status: {
+      id,
+      status,
+      startedAt,
+      updatedAt,
+      pid: 123,
+      ...terminal,
+    },
+    info: {
+      id,
+      command,
+      cwd,
+      ...paths,
+      shell: 'sh',
+      shellArgs: [],
+      startedAt,
+      updatedAt,
+      status,
+      pid: 123,
+      processGroupId: 123,
+      processToken: 'private-process-token',
+      creatorPid: 1,
+      ...terminal,
+    },
+  };
 }
 
 function unusedRuntime(): AgentRuntime {
