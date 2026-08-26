@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.15.3",
+  "version": "0.15.4",
   "description": "Local Felan terminal agent",
   "license": "MIT",
   "type": "module",
@@ -55,11 +55,7 @@
     "@felan-ai/ext-web-access": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0",
     "@napi-rs/keyring": "1.3.0",
-    "open": "11.0.0",
-    "proper-lockfile": "4.1.2"
-  },
-  "devDependencies": {
-    "@types/proper-lockfile": "4.1.4"
+    "open": "11.0.0"
   },
   "publishConfig": {
     "access": "public",

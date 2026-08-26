@@ -59,6 +59,9 @@ import { LocalMemoryCoordinator } from './memory/coordinator.js';
 import { createGainExtension } from './gain.js';
 import { SavingsService, createModelPriceSource } from './savings.js';
 import { createHash } from 'node:crypto';
+import { installPiAsyncFileLockGuard } from './pi-lock.js';
+
+installPiAsyncFileLockGuard();
 
 const localSubagentHost = Symbol('localSubagentHost');
 const localSubagentShutdown = Symbol('localSubagentShutdown');

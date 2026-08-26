@@ -46,6 +46,30 @@ afterEach(async () => {
 });
 
 describe('local Agent Core lifecycle', () => {
+  it('guards concurrent Pi credential writes with the local async lock', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, 'agent');
+    await mkdir(agentDir, { recursive: true });
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+
+    await Promise.all([
+      modelRuntime.login('anthropic', 'api_key', {
+        prompt: async () => 'anthropic-test-key',
+        notify: () => {},
+      }),
+      modelRuntime.login('openai', 'api_key', {
+        prompt: async () => 'openai-test-key',
+        notify: () => {},
+      }),
+    ]);
+
+    const stored = JSON.parse(await readFile(join(agentDir, 'auth.json'), 'utf8')) as Record<string, unknown>;
+    expect(stored).toMatchObject({
+      anthropic: { type: 'api_key', key: 'anthropic-test-key' },
+      openai: { type: 'api_key', key: 'openai-test-key' },
+    });
+  });
+
   it('uses the Felan root for sessions and loads only configured built-ins, root instructions, and .agents skills', async () => {
     const root = await temporaryDirectory();
     const home = join(root, 'home');

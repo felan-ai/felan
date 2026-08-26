@@ -1,4 +1,4 @@
-import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -44,6 +44,37 @@ describe('local file locks', () => {
       return 'unreachable';
     })).rejects.toThrow('Unable to update lock within the stale threshold');
   });
+
+  it('fences a heartbeat after a replacement lock is released', async () => {
+    const root = await temporaryDirectory();
+    const target = join(root, 'target');
+    const lockPath = `${target}.lock`;
+    await writeFile(target, '');
+    const first = await acquireLocalFileLock(target, {
+      realpath: false,
+      stale: 2_000,
+      update: 1_000,
+      preservePathOnRelease: true,
+    });
+    const firstMtime = (await lstat(lockPath)).mtime;
+
+    await rm(lockPath, { recursive: true, force: true });
+    const replacement = await acquireLocalFileLock(target, {
+      realpath: false,
+      stale: 2_000,
+      update: 1_000,
+      preservePathOnRelease: true,
+    });
+    await replacement.release();
+    await utimes(lockPath, firstMtime, firstMtime);
+
+    await waitFor(() => first.isCompromised());
+
+    expect(await replacement.isCurrent()).toBe(true);
+    expect((await lstat(lockPath)).mtime.getTime()).toBe(firstMtime.getTime());
+    await expect(first.release()).resolves.toBeUndefined();
+  });
+
 });
 
 async function temporaryDirectory(): Promise<string> {
