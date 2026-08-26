@@ -27,8 +27,36 @@ describe('powerline configuration', () => {
     expect(config.display.lines).toEqual([{ segments: { directory: { enabled: true, style: 'basename' } } }]);
   });
 
-  it('keeps default layout when no overrides are supplied', () => {
-    expect(powerlineConfigFromSettings({})).toEqual(DEFAULT_CONFIG);
+  it('uses the Felan theme and customized default layout when no overrides are supplied', () => {
+    const resolved = resolveExtensionConfigs([POWERLINE_CONFIG]);
+    expect(powerlineConfigFromSettings(resolved.get('powerline')!)).toEqual(DEFAULT_CONFIG);
+    expect(DEFAULT_CONFIG).toEqual({
+      theme: 'felan',
+      display: {
+        style: 'powerline',
+        charset: 'text',
+        colorCompatibility: 'truecolor',
+        autoWrap: true,
+        padding: 1,
+        lines: [
+          {
+            segments: {
+              directory: { enabled: true, style: 'fish' },
+              git: { enabled: true, showSha: false, showWorkingTree: true },
+            },
+          },
+          {
+            segments: {
+              context: { enabled: true, displayStyle: 'text', showTokensOnly: true },
+              session: { enabled: true, type: 'cost' },
+              subscription: { enabled: true, showProviderName: false, showReset: true, maxWindows: 3 },
+              model: { enabled: true, align: 'right' },
+            },
+          },
+          { segments: { status: { enabled: true } } },
+        ],
+      },
+    });
   });
 
   it('rejects malformed structured values before activation', () => {

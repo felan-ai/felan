@@ -1,6 +1,6 @@
 import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 
-export type ThemeName = 'dark' | 'light' | 'nord' | 'tokyo-night' | 'rose-pine' | 'gruvbox' | 'custom';
+export type ThemeName = 'felan' | 'dark' | 'light' | 'nord' | 'tokyo-night' | 'rose-pine' | 'gruvbox' | 'custom';
 export type FooterStyle = 'minimal' | 'powerline' | 'capsule';
 export type Charset = 'unicode' | 'text';
 export type ColorCompatibility = 'auto' | 'none' | 'ansi' | 'ansi256' | 'truecolor';
@@ -60,34 +60,38 @@ export interface PowerlineConfig {
 }
 
 export const DEFAULT_CONFIG: PowerlineConfig = {
-  theme: 'dark',
+  theme: 'felan',
   display: {
     style: 'powerline',
     charset: 'text',
-    colorCompatibility: 'auto',
+    colorCompatibility: 'truecolor',
     autoWrap: true,
     padding: 1,
     lines: [
       {
         segments: {
           directory: { enabled: true, style: 'fish' },
-          git: { enabled: true, showSha: true, showWorkingTree: true },
+          git: { enabled: true, showSha: false, showWorkingTree: true },
+        },
+      },
+      {
+        segments: {
+          context: { enabled: true, displayStyle: 'text', showTokensOnly: true },
+          session: { enabled: true, type: 'cost' },
+          subscription: { enabled: true, showProviderName: false, showReset: true, maxWindows: 3 },
           model: { enabled: true, align: 'right' },
         },
       },
       {
         segments: {
-          session: { enabled: true, type: 'tokens' },
-          subscription: { enabled: true, showProviderName: true, showReset: true, showPercentage: true, maxWindows: 3 },
-          context: { enabled: true, displayStyle: 'bar' },
-          status: { enabled: true, align: 'right' },
+          status: { enabled: true },
         },
       },
     ],
   },
 };
 
-const THEMES = new Set<ThemeName>(['dark', 'light', 'nord', 'tokyo-night', 'rose-pine', 'gruvbox', 'custom']);
+const THEMES = new Set<ThemeName>(['felan', 'dark', 'light', 'nord', 'tokyo-night', 'rose-pine', 'gruvbox', 'custom']);
 const STYLES = new Set<FooterStyle>(['minimal', 'powerline', 'capsule']);
 const CHARSETS = new Set<Charset>(['unicode', 'text']);
 const COLORS = new Set<ColorCompatibility>(['auto', 'none', 'ansi', 'ansi256', 'truecolor']);
@@ -116,7 +120,7 @@ export const POWERLINE_CONFIG = defineExtensionConfig({
   id: 'powerline',
   title: 'Powerline',
   fields: {
-    theme: configField.enum(['dark', 'light', 'nord', 'tokyo-night', 'rose-pine', 'gruvbox', 'custom'], { default: DEFAULT_CONFIG.theme, description: 'Powerline color theme' }),
+    theme: configField.enum(['felan', 'dark', 'light', 'nord', 'tokyo-night', 'rose-pine', 'gruvbox', 'custom'], { default: DEFAULT_CONFIG.theme, description: 'Powerline color theme' }),
     style: configField.enum(['minimal', 'powerline', 'capsule'], { default: DEFAULT_CONFIG.display.style, description: 'Powerline footer style' }),
     charset: configField.enum(['text', 'unicode'], { default: DEFAULT_CONFIG.display.charset, description: 'Powerline footer charset' }),
     colorCompatibility: configField.enum(['auto', 'none', 'ansi', 'ansi256', 'truecolor'], { default: DEFAULT_CONFIG.display.colorCompatibility, description: 'Powerline ANSI color mode' }),
@@ -136,7 +140,10 @@ export function powerlineConfigFromSettings(values: Readonly<Record<string, unkn
   if (typeof values.autoWrap === 'boolean') config.display.autoWrap = values.autoWrap;
   if (typeof values.padding === 'number') config.display.padding = values.padding;
   if (values.lines !== undefined) config.display.lines = parseDisplayLines(values.lines);
-  if (values.colors !== undefined) config.colors = { custom: parseCustomColors(values.colors) };
+  if (values.colors !== undefined) {
+    const colors = parseCustomColors(values.colors);
+    if (Object.keys(colors).length > 0) config.colors = { custom: colors };
+  }
   return config;
 }
 

@@ -208,7 +208,8 @@ options. The complete shape is:
 `lines` contains ordered display lines. Each line contains supported
 `directory`, `git`, `model`, `session`, `subscription`, `context`, and `status`
 segments with their documented segment fields. `colors` accepts custom named
-`#RRGGBB` foreground/background pairs. Changes take effect in a newly
+`#RRGGBB` foreground/background pairs. `felan` is the default built-in theme;
+select `custom` to apply the `colors` palette. Changes take effect in a newly
 constructed process/session. The built-in is enabled by default; set
 `builtinExtensions.powerline` to `false` to remove it.
 

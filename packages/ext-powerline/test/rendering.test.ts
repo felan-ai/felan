@@ -9,6 +9,25 @@ import type { SubscriptionState } from '../src/subscription.js';
 import { getSymbols } from '../src/symbols.js';
 
 describe('powerline rendering', () => {
+  it('uses the customized palette as the built-in Felan theme', () => {
+    expect(getThemePalette(DEFAULT_CONFIG).colors).toEqual({
+      directory: { fg: '#ffffff', bg: '#1d4ed8' },
+      git: { fg: '#111111', bg: '#a3be00' },
+      model: { fg: '#475569', bg: '#11151c' },
+      session: { fg: '#facc15', bg: '#11151c' },
+      subscription: { fg: '#475569', bg: '#11151c' },
+      context: { fg: '#22c55e', bg: '#11151c' },
+      status: { fg: '#475569', bg: '#11151c' },
+      warning: { fg: '#facc15', bg: '#11151c' },
+      critical: { fg: '#f87171', bg: '#11151c' },
+      muted: { fg: '#475569', bg: '#11151c' },
+      extensionStatus1: { fg: '#cbd5e1', bg: '#1f2937' },
+      extensionStatus2: { fg: '#bfdbfe', bg: '#1e3a5f' },
+      extensionStatus3: { fg: '#ddd6fe', bg: '#3b2f5f' },
+      extensionStatus4: { fg: '#99f6e4', bg: '#134e4a' },
+    });
+  });
+
   it('uses custom colors with built-in fallbacks', () => {
     const config: PowerlineConfig = {
       ...testConfig({}),

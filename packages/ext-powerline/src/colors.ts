@@ -12,6 +12,14 @@ export interface ThemePalette {
 }
 
 const THEMES: Record<Exclude<PowerlineConfig['theme'], 'custom'>, ThemePalette> = {
+  felan: makeTheme({
+    directory: ['#ffffff', '#1d4ed8'], git: ['#111111', '#a3be00'], model: ['#475569', '#11151c'],
+    session: ['#facc15', '#11151c'], subscription: ['#475569', '#11151c'],
+    context: ['#22c55e', '#11151c'], status: ['#475569', '#11151c'],
+    warning: ['#facc15', '#11151c'], critical: ['#f87171', '#11151c'], muted: ['#475569', '#11151c'],
+    extensionStatus1: ['#cbd5e1', '#1f2937'], extensionStatus2: ['#bfdbfe', '#1e3a5f'],
+    extensionStatus3: ['#ddd6fe', '#3b2f5f'], extensionStatus4: ['#99f6e4', '#134e4a'],
+  }),
   dark: makeTheme({
     directory: ['#f8fafc', '#2563eb'], git: ['#052e16', '#22c55e'], model: ['#ffffff', '#7c3aed'],
     session: ['#111827', '#f59e0b'], subscription: ['#f0fdf4', '#16a34a'],
