@@ -48,6 +48,22 @@ function assistant(
   };
 }
 
+function implementationAssistant(usage: Record<string, unknown>, stopReason: 'stop' | 'toolUse' = 'stop') {
+  return {
+    ...assistant(stopReason),
+    usage: {
+      input: 101,
+      output: 203,
+      cacheRead: 307,
+      cacheWrite: 409,
+      cacheWrite1h: 11,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      ...usage,
+    },
+  };
+}
+
 function toolResult(toolCallId: string, toolName: string, isError = false, details?: unknown) {
   return {
     role: 'toolResult',
@@ -73,6 +89,7 @@ function createHarness(
     thinkingLevel?: string;
     entryApproved?: boolean;
     prewalkOptions?: { entryApproval?: string; planReview?: string };
+    savings?: { report(measurement: unknown): Promise<void> };
   } = {},
 ) {
   const handlers = new Map<string, Handler[]>();
@@ -175,6 +192,7 @@ function createHarness(
     sendMessage,
     sendUserMessage,
     registeredFlags,
+    ...(options.savings === undefined ? {} : { savings: options.savings }),
   } as unknown as FelanExtensionAPI;
 
   prewalkExtension(pi);
@@ -308,6 +326,82 @@ async function contextMessages(harness: ReturnType<typeof createHarness>, messag
   const result = await harness.emit('context', { type: 'context', messages });
   return result.messages as any[];
 }
+
+describe('savings reporting', () => {
+  it('reports each implementation turn against a two-thirds planner counterfactual', async () => {
+    const report = vi.fn(async (_measurement: unknown) => {});
+    const harness = createHarness({ savings: { report } });
+
+    await qualifyHandoff(harness);
+    await harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 1,
+      message: implementationAssistant({}),
+      toolResults: [],
+    });
+    await harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 2,
+      message: implementationAssistant({ input: 2, output: 4, cacheRead: 6, cacheWrite: 8, cacheWrite1h: 0 }),
+      toolResults: [],
+    });
+
+    expect(report).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenNthCalledWith(1, {
+      category: 'model-routing',
+      operation: 'implementation-turn',
+      baseline: {
+        model: { provider: plannerModel.provider, id: plannerModel.id },
+        tokens: { input: 67, output: 135, cacheRead: 205, cacheWrite: 273, cacheWrite1h: 7 },
+      },
+      actual: {
+        model: { provider: targetModel.provider, id: targetModel.id },
+        tokens: { input: 101, output: 203, cacheRead: 307, cacheWrite: 409, cacheWrite1h: 11 },
+      },
+      basis: { kind: 'estimated-baseline', method: 'planner-two-thirds-usage-v1' },
+    });
+    expect(report).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      baseline: expect.objectContaining({ tokens: { input: 1, output: 3, cacheRead: 4, cacheWrite: 5, cacheWrite1h: 0 } }),
+      actual: expect.objectContaining({ tokens: { input: 2, output: 4, cacheRead: 6, cacheWrite: 8, cacheWrite1h: 0 } }),
+    }));
+  });
+
+  it('does not report planning, same-model, or failed implementation usage', async () => {
+    const report = vi.fn(async (_measurement: unknown) => {});
+    const planning = createHarness({ savings: { report } });
+    await startPlanning(planning);
+    await planning.emit('turn_end', {
+      type: 'turn_end', turnIndex: 0, message: implementationAssistant({}), toolResults: [],
+    });
+    expect(report).not.toHaveBeenCalled();
+
+    const sameModel = createHarness({
+      savings: { report },
+      flags: { 'prewalk-target-model': `${plannerModel.provider}/${plannerModel.id}` },
+    });
+    await qualifyHandoff(sameModel);
+    await sameModel.emit('turn_end', {
+      type: 'turn_end', turnIndex: 1, message: implementationAssistant({}), toolResults: [],
+    });
+    expect(report).not.toHaveBeenCalled();
+
+    const failed = createHarness({ savings: { report } });
+    await qualifyHandoff(failed);
+    await failed.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 1,
+      message: implementationAssistant({ input: 10 }, 'stop'),
+      toolResults: [],
+    });
+    await failed.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 2,
+      message: { ...implementationAssistant({ input: 10 }), stopReason: 'aborted' },
+      toolResults: [],
+    });
+    expect(report).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('flags and commands', () => {
   it('registers static Prewalk guidance', () => {

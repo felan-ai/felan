@@ -4,6 +4,8 @@ Same-session Prewalk for Felan's complex repository work: the current model expl
 
 After the run settles, Prewalk restores the original planner model and thinking level by default. All of these automated changes are scoped to the active session and do not change the user's or project's default model or thinking preference.
 
+When a savings reporter is available, Prewalk reports each implementation turn as a `model-routing` saving. The observed target-model usage is the actual outcome; the estimated planner-model baseline uses two thirds of each observed input, output, and cache token class (rounded to whole tokens). The host prices both outcomes and records the dollar difference as estimated savings. Planning turns, same-model handoffs, and failed or aborted turns are not reported. Savings reporting is optional and never interrupts the Prewalk lifecycle.
+
 For complex repository work that benefits from substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification, the model can request Prewalk by calling `enter_prewalk` before it explores or mutates the repository. Model-requested entry asks for user approval by default. Small localized edits and routine one-file fixes should normally stay on the regular path. `/prewalk` remains available when the user wants to enter explicitly and does not ask for redundant approval. Read-only requests do not use Prewalk.
 
 ## Requirements

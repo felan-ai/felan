@@ -182,6 +182,20 @@ The extension does **not** provide:
 - a storage path; or
 - arbitrary metadata.
 
+### Prewalk model-routing producer
+
+Prewalk reports one `model-routing` measurement for each successful assistant
+turn after a cross-model handoff into implementation. The actual outcome keeps
+the target model's observed usage. Its estimated planner baseline uses two
+thirds of every observed token class (`input`, `output`, `cacheRead`,
+`cacheWrite`, and `cacheWrite1h`), rounded to whole tokens, and prices those
+tokens against the original planner model. This is the explicit counterfactual
+assumption: 1.5 million target tokens represent 1 million planner tokens. The
+host therefore calculates the dollar saving as the planner-model baseline cost
+minus the target-model actual cost. Planning, same-model, failed, and aborted
+turns are excluded; an unavailable or failing reporter does not affect agent
+execution. The method identifier is `planner-two-thirds-usage-v1`.
+
 Categories and dimension keys come from a Felan-owned registry so that reports
 remain comparable. Operation, tool, and technique values are bounded lowercase
 slugs; an extension's operation values are internally namespaced by its bound

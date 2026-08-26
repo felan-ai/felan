@@ -11,9 +11,13 @@ import {
   type FelanThinkingLevel,
   type ModelReference,
   type ModelTier,
+  type AssistantMessage,
   type ExtensionContext,
   type FelanExtension,
   type FelanExtensionAPI,
+  type SavingsModelReference,
+  type SavingsReporter,
+  type SavingsTokenUsage,
 } from '@felan-ai/agent-core';
 import { Type } from 'typebox';
 import {
@@ -86,6 +90,11 @@ interface PlannerSnapshot {
   thinkingLevel: PlannerThinkingLevel;
 }
 
+interface ImplementationSavingsModels {
+  planner: SavingsModelReference;
+  target: SavingsModelReference;
+}
+
 interface ModelTransition {
   expectedModelKey: string;
   initialThinkingLevel: PlannerThinkingLevel;
@@ -117,6 +126,7 @@ interface ContextBuildResult {
 const HEADLESS_TASK_MESSAGE_TYPE = 'pi-prewalk-task';
 const ENTER_PREWALK_TOOL = 'enter_prewalk';
 const APPROVE_PREWALK_PLAN_TOOL = 'approve_prewalk_plan';
+const IMPLEMENTATION_BASELINE_RATIO = 2 / 3;
 const EnterPrewalkParams = Type.Object({}, { additionalProperties: false });
 const ApprovePrewalkPlanParams = Type.Object({}, { additionalProperties: false });
 
@@ -135,6 +145,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   let handoffPromise: Promise<void> | undefined;
   let restorationPromise: Promise<boolean> | undefined;
   let phaseContextAnchor: PhaseContextAnchor | undefined;
+  let implementationSavingsModels: ImplementationSavingsModels | undefined;
   let internalThinkingChange = false;
 
   function refreshConfig(): void {
@@ -180,6 +191,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     state = { phase: 'idle' };
     plannerSnapshot = undefined;
     phaseContextAnchor = undefined;
+    implementationSavingsModels = undefined;
     exitRequested = false;
     updateStatus(ctx);
   }
@@ -321,6 +333,12 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       setThinkingLevelInternally(targetThinkingLevel);
       const effectiveThinkingLevel = pi.getThinkingLevel();
 
+      implementationSavingsModels = modelAlreadyActive
+        ? undefined
+        : {
+            planner: savingsModelReference(snapshot.model),
+            target: savingsModelReference(target),
+          };
       state = { phase: 'implementing', run };
       updateStatus(ctx);
       const modelText = modelAlreadyActive ? ' without changing models' : '';
@@ -656,6 +674,12 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   });
 
   pi.on('turn_end', async (event, ctx) => {
+    if (state.phase === 'implementing') {
+      if (event.message.role === 'assistant') {
+        await reportImplementationSavings(pi.savings, implementationSavingsModels, event.message);
+      }
+      return;
+    }
     if (state.phase !== 'planning' || !state.run) return;
 
     const textOnlyCompletion = isTextOnlyCompletion(event.message);
@@ -785,6 +809,71 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       clearAutomation(ctx);
     }
   });
+}
+
+async function reportImplementationSavings(
+  reporter: SavingsReporter | undefined,
+  models: ImplementationSavingsModels | undefined,
+  message: AssistantMessage,
+): Promise<void> {
+  if (!reporter || !models) return;
+  if (message.stopReason === 'error' || message.stopReason === 'aborted') return;
+  const actualTokens = savingsTokens(message);
+  if (!actualTokens) return;
+
+  try {
+    await reporter.report({
+      category: 'model-routing',
+      operation: 'implementation-turn',
+      baseline: {
+        model: models.planner,
+        tokens: scaleSavingsTokens(actualTokens, IMPLEMENTATION_BASELINE_RATIO),
+      },
+      actual: {
+        model: models.target,
+        tokens: actualTokens,
+      },
+      basis: {
+        kind: 'estimated-baseline',
+        method: 'planner-two-thirds-usage-v1',
+      },
+    });
+  } catch {}
+}
+
+function savingsTokens(message: AssistantMessage): SavingsTokenUsage | undefined {
+  const { usage } = message;
+  const values = [usage.input, usage.output, usage.cacheRead, usage.cacheWrite];
+  if (
+    !values.every((value) => Number.isSafeInteger(value) && value >= 0)
+    || (usage.cacheWrite1h !== undefined
+      && (!Number.isSafeInteger(usage.cacheWrite1h) || usage.cacheWrite1h < 0))
+    || values.every((value) => value === 0)
+  ) {
+    return undefined;
+  }
+
+  return {
+    input: usage.input,
+    output: usage.output,
+    cacheRead: usage.cacheRead,
+    cacheWrite: usage.cacheWrite,
+    ...(usage.cacheWrite1h === undefined ? {} : { cacheWrite1h: usage.cacheWrite1h }),
+  };
+}
+
+function scaleSavingsTokens(tokens: SavingsTokenUsage, ratio: number): SavingsTokenUsage {
+  return {
+    input: Math.round(tokens.input * ratio),
+    output: Math.round(tokens.output * ratio),
+    ...(tokens.cacheRead === undefined ? {} : { cacheRead: Math.round(tokens.cacheRead * ratio) }),
+    ...(tokens.cacheWrite === undefined ? {} : { cacheWrite: Math.round(tokens.cacheWrite * ratio) }),
+    ...(tokens.cacheWrite1h === undefined ? {} : { cacheWrite1h: Math.round(tokens.cacheWrite1h * ratio) }),
+  };
+}
+
+function savingsModelReference(model: PlannerModel): SavingsModelReference {
+  return { provider: model.provider, id: model.id };
 }
 
 export const createPrewalkExtension = (): FelanExtension => registerPrewalk;

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-prewalk",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Same-session planner-to-implementation model handoff for Felan",
   "license": "MIT",
   "type": "module",

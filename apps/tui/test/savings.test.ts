@@ -58,6 +58,50 @@ describe('SavingsService', () => {
     expect(report.buckets[0]?.baseline.priceFingerprint).toBe('price-1');
   });
 
+  it('prices the Prewalk two-thirds planner counterfactual separately from actual usage', async () => {
+    const service = new SavingsService({
+      runtime: new TestAgentRuntime(),
+      rootSessionId: 'session-a',
+      projectKey: 'project-a',
+      priceSource: createModelPriceSource((model) => model.id === 'planner'
+        ? {
+            model,
+            input: 10,
+            output: 20,
+            cacheRead: 0,
+            cacheWrite: 0,
+            fingerprint: 'planner-v1',
+          }
+        : {
+            model,
+            input: 1,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            fingerprint: 'target-v1',
+          }),
+    });
+
+    await service.report('prewalk', {
+      category: 'model-routing',
+      operation: 'implementation-turn',
+      baseline: {
+        model: { provider: 'test', id: 'planner' },
+        tokens: { input: 1_000_000, output: 0 },
+      },
+      actual: {
+        model: { provider: 'test', id: 'target' },
+        tokens: { input: 1_500_000, output: 0 },
+      },
+      basis: { kind: 'estimated-baseline', method: 'planner-two-thirds-usage-v1' },
+    });
+
+    const report = await service.query();
+    expect(report.baselineCostUsd).toBe(10);
+    expect(report.actualCostUsd).toBe(1.5);
+    expect(report.savedCostUsd).toBe(8.5);
+  });
+
   it('formats detailed savings as a table grouped by category and extension', async () => {
     const service = new SavingsService({
       runtime: new TestAgentRuntime(), rootSessionId: 'session-a', projectKey: 'project-a',
