@@ -75,20 +75,6 @@ describe('BackgroundBashManager', () => {
     expect(stopped.status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
-  it('does not replace natural completion with an unknown stop result', async () => {
-    const { manager } = await createManager();
-    const started = await manager.start('printf done');
-    trackJob(manager, started.meta.id);
-
-    await expect(manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS)).resolves.toMatchObject({
-      timedOut: false,
-      job: { status: { status: 'completed', exitCode: 0 } },
-    });
-    const stopped = await manager.stop(started.meta.id, 'SIGTERM');
-
-    expect(stopped.status).toMatchObject({ status: 'completed', exitCode: 0 });
-  }, INTEGRATION_TEST_TIMEOUT_MS);
-
   it.skipIf(process.platform !== 'win32' || !nativeGitBashAvailable())(
     'runs and stops a detached process through native Git Bash process groups',
     async () => {

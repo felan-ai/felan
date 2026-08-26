@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { HostAgentRuntime } from '@felan-ai/agent-core';
 import { describe, expect, it } from 'vitest';
 import { SavingsService, createModelPriceSource, formatSavingsReport } from '../src/savings.js';
 import { TestAgentRuntime } from '../../../packages/agent-core/test/test-agent-runtime.js';
@@ -54,6 +58,37 @@ describe('SavingsService', () => {
     expect(report.buckets[0]?.baseline.priceFingerprint).toBe('price-1');
   });
 
+  it('formats detailed savings as a table grouped by category and extension', async () => {
+    const service = new SavingsService({
+      runtime: new TestAgentRuntime(), rootSessionId: 'session-a', projectKey: 'project-a',
+    });
+    await service.report('optimizer', {
+      category: 'output-optimization',
+      operation: 'first-stage',
+      baseline: { costUsd: 1 },
+      actual: { costUsd: 0.5 },
+      basis: { kind: 'observed-comparison', method: 'test' },
+    });
+    await service.report('optimizer', {
+      category: 'output-optimization',
+      operation: 'second-stage',
+      baseline: { costUsd: 2 },
+      actual: { costUsd: 1.25 },
+      basis: { kind: 'observed-comparison', method: 'test' },
+      calls: 2,
+    });
+
+    const output = formatSavingsReport(await service.query(), true);
+    const rows = output.split('\n').filter((line) => line.includes('optimizer'));
+
+    expect(output).toContain('Category');
+    expect(output).toContain('Extension');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatch(/^Output optimization\s+optimizer\s+3\s+\$1\.25$/u);
+    expect(output).not.toContain('first-stage');
+    expect(output).not.toContain('second-stage');
+  });
+
   it('keeps unavailable pricing out of the USD total', async () => {
     const service = new SavingsService({
       runtime: new TestAgentRuntime(), rootSessionId: 'session-a', projectKey: 'project-a',
@@ -79,6 +114,49 @@ describe('SavingsService', () => {
     await second.report('two', measurement);
     expect((await first.query({ scope: 'project', projectKey: 'p1' })).buckets.map((bucket) => bucket.producerId)).toEqual(['one']);
     expect((await first.query({ scope: 'all' })).buckets.map((bucket) => bucket.producerId).sort()).toEqual(['one', 'two']);
+  });
+
+  it('loads nested writer snapshots from host storage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'felan-savings-'));
+    try {
+      const sessionStorageRoot = join(root, 'session');
+      const agentStorageRoot = join(root, 'agent');
+      await Promise.all([
+        mkdir(sessionStorageRoot, { recursive: true }),
+        mkdir(agentStorageRoot, { recursive: true }),
+      ]);
+      const runtime = new HostAgentRuntime(root, {
+        sessionStorageRoot,
+        agentStorageRoot,
+        agentDir: root,
+        pathAccess: 'host',
+      });
+      const first = new SavingsService({
+        runtime,
+        rootSessionId: 'session-a',
+        projectKey: 'project-a',
+        writerId: '11111111-1111-4111-8111-111111111111',
+      });
+      await first.report('optimizer', {
+        category: 'output-optimization',
+        baseline: { costUsd: 1 },
+        actual: { costUsd: 0.25 },
+        basis: { kind: 'observed-comparison', method: 'host-storage-test' },
+      });
+
+      const reloaded = new SavingsService({
+        runtime,
+        rootSessionId: 'session-b',
+        projectKey: 'project-a',
+        writerId: '22222222-2222-4222-8222-222222222222',
+      });
+      const report = await reloaded.query({ scope: 'all' });
+
+      expect(report.calls).toBe(1);
+      expect(report.savedCostUsd).toBe(0.75);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('rejects invalid measurements', async () => {

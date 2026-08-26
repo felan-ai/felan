@@ -246,13 +246,52 @@ export function formatSavingsReport(report: SavingsReport, detailed = false): st
     `Measured decisions: ${report.calls}`,
   ];
   if (report.hasUnpricedMeasurements) lines.push('Some measurements have unavailable pricing and are excluded from the USD total.');
-  if (detailed) {
-    for (const bucket of report.buckets) {
-      lines.push(`- ${bucket.producerId}: ${bucket.category}${bucket.operation ? `/${bucket.operation}` : ''} ${formatUsd(cost(bucket.baseline) - cost(bucket.actual))} (${bucket.calls} calls)`);
-    }
-  }
+  if (detailed && report.buckets.length > 0) lines.push('', ...formatSavingsTable(report.buckets));
   lines.push(...report.diagnostics.map((diagnostic) => `Warning: ${diagnostic}`));
   return lines.join('\n');
+}
+
+function formatSavingsTable(buckets: readonly SavingsBucket[]): string[] {
+  const grouped = new Map<string, {
+    category: SavingsMeasurement['category'];
+    producerId: string;
+    calls: number;
+    savedCostUsd: number;
+  }>();
+  for (const bucket of buckets) {
+    const key = JSON.stringify([bucket.category, bucket.producerId]);
+    const previous = grouped.get(key);
+    const savedCostUsd = cost(bucket.baseline) - cost(bucket.actual);
+    grouped.set(key, previous
+      ? { ...previous, calls: previous.calls + bucket.calls, savedCostUsd: previous.savedCostUsd + savedCostUsd }
+      : { category: bucket.category, producerId: bucket.producerId, calls: bucket.calls, savedCostUsd });
+  }
+
+  const categoryOrder: readonly SavingsMeasurement['category'][] = [
+    'output-optimization',
+    'model-routing',
+    'context-management',
+    'other',
+  ];
+  const rows = [...grouped.values()]
+    .sort((left, right) => categoryOrder.indexOf(left.category) - categoryOrder.indexOf(right.category)
+      || left.producerId.localeCompare(right.producerId))
+    .map((row) => [formatCategory(row.category), row.producerId, String(row.calls), formatUsd(row.savedCostUsd)]);
+  const headers = ['Category', 'Extension', 'Decisions', 'Savings'];
+  const widths = headers.map((header, index) => Math.max(header.length, ...rows.map((row) => row[index]!.length)));
+  const renderRow = (row: readonly string[]): string => row
+    .map((value, index) => index < 2 ? value.padEnd(widths[index]!) : value.padStart(widths[index]!))
+    .join('  ')
+    .trimEnd();
+  return [
+    renderRow(headers),
+    widths.map((width) => '-'.repeat(width)).join('  '),
+    ...rows.map(renderRow),
+  ];
+}
+
+function formatCategory(category: SavingsMeasurement['category']): string {
+  return category.split('-').map((word, index) => index === 0 ? `${word[0]!.toUpperCase()}${word.slice(1)}` : word).join(' ');
 }
 
 function validateMeasurement(producerId: string, measurement: SavingsMeasurement): void {
@@ -336,7 +375,7 @@ function isProducerId(value: string): boolean { return value.length > 0 && value
 
 async function readSnapshots(storage: AgentRuntimeStorage): Promise<Array<{ snapshot: Snapshot; error?: string }>> {
   let files: string[];
-  try { files = await storage.listFiles(ROOT, { recursive: true, pattern: '*.json', limit: 10_000 }); } catch (error) {
+  try { files = await storage.listFiles(ROOT, { recursive: true, pattern: '**/*.json', limit: 10_000 }); } catch (error) {
     if ((error as { code?: string }).code === 'ENOENT') return [];
     return [{ snapshot: emptySnapshot(), error: `Unable to read savings storage: ${errorMessage(error)}` }];
   }
