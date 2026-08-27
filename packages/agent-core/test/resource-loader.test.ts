@@ -69,6 +69,8 @@ describe('Agent Core resource loading', () => {
     });
 
     expect(loader.getSystemPrompt()).toBe(FELAN_BASE_SYSTEM_PROMPT);
+    expect(loader.getSystemPrompt()).not.toContain('Be concise and direct');
+    expect(loader.getSystemPrompt()).not.toContain('## Reporting');
     expect(loader.getSystemPrompt()).not.toMatch(/\bpi\b/i);
     expect(loader.getAppendSystemPrompt()).toEqual(['Consumer append']);
     expect(loader.getSystemPromptSource()).toBeUndefined();
