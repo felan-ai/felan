@@ -113,7 +113,7 @@ try {
       }
       const outputStyle = await import('@felan-ai/ext-output-style');
       let outputStyleHandler;
-      outputStyle.createOutputStyleExtension('caveman')({
+      outputStyle.createOutputStyleExtension('concise')({
         on: (event, handler) => {
           if (event === 'before_agent_start') outputStyleHandler = handler;
         },
@@ -122,9 +122,15 @@ try {
       if (!styledPrompt?.includes('## Output Style')
         || !styledPrompt.includes('<output_style>')
         || !styledPrompt.includes('Use the fewest words that preserve correctness')
-        || !styledPrompt.includes('Keep code, commands, paths, identifiers, numbers, and error messages exact')
+        || !styledPrompt.includes('Keep technical terms, code, commands, paths, identifiers, API names, numbers, units, and exact error messages unchanged')
         || !styledPrompt.includes('</output_style>')) {
-        throw new Error('Packed output-style extension did not apply the caveman style');
+        throw new Error('Packed output-style extension did not apply the concise style');
+      }
+      try {
+        outputStyle.createOutputStyleExtension('caveman');
+        throw new Error('Packed output-style extension accepted the removed caveman style');
+      } catch (error) {
+        if (!String(error).includes('outputStyle must be one of: concise, explanatory, custom')) throw error;
       }
       let customOutputStyleHandler;
       outputStyle.createOutputStyleExtension('custom', 'Packed custom instructions.')({

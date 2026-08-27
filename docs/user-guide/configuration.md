@@ -168,13 +168,15 @@ the wide-terminal details pane. The shortcut fields accept a key or chord;
 ### Output style
 
 The `extensionConfig.outputStyle.style` setting accepts `concise`,
-`explanatory`, `caveman`, or `custom`. `concise` is the default. `caveman` uses fragments,
-compact bullets, and minimal prose, but expands automatically for errors,
-security warnings, destructive actions, blockers, and complex plans. Code,
-commands, paths, identifiers, numbers, and error messages remain exact, and
-required caveats and verification results are not omitted. The output-style
-extension appends the selected instructions as a bounded `## Output Style`
-section for root and child sessions.
+`explanatory`, or `custom`. `concise` is the default. It uses short sentences,
+clear fragments, compact bullets, standard abbreviations, and minimal prose,
+but expands when compression could cause ambiguity around errors, security,
+destructive actions, blockers, limitations, recovery, tradeoffs, or complex
+plans. Technical terms, code, commands, paths, identifiers, API names, numbers,
+units, and exact error messages remain unchanged. Negation, conditions, scope,
+exceptions, caveats, verification results, and blockers are not omitted. The
+output-style extension appends the selected instructions as a bounded
+`## Output Style` section for root and child sessions.
 
 Use `custom` to test arbitrary system-prompt instructions without changing the
 extension source:
@@ -194,9 +196,15 @@ extension source:
 not load instruction files or ambient prompt resources; callers must pass the
 text explicitly.
 
-The same value can be selected from the CLI with `--output-style caveman` or
+The same value can be selected from the CLI with `--output-style concise` or
 from the interactive `/settings` screen. Custom text is available through
 `--output-style-instructions` or the corresponding `/settings` field.
+
+The former `caveman` value has been replaced by `concise`. Existing
+configurations should change either legacy `"outputStyle": "caveman"` or
+`extensionConfig.outputStyle.style: caveman` to `concise`. Invalid persisted
+namespaced values produce a warning and use the concise default; invalid CLI
+or programmatic values are errors. Felan does not retain `caveman` as an alias.
 
 The local host captures the selection when it creates a session runtime, so
 restart Felan after changing it. Set `builtinExtensions.outputStyle` to `false`

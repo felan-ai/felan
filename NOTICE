@@ -6,9 +6,12 @@ portable local-first Markdown memory schema, validation, and session bridge.
 Its package-level license and attribution are included in
 packages/ext-memory/LICENSE and NOTICE.
 
-@felan-ai/ext-output-style is original Felan MIT-licensed code providing
-portable, validated output-style instructions. Its package-level license and
-notice are included in packages/ext-output-style/LICENSE and NOTICE.
+@felan-ai/ext-output-style is original Felan MIT-licensed extension code
+providing portable, validated output-style instructions. Its built-in concise
+instructions adapt wording from Julius Brussee's Caveman skill at
+https://github.com/JuliusBrussee/caveman/blob/main/skills/caveman/SKILL.md.
+Copyright (c) 2026 Julius Brussee. Its package-level license and notice are
+included in packages/ext-output-style/LICENSE and NOTICE.
 
 This product uses Pi 0.84.3 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.

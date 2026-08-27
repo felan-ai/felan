@@ -19,13 +19,15 @@ describe('@felan-ai/ext-output-style', () => {
     const systemPrompt = applyExtension(outputStyleExtension, FELAN_BASE_SYSTEM_PROMPT);
 
     expect(systemPrompt).toBe(`${FELAN_BASE_SYSTEM_PROMPT}\n\n${formatOutputStyleSection('concise')}`);
-    expect(systemPrompt).toContain('Keep responses concise and direct');
+    expect(systemPrompt).toContain('Use the fewest words that preserve correctness, clarity, and all required technical substance');
+    expect(systemPrompt).toContain('Never omit or alter negation, conditions, scope, exceptions, caveats, verification results, or blockers');
+    expect(systemPrompt).toContain('For documentation, comments, commits, issues, pull requests, tickets, and other durable artifacts');
     expect(systemPrompt).toContain('<output_style>');
     expect(systemPrompt).toContain('</output_style>');
   });
 
   it('declares custom style configuration', () => {
-    expect(OUTPUT_STYLES).toEqual(['concise', 'explanatory', 'caveman', 'custom']);
+    expect(OUTPUT_STYLES).toEqual(['concise', 'explanatory', 'custom']);
     expect(OUTPUT_STYLE_CONFIG.fields.style.values).toEqual(OUTPUT_STYLES);
     expect(OUTPUT_STYLE_CONFIG.fields.instructions).toMatchObject({
       type: 'string',
@@ -37,18 +39,13 @@ describe('@felan-ai/ext-output-style', () => {
   it('changes the system prompt for the selected style', () => {
     const concise = applyExtension(createOutputStyleExtension('concise'), FELAN_BASE_SYSTEM_PROMPT);
     const explanatory = applyExtension(createOutputStyleExtension('explanatory'), FELAN_BASE_SYSTEM_PROMPT);
-    const caveman = applyExtension(createOutputStyleExtension('caveman'), FELAN_BASE_SYSTEM_PROMPT);
 
     expect(explanatory).not.toBe(concise);
     expect(explanatory).toContain('Explain the reasoning and important tradeoffs');
-    expect(explanatory).not.toContain('Keep responses concise and direct');
-    expect(explanatory).not.toContain('Be concise and direct');
-    expect(caveman).not.toBe(concise);
-    expect(caveman).not.toBe(explanatory);
-    expect(caveman).toContain('Use the fewest words that preserve correctness');
-    expect(caveman).toContain('Expand enough to be clear for errors');
-    expect(caveman).toContain('Keep code, commands, paths, identifiers, numbers, and error messages exact');
-    expect(caveman).not.toContain('Be concise and direct');
+    expect(explanatory).not.toContain('Use the fewest words that preserve correctness');
+    expect(concise).toContain('Keep technical terms, code, commands, paths, identifiers, API names, numbers, units, and exact error messages unchanged');
+    expect(concise).toContain('Expand into clear, complete prose whenever compression could cause ambiguity');
+    expect(concise).toContain('Do not narrate ordinary tool calls or announce the next tool call');
   });
 
   it('uses caller-provided instructions for the custom style', () => {
@@ -68,7 +65,7 @@ describe('@felan-ai/ext-output-style', () => {
       `${FELAN_BASE_SYSTEM_PROMPT}\n\n${formatOutputStyleSection('custom', instructions)}`,
     );
     expect(systemPrompt).toContain(`<output_style>\n${instructions}\n</output_style>`);
-    expect(systemPrompt).not.toContain('Keep responses concise and direct');
+    expect(systemPrompt).not.toContain('Use the fewest words that preserve correctness');
   });
 
   it('reads custom instructions from extension configuration', () => {
@@ -83,13 +80,15 @@ describe('@felan-ai/ext-output-style', () => {
   it('validates style values before registering the extension', () => {
     expect(parseOutputStyle()).toBe('concise');
     expect(parseOutputStyle('explanatory')).toBe('explanatory');
-    expect(parseOutputStyle('caveman')).toBe('caveman');
     expect(parseOutputStyle('custom')).toBe('custom');
+    expect(() => parseOutputStyle('caveman')).toThrow(
+      'outputStyle must be one of: concise, explanatory, custom',
+    );
     expect(() => parseOutputStyle('verbose')).toThrow(
-      'outputStyle must be one of: concise, explanatory, caveman, custom',
+      'outputStyle must be one of: concise, explanatory, custom',
     );
     expect(() => createOutputStyleExtension({ style: 'concise' })).toThrow(
-      'outputStyle must be one of: concise, explanatory, caveman, custom',
+      'outputStyle must be one of: concise, explanatory, custom',
     );
     expect(() => createOutputStyleExtension('custom')).toThrow(
       'outputStyle.instructions must be a non-empty string when outputStyle is custom',

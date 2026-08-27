@@ -7,6 +7,7 @@ import {
   type ExtensionConfigDefinition,
   type SettingsManager,
 } from '@felan-ai/agent-core';
+import { OUTPUT_STYLE_CONFIG } from '@felan-ai/ext-output-style';
 import type { Component, Focusable } from '@earendil-works/pi-tui';
 import { initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -110,13 +111,28 @@ describe('local settings', () => {
   it('defaults output style to concise and rejects invalid values', () => {
     expect(getLocalOutputStyle(settingsWith({}))).toBe('concise');
     expect(getLocalOutputStyle(settingsWith({ outputStyle: 'explanatory' }))).toBe('explanatory');
-    expect(getLocalOutputStyle(settingsWith({ outputStyle: 'caveman' }))).toBe('caveman');
     expect(getLocalOutputStyle(settingsWith({ extensionConfig: { outputStyle: { style: 'custom' } } }))).toBe('custom');
-    expect(getLocalOutputStyle(settingsWith({ extensionConfig: { outputStyle: { style: 'caveman' } } }))).toBe('caveman');
+    expect(() => getLocalOutputStyle(settingsWith({ outputStyle: 'caveman' })))
+      .toThrow('outputStyle must be one of: concise, explanatory, custom');
+    expect(() => getLocalOutputStyle(settingsWith({ extensionConfig: { outputStyle: { style: 'caveman' } } })))
+      .toThrow('outputStyle must be one of: concise, explanatory, custom');
     expect(() => getLocalOutputStyle(settingsWith({ outputStyle: 'verbose' })))
-      .toThrow('outputStyle must be one of: concise, explanatory, caveman, custom');
+      .toThrow('outputStyle must be one of: concise, explanatory, custom');
     expect(() => getLocalOutputStyle(settingsWith({ outputStyle: { path: '/tmp/prompt' } })))
-      .toThrow('outputStyle must be one of: concise, explanatory, caveman, custom');
+      .toThrow('outputStyle must be one of: concise, explanatory, custom');
+  });
+
+  it('warns and defaults removed caveman extension configuration to concise', () => {
+    const resolved = resolveExtensionConfigSettings({
+      extensionConfig: { outputStyle: { style: 'caveman' } },
+    }, [OUTPUT_STYLE_CONFIG]);
+    const outputStyle = resolved.configs.get('outputStyle');
+
+    expect(outputStyle).toEqual({ style: 'concise', instructions: '' });
+    expect(resolved.warnings).toEqual([
+      'settings.json.extensionConfig.outputStyle.style must be one of: concise, explanatory, custom; using the default value.',
+    ]);
+    expect(getLocalOutputStyle(settingsWith({}), outputStyle)).toBe('concise');
   });
 
   it('persists dependency choices without replacing unrelated global settings', async () => {
