@@ -17,7 +17,7 @@ and first-party extensions.
 | `/memory open` | Open canonical project memory in the local TUI |
 | `/agents` | Open the subagent navigator |
 | `/tools` | Inspect complete root-session tool arguments and results |
-| `/gain` | Show Felan savings for the current root session (`project`, `all`, or `details` also supported) |
+| `/savings` | Show Felan savings for the current root session (`project`, `all`, or `details` also supported) |
 
 `/dependencies` and `/memory open` require the interactive TUI.
 

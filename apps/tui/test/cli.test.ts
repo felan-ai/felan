@@ -25,10 +25,10 @@ describe('felan CLI', () => {
     expect(launched).toBe(false);
   });
 
-  it('runs gain without starting a model session', async () => {
+  it('runs savings without starting a model session', async () => {
     const output: string[] = [];
     let launched = false;
-    const exitCode = await runCli(['gain', '--help'], {
+    const exitCode = await runCli(['savings', '--help'], {
       writeOutput: (line) => output.push(line),
       launch: async () => { launched = true; },
       launchHeadless: async () => { launched = true; return 1; },
@@ -36,15 +36,15 @@ describe('felan CLI', () => {
 
     expect(exitCode).toBe(0);
     expect(launched).toBe(false);
-    expect(output[0]).toContain('Usage: felan gain');
+    expect(output[0]).toContain('Usage: felan savings');
   });
 
-  it('validates gain options before reading storage', async () => {
+  it('validates savings options before reading storage', async () => {
     const errors: string[] = [];
-    expect(await runCli(['gain', '--project', '--session', 'session'], {
+    expect(await runCli(['savings', '--project', '--session', 'session'], {
       writeError: (line) => errors.push(line),
     })).toBe(1);
-    expect(await runCli(['gain', '--format', 'yaml'], {
+    expect(await runCli(['savings', '--format', 'yaml'], {
       writeError: (line) => errors.push(line),
     })).toBe(1);
     expect(errors).toEqual([

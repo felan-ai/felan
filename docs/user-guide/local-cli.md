@@ -19,7 +19,7 @@ felan [options] [message]
 --session-dir <dir> Session directory for --session
 --diagnostics      Print runtime versions and configuration mode
 update             Update a global npm installation of Felan
-gain               Show persisted savings without starting a model session
+savings            Show persisted savings without starting a model session
 -h, --help         Show help
 -v, --version      Print the Felan version
 --verbose          Show verbose startup details
@@ -64,16 +64,16 @@ command instead. To send `update` as an initial prompt, use `felan -- update`.
 
 ### Savings
 
-Read the same persisted savings used by `/gain` without starting a model
+Read the same persisted savings used by `/savings` without starting a model
 session:
 
 ```sh
-felan gain
-felan gain --project
-felan gain --session <id>
-felan gain --daily
-felan gain --monthly
-felan gain --format json
+felan savings
+felan savings --project
+felan savings --session <id>
+felan savings --daily
+felan savings --monthly
+felan savings --format json
 ```
 
 On Windows, exit every running Felan process before updating. npm replaces the

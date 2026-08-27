@@ -36,6 +36,7 @@ import {
   getLocalSkillPaths,
 } from '../src/runtime.js';
 import type { LocalAgentRuntimeFactoryRequest } from '../src/runtime-factory.js';
+import { SAVINGS_COMMAND_EXTENSION_NAME } from '../src/savings-command.js';
 import { createToolActivityRuntimeView } from '../src/tool-activity/runtime-view.js';
 
 const temporaryPaths: string[] = [];
@@ -119,8 +120,12 @@ describe('local Agent Core lifecycle', () => {
     const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: home, skillPaths });
 
     expect(runtime.session.sessionManager.getSessionDir()).toBe(join(agentDir, 'sessions'));
-    expect(runtime.services.resourceLoader.getExtensions().extensions.filter((extension) => !extension.hidden))
-      .toEqual([]);
+    const loadedExtensions = runtime.services.resourceLoader.getExtensions().extensions;
+    expect(loadedExtensions.filter((extension) => !extension.hidden)).toEqual([]);
+    expect(loadedExtensions).toContainEqual(expect.objectContaining({
+      path: `<inline:${SAVINGS_COMMAND_EXTENSION_NAME}>`,
+      hidden: true,
+    }));
     expect(runtime.services.resourceLoader.getSkills().skills.map(({ name }) => name)).toEqual([
       'project-skill',
       'user-skill',

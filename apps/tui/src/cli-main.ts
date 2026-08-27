@@ -10,7 +10,7 @@ import { createLocalSettingsManager, getFelanSettings } from './settings.js';
 import { getLocalAgentDir } from './runtime.js';
 import { runFelanUpdate } from './update.js';
 import { FELAN_VERSION } from './version.js';
-import { runLocalGainCli } from './gain.js';
+import { runLocalSavingsCli } from './savings-command.js';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
@@ -37,7 +37,7 @@ Options:
   --session-dir <dir> Session directory for --session
   --diagnostics      Print local runtime versions and configuration mode
   update             Update a global npm installation of Felan
-  gain               Show persisted Felan savings
+  savings            Show persisted Felan savings
   -h, --help         Show this help
   -v, --version      Print the Felan version
   --verbose          Show verbose startup details
@@ -53,8 +53,8 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     }
     return dependencies.update?.() ?? runFelanUpdate({ writeOutput, writeError });
   }
-  if (args[0] === 'gain') {
-    return runGainCommand(args.slice(1), writeOutput, writeError);
+  if (args[0] === 'savings') {
+    return runSavingsCommand(args.slice(1), writeOutput, writeError);
   }
 
   let continueRecent = false;
@@ -272,7 +272,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   return 0;
 }
 
-async function runGainCommand(
+async function runSavingsCommand(
   args: readonly string[],
   writeOutput: (line: string) => void,
   writeError: (line: string) => void,
@@ -301,10 +301,10 @@ async function runGainCommand(
       if (value !== 'text' && value !== 'json') { writeError('--format requires text or json'); return 1; }
       format = value;
     } else if (argument === '--help') {
-      writeOutput('Usage: felan gain [--project|--session <id>] [--daily|--monthly] [--format text|json]');
+      writeOutput('Usage: felan savings [--project|--session <id>] [--daily|--monthly] [--format text|json]');
       return 0;
     } else {
-      writeError(`Unknown gain option: ${argument}`);
+      writeError(`Unknown savings option: ${argument}`);
       return 1;
     }
   }
@@ -312,7 +312,7 @@ async function runGainCommand(
   const cwd = resolve(process.cwd());
   const projectKey = createHash('sha256').update(cwd, 'utf8').digest('hex');
   const scope = sessionId !== undefined ? 'session' : project ? 'project' : 'all';
-  return runLocalGainCli({
+  return runLocalSavingsCli({
     agentDir: getLocalAgentDir(), cwd, projectKey, format, ...(sessionId === undefined ? {} : { sessionId }),
     query: { scope, ...(sessionId === undefined ? {} : { sessionId }), ...(project ? { projectKey } : {}), ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) },
     writeOutput,

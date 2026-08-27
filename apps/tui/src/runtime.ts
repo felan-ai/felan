@@ -56,7 +56,7 @@ import { registerToolActivitySession } from './tool-activity/runtime-view.js';
 import { ToolActivityState } from './tool-activity/state.js';
 import { createLocalMemoryControlExtension } from './memory/control.js';
 import { LocalMemoryCoordinator } from './memory/coordinator.js';
-import { createGainExtension } from './gain.js';
+import { createSavingsCommandExtension } from './savings-command.js';
 import { SavingsService, createModelPriceSource } from './savings.js';
 import { createHash } from 'node:crypto';
 import { installPiAsyncFileLockGuard } from './pi-lock.js';
@@ -301,14 +301,7 @@ export function createLocalSessionRuntimeFactory(
       ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
       inlineExtensions: [
         dependencyExtension,
-        ...(extensionPackages.length === 0 ? [] : [bindFelanExtension(
-          '@felan-ai/felan/gain',
-          createGainExtension(savings),
-          runtime,
-          options.agentDir,
-          {},
-          savings,
-        )]),
+        createSavingsCommandExtension(savings),
         createToolActivityExtension(toolActivityState),
         ...(memoryControlExtension === undefined ? [] : [memoryControlExtension]),
       ],

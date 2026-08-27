@@ -97,7 +97,7 @@ The previous top-level paths remain compatibility pages:
 - [Architecture map](maintainers/architecture-map.md) — code ownership,
   starting points, and verification commands.
 - [Savings metrics design](maintainers/savings-metrics-design.md) — working
-  proposal for extension reporting, local persistence, and gain reports.
+  proposal for extension reporting, local persistence, and savings reports.
 - [Release process](maintainers/releasing.md) — package selection, trusted
   publishing, and packed audits.
 - [Upstream extension reviews](maintainers/upstream-extensions.md) — immutable

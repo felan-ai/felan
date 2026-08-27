@@ -53,7 +53,7 @@ interface.
 
 The RTK optimizer now reports both RTK command-output measurements and Felan
 post-tool measurements through the shared savings service. The former RTK metric
-subcommands have been removed; `/gain` is the only interactive savings report.
+subcommands have been removed; `/savings` is the only interactive savings report.
 
 How the command-output optimizer obtains its baseline
 and actual outcomes is a producer implementation concern, not part of the shared
@@ -74,7 +74,7 @@ explicit update to this document:
    supplies source, time, session, project, validation, storage, and aggregation.
 4. **Agent storage is canonical.** Session and project identifiers are fields in
    the stored data, so one persistent agent-scoped store can answer every query.
-5. **Reports are Felan-owned.** `/gain` and `felan gain` aggregate all producers;
+5. **Reports are Felan-owned.** `/savings` and `felan savings` aggregate all producers;
    RTK must not retain a competing source of totals.
 
 ## Savings comparison
@@ -318,8 +318,8 @@ The bound service then:
 5. computes signed cost and token deltas; and
 6. updates the producer's durable aggregate writer.
 
-Extensions never open the metrics store or query other producers. `/gain`,
-`felan gain`, and future dashboards use the shared read-only query service.
+Extensions never open the metrics store or query other producers. `/savings`,
+`felan savings`, and future dashboards use the shared read-only query service.
 
 ### API ownership
 
@@ -328,7 +328,7 @@ Proposed ownership:
 | Layer | Responsibility |
 | --- | --- |
 | `@felan-ai/agent-core` | Public measurement and reporter types; binds the reporting extension identity |
-| `apps/tui` | Validation, pricing, persistence, aggregation, query and presentation; supplies root-session/project identity and implements `/gain` and `felan gain` |
+| `apps/tui` | Validation, pricing, persistence, aggregation, query and presentation; supplies root-session/project identity and implements `/savings` and `felan savings` |
 | Producing extension | Defines its baseline and actual outcomes and calls `report()` |
 
 Whether `pi.savings` is required or optional for hosts that have not adopted the
@@ -524,7 +524,7 @@ rather than silently dropping totals.
 
 Metrics persistence is fail-open for agent execution: a storage failure must not
 change a tool result or fail the turn. The service should retain a bounded error
-status so `/gain` can disclose that the report may be incomplete.
+status so `/savings` can disclose that the report may be incomplete.
 
 ## Query and reporting
 
@@ -533,10 +533,10 @@ status so `/gain` can disclose that the report may be incomplete.
 Proposed commands:
 
 ```text
-/gain                 current root session
-/gain project         current project across sessions
-/gain all             all retained local metrics
-/gain details         detailed category/operation breakdown
+/savings                 current root session
+/savings project         current project across sessions
+/savings all             all retained local metrics
+/savings details         detailed category/operation breakdown
 ```
 
 The default report should use product categories rather than internal mechanism
@@ -566,21 +566,21 @@ Negative values are shown as added cost rather than hidden or clamped to zero.
 Proposed initial CLI:
 
 ```text
-felan gain
-felan gain --project
-felan gain --session <id>
-felan gain --daily
-felan gain --monthly
-felan gain --format text|json
+felan savings
+felan savings --project
+felan savings --session <id>
+felan savings --daily
+felan savings --monthly
+felan savings --format text|json
 ```
 
-`felan gain` should read the agent-scoped store without creating a model session.
+`felan savings` should read the agent-scoped store without creating a model session.
 The default CLI scope—current project or all retained data—is still open.
 
 ### Programmatic query
 
 The TUI-owned savings service should expose a read-only query API used by both
-`/gain` and the local CLI. The output schema should include:
+`/savings` and the local CLI. The output schema should include:
 
 - selected scope and time range;
 - first and last measurement times;
@@ -647,7 +647,7 @@ persisted. Any report must state the earliest retained measurement time.
    dimension?
 5. How should optimization decisions be linked so accidental overlapping cost
    comparisons can be detected?
-6. Should `felan gain` default to the current project or all local data?
+6. Should `felan savings` default to the current project or all local data?
 8. What retention and rollup policy preserves all-time totals while bounding
    files, bytes, and query cost?
 9. Should project labels be stored, derived only at query time, or omitted for
@@ -672,7 +672,7 @@ are accepted.
    concurrent writers and corrupt-generation recovery.
 3. Add the host-bound reporter and migrate post-tool compaction as the first
    producer.
-4. Add `/gain` and `felan gain` over the same query service.
+4. Add `/savings` and `felan savings` over the same query service.
 5. Add internal command-output measurements in the owning optimizer extension.
 6. Add model routing or another cost-oriented second producer before declaring
    the extension contract stable.
