@@ -144,17 +144,35 @@ values automatically.
 ### Output style
 
 The `extensionConfig.outputStyle.style` setting accepts `concise`,
-`explanatory`, or `caveman`. `concise` is the default. `caveman` uses fragments,
+`explanatory`, `caveman`, or `custom`. `concise` is the default. `caveman` uses fragments,
 compact bullets, and minimal prose, but expands automatically for errors,
 security warnings, destructive actions, blockers, and complex plans. Code,
 commands, paths, identifiers, numbers, and error messages remain exact, and
 required caveats and verification results are not omitted. The output-style
-extension appends the selected built-in instructions as a bounded `## Output
-Style` section for root and child sessions; it does not load arbitrary prompt
-text or ambient files.
+extension appends the selected instructions as a bounded `## Output Style`
+section for root and child sessions.
+
+Use `custom` to test arbitrary system-prompt instructions without changing the
+extension source:
+
+```json
+{
+  "extensionConfig": {
+    "outputStyle": {
+      "style": "custom",
+      "instructions": "Respond tersely. Keep all technical details and blockers."
+    }
+  }
+}
+```
+
+`instructions` must be a non-empty string when `style` is `custom`. Felan does
+not load instruction files or ambient prompt resources; callers must pass the
+text explicitly.
 
 The same value can be selected from the CLI with `--output-style caveman` or
-from the interactive `/settings` screen.
+from the interactive `/settings` screen. Custom text is available through
+`--output-style-instructions` or the corresponding `/settings` field.
 
 The local host captures the selection when it creates a session runtime, so
 restart Felan after changing it. Set `builtinExtensions.outputStyle` to `false`

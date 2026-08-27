@@ -3,24 +3,39 @@
 Portable output-style instructions for Felan sessions.
 
 The extension appends one clearly bounded `## Output Style` section to the
-system prompt before each model run. It accepts only the built-in `concise`,
-`explanatory`, and `caveman` styles; arbitrary prompt text and file-backed
-styles are not supported. `concise` is the default.
+system prompt before each model run. It provides the built-in `concise`,
+`explanatory`, and `caveman` styles plus a `custom` style for caller-provided
+instructions. `concise` is the default. File-backed styles are not supported.
 
 ```ts
 import { createOutputStyleExtension } from '@felan-ai/ext-output-style';
 
 const extension = createOutputStyleExtension('explanatory');
 const caveman = createOutputStyleExtension('caveman');
+const experiment = createOutputStyleExtension('custom', 'Answer in one compact paragraph.');
 ```
 
-Felan declares the style as `extensionConfig.outputStyle.style`. The local TUI,
-CLI, `/settings`, and Agent Core consumers all resolve this setting before
-activating the extension for root and child sessions.
+Felan declares the style as `extensionConfig.outputStyle.style`. Custom
+instructions use `extensionConfig.outputStyle.instructions`:
+
+```json
+{
+  "extensionConfig": {
+    "outputStyle": {
+      "style": "custom",
+      "instructions": "Answer in one compact paragraph without omitting blockers."
+    }
+  }
+}
+```
+
+The local TUI, CLI, `/settings`, and Agent Core consumers resolve these fields
+before activating the extension for root and child sessions. A custom style
+requires non-empty instructions.
 
 ## Package boundary and requirements
 
-The package owns the supported style names, their fixed instructions,
+The package owns the supported style names, built-in instructions, custom-text
 validation, and prompt-section formatting. A host owns style selection,
 built-in enablement, and session lifecycle. The package requires a compatible
 `@felan-ai/agent-core` peer and does not read settings, prompt files, or ambient

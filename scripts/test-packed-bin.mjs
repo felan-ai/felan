@@ -126,6 +126,16 @@ try {
         || !styledPrompt.includes('</output_style>')) {
         throw new Error('Packed output-style extension did not apply the caveman style');
       }
+      let customOutputStyleHandler;
+      outputStyle.createOutputStyleExtension('custom', 'Packed custom instructions.')({
+        on: (event, handler) => {
+          if (event === 'before_agent_start') customOutputStyleHandler = handler;
+        },
+      });
+      const customStyledPrompt = customOutputStyleHandler?.({ systemPrompt: 'Packed base prompt' })?.systemPrompt;
+      if (!customStyledPrompt?.includes('<output_style>\\nPacked custom instructions.\\n</output_style>')) {
+        throw new Error('Packed output-style extension did not apply custom instructions');
+      }
       const subagents = await import('@felan-ai/ext-subagents');
       const canonicalTools = [];
       const canonicalCapabilities = [];

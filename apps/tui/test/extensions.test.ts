@@ -141,6 +141,31 @@ describe('local extension importer', () => {
     );
   });
 
+  it('forwards custom output-style instructions for local root sessions', async () => {
+    const importer = createLocalExtensionImporter(
+      testSubagentHost(),
+      testModelRuntime(),
+      async () => { throw new Error('The generic importer must not load output style'); },
+    );
+    const imported = await importer('@felan-ai/ext-output-style') as {
+      default: (pi: FelanExtensionAPI) => void;
+    };
+    let handler: ((event: { systemPrompt: string }) => { systemPrompt: string } | undefined) | undefined;
+    imported.default({
+      config: {
+        style: 'custom',
+        instructions: 'Custom benchmark instructions.',
+      },
+      on: ((event: string, registered: typeof handler) => {
+        if (event === 'before_agent_start') handler = registered;
+      }) as FelanExtensionAPI['on'],
+    } as FelanExtensionAPI);
+
+    expect(handler?.({ systemPrompt: 'Base prompt' })?.systemPrompt).toContain(
+      '<output_style>\nCustom benchmark instructions.\n</output_style>',
+    );
+  });
+
   it('binds memory as root or reader without sharing checkpoint behavior', async () => {
     const host = memoryHost();
     const rootImporter = createLocalExtensionImporter(

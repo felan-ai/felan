@@ -111,11 +111,12 @@ describe('local settings', () => {
     expect(getLocalOutputStyle(settingsWith({}))).toBe('concise');
     expect(getLocalOutputStyle(settingsWith({ outputStyle: 'explanatory' }))).toBe('explanatory');
     expect(getLocalOutputStyle(settingsWith({ outputStyle: 'caveman' }))).toBe('caveman');
+    expect(getLocalOutputStyle(settingsWith({ extensionConfig: { outputStyle: { style: 'custom' } } }))).toBe('custom');
     expect(getLocalOutputStyle(settingsWith({ extensionConfig: { outputStyle: { style: 'caveman' } } }))).toBe('caveman');
     expect(() => getLocalOutputStyle(settingsWith({ outputStyle: 'verbose' })))
-      .toThrow('outputStyle must be one of: concise, explanatory, caveman');
+      .toThrow('outputStyle must be one of: concise, explanatory, caveman, custom');
     expect(() => getLocalOutputStyle(settingsWith({ outputStyle: { path: '/tmp/prompt' } })))
-      .toThrow('outputStyle must be one of: concise, explanatory, caveman');
+      .toThrow('outputStyle must be one of: concise, explanatory, caveman, custom');
   });
 
   it('persists dependency choices without replacing unrelated global settings', async () => {
