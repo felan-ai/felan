@@ -151,6 +151,24 @@ describe('AgentNavigator', () => {
     transcript.dispose();
   });
 
+  it('uses grouped thinking rows for selected child transcripts', () => {
+    const session = sessionWithMessages([
+      assistantThinking('Inspect the child session. Render the next sentence.'),
+    ], () => {});
+    const transcript = new AgentTranscript(
+      { requestRender: vi.fn() } as never,
+      new TuiKeybindingsManager(TUI_KEYBINDINGS) as unknown as KeybindingsManager,
+    );
+
+    transcript.attach(session);
+    const output = transcript.render(100).join('\n');
+
+    expect(output).toContain('Thinking');
+    expect(output).toContain('· Inspect the child session.');
+    expect(output).toContain('· Render the next sentence.');
+    transcript.dispose();
+  });
+
   it('keeps grouped child tools live and releases both session subscriptions', () => {
     const definition = toolDefinition('read');
     const listeners: Array<(event: unknown) => void> = [];
@@ -494,6 +512,14 @@ function assistantToolCall(id: string, name: string, arguments_: unknown): unkno
     },
     stopReason: 'toolUse',
     timestamp: 1,
+  };
+}
+
+function assistantThinking(thinking: string): unknown {
+  return {
+    ...assistantToolCall('unused', 'read', {}),
+    content: [{ type: 'thinking', thinking }],
+    stopReason: 'stop',
   };
 }
 

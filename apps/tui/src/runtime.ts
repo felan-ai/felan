@@ -60,6 +60,7 @@ import { createSavingsCommandExtension } from './savings-command.js';
 import { SavingsService, createModelPriceSource } from './savings.js';
 import { createHash } from 'node:crypto';
 import { installPiAsyncFileLockGuard } from './pi-lock.js';
+import { createThinkingGroupExtension } from './thinking-groups.js';
 
 installPiAsyncFileLockGuard();
 
@@ -302,6 +303,7 @@ export function createLocalSessionRuntimeFactory(
       inlineExtensions: [
         dependencyExtension,
         createSavingsCommandExtension(savings),
+        createThinkingGroupExtension(),
         createToolActivityExtension(toolActivityState),
         ...(memoryControlExtension === undefined ? [] : [memoryControlExtension]),
       ],

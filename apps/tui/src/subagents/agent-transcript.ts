@@ -20,6 +20,7 @@ import {
 import { getLocalToolDisplayMode } from '../settings.js';
 import { createToolActivitySessionView } from '../tool-activity/runtime-view.js';
 import { ToolActivityState } from '../tool-activity/state.js';
+import { renderThinkingGroupMarkdown } from '../thinking-groups.js';
 
 type AgentMessage = AgentSession['messages'][number];
 type AssistantMessage = Extract<AgentMessage, { role: 'assistant' }>;
@@ -302,6 +303,8 @@ export class AgentTranscript implements Component {
         this.#hideThinkingBlock,
         this.#markdownTheme,
         'Thinking...',
+        undefined,
+        [renderThinkingGroupMarkdown],
       );
       this.#assistantComponents.set(key, component);
       this.#container.addChild(component);
