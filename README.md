@@ -156,7 +156,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 | [`@felan-ai/ext-ask-user`](packages/ext-ask-user/README.md) | Structured one-to-four-question input | [Commands](docs/user-guide/commands-and-shortcuts.md) |
 | [`@felan-ai/ext-context`](packages/ext-context/README.md) | Progressive nested project context | [Context and memory](docs/user-guide/context-and-memory.md) |
 | [`@felan-ai/ext-memory`](packages/ext-memory/README.md) | Portable local-first memory contracts | [Memory architecture](docs/concepts/local-memory.md) |
-| [`@felan-ai/ext-output-style`](packages/ext-output-style/README.md) | Validated concise and explanatory response instructions | [Configuration](docs/user-guide/configuration.md#output-style) |
+| [`@felan-ai/ext-output-style`](packages/ext-output-style/README.md) | Validated concise, explanatory, and caveman response instructions | [Configuration](docs/user-guide/configuration.md#output-style) |
 | [`@felan-ai/ext-web-access`](packages/ext-web-access/README.md) | Bounded web search, source checking, and content retrieval | [Web access](docs/user-guide/web-mcp-and-browser.md) |
 | [`@felan-ai/ext-mcp`](packages/ext-mcp/README.md) | Portable OAuth-only remote MCP gateway | [MCP](docs/user-guide/web-mcp-and-browser.md) |
 | [`@felan-ai/ext-felan-api`](packages/ext-felan-api/README.md) | Single authenticated Felan API gateway | [Configuration](docs/user-guide/configuration.md#felan-api) |

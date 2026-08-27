@@ -16,7 +16,7 @@ Pi extensions or arbitrary npm packages.
 | [`@felan-ai/ext-prewalk`](../../packages/ext-prewalk/README.md) | Same-session planner-to-implementation handoff | `/prewalk` | Authenticated target model and explicit mutation tool |
 | [`@felan-ai/ext-context`](../../packages/ext-context/README.md) | Progressive nested `AGENTS.md`/`CLAUDE.md` loading | `/progressive-context` | Structured reads or decoded `@file` blocks |
 | [`@felan-ai/ext-memory`](../../packages/ext-memory/README.md) | Portable Markdown memory schema and checkpoint integration | `/memory` through local host | Host supplies memory coordinator for processing |
-| [`@felan-ai/ext-output-style`](../../packages/ext-output-style/README.md) | Validated model-response style instructions | Root and child system prompts | Host selects the built-in `concise` or `explanatory` style; no ambient prompt loading |
+| [`@felan-ai/ext-output-style`](../../packages/ext-output-style/README.md) | Validated model-response style instructions | Root and child system prompts | Host selects the built-in `concise`, `explanatory`, or `caveman` style; no ambient prompt loading |
 | [`@felan-ai/ext-web-access`](../../packages/ext-web-access/README.md) | Bounded search, source checks, fetches, and retained content | Four web tools | Provider configuration and network policy |
 | [`@felan-ai/ext-mcp`](../../packages/ext-mcp/README.md) | OAuth-only remote MCP gateway | `/mcp` | Local host supplies OAuth credentials/callbacks |
 | [`@felan-ai/ext-felan-api`](../../packages/ext-felan-api/README.md) | Single authenticated Felan REST API gateway | `felan_api` | `FELAN_API_KEY` or explicit factory `apiKey`; local built-in is disabled when no key is present |

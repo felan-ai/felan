@@ -113,7 +113,7 @@ try {
       }
       const outputStyle = await import('@felan-ai/ext-output-style');
       let outputStyleHandler;
-      outputStyle.createOutputStyleExtension('explanatory')({
+      outputStyle.createOutputStyleExtension('caveman')({
         on: (event, handler) => {
           if (event === 'before_agent_start') outputStyleHandler = handler;
         },
@@ -121,9 +121,10 @@ try {
       const styledPrompt = outputStyleHandler?.({ systemPrompt: 'Packed base prompt' })?.systemPrompt;
       if (!styledPrompt?.includes('## Output Style')
         || !styledPrompt.includes('<output_style>')
-        || !styledPrompt.includes('Explain the reasoning and important tradeoffs')
+        || !styledPrompt.includes('Use the fewest words that preserve correctness')
+        || !styledPrompt.includes('Keep code, commands, paths, identifiers, numbers, and error messages exact')
         || !styledPrompt.includes('</output_style>')) {
-        throw new Error('Packed output-style extension did not apply the explanatory style');
+        throw new Error('Packed output-style extension did not apply the caveman style');
       }
       const subagents = await import('@felan-ai/ext-subagents');
       const canonicalTools = [];

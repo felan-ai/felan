@@ -64,6 +64,34 @@ describe('LocalSubagentHost', () => {
     await host.shutdown();
   });
 
+  it('binds caveman output style into child extension composition', async () => {
+    const { host, modelRuntime } = await harness({
+      runner: async () => ({ result: 'unused' }),
+    });
+    const importer = createLocalSubagentExtensionImporter({
+      modelRuntime,
+      importExtension: async () => {
+        throw new Error('The generic importer must not load output style');
+      },
+      outputStyle: 'caveman',
+    }, host);
+    const imported = await importer('@felan-ai/ext-output-style') as {
+      default: (pi: FelanExtensionAPI) => void;
+    };
+    let handler: ((event: { systemPrompt: string }) => { systemPrompt: string }) | undefined;
+    imported.default({
+      config: { style: 'caveman' },
+      on: ((event: string, registered: typeof handler) => {
+        if (event === 'before_agent_start') handler = registered;
+      }) as FelanExtensionAPI['on'],
+    } as FelanExtensionAPI);
+
+    expect(handler?.({ systemPrompt: 'Child base prompt' }).systemPrompt).toContain(
+      'Keep code, commands, paths, identifiers, numbers, and error messages exact',
+    );
+    await host.shutdown();
+  });
+
   it('continues one child with the same agent ID, session file, and latest result', async () => {
     const sessionIds: string[] = [];
     const sessionFiles: Array<string | undefined> = [];
