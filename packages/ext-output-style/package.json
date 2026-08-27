@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-output-style",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Portable output-style system prompt extension for Felan",
   "license": "MIT",
   "type": "module",
