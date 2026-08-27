@@ -576,10 +576,7 @@ describe('model entry', () => {
   it('denies model entry when the user declines approval', async () => {
     const harness = createHarness({ idle: false, entryApproved: false });
 
-    const result = await enterPrewalk(harness);
-
-    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
-    expect(result.content[0].text).toContain('user declined');
+    await expect(enterPrewalk(harness)).rejects.toThrow('user declined');
     expect(await contextMessages(harness, [])).toEqual([]);
   });
 
@@ -589,10 +586,7 @@ describe('model entry', () => {
       prewalkOptions: { entryApproval: 'deny' },
     });
 
-    const result = await enterPrewalk(harness);
-
-    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
-    expect(result.content[0].text).toContain('disabled');
+    await expect(enterPrewalk(harness)).rejects.toThrow('disabled');
     expect(harness.ui.confirm).not.toHaveBeenCalled();
   });
 
@@ -603,20 +597,14 @@ describe('model entry', () => {
       prewalkOptions: { entryApproval: 'allow' },
     });
 
-    const result = await enterPrewalk(harness);
-
-    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
-    expect(result.content[0].text).toContain('disabled');
+    await expect(enterPrewalk(harness)).rejects.toThrow('disabled');
     expect(harness.ui.confirm).not.toHaveBeenCalled();
   });
 
   it.each(['json', 'print'] as const)('denies ask policy in non-interactive %s mode', async (mode) => {
     const harness = createHarness({ idle: false, mode });
 
-    const result = await enterPrewalk(harness);
-
-    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
-    expect(result.content[0].text).toContain(`unavailable in ${mode} mode`);
+    await expect(enterPrewalk(harness)).rejects.toThrow(`unavailable in ${mode} mode`);
     expect(harness.ui.confirm).not.toHaveBeenCalled();
   });
 
@@ -634,20 +622,10 @@ describe('model entry', () => {
 
   it('rejects entry without a mutation tool or selected planner model', async () => {
     const withoutMutation = createHarness({ activeTools: ['read', 'grep'] });
-    const mutationError = await enterPrewalk(withoutMutation);
-    expect(mutationError).toMatchObject({
-      isError: true,
-      details: { phase: 'idle' },
-    });
-    expect(mutationError.content[0].text).toContain('requires an active mutation tool');
+    await expect(enterPrewalk(withoutMutation)).rejects.toThrow('requires an active mutation tool');
 
     const withoutModel = createHarness({ currentModel: undefined });
-    const modelError = await enterPrewalk(withoutModel);
-    expect(modelError).toMatchObject({
-      isError: true,
-      details: { phase: 'idle' },
-    });
-    expect(modelError.content[0].text).toContain('selected planner model');
+    await expect(enterPrewalk(withoutModel)).rejects.toThrow('selected planner model');
   });
 
   it('does not reset an active run on duplicate entry', async () => {
@@ -655,11 +633,7 @@ describe('model entry', () => {
     await enterPrewalk(harness);
     harness.setThinking('low');
 
-    const duplicate = await enterPrewalk(harness);
-    expect(duplicate).toMatchObject({
-      isError: true,
-      details: { phase: 'planning' },
-    });
+    await expect(enterPrewalk(harness)).rejects.toThrow('Prewalk is already planning');
 
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 1, timestamp: Date.now() });
     await recordTaskGraph(harness, 'duplicate-task');
@@ -731,7 +705,7 @@ describe('model entry', () => {
     expect(await contextMessages(harness, successfulHistory)).toEqual([successfulHistory[0]]);
 
     const failedHarness = createHarness({ activeTools: ['read'] });
-    await enterPrewalk(failedHarness);
+    await expect(enterPrewalk(failedHarness)).rejects.toThrow('requires an active mutation tool');
     const failedHistory = [
       assistant('toolUse', [{
         type: 'toolCall', id: 'failed-entry', name: 'enter_prewalk', arguments: {},
@@ -813,11 +787,23 @@ describe('plan review', () => {
   it('rejects approval outside the review phase', async () => {
     const harness = createHarness({ prewalkOptions: { planReview: 'ask' } });
 
-    const result = await harness.tools.get('approve_prewalk_plan').execute(
+    await expect(harness.tools.get('approve_prewalk_plan').execute(
+      'approve-plan', {}, undefined, undefined, harness.ctx,
+    )).rejects.toThrow('No Prewalk plan is awaiting approval');
+  });
+
+  it('rejects duplicate approval after the plan is approved', async () => {
+    const harness = createHarness({ prewalkOptions: { planReview: 'ask' } });
+    await startPlanning(harness);
+    await presentPlanForReview(harness);
+    await harness.tools.get('approve_prewalk_plan').execute(
       'approve-plan', {}, undefined, undefined, harness.ctx,
     );
 
-    expect(result).toMatchObject({ isError: true, details: { phase: 'idle' } });
+    await expect(harness.tools.get('approve_prewalk_plan').execute(
+      'duplicate-approval', {}, undefined, undefined, harness.ctx,
+    )).rejects.toThrow('No Prewalk plan is awaiting approval');
+    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_APPROVED_MESSAGE_TYPE);
   });
 
   it('skips inherited review when entry approval allows entry', async () => {
