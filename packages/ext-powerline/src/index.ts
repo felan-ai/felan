@@ -8,12 +8,19 @@ import {
   type SubscriptionUsageHost,
 } from './subscription.js';
 import { createSavingsController, type SavingsController, type SavingsUsageHost } from './savings.js';
+import type { SessionUsageTotals } from './segments.js';
 
 const SUBSCRIPTION_REFRESH_TIMER_MS = 60_000;
+
+export interface AdditionalSessionUsageHost {
+  getUsage(): SessionUsageTotals;
+  subscribe(listener: () => void): () => void;
+}
 
 export interface PowerlineExtensionOptions {
   readonly footerRows?: FooterRowsRenderer;
   readonly savingsHost?: SavingsUsageHost;
+  readonly additionalSessionUsageHost?: AdditionalSessionUsageHost;
 }
 
 export function createPowerlineExtension(
@@ -25,6 +32,7 @@ export function createPowerlineExtension(
     let subscriptionContext: ExtensionContext | undefined;
     let subscriptionTimer: ReturnType<typeof setInterval> | undefined;
     let savingsTimer: ReturnType<typeof setInterval> | undefined;
+    let unsubscribeAdditionalSessionUsage: (() => void) | undefined;
     const emptySubscription: SubscriptionState = { loading: false };
     const config = powerlineConfigFromSettings(pi.config ?? {});
     const subscription = subscriptionHost && config.display.lines.some(
@@ -34,6 +42,10 @@ export function createPowerlineExtension(
       : undefined;
     const savings = options.savingsHost && config.display.lines.some((line) => line.segments.savings?.enabled)
       ? createSavingsController(options.savingsHost, redraw)
+      : undefined;
+    const additionalSessionUsageHost = options.additionalSessionUsageHost
+      && config.display.lines.some((line) => line.segments.session?.enabled)
+      ? options.additionalSessionUsageHost
       : undefined;
     const emptySavings = { loading: false } as const;
 
@@ -49,6 +61,9 @@ export function createPowerlineExtension(
           config,
           subscription: subscription?.state ?? emptySubscription,
           savings: () => savings?.state ?? emptySavings,
+          ...(additionalSessionUsageHost === undefined
+            ? {}
+            : { additionalSessionUsage: () => additionalSessionUsageHost.getUsage() }),
           ...(options.footerRows === undefined ? {} : { footerRows: options.footerRows }),
         });
         return footer;
@@ -80,6 +95,12 @@ export function createPowerlineExtension(
       clearInterval(subscriptionTimer);
       subscriptionTimer = undefined;
     }
+    function subscribeAdditionalSessionUsage(ctx: ExtensionContext): void {
+      unsubscribeAdditionalSessionUsage?.();
+      unsubscribeAdditionalSessionUsage = undefined;
+      if (ctx.mode !== 'tui' || !additionalSessionUsageHost) return;
+      unsubscribeAdditionalSessionUsage = additionalSessionUsageHost.subscribe(redraw);
+    }
     function startSavingsTimer(): void {
       if (!savings) return;
       clearInterval(savingsTimer);
@@ -94,6 +115,7 @@ export function createPowerlineExtension(
     pi.on('session_start', (_event, ctx) => {
       subscriptionContext = ctx;
       installFooter(ctx);
+      subscribeAdditionalSessionUsage(ctx);
       startSubscriptionTimer(ctx);
       refreshSubscription(ctx, { allowStaleCache: true });
       startSavingsTimer();
@@ -101,6 +123,8 @@ export function createPowerlineExtension(
     });
     pi.on('session_shutdown', (_event, ctx) => {
       clearSubscriptionTimer();
+      unsubscribeAdditionalSessionUsage?.();
+      unsubscribeAdditionalSessionUsage = undefined;
       clearInterval(savingsTimer);
       savingsTimer = undefined;
       subscriptionContext = undefined;
@@ -147,6 +171,7 @@ export { createSavingsController } from './savings.js';
 export type { SavingsController, SavingsState, SavingsUsageHost, SavingsUsageHostRequest, SavingsUsageHostResult } from './savings.js';
 export { GitCache, formatAge, parseGitStatus, runGit } from './git.js';
 export { formatTokens, renderSegments, sanitizePlainText } from './segments.js';
+export type { SessionUsageTotals } from './segments.js';
 export {
   createSubscriptionController,
   detectSubscriptionProvider,

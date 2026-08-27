@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -673,6 +673,8 @@ describe('LocalSubagentHost', () => {
   });
 
   it('shares one nested manager, preserves the root session, and cancels a real descendant', async () => {
+    const root = await temporaryDirectory();
+    const sessionDirectory = join(root, 'child-sessions');
     let descendantId: string | undefined;
     const rootSessionIds: string[] = [];
     let descendantStarted!: () => void;
@@ -681,6 +683,14 @@ describe('LocalSubagentHost', () => {
     });
     const runner: LocalSubagentRunner = async (input) => {
       rootSessionIds.push(input.rootSessionId);
+      const manager = SessionManager.create(input.cwd, sessionDirectory, { id: input.sessionId });
+      manager.appendMessage(usageAssistantMessage({
+        input: input.depth,
+        output: input.depth,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: input.depth / 10,
+      }));
       input.onReady({ steer: async () => {}, cancel: async () => {} });
       if (input.request.description === 'parent') {
         const child = await input.subagents.spawn(request({ description: 'descendant' }));
@@ -689,9 +699,9 @@ describe('LocalSubagentHost', () => {
         descendantStarted();
       }
       await aborted(input.signal);
-      return {};
+      return { sessionFile: manager.getSessionFile() };
     };
-    const fixture = await harness({ runner, concurrency: 2 });
+    const fixture = await harness({ runner, concurrency: 2, root });
     const host = fixture.host;
     const parent = await host.spawn(request({ type: 'general', description: 'parent' }));
     if (!parent.ok) return;
@@ -706,6 +716,8 @@ describe('LocalSubagentHost', () => {
       ]),
     });
     expect(rootSessionIds).toEqual(['root', 'root']);
+    expect(host.getUsage()).toMatchObject({ input: 3, output: 3 });
+    expect(host.getUsage().cost).toBeCloseTo(0.3);
   });
 
   it('enforces configured nesting depth without exposing it through host policy', async () => {
@@ -875,6 +887,129 @@ describe('LocalSubagentHost', () => {
       value: { status: 'completed', result: 'original result' },
     });
     await host.shutdown();
+  });
+
+  it('aggregates child usage and restores it from retained session files', async () => {
+    const root = await temporaryDirectory();
+    const sessionDirectory = join(root, 'child-sessions');
+    const runner: LocalSubagentRunner = async (input) => {
+      const manager = SessionManager.create(input.cwd, sessionDirectory, { id: input.sessionId });
+      manager.appendMessage(usageAssistantMessage({
+        input: 10,
+        output: 20,
+        cacheRead: 30,
+        cacheWrite: 40,
+        cost: 0.75,
+      }));
+      return { result: 'done', sessionFile: manager.getSessionFile() };
+    };
+    const first = await harness({ runner, root });
+    const spawned = await first.host.spawn(request());
+    if (!spawned.ok) return;
+    await waitForResult(first.host, spawned.value.agentId);
+
+    expect(first.host.getUsage()).toEqual({
+      input: 10,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 40,
+      cost: 0.75,
+    });
+    expect(first.host.getLocalSubagent(spawned.value.agentId)).toMatchObject({
+      usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, cost: 0.75 },
+    });
+    await first.host.shutdown();
+
+    const second = await harness({ runner, root });
+    expect(second.host.getUsage()).toEqual({
+      input: 10,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 40,
+      cost: 0.75,
+    });
+    expect(second.host.getLocalSubagent(spawned.value.agentId)).toMatchObject({
+      usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, cost: 0.75 },
+    });
+    await second.host.shutdown();
+  });
+
+  it('does not double-count a continued child session', async () => {
+    const root = await temporaryDirectory();
+    const sessionDirectory = join(root, 'child-sessions');
+    const runner: LocalSubagentRunner = async (input) => {
+      const manager = input.sessionFile
+        ? SessionManager.open(input.sessionFile)
+        : SessionManager.create(input.cwd, sessionDirectory, { id: input.sessionId });
+      if (!input.sessionFile) {
+        manager.appendMessage(usageAssistantMessage({
+          input: 10,
+          output: 20,
+          cacheRead: 30,
+          cacheWrite: 40,
+          cost: 0.75,
+        }));
+      }
+      return { result: 'done', sessionFile: manager.getSessionFile() };
+    };
+    const { host } = await harness({ runner, root });
+    const spawned = await host.spawn(request());
+    if (!spawned.ok) return;
+    await waitForResult(host, spawned.value.agentId);
+    await host.steer(spawned.value.agentId, 'continue');
+    await waitForResult(host, spawned.value.agentId);
+
+    expect(host.getUsage()).toEqual({
+      input: 10,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 40,
+      cost: 0.75,
+    });
+    await host.shutdown();
+  });
+
+  it('does not recreate or count missing and malformed retained session files', async () => {
+    const root = await temporaryDirectory();
+    const sessionDirectory = join(root, 'child-sessions');
+    let sessionFile = '';
+    const runner: LocalSubagentRunner = async (input) => {
+      const manager = SessionManager.create(input.cwd, sessionDirectory, { id: input.sessionId });
+      manager.appendMessage(usageAssistantMessage({
+        input: 10,
+        output: 20,
+        cacheRead: 30,
+        cacheWrite: 40,
+        cost: 0.75,
+      }));
+      sessionFile = manager.getSessionFile()!;
+      return { result: 'done', sessionFile };
+    };
+    const first = await harness({ runner, root });
+    const spawned = await first.host.spawn(request());
+    if (!spawned.ok) return;
+    await waitForResult(first.host, spawned.value.agentId);
+    await first.host.shutdown();
+
+    await rm(sessionFile);
+    const missing = await harness({ runner, root });
+    expect(missing.host.getUsage()).toEqual({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0,
+    });
+    expect(missing.host.getLocalSubagent(spawned.value.agentId)?.usage).toBeUndefined();
+    await expect(readFile(sessionFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await missing.host.shutdown();
+
+    await writeFile(sessionFile, '{"type":"not-a-session"}\n');
+    const malformed = await harness({ runner, root });
+    expect(malformed.host.getUsage().cost).toBe(0);
+    expect(malformed.host.getLocalSubagent(spawned.value.agentId)?.usage).toBeUndefined();
+    expect(await readFile(sessionFile, 'utf8')).toBe('{"type":"not-a-session"}\n');
+    await malformed.host.shutdown();
   });
 
   it('routes concurrent completed steering into one continued run', async () => {
@@ -1068,6 +1203,35 @@ function completedAssistantMessage(text: string) {
       cacheWrite: 0,
       totalTokens: 2,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: 'stop' as const,
+    timestamp: Date.now(),
+  };
+}
+
+function usageAssistantMessage(usage: {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+}) {
+  return {
+    role: 'assistant' as const,
+    content: [{ type: 'text' as const, text: 'usage' }],
+    api: 'anthropic-messages' as const,
+    provider: 'anthropic',
+    model: 'test-model',
+    usage: {
+      ...usage,
+      totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: usage.cost,
+      },
     },
     stopReason: 'stop' as const,
     timestamp: Date.now(),

@@ -190,9 +190,11 @@ Set `felanTui.toolDisplay` to `full` to use the ungrouped presentation. The
 
 The Powerline footer is enabled by default in TUI sessions. It shows selected
 Git, model, session, subscription, recent all-local savings, context, and
-extension state. Savings defaults to seven inclusive UTC calendar days and can
-be configured with the Powerline `savings.periodDays` segment field. Disable the
-`powerline` built-in explicitly if you prefer the agent rail beneath the editor.
+extension state. The session token and cost totals include the root session and
+all local subagent sessions for that root, including retained subagent work.
+Savings defaults to seven inclusive UTC calendar days and can be configured with
+the Powerline `savings.periodDays` segment field. Disable the `powerline` built-in
+explicitly if you prefer the agent rail beneath the editor.
 
 ## Permission model
 

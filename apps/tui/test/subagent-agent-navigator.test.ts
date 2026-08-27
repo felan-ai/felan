@@ -90,6 +90,48 @@ describe('AgentNavigator', () => {
     harness.navigator.dispose();
   });
 
+  it('shows each subagent cost beside its elapsed time', () => {
+    const withCost = record('agent-1', 'completed', {
+      type: 'explore',
+      completedAt: '2026-01-01T00:00:03.000Z',
+      usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 0, cost: 0.05134808 },
+    });
+    const zeroCost = record('agent-2', 'completed', {
+      completedAt: '2026-01-01T00:00:04.000Z',
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    });
+    const unknownCost = record('agent-3', 'completed', {
+      completedAt: '2026-01-01T00:00:05.000Z',
+    });
+    const harness = createHarness([withCost, zeroCost, unknownCost], 10, 80);
+
+    const lines = harness.navigator.render(80);
+    const output = lines.join('\n');
+
+    expect(output.match(/\$0\.051/g)).toHaveLength(2);
+    expect(output).toContain('$0.000 · 3.0s');
+    expect(output.match(/\$/g)).toHaveLength(3);
+    expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true);
+    harness.navigator.dispose();
+  });
+
+  it('refreshes the displayed cost when running usage changes', () => {
+    const initial = record('agent-1', 'running', {
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.01 },
+    });
+    const harness = createHarness([initial], 10, 80);
+
+    expect(harness.navigator.render(80).join('\n')).toContain('$0.010');
+    harness.setRecords([record('agent-1', 'running', {
+      usage: { input: 2, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.02 },
+    })]);
+    const updated = harness.navigator.render(80).join('\n');
+
+    expect(updated).toContain('$0.020');
+    expect(updated).not.toContain('$0.010');
+    harness.navigator.dispose();
+  });
+
   it('falls back to the live session model when no request model was stored', () => {
     const session = sessionWithMessages([], () => {}, {
       model: { provider: 'default-provider', id: 'default-model' },

@@ -120,8 +120,15 @@ export function createLocalExtensionImporter(
 ): ExtensionPackageImporter {
   let powerlineLoaded = false;
   let agentRailRenderer: AgentRailRenderer | undefined;
+  const additionalSessionUsageHost = isSessionUsageHost(host)
+    ? {
+        getUsage: () => host.getUsage(),
+        subscribe: (listener: () => void) => host.subscribeUsage(listener),
+      }
+    : undefined;
   const powerline = createPowerlineExtension(createLocalSubscriptionUsageHost(modelRuntime), {
     ...(savings === undefined ? {} : { savingsHost: createLocalSavingsUsageHost(savings) }),
+    ...(additionalSessionUsageHost === undefined ? {} : { additionalSessionUsageHost }),
     footerRows: (width) => agentRailRenderer?.(width) ?? [],
   });
   associateExtensionConfig(powerline, POWERLINE_CONFIG);
@@ -175,6 +182,16 @@ export function createLocalExtensionImporter(
     }
     return importExtension(packageName);
   };
+}
+
+function isSessionUsageHost(value: object): value is object & {
+  getUsage: () => import('@felan-ai/ext-powerline').SessionUsageTotals;
+  subscribeUsage: (listener: () => void) => () => void;
+} {
+  return 'getUsage' in value
+    && typeof value.getUsage === 'function'
+    && 'subscribeUsage' in value
+    && typeof value.subscribeUsage === 'function';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

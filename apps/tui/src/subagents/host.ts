@@ -47,9 +47,18 @@ export interface LocalSubagentSettings {
   readonly maxDepth?: number;
 }
 
+export interface LocalSubagentUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+}
+
 export interface LocalSubagentView extends SubagentRecord {
   readonly model?: string;
   readonly session?: AgentSession;
+  readonly usage?: LocalSubagentUsage;
 }
 
 export interface CreateLocalSubagentHostOptions {
@@ -126,6 +135,8 @@ interface MutableChild {
   readonly depth: number;
   session?: AgentSession;
   sessionFile?: string;
+  usage?: LocalSubagentUsage;
+  usageUnsubscribe?: () => void;
   deliveryId?: string;
   completionPending: boolean;
 }
@@ -198,6 +209,14 @@ export class LocalSubagentHost implements SubagentHost {
     return this.#manager.subscribe(listener);
   }
 
+  getUsage(): LocalSubagentUsage {
+    return this.#manager.getUsage();
+  }
+
+  subscribeUsage(listener: () => void): () => void {
+    return this.#manager.subscribeUsage(listener);
+  }
+
   async shutdown(): Promise<void> {
     await this.#manager.shutdown();
   }
@@ -215,6 +234,7 @@ export class LocalSubagentManager {
   readonly #jobs = new Map<string, Job>();
   readonly #queue: Job[] = [];
   readonly #listeners = new Set<(records: readonly LocalSubagentView[]) => void>();
+  readonly #usageListeners = new Set<() => void>();
   readonly #deliveries = new Map<string, Promise<void>>();
   readonly #deliveryAttempts = new Map<string, number>();
   readonly #deliveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -261,6 +281,12 @@ export class LocalSubagentManager {
         reconciled = true;
       }
       manager.#children.set(child.record.agentId, child);
+    }
+    for (const child of manager.#children.values()) {
+      if (!child.sessionFile) continue;
+      const usage = await loadSessionUsage(child.sessionFile, child.record.agentId);
+      if (usage) child.usage = usage;
+      else delete child.usage;
     }
     if (reconciled) await manager.#persist();
     return manager;
@@ -547,6 +573,17 @@ export class LocalSubagentManager {
     return () => this.#listeners.delete(listener);
   }
 
+  getUsage(): LocalSubagentUsage {
+    const totals = emptyUsageTotals();
+    for (const child of this.#children.values()) addUsage(totals, child.usage);
+    return totals;
+  }
+
+  subscribeUsage(listener: () => void): () => void {
+    this.#usageListeners.add(listener);
+    return () => this.#usageListeners.delete(listener);
+  }
+
   async shutdown(): Promise<void> {
     this.#shutdown ??= this.#performShutdown();
     await this.#shutdown;
@@ -662,6 +699,17 @@ export class LocalSubagentManager {
           : await this.#runAgentCore(input, async (session, sessionFile) => {
             child.session = session;
             child.sessionFile = sessionFile;
+            child.usage = usageFromEntries(session.sessionManager.getEntries());
+            child.usageUnsubscribe?.();
+            child.usageUnsubscribe = session.subscribe((event) => {
+              if (
+                event.type !== 'entry_appended'
+                || event.entry.type !== 'message'
+                || event.entry.message.role !== 'assistant'
+              ) return;
+              child.usage = usageFromEntries(session.sessionManager.getEntries());
+              this.#emitUsage();
+            });
             await this.#persist();
             this.#emit();
           });
@@ -674,7 +722,18 @@ export class LocalSubagentManager {
     } finally {
       if (timeout) clearTimeout(timeout);
       await this.#serializeControl(async () => {
-        if (outcome?.sessionFile) child.sessionFile = outcome.sessionFile;
+        child.usageUnsubscribe?.();
+        delete child.usageUnsubscribe;
+        if (outcome?.sessionFile) {
+          child.sessionFile = outcome.sessionFile;
+        }
+        if (child.session) {
+          child.usage = usageFromEntries(child.session.sessionManager.getEntries());
+        } else if (child.sessionFile) {
+          const usage = await loadSessionUsage(child.sessionFile, child.record.agentId);
+          if (usage) child.usage = usage;
+          else delete child.usage;
+        }
         if (job.terminalStatus) {
           child.record = terminalRecord(child.record, job.terminalStatus, job.terminalError);
         } else if (outcome?.turnLimitReached) {
@@ -1062,6 +1121,11 @@ export class LocalSubagentManager {
   #emit(): void {
     const records = this.#latestChildren().map(localView);
     for (const listener of this.#listeners) listener(records);
+    this.#emitUsage();
+  }
+
+  #emitUsage(): void {
+    for (const listener of this.#usageListeners) listener();
   }
 
   async #persist(): Promise<void> {
@@ -1175,6 +1239,7 @@ function localView(child: MutableChild): LocalSubagentView {
     ...cloneRecord(child.record),
     ...(child.request.model === undefined ? {} : { model: child.request.model }),
     ...(child.session === undefined ? {} : { session: child.session }),
+    ...(child.usage === undefined ? {} : { usage: { ...child.usage } }),
   };
 }
 
@@ -1208,6 +1273,89 @@ function boundResult(result: string): string {
 
 function byteLength(value: string): number {
   return Buffer.byteLength(value);
+}
+
+function emptyUsageTotals(): LocalSubagentUsage {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+}
+
+function addUsage(target: LocalSubagentUsage, source: LocalSubagentUsage | undefined): void {
+  if (!source) return;
+  target.input += source.input;
+  target.output += source.output;
+  target.cacheRead += source.cacheRead;
+  target.cacheWrite += source.cacheWrite;
+  target.cost += source.cost;
+}
+
+function usageFromEntries(entries: ReturnType<SessionManager['getEntries']>): LocalSubagentUsage {
+  const totals = emptyUsageTotals();
+  for (const entry of entries) {
+    if (entry.type !== 'message' || entry.message.role !== 'assistant') continue;
+    totals.input += entry.message.usage.input;
+    totals.output += entry.message.usage.output;
+    totals.cacheRead += entry.message.usage.cacheRead;
+    totals.cacheWrite += entry.message.usage.cacheWrite;
+    totals.cost += entry.message.usage.cost.total;
+  }
+  return totals;
+}
+
+async function loadSessionUsage(
+  sessionFile: string,
+  expectedSessionId: string,
+): Promise<LocalSubagentUsage | undefined> {
+  try {
+    const totals = emptyUsageTotals();
+    let headerValidated = false;
+    for (const line of (await readFile(sessionFile, 'utf8')).split('\n')) {
+      if (!line.trim()) continue;
+      let entry: unknown;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        if (!headerValidated) return undefined;
+        continue;
+      }
+      if (!headerValidated) {
+        if (
+          typeof entry !== 'object'
+          || entry === null
+          || Reflect.get(entry, 'type') !== 'session'
+          || Reflect.get(entry, 'id') !== expectedSessionId
+        ) return undefined;
+        headerValidated = true;
+        continue;
+      }
+      addPersistedAssistantUsage(totals, entry);
+    }
+    return headerValidated ? totals : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function addPersistedAssistantUsage(target: LocalSubagentUsage, entry: unknown): void {
+  if (
+    typeof entry !== 'object'
+    || entry === null
+    || Reflect.get(entry, 'type') !== 'message'
+  ) return;
+  const message = Reflect.get(entry, 'message');
+  if (typeof message !== 'object' || message === null || Reflect.get(message, 'role') !== 'assistant') return;
+  const usage = Reflect.get(message, 'usage');
+  if (typeof usage !== 'object' || usage === null) return;
+  const cost = Reflect.get(usage, 'cost');
+  if (typeof cost !== 'object' || cost === null) return;
+  const values = {
+    input: Reflect.get(usage, 'input'),
+    output: Reflect.get(usage, 'output'),
+    cacheRead: Reflect.get(usage, 'cacheRead'),
+    cacheWrite: Reflect.get(usage, 'cacheWrite'),
+    cost: Reflect.get(cost, 'total'),
+  };
+  if (!Object.values(values).every((value) => typeof value === 'number' && Number.isFinite(value))) return;
+  addUsage(target, values as LocalSubagentUsage);
 }
 
 function sessionFileOutcome(sessionFile: string | undefined): Pick<LocalSubagentRunOutcome, 'sessionFile'> {

@@ -485,11 +485,14 @@ export class AgentNavigator implements Component, Focusable {
       return this.theme.bold('Agent navigator') + this.theme.fg('dim', ' · no subagents · Esc closes');
     }
     const model = modelLabel(selected);
+    const metadata = [
+      model,
+      describeActivity(selected),
+      formatCost(selected),
+      formatDuration(selected),
+    ].filter(Boolean).join(' · ');
     return this.theme.bold(`Viewing ${selected.type}`)
-      + this.theme.fg(
-        'dim',
-        `${model ? ` · ${model}` : ''} · ${describeActivity(selected)} · ${formatDuration(selected)} · Esc returns`,
-      );
+      + this.theme.fg('dim', ` · ${metadata} · Esc returns`);
   }
 
   #renderInput(width: number, selected: LocalSubagentView): string {
@@ -668,14 +671,14 @@ function renderAgentRow(
     width,
     '…',
   );
-  const duration = formatDuration(record);
-  const durationWidth = visibleWidth(duration);
+  const metrics = [formatCost(record), formatDuration(record)].filter(Boolean).join(' · ');
+  const metricsWidth = visibleWidth(metrics);
   const summary = record.status === 'running'
     ? describeActivity(record)
     : activityLine(record.description);
   const summaryWidth = Math.max(
     0,
-    width - visibleWidth(head) - 2 - (durationWidth > 0 ? durationWidth + 2 : 0),
+    width - visibleWidth(head) - 2 - (metricsWidth > 0 ? metricsWidth + 2 : 0),
   );
   const renderedSummary = summaryWidth > 0
     ? theme.fg('dim', truncateToWidth(summary, summaryWidth, '…'))
@@ -686,10 +689,10 @@ function renderAgentRow(
     '',
   );
   const available = width - visibleWidth(left);
-  const renderedDuration = durationWidth > 0 && available >= durationWidth + 1
-    ? `${' '.repeat(Math.max(2, available - durationWidth))}${theme.fg('dim', duration)}`
+  const renderedMetrics = metricsWidth > 0 && available >= metricsWidth + 1
+    ? `${' '.repeat(Math.max(2, available - metricsWidth))}${theme.fg('dim', metrics)}`
     : '';
-  const line = truncateToWidth(left + renderedDuration, width, '');
+  const line = truncateToWidth(left + renderedMetrics, width, '');
   return line + ' '.repeat(Math.max(0, width - visibleWidth(line)));
 }
 
@@ -774,4 +777,11 @@ function formatDuration(record: LocalSubagentView): string {
   return seconds < 60
     ? `${seconds.toFixed(1)}s`
     : `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+}
+
+function formatCost(record: LocalSubagentView): string {
+  const cost = record.usage?.cost;
+  return cost !== undefined && Number.isFinite(cost) && cost >= 0
+    ? `$${cost.toFixed(3)}`
+    : '';
 }

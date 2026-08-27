@@ -1,7 +1,10 @@
 import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
 import type { Component, TUI } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import powerlineExtension, { createPowerlineExtension } from '../src/index.js';
+import powerlineExtension, {
+  createPowerlineExtension,
+  type AdditionalSessionUsageHost,
+} from '../src/index.js';
 import type { FooterDataLike } from '../src/segments.js';
 import type { SubscriptionUsageHost } from '../src/subscription.js';
 
@@ -97,6 +100,68 @@ describe('powerline lifecycle', () => {
     expect(lines.at(-1)).toBe('agent rail');
     await harness.emit('session_shutdown', {}, ctx.value);
   });
+
+  it('redraws for additional session usage and unsubscribes on shutdown', async () => {
+    let usageChanged: (() => void) | undefined;
+    const unsubscribe = vi.fn();
+    const usageHost: AdditionalSessionUsageHost = {
+      getUsage: vi.fn(() => ({ input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cost: 0.5 })),
+      subscribe: vi.fn((listener) => {
+        usageChanged = listener;
+        return unsubscribe;
+      }),
+    };
+    const harness = extensionHarness();
+    createPowerlineExtension(undefined, { additionalSessionUsageHost: usageHost })(harness.pi);
+    const ctx = extensionContext('tui');
+
+    await harness.emit('session_start', {}, ctx.value);
+    const factory = ctx.setFooter.mock.calls[0]![0] as (
+      tui: TUI,
+      theme: unknown,
+      data: FooterDataLike,
+    ) => Component & { dispose(): void };
+    const requestRender = vi.fn();
+    const footer = factory(
+      { requestRender } as unknown as TUI,
+      {},
+      {
+        getGitBranch: () => null,
+        getExtensionStatuses: () => new Map(),
+        getAvailableProviderCount: () => 1,
+        onBranchChange: () => vi.fn(),
+      },
+    );
+    footer.render(80);
+
+    expect(usageHost.subscribe).toHaveBeenCalledOnce();
+    expect(usageHost.getUsage).toHaveBeenCalled();
+    const beforeUsageChange = requestRender.mock.calls.length;
+    usageChanged?.();
+    expect(requestRender.mock.calls.length).toBeGreaterThan(beforeUsageChange);
+
+    await harness.emit('session_shutdown', {}, ctx.value);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it.each(['rpc', 'json', 'print'] as const)(
+    'does not subscribe to additional session usage in %s mode',
+    async (mode) => {
+      const usageHost: AdditionalSessionUsageHost = {
+        getUsage: vi.fn(() => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 })),
+        subscribe: vi.fn(() => vi.fn()),
+      };
+      const harness = extensionHarness();
+      createPowerlineExtension(undefined, { additionalSessionUsageHost: usageHost })(harness.pi);
+      const ctx = extensionContext(mode);
+
+      await harness.emit('session_start', {}, ctx.value);
+      await harness.emit('session_shutdown', {}, ctx.value);
+
+      expect(usageHost.subscribe).not.toHaveBeenCalled();
+      expect(usageHost.getUsage).not.toHaveBeenCalled();
+    },
+  );
 
   it('registers lifecycle handlers without Pi flags', () => {
     const harness = extensionHarness();

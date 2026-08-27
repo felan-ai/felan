@@ -25,7 +25,10 @@ The portable extension exposes exactly five tools:
 
 The local host owns admission, persistence, nesting, cancellation, model
 selection, and completion delivery. `/agents` or `Alt+A` opens live and stored
-child transcripts in the TUI.
+child transcripts in the TUI. The selected-agent header and agent rows show
+each child session's captured USD cost beside its elapsed time. Running costs
+refresh after each persisted assistant response, and retained costs reload with
+the root session.
 
 `max_turns` is a hard assistant-turn budget, not a guarantee of a final prose
 answer. Leave a final turn available for the child to summarize its work. If a

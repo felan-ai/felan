@@ -143,6 +143,20 @@ describe('powerline segments', () => {
     expect(rendered.text).toBe('in2.0k out1.0k R500 W100 $0.223');
   });
 
+  it('adds usage supplied for related sessions to the root session totals', () => {
+    const rendered = renderSingle('session', { enabled: true, type: 'breakdown' }, context({
+      entries: [assistantEntry(1_200, 300, 400, 50, 0.1234)],
+      additionalSessionUsage: {
+        input: 800,
+        output: 700,
+        cacheRead: 100,
+        cacheWrite: 50,
+        cost: 0.1,
+      },
+    }));
+    expect(rendered.text).toBe('in2.0k out1.0k R500 W100 $0.223');
+  });
+
   it('renders labeled savings with the default period and unpriced marker', () => {
     const rendered = renderSingle('savings', { enabled: true }, context({ savings: {
       loading: false,
@@ -280,6 +294,9 @@ function renderSingle(
     ...(gitDetails === undefined ? {} : { gitDetails }),
     subscription: value.subscription,
     ...(value.savings === undefined ? {} : { savings: value.savings }),
+    ...(value.additionalSessionUsage === undefined
+      ? {}
+      : { additionalSessionUsage: value.additionalSessionUsage }),
     symbols: getSymbols('text'),
   });
   expect(rendered).toHaveLength(1);
@@ -297,7 +314,14 @@ function context(options: {
   statuses?: ReadonlyMap<string, string>;
   subscription?: SubscriptionState;
   savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } };
-} = {}): { ctx: ExtensionContext; footerData: FooterDataLike; subscription: SubscriptionState; savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } } } {
+  additionalSessionUsage?: Parameters<typeof renderSegments>[1]['additionalSessionUsage'];
+} = {}): {
+  ctx: ExtensionContext;
+  footerData: FooterDataLike;
+  subscription: SubscriptionState;
+  savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } };
+  additionalSessionUsage?: Parameters<typeof renderSegments>[1]['additionalSessionUsage'];
+} {
   const ctx = {
     cwd: options.cwd ?? '/workspace',
     model: options.model,
@@ -311,7 +335,13 @@ function context(options: {
     getAvailableProviderCount: () => options.providerCount ?? 1,
     onBranchChange: () => () => {},
   };
-  return { ctx, footerData, subscription: options.subscription ?? { loading: false }, savings: options.savings };
+  return {
+    ctx,
+    footerData,
+    subscription: options.subscription ?? { loading: false },
+    savings: options.savings,
+    additionalSessionUsage: options.additionalSessionUsage,
+  };
 }
 
 function assistantEntry(input: number, output: number, cacheRead: number, cacheWrite: number, total: number) {

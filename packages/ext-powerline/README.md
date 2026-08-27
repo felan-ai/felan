@@ -9,7 +9,8 @@ The footer displays:
 - current directory
 - cached Git branch, revision, working-tree status, tag, age, stash, upstream, and repository name
 - active model and thinking level
-- session token and cost totals
+- session token and cost totals (the local Felan TUI includes the root session
+  and local subagent sessions; hostless consumers use the active session only)
 - active Codex or Claude subscription usage
 - estimated Felan savings for the configured recent-day period
 - context-window usage

@@ -24,6 +24,7 @@ export interface SegmentRenderContext {
   gitDetails?: GitDetails;
   subscription: SubscriptionState;
   savings?: SavingsState;
+  additionalSessionUsage?: SessionUsageTotals;
   symbols: PowerlineSymbols;
 }
 
@@ -34,7 +35,7 @@ export interface RenderedSegment {
   align: 'left' | 'right';
 }
 
-interface UsageTotals {
+export interface SessionUsageTotals {
   input: number;
   output: number;
   cacheRead: number;
@@ -132,7 +133,7 @@ function renderModel(context: SegmentRenderContext): Omit<RenderedSegment, 'alig
 }
 
 function renderSession(config: SegmentConfig, context: SegmentRenderContext): Omit<RenderedSegment, 'align'> {
-  const totals = getUsageTotals(context.ctx);
+  const totals = getUsageTotals(context.ctx, context.additionalSessionUsage);
   const tokenText = `${context.symbols.tokensIn}${formatTokens(totals.input)} ${context.symbols.tokensOut}${formatTokens(totals.output)}`;
   const cacheText = `${context.symbols.cacheRead}${formatTokens(totals.cacheRead)} ${context.symbols.cacheWrite}${formatTokens(totals.cacheWrite)}`;
   const costText = `$${totals.cost.toFixed(3)}`;
@@ -305,8 +306,17 @@ function clampInteger(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
-function getUsageTotals(context: ExtensionContext): UsageTotals {
-  const totals: UsageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+function getUsageTotals(
+  context: ExtensionContext,
+  additional?: SessionUsageTotals,
+): SessionUsageTotals {
+  const totals: SessionUsageTotals = {
+    input: additional?.input ?? 0,
+    output: additional?.output ?? 0,
+    cacheRead: additional?.cacheRead ?? 0,
+    cacheWrite: additional?.cacheWrite ?? 0,
+    cost: additional?.cost ?? 0,
+  };
   for (const entry of context.sessionManager.getEntries()) {
     if (entry.type !== 'message' || entry.message.role !== 'assistant') continue;
     totals.input += entry.message.usage.input;
