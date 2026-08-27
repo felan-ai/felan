@@ -1,6 +1,6 @@
 import { associateExtensionConfig, configField, defineExtensionConfig, type FelanExtension, type FelanExtensionAPI } from '@felan-ai/agent-core';
 
-export const OUTPUT_STYLES = ['concise', 'explanatory', 'caveman'] as const;
+export const OUTPUT_STYLES = ['concise', 'explanatory', 'caveman', 'custom'] as const;
 export type OutputStyle = typeof OUTPUT_STYLES[number];
 
 export const DEFAULT_OUTPUT_STYLE: OutputStyle = 'concise';
@@ -13,13 +13,18 @@ export const OUTPUT_STYLE_CONFIG = defineExtensionConfig({
       description: 'Response detail and explanation style',
       cliName: 'output-style',
     }),
+    instructions: configField.string({
+      default: '',
+      description: 'Custom system-prompt instructions used when output style is custom',
+      cliName: 'output-style-instructions',
+    }),
   },
 });
 
 const OUTPUT_STYLE_START = '<output_style>';
 const OUTPUT_STYLE_END = '</output_style>';
 
-const STYLE_INSTRUCTIONS: Readonly<Record<OutputStyle, readonly string[]>> = {
+const STYLE_INSTRUCTIONS: Readonly<Record<Exclude<OutputStyle, 'custom'>, readonly string[]>> = {
   concise: [
     'Keep responses concise and direct. Lead with the outcome or next action.',
     'Use headings and bullets only when they make the response easier to scan.',
@@ -46,19 +51,25 @@ export function parseOutputStyle(value: unknown = DEFAULT_OUTPUT_STYLE): OutputS
   throw new Error(`outputStyle must be one of: ${OUTPUT_STYLES.join(', ')}`);
 }
 
-export function formatOutputStyleSection(style: OutputStyle): string {
+export function formatOutputStyleSection(style: OutputStyle, instructions?: unknown): string {
+  const body = style === 'custom'
+    ? parseCustomInstructions(instructions)
+    : STYLE_INSTRUCTIONS[style].map((instruction) => `- ${instruction}`).join('\n');
   return [
     '## Output Style',
     '',
     OUTPUT_STYLE_START,
-    ...STYLE_INSTRUCTIONS[style].map((instruction) => `- ${instruction}`),
+    body,
     OUTPUT_STYLE_END,
   ].join('\n');
 }
 
-export function createOutputStyleExtension(value: unknown = DEFAULT_OUTPUT_STYLE): FelanExtension {
+export function createOutputStyleExtension(
+  value: unknown = DEFAULT_OUTPUT_STYLE,
+  instructions?: unknown,
+): FelanExtension {
   const style = parseOutputStyle(value);
-  const section = formatOutputStyleSection(style);
+  const section = formatOutputStyleSection(style, instructions);
 
   return (pi) => {
     pi.on('before_agent_start', (event) => {
@@ -69,7 +80,15 @@ export function createOutputStyleExtension(value: unknown = DEFAULT_OUTPUT_STYLE
 
 const outputStyleExtension: FelanExtension = ((pi: FelanExtensionAPI) => createOutputStyleExtension(
   pi.config?.style ?? DEFAULT_OUTPUT_STYLE,
+  pi.config?.instructions,
 )(pi));
 associateExtensionConfig(outputStyleExtension, OUTPUT_STYLE_CONFIG);
 
 export default outputStyleExtension;
+
+function parseCustomInstructions(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('outputStyle.instructions must be a non-empty string when outputStyle is custom');
+  }
+  return value.trim();
+}

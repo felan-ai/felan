@@ -156,7 +156,10 @@ export function createLocalExtensionImporter(
     }
     if (packageName === outputStyleExtensionPackage) {
       const extension = ((pi: Parameters<ReturnType<typeof createOutputStyleExtension>>[0]) => (
-        createOutputStyleExtension(pi.config?.style ?? outputStyle)(pi)
+        createOutputStyleExtension(
+          pi.config?.style ?? outputStyle,
+          pi.config?.instructions,
+        )(pi)
       ));
       associateExtensionConfig(extension, OUTPUT_STYLE_CONFIG);
       return { default: extension };
