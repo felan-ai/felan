@@ -8,8 +8,8 @@ import {
   type MemoryValidationOptions,
   type MemoryValidationResult,
 } from './contracts.js';
+import { createDefaultMemoryIndex } from './schema.js';
 
-const REQUIRED_FILES = ['summary.md', 'index.md'] as const;
 const MARKDOWN_LINK = /!?\[[^\]]*\]\(([^)\s]+)(?:\s+['"][^'"]*['"])?\)/g;
 const WIKI_LINK = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g;
 const SOURCE_MARKER = /session(?:_id)?\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]*)/gi;
@@ -20,11 +20,21 @@ export function validateMemoryArtifact(
 ): MemoryValidationResult {
   const memoryPath = options.memoryPath ?? '.memory';
   const limits = mergeLimits(options.limits);
+  const readMode = options.mode === 'read';
+  const requireSources = options.requireSources ?? !readMode;
+  const validateNavigation = options.validateNavigation ?? !readMode;
   const errors: MemoryValidationError[] = [];
-  const isArtifact = isMemoryArtifact(input);
-  const files = isArtifact ? input.files : input;
-  if (isArtifact && input.version !== 1) {
+  const artifact = !Array.isArray(input) && isRecord(input) ? input : undefined;
+  const files: readonly unknown[] = Array.isArray(input)
+    ? input
+    : artifact && Array.isArray(artifact.files)
+      ? artifact.files
+      : [];
+  if (artifact && artifact.version !== 1) {
     errors.push({ code: 'unsupported_version', message: 'Unsupported memory artifact version' });
+  }
+  if (!Array.isArray(input) && (!artifact || !Array.isArray(artifact.files))) {
+    errors.push({ code: 'invalid_file_type', message: 'Memory artifact files must be an array' });
   }
   const normalized: MemoryFile[] = [];
   const seen = new Set<string>();
@@ -58,6 +68,31 @@ export function validateMemoryArtifact(
     normalized.push({ path, content: file.content });
   }
 
+  const byPath = new Map(normalized.map((file) => [file.path, file]));
+  if (!byPath.has('summary.md')) {
+    if (readMode) {
+      const summary = { path: 'summary.md', content: '' } as const;
+      normalized.push(summary);
+      byPath.set(summary.path, summary);
+    } else {
+      errors.push({ code: 'missing_required_file', path: 'summary.md', message: 'Memory must contain summary.md' });
+    }
+  }
+  if (!byPath.has('index.md')) {
+    if (readMode) {
+      const index = { path: 'index.md', content: createDefaultMemoryIndex(memoryPath) } as const;
+      const bytes = Buffer.byteLength(index.content, 'utf8');
+      normalized.push(index);
+      byPath.set(index.path, index);
+      totalBytes += bytes;
+      if (bytes > limits.maxFileBytes) {
+        errors.push({ code: 'file_too_large', path: index.path, message: `${index.path} exceeds the ${limits.maxFileBytes}-byte file limit` });
+      }
+    } else {
+      errors.push({ code: 'missing_required_file', path: 'index.md', message: 'Memory must contain index.md' });
+    }
+  }
+
   if (normalized.length > limits.maxFiles) {
     errors.push({ code: 'too_many_files', message: `Memory contains ${normalized.length} files; the limit is ${limits.maxFiles}` });
   }
@@ -73,76 +108,71 @@ export function validateMemoryArtifact(
     }
   }
 
-  const byPath = new Map(normalized.map((file) => [file.path, file]));
-  for (const required of REQUIRED_FILES) {
-    if (!byPath.has(required)) {
-      errors.push({ code: 'missing_required_file', path: required, message: `Memory must contain ${required}` });
+  if (validateNavigation) {
+    const index = byPath.get('index.md');
+    if (index && !index.content.includes('## How to use this memory')) {
+      errors.push({ code: 'invalid_markdown', path: index.path, message: 'index.md is missing the required navigation guidance' });
     }
-  }
 
-  const summary = byPath.get('summary.md');
-  if (summary && hasLink(summary.content)) {
-    errors.push({ code: 'summary_has_links', path: summary.path, message: 'summary.md must remain link-free' });
-  }
-
-  const index = byPath.get('index.md');
-  if (index && !index.content.includes('## How to use this memory')) {
-    errors.push({ code: 'invalid_markdown', path: index.path, message: 'index.md is missing the required navigation guidance' });
-  }
-
-  const linksBySource = new Map<string, string[]>();
-  for (const file of normalized) {
-    const links = extractLinks(file.content);
-    const targets: string[] = [];
-    for (const rawTarget of links) {
-      const target = resolveMemoryLink(file.path, rawTarget, memoryPath);
-      if (target === null) {
-        errors.push({ code: 'invalid_link', path: file.path, message: `Invalid memory link target: ${rawTarget}` });
-        continue;
-      }
-      if (target === '') continue;
-      targets.push(target);
-      if (!byPath.has(target)) {
-        errors.push({ code: 'broken_link', path: file.path, message: `Memory link points to missing file: ${rawTarget}` });
-      }
-      if (file.path === 'index.md' && target === 'summary.md') {
-        errors.push({ code: 'invalid_link', path: file.path, message: 'index.md must navigate pages, not summary.md' });
-      }
-      if (file.path.startsWith('pages/') && file.path.endsWith('/index.md')) {
-        const area = file.path.split('/')[1];
-        if (area && !target.startsWith(`pages/${area}/`)) {
-          errors.push({ code: 'invalid_link', path: file.path, message: `Area index links outside its area: ${rawTarget}` });
+    const linksBySource = new Map<string, string[]>();
+    for (const file of normalized) {
+      const targets: string[] = [];
+      if (file.path !== 'summary.md') {
+        for (const rawTarget of extractLinks(file.content)) {
+          const target = resolveMemoryLink(file.path, rawTarget, memoryPath);
+          if (target === null) {
+            errors.push({ code: 'invalid_link', path: file.path, message: `Invalid memory link target: ${rawTarget}` });
+            continue;
+          }
+          if (target === '') continue;
+          targets.push(target);
+          if (!byPath.has(target)) {
+            errors.push({ code: 'broken_link', path: file.path, message: `Memory link points to missing file: ${rawTarget}` });
+          }
+          if (file.path === 'index.md' && target === 'summary.md') {
+            errors.push({ code: 'invalid_link', path: file.path, message: 'index.md must navigate pages, not summary.md' });
+          }
+          if (file.path.startsWith('pages/') && file.path.endsWith('/index.md')) {
+            const area = file.path.split('/')[1];
+            if (area && !target.startsWith(`pages/${area}/`)) {
+              errors.push({ code: 'invalid_link', path: file.path, message: `Area index links outside its area: ${rawTarget}` });
+            }
+          }
         }
       }
+      linksBySource.set(file.path, targets);
     }
-    linksBySource.set(file.path, targets);
+
+    if (normalized.some((file) => file.path.startsWith('pages/'))
+      && !(linksBySource.get('index.md') ?? []).some((target) => target.startsWith('pages/'))) {
+      errors.push({
+        code: 'invalid_markdown',
+        path: 'index.md',
+        message: 'index.md must link to at least one area index or memory page',
+      });
+    }
+
+    for (const file of normalized) {
+      if (!file.path.startsWith('pages/') || file.path.endsWith('/index.md')) continue;
+      const area = file.path.split('/')[1];
+      const areaIndex = area ? `pages/${area}/index.md` : undefined;
+      const links = areaIndex ? linksBySource.get(areaIndex) ?? [] : [];
+      if (!links.includes(file.path)) {
+        errors.push({ code: 'unreachable_page', path: file.path, message: `${file.path} is not linked from its area index` });
+      }
+    }
   }
 
-  if (byPath.has('index.md') && normalized.some((file) => file.path.startsWith('pages/'))
-    && !(linksBySource.get('index.md') ?? []).some((target) => target.startsWith('pages/'))) {
-    errors.push({
-      code: 'invalid_markdown',
-      path: 'index.md',
-      message: 'index.md must link to at least one area index or memory page',
-    });
-  }
-
+  const allowedSourceIds = options.sourceSessionIds ? new Set(options.sourceSessionIds) : undefined;
   for (const file of normalized) {
     if (!file.path.startsWith('pages/') || file.path.endsWith('/index.md')) continue;
-    const area = file.path.split('/')[1];
-    const areaIndex = area ? `pages/${area}/index.md` : undefined;
-    const links = areaIndex ? linksBySource.get(areaIndex) ?? [] : [];
-    if (!links.includes(file.path)) {
-      errors.push({ code: 'unreachable_page', path: file.path, message: `${file.path} is not linked from its area index` });
-    }
     const sourceIds = extractSourceIds(file.content);
-    if (options.requireSources !== false && (!file.content.match(/^##\s+Sources\s*$/imu) || sourceIds.length === 0)) {
+    if (requireSources && (!file.content.match(/^##\s+Sources\s*$/imu) || sourceIds.length === 0)) {
       errors.push({ code: 'missing_sources', path: file.path, message: `${file.path} must include source session provenance` });
     }
-    if (options.sourceSessionIds) {
-      const allowed = new Set(options.sourceSessionIds);
+    if (allowedSourceIds) {
       for (const sourceId of sourceIds) {
-        if (!allowed.has(sourceId)) {
+        if (!allowedSourceIds.has(sourceId)) {
           errors.push({ code: 'unknown_source', path: file.path, message: `${file.path} cites a session outside the dream input: ${sourceId}` });
         }
       }
@@ -232,10 +262,6 @@ export function resolveMemoryLink(
   return isSafeMemoryPath(target) ? target : null;
 }
 
-function hasLink(content: string): boolean {
-  return extractLinks(content).length > 0 || /(?:https?:\/\/|www\.)\S+/iu.test(content);
-}
-
 function mergeLimits(overrides: Partial<MemoryArtifactLimits> | undefined): MemoryArtifactLimits {
   return {
     ...DEFAULT_MEMORY_ARTIFACT_LIMITS,
@@ -249,8 +275,4 @@ function isSafeSegment(value: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isMemoryArtifact(value: MemoryArtifact | readonly MemoryFile[]): value is MemoryArtifact {
-  return isRecord(value) && 'files' in value;
 }

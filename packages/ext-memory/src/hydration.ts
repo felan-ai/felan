@@ -38,7 +38,10 @@ export function createMemorySnapshot(
   memoryPath: string,
   options: MemoryHydrationOptions = {},
 ): MemorySnapshot {
-  const normalized = assertValidMemoryArtifact(artifact, options);
+  const normalized = assertValidMemoryArtifact(artifact, {
+    ...options,
+    memoryPath: options.memoryPath ?? memoryPath,
+  });
   return {
     ...normalized,
     fingerprint: memoryArtifactFingerprint(normalized),
@@ -46,22 +49,22 @@ export function createMemorySnapshot(
   };
 }
 
-/**
- * Rebase root-index navigation for an agent-visible projection while retaining
- * the fingerprint of the unchanged canonical artifact.
- */
+/** Rebase prompt navigation for a projection while retaining the canonical fingerprint. */
 export function createMemoryProjectionSnapshot(
   snapshot: MemorySnapshot,
   memoryPath: string,
 ): MemorySnapshot {
   if (snapshot.memoryPath === memoryPath) return snapshot;
-  const files = snapshot.files.map((file) => file.path === 'index.md'
-    ? {
-        ...file,
-        content: rebaseMemoryIndex(file.content, snapshot.memoryPath, memoryPath),
-      }
-    : file);
-  const projected = assertValidMemoryArtifact(files, { memoryPath });
+  const files = snapshot.files.map((file) => {
+    let content = file.content;
+    if (file.path === 'index.md') {
+      content = rebaseMemoryIndex(file.content, snapshot.memoryPath, memoryPath);
+    } else if (file.path === 'summary.md') {
+      content = rebaseMemoryLinks(file.content, file.path, snapshot.memoryPath, memoryPath);
+    }
+    return content === file.content ? file : { ...file, content };
+  });
+  const projected = assertValidMemoryArtifact(files, { memoryPath, mode: 'read' });
   return {
     ...projected,
     fingerprint: snapshot.fingerprint,
@@ -173,30 +176,44 @@ function mergedLimits(overrides: Partial<MemoryArtifactLimits> | undefined): Mem
 function rebaseMemoryIndex(content: string, sourceMemoryPath: string, targetMemoryPath: string): string {
   const sourceGuide = createMemoryNavigationGuide(sourceMemoryPath);
   const targetGuide = createMemoryNavigationGuide(targetMemoryPath);
+  return rebaseMemoryLinks(
+    content.replace(sourceGuide, targetGuide),
+    'index.md',
+    sourceMemoryPath,
+    targetMemoryPath,
+  );
+}
+
+function rebaseMemoryLinks(
+  content: string,
+  sourcePath: string,
+  sourceMemoryPath: string,
+  targetMemoryPath: string,
+): string {
   return content
-    .replace(sourceGuide, targetGuide)
     .replace(
       MARKDOWN_LINK_TARGET,
       (match, opening: string, rawTarget: string, closing: string) => {
-        const rebased = rebaseMemoryLink(rawTarget, sourceMemoryPath, targetMemoryPath);
+        const rebased = rebaseMemoryLink(sourcePath, rawTarget, sourceMemoryPath, targetMemoryPath);
         return rebased === undefined ? match : `${opening}${rebased}${closing}`;
       },
     )
     .replace(
       WIKI_LINK_TARGET,
       (match, opening: string, rawTarget: string, suffix: string) => {
-        const rebased = rebaseMemoryLink(rawTarget, sourceMemoryPath, targetMemoryPath);
+        const rebased = rebaseMemoryLink(sourcePath, rawTarget, sourceMemoryPath, targetMemoryPath);
         return rebased === undefined ? match : `${opening}${rebased}${suffix}]]`;
       },
     );
 }
 
 function rebaseMemoryLink(
+  sourcePath: string,
   rawTarget: string,
   sourceMemoryPath: string,
   targetMemoryPath: string,
 ): string | undefined {
-  const resolved = resolveMemoryLink('index.md', rawTarget, sourceMemoryPath);
+  const resolved = resolveMemoryLink(sourcePath, rawTarget, sourceMemoryPath);
   if (!resolved) return undefined;
   const suffix = rawTarget.match(/[?#].*$/u)?.[0] ?? '';
   return `${targetMemoryPath.replace(/\/$/u, '')}/${resolved}${suffix}`;

@@ -27,7 +27,7 @@ Each root session receives a non-authoritative projection at:
 $FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>/.memory/
 ```
 
-The projection makes the loaded summary and absolute index links inspectable by
+The projection makes links in the loaded summary and root index inspectable by
 the session and its child readers. Editing it directly does not publish to the
 canonical store. Child sessions can recall the projection but do not contribute
 their own evidence.
@@ -126,9 +126,13 @@ or a lost publication lease leaves affected evidence pending. `/memory run`, a
 newer cursor, or a later launch can retry it. Valid checkpoints in the same
 batch can still proceed when one source fails deterministically.
 
+Availability-safe read mode enforces filesystem safety and resource bounds but
+does not reject the whole snapshot for broken navigation or missing provenance.
+Strict validation remains the default for newly generated memory publication.
+
 The projection is copied from canonical files when loaded; canonical memory is
-the authority. Root-index paths are rebased only in the session projection so
-they remain directly openable from that session.
+the authority. Resolvable summary and root-index paths are rebased only in the
+session projection so they remain directly openable from that session.
 
 See [Context and memory](../user-guide/context-and-memory.md) for user commands
 and [`@felan-ai/ext-memory`](../../packages/ext-memory/README.md) for the
