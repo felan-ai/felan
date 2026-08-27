@@ -133,6 +133,7 @@ describe('local Agent Core lifecycle', () => {
     expect(runtime.session.agent.state.tools.map(({ name }) => name)).not.toContain('Agent');
     const systemPrompt = runtime.session.systemPrompt;
     expect(systemPrompt.startsWith(FELAN_BASE_SYSTEM_PROMPT)).toBe(true);
+    expect(systemPrompt).not.toContain('Be concise and direct');
     expect(systemPrompt).toContain('Local application instructions');
     expect(systemPrompt).toContain('Root project instructions');
     expect(systemPrompt).not.toContain('Ignored fallback instructions');
