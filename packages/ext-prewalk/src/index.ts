@@ -553,15 +553,14 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       if (state.phase !== 'idle') {
         return prewalkToolError(
           `Prewalk is already ${state.phase}; continue the active run without calling ${ENTER_PREWALK_TOOL} again.`,
-          state.phase,
         );
       }
 
       const validation = validateArmingTools(pi.getActiveTools());
-      if (!validation.ok) return prewalkToolError(validation.reason, state.phase);
-      if (!ctx.model) return prewalkToolError('Prewalk requires a selected planner model.', state.phase);
+      if (!validation.ok) return prewalkToolError(validation.reason);
+      if (!ctx.model) return prewalkToolError('Prewalk requires a selected planner model.');
       const approval = await approveModelEntry(ctx);
-      if (!approval.approved) return prewalkToolError(approval.reason, state.phase);
+      if (!approval.approved) return prewalkToolError(approval.reason);
 
       startRun(ctx, false);
       const reviewText = effectivePlanReview(config) === 'ask'
@@ -592,7 +591,6 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       if (!approvePlan(ctx)) {
         return prewalkToolError(
           'No Prewalk plan is awaiting approval. Continue the current phase without calling approve_prewalk_plan.',
-          state.phase,
         );
       }
       return {
@@ -1089,12 +1087,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function prewalkToolError(message: string, phase: PrewalkPhase) {
-  return {
-    content: [{ type: 'text' as const, text: message }],
-    details: { error: message, phase },
-    isError: true,
-  };
+function prewalkToolError(message: string): never {
+  throw new Error(message);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
