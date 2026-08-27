@@ -7,11 +7,22 @@ import {
   createLocalExtensionImporter,
   importLocalExtension,
   localExtensionPackages,
+  loadLocalExtensionConfigDefinitions,
   resolveBuiltinExtensionPackages,
 } from '../src/extensions.js';
 import type { LocalSubagentNavigatorHost } from '../src/subagents/agent-navigator.js';
 
 describe('local extension importer', () => {
+  it('discovers ask-user configuration for the host-bound extension', async () => {
+    const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-ask-user']);
+    expect(definitions).toEqual([expect.objectContaining({
+      id: 'askUser',
+      fields: expect.objectContaining({
+        displayMode: expect.objectContaining({ default: 'inline' }),
+      }),
+    })]);
+  });
+
   it('imports only the source-controlled package list', async () => {
     expect(localExtensionPackages).toEqual([
       '@felan-ai/ext-subagents',

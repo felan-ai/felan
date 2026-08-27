@@ -182,6 +182,12 @@ try {
       if (JSON.stringify(askUserCapabilities) !== JSON.stringify(['ask-user'])) {
         throw new Error('Packed ask-user extension capability is unavailable');
       }
+      if (askUser.DEFAULT_ASK_USER_CONFIG.displayMode !== 'inline'
+        || askUser.DEFAULT_ASK_USER_CONFIG.singleSelectLayout !== 'auto'
+        || askUser.DEFAULT_ASK_USER_CONFIG.overlayToggleKey !== 'alt+o'
+        || askUser.DEFAULT_ASK_USER_CONFIG.commentToggleKey !== 'ctrl+g') {
+        throw new Error('Packed ask-user configuration defaults are unavailable');
+      }
       const memory = await import('@felan-ai/ext-memory');
       const memoryCapabilities = [];
       const memoryEvents = [];

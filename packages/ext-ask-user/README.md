@@ -50,15 +50,27 @@ normalization also accepts string, number, and boolean entries and the object ke
 `label`, `text`, `value`, `name`, and `option`. Unusable entries return a validation
 error instead of silently falling back to a freeform prompt.
 
-Environment defaults remain available for local use:
+Local defaults are configured declaratively under `extensionConfig.askUser` in
+`$FELAN_AGENT_DIR/settings.json`, through `/settings`, or through generated CLI options:
 
-- `PI_ASK_USER_DISPLAY_MODE`
-- `PI_ASK_USER_SINGLE_SELECT_LAYOUT` (`auto` or `list`)
-- `PI_ASK_USER_OVERLAY_TOGGLE_KEY`
-- `PI_ASK_USER_COMMENT_TOGGLE_KEY`
+```json
+{
+  "extensionConfig": {
+    "askUser": {
+      "displayMode": "inline",
+      "singleSelectLayout": "auto",
+      "overlayToggleKey": "alt+o",
+      "commentToggleKey": "ctrl+g"
+    }
+  }
+}
+```
 
-Per-call values take precedence. Display-mode and single-select-layout environment values
-are trimmed and case-normalized. `off`, `none`, `disabled`, or `null` disables a shortcut.
+The defaults are `inline`, `auto`, `alt+o`, and `ctrl+g`, respectively. Use `off`,
+`none`, `disabled`, or an empty value to disable either shortcut. Per-call tool values
+take precedence over these settings. Generated CLI names are
+`--ask-user-display-mode`, `--ask-user-single-select-layout`,
+`--ask-user-overlay-toggle-key`, and `--ask-user-comment-toggle-key`.
 
 ## Attribution
 
