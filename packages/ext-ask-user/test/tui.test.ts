@@ -2,6 +2,7 @@ import type { ExtensionContext } from '@felan-ai/agent-core';
 import { Key, matchesKey, type Component } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
+  AskUserConfig,
   AskUserHostExecutionContext,
   AskUserRequest,
 } from '../src/index.js';
@@ -107,14 +108,13 @@ describe('createTuiAskUserHost', () => {
     const overlay = tuiContext((_component, options) => {
       customOptions = options;
     });
-    const pending = ask({ ...singleRequest(), timeout: 25 }, overlay.context);
+    const pending = ask({ ...singleRequest(), displayMode: 'overlay', timeout: 25 }, overlay.context);
     await vi.advanceTimersByTimeAsync(25);
     await expect(pending).resolves.toEqual({ status: 'cancelled', reason: 'timeout' });
     expect(customOptions).toMatchObject({ overlay: true, overlayOptions: { anchor: 'center' } });
   });
 
-  it('normalizes display-mode environment values', async () => {
-    vi.stubEnv('PI_ASK_USER_DISPLAY_MODE', '  InLiNe  ');
+  it('uses inline display mode by default and accepts configured overlay mode', async () => {
     let customOptions: unknown = 'unset';
     const { context } = tuiContext((component, options) => {
       customOptions = options;
@@ -123,9 +123,17 @@ describe('createTuiAskUserHost', () => {
 
     await ask(singleRequest(), context);
     expect(customOptions).toBeUndefined();
+
+    customOptions = 'unset';
+    const overlay = tuiContext((component, options) => {
+      customOptions = options;
+      component.handleInput?.('\u001b');
+    });
+    await ask(singleRequest(), overlay.context, vi.fn(), new AbortController().signal, { displayMode: 'overlay' });
+    expect(customOptions).toMatchObject({ overlay: true });
   });
 
-  it('supports list-only single-select layout from requests and the environment', async () => {
+  it('supports list-only single-select layout from requests and configuration', async () => {
     let requestLines: string[] = [];
     const requested = tuiContext((component) => {
       requestLines = component.render(100);
@@ -134,13 +142,12 @@ describe('createTuiAskUserHost', () => {
     await ask({ ...singleRequest(), singleSelectLayout: 'list' }, requested.context);
     expect(requestLines.find((line) => line.includes('Filter:'))).not.toContain('Alpha');
 
-    vi.stubEnv('PI_ASK_USER_SINGLE_SELECT_LAYOUT', '  LiSt  ');
     let environmentLines: string[] = [];
     const environment = tuiContext((component) => {
       environmentLines = component.render(100);
       component.handleInput?.('\u001b');
     });
-    await ask(singleRequest(), environment.context);
+    await ask(singleRequest(), environment.context, vi.fn(), new AbortController().signal, { singleSelectLayout: 'list' });
     expect(environmentLines.find((line) => line.includes('Filter:'))).not.toContain('Alpha');
 
     let autoLines: string[] = [];
@@ -189,7 +196,7 @@ describe('createTuiAskUserHost', () => {
       component.handleInput?.('\u001b');
     }, 18);
 
-    await ask(singleRequest({ options, allowMultiple: true, allowFreeform: false }), context);
+    await ask({ ...singleRequest({ options, allowMultiple: true, allowFreeform: false }), displayMode: 'overlay' }, context);
     expect(rendered).toHaveLength(15);
     expect(rendered.join('\n')).toContain('Option 5');
     expect(rendered.join('\n')).toContain('(5/6)');
@@ -202,7 +209,7 @@ describe('createTuiAskUserHost', () => {
       shortTerminal = component.render(60);
       component.handleInput?.('\u001b');
     }, 6);
-    await ask(singleRequest({ options, allowMultiple: true, allowFreeform: false }), short.context);
+    await ask({ ...singleRequest({ options, allowMultiple: true, allowFreeform: false }), displayMode: 'overlay' }, short.context);
     expect(shortTerminal).toHaveLength(4);
     expect(shortTerminal.join('\n')).toContain('Option 6');
     expect(shortTerminal.filter((line) => /Option \d/.test(line))).toHaveLength(1);
@@ -213,6 +220,7 @@ describe('createTuiAskUserHost', () => {
       component.handleInput?.('\u001b');
     }, 6);
     await ask({
+      displayMode: 'overlay',
       questions: [
         { ...singleRequest().questions[0]!, id: 'q1', header: 'First' },
         { ...singleRequest().questions[0]!, id: 'q2', header: 'Second' },
@@ -233,7 +241,7 @@ describe('createTuiAskUserHost', () => {
       freeformLines = component.render(60);
       component.handleInput?.('\r');
     }, 6);
-    await expect(ask(singleRequest(), freeform.context)).resolves.toMatchObject({ status: 'answered' });
+    await expect(ask({ ...singleRequest(), displayMode: 'overlay' }, freeform.context)).resolves.toMatchObject({ status: 'answered' });
     expect(freeformLines).toHaveLength(4);
     expect(freeformLines.join('\n')).toContain('short reply');
 
@@ -245,7 +253,7 @@ describe('createTuiAskUserHost', () => {
       commentLines = component.render(60);
       component.handleInput?.('\r');
     }, 6);
-    await expect(ask(singleRequest({ allowComment: true }), comment.context)).resolves.toMatchObject({ status: 'answered' });
+    await expect(ask({ ...singleRequest({ allowComment: true }), displayMode: 'overlay' }, comment.context)).resolves.toMatchObject({ status: 'answered' });
     expect(commentLines).toHaveLength(4);
     expect(commentLines.join('\n')).toContain('short note');
   });
@@ -369,6 +377,7 @@ function ask(
   extensionContext: ExtensionContext,
   reportProgress = vi.fn(),
   signal = new AbortController().signal,
+  config?: Partial<AskUserConfig>,
 ) {
   const execution: AskUserHostExecutionContext = {
     requestId: 'call-1',
@@ -377,5 +386,5 @@ function ask(
     extensionContext,
     reportProgress,
   };
-  return createTuiAskUserHost().ask(request, execution);
+  return createTuiAskUserHost(config).ask(request, execution);
 }

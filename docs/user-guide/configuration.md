@@ -141,6 +141,30 @@ other valid fields in the same extension remain active. Invalid CLI and
 programmatic overrides remain errors. Felan does not rewrite invalid persisted
 values automatically.
 
+### Ask User
+
+The `extensionConfig.askUser` settings control the local question presentation:
+
+```json
+{
+  "extensionConfig": {
+    "askUser": {
+      "displayMode": "inline",
+      "singleSelectLayout": "auto",
+      "overlayToggleKey": "alt+o",
+      "commentToggleKey": "ctrl+g"
+    }
+  }
+}
+```
+
+The defaults are `inline`, `auto`, `alt+o`, and `ctrl+g`. Set `displayMode` to
+`overlay` for a centered popup, or set `singleSelectLayout` to `list` to hide
+the wide-terminal details pane. The shortcut fields accept a key or chord;
+`off`, `none`, `disabled`, or an empty value disables a shortcut. Per-call
+`ask_user` values override these defaults. The same fields are available in
+`/settings` and as generated `--ask-user-*` CLI options.
+
 ### Output style
 
 The `extensionConfig.outputStyle.style` setting accepts `concise`,

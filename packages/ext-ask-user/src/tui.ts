@@ -34,6 +34,7 @@ import type {
 } from './contracts.js';
 import { normalizeAskUserOption } from './normalize.js';
 import { renderSingleSelectRows } from './single-select-layout.js';
+import { DEFAULT_ASK_USER_CONFIG, normalizeAskUserShortcut, type AskUserConfig } from './config.js';
 
 type Theme = ExtensionContext['ui']['theme'];
 type AskMode = 'select' | 'freeform' | 'comment';
@@ -58,7 +59,6 @@ const DEFAULT_COMMENT_TOGGLE = 'ctrl+g';
 const CONTEXT_TOGGLE_KEY = Key.ctrl('e');
 const INLINE_CONTEXT_MAX_ROWS = 3;
 const FREEFORM_SENTINEL = 'Type custom response...';
-const DISABLED_VALUES = new Set(['off', 'none', 'disabled', '']);
 
 type ResolvedShortcut =
   | { readonly disabled: false; readonly spec: string; matches(data: string): boolean }
@@ -75,9 +75,10 @@ const DISABLED_SHORTCUT: ResolvedShortcut = {
   matches: (_data: string): false => false,
 };
 
-export function createTuiAskUserHost(): AskUserHost {
+export function createTuiAskUserHost(config: Partial<AskUserConfig> = {}): AskUserHost {
+  const defaults: AskUserConfig = { ...DEFAULT_ASK_USER_CONFIG, ...config };
   return {
-    ask: presentAskUser,
+    ask: (request, execution) => presentAskUser(request, execution, defaults),
     toolPresentation,
   };
 }
@@ -85,6 +86,7 @@ export function createTuiAskUserHost(): AskUserHost {
 async function presentAskUser(
   request: AskUserRequest,
   execution: Parameters<AskUserHost['ask']>[1],
+  config: AskUserConfig,
 ): Promise<AskUserHostOutcome> {
   const ctx = execution.extensionContext;
   if (!ctx.hasUI || (ctx.mode !== 'tui' && ctx.mode !== 'rpc')) {
@@ -95,17 +97,17 @@ async function presentAskUser(
     };
   }
 
-  const displayMode = resolveDisplayMode(request.displayMode);
-  const singleSelectLayout = resolveSingleSelectLayout(request.singleSelectLayout);
+  const displayMode = request.displayMode ?? config.displayMode;
+  const singleSelectLayout = request.singleSelectLayout ?? config.singleSelectLayout;
   const shortcuts: ResolvedShortcuts = {
     overlayToggle: resolveShortcut(
       request.overlayToggleKey,
-      process.env.PI_ASK_USER_OVERLAY_TOGGLE_KEY,
+      config.overlayToggleKey,
       DEFAULT_OVERLAY_TOGGLE,
     ),
     commentToggle: resolveShortcut(
       request.commentToggleKey,
-      process.env.PI_ASK_USER_COMMENT_TOGGLE_KEY,
+      config.commentToggleKey,
       DEFAULT_COMMENT_TOGGLE,
     ),
   };
@@ -221,29 +223,17 @@ async function presentAskUser(
   }
 }
 
-function resolveDisplayMode(value: AskUserRequest['displayMode']): 'overlay' | 'inline' {
-  if (value) return value;
-  const environment = process.env.PI_ASK_USER_DISPLAY_MODE?.trim().toLowerCase();
-  return environment === 'inline' || environment === 'overlay' ? environment : 'overlay';
-}
-
-function resolveSingleSelectLayout(value: AskUserRequest['singleSelectLayout']): AskUserSingleSelectLayout {
-  if (value) return value;
-  return process.env.PI_ASK_USER_SINGLE_SELECT_LAYOUT?.trim().toLowerCase() === 'list' ? 'list' : 'auto';
-}
-
 function resolveShortcut(
   parameter: string | null | undefined,
-  environment: string | undefined,
+  configuredDefault: string | undefined,
   fallback: string,
 ): ResolvedShortcut {
-  for (const value of [parameter, environment, fallback]) {
+  for (const value of [parameter, configuredDefault, fallback]) {
     if (value === undefined) continue;
     if (value === null) return DISABLED_SHORTCUT;
-    const normalized = value.trim().toLowerCase();
-    if (DISABLED_VALUES.has(normalized)) return DISABLED_SHORTCUT;
-    if (!/^[a-z0-9+_\-!@#$%^&*()|~`'":;,./<>?[\]{}=\\]+$/i.test(normalized)) continue;
-    if (normalized.startsWith('+') || normalized.endsWith('+') || normalized.includes('++')) continue;
+    const normalized = normalizeAskUserShortcut(value);
+    if (normalized === undefined) continue;
+    if (normalized === null) return DISABLED_SHORTCUT;
     return { disabled: false, spec: normalized, matches: (data) => matchesKey(data, normalized as any) };
   }
   return DISABLED_SHORTCUT;

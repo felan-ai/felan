@@ -3,9 +3,10 @@ import {
   getExtensionConfigDefinition,
   type ExtensionConfigDefinition,
   type ExtensionPackageImporter,
+  type FelanExtensionAPI,
   type ModelRuntime,
 } from '@felan-ai/agent-core';
-import { createAskUserExtension } from '@felan-ai/ext-ask-user';
+import { ASK_USER_CONFIG, createAskUserExtension, type AskUserConfig } from '@felan-ai/ext-ask-user';
 import { createTuiAskUserHost } from '@felan-ai/ext-ask-user/tui';
 import { createMemoryExtension, type MemoryHost, type MemoryRole } from '@felan-ai/ext-memory';
 import {
@@ -62,6 +63,10 @@ export async function loadLocalExtensionConfigDefinitions(
 ): Promise<readonly ExtensionConfigDefinition[]> {
   const definitions: ExtensionConfigDefinition[] = [];
   for (const packageName of packages) {
+    if (packageName === askUserExtensionPackage) {
+      definitions.push(ASK_USER_CONFIG);
+      continue;
+    }
     const imported = await importExtension(packageName);
     const extension = (typeof imported === 'object' && imported !== null)
       ? Reflect.get(imported, 'default')
@@ -122,7 +127,11 @@ export function createLocalExtensionImporter(
   associateExtensionConfig(powerline, POWERLINE_CONFIG);
   return async (packageName) => {
     if (packageName === askUserExtensionPackage) {
-      return { default: createAskUserExtension(createTuiAskUserHost()) };
+      const extension = (pi: FelanExtensionAPI) => (
+        createAskUserExtension(createTuiAskUserHost(pi.config as unknown as Partial<AskUserConfig>))(pi)
+      );
+      associateExtensionConfig(extension, ASK_USER_CONFIG);
+      return { default: extension };
     }
     if (packageName === mcpExtensionPackage) {
       return { default: createLocalMcpExtension() };

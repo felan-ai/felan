@@ -251,6 +251,28 @@ describe('felan CLI', () => {
     }), expect.objectContaining({ extensionId: 'powerline', values: { theme: 'nord' } })]);
   });
 
+  it('parses ask-user configuration options', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+    const exitCode = await runCli([
+      '--ask-user-display-mode', 'overlay',
+      '--ask-user-single-select-layout', 'list',
+      '--ask-user-overlay-toggle-key', 'off',
+      '--ask-user-comment-toggle-key', 'ctrl+x',
+      'inspect',
+    ], { launch: async (options) => launches.push(options) });
+
+    expect(exitCode).toBe(0);
+    expect(launches[0]?.extensionConfigOverrides).toEqual([expect.objectContaining({
+      extensionId: 'askUser',
+      values: {
+        displayMode: 'overlay',
+        singleSelectLayout: 'list',
+        overlayToggleKey: 'off',
+        commentToggleKey: 'ctrl+x',
+      },
+    })]);
+  });
+
   it('parses structured declarative extension options as JSON', async () => {
     const launches: RunLocalFelanOptions[] = [];
     const lines = '[{"segments":{"status":{"enabled":true}}}]';
