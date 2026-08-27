@@ -117,6 +117,30 @@ describe('local extension importer', () => {
     );
   });
 
+  it('binds caveman output style for local root sessions', async () => {
+    const importer = createLocalExtensionImporter(
+      testSubagentHost(),
+      testModelRuntime(),
+      async () => { throw new Error('The generic importer must not load output style'); },
+      undefined,
+      undefined,
+      'caveman',
+    );
+    const imported = await importer('@felan-ai/ext-output-style') as {
+      default: (pi: FelanExtensionAPI) => void;
+    };
+    let handler: ((event: { systemPrompt: string }) => { systemPrompt: string } | undefined) | undefined;
+    imported.default({
+      on: ((event: string, registered: typeof handler) => {
+        if (event === 'before_agent_start') handler = registered;
+      }) as FelanExtensionAPI['on'],
+    } as FelanExtensionAPI);
+
+    expect(handler?.({ systemPrompt: 'Base prompt' })?.systemPrompt).toContain(
+      'Use the fewest words that preserve correctness',
+    );
+  });
+
   it('binds memory as root or reader without sharing checkpoint behavior', async () => {
     const host = memoryHost();
     const rootImporter = createLocalExtensionImporter(

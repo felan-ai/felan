@@ -1,6 +1,6 @@
 import { associateExtensionConfig, configField, defineExtensionConfig, type FelanExtension, type FelanExtensionAPI } from '@felan-ai/agent-core';
 
-export const OUTPUT_STYLES = ['concise', 'explanatory'] as const;
+export const OUTPUT_STYLES = ['concise', 'explanatory', 'caveman'] as const;
 export type OutputStyle = typeof OUTPUT_STYLES[number];
 
 export const DEFAULT_OUTPUT_STYLE: OutputStyle = 'concise';
@@ -8,7 +8,7 @@ export const OUTPUT_STYLE_CONFIG = defineExtensionConfig({
   id: 'outputStyle',
   title: 'Output style',
   fields: {
-    style: configField.enum(['concise', 'explanatory'], {
+    style: configField.enum(OUTPUT_STYLES, {
       default: DEFAULT_OUTPUT_STYLE,
       description: 'Response detail and explanation style',
       cliName: 'output-style',
@@ -29,6 +29,13 @@ const STYLE_INSTRUCTIONS: Readonly<Record<OutputStyle, readonly string[]>> = {
     'Explain the reasoning and important tradeoffs behind recommendations and changes.',
     'Provide enough context for the user to understand how the result works and how to verify it.',
     'Keep explanations relevant to the request and avoid repeating the same point.',
+  ],
+  caveman: [
+    'Use the fewest words that preserve correctness. Prefer short fragments, compact bullets, and standard abbreviations.',
+    'Omit greetings, restatements, transitions, and filler.',
+    'Expand enough to be clear for errors, security warnings, destructive actions, blockers, and complex plans.',
+    'Keep code, commands, paths, identifiers, numbers, and error messages exact.',
+    'Never omit required caveats, verification results, or blockers for brevity.',
   ],
 };
 

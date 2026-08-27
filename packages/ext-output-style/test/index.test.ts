@@ -25,20 +25,27 @@ describe('@felan-ai/ext-output-style', () => {
   it('changes the system prompt for the selected style', () => {
     const concise = applyExtension(createOutputStyleExtension('concise'), 'Base prompt');
     const explanatory = applyExtension(createOutputStyleExtension('explanatory'), 'Base prompt');
+    const caveman = applyExtension(createOutputStyleExtension('caveman'), 'Base prompt');
 
     expect(explanatory).not.toBe(concise);
     expect(explanatory).toContain('Explain the reasoning and important tradeoffs');
     expect(explanatory).not.toContain('Keep responses concise and direct');
+    expect(caveman).not.toBe(concise);
+    expect(caveman).not.toBe(explanatory);
+    expect(caveman).toContain('Use the fewest words that preserve correctness');
+    expect(caveman).toContain('Expand enough to be clear for errors');
+    expect(caveman).toContain('Keep code, commands, paths, identifiers, numbers, and error messages exact');
   });
 
   it('validates style values before registering the extension', () => {
     expect(parseOutputStyle()).toBe('concise');
     expect(parseOutputStyle('explanatory')).toBe('explanatory');
+    expect(parseOutputStyle('caveman')).toBe('caveman');
     expect(() => parseOutputStyle('verbose')).toThrow(
-      'outputStyle must be one of: concise, explanatory',
+      'outputStyle must be one of: concise, explanatory, caveman',
     );
     expect(() => createOutputStyleExtension({ style: 'concise' })).toThrow(
-      'outputStyle must be one of: concise, explanatory',
+      'outputStyle must be one of: concise, explanatory, caveman',
     );
   });
 });

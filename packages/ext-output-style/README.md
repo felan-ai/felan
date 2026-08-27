@@ -3,14 +3,15 @@
 Portable output-style instructions for Felan sessions.
 
 The extension appends one clearly bounded `## Output Style` section to the
-system prompt before each model run. It accepts only the built-in `concise` and
-`explanatory` styles; arbitrary prompt text and file-backed styles are not
-supported. `concise` is the default.
+system prompt before each model run. It accepts only the built-in `concise`,
+`explanatory`, and `caveman` styles; arbitrary prompt text and file-backed
+styles are not supported. `concise` is the default.
 
 ```ts
 import { createOutputStyleExtension } from '@felan-ai/ext-output-style';
 
 const extension = createOutputStyleExtension('explanatory');
+const caveman = createOutputStyleExtension('caveman');
 ```
 
 Felan declares the style as `extensionConfig.outputStyle.style`. The local TUI,

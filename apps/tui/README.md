@@ -104,7 +104,9 @@ sessions. Binary-backed features can remain inactive until their dependency is
 installed or the feature is disabled through `/dependencies`.
 
 Model responses use the built-in `concise` output style by default. Set the
-global `outputStyle` setting to `explanatory` for more reasoning and context;
+global `outputStyle` setting to `explanatory` for more reasoning and context, or
+to `caveman` for aggressively terse responses with safety and fidelity
+exceptions;
 the [configuration guide](../../docs/user-guide/configuration.md#output-style)
 documents validation and session-lifecycle behavior.
 
