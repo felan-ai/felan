@@ -152,8 +152,8 @@ function renderSavings(config: SegmentConfig, context: SegmentRenderContext): Om
   if (savings.loading && !savings.result) return { name: 'savings', colorKey: 'savings', text: 'savings …' };
   if (!savings.result) return undefined;
   const amount = savings.result.savedCostUsd;
-  const text = `${amount < 0 ? '-' : ''}$${Math.abs(amount).toFixed(2)} ${config.periodDays ?? 7}d`;
-  return { name: 'savings', colorKey: 'savings', text: savings.result.hasUnpricedMeasurements ? `~${text}` : text };
+  const estimate = `${savings.result.hasUnpricedMeasurements ? '~' : ''}${amount < 0 ? '-' : ''}$${Math.abs(amount).toFixed(2)}`;
+  return { name: 'savings', colorKey: 'savings', text: `Est. Savings(${config.periodDays ?? 7}d): ${estimate}` };
 }
 
 function renderSubscription(

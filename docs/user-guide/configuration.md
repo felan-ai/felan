@@ -228,8 +228,9 @@ options. The complete shape is:
 `status` segments with their documented segment fields. The default layout adds
 `{ "savings": { "enabled": true, "align": "right", "periodDays": 7 } }` after
 Git on the first line. It shows all retained local savings for seven inclusive
-UTC calendar days; set `periodDays` to a positive integer from 1 to 3650 for a
-different period. A `~` marker indicates incomplete pricing coverage.
+UTC calendar days as `Est. Savings(7d): $33.00`; set `periodDays` to a positive
+integer from 1 to 3650 for a different period. A `~` before the amount indicates
+incomplete pricing coverage.
 `colors` accepts custom named
 `#RRGGBB` foreground/background pairs. `felan` is the default built-in theme;
 select `custom` to apply the `colors` palette. Changes take effect in a newly

@@ -40,10 +40,11 @@ It refreshes at startup, after turns and model changes, and once per minute.
 The `savings` segment is enabled by default at the end of the first line and is
 right-aligned above the model. It reports estimated savings across all retained
 local Felan activity for seven inclusive UTC calendar days (today plus the six
-previous days). Set `periodDays` on the segment to choose another period. A `~`
-prefix means at least one measurement had unavailable pricing, so the USD total
-is incomplete. The local TUI supplies the host query; the portable package does
-not access storage itself.
+previous days), displayed as `Est. Savings(7d): $33.00`. Set `periodDays` on the
+segment to choose another period. A `~` before the amount means at least one
+measurement had unavailable pricing, so the USD total is incomplete. The local
+TUI supplies the host query; the portable package does not access storage
+itself.
 
 Scalar display settings are available through generated `felan --powerline-*`
 options and `/settings`; structured `lines` and `colors` values are edited as

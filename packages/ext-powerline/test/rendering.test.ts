@@ -143,12 +143,20 @@ describe('powerline segments', () => {
     expect(rendered.text).toBe('in2.0k out1.0k R500 W100 $0.223');
   });
 
-  it('renders cached savings with the configured period and unpriced marker', () => {
+  it('renders labeled savings with the default period and unpriced marker', () => {
+    const rendered = renderSingle('savings', { enabled: true }, context({ savings: {
+      loading: false,
+      result: { savedCostUsd: 33, hasUnpricedMeasurements: true },
+    } }));
+    expect(rendered).toMatchObject({ name: 'savings', colorKey: 'savings', text: 'Est. Savings(7d): ~$33.00' });
+  });
+
+  it('renders savings with the configured period', () => {
     const rendered = renderSingle('savings', { enabled: true, periodDays: 14 }, context({ savings: {
       loading: false,
-      result: { savedCostUsd: 12.5, hasUnpricedMeasurements: true },
+      result: { savedCostUsd: 12.5, hasUnpricedMeasurements: false },
     } }));
-    expect(rendered).toMatchObject({ name: 'savings', colorKey: 'savings', text: '~$12.50 14d' });
+    expect(rendered.text).toBe('Est. Savings(14d): $12.50');
   });
 
   it('renders Codex remaining usage and Claude used usage', () => {
