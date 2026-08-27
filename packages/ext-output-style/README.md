@@ -4,14 +4,17 @@ Portable output-style instructions for Felan sessions.
 
 The extension appends one clearly bounded `## Output Style` section to the
 system prompt before each model run. It provides the built-in `concise`,
-`explanatory`, and `caveman` styles plus a `custom` style for caller-provided
-instructions. `concise` is the default. File-backed styles are not supported.
+and `explanatory` styles plus a `custom` style for caller-provided instructions.
+`concise` is the default. It minimizes prose while preserving clarity, exact
+technical content, conditions, caveats, verification, and blockers, and it
+expands for ambiguity, safety-sensitive actions, errors, and complex plans.
+File-backed styles are not supported.
 
 ```ts
 import { createOutputStyleExtension } from '@felan-ai/ext-output-style';
 
 const extension = createOutputStyleExtension('explanatory');
-const caveman = createOutputStyleExtension('caveman');
+const concise = createOutputStyleExtension('concise');
 const experiment = createOutputStyleExtension('custom', 'Answer in one compact paragraph.');
 ```
 
@@ -61,5 +64,7 @@ pnpm --filter @felan-ai/ext-output-style test
 
 ## Attribution
 
-This package is original Felan project code. See [NOTICE](NOTICE) and
-[LICENSE](LICENSE).
+The extension implementation is original Felan project code. The merged
+concise instructions adapt wording from Julius Brussee's MIT-licensed
+[Caveman skill](https://github.com/JuliusBrussee/caveman/blob/main/skills/caveman/SKILL.md).
+See [NOTICE](NOTICE) and [LICENSE](LICENSE).

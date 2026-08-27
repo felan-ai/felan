@@ -1,6 +1,6 @@
 import { associateExtensionConfig, configField, defineExtensionConfig, type FelanExtension, type FelanExtensionAPI } from '@felan-ai/agent-core';
 
-export const OUTPUT_STYLES = ['concise', 'explanatory', 'caveman', 'custom'] as const;
+export const OUTPUT_STYLES = ['concise', 'explanatory', 'custom'] as const;
 export type OutputStyle = typeof OUTPUT_STYLES[number];
 
 export const DEFAULT_OUTPUT_STYLE: OutputStyle = 'concise';
@@ -26,21 +26,22 @@ const OUTPUT_STYLE_END = '</output_style>';
 
 const STYLE_INSTRUCTIONS: Readonly<Record<Exclude<OutputStyle, 'custom'>, readonly string[]>> = {
   concise: [
-    'Keep responses concise and direct. Lead with the outcome or next action.',
-    'Use headings and bullets only when they make the response easier to scan.',
-    'Do not omit necessary caveats, verification results, or blockers for brevity.',
+    'Use the fewest words that preserve correctness, clarity, and all required technical substance. Lead with the outcome or next action.',
+    'Omit greetings, restatements, filler, decorative prose, emoji, redundant transitions, duplicate recaps, and filler closings.',
+    'Prefer short sentences, compact bullets, and concise paragraphs. Fragments and standard, widely understood abbreviations are acceptable only when they remain clear and professional; do not invent abbreviations or mangle grammar merely to shorten.',
+    'Use headings only when they improve scanability. State each fact once; do not provide both a normal answer and a terse duplicate.',
+    'Keep technical terms, code, commands, paths, identifiers, API names, numbers, units, and exact error messages unchanged.',
+    'Never omit or alter negation, conditions, scope, exceptions, caveats, verification results, or blockers merely to shorten the response.',
+    'Quote the shortest decisive exact error lines and summarize the rest accurately unless the full log is requested.',
+    'Expand into clear, complete prose whenever compression could cause ambiguity, especially for security warnings, destructive or irreversible actions, ordered procedures, errors, blockers, limitations, recovery instructions, complex plans, tradeoffs, or clarification requests.',
+    'Do not narrate ordinary tool calls or announce the next tool call. Before a tool call, write only what is needed to resolve ambiguity, explain a safety concern, or confirm an irreversible action.',
+    "Reply in the user's language. Do not translate code, commands, identifiers, API names, or exact error strings unless requested.",
+    'For documentation, comments, commits, issues, pull requests, tickets, and other durable artifacts, use clear conventional prose and preserve requested formats.',
   ],
   explanatory: [
     'Explain the reasoning and important tradeoffs behind recommendations and changes.',
     'Provide enough context for the user to understand how the result works and how to verify it.',
     'Keep explanations relevant to the request and avoid repeating the same point.',
-  ],
-  caveman: [
-    'Use the fewest words that preserve correctness. Prefer short fragments, compact bullets, and standard abbreviations.',
-    'Omit greetings, restatements, transitions, and filler.',
-    'Expand enough to be clear for errors, security warnings, destructive actions, blockers, and complex plans.',
-    'Keep code, commands, paths, identifiers, numbers, and error messages exact.',
-    'Never omit required caveats, verification results, or blockers for brevity.',
   ],
 };
 

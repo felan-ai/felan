@@ -12,7 +12,7 @@ describe('@felan-ai/ext-output-style package boundary', () => {
 
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-output-style',
-      version: '0.2.2',
+      version: '0.3.0',
       license: 'MIT',
       repository: {
         type: 'git',
@@ -26,6 +26,9 @@ describe('@felan-ai/ext-output-style package boundary', () => {
     expect(license).toContain('MIT License');
     expect(notice).toContain('original Felan code');
     expect(notice).toContain('no third-party runtime dependencies');
+    expect(notice).toContain('https://github.com/JuliusBrussee/caveman');
+    expect(notice).toContain('Copyright (c) 2026 Julius Brussee');
+    expect(license).toContain('Copyright (c) 2026 Julius Brussee');
   });
 
   it('does not load prompts, files, or host-specific dependencies', async () => {

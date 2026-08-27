@@ -65,12 +65,22 @@ for (const requiredNotice of [
   'open 11.0.0',
   'pi-rtk-optimizer 0.9.0',
   'Microsoft MarkItDown 0.1.7',
+  'https://github.com/JuliusBrussee/caveman',
 ]) {
   if (!notice.includes(requiredNotice)) errors.push(`NOTICE is missing ${requiredNotice}`);
 }
 const agentCoreNotice = readFileSync(resolve(root, 'packages/agent-core/NOTICE'), 'utf8');
 if (!agentCoreNotice.includes('@lydell/node-pty 1.2.0-beta.14')) {
   errors.push('packages/agent-core/NOTICE is missing @lydell/node-pty 1.2.0-beta.14');
+}
+const outputStyleNotice = readFileSync(resolve(root, 'packages/ext-output-style/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'https://github.com/JuliusBrussee/caveman',
+  'Copyright (c) 2026 Julius Brussee',
+]) {
+  if (!outputStyleNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-output-style/NOTICE is missing ${requiredNotice}`);
+  }
 }
 const subagentsNotice = readFileSync(resolve(root, 'packages/ext-subagents/NOTICE'), 'utf8');
 if (!subagentsNotice.includes('TypeBox 1.1.38')) {

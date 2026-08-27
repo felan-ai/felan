@@ -128,14 +128,14 @@ describe('local extension importer', () => {
     );
   });
 
-  it('binds caveman output style for local root sessions', async () => {
+  it('binds concise output style for local root sessions', async () => {
     const importer = createLocalExtensionImporter(
       testSubagentHost(),
       testModelRuntime(),
       async () => { throw new Error('The generic importer must not load output style'); },
       undefined,
       undefined,
-      'caveman',
+      'concise',
     );
     const imported = await importer('@felan-ai/ext-output-style') as {
       default: (pi: FelanExtensionAPI) => void;
@@ -148,7 +148,7 @@ describe('local extension importer', () => {
     } as FelanExtensionAPI);
 
     expect(handler?.({ systemPrompt: 'Base prompt' })?.systemPrompt).toContain(
-      'Use the fewest words that preserve correctness',
+      'Use the fewest words that preserve correctness, clarity, and all required technical substance',
     );
   });
 
