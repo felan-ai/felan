@@ -35,6 +35,28 @@ describe('local memory store', () => {
     expect(store.currentDirectory).not.toContain(join('workspace', '.memory'));
   });
 
+  it('keeps semantically broken memory readable and projectable', async () => {
+    const { store, root } = await createStore();
+    await writeFile(join(store.currentDirectory, 'summary.md'), '[Missing](pages/workflows/missing.md)', 'utf8');
+    await writeFile(join(store.currentDirectory, 'index.md'), '# Incomplete index', 'utf8');
+    await mkdir(join(store.currentDirectory, 'pages', 'workflows'), { recursive: true });
+    await writeFile(
+      join(store.currentDirectory, 'pages', 'workflows', 'release.md'),
+      '# Release without navigation or provenance',
+      'utf8',
+    );
+
+    await expect(store.readCurrent()).resolves.toMatchObject({
+      files: expect.arrayContaining([
+        { path: 'summary.md', content: '[Missing](pages/workflows/missing.md)' },
+        { path: 'pages/workflows/release.md', content: '# Release without navigation or provenance' },
+      ]),
+    });
+    await expect(store.projectTo(join(root, 'broken-memory-session'))).resolves.toMatchObject({
+      memoryPath: expect.stringContaining('broken-memory-session'),
+    });
+  });
+
   it('publishes a validated artifact and acknowledges only matching pending cursors', async () => {
     const { store } = await createStore();
     const checkpoint = checkpointFor('session-1', 'b'.repeat(64));

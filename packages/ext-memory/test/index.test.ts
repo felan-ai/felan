@@ -102,11 +102,14 @@ describe('@felan-ai/ext-memory', () => {
     expect(memoryArtifactFingerprint(files)).toBe(memoryArtifactFingerprint(result.artifact!));
   });
 
-  it('rebases root navigation for a session projection without changing canonical memory', () => {
+  it('rebases resolvable links for a session projection without changing canonical memory', () => {
     const canonicalPath = '.memory';
     const projectionPath = '/sessions/root-1/.memory';
     const canonical = createMemorySnapshot([
-      { path: 'summary.md', content: 'The project prefers small changes.' },
+      {
+        path: 'summary.md',
+        content: `Review [release checks](${canonicalPath}/pages/workflows/release.md#checks), [[${canonicalPath}/pages/workflows/index.md|workflow notes]], and [external docs](https://example.com).`,
+      },
       {
         path: 'index.md',
         content: `# Memory index\n\n${createMemoryNavigationGuide(canonicalPath)}\n\n## Memory map\n- [Workflow](${canonicalPath}/pages/workflows/index.md)\n`,
@@ -116,13 +119,19 @@ describe('@felan-ai/ext-memory', () => {
     ], canonicalPath, { sourceSessionIds: ['session-1'] });
 
     const projection = createMemoryProjectionSnapshot(canonical, projectionPath);
+    const projectedSummary = projection.files.find(({ path }) => path === 'summary.md')?.content;
     const projectedIndex = projection.files.find(({ path }) => path === 'index.md')?.content;
+    const canonicalSummary = canonical.files.find(({ path }) => path === 'summary.md')?.content;
     const canonicalIndex = canonical.files.find(({ path }) => path === 'index.md')?.content;
 
     expect(projection.memoryPath).toBe(projectionPath);
     expect(projection.fingerprint).toBe(canonical.fingerprint);
     expect(projectedIndex).toContain(createMemoryNavigationGuide(projectionPath));
     expect(projectedIndex).toContain(`[Workflow](${projectionPath}/pages/workflows/index.md)`);
+    expect(projectedSummary).toContain(`[release checks](${projectionPath}/pages/workflows/release.md#checks)`);
+    expect(projectedSummary).toContain(`[[${projectionPath}/pages/workflows/index.md|workflow notes]]`);
+    expect(projectedSummary).toContain('[external docs](https://example.com)');
+    expect(canonicalSummary).toContain(`[release checks](${canonicalPath}/pages/workflows/release.md#checks)`);
     expect(canonicalIndex).toContain(`[Workflow](${canonicalPath}/pages/workflows/index.md)`);
     expect(validateMemoryArtifact(projection, {
       memoryPath: projectionPath,
@@ -130,22 +139,79 @@ describe('@felan-ai/ext-memory', () => {
     }).ok).toBe(true);
   });
 
-  it('rejects unsafe paths, broken navigation, summary links, and foreign provenance', () => {
+  it('treats summary links as non-blocking orientation, not artifact navigation', () => {
+    const result = validateMemoryArtifact([
+      {
+        path: 'summary.md',
+        content: 'Review [release](pages/workflows/release.md), [missing](pages/workflows/missing.md), [external docs](https://example.com), and [[%ZZ|malformed]].',
+      },
+      {
+        path: 'index.md',
+        content: `# Memory index\n\n${createMemoryNavigationGuide('/work/.memory')}\n\n## Memory map\n- [Workflows](/work/.memory/pages/workflows/index.md)\n`,
+      },
+      { path: 'pages/workflows/index.md', content: '# workflows\n\n- [Release](release.md) — Release safely.\n' },
+      { path: 'pages/workflows/release.md', content: '# release\n\n## Sources\n- session:session-1\n' },
+    ], {
+      memoryPath: '/work/.memory',
+      sourceSessionIds: ['session-1'],
+      requireSources: true,
+      validateNavigation: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, errors: [] });
+  });
+
+  it('keeps semantic checks opt-in while preserving hard artifact boundaries', () => {
     const result = validateMemoryArtifact([
       { path: '../summary.md', content: 'bad' },
-      { path: 'summary.md', content: '[unsafe](page.md)' },
+      { path: 'summary.md', content: 'Review memory before acting.' },
       { path: 'index.md', content: '# Memory index\n\n## How to use this memory\n- [Missing](pages/nope/index.md)' },
       { path: 'pages/workflows/index.md', content: '# workflows\n' },
       { path: 'pages/workflows/release.md', content: '# release\n\n## Sources\n- session:foreign\n' },
-    ], { memoryPath: '/work/.memory', sourceSessionIds: ['session-1'] });
+    ], {
+      memoryPath: '/work/.memory',
+      sourceSessionIds: ['session-1'],
+      requireSources: true,
+      validateNavigation: true,
+    });
     expect(result.ok).toBe(false);
     expect(result.errors.map(({ code }) => code)).toEqual(expect.arrayContaining([
       'invalid_path',
-      'summary_has_links',
       'broken_link',
       'unreachable_page',
       'unknown_source',
     ]));
+  });
+
+  it('normalizes incomplete memory for availability-safe reads', () => {
+    const files = [
+      { path: 'pages/workflows/release.md', content: '# Release without navigation or provenance' },
+    ];
+    const result = validateMemoryArtifact(files, { memoryPath: '/work/.memory', mode: 'read' });
+
+    expect(result).toMatchObject({ ok: true, errors: [] });
+    expect(result.artifact?.files).toEqual(expect.arrayContaining([
+      { path: 'summary.md', content: '' },
+      expect.objectContaining({ path: 'index.md' }),
+      { path: 'pages/workflows/release.md', content: '# Release without navigation or provenance' },
+    ]));
+
+    const snapshot = createMemorySnapshot([], '/work/.memory', { mode: 'read' });
+    expect(snapshot.files.find(({ path }) => path === 'index.md')?.content).toContain('/work/.memory');
+
+    const strict = validateMemoryArtifact(files, { memoryPath: '/work/.memory' });
+    expect(strict.ok).toBe(false);
+    expect(strict.errors.map(({ code }) => code)).toEqual(expect.arrayContaining([
+      'missing_required_file',
+      'missing_sources',
+    ]));
+  });
+
+  it('returns validation errors instead of throwing for malformed artifact input', () => {
+    const result = validateMemoryArtifact({ version: 1, files: null } as never);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.map(({ code }) => code)).toContain('invalid_file_type');
   });
 
   it('hydrates only validated regular Markdown files and rejects symlinks', async () => {
@@ -200,6 +266,10 @@ describe('@felan-ai/ext-memory', () => {
     expect(dreamerInstructions).toContain('stale or duplicate claims');
     expect(dreamerInstructions).toContain('important concepts without pages');
     expect(dreamerInstructions).toContain('never invent facts, links, or sources');
+    expect(dreamerInstructions).toContain('inspect the existing memory');
+    expect(dreamerInstructions).toContain('clean up problems when needed');
+    expect(dreamerInstructions).toContain('preserving supported knowledge and source provenance');
+    expect(dreamerInstructions).not.toContain('link-free');
     expect(dreamerInstructions).not.toContain('entries drawn only from the manifest');
   });
 });

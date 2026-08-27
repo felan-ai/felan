@@ -342,14 +342,14 @@ export class LocalMemoryCoordinator {
       }
       staging = await context.store.createStagingDirectory();
       const memoryDirectory = join(staging, '.memory');
-      await hydrateMemoryDirectory(snapshot.artifact, memoryDirectory, { memoryPath: '.memory' });
+      await hydrateMemoryDirectory(snapshot.artifact, memoryDirectory, { memoryPath: '.memory', mode: 'read' });
       const manifest = await materializeMemoryInput({
         stagingDirectory: staging,
         checkpoints: snapshot.checkpoints.map(({ checkpoint }) => checkpoint),
         previousCheckpoints: Object.fromEntries(
           Object.entries(snapshot.state.processed).map(([sessionId, entry]) => [sessionId, entry.checkpoint]),
         ),
-        baseSnapshot: createMemorySnapshot(snapshot.artifact, '.memory'),
+        baseSnapshot: createMemorySnapshot(snapshot.artifact, '.memory', { mode: 'read' }),
         maxTranscriptBytes: this.#options.maxTranscriptBytes ?? 256 * 1024,
         signal: abort.signal,
       });
@@ -374,7 +374,7 @@ export class LocalMemoryCoordinator {
         stagingDirectory: staging,
         memoryDirectory,
         inputDirectory: join(staging, '.dreaming', 'input'),
-        baseSnapshot: createMemorySnapshot(snapshot.artifact, '.memory'),
+        baseSnapshot: createMemorySnapshot(snapshot.artifact, '.memory', { mode: 'read' }),
         manifest,
         modelRuntime: this.#options.modelRuntime,
         ...(this.#selectedModel === undefined ? {} : { selectedModel: this.#selectedModel }),
@@ -384,10 +384,14 @@ export class LocalMemoryCoordinator {
       const artifact = await readMemoryDirectory(memoryDirectory, {
         memoryPath: '.memory',
         sourceSessionIds: allowedSourceIds(snapshot, manifest),
+        requireSources: true,
+        validateNavigation: true,
       });
       const validation = validateMemoryArtifact(artifact, {
         memoryPath: '.memory',
         sourceSessionIds: allowedSourceIds(snapshot, manifest),
+        requireSources: true,
+        validateNavigation: true,
       });
       if (!validation.ok || !validation.artifact) throw new Error('Memory output validation failed');
       await context.store.commit(lease, snapshot.fingerprint, validation.artifact, processedCheckpoints);

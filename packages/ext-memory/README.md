@@ -26,6 +26,15 @@ should follow the index to relevant area and topic pages and cite their paths
 and `Sources` session IDs. Hosts project a non-authoritative copy into each
 root session and retain canonical storage outside customer repositories.
 
+Markdown links in `summary.md` are ordinary untrusted content and never make an
+artifact invalid. Strict validation remains the default for publication.
+Availability-sensitive consumers can use `mode: 'read'`; it still enforces
+bounded regular Markdown files at safe, unique paths, but treats navigation and
+provenance defects as nonfatal and supplies empty summary/index defaults when
+either prompt file is absent. Publication callers can override individual
+checks with `validateNavigation` and `requireSources`, and restrict citations
+with `sourceSessionIds`.
+
 The extension appends one hidden, persisted memory-context message when a
 session starts. Later provider calls reuse that session context instead of
 injecting a new message on every `context` event. If compaction or tree

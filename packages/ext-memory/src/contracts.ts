@@ -87,7 +87,12 @@ export const DEFAULT_MEMORY_ARTIFACT_LIMITS: MemoryArtifactLimits = Object.freez
 export interface MemoryValidationOptions {
   readonly limits?: Partial<MemoryArtifactLimits>;
   readonly sourceSessionIds?: readonly string[];
+  /** Use availability-safe normalization instead of strict publication validation. */
+  readonly mode?: 'strict' | 'read';
+  /** Require page provenance. Defaults to true except in read mode. */
   readonly requireSources?: boolean;
+  /** Validate index/page navigation. Defaults to true except in read mode. */
+  readonly validateNavigation?: boolean;
   readonly memoryPath?: string;
 }
 

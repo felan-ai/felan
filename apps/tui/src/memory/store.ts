@@ -81,7 +81,7 @@ export class LocalMemoryStore {
         if (!current) {
           await hydrateMemoryDirectory(createEmptyMemoryArtifact(this.#memoryPath), this.currentDirectory);
         }
-        const artifact = await readMemoryDirectory(this.currentDirectory, { memoryPath: this.#memoryPath });
+        const artifact = await readMemoryDirectory(this.currentDirectory, { memoryPath: this.#memoryPath, mode: 'read' });
         const fingerprint = memoryArtifactFingerprint(artifact);
         const existing = await readState(this.statePath);
         if (!existing || existing.memoryFingerprint !== fingerprint) {
@@ -101,8 +101,8 @@ export class LocalMemoryStore {
 
   async readCurrent(): Promise<MemorySnapshot> {
     return withStateLock(this, async () => {
-      const artifact = await readMemoryDirectory(this.currentDirectory, { memoryPath: this.#memoryPath });
-      return createMemorySnapshot(artifact, this.#memoryPath);
+      const artifact = await readMemoryDirectory(this.currentDirectory, { memoryPath: this.#memoryPath, mode: 'read' });
+      return createMemorySnapshot(artifact, this.#memoryPath, { mode: 'read' });
     });
   }
 
@@ -113,7 +113,7 @@ export class LocalMemoryStore {
     const current = snapshot ?? await this.readCurrent();
     const target = join(sessionStorageRoot, this.projectionName);
     const projection = createMemoryProjectionSnapshot(current, target);
-    await hydrateMemoryDirectory(projection, target, { replace: true, memoryPath: target });
+    await hydrateMemoryDirectory(projection, target, { replace: true, memoryPath: target, mode: 'read' });
     return projection;
   }
 
@@ -144,7 +144,7 @@ export class LocalMemoryStore {
   async processingSnapshot(maxSessions = 8): Promise<LocalMemoryProcessingSnapshot> {
     return withStateLock(this, async () => {
       const state = await this.readState();
-      const artifact = await readMemoryDirectory(this.currentDirectory, { memoryPath: this.#memoryPath });
+      const artifact = await readMemoryDirectory(this.currentDirectory, { memoryPath: this.#memoryPath, mode: 'read' });
       const fingerprint = memoryArtifactFingerprint(artifact);
       const checkpoints = Object.values(state.pending)
         .sort((left, right) => left.recordedAt.localeCompare(right.recordedAt))
@@ -183,7 +183,7 @@ export class LocalMemoryStore {
 
     try {
       await withStateLock(this, async () => {
-        const current = await readMemoryDirectory(this.currentDirectory, { memoryPath: this.#memoryPath });
+        const current = await readMemoryDirectory(this.currentDirectory, { memoryPath: this.#memoryPath, mode: 'read' });
         if (memoryArtifactFingerprint(current) !== baseFingerprint) {
           throw new Error('Memory changed while the dream was running');
         }
@@ -337,7 +337,7 @@ async function readState(path: string): Promise<LocalMemoryState | undefined> {
 
 async function fingerprintAt(path: string, memoryPath: string): Promise<string | undefined> {
   try {
-    return memoryArtifactFingerprint(await readMemoryDirectory(path, { memoryPath }));
+    return memoryArtifactFingerprint(await readMemoryDirectory(path, { memoryPath, mode: 'read' }));
   } catch (error) {
     if (isMissing(error)) return undefined;
     throw error;

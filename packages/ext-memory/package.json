@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-memory",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Portable local-first memory contracts and extension for Felan",
   "license": "MIT",
   "type": "module",
