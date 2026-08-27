@@ -216,8 +216,13 @@ options. The complete shape is:
 ```
 
 `lines` contains ordered display lines. Each line contains supported
-`directory`, `git`, `model`, `session`, `subscription`, `context`, and `status`
-segments with their documented segment fields. `colors` accepts custom named
+`directory`, `git`, `model`, `session`, `subscription`, `savings`, `context`, and
+`status` segments with their documented segment fields. The default layout adds
+`{ "savings": { "enabled": true, "align": "right", "periodDays": 7 } }` after
+Git on the first line. It shows all retained local savings for seven inclusive
+UTC calendar days; set `periodDays` to a positive integer from 1 to 3650 for a
+different period. A `~` marker indicates incomplete pricing coverage.
+`colors` accepts custom named
 `#RRGGBB` foreground/background pairs. `felan` is the default built-in theme;
 select `custom` to apply the `colors` palette. Changes take effect in a newly
 constructed process/session. The built-in is enabled by default; set

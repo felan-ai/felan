@@ -13,6 +13,7 @@ import type { PowerlineConfig } from './config.js';
 import { GitCache } from './git.js';
 import { renderSegments, type FooterDataLike, type RenderedSegment } from './segments.js';
 import type { SubscriptionState } from './subscription.js';
+import type { SavingsState } from './savings.js';
 import { getSymbols, type PowerlineSymbols } from './symbols.js';
 
 export type FooterRowsRenderer = (width: number) => readonly string[];
@@ -24,6 +25,7 @@ export interface PowerlineFooterOptions {
   footerData: FooterDataLike;
   config: PowerlineConfig;
   subscription: SubscriptionState;
+  savings?: SavingsState | (() => SavingsState);
   footerRows?: FooterRowsRenderer;
 }
 
@@ -67,6 +69,9 @@ export class PowerlineFooter implements Component {
         footerData: this.options.footerData,
         ...(gitDetails === undefined ? {} : { gitDetails }),
         subscription: this.options.subscription,
+        ...(typeof this.options.savings === 'function'
+          ? { savings: this.options.savings() }
+          : this.options.savings === undefined ? {} : { savings: this.options.savings }),
         symbols,
       });
       if (segments.length > 0) lines.push(...renderFooterLine(segments, config, palette, mode, symbols, safeWidth));

@@ -14,7 +14,7 @@ export interface ThemePalette {
 const THEMES: Record<Exclude<PowerlineConfig['theme'], 'custom'>, ThemePalette> = {
   felan: makeTheme({
     directory: ['#ffffff', '#1d4ed8'], git: ['#111111', '#a3be00'], model: ['#475569', '#11151c'],
-    session: ['#facc15', '#11151c'], subscription: ['#475569', '#11151c'],
+    session: ['#facc15', '#11151c'], subscription: ['#475569', '#11151c'], savings: ['#052e16', '#86efac'],
     context: ['#22c55e', '#11151c'], status: ['#475569', '#11151c'],
     warning: ['#facc15', '#11151c'], critical: ['#f87171', '#11151c'], muted: ['#475569', '#11151c'],
     extensionStatus1: ['#cbd5e1', '#1f2937'], extensionStatus2: ['#bfdbfe', '#1e3a5f'],
@@ -22,7 +22,7 @@ const THEMES: Record<Exclude<PowerlineConfig['theme'], 'custom'>, ThemePalette> 
   }),
   dark: makeTheme({
     directory: ['#f8fafc', '#2563eb'], git: ['#052e16', '#22c55e'], model: ['#ffffff', '#7c3aed'],
-    session: ['#111827', '#f59e0b'], subscription: ['#f0fdf4', '#16a34a'],
+    session: ['#111827', '#f59e0b'], subscription: ['#f0fdf4', '#16a34a'], savings: ['#052e16', '#4ade80'],
     context: ['#ecfeff', '#0891b2'], status: ['#f8fafc', '#334155'],
     warning: ['#111827', '#fbbf24'], critical: ['#ffffff', '#dc2626'], muted: ['#cbd5e1', '#1f2937'],
     extensionStatus1: ['#cbd5e1', '#1f2937'], extensionStatus2: ['#bfdbfe', '#1e3a5f'],
@@ -30,7 +30,7 @@ const THEMES: Record<Exclude<PowerlineConfig['theme'], 'custom'>, ThemePalette> 
   }),
   light: makeTheme({
     directory: ['#ffffff', '#1d4ed8'], git: ['#052e16', '#86efac'], model: ['#ffffff', '#6d28d9'],
-    session: ['#451a03', '#fcd34d'], subscription: ['#052e16', '#86efac'],
+    session: ['#451a03', '#fcd34d'], subscription: ['#052e16', '#86efac'], savings: ['#052e16', '#86efac'],
     context: ['#083344', '#67e8f9'], status: ['#111827', '#e5e7eb'],
     warning: ['#451a03', '#fde68a'], critical: ['#ffffff', '#ef4444'], muted: ['#374151', '#e5e7eb'],
     extensionStatus1: ['#374151', '#e5e7eb'], extensionStatus2: ['#1e3a8a', '#dbeafe'],
@@ -38,7 +38,7 @@ const THEMES: Record<Exclude<PowerlineConfig['theme'], 'custom'>, ThemePalette> 
   }),
   nord: makeTheme({
     directory: ['#eceff4', '#5e81ac'], git: ['#2e3440', '#a3be8c'], model: ['#2e3440', '#b48ead'],
-    session: ['#2e3440', '#ebcb8b'], subscription: ['#2e3440', '#a3be8c'],
+    session: ['#2e3440', '#ebcb8b'], subscription: ['#2e3440', '#a3be8c'], savings: ['#2e3440', '#a3be8c'],
     context: ['#2e3440', '#88c0d0'], status: ['#d8dee9', '#434c5e'],
     warning: ['#2e3440', '#ebcb8b'], critical: ['#eceff4', '#bf616a'], muted: ['#d8dee9', '#3b4252'],
     extensionStatus1: ['#d8dee9', '#3b4252'], extensionStatus2: ['#d8dee9', '#434c5e'],
@@ -46,7 +46,7 @@ const THEMES: Record<Exclude<PowerlineConfig['theme'], 'custom'>, ThemePalette> 
   }),
   'tokyo-night': makeTheme({
     directory: ['#c0caf5', '#2f7dc8'], git: ['#1a1b26', '#9ece6a'], model: ['#c0caf5', '#7aa2f7'],
-    session: ['#1a1b26', '#e0af68'], subscription: ['#1a1b26', '#9ece6a'],
+    session: ['#1a1b26', '#e0af68'], subscription: ['#1a1b26', '#9ece6a'], savings: ['#1a1b26', '#9ece6a'],
     context: ['#1a1b26', '#7dcfff'], status: ['#c0caf5', '#24283b'],
     warning: ['#1a1b26', '#e0af68'], critical: ['#c0caf5', '#f7768e'], muted: ['#a9b1d6', '#1f2335'],
     extensionStatus1: ['#a9b1d6', '#1f2335'], extensionStatus2: ['#c0caf5', '#24283b'],
@@ -54,7 +54,7 @@ const THEMES: Record<Exclude<PowerlineConfig['theme'], 'custom'>, ThemePalette> 
   }),
   'rose-pine': makeTheme({
     directory: ['#e0def4', '#31748f'], git: ['#191724', '#9ccfd8'], model: ['#e0def4', '#c4a7e7'],
-    session: ['#191724', '#f6c177'], subscription: ['#191724', '#9ccfd8'],
+    session: ['#191724', '#f6c177'], subscription: ['#191724', '#9ccfd8'], savings: ['#191724', '#9ccfd8'],
     context: ['#191724', '#ebbcba'], status: ['#e0def4', '#26233a'],
     warning: ['#191724', '#f6c177'], critical: ['#e0def4', '#eb6f92'], muted: ['#908caa', '#21202e'],
     extensionStatus1: ['#908caa', '#21202e'], extensionStatus2: ['#e0def4', '#26233a'],
@@ -62,7 +62,7 @@ const THEMES: Record<Exclude<PowerlineConfig['theme'], 'custom'>, ThemePalette> 
   }),
   gruvbox: makeTheme({
     directory: ['#fbf1c7', '#458588'], git: ['#282828', '#98971a'], model: ['#fbf1c7', '#b16286'],
-    session: ['#282828', '#d79921'], subscription: ['#282828', '#98971a'],
+    session: ['#282828', '#d79921'], subscription: ['#282828', '#98971a'], savings: ['#282828', '#98971a'],
     context: ['#282828', '#83a598'], status: ['#ebdbb2', '#3c3836'],
     warning: ['#282828', '#fabd2f'], critical: ['#fbf1c7', '#cc241d'], muted: ['#d5c4a1', '#3c3836'],
     extensionStatus1: ['#d5c4a1', '#3c3836'], extensionStatus2: ['#ebdbb2', '#504945'],

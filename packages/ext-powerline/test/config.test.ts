@@ -43,6 +43,7 @@ describe('powerline configuration', () => {
             segments: {
               directory: { enabled: true, style: 'fish' },
               git: { enabled: true, showSha: false, showWorkingTree: true },
+              savings: { enabled: true, align: 'right', periodDays: 7 },
             },
           },
           {
@@ -70,5 +71,13 @@ describe('powerline configuration', () => {
         colors: { directory: { fg: 'red', bg: '#123456' } },
       },
     }])).toThrow('#RRGGBB');
+  });
+
+  it('validates the savings period', () => {
+    expect(() => resolveExtensionConfigs([POWERLINE_CONFIG], [{
+      extensionId: 'powerline', source: 'settings', values: {
+        lines: [{ segments: { savings: { periodDays: 0 } } }],
+      },
+    }])).toThrow('periodDays must be an integer from 1 to 3650');
   });
 });

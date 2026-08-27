@@ -1,5 +1,6 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import type { DisplayLineConfig, SegmentConfig, SegmentName, ThemeColorKey } from './config.js';
+import type { SavingsState } from './savings.js';
 import type { GitDetails } from './git.js';
 import {
   formatReset,
@@ -22,6 +23,7 @@ export interface SegmentRenderContext {
   footerData: FooterDataLike;
   gitDetails?: GitDetails;
   subscription: SubscriptionState;
+  savings?: SavingsState;
   symbols: PowerlineSymbols;
 }
 
@@ -84,6 +86,7 @@ function renderSegment(
     case 'model': return renderModel(context);
     case 'session': return renderSession(config, context);
     case 'subscription': return renderSubscription(config, context);
+    case 'savings': return renderSavings(config, context);
     case 'context': return renderContext(config, context);
     case 'status': return renderStatus(context);
   }
@@ -142,6 +145,15 @@ function renderSession(config: SegmentConfig, context: SegmentRenderContext): Om
         ? `${tokenText} ${cacheText} ${costText}`
         : tokenText;
   return { name: 'session', colorKey: 'session', text };
+}
+
+function renderSavings(config: SegmentConfig, context: SegmentRenderContext): Omit<RenderedSegment, 'align'> | undefined {
+  const savings = context.savings ?? { loading: false };
+  if (savings.loading && !savings.result) return { name: 'savings', colorKey: 'savings', text: 'savings …' };
+  if (!savings.result) return undefined;
+  const amount = savings.result.savedCostUsd;
+  const text = `${amount < 0 ? '-' : ''}$${Math.abs(amount).toFixed(2)} ${config.periodDays ?? 7}d`;
+  return { name: 'savings', colorKey: 'savings', text: savings.result.hasUnpricedMeasurements ? `~${text}` : text };
 }
 
 function renderSubscription(

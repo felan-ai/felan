@@ -1,9 +1,30 @@
 import type { ModelRuntime } from '@felan-ai/agent-core';
 import type {
+  SavingsUsageHost,
+  SavingsUsageHostResult,
   SubscriptionProviderName,
   SubscriptionUsageHost,
   SubscriptionUsageHostResult,
 } from '@felan-ai/ext-powerline';
+import type { SavingsService } from './savings.js';
+
+export function createLocalSavingsUsageHost(
+  service: Pick<SavingsService, 'query'>,
+  now: () => Date = () => new Date(),
+): SavingsUsageHost {
+  return {
+    async query(request): Promise<SavingsUsageHostResult> {
+      if (request.signal.aborted) throw new DOMException('The operation was aborted', 'AbortError');
+      const to = now();
+      const today = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
+      const from = new Date(today);
+      from.setUTCDate(from.getUTCDate() - (request.periodDays - 1));
+      const report = await service.query({ scope: 'all', from, to });
+      if (request.signal.aborted) throw new DOMException('The operation was aborted', 'AbortError');
+      return { savedCostUsd: report.savedCostUsd, hasUnpricedMeasurements: report.hasUnpricedMeasurements };
+    },
+  };
+}
 
 const CODEX_PROVIDER = 'openai-codex';
 const ANTHROPIC_PROVIDER = 'anthropic';

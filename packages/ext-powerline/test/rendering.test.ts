@@ -21,6 +21,7 @@ describe('powerline rendering', () => {
       warning: { fg: '#facc15', bg: '#11151c' },
       critical: { fg: '#f87171', bg: '#11151c' },
       muted: { fg: '#475569', bg: '#11151c' },
+      savings: { fg: '#052e16', bg: '#86efac' },
       extensionStatus1: { fg: '#cbd5e1', bg: '#1f2937' },
       extensionStatus2: { fg: '#bfdbfe', bg: '#1e3a5f' },
       extensionStatus3: { fg: '#ddd6fe', bg: '#3b2f5f' },
@@ -140,6 +141,14 @@ describe('powerline segments', () => {
       ],
     }));
     expect(rendered.text).toBe('in2.0k out1.0k R500 W100 $0.223');
+  });
+
+  it('renders cached savings with the configured period and unpriced marker', () => {
+    const rendered = renderSingle('savings', { enabled: true, periodDays: 14 }, context({ savings: {
+      loading: false,
+      result: { savedCostUsd: 12.5, hasUnpricedMeasurements: true },
+    } }));
+    expect(rendered).toMatchObject({ name: 'savings', colorKey: 'savings', text: '~$12.50 14d' });
   });
 
   it('renders Codex remaining usage and Claude used usage', () => {
@@ -262,6 +271,7 @@ function renderSingle(
     footerData: value.footerData,
     ...(gitDetails === undefined ? {} : { gitDetails }),
     subscription: value.subscription,
+    ...(value.savings === undefined ? {} : { savings: value.savings }),
     symbols: getSymbols('text'),
   });
   expect(rendered).toHaveLength(1);
@@ -278,7 +288,8 @@ function context(options: {
   branch?: string | null;
   statuses?: ReadonlyMap<string, string>;
   subscription?: SubscriptionState;
-} = {}): { ctx: ExtensionContext; footerData: FooterDataLike; subscription: SubscriptionState } {
+  savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } };
+} = {}): { ctx: ExtensionContext; footerData: FooterDataLike; subscription: SubscriptionState; savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } } } {
   const ctx = {
     cwd: options.cwd ?? '/workspace',
     model: options.model,
@@ -292,7 +303,7 @@ function context(options: {
     getAvailableProviderCount: () => options.providerCount ?? 1,
     onBranchChange: () => () => {},
   };
-  return { ctx, footerData, subscription: options.subscription ?? { loading: false } };
+  return { ctx, footerData, subscription: options.subscription ?? { loading: false }, savings: options.savings };
 }
 
 function assistantEntry(input: number, output: number, cacheRead: number, cacheWrite: number, total: number) {

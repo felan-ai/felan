@@ -294,6 +294,7 @@ export function createLocalSessionRuntimeFactory(
         shutdownHost,
         memoryHost === undefined ? undefined : { role: 'root' as const, host: memoryHost },
         outputStyle,
+        savings,
       ),
       modelRuntime: options.modelRuntime,
       settingsManager,

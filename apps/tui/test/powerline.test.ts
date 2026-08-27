@@ -1,6 +1,6 @@
 import type { ModelRuntime } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import { createLocalSubscriptionUsageHost } from '../src/powerline.js';
+import { createLocalSavingsUsageHost, createLocalSubscriptionUsageHost } from '../src/powerline.js';
 
 describe('local subscription usage host', () => {
   it('uses Felan ModelRuntime OAuth for Codex usage', async () => {
@@ -78,6 +78,32 @@ describe('local subscription usage host', () => {
       modelProvider: 'openai-codex',
       signal,
     })).resolves.toEqual({ ok: false, error: { code: 'HTTP_ERROR', httpStatus: 429 } });
+  });
+});
+
+describe('local savings usage host', () => {
+  it('queries all savings for seven inclusive UTC calendar days', async () => {
+    const query = vi.fn().mockResolvedValue({ savedCostUsd: 4.25, hasUnpricedMeasurements: false });
+    const host = createLocalSavingsUsageHost(
+      { query },
+      () => new Date('2026-03-10T12:34:00Z'),
+    );
+    const result = await host.query({ periodDays: 7, signal: new AbortController().signal });
+    expect(result).toEqual({ savedCostUsd: 4.25, hasUnpricedMeasurements: false });
+    expect(query).toHaveBeenCalledWith({
+      scope: 'all',
+      from: new Date('2026-03-04T00:00:00Z'),
+      to: new Date('2026-03-10T12:34:00Z'),
+    });
+  });
+
+  it('does not query when the request is already aborted', async () => {
+    const query = vi.fn();
+    const host = createLocalSavingsUsageHost({ query });
+    const abort = new AbortController();
+    abort.abort();
+    await expect(host.query({ periodDays: 7, signal: abort.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(query).not.toHaveBeenCalled();
   });
 });
 

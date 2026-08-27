@@ -20,7 +20,8 @@ import {
   type SubagentHost,
 } from '@felan-ai/ext-subagents';
 import { createLocalMcpExtension } from './mcp/index.js';
-import { createLocalSubscriptionUsageHost } from './powerline.js';
+import { createLocalSavingsUsageHost, createLocalSubscriptionUsageHost } from './powerline.js';
+import type { SavingsService } from './savings.js';
 import {
   registerLocalSubagentNavigator,
   type AgentRailRenderer,
@@ -110,10 +111,12 @@ export function createLocalExtensionImporter(
   shutdownHost?: () => Promise<void>,
   memoryBinding?: LocalMemoryExtensionBinding,
   outputStyle: OutputStyle = DEFAULT_OUTPUT_STYLE,
+  savings?: SavingsService,
 ): ExtensionPackageImporter {
   let powerlineLoaded = false;
   let agentRailRenderer: AgentRailRenderer | undefined;
   const powerline = createPowerlineExtension(createLocalSubscriptionUsageHost(modelRuntime), {
+    ...(savings === undefined ? {} : { savingsHost: createLocalSavingsUsageHost(savings) }),
     footerRows: (width) => agentRailRenderer?.(width) ?? [],
   });
   associateExtensionConfig(powerline, POWERLINE_CONFIG);

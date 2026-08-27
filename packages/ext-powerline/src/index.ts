@@ -7,11 +7,13 @@ import {
   type SubscriptionState,
   type SubscriptionUsageHost,
 } from './subscription.js';
+import { createSavingsController, type SavingsController, type SavingsUsageHost } from './savings.js';
 
 const SUBSCRIPTION_REFRESH_TIMER_MS = 60_000;
 
 export interface PowerlineExtensionOptions {
   readonly footerRows?: FooterRowsRenderer;
+  readonly savingsHost?: SavingsUsageHost;
 }
 
 export function createPowerlineExtension(
@@ -22,6 +24,7 @@ export function createPowerlineExtension(
     let footer: PowerlineFooter | undefined;
     let subscriptionContext: ExtensionContext | undefined;
     let subscriptionTimer: ReturnType<typeof setInterval> | undefined;
+    let savingsTimer: ReturnType<typeof setInterval> | undefined;
     const emptySubscription: SubscriptionState = { loading: false };
     const config = powerlineConfigFromSettings(pi.config ?? {});
     const subscription = subscriptionHost && config.display.lines.some(
@@ -29,6 +32,10 @@ export function createPowerlineExtension(
     )
       ? createSubscriptionController(subscriptionHost, redraw)
       : undefined;
+    const savings = options.savingsHost && config.display.lines.some((line) => line.segments.savings?.enabled)
+      ? createSavingsController(options.savingsHost, redraw)
+      : undefined;
+    const emptySavings = { loading: false } as const;
 
     function installFooter(ctx: ExtensionContext): void {
       if (ctx.mode !== 'tui') return;
@@ -41,6 +48,7 @@ export function createPowerlineExtension(
           footerData,
           config,
           subscription: subscription?.state ?? emptySubscription,
+          savings: () => savings?.state ?? emptySavings,
           ...(options.footerRows === undefined ? {} : { footerRows: options.footerRows }),
         });
         return footer;
@@ -72,19 +80,34 @@ export function createPowerlineExtension(
       clearInterval(subscriptionTimer);
       subscriptionTimer = undefined;
     }
+    function startSavingsTimer(): void {
+      if (!savings) return;
+      clearInterval(savingsTimer);
+      savingsTimer = setInterval(() => refreshSavings(), 60_000);
+    }
+    function refreshSavings(): void {
+      if (!savings) return;
+      const segment = config.display.lines.flatMap((line) => line.segments.savings ? [line.segments.savings] : [])[0];
+      void savings.refresh(segment?.periodDays ?? 7);
+    }
 
     pi.on('session_start', (_event, ctx) => {
       subscriptionContext = ctx;
       installFooter(ctx);
       startSubscriptionTimer(ctx);
       refreshSubscription(ctx, { allowStaleCache: true });
+      startSavingsTimer();
+      refreshSavings();
     });
     pi.on('session_shutdown', (_event, ctx) => {
       clearSubscriptionTimer();
+      clearInterval(savingsTimer);
+      savingsTimer = undefined;
       subscriptionContext = undefined;
       footer?.dispose();
       footer = undefined;
       subscription?.clear();
+      savings?.clear();
       if (ctx.mode === 'tui') ctx.ui.setFooter(undefined);
     });
 
@@ -94,6 +117,7 @@ export function createPowerlineExtension(
       subscriptionContext = ctx;
       refreshSubscription(ctx);
       redraw();
+      refreshSavings();
     });
     pi.on('tool_execution_end', redraw);
     pi.on('session_compact', redraw);
@@ -119,6 +143,8 @@ export {
 } from './config.js';
 export { PowerlineFooter, renderFooterLine, renderStyledSegments } from './footer.js';
 export type { FooterRowsRenderer } from './footer.js';
+export { createSavingsController } from './savings.js';
+export type { SavingsController, SavingsState, SavingsUsageHost, SavingsUsageHostRequest, SavingsUsageHostResult } from './savings.js';
 export { GitCache, formatAge, parseGitStatus, runGit } from './git.js';
 export { formatTokens, renderSegments, sanitizePlainText } from './segments.js';
 export {
