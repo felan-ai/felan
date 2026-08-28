@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  createAssistantMessageEventStream,
   type FelanExtensionAPI,
   ModelRuntime,
   SessionManager,
@@ -934,6 +935,106 @@ describe('LocalSubagentHost', () => {
     await second.host.shutdown();
   });
 
+  it('reports live usage across tool turns and a continued run without double-counting', async () => {
+    const responses = Array.from({ length: 4 }, () => createAssistantMessageEventStream());
+    let responseIndex = 0;
+    const model = {
+      id: 'test-model',
+      name: 'Test Model',
+      api: 'anthropic-messages',
+      provider: 'test-provider',
+      baseUrl: 'https://example.invalid',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 100_000,
+      maxTokens: 4_096,
+    };
+    const modelRuntime = {
+      getAvailableSnapshot: () => [model],
+      hasConfiguredAuth: () => true,
+      getModel: (provider: string, id: string) => (
+        provider === model.provider && id === model.id ? model : undefined
+      ),
+      streamSimple: () => responses[responseIndex++]!,
+    } as unknown as ModelRuntime;
+    const { host } = await harness({ modelRuntime });
+    const spawned = await host.spawn(request({ model: `${model.provider}/${model.id}` }));
+    expect(spawned).toMatchObject({ ok: true });
+    if (!spawned.ok) return;
+
+    await vi.waitFor(() => {
+      expect(responseIndex).toBe(1);
+    });
+    pushUsageResponse(responses[0]!, {
+      input: 10,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 40,
+      cost: 0.75,
+    }, 'ls-1');
+    await vi.waitFor(() => {
+      expect(responseIndex).toBe(2);
+    });
+    expect(host.getLocalSubagent(spawned.value.agentId)).toMatchObject({
+      status: 'running',
+      usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, cost: 0.75 },
+    });
+
+    pushUsageResponse(responses[1]!, {
+      input: 1,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+      cost: 0.25,
+    });
+    await waitForResult(host, spawned.value.agentId);
+    expect(host.getUsage()).toEqual({
+      input: 11,
+      output: 22,
+      cacheRead: 33,
+      cacheWrite: 44,
+      cost: 1,
+    });
+
+    await host.steer(spawned.value.agentId, 'continue');
+    await vi.waitFor(() => {
+      expect(responseIndex).toBe(3);
+    });
+    pushUsageResponse(responses[2]!, {
+      input: 5,
+      output: 6,
+      cacheRead: 7,
+      cacheWrite: 8,
+      cost: 0.5,
+    }, 'ls-2');
+    await vi.waitFor(() => {
+      expect(responseIndex).toBe(4);
+    });
+    expect(host.getLocalSubagent(spawned.value.agentId)).toMatchObject({
+      status: 'running',
+      usage: { input: 16, output: 28, cacheRead: 40, cacheWrite: 52, cost: 1.5 },
+    });
+
+    pushUsageResponse(responses[3]!, {
+      input: 10,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 40,
+      cost: 0.125,
+    });
+    await waitForResult(host, spawned.value.agentId);
+
+    expect(host.getUsage()).toEqual({
+      input: 26,
+      output: 48,
+      cacheRead: 70,
+      cacheWrite: 92,
+      cost: 1.625,
+    });
+    await host.shutdown();
+  });
+
   it('does not double-count a continued child session', async () => {
     const root = await temporaryDirectory();
     const sessionDirectory = join(root, 'child-sessions');
@@ -1142,7 +1243,7 @@ describe('LocalSubagentHost', () => {
 });
 
 async function harness(options: {
-  runner: LocalSubagentRunner;
+  runner?: LocalSubagentRunner;
   concurrency?: number;
   maxDepth?: number;
   root?: string;
@@ -1164,7 +1265,7 @@ async function harness(options: {
     extensionPackages: [],
     importExtension: async () => ({}),
     settings: { concurrency: options.concurrency ?? 4, maxDepth: options.maxDepth ?? 3 },
-    runChild: options.runner,
+    ...(options.runner === undefined ? {} : { runChild: options.runner }),
   });
   return { host, modelRuntime };
 }
@@ -1209,13 +1310,15 @@ function completedAssistantMessage(text: string) {
   };
 }
 
-function usageAssistantMessage(usage: {
+interface UsageFixture {
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
   cost: number;
-}) {
+}
+
+function usageAssistantMessage(usage: UsageFixture) {
   return {
     role: 'assistant' as const,
     content: [{ type: 'text' as const, text: 'usage' }],
@@ -1236,6 +1339,27 @@ function usageAssistantMessage(usage: {
     stopReason: 'stop' as const,
     timestamp: Date.now(),
   };
+}
+
+function pushUsageResponse(
+  response: ReturnType<typeof createAssistantMessageEventStream>,
+  usage: UsageFixture,
+  toolCallId?: string,
+): void {
+  if (toolCallId === undefined) {
+    const message = usageAssistantMessage(usage);
+    response.push({ type: 'start', partial: message });
+    response.push({ type: 'done', reason: 'stop', message });
+    return;
+  }
+
+  const message = {
+    ...usageAssistantMessage(usage),
+    content: [{ type: 'toolCall' as const, id: toolCallId, name: 'ls', arguments: { path: '.' } }],
+    stopReason: 'toolUse' as const,
+  };
+  response.push({ type: 'start', partial: message });
+  response.push({ type: 'done', reason: 'toolUse', message });
 }
 
 function sessionHeader(cwd: string, sessionId: string): string {
