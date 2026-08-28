@@ -1,9 +1,9 @@
 <h1 align="center">Felan</h1>
 
 <p align="center">
-  <strong>One agent core, from your terminal to your team.</strong><br>
-  An open-source, model-portable coding agent for local development and the
-  shared runtime behind <a href="https://felan.ai">felan.ai</a>.
+  <strong>Get the job done. Waste less.</strong><br>
+  An open-source, model-portable coding agent built for cost-efficient,
+  verifiable software work.
 </p>
 
 <p align="center">
@@ -13,16 +13,12 @@
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-%3E%3D22.19-5FA04E?style=flat&colorA=222222" alt="Node.js 22.19 or newer"></a>
 </p>
 
-Felan combines a portable agent core with a local terminal host and first-party
-extensions for the parts of software work that benefit from explicit state:
-parallel agents, dependency-aware tasks, structured questions, progressive
-context, local-first memory, bounded web research, remote MCP, browser
-automation, and model-specific coding tools.
+Felan is built around one rule: an optimization only counts when the task still
+succeeds. It combines model routing, progressive context, compact tool output,
+explicit task state, and estimated API-equivalent savings for supported
+optimizations.
 
-**Felan wraps [Pi](https://github.com/earendil-works/pi); it does not fork Pi.**
-Pinned Pi packages provide the model, session, extension, and TUI primitives;
-Felan owns the host contracts, feature behavior, policy, storage, and
-presentation around them.
+**Correctness first. Efficiency by design.**
 
 > [!IMPORTANT]
 > The local agent runs with your user's filesystem and process permissions. It
@@ -49,6 +45,7 @@ Connect a provider inside the TUI with `/login`, then start working:
 ```sh
 felan "inspect this project and explain how to run its tests"
 felan --continue
+felan savings
 felan --diagnostics
 felan update
 ```
@@ -61,12 +58,37 @@ Both modes support `--continue` and exact `--provider`, `--model`, and
 first-run setup and [Local CLI](docs/user-guide/local-cli.md) for all accepted
 commands, flags, and local state.
 
-## One agent, two hosts
+## Efficient by design
 
-The local CLI and Felan's managed product share the same portable agent layer.
-Each host owns the boundaries that cannot be portable:
+Felan treats correctness as the constraint and cost as the optimization target.
+Fewer tokens can support that goal, but they are not the outcome: a cheaper run
+that fails is not an efficiency win.
 
-| Local Felan | Felan managed host |
+| Boundary | What Felan does |
+| --- | --- |
+| **Model routing** | Prewalk can start a task with a stronger planner and continue the same conversation trajectory on a configured implementation model. |
+| **Context control** | Progressive nested instructions, scoped subagents, lazy MCP discovery, and bounded research keep context focused on the current work. |
+| **Tool output** | RTK-backed command rewriting and post-tool compaction reduce noisy model input while preserving failures, complete JSON, and recoverable output. |
+| **Explicit state** | Dependency-aware tasks, structured questions, retained subagent records, and local project memory keep decisions and progress inspectable. |
+| **Measurement** | `/savings`, `felan savings`, and the Powerline footer report estimated API-equivalent cost avoided by supported optimizations. |
+
+Felan is developed against **cost per verified task**, not token count alone.
+The public [harness-bench](https://github.com/felan-ai/harness-bench) project
+holds the task, starting repository, verifier, timeout, and environment
+equivalent when comparing configurations. Correctness is primary; cost, token
+usage, and latency are supporting measurements. Read
+[Efficient execution and savings](docs/concepts/efficient-execution.md) for the
+measurement boundaries and claim limits.
+
+## Local agent, portable core
+
+`@felan-ai/felan` is the account-free local terminal agent. The Felan cloud
+platform at [felan.ai](https://felan.ai) and
+[app.felan.ai](https://app.felan.ai) composes the same portable core and
+extensions as a managed host. Each host owns the boundaries that cannot be
+portable:
+
+| Local Felan | Felan cloud platform |
 | --- | --- |
 | Runs on your machine from `@felan-ai/felan` | Runs as managed background agents |
 | Uses provider-owned local credentials; no Felan account required | Adds tenant/team workflows, integrations, visibility, and guardrails |
@@ -89,6 +111,7 @@ versus host-managed memory lifecycle.
 | **Research with evidence** | Multi-provider search, claim checking with exact passages, bounded page/PDF/GitHub retrieval, retained-content paging, untrusted-content markers, and SSRF protections. |
 | **Connect external tools carefully** | A lazy OAuth-only remote MCP gateway, explicit credential ownership, and bounded untrusted remote results. |
 | **Use the right model tools** | GPT-specific structured command/patch/image tools, detached Background Bash for other providers, and RTK-backed command/output optimization. |
+| **Inspect efficiency** | Session, project, and retained local estimates through `/savings`, `felan savings`, and the default Powerline footer. |
 | **Keep the TUI readable** | Grouped tool activity, full-call inspection, agent/task/process overlays, and an ANSI-aware Powerline footer. |
 
 The [extension catalog](docs/reference/extension-catalog.md) maps each workflow
@@ -113,15 +136,17 @@ using Felan with sensitive repositories.
 
 ## Architecture
 
-```text
-@felan-ai/felan local host       Felan managed host
-              \                   /
-               portable extensions
-                         |
-                 @felan-ai/agent-core
-                         |
-             pinned @earendil-works/pi-*
-```
+<!-- Standalone source: docs/diagrams/felan-runtime-architecture.html -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/felan-runtime-architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/diagrams/felan-runtime-architecture-light.svg">
+  <img alt="Felan runtime architecture: the local product and Felan cloud platform compose portable extensions over Agent Core and pinned Pi packages." src="docs/diagrams/felan-runtime-architecture-light.svg">
+</picture>
+
+**Felan wraps [Pi](https://github.com/earendil-works/pi); it does not fork Pi.**
+Pinned Pi packages provide the model, session, extension, and TUI primitives;
+Felan owns the host contracts, feature behavior, policy, storage, and
+presentation around them.
 
 Behavior stays in its owning layer: `apps/tui` owns local policy, storage, and
 presentation; `ext-*` packages own portable feature behavior; and Agent Core
@@ -138,6 +163,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 - [Agents, tasks, and Prewalk](docs/user-guide/agents-tasks-and-prewalk.md)
 - [Context and memory](docs/user-guide/context-and-memory.md)
 - [Web, MCP, browser, and documents](docs/user-guide/web-mcp-and-browser.md)
+- [Efficient execution and savings](docs/concepts/efficient-execution.md)
 - [Architecture](docs/concepts/architecture.md)
 - [Runtime and security](docs/concepts/runtime-and-security.md)
 - [Comparisons with Codex, OpenCode, Claude Code, Pi, and Oh My Pi](docs/comparisons/README.md)
@@ -148,7 +174,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 
 | Package | Purpose | Documentation |
 | --- | --- | --- |
-| [`@felan-ai/felan`](apps/tui/README.md) | Account-free local terminal application and `felan` binary | [Local CLI](docs/user-guide/local-cli.md) |
+| [`@felan-ai/felan`](apps/tui/README.md) | Cost-efficient, model-portable local coding agent and `felan` binary | [Local CLI](docs/user-guide/local-cli.md) |
 | [`@felan-ai/agent-core`](packages/agent-core/README.md) | Portable runtime contracts, prompt, tools, model tiers, and Pi composition | [Architecture](docs/concepts/architecture.md) |
 | [`@felan-ai/ext-subagents`](packages/ext-subagents/README.md) | Tracked asynchronous subagent protocol | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
 | [`@felan-ai/ext-tasks`](packages/ext-tasks/README.md) | Dependency-aware root-session task graph | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |

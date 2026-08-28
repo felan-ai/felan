@@ -241,9 +241,9 @@ export function createModelPriceSource(
 
 export function formatSavingsReport(report: SavingsReport, detailed = false): string {
   const lines = [
-    `Felan savings — ${report.scope}`,
-    `Estimated cost avoided: ${formatUsd(report.savedCostUsd)}`,
-    `Measured decisions: ${report.calls}`,
+    `Felan estimated savings — ${report.scope}`,
+    `Estimated API-equivalent cost avoided: ${formatUsd(report.savedCostUsd)}`,
+    `Measured optimization decisions: ${report.calls}`,
   ];
   if (report.hasUnpricedMeasurements) lines.push('Some measurements have unavailable pricing and are excluded from the USD total.');
   if (detailed && report.buckets.length > 0) lines.push('', ...formatSavingsTable(report.buckets));

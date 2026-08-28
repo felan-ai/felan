@@ -28,7 +28,11 @@ describe('SavingsService', () => {
     expect(report.savedCostUsd).toBe(1);
     expect(report.buckets[0]).toMatchObject({ producerId: 'prewalk', calls: 1 });
     expect(report.buckets[0]?.actual.tokens).toMatchObject({ input: 20, output: 20 });
-    expect(formatSavingsReport(report, true)).toContain('prewalk');
+    const output = formatSavingsReport(report, true);
+    expect(output).toContain('Felan estimated savings — session');
+    expect(output).toContain('Estimated API-equivalent cost avoided: $1.00');
+    expect(output).toContain('Measured optimization decisions: 1');
+    expect(output).toContain('prewalk');
   });
 
   it('resolves tiered catalog pricing and keeps cache classes', async () => {

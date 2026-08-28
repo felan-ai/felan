@@ -297,7 +297,7 @@ function renderPreview() {
   const terminalLines = [
     '<div class="term-top"><div><span class="term-segment">~/workspace/felan</span> felan</div><div class="term-status">✓  local  13:18:02</div></div>',
     '<div class="term-line"><span class="term-accent">◉  felan v__FELAN_VERSION__</span></div>',
-    '<div class="term-line"><span class="term-dim">   inspect · plan · implement · review</span></div>',
+    '<div class="term-line"><span class="term-dim">   get the job done · waste less</span></div>',
     '<div class="term-line"><span class="term-dim">escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more</span></div>',
     '<div class="term-blank"></div>',
     '<div class="term-line">Felan can inspect, plan, implement, review, test, and document software.</div>',

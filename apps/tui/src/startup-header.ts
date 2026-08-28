@@ -8,7 +8,7 @@ import { FELAN_VERSION } from './version.js';
 
 const PI_ONBOARDING = 'Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.';
 const PI_RESOURCE_HINT = 'to show full startup help and loaded resources.';
-const FELAN_TAGLINE = '   inspect · plan · implement · review';
+const FELAN_TAGLINE = '   get the job done · waste less';
 const MEMORY_CONTEXT_DISPLAY_PATH = 'Project memory';
 
 interface ExpandableStartupHeader extends Component {

@@ -1,8 +1,8 @@
 # Felan documentation
 
-Felan is an open-source, model-portable coding agent with a local terminal host
-and a portable agent core used by both local and managed hosts. Start with the
-path that matches what you are trying to do.
+Felan is an open-source, model-portable coding agent built for cost-efficient,
+verifiable software work. Start with the path that matches what you are trying
+to do.
 
 ## Use Felan locally
 
@@ -27,6 +27,8 @@ path that matches what you are trying to do.
   through extensions, to Agent Core and Pi.
 - [Runtime and security](concepts/runtime-and-security.md) — permissions,
   trusted boundaries, credentials, and untrusted content.
+- [Efficient execution and savings](concepts/efficient-execution.md) —
+  correctness-first optimization, estimated savings, and claim boundaries.
 - [Local memory architecture](concepts/local-memory.md) — checkpointing,
   staging, validation, publication, and session projections.
 - [Extension catalog](reference/extension-catalog.md) — every first-party
@@ -96,8 +98,8 @@ The previous top-level paths remain compatibility pages:
 - [Contributing](../CONTRIBUTING.md) — setup and contribution expectations.
 - [Architecture map](maintainers/architecture-map.md) — code ownership,
   starting points, and verification commands.
-- [Savings metrics design](maintainers/savings-metrics-design.md) — working
-  proposal for extension reporting, local persistence, and savings reports.
+- [Savings metrics design](maintainers/savings-metrics-design.md) — implemented
+  reporting contracts, local persistence, and remaining follow-up decisions.
 - [Release process](maintainers/releasing.md) — package selection, trusted
   publishing, and packed audits.
 - [Upstream extension reviews](maintainers/upstream-extensions.md) — immutable

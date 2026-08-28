@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="544" viewBox="0 0 960 544" role="img" aria-labelledby="title desc">
+  <title id="title">Felan runtime architecture</title>
+  <desc id="desc">The local Felan product and Felan cloud platform both compose portable Felan extensions over Agent Core and pinned Pi packages.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#9699a6"/>
+    </marker>
+    <marker id="arrow-brand" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#75a58a"/>
+    </marker>
+    <style>
+      .name { font: 600 20px Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #d7d9e2; }
+      .sub { font: 400 12px "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace; fill: #9699a6; }
+      .tag { font: 600 12px "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 1.6px; fill: #9699a6; }
+      .tag-brand { fill: #87b398; }
+    </style>
+  </defs>
+
+  <rect width="960" height="544" fill="#1a1b26"/>
+
+  <g fill="none" stroke="#9699a6" stroke-width="1.5" marker-end="url(#arrow)">
+    <path d="M 252 144 V 188"/>
+    <path d="M 708 144 V 188"/>
+    <path d="M 480 396 V 436"/>
+  </g>
+  <path d="M 480 276 V 316" fill="none" stroke="#75a58a" stroke-width="2" marker-end="url(#arrow-brand)"/>
+
+  <g>
+    <rect x="80" y="48" width="344" height="96" rx="8" fill="#1e202b" stroke="#75a58a" stroke-width="2"/>
+    <text x="104" y="76" class="tag tag-brand">LOCAL PRODUCT</text>
+    <text x="104" y="108" class="name">@felan-ai/felan</text>
+    <text x="104" y="132" class="sub">policy · storage · credentials · TUI</text>
+  </g>
+
+  <g>
+    <rect x="536" y="48" width="344" height="96" rx="8" fill="#1e202b" stroke="#484b58" stroke-width="1.5"/>
+    <text x="560" y="76" class="tag">CLOUD PLATFORM</text>
+    <text x="560" y="108" class="name">felan.ai / app.felan.ai</text>
+    <text x="560" y="132" class="sub">team workflows · integrations · guardrails</text>
+  </g>
+
+  <g>
+    <rect x="128" y="196" width="704" height="80" rx="8" fill="#1e202b" stroke="#484b58" stroke-width="1.5"/>
+    <text x="152" y="224" class="tag">PORTABLE FEATURE LAYER</text>
+    <text x="152" y="252" class="name">@felan-ai/ext-*</text>
+    <text x="808" y="252" class="sub" text-anchor="end">subagents · tasks · context · memory · Prewalk · tools</text>
+  </g>
+
+  <g>
+    <rect x="208" y="324" width="544" height="72" rx="8" fill="#213029" stroke="#87b398" stroke-width="2"/>
+    <text x="232" y="352" class="tag tag-brand">PORTABLE CORE</text>
+    <text x="232" y="380" class="name">@felan-ai/agent-core</text>
+    <text x="728" y="380" class="sub" text-anchor="end">contracts · runtime · composition</text>
+  </g>
+
+  <g>
+    <rect x="272" y="444" width="416" height="64" rx="8" fill="#242631" stroke="#343743" stroke-width="1.5"/>
+    <text x="296" y="468" class="tag">FOUNDATION</text>
+    <text x="296" y="492" class="name">pinned @earendil-works/pi-*</text>
+  </g>
+</svg>

@@ -1,7 +1,7 @@
 # Getting started
 
-This guide gets the local Felan terminal agent running in an existing project.
-No Felan account is required.
+This guide gets Felan's local, model-portable coding agent running in an
+existing project. No Felan account is required.
 
 ## Requirements
 
@@ -122,6 +122,7 @@ with sensitive repositories or external systems.
 ## Next steps
 
 - Learn the [local CLI](user-guide/local-cli.md).
+- Understand [efficient execution and savings](concepts/efficient-execution.md).
 - Review [commands and shortcuts](user-guide/commands-and-shortcuts.md).
 - Configure [agents, tasks, and Prewalk](user-guide/agents-tasks-and-prewalk.md).
 - Understand [context and memory](user-guide/context-and-memory.md).

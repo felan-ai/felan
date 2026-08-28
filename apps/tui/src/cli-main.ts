@@ -37,7 +37,7 @@ Options:
   --session-dir <dir> Session directory for --session
   --diagnostics      Print local runtime versions and configuration mode
   update             Update a global npm installation of Felan
-  savings            Show persisted Felan savings
+  savings            Show persisted estimated API-equivalent savings
   -h, --help         Show this help
   -v, --version      Print the Felan version
   --verbose          Show verbose startup details

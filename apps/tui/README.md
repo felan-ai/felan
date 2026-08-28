@@ -1,7 +1,8 @@
 # @felan-ai/felan
 
-Local, account-free Felan terminal agent built on `@felan-ai/agent-core` and
-Pi's interactive TUI and print modes.
+Local, account-free, model-portable coding agent built for cost-efficient,
+verifiable software work on `@felan-ai/agent-core` and Pi's interactive TUI
+and print modes.
 
 ```sh
 npx @felan-ai/felan
@@ -51,6 +52,7 @@ felan [options] [message]
 --session-dir <dir> Session directory for --session
 --diagnostics      Print runtime versions and configuration mode
 update             Update a global npm installation of Felan
+savings            Show persisted estimated API-equivalent savings
 -h, --help         Show help
 -v, --version      Print the Felan version
 --verbose          Show verbose startup details
@@ -133,6 +135,7 @@ details:
 - [Agents, tasks, and Prewalk](../../docs/user-guide/agents-tasks-and-prewalk.md)
 - [Context and memory](../../docs/user-guide/context-and-memory.md)
 - [Web, MCP, browser, and documents](../../docs/user-guide/web-mcp-and-browser.md)
+- [Efficient execution and savings](../../docs/concepts/efficient-execution.md)
 - [Runtime and security](../../docs/concepts/runtime-and-security.md)
 - [Extension catalog](../../docs/reference/extension-catalog.md)
 

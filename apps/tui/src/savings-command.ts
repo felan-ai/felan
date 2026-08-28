@@ -11,7 +11,7 @@ export function createSavingsCommandExtension(service: SavingsService): InlineEx
     hidden: true,
     factory: (pi) => {
       pi.registerCommand('savings', {
-        description: 'Show Felan savings',
+        description: 'Show estimated API-equivalent savings',
         getArgumentCompletions: (prefix) => {
           const value = prefix.trim().toLowerCase();
           if (value.includes(' ')) return null;

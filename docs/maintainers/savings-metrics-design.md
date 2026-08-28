@@ -543,15 +543,15 @@ The default report should use product categories rather than internal mechanism
 names:
 
 ```text
-Felan savings — current session
+Felan estimated savings — current session
 
 Output optimization          ~$0.42   138K fewer tokens
 Model routing                ~$1.85    24K more tokens
 Context management           ~$0.11     9K fewer tokens
 ──────────────────────────────────────────────────
-Estimated cost avoided       ~$2.38
+Estimated API-equivalent cost avoided  ~$2.38
 
-Measured decisions: 47
+Measured optimization decisions: 47
 Price basis: model catalog, API-equivalent USD
 ```
 

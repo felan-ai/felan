@@ -42,7 +42,7 @@ describe('savings command extension', () => {
 
     await command.handler('project', context);
     expect(query).toHaveBeenCalledWith({ scope: 'project' });
-    expect(notify).toHaveBeenLastCalledWith(expect.stringContaining('Felan savings — project'), 'info');
+    expect(notify).toHaveBeenLastCalledWith(expect.stringContaining('Felan estimated savings — project'), 'info');
 
     await command.handler('unexpected', context);
     expect(query).toHaveBeenCalledTimes(1);

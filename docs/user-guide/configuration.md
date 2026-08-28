@@ -272,10 +272,11 @@ options. The complete shape is:
 `directory`, `git`, `model`, `session`, `subscription`, `savings`, `context`, and
 `status` segments with their documented segment fields. The default layout adds
 `{ "savings": { "enabled": true, "align": "right", "periodDays": 7 } }` after
-Git on the first line. It shows all retained local savings for seven inclusive
-UTC calendar days as `Est. Savings(7d): $33.00`; set `periodDays` to a positive
-integer from 1 to 3650 for a different period. A `~` before the amount indicates
-incomplete pricing coverage.
+Git on the first line. It shows estimated API-equivalent savings across all
+retained local measurements for seven inclusive UTC calendar days as
+`Est. Savings(7d): $33.00`; set `periodDays` to a positive integer from 1 to
+3650 for a different period. A `~` before the amount indicates incomplete
+pricing coverage.
 Powerline inherits the active Pi theme and maps its semantic segment roles to
 Pi foreground/background tokens. There is no second Powerline palette or
 color mode. Felan supplies `felan-light` and `felan-dark` and defaults to
@@ -301,14 +302,16 @@ fuzzy-search either list; activating a field with declared options cycles them.
 
 Use `/settings` to edit `extensionConfig.rtkOptimizer`. `/rtk` shows operational
 status, verifies availability, and installs the reviewed executable. `/savings`
-reports Felan's savings. Command rewriting needs the reviewed `rtk` executable;
+reports Felan's estimated API-equivalent savings. Command rewriting needs the
+reviewed `rtk` executable;
 binary-independent output compaction does not. Felan's post-tool metrics include
 command, read, grep, and Codex result compaction (including non-RTK compaction),
 and RTK command-output savings are reported separately from Felan's post-tool
 compaction. Felan uses one isolated temporary RTK tracker per root session and
 model, queries each tracker during session shutdown, and never imports RTK's
 global history or exposes `rtk gain`. Active-session `/savings` may not yet include
-unflushed RTK command-output savings.
+unflushed RTK command-output savings. These are API-equivalent estimates, not
+provider billing; see [Efficient execution and savings](../concepts/efficient-execution.md).
 Large lossy results use a recoverable head-and-tail preview; failed results and
 complete JSON payloads are protected from false-success or mid-document cuts.
 

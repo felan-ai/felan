@@ -19,7 +19,7 @@ describe('Felan startup header', () => {
 
     expect(header.renderedText).toBe([
       `◉  felan v${FELAN_VERSION}`,
-      '   inspect · plan · implement · review',
+      '   get the job done · waste less',
       '',
       'escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',
     ].join('\n'));
@@ -30,7 +30,7 @@ describe('Felan startup header', () => {
 
     expect(header.renderedText).toBe([
       `◉  felan v${FELAN_VERSION}`,
-      '   inspect · plan · implement · review',
+      '   get the job done · waste less',
       '',
       'escape to interrupt',
       'ctrl+c to clear',
@@ -96,7 +96,7 @@ describe('Felan startup header', () => {
 
     expect(rewritePiStartupHeader(source)).toBe([
       `◉  felan v${FELAN_VERSION}`,
-      '   inspect · plan · implement · review',
+      '   get the job done · waste less',
       '',
       'escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',
     ].join('\n'));

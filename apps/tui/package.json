@@ -1,7 +1,17 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.18.0",
-  "description": "Local Felan terminal agent",
+  "version": "0.18.1",
+  "description": "Open-source, model-portable coding agent built for cost-efficient, verifiable software work",
+  "keywords": [
+    "ai",
+    "ai-agent",
+    "coding-agent",
+    "developer-tools",
+    "llm",
+    "model-routing",
+    "context-management",
+    "llm-optimization"
+  ],
   "license": "MIT",
   "type": "module",
   "repository": {

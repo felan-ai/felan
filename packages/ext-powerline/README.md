@@ -12,7 +12,7 @@ The footer displays:
 - session token and cost totals (the local Felan TUI includes the root session
   and local subagent sessions; hostless consumers use the active session only)
 - active Codex or Claude subscription usage
-- estimated Felan savings for the configured recent-day period
+- estimated API-equivalent Felan savings for the configured recent-day period
 - context-window usage
 - statuses published by other Pi extensions
 
@@ -43,13 +43,13 @@ configure `showProviderName`, `showReset`, `showPercentage`, and `maxWindows`.
 It refreshes at startup, after turns and model changes, and once per minute.
 
 The `savings` segment is enabled by default at the end of the first line and is
-right-aligned above the model. It reports estimated savings across all retained
-local Felan activity for seven inclusive UTC calendar days (today plus the six
-previous days), displayed as `Est. Savings(7d): $33.00`. Set `periodDays` on the
-segment to choose another period. A `~` before the amount means at least one
-measurement had unavailable pricing, so the USD total is incomplete. The local
-TUI supplies the host query; the portable package does not access storage
-itself.
+right-aligned above the model. It reports estimated API-equivalent savings
+across all retained local Felan activity for seven inclusive UTC calendar days
+(today plus the six previous days), displayed as
+`Est. Savings(7d): $33.00`. Set `periodDays` on the segment to choose another
+period. A `~` before the amount means at least one measurement had unavailable
+pricing, so the USD total is incomplete. The local TUI supplies the host query;
+the portable package does not access storage itself.
 
 Scalar display settings are available through generated `felan --powerline-*`
 options and `/settings`; structured `lines` values are edited as JSON in

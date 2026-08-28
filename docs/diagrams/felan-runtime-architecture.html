@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Felan runtime architecture</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --paper: #fcfcfc;
+      --surface: #f8f7f6;
+      --surface-strong: #f1f0ee;
+      --card: #ffffff;
+      --core: #edf3ef;
+      --ink: #282522;
+      --muted: #706b67;
+      --border: #bcb7b2;
+      --border-soft: #dedbd7;
+      --brand: #356b50;
+      --brand-strong: #255f44;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(1040px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 48px 0 40px;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--brand-strong);
+      font: 600 12px "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font: 400 clamp(36px, 6vw, 56px)/1 Instrument Serif, Georgia, serif;
+    }
+
+    .lede {
+      max-width: 680px;
+      margin: 16px 0 32px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .name { font: 600 20px Geist, ui-sans-serif, sans-serif; fill: var(--ink); }
+    .sub { font: 400 12px "Geist Mono", ui-monospace, monospace; fill: var(--muted); }
+    .tag { font: 600 12px "Geist Mono", ui-monospace, monospace; letter-spacing: 1.6px; fill: var(--muted); }
+    .tag-brand { fill: var(--brand-strong); }
+    .node { fill: var(--surface); stroke: var(--border); }
+    .node-local { stroke: var(--brand); }
+    .node-card { fill: var(--card); }
+    .node-core { fill: var(--core); stroke: var(--brand-strong); }
+    .node-base { fill: var(--surface-strong); stroke: var(--border-soft); }
+    .arrow { fill: none; stroke: var(--muted); }
+    .arrow-brand { fill: none; stroke: var(--brand); }
+
+    footer {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border-soft);
+      color: var(--muted);
+      font: 500 12px "Geist Mono", ui-monospace, monospace;
+      letter-spacing: 0.08em;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #1a1b26;
+        --surface: #1e202b;
+        --surface-strong: #242631;
+        --card: #1e202b;
+        --core: #213029;
+        --ink: #d7d9e2;
+        --muted: #9699a6;
+        --border: #484b58;
+        --border-soft: #343743;
+        --brand: #75a58a;
+        --brand-strong: #87b398;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Architecture</p>
+    <h1>Felan runtime composition</h1>
+    <p class="lede">Host policy stays at the edge. Portable feature behavior and runtime contracts stay in the shared Felan layers over pinned Pi foundations.</p>
+
+    <svg viewBox="0 0 960 544" role="img" aria-labelledby="diagram-title diagram-desc">
+      <title id="diagram-title">Felan runtime architecture</title>
+      <desc id="diagram-desc">The local Felan product and Felan cloud platform both compose portable Felan extensions over Agent Core and pinned Pi packages.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+          <path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--muted)"/>
+        </marker>
+        <marker id="arrow-brand" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+          <path d="M 0 0 L 8 4 L 0 8 Z" fill="var(--brand)"/>
+        </marker>
+      </defs>
+
+      <g class="arrow" stroke-width="1.5" marker-end="url(#arrow)">
+        <path d="M 252 144 V 188"/>
+        <path d="M 708 144 V 188"/>
+        <path d="M 480 396 V 436"/>
+      </g>
+      <path d="M 480 276 V 316" class="arrow-brand" stroke-width="2" marker-end="url(#arrow-brand)"/>
+
+      <g>
+        <rect class="node node-local" x="80" y="48" width="344" height="96" rx="8" stroke-width="2"/>
+        <text x="104" y="76" class="tag tag-brand">LOCAL PRODUCT</text>
+        <text x="104" y="108" class="name">@felan-ai/felan</text>
+        <text x="104" y="132" class="sub">policy · storage · credentials · TUI</text>
+      </g>
+
+      <g>
+        <rect class="node" x="536" y="48" width="344" height="96" rx="8" stroke-width="1.5"/>
+        <text x="560" y="76" class="tag">CLOUD PLATFORM</text>
+        <text x="560" y="108" class="name">felan.ai / app.felan.ai</text>
+        <text x="560" y="132" class="sub">team workflows · integrations · guardrails</text>
+      </g>
+
+      <g>
+        <rect class="node node-card" x="128" y="196" width="704" height="80" rx="8" stroke-width="1.5"/>
+        <text x="152" y="224" class="tag">PORTABLE FEATURE LAYER</text>
+        <text x="152" y="252" class="name">@felan-ai/ext-*</text>
+        <text x="808" y="252" class="sub" text-anchor="end">subagents · tasks · context · memory · Prewalk · tools</text>
+      </g>
+
+      <g>
+        <rect class="node node-core" x="208" y="324" width="544" height="72" rx="8" stroke-width="2"/>
+        <text x="232" y="352" class="tag tag-brand">PORTABLE CORE</text>
+        <text x="232" y="380" class="name">@felan-ai/agent-core</text>
+        <text x="728" y="380" class="sub" text-anchor="end">contracts · runtime · composition</text>
+      </g>
+
+      <g>
+        <rect class="node node-base" x="272" y="444" width="416" height="64" rx="8" stroke-width="1.5"/>
+        <text x="296" y="468" class="tag">FOUNDATION</text>
+        <text x="296" y="492" class="name">pinned @earendil-works/pi-*</text>
+      </g>
+    </svg>
+
+    <footer>FELAN · HOST POLICY → PORTABLE FEATURES → AGENT CORE → PI</footer>
+  </main>
+</body>
+</html>

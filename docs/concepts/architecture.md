@@ -6,7 +6,7 @@ behavior; Agent Core owns the runtime-neutral composition boundary; and pinned
 Pi packages provide the underlying model, session, and TUI machinery.
 
 ```text
-  local Felan TUI                         managed/cloud host
+  local Felan TUI                         Felan cloud platform
   credentials · storage · policy          tenant state · integrations · policy
              \                             /
               \                           /
@@ -83,9 +83,9 @@ instruction file. Ambient Pi extensions, packages, prompts, themes, project
 settings, and package resources are filtered.
 
 This boundary is part of the local host, not a promise that every Felan host
-will make the same policy decision. A managed host can provide different
-credentials, storage, integrations, and approval controls while preserving the
-portable feature contracts.
+will make the same policy decision. The Felan cloud platform can provide
+different credentials, storage, integrations, and approval controls while
+preserving the portable feature contracts.
 
 ## Why Felan wraps Pi
 
