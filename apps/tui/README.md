@@ -103,6 +103,14 @@ All built-ins are enabled by default, including the Powerline footer in TUI
 sessions. Binary-backed features can remain inactive until their dependency is
 installed or the feature is disabled through `/dependencies`.
 
+The local TUI provides `felan-light` and `felan-dark` as host-owned Pi themes.
+The startup view uses a compact Felan welcome; press `Ctrl+O` when you need
+the full startup help and loaded-resource listing. When no theme is saved,
+Felan follows the terminal appearance automatically. The `felan-*` names are
+intentional: Pi 0.84.3 reserves `dark` and `light` for its built-in export
+themes, so colliding IDs would make exported sessions use different colors.
+Powerline consumes that same active theme instead of defining its own colors.
+
 Model responses use the built-in `concise` output style by default. Set the
 global `outputStyle` setting to `explanatory` for more reasoning and context.
 The concise style prefers minimal prose, clear fragments, and compact bullets
@@ -139,6 +147,10 @@ pnpm --filter @felan-ai/felan build
 pnpm --filter @felan-ai/felan type-check
 pnpm --filter @felan-ai/felan test
 ```
+
+The development-only root preview (`pnpm theme:preview`) shows the two
+host-owned themes across representative Pi, editor, and Powerline states. It
+is intentionally a browser approximation rather than a second renderer.
 
 Run `pnpm verify` from the repository root for cross-package and packed-binary
 coverage.

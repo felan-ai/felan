@@ -46,6 +46,7 @@ export interface CreateAgentCoreSessionOptions {
   readonly inlineExtensions?: readonly InlineExtension[];
   readonly customTools?: readonly ToolDefinition[];
   readonly skillPaths?: readonly string[];
+  readonly themePaths?: readonly string[];
   readonly skills?: readonly Skill[];
   readonly appendSystemPrompt?: readonly string[];
   readonly savings?: SavingsReporterProvider;
@@ -123,6 +124,7 @@ async function composeAgentCoreSession(
     agentDir,
     extensionFactories,
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
+    ...(options.themePaths === undefined ? {} : { themePaths: options.themePaths }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
     ...(projectInstructions === undefined ? {} : { contextFiles: [projectInstructions] }),
     ...(options.appendSystemPrompt === undefined

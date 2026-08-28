@@ -237,6 +237,36 @@ describe('Agent Core resource loading', () => {
 
     expect(loader.getSkills().skills.map(({ name }) => name)).toEqual(['selected']);
   });
+
+  it('loads only explicit theme paths while ambient discovery stays disabled', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    const ambientThemes = join(agentDir, 'themes');
+    const selectedTheme = join(root, 'selected-theme.json');
+    await Promise.all([
+      mkdir(cwd, { recursive: true }),
+      mkdir(ambientThemes, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(ambientThemes, 'ambient.json'), themeJson('ambient-theme')),
+      writeFile(selectedTheme, themeJson('selected-theme')),
+    ]);
+
+    const loader = await createAgentCoreResourceLoader({
+      cwd,
+      agentDir,
+      extensionFactories: [],
+      themePaths: [selectedTheme],
+    });
+
+    expect(loader.getThemes().diagnostics).toEqual([]);
+    expect(loader.getThemes().themes.map(({ name }) => name)).toEqual(['selected-theme']);
+
+    await loader.reload();
+
+    expect(loader.getThemes().themes.map(({ name }) => name)).toEqual(['selected-theme']);
+  });
 });
 
 function skill(name: string, description: string): string {
@@ -247,4 +277,39 @@ async function temporaryDirectory(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), 'felan-agent-core-'));
   temporaryPaths.push(path);
   return path;
+}
+
+function themeJson(name: string): string {
+  return JSON.stringify({
+    name,
+    vars: {
+      text: '#e8e6e3',
+      muted: '#928a87',
+      dim: '#6f6864',
+      accent: '#2f7f59',
+      border: '#5e5652',
+      surface: '#211e1c',
+      success: '#21c45d',
+      error: '#ef4343',
+      warning: '#f59f0a',
+      info: '#258cf4',
+    },
+    colors: {
+      accent: 'accent', border: 'border', borderAccent: 'accent', borderMuted: 'dim',
+      success: 'success', error: 'error', warning: 'warning', muted: 'muted', dim: 'dim',
+      text: 'text', thinkingText: 'muted', selectedBg: 'surface', userMessageBg: 'surface',
+      userMessageText: 'text', customMessageBg: 'surface', customMessageText: 'text',
+      customMessageLabel: 'accent', toolPendingBg: 'surface', toolSuccessBg: 'surface',
+      toolErrorBg: 'surface', toolTitle: 'accent', toolOutput: 'muted', mdHeading: 'accent',
+      mdLink: 'info', mdLinkUrl: 'muted', mdCode: 'warning', mdCodeBlock: 'text',
+      mdCodeBlockBorder: 'border', mdQuote: 'muted', mdQuoteBorder: 'border', mdHr: 'border',
+      mdListBullet: 'accent', toolDiffAdded: 'success', toolDiffRemoved: 'error',
+      toolDiffContext: 'muted', syntaxComment: 'dim', syntaxKeyword: 'accent',
+      syntaxFunction: 'info', syntaxVariable: 'text', syntaxString: 'success',
+      syntaxNumber: 'warning', syntaxType: 'info', syntaxOperator: 'muted',
+      syntaxPunctuation: 'muted', thinkingOff: 'dim', thinkingMinimal: 'muted',
+      thinkingLow: 'info', thinkingMedium: 'accent', thinkingHigh: 'warning',
+      thinkingXhigh: 'error', bashMode: 'success',
+    },
+  });
 }

@@ -7,6 +7,8 @@ import type { Component } from '@earendil-works/pi-tui';
 import { FELAN_VERSION } from './version.js';
 
 const PI_ONBOARDING = 'Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.';
+const PI_RESOURCE_HINT = 'to show full startup help and loaded resources.';
+const FELAN_TAGLINE = '   inspect · plan · implement · review';
 const MEMORY_CONTEXT_DISPLAY_PATH = 'Project memory';
 
 interface ExpandableStartupHeader extends Component {
@@ -25,6 +27,12 @@ interface DisplayContextFile {
 }
 
 interface InteractiveModeResourceInternals {
+  readonly options?: {
+    readonly verbose?: boolean;
+  };
+  readonly settingsManager?: {
+    getQuietStartup: () => boolean;
+  };
   readonly session?: {
     readonly sessionManager: {
       buildContextEntries(): readonly unknown[];
@@ -74,15 +82,19 @@ export function installFelanStartupHeader(
 
 export function rewritePiStartupHeader(text: string): string {
   const lines = text.split('\n');
-  if (lines[0]) {
-    lines[0] = lines[0]
-      .replace('pi', 'felan')
-      .replace(`v${PI_VERSION}`, `v${FELAN_VERSION}`);
-  }
-  return lines
-    .filter((line) => !line.includes(PI_ONBOARDING))
-    .join('\n')
-    .replace(/\n+$/u, '');
+  const logo = (lines[0] ?? '')
+    .replace('pi', '◉  felan')
+    .replace(`v${PI_VERSION}`, `v${FELAN_VERSION}`);
+  const upstreamOnboarding = lines.find((line) => line.includes(PI_ONBOARDING));
+  const tagline = upstreamOnboarding?.replace(PI_ONBOARDING, FELAN_TAGLINE) ?? FELAN_TAGLINE;
+  const instructions = lines.slice(1).filter((line) => (
+    line.trim().length > 0
+    && !line.includes(PI_ONBOARDING)
+    && !line.includes(PI_RESOURCE_HINT)
+  ));
+  return [logo, tagline, ...(instructions.length === 0 ? [] : ['', ...instructions])]
+    .filter((line, index) => index > 0 || line.length > 0)
+    .join('\n');
 }
 
 function isExpandableStartupHeader(component: Component | undefined): component is ExpandableStartupHeader {
@@ -108,31 +120,57 @@ function installMemoryContextIndicator(
   if (typeof showLoadedResources !== 'function') return;
 
   internals.showLoadedResources = function showFelanLoadedResources(options?: unknown): void {
-    const session = internals.session;
-    if (!session?.sessionManager.buildContextEntries().some(isMemoryContextEntry)) {
-      showLoadedResources.call(mode, options);
-      return;
-    }
+    withNormalResourceListingSuppressed(internals, options, () => {
+      const session = internals.session;
+      if (!session?.sessionManager.buildContextEntries().some(isMemoryContextEntry)) {
+        showLoadedResources.call(mode, options);
+        return;
+      }
 
-    const loader = session.resourceLoader;
-    const getAgentsFiles = loader.getAgentsFiles;
-    const ownGetAgentsFiles = Object.getOwnPropertyDescriptor(loader, 'getAgentsFiles');
-    const displayPath = memorySummaryPath?.().trim() || MEMORY_CONTEXT_DISPLAY_PATH;
-    loader.getAgentsFiles = () => {
-      const result = getAgentsFiles.call(loader);
-      if (result.agentsFiles.some(({ path }) => path === displayPath)) return result;
-      return {
-        agentsFiles: [
-          ...result.agentsFiles,
-          { path: displayPath, content: '' },
-        ],
+      const loader = session.resourceLoader;
+      const getAgentsFiles = loader.getAgentsFiles;
+      const ownGetAgentsFiles = Object.getOwnPropertyDescriptor(loader, 'getAgentsFiles');
+      const displayPath = memorySummaryPath?.().trim() || MEMORY_CONTEXT_DISPLAY_PATH;
+      loader.getAgentsFiles = () => {
+        const result = getAgentsFiles.call(loader);
+        if (result.agentsFiles.some(({ path }) => path === displayPath)) return result;
+        return {
+          agentsFiles: [
+            ...result.agentsFiles,
+            { path: displayPath, content: '' },
+          ],
+        };
       };
-    };
-    try {
-      showLoadedResources.call(mode, options);
-    } finally {
-      if (ownGetAgentsFiles) Object.defineProperty(loader, 'getAgentsFiles', ownGetAgentsFiles);
-      else Reflect.deleteProperty(loader, 'getAgentsFiles');
-    }
+      try {
+        showLoadedResources.call(mode, options);
+      } finally {
+        if (ownGetAgentsFiles) Object.defineProperty(loader, 'getAgentsFiles', ownGetAgentsFiles);
+        else Reflect.deleteProperty(loader, 'getAgentsFiles');
+      }
+    });
   };
+}
+
+function withNormalResourceListingSuppressed(
+  internals: InteractiveModeResourceInternals,
+  options: unknown,
+  render: () => void,
+): void {
+  const force = typeof options === 'object'
+    && options !== null
+    && Reflect.get(options, 'force') === true;
+  const settingsManager = internals.settingsManager;
+  if (force || internals.options?.verbose === true || !settingsManager) {
+    render();
+    return;
+  }
+
+  const ownGetQuietStartup = Object.getOwnPropertyDescriptor(settingsManager, 'getQuietStartup');
+  settingsManager.getQuietStartup = () => true;
+  try {
+    render();
+  } finally {
+    if (ownGetQuietStartup) Object.defineProperty(settingsManager, 'getQuietStartup', ownGetQuietStartup);
+    else Reflect.deleteProperty(settingsManager, 'getQuietStartup');
+  }
 }

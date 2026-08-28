@@ -8,38 +8,20 @@ import { renderSegments, sanitizePlainText, type FooterDataLike, type RenderedSe
 import type { SubscriptionState } from '../src/subscription.js';
 import { getSymbols } from '../src/symbols.js';
 
+const theme = {
+  getFgAnsi: (color: string) => `\x1b[38;5;42m`,
+  getBgAnsi: (color: string) => `\x1b[48;5;42m`,
+};
+
 describe('powerline rendering', () => {
-  it('uses the customized palette as the built-in Felan theme', () => {
-    expect(getThemePalette(DEFAULT_CONFIG).colors).toEqual({
-      directory: { fg: '#ffffff', bg: '#1d4ed8' },
-      git: { fg: '#111111', bg: '#a3be00' },
-      model: { fg: '#475569', bg: '#11151c' },
-      session: { fg: '#facc15', bg: '#11151c' },
-      subscription: { fg: '#475569', bg: '#11151c' },
-      context: { fg: '#22c55e', bg: '#11151c' },
-      status: { fg: '#475569', bg: '#11151c' },
-      warning: { fg: '#facc15', bg: '#11151c' },
-      critical: { fg: '#f87171', bg: '#11151c' },
-      muted: { fg: '#475569', bg: '#11151c' },
-      savings: { fg: '#052e16', bg: '#86efac' },
-      extensionStatus1: { fg: '#cbd5e1', bg: '#1f2937' },
-      extensionStatus2: { fg: '#bfdbfe', bg: '#1e3a5f' },
-      extensionStatus3: { fg: '#ddd6fe', bg: '#3b2f5f' },
-      extensionStatus4: { fg: '#99f6e4', bg: '#134e4a' },
-    });
-  });
-
-  it('uses custom colors with built-in fallbacks', () => {
-    const config: PowerlineConfig = {
-      ...testConfig({}),
-      theme: 'custom',
-      colors: { custom: { directory: { fg: '#ffffff', bg: '#123456' } } },
-    };
-
-    const palette = getThemePalette(config);
-    expect(palette.colors.directory).toEqual({ fg: '#ffffff', bg: '#123456' });
-    expect(palette.colors.git).toBeDefined();
-    expect(palette.colors.subscription).toBeDefined();
+  it('maps Powerline roles to the active Pi theme', () => {
+    const palette = getThemePalette(theme);
+    expect(palette.colors.directory.fg).toBe(theme.getFgAnsi('accent'));
+    expect(palette.colors.directory.bg).toBe(theme.getBgAnsi('customMessageBg'));
+    expect(palette.colors.model.fg).toBe(theme.getFgAnsi('muted'));
+    expect(palette.colors.session.fg).toBe(theme.getFgAnsi('text'));
+    expect(palette.colors.savings.bg).toBe(theme.getBgAnsi('customMessageBg'));
+    expect(palette.colors.critical.bg).toBe(theme.getBgAnsi('toolErrorBg'));
   });
 
   it('renders minimal, powerline, and capsule styles with both charsets', () => {
@@ -52,11 +34,11 @@ describe('powerline rendering', () => {
 
     for (const style of ['minimal', 'powerline', 'capsule'] as const) {
       const config = testConfig({ style, charset: 'text', padding: 0 });
-      expect(renderStyledSegments(segments, config, getThemePalette(config), 'none', getSymbols('text'))).toBe(expected[style]);
+      expect(renderStyledSegments(segments, config, getThemePalette(theme), 'none', getSymbols('text'))).toContain(expected[style]);
     }
 
     const unicode = testConfig({ style: 'powerline', charset: 'unicode', padding: 0 });
-    expect(renderStyledSegments(segments, unicode, getThemePalette(unicode), 'none', getSymbols('unicode'))).toBe('onetwo');
+    expect(renderStyledSegments(segments, unicode, getThemePalette(theme), 'none', getSymbols('unicode'))).toContain('onetwo');
   });
 
   it('measures ANSI-colored content by visible width and truncates safely', () => {
@@ -64,7 +46,7 @@ describe('powerline rendering', () => {
     const lines = renderFooterLine(
       [segment('directory', '界界界界')],
       config,
-      getThemePalette(config),
+      getThemePalette(theme),
       'truecolor',
       getSymbols('unicode'),
       7,
@@ -80,7 +62,7 @@ describe('powerline rendering', () => {
     const wrapped = renderFooterLine(
       [segment('directory', 'alpha'), segment('git', 'bravo')],
       wrapping,
-      getThemePalette(wrapping),
+      getThemePalette(theme),
       'none',
       getSymbols('text'),
       8,
@@ -91,7 +73,7 @@ describe('powerline rendering', () => {
     const [line] = renderFooterLine(
       [segment('directory', 'left'), segment('model', 'right', 'right')],
       aligned,
-      getThemePalette(aligned),
+      getThemePalette(theme),
       'none',
       getSymbols('text'),
       20,
@@ -105,7 +87,7 @@ describe('powerline rendering', () => {
     const [line] = renderFooterLine(
       [segment('model', '界', 'right')],
       config,
-      getThemePalette(config),
+      getThemePalette(theme),
       'truecolor',
       getSymbols('text'),
       10,

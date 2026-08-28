@@ -127,7 +127,7 @@ export class AgentRailEditor extends CustomEditor {
     if (this.#railFocused) this.focused = false;
     let editorLines: string[];
     try {
-      editorLines = super.render(width);
+      editorLines = this.renderFramedEditor(width);
     } finally {
       this.focused = wasFocused;
     }
@@ -135,6 +135,28 @@ export class AgentRailEditor extends CustomEditor {
     return this.renderRailInEditor()
       ? [...editorLines, ...this.renderRail(width)]
       : editorLines;
+  }
+
+  private renderFramedEditor(width: number): string[] {
+    if (width < 4) return super.render(width);
+    const innerWidth = width - 2;
+    const base = super.render(innerWidth);
+    if (base.length < 2) return base;
+    // Pi replaces its horizontal borders with scroll indicators when the
+    // editor viewport is scrolled. Those lines also contain the hidden-line
+    // count, so they are not safe to reconstruct as rounded borders.
+    const plain = base.map((line) => stripTerminalSequences(line));
+    if (plain.some((line) => /[↑↓]\s*\d+\s+more/u.test(line))) return super.render(width);
+    const border = (text: string) => this.borderColor(text);
+    const bottomIndex = plain.findIndex((line, index) => index > 0 && /^[─]+$/u.test(line));
+    if (bottomIndex < 0) return super.render(width);
+    const end = bottomIndex;
+    return [
+      border(`╭${'─'.repeat(innerWidth)}╮`),
+      ...base.slice(1, end).map((line) => `${border('│')}${line}${border('│')}`),
+      border(`╰${'─'.repeat(innerWidth)}╯`),
+      ...base.slice(end + 1),
+    ];
   }
 
   renderRail(width: number): string[] {

@@ -26,6 +26,8 @@ pnpm verify
   public behavior or configuration changes.
 - Run the changed workspace's `build`, `type-check`, and `test`; run
   `pnpm verify` for cross-package or release-facing changes.
+- For terminal theme work, run `pnpm theme:preview`, review both light and dark
+  states at wide and narrow widths, and run `pnpm theme:preview:check`.
 - Use Conventional Commit messages when maintainers request a commit.
 
 For package versioning, trusted publishing, and packed audits, follow the

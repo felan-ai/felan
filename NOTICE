@@ -1,6 +1,15 @@
 Felan
 Copyright (c) 2026 Felan contributors
 
+The development-only scripts/theme-preview.mjs adapts the preview interaction
+pattern from awesome-pi-themes at
+https://github.com/isashi/awesome-pi-themes/tree/c75595966366147d747c31ba9db5c7acead2d0b1.
+Copyright (c) 2026 Isashi Mitsui. The adapted material is distributed under the
+MIT License. Felan retains the upstream gallery layout, preview styling, and
+interaction pattern while supplying its own theme files and Felan-specific
+transcript, editor, and Powerline content. The upstream theme collection is not
+copied or bundled.
+
 @felan-ai/ext-memory is original Felan MIT-licensed code providing the
 portable local-first Markdown memory schema, validation, and session bridge.
 Its package-level license and attribution are included in

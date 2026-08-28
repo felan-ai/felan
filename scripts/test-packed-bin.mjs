@@ -78,6 +78,7 @@ try {
   ], cleanEnvironment);
 
   for (const sourcePackage of sourcePackages) validateInstalledPackage(sourcePackage);
+  assertPackedFelanThemes();
   assertPackedFelanOutputStyleDependency();
   assertSingleAgentCoreInstallation();
   assertPackedToolBoundary();
@@ -508,6 +509,20 @@ function assertPackedToolBoundary() {
       for (const name of forbidden) {
         if (content.includes(name)) throw new Error(`${sourcePackage.name} packed dist contains ${name}`);
       }
+    }
+  }
+}
+
+function assertPackedFelanThemes() {
+  const themesDirectory = join(installDir, 'node_modules', '@felan-ai', 'felan', 'dist', 'themes');
+  for (const name of ['felan-light.json', 'felan-dark.json']) {
+    const path = join(themesDirectory, name);
+    if (!existsSync(path)) throw new Error(`Packed Felan is missing ${name}`);
+    const theme = JSON.parse(readFileSync(path, 'utf8'));
+    const requiredVars = ['bg', 'fg', 'surface1', 'surface2', 'surface3', 'brand', 'border', 'muted', 'success', 'warning', 'error', 'info'];
+    if (theme.name !== name.slice(0, -5) || Object.keys(theme.colors ?? {}).length < 51
+      || requiredVars.some((variable) => typeof theme.vars?.[variable] !== 'string')) {
+      throw new Error(`Packed Felan theme ${name} is invalid`);
     }
   }
 }

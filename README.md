@@ -187,6 +187,12 @@ installation suite with:
 pnpm verify
 ```
 
+To review the Felan Pi themes in a browser, run `pnpm theme:preview` and open
+`http://127.0.0.1:4173`. Use `pnpm theme:preview:check` for a no-write
+validation or `pnpm theme:preview:build` to generate the ignored local artifact
+at `.artifacts/theme-preview/index.html`. The preview is a visual review aid;
+the Pi TUI remains the runtime source of truth.
+
 See [Contributing](CONTRIBUTING.md) and the
 [maintainer architecture map](docs/maintainers/architecture-map.md) before
 changing a shared runtime or public package.

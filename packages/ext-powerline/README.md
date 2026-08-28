@@ -27,11 +27,15 @@ and Git branch changes, and removes and disposes the footer on
 `session_shutdown`. Headless Pi modes perform no footer, Git, or subscription
 work.
 
+Powerline inherits the active Pi theme. Segment roles use Pi semantic color
+tokens, so changing the TUI theme also changes the footer; Powerline does not
+maintain a second palette or color compatibility setting.
+
 ## Configuration
 
 All configuration is supplied through the declarative `powerline` extension
-settings. The settings include scalar display fields, ordered `lines` with
-supported segment objects, and named custom color pairs.
+settings. The settings include scalar display fields and ordered `lines` with
+supported segment objects. Theme selection and colors belong to Pi.
 
 The `subscription` segment supports Codex and Claude OAuth plans. Codex values
 show remaining percentage; Claude values show used percentage. The segment can
@@ -48,8 +52,8 @@ TUI supplies the host query; the portable package does not access storage
 itself.
 
 Scalar display settings are available through generated `felan --powerline-*`
-options and `/settings`; structured `lines` and `colors` values are edited as
-JSON in `settings.json` or `/settings`.
+options and `/settings`; structured `lines` values are edited as JSON in
+`settings.json` or `/settings`.
 
 The package default export is hostless and renders no subscription data.
 Consumers enable subscription usage with

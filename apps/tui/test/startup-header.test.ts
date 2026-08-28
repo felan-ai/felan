@@ -18,9 +18,10 @@ describe('Felan startup header', () => {
     modeInternals(mode).builtInHeader = header;
 
     expect(header.renderedText).toBe([
-      `felan v${FELAN_VERSION}`,
+      `◉  felan v${FELAN_VERSION}`,
+      '   inspect · plan · implement · review',
+      '',
       'escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',
-      'Press ctrl+o to show full startup help and loaded resources.',
     ].join('\n'));
     expect(header.renderedText).not.toContain(`pi v${PI_VERSION}`);
     expect(header.renderedText).not.toContain('extend Pi');
@@ -28,7 +29,9 @@ describe('Felan startup header', () => {
     header.setExpanded(true);
 
     expect(header.renderedText).toBe([
-      `felan v${FELAN_VERSION}`,
+      `◉  felan v${FELAN_VERSION}`,
+      '   inspect · plan · implement · review',
+      '',
       'escape to interrupt',
       'ctrl+c to clear',
       'ctrl+c twice to exit',
@@ -45,6 +48,29 @@ describe('Felan startup header', () => {
     modeInternals(mode).builtInHeader = quietHeader;
 
     expect(quietHeader.render()).toEqual([]);
+  });
+
+  it('hides ordinary resource listings while preserving forced resource views', () => {
+    const displayed: string[][] = [];
+    const mode = {
+      builtInHeader: undefined,
+      options: { verbose: false },
+      settingsManager: { getQuietStartup: () => false },
+      session: resourceSession(false, 'AGENTS.md'),
+      showLoadedResources(options?: { force?: boolean }) {
+        if (options?.force || this.options.verbose || !this.settingsManager.getQuietStartup()) {
+          displayed.push(this.session.resourceLoader.getAgentsFiles().agentsFiles.map(({ path }) => path));
+        }
+      },
+    };
+    installFelanStartupHeader(mode as unknown as InteractiveMode);
+
+    mode.showLoadedResources();
+    expect(displayed).toEqual([]);
+    expect(mode.settingsManager.getQuietStartup()).toBe(false);
+
+    mode.showLoadedResources({ force: true });
+    expect(displayed).toEqual([['AGENTS.md']]);
   });
 
   it('preserves Pi verbose startup expansion when installing the adapter', () => {
@@ -69,9 +95,10 @@ describe('Felan startup header', () => {
     ].join('\n');
 
     expect(rewritePiStartupHeader(source)).toBe([
-      `felan v${FELAN_VERSION}`,
+      `◉  felan v${FELAN_VERSION}`,
+      '   inspect · plan · implement · review',
+      '',
       'escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',
-      'Press ctrl+o to show full startup help and loaded resources.',
     ].join('\n'));
   });
 

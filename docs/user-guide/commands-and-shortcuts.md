@@ -86,6 +86,6 @@ These are the flags accepted directly by the `felan` binary:
 ```
 
 Enabled configurable extensions add generated options to this list. For
-example, `--prewalk-entry-approval allow` and `--powerline-theme nord` are
+example, `--prewalk-entry-approval allow` and `--powerline-style capsule` are
 also accepted. The same values can be persisted in `settings.json` or edited
 through `/settings`.

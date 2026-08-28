@@ -77,8 +77,28 @@ describe('@felan-ai/ext-tasks', () => {
     expect([...harness.commands.keys()]).toEqual(['tasks']);
     expect(harness.shortcuts).toHaveLength(1);
 
-    await harness.execute('TaskCreate', { title: 'Visible task' });
-    expect(harness.statuses.at(-1)?.[1]).toContain('0/1');
+    const created = await harness.execute('TaskCreate', { title: 'Visible task' });
+    const taskId = (created.details as any).task.id as string;
+    expect(harness.statuses.at(-1)).toEqual([
+      'tasks',
+      'Tasks 1 · 0 · 0',
+    ]);
+
+    await harness.execute('TaskUpdate', { task_id: taskId, status: 'in_progress' });
+    expect(harness.statuses.at(-1)).toEqual([
+      'tasks',
+      'Tasks 0 · 1 · 0',
+    ]);
+
+    await harness.execute('TaskUpdate', {
+      task_id: taskId,
+      status: 'completed',
+      result: 'Verified',
+    });
+    expect(harness.statuses.at(-1)).toEqual([
+      'tasks',
+      'Tasks 0 · 0 · 1',
+    ]);
     await harness.shutdown();
     expect(harness.statuses.at(-1)).toEqual(['tasks', undefined]);
   });

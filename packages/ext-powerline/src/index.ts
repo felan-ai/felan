@@ -52,12 +52,13 @@ export function createPowerlineExtension(
     function installFooter(ctx: ExtensionContext): void {
       if (ctx.mode !== 'tui') return;
       footer?.dispose();
-      ctx.ui.setFooter((tui, _theme, footerData) => {
+      ctx.ui.setFooter((tui, theme, footerData) => {
         footer = new PowerlineFooter({
           pi,
           ctx,
           tui,
           footerData,
+          theme,
           config,
           subscription: subscription?.state ?? emptySubscription,
           savings: () => savings?.state ?? emptySavings,

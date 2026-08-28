@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.17.1",
+  "version": "0.18.0",
   "description": "Local Felan terminal agent",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,7 @@
     }
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp -R src/themes dist/themes && chmod +x dist/cli.js",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "prepack": "pnpm build"

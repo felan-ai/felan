@@ -61,8 +61,16 @@ import { SavingsService, createModelPriceSource } from './savings.js';
 import { createHash } from 'node:crypto';
 import { installPiAsyncFileLockGuard } from './pi-lock.js';
 import { createThinkingGroupExtension } from './thinking-groups.js';
+import { fileURLToPath } from 'node:url';
 
 installPiAsyncFileLockGuard();
+
+export const FELAN_THEME_PATHS = [
+  // Keep Felan IDs namespaced: Pi's built-in dark/light JSON still wins in
+  // HTML export even when a runtime registration shadows those names.
+  fileURLToPath(new URL('./themes/felan-light.json', import.meta.url)),
+  fileURLToPath(new URL('./themes/felan-dark.json', import.meta.url)),
+] as const;
 
 const localSubagentHost = Symbol('localSubagentHost');
 const localSubagentShutdown = Symbol('localSubagentShutdown');
@@ -96,6 +104,7 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly model?: CreateAgentSessionOptions['model'];
   readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
+  readonly themePaths?: readonly string[];
 }
 
 export interface CreateLocalFelanRuntimeOptions {
@@ -113,6 +122,7 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly model?: CreateAgentSessionOptions['model'];
   readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
+  readonly themePaths?: readonly string[];
 }
 
 export function getLocalAgentDir(): string {
@@ -299,6 +309,7 @@ export function createLocalSessionRuntimeFactory(
       modelRuntime: options.modelRuntime,
       settingsManager,
       skillPaths,
+      themePaths: options.themePaths ?? FELAN_THEME_PATHS,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
       inlineExtensions: [
@@ -385,6 +396,7 @@ export async function createLocalFelanRuntime(
     modelRuntime,
     ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
+    ...(options.themePaths === undefined ? {} : { themePaths: options.themePaths }),
     ...(options.subagentSettings === undefined ? {} : { subagentSettings: options.subagentSettings }),
     ...(options.extensionConfigOverrides === undefined ? {} : { extensionConfigOverrides: options.extensionConfigOverrides }),
     ...(options.model === undefined ? {} : { model: options.model }),

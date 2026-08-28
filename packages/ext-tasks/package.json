@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-tasks",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Dependency-aware session task tracking for Felan",
   "license": "MIT",
   "type": "module",

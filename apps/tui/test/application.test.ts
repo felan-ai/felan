@@ -246,8 +246,8 @@ describe('interactive application', () => {
     expect(interactive.constructorDisposals).toEqual([0, 1]);
     expect(interactive.disposals).toBe(2);
     expect(interactive.modeOptions).toEqual([
-      { initialMessage: 'only the first session' },
-      {},
+      { initialMessage: 'only the first session', initialThemeSetting: 'felan-light/felan-dark' },
+      { initialThemeSetting: 'felan-light/felan-dark' },
     ]);
   });
 
@@ -288,7 +288,7 @@ describe('interactive application', () => {
 
     await runLocalFelan({ cwd, agentDir, verbose: true });
 
-    expect(interactive.modeOptions).toEqual([{ verbose: true }]);
+    expect(interactive.modeOptions).toEqual([{ verbose: true, initialThemeSetting: 'felan-light/felan-dark' }]);
     expect(interactive.headerAdapters).toEqual([true]);
   });
 
@@ -304,6 +304,7 @@ describe('interactive application', () => {
     await runLocalFelan({ cwd, agentDir });
 
     expect(interactive.modeOptions).toEqual([{
+      initialThemeSetting: 'felan-light/felan-dark',
       startupDiagnostics: [{
         type: 'warning',
         message: 'settings.json.extensionConfig.prewalk.entryApproval must be one of: ask, allow, deny; using the default value.',

@@ -5,7 +5,6 @@ import {
   colorForeground,
   colorPairText,
   getThemePalette,
-  resolveColorMode,
   type ColorMode,
   type ThemePalette,
 } from './colors.js';
@@ -28,6 +27,7 @@ export interface PowerlineFooterOptions {
   ctx: ExtensionContext;
   tui: TUI;
   footerData: FooterDataLike;
+  theme: Parameters<typeof getThemePalette>[0];
   config: PowerlineConfig;
   subscription: SubscriptionState;
   savings?: SavingsState | (() => SavingsState);
@@ -64,8 +64,10 @@ export class PowerlineFooter implements Component {
 
     const { config } = this.options;
     const symbols = getSymbols(config.display.charset);
-    const palette = getThemePalette(config);
-    const mode = resolveColorMode(config.display.colorCompatibility);
+    // Read the context theme on every render so Pi theme changes are reflected
+    // without requiring the footer factory to be installed again.
+    const palette = getThemePalette(this.options.ctx.ui.theme);
+    const mode: ColorMode = 'truecolor';
     const lines: string[] = [];
 
     for (const line of config.display.lines) {

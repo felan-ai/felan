@@ -12,30 +12,24 @@ describe('powerline configuration', () => {
       extensionId: 'powerline',
       source: 'settings.json.extensionConfig.powerline',
       values: {
-        theme: 'custom',
         padding: 2,
-        colors: { metrics: { fg: '#ffffff', bg: '#123456' } },
         lines: [{ segments: { directory: { enabled: true, style: 'basename' } } }],
       },
     }]);
     const config = powerlineConfigFromSettings(resolved.get('powerline')!);
     expect(config).toMatchObject({
-      theme: 'custom',
-      colors: { custom: { metrics: { fg: '#ffffff', bg: '#123456' } } },
       display: { padding: 2 },
     });
     expect(config.display.lines).toEqual([{ segments: { directory: { enabled: true, style: 'basename' } } }]);
   });
 
-  it('uses the Felan theme and customized default layout when no overrides are supplied', () => {
+  it('uses the quiet default style and customized layout when no overrides are supplied', () => {
     const resolved = resolveExtensionConfigs([POWERLINE_CONFIG]);
     expect(powerlineConfigFromSettings(resolved.get('powerline')!)).toEqual(DEFAULT_CONFIG);
     expect(DEFAULT_CONFIG).toEqual({
-      theme: 'felan',
       display: {
-        style: 'powerline',
+        style: 'minimal',
         charset: 'text',
-        colorCompatibility: 'truecolor',
         autoWrap: true,
         padding: 1,
         lines: [
@@ -66,11 +60,6 @@ describe('powerline configuration', () => {
         lines: [{ segments: { unknown: { enabled: true } } }],
       },
     }])).toThrow('unknown segment');
-    expect(() => resolveExtensionConfigs([POWERLINE_CONFIG], [{
-      extensionId: 'powerline', source: 'settings', values: {
-        colors: { directory: { fg: 'red', bg: '#123456' } },
-      },
-    }])).toThrow('#RRGGBB');
   });
 
   it('validates the savings period', () => {

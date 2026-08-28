@@ -12,7 +12,7 @@ import {
   type TaskState,
   type UpdateTaskInput,
 } from './contracts.js';
-import { hasOpenTasks, taskCounts } from './graph.js';
+import { hasOpenTasks } from './graph.js';
 import {
   formatTaskContext,
   formatTaskDetails,
@@ -224,14 +224,21 @@ const tasksExtension: FelanExtension = (pi) => {
 
   const setStatus = (state: TaskState): void => {
     if (!statusContext) return;
-    const counts = taskCounts(state);
-    if (counts.total === 0) {
+    if (state.tasks.length === 0) {
       statusContext.ui.setStatus('tasks', undefined);
       return;
     }
+    let notStarted = 0;
+    let inProgress = 0;
+    let done = 0;
+    for (const task of state.tasks) {
+      if (task.status === 'pending' || task.status === 'blocked') notStarted += 1;
+      if (task.status === 'in_progress') inProgress += 1;
+      if (task.status === 'completed') done += 1;
+    }
     statusContext.ui.setStatus(
       'tasks',
-      `Tasks ${counts.completed}/${counts.total} · ${counts.active} active · ${counts.ready} ready · ${counts.blocked} blocked`,
+      `Tasks ${notStarted} · ${inProgress} · ${done}`,
     );
   };
 

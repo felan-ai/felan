@@ -32,8 +32,10 @@ claim at most one task at a time. A session cannot change another session's
 active task unless it explicitly requests stale-claim recovery with `force`.
 
 Local TUI sessions expose `/tasks` and `Ctrl+Shift+T` for list, detail, and graph
-views. Headless and cloud sessions use the same tools and storage without
-registering TUI controls.
+views. The compact footer status presents three unlabeled counts in Kanban order:
+not started, in progress, and done. `/tasks` retains ready, blocked, waiting,
+cancelled, and dependency details. Headless and cloud sessions use the same
+tools and storage without registering TUI controls.
 
 ## Installation and composition
 

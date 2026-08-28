@@ -241,14 +241,14 @@ describe('felan CLI', () => {
     const exitCode = await runCli([
       '--prewalk-entry-approval', 'allow',
       '--no-prewalk-restore-planner',
-      '--powerline-theme=nord',
+      '--powerline-style=capsule',
       'inspect',
     ], { launch: async (options) => launches.push(options) });
 
     expect(exitCode).toBe(0);
     expect(launches[0]?.extensionConfigOverrides).toEqual([expect.objectContaining({
       extensionId: 'prewalk', values: { entryApproval: 'allow', restorePlanner: false },
-    }), expect.objectContaining({ extensionId: 'powerline', values: { theme: 'nord' } })]);
+    }), expect.objectContaining({ extensionId: 'powerline', values: { style: 'capsule' } })]);
   });
 
   it('parses ask-user configuration options', async () => {

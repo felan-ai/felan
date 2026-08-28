@@ -10,6 +10,11 @@ import type { SubscriptionUsageHost } from '../src/subscription.js';
 
 afterEach(() => vi.useRealTimers());
 
+const theme = {
+  getFgAnsi: (color: string) => `\x1b[38;5;42m`,
+  getBgAnsi: (color: string) => `\x1b[48;5;42m`,
+};
+
 describe('powerline lifecycle', () => {
   it.each(['rpc', 'json', 'print'] as const)('is headless-safe in %s mode', async (mode) => {
     const harness = extensionHarness();
@@ -70,6 +75,36 @@ describe('powerline lifecycle', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
+  it('reads the active Pi theme when the footer renders', async () => {
+    const harness = extensionHarness();
+    powerlineExtension(harness.pi);
+    const ctx = extensionContext('tui');
+    await harness.emit('session_start', {}, ctx.value);
+    const factory = ctx.setFooter.mock.calls[0]![0] as (tui: TUI, theme: unknown, data: FooterDataLike) => Component & { render(width: number): string[] };
+    const footer = factory(
+      { requestRender: vi.fn() } as unknown as TUI,
+      theme,
+      {
+        getGitBranch: () => null,
+        getExtensionStatuses: () => new Map(),
+        getAvailableProviderCount: () => 1,
+        onBranchChange: () => vi.fn(),
+      },
+    );
+
+    const firstTheme = { getFgAnsi: () => '\x1b[38;5;42m', getBgAnsi: () => '\x1b[48;5;42m' };
+    const secondTheme = { getFgAnsi: () => '\x1b[38;5;99m', getBgAnsi: () => '\x1b[48;5;99m' };
+    ctx.ui.theme = firstTheme as never;
+    const first = footer.render(80).join('\n');
+    ctx.ui.theme = secondTheme as never;
+    const second = footer.render(80).join('\n');
+
+    expect(first).toContain('\x1b[38;5;42m');
+    expect(second).toContain('\x1b[38;5;99m');
+    expect(second).not.toContain('\x1b[38;5;42m');
+    await harness.emit('session_shutdown', {}, ctx.value);
+  });
+
   it('renders injected rows after the configured status lines', async () => {
     const harness = extensionHarness();
     createPowerlineExtension(undefined, {
@@ -85,7 +120,7 @@ describe('powerline lifecycle', () => {
     ) => Component & { dispose(): void };
     const footer = factory(
       { requestRender: vi.fn() } as unknown as TUI,
-      {},
+      theme,
       {
         getGitBranch: () => null,
         getExtensionStatuses: () => new Map(),
@@ -124,7 +159,7 @@ describe('powerline lifecycle', () => {
     const requestRender = vi.fn();
     const footer = factory(
       { requestRender } as unknown as TUI,
-      {},
+      theme,
       {
         getGitBranch: () => null,
         getExtensionStatuses: () => new Map(),
@@ -241,17 +276,22 @@ function extensionHarness() {
 
 function extensionContext(mode: ExtensionContext['mode'], model?: Record<string, unknown>) {
   const setFooter = vi.fn();
+  const theme = {
+    getFgAnsi: (color: string) => `\x1b[38;5;42m`,
+    getBgAnsi: (color: string) => `\x1b[48;5;42m`,
+  };
+  const ui = { setFooter, theme };
   const value = {
     mode,
     hasUI: mode === 'tui' || mode === 'rpc',
     cwd: '/workspace',
-    ui: { setFooter },
+    ui,
     model,
     thinkingLevel: 'off',
     getContextUsage: () => undefined,
     sessionManager: { getEntries: () => [] },
   } as unknown as ExtensionContext;
-  return { value, setFooter };
+  return { value, setFooter, ui };
 }
 
 async function settle(): Promise<void> {

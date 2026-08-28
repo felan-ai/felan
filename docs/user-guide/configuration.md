@@ -258,15 +258,10 @@ options. The complete shape is:
 
 ```json
 {
-  "theme": "custom",
   "style": "powerline",
   "charset": "text",
-  "colorCompatibility": "truecolor",
   "autoWrap": true,
   "padding": 1,
-  "colors": {
-    "directory": { "fg": "#ffffff", "bg": "#1d4ed8" }
-  },
   "lines": [
     { "segments": { "directory": { "enabled": true, "style": "fish" } } }
   ]
@@ -281,11 +276,17 @@ Git on the first line. It shows all retained local savings for seven inclusive
 UTC calendar days as `Est. Savings(7d): $33.00`; set `periodDays` to a positive
 integer from 1 to 3650 for a different period. A `~` before the amount indicates
 incomplete pricing coverage.
-`colors` accepts custom named
-`#RRGGBB` foreground/background pairs. `felan` is the default built-in theme;
-select `custom` to apply the `colors` palette. Changes take effect in a newly
-constructed process/session. The built-in is enabled by default; set
+Powerline inherits the active Pi theme and maps its semantic segment roles to
+Pi foreground/background tokens. There is no second Powerline palette or
+color mode. Felan supplies `felan-light` and `felan-dark` and defaults to
+following the terminal appearance when no Pi theme is saved. Changes take
+effect in a newly constructed process/session. The built-in is enabled by default; set
 `builtinExtensions.powerline` to `false` to remove it.
+
+Felan keeps its theme IDs namespaced instead of replacing Pi's `dark` and
+`light`: Pi 0.84.3 gives its built-in IDs precedence during HTML export. The
+interactive startup view is compact by default; press `Ctrl+O` to show full
+startup help and loaded resources.
 
 ### Extension configuration
 

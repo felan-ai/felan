@@ -1,9 +1,7 @@
 import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 
-export type ThemeName = 'felan' | 'dark' | 'light' | 'nord' | 'tokyo-night' | 'rose-pine' | 'gruvbox' | 'custom';
 export type FooterStyle = 'minimal' | 'powerline' | 'capsule';
 export type Charset = 'unicode' | 'text';
-export type ColorCompatibility = 'auto' | 'none' | 'ansi' | 'ansi256' | 'truecolor';
 export type DirectoryStyle = 'full' | 'fish' | 'basename';
 export type SessionDisplayType = 'cost' | 'tokens' | 'both' | 'breakdown';
 export type ContextDisplayStyle = 'text' | 'bar' | 'blocks' | 'blocks-line' | 'dots';
@@ -40,20 +38,10 @@ export interface DisplayLineConfig {
   segments: Partial<Record<SegmentName, SegmentConfig>>;
 }
 
-export interface ThemeColorConfig {
-  fg: string;
-  bg: string;
-}
-
 export interface PowerlineConfig {
-  theme: ThemeName;
-  colors?: {
-    custom?: Record<string, ThemeColorConfig>;
-  };
   display: {
     style: FooterStyle;
     charset: Charset;
-    colorCompatibility: ColorCompatibility;
     autoWrap: boolean;
     padding: number;
     lines: DisplayLineConfig[];
@@ -61,11 +49,9 @@ export interface PowerlineConfig {
 }
 
 export const DEFAULT_CONFIG: PowerlineConfig = {
-  theme: 'felan',
   display: {
-    style: 'powerline',
+    style: 'minimal',
     charset: 'text',
-    colorCompatibility: 'truecolor',
     autoWrap: true,
     padding: 1,
     lines: [
@@ -93,10 +79,8 @@ export const DEFAULT_CONFIG: PowerlineConfig = {
   },
 };
 
-const THEMES = new Set<ThemeName>(['felan', 'dark', 'light', 'nord', 'tokyo-night', 'rose-pine', 'gruvbox', 'custom']);
 const STYLES = new Set<FooterStyle>(['minimal', 'powerline', 'capsule']);
 const CHARSETS = new Set<Charset>(['unicode', 'text']);
-const COLORS = new Set<ColorCompatibility>(['auto', 'none', 'ansi', 'ansi256', 'truecolor']);
 const DIRECTORY_STYLES = new Set<DirectoryStyle>(['full', 'fish', 'basename']);
 const SESSION_TYPES = new Set<SessionDisplayType>(['cost', 'tokens', 'both', 'breakdown']);
 const CONTEXT_STYLES = new Set<ContextDisplayStyle>(['text', 'bar', 'blocks', 'blocks-line', 'dots']);
@@ -122,46 +106,27 @@ export const POWERLINE_CONFIG = defineExtensionConfig({
   id: 'powerline',
   title: 'Powerline',
   fields: {
-    theme: configField.enum(['felan', 'dark', 'light', 'nord', 'tokyo-night', 'rose-pine', 'gruvbox', 'custom'], { default: DEFAULT_CONFIG.theme, description: 'Powerline color theme' }),
     style: configField.enum(['minimal', 'powerline', 'capsule'], { default: DEFAULT_CONFIG.display.style, description: 'Powerline footer style' }),
     charset: configField.enum(['text', 'unicode'], { default: DEFAULT_CONFIG.display.charset, description: 'Powerline footer charset' }),
-    colorCompatibility: configField.enum(['auto', 'none', 'ansi', 'ansi256', 'truecolor'], { default: DEFAULT_CONFIG.display.colorCompatibility, description: 'Powerline ANSI color mode' }),
     autoWrap: configField.boolean({ default: DEFAULT_CONFIG.display.autoWrap, description: 'Wrap long powerline segments' }),
     padding: configField.number({ default: DEFAULT_CONFIG.display.padding, description: 'Horizontal segment padding', validate: validatePadding }),
     lines: configField.json({ default: DEFAULT_CONFIG.display.lines, description: 'Ordered powerline lines and segments', validate: validateLines }),
-    colors: configField.json({ default: {}, description: 'Custom powerline colors', validate: validateColors }),
   },
 });
 
 export function powerlineConfigFromSettings(values: Readonly<Record<string, unknown>>): PowerlineConfig {
   const config = cloneConfig(DEFAULT_CONFIG);
-  if (typeof values.theme === 'string' && THEMES.has(values.theme as ThemeName)) config.theme = values.theme as ThemeName;
   if (typeof values.style === 'string' && STYLES.has(values.style as FooterStyle)) config.display.style = values.style as FooterStyle;
   if (typeof values.charset === 'string' && CHARSETS.has(values.charset as Charset)) config.display.charset = values.charset as Charset;
-  if (typeof values.colorCompatibility === 'string' && COLORS.has(values.colorCompatibility as ColorCompatibility)) config.display.colorCompatibility = values.colorCompatibility as ColorCompatibility;
   if (typeof values.autoWrap === 'boolean') config.display.autoWrap = values.autoWrap;
   if (typeof values.padding === 'number') config.display.padding = values.padding;
   if (values.lines !== undefined) config.display.lines = parseDisplayLines(values.lines);
-  if (values.colors !== undefined) {
-    const colors = parseCustomColors(values.colors);
-    if (Object.keys(colors).length > 0) config.colors = { custom: colors };
-  }
   return config;
 }
 
 
 function cloneConfig(config: PowerlineConfig): PowerlineConfig {
   return {
-    theme: config.theme,
-    ...(config.colors?.custom === undefined
-      ? {}
-      : {
-          colors: {
-            custom: Object.fromEntries(
-              Object.entries(config.colors.custom).map(([name, color]) => [name, color ? { ...color } : color]),
-            ),
-          },
-        }),
     display: {
       ...config.display,
       lines: config.display.lines.map((line) => ({
@@ -182,15 +147,6 @@ function validatePadding(value: unknown): string | undefined {
 function validateLines(value: unknown): string | undefined {
   try {
     parseDisplayLines(value);
-    return undefined;
-  } catch (error) {
-    return errorMessage(error);
-  }
-}
-
-function validateColors(value: unknown): string | undefined {
-  try {
-    parseCustomColors(value);
     return undefined;
   } catch (error) {
     return errorMessage(error);
@@ -250,27 +206,12 @@ function parseSegmentConfig(value: unknown, source: string): SegmentConfig {
   return config;
 }
 
-function parseCustomColors(value: unknown): Record<string, ThemeColorConfig> {
-  if (!isRecord(value)) throw new Error('must be an object');
-  const colors: Record<string, ThemeColorConfig> = {};
-  for (const [name, pair] of Object.entries(value)) {
-    if (!isRecord(pair)) throw new Error(`${name} must be an object`);
-    if (!isHexColor(pair.fg) || !isHexColor(pair.bg)) throw new Error(`${name}.fg and ${name}.bg must be #RRGGBB colors`);
-    colors[name] = { fg: pair.fg, bg: pair.bg };
-  }
-  return colors;
-}
-
 function findSegment(config: PowerlineConfig, name: SegmentName): SegmentConfig | undefined {
   for (const line of config.display.lines) {
     const segment = line.segments[name];
     if (segment) return segment;
   }
   return undefined;
-}
-
-function isHexColor(value: unknown): value is string {
-  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

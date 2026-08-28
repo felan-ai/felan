@@ -182,6 +182,7 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
     const mode = new InteractiveMode(createToolActivityRuntimeView(runtime), {
       ...(options.initialMessage === undefined ? {} : { initialMessage: options.initialMessage }),
       ...(options.verbose === undefined ? {} : { verbose: options.verbose }),
+      initialThemeSetting: runtime.services.settingsManager.getThemeSetting() ?? 'felan-light/felan-dark',
       ...(startupDiagnostics.length === 0 ? {} : { startupDiagnostics }),
     });
     installFelanSettingsCommand(mode, {

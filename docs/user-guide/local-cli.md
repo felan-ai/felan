@@ -179,6 +179,17 @@ Ambient Pi extensions, packages, prompts, project settings, themes, and package
 resources are filtered. Felan also does not import Claude, Cursor, Codex, or
 other tools' ambient extension configuration.
 
+Felan supplies two host-owned Pi themes, `felan-light` and `felan-dark`, and
+uses `felan-light/felan-dark` by default when no saved theme setting exists.
+The active Pi theme is shared by built-in UI, Felan overlays, and the Powerline
+footer. Felan keeps these namespaced rather than replacing Pi's `dark` and
+`light` IDs: Pi 0.84.3 resolves those built-in names first when exporting HTML,
+which would make runtime and exported sessions disagree.
+
+Startup is intentionally compact: it shows a Felan welcome and key hints
+instead of listing every Context, Skill, Extension, and Theme. Press `Ctrl+O`
+for the full help and loaded-resource view; startup diagnostics remain visible.
+
 ## Tool presentation
 
 The local transcript groups adjacent tool activity by default. Press `Ctrl+O`
