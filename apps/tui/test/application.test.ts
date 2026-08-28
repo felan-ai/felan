@@ -246,9 +246,29 @@ describe('interactive application', () => {
     expect(interactive.constructorDisposals).toEqual([0, 1]);
     expect(interactive.disposals).toBe(2);
     expect(interactive.modeOptions).toEqual([
-      { initialMessage: 'only the first session', initialThemeSetting: 'felan-light/felan-dark' },
-      { initialThemeSetting: 'felan-light/felan-dark' },
+      { initialMessage: 'only the first session', tuiMode: 'fullscreen', initialThemeSetting: 'felan-light/felan-dark' },
+      { tuiMode: 'fullscreen', initialThemeSetting: 'felan-light/felan-dark' },
     ]);
+  });
+
+  it('starts new installs in fullscreen mode while preserving saved TUI mode', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+
+    await runLocalFelan({ cwd, agentDir });
+    expect(interactive.modeOptions[0]).toEqual(expect.objectContaining({ tuiMode: 'fullscreen' }));
+
+    interactive.modeOptions = [];
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ tuiMode: 'regular' }));
+    await runLocalFelan({ cwd, agentDir });
+    expect(interactive.modeOptions[0]).toEqual(expect.objectContaining({ tuiMode: 'regular' }));
+
+    interactive.modeOptions = [];
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ tuiMode: 'fullscreen' }));
+    await runLocalFelan({ cwd, agentDir });
+    expect(interactive.modeOptions[0]).toEqual(expect.objectContaining({ tuiMode: 'fullscreen' }));
   });
 
   it('cancels a pending update check before disposing the interactive runtime', async () => {
@@ -288,7 +308,7 @@ describe('interactive application', () => {
 
     await runLocalFelan({ cwd, agentDir, verbose: true });
 
-    expect(interactive.modeOptions).toEqual([{ verbose: true, initialThemeSetting: 'felan-light/felan-dark' }]);
+    expect(interactive.modeOptions).toEqual([{ verbose: true, tuiMode: 'fullscreen', initialThemeSetting: 'felan-light/felan-dark' }]);
     expect(interactive.headerAdapters).toEqual([true]);
   });
 
@@ -304,6 +324,7 @@ describe('interactive application', () => {
     await runLocalFelan({ cwd, agentDir });
 
     expect(interactive.modeOptions).toEqual([{
+      tuiMode: 'fullscreen',
       initialThemeSetting: 'felan-light/felan-dark',
       startupDiagnostics: [{
         type: 'warning',

@@ -33,6 +33,18 @@ instructions.
 
 Use `/progressive-context` to inspect what has been loaded.
 
+Use `/context` to inspect the assembled context-window estimate. The report
+breaks usage into the system prompt, tools, project context, skills, memory,
+messages, other context, and free space. It renders inline by default; configure
+`extensionConfig.contextView.displayMode` as `overlay` for a centered popup.
+Estimates are based on the current prompt and session entries and are not
+provider billing measurements; immediately after compaction, the provider usage
+may remain unknown until the next model response.
+
+The Memory row includes the injected `summary.md`, `index.md`, and schema, plus
+identifiable reads from the session memory projection. Other conversation
+messages are counted under Messages.
+
 ## Agent Skills
 
 The local host explicitly loads Agent Skills from:

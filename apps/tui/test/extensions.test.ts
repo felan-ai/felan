@@ -23,6 +23,16 @@ describe('local extension importer', () => {
     })]);
   });
 
+  it('discovers context-view display configuration', async () => {
+    const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-context-view']);
+    expect(definitions).toEqual([expect.objectContaining({
+      id: 'contextView',
+      fields: expect.objectContaining({
+        displayMode: expect.objectContaining({ default: 'inline', values: ['inline', 'overlay'] }),
+      }),
+    })]);
+  });
+
   it('imports only the source-controlled package list', async () => {
     expect(localExtensionPackages).toEqual([
       '@felan-ai/ext-subagents',
@@ -38,6 +48,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-rtk-optimizer',
       '@felan-ai/ext-markitdown',
       '@felan-ai/ext-context',
+      '@felan-ai/ext-context-view',
       '@felan-ai/ext-memory',
       '@felan-ai/ext-powerline',
       '@felan-ai/ext-output-style',
@@ -223,6 +234,7 @@ describe('local extension importer', () => {
       felanApi: false,
       powerline: false,
       outputStyle: false,
+      contextView: false,
     })).toEqual([
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',

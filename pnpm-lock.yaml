@@ -50,6 +50,9 @@ importers:
       '@felan-ai/ext-context':
         specifier: workspace:*
         version: link:../../packages/ext-context
+      '@felan-ai/ext-context-view':
+        specifier: workspace:*
+        version: link:../../packages/ext-context-view
       '@felan-ai/ext-felan-api':
         specifier: workspace:*
         version: link:../../packages/ext-felan-api
@@ -155,6 +158,16 @@ importers:
         version: link:../agent-core
 
   packages/ext-context:
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-context-view:
+    dependencies:
+      '@earendil-works/pi-tui':
+        specifier: 0.84.3
+        version: 0.84.3
     devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.18.1",
+  "version": "0.18.2",
   "description": "Open-source, model-portable coding agent built for cost-efficient, verifiable software work",
   "keywords": [
     "ai",
@@ -55,6 +55,7 @@
     "@felan-ai/ext-subagents": "workspace:*",
     "@felan-ai/ext-tasks": "workspace:*",
     "@felan-ai/ext-context": "workspace:*",
+    "@felan-ai/ext-context-view": "workspace:*",
     "@felan-ai/ext-felan-api": "workspace:*",
     "@felan-ai/ext-memory": "workspace:*",
     "@felan-ai/ext-output-style": "workspace:*",

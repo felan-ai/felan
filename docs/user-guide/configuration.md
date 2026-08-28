@@ -39,6 +39,7 @@ browser and Powerline extensions:
     "rtkOptimizer": true,
     "markitdown": true,
     "context": true,
+    "contextView": true,
     "memory": true,
     "outputStyle": true,
     "powerline": false
@@ -46,6 +47,7 @@ browser and Powerline extensions:
   "extensionConfig": {
     "prewalk": { "entryApproval": "allow", "planReview": "skip" },
     "outputStyle": { "style": "concise" },
+    "contextView": { "displayMode": "inline" },
     "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true }
   },
   "felanSubagents": {
@@ -55,7 +57,9 @@ browser and Powerline extensions:
   "felanTui": {
     "toolDisplay": "grouped",
     "memoryProcessing": true
-  }
+  },
+  "editorPaddingX": 1,
+  "tuiMode": "fullscreen"
 }
 ```
 
@@ -64,8 +68,15 @@ Defaults:
 - every built-in is enabled;
 - response output style is `concise`;
 - subagent concurrency is `4` and maximum nesting depth is `3`;
+- editor horizontal padding is `1`;
 - tool display is `grouped`; and
 - local memory processing is enabled.
+
+New installations use Pi's `fullscreen` TUI mode and editor padding `1`.
+Existing `tuiMode` and `editorPaddingX` values in `settings.json` remain
+authoritative, so `regular` mode and zero padding continue to work. Change
+either value from `/settings`; the choice is saved for future sessions. Felan
+uses Pi's native prompt editor frame rather than adding a second box around it.
 
 The dependency manager also stores onboarding decisions under `felanTui`.
 Prefer `/dependencies` over editing that internal state directly.
@@ -140,6 +151,17 @@ warning, ignores each invalid field, and uses that field's declared default;
 other valid fields in the same extension remain active. Invalid CLI and
 programmatic overrides remain errors. Felan does not rewrite invalid persisted
 values automatically.
+
+### Context View
+
+The `extensionConfig.contextView.displayMode` setting controls `/context` in
+the interactive TUI. It defaults to `inline`, which replaces the current
+content with the report until it is closed. Set it to `overlay` for a centered
+popup. Headless modes always emit the compact report as text output.
+
+The report attributes the initial memory `summary.md`, `index.md`, and schema
+to Memory, along with identifiable reads from the session memory projection;
+ordinary conversation messages remain under Messages.
 
 ### Ask User
 

@@ -147,6 +147,16 @@ for (const requiredNotice of [
     errors.push(`packages/ext-markitdown/NOTICE is missing ${requiredNotice}`);
   }
 }
+const contextViewNotice = readFileSync(resolve(root, 'packages/ext-context-view/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'packages/pi-context',
+  '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
+  'Pi-TUI 0.84.3',
+]) {
+  if (!contextViewNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-context-view/NOTICE is missing ${requiredNotice}`);
+  }
+}
 const tasksNotice = readFileSync(resolve(root, 'packages/ext-tasks/NOTICE'), 'utf8');
 if (!tasksNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-tasks/NOTICE is missing TypeBox 1.1.38');

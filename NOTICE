@@ -46,6 +46,12 @@ packages/pi-progressive-context from https://github.com/mslavov/pi-extensions
 at commit 9571293d422db11de893fa80ed0fc3e39945c657.
 Copyright (c) 2026 Milko Slavov.
 
+@felan-ai/ext-context-view adapts MIT-licensed portions of packages/pi-context
+from https://github.com/mslavov/pi-extensions at commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d. Copyright (c) 2026 Milko Slavov.
+Package-level attribution and license terms are included in
+packages/ext-context-view/NOTICE and LICENSE.
+
 @felan-ai/ext-markitdown adapts MIT-licensed portions of
 packages/pi-markitdown from https://github.com/mslavov/pi-extensions at commit
 7e72e509fe45a5a87c4c2e176cb711de994a8c1d. Copyright (c) 2026 Milko Slavov.

@@ -112,6 +112,10 @@ Felan follows the terminal appearance automatically. The `felan-*` names are
 intentional: Pi 0.84.3 reserves `dark` and `light` for its built-in export
 themes, so colliding IDs would make exported sessions use different colors.
 Powerline consumes that same active theme instead of defining its own colors.
+New installs use Pi's fullscreen TUI mode by default. A saved `tuiMode` setting
+continues to take precedence; use `/settings` to switch between `fullscreen`
+and `regular`. The prompt uses Pi's native editor rendering with one column of
+horizontal padding by default; saved `editorPaddingX` values take precedence.
 
 Model responses use the built-in `concise` output style by default. Set the
 global `outputStyle` setting to `explanatory` for more reasoning and context.

@@ -41,6 +41,7 @@ to start a new session for the current directory.
 | `/markitdown` | Show document-converter status |
 | `/markitdown install` | Explicitly install the managed converter |
 | `/progressive-context` | Show progressively loaded nested instructions |
+| `/context` | Show estimated current context-window usage inline (or in the configured overlay) |
 | `/rtk` | Open interactive RTK settings |
 | `/rtk show` | Show RTK configuration and runtime status |
 | `/rtk verify` | Recheck the active runtime for RTK |

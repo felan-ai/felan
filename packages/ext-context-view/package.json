@@ -1,13 +1,13 @@
 {
-  "name": "@felan-ai/agent-core",
-  "version": "0.5.5",
-  "description": "Portable Felan agent contracts and composition",
+  "name": "@felan-ai/ext-context-view",
+  "version": "0.1.0",
+  "description": "Local TUI context-window usage inspector for Felan",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felan-ai/felan.git",
-    "directory": "packages/agent-core"
+    "directory": "packages/ext-context-view"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -31,9 +31,13 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.3",
-    "@earendil-works/pi-coding-agent": "0.84.3",
-    "@lydell/node-pty": "1.2.0-beta.14"
+    "@earendil-works/pi-tui": "0.84.3"
+  },
+  "peerDependencies": {
+    "@felan-ai/agent-core": "^0.5.5"
+  },
+  "devDependencies": {
+    "@felan-ai/agent-core": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

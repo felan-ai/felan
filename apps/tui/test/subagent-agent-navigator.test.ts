@@ -291,8 +291,8 @@ describe('AgentRailEditor', () => {
     editor.handleInput('\x1b[B');
 
     let output = editor.render(80).join('\n');
-    expect(output).toContain('╭');
-    expect(output).toContain('╯');
+    expect(output).not.toContain('╭');
+    expect(output.split('\n')[0]).toBe('─'.repeat(80));
     expect(output).toContain('› ● explore');
     expect(output).toContain('provider/explore-model');
     expect(output).toContain('◦ developer');
@@ -335,7 +335,7 @@ describe('AgentRailEditor', () => {
     expect(visibleWidth(row!)).toBe(120);
   });
 
-  it('preserves Pi scroll indicators instead of reframing them', () => {
+  it('preserves Pi scroll indicators and native editor width', () => {
     const host = navigatorHost(() => []);
     const editor = new AgentRailEditor(
       { terminal: { rows: 20, columns: 80 }, requestRender: vi.fn() } as never,
@@ -353,7 +353,7 @@ describe('AgentRailEditor', () => {
     expect(lines.join('\n')).toMatch(/↑\s*\d+\s+more/u);
     expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true);
     expect(lines.join('\n')).not.toContain('╭');
-    expect(lines.join('\n')).not.toContain('╰');
+    expect(lines.join('\n')).not.toContain('│');
   });
 });
 

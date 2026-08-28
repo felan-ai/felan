@@ -75,6 +75,7 @@ describe('local settings', () => {
     expect(settings.getSkillPaths()).toEqual([]);
     expect(settings.getPromptTemplatePaths()).toEqual([]);
     expect(settings.getThemePaths()).toEqual([]);
+    expect(settings.getEditorPaddingX()).toBe(1);
     expect(settings.getEnableInstallTelemetry()).toBe(false);
     expect(settings.getLastChangelogVersion()).toBe(PI_VERSION);
     expect(settings.getGlobalSettings().packages).toEqual([]);
@@ -94,10 +95,22 @@ describe('local settings', () => {
     settings.setProjectTrusted(false);
     expect(settings.isProjectTrusted()).toBe(true);
     expect(settings.getDefaultModel()).toBe('test-model');
+    expect(settings.getEditorPaddingX()).toBe(1);
     expect(settings.getPackages()).toEqual([]);
     expect(settings.getEnableInstallTelemetry()).toBe(false);
     expect(settings.getLastChangelogVersion()).toBe(PI_VERSION);
     expect(settings.getGlobalSettings().packages).toEqual([]);
+  });
+
+  it('preserves explicitly configured editor padding', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ editorPaddingX: 0 }));
+
+    const settings = createLocalSettingsManager(root, agentDir);
+
+    expect(settings.getEditorPaddingX()).toBe(0);
   });
 
   it('defaults to grouped tool display and rejects invalid values', () => {

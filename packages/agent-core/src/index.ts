@@ -86,7 +86,10 @@ export type {
   FelanExtensionAPI,
   FelanModelSelectionOptions,
 } from './extensions.js';
-export { createAgentCoreResourceLoader } from './resource-loader.js';
+export {
+  createAgentCoreResourceLoader,
+  runtimeToolsExtensionName,
+} from './resource-loader.js';
 export type { CreateAgentCoreResourceLoaderOptions } from './resource-loader.js';
 export { createRuntimeCodingTools } from './tools.js';
 export type { RuntimeCodingToolsOptions } from './tools.js';
@@ -106,14 +109,17 @@ export {
   AgentSession,
   CURRENT_SESSION_VERSION,
   DefaultResourceLoader,
+  DynamicBorder,
   ModelRuntime,
   SessionManager,
   SettingsManager,
   createAgentSessionRuntime,
   defineTool,
+  formatSkillsForPrompt,
   getAgentDir,
   loadSkillsFromDir,
   resizeImage,
+  sessionEntryToContextMessages,
   withFileMutationQueue,
 } from '@earendil-works/pi-coding-agent';
 export type {
@@ -121,12 +127,14 @@ export type {
   AgentSessionEventListener,
   AgentSessionRuntimeDiagnostic,
   AgentSessionServices,
+  BuildSystemPromptOptions,
   CreateAgentSessionOptions,
   CreateAgentSessionResult,
   CreateAgentSessionRuntimeFactory,
   CreateAgentSessionRuntimeResult,
   Extension,
   ExtensionAPI,
+  ExtensionCommandContext,
   ExtensionContext,
   ExtensionFactory,
   InlineExtension,
@@ -135,9 +143,16 @@ export type {
   ResourceLoader,
   ResizedImage,
   SessionContext,
+  SessionEntry,
+  SessionMessageEntry,
   SessionStartEvent,
   Skill,
+  Theme,
+  ThemeColor,
+  SlashCommandInfo,
+  SourceInfo,
   ToolDefinition,
+  ToolInfo,
 } from '@earendil-works/pi-coding-agent';
 export {
   InMemoryCredentialStore,

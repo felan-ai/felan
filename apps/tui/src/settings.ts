@@ -142,6 +142,7 @@ export function createLocalSettingsManager(cwd: string, agentDir: string): Setti
     lastChangelogVersion: PI_VERSION,
   };
   const reload = settingsManager.reload.bind(settingsManager);
+  const getEditorPaddingX = settingsManager.getEditorPaddingX.bind(settingsManager);
   const getGlobalSettings = settingsManager.getGlobalSettings.bind(settingsManager);
   const getProjectSettings = settingsManager.getProjectSettings.bind(settingsManager);
 
@@ -150,6 +151,9 @@ export function createLocalSettingsManager(cwd: string, agentDir: string): Setti
     await reload();
     settingsManager.applyOverrides(runtimeOverrides);
   };
+  settingsManager.getEditorPaddingX = () => (
+    getGlobalSettings().editorPaddingX === undefined ? 1 : getEditorPaddingX()
+  );
   settingsManager.getGlobalSettings = () => ({
     ...getGlobalSettings(),
     ...filteredResources,

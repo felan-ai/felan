@@ -51,6 +51,7 @@ export const builtinExtensionPackages = {
   // Append conversion diagnostics after result optimization, then restore the source path for progressive context.
   markitdown: '@felan-ai/ext-markitdown',
   context: '@felan-ai/ext-context',
+  contextView: '@felan-ai/ext-context-view',
   memory: memoryExtensionPackage,
   powerline: powerlineExtensionPackage,
   outputStyle: outputStyleExtensionPackage,

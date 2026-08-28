@@ -86,7 +86,7 @@ explicit application `customTools` retain final precedence.
 
 Agent Core owns the exact Pi dependency versions used by its consumers. Its
 public entry point exposes the Pi model, credential, streaming, session,
-resource, skill, and tool symbols needed to compose Felan applications, so
+resource, skill, tool, and context-inspection symbols needed to compose Felan applications, so
 consumers import those symbols from `@felan-ai/agent-core` without declaring
 Pi packages directly.
 
