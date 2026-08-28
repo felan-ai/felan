@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.18.2",
+  "version": "0.18.3",
   "description": "Open-source, model-portable coding agent built for cost-efficient, verifiable software work",
   "keywords": [
     "ai",
@@ -63,6 +63,7 @@
     "@felan-ai/ext-powerline": "workspace:*",
     "@felan-ai/ext-prewalk": "workspace:*",
     "@felan-ai/ext-rtk-optimizer": "workspace:*",
+    "@felan-ai/ext-codebase-memory": "workspace:*",
     "@felan-ai/ext-web-access": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0",
     "@napi-rs/keyring": "1.3.0",

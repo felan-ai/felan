@@ -1,0 +1,11 @@
+@felan-ai/ext-codebase-memory
+Copyright (c) 2026 Felan AI, Inc.
+
+This package adapts portions of pi-cbm-proxy from mslavov/pi-extensions,
+https://github.com/mslavov/pi-extensions/tree/main/packages/pi-cbm-proxy.
+Copyright (c) 2026 Milko Slavov. Licensed under the MIT License included in
+this package.
+
+It integrates with codebase-memory-mcp by DeusData, licensed under the MIT
+License. codebase-memory-mcp is installed separately and is not distributed
+in this package.

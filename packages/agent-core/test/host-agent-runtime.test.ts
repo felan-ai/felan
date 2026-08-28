@@ -362,6 +362,18 @@ describe('HostAgentRuntime', () => {
     expect(result.killed).toBe(false);
   });
 
+  it('passes explicit environment values to literal exec commands', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const variable = `exec-${Date.now()}`;
+    const result = await runtime.exec(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.HOST_RUNTIME_EXEC_LITERAL ?? "")'],
+      { env: { HOST_RUNTIME_EXEC_LITERAL: variable } },
+    );
+
+    expect(result).toMatchObject({ code: 0, stdout: variable });
+  });
+
   it('runs commands through an explicit POSIX shell without changing the default shell', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     let result;

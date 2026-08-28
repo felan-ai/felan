@@ -48,6 +48,7 @@ export const builtinExtensionPackages = {
   backgroundBash: '@felan-ai/ext-background-bash',
   codex: '@felan-ai/ext-codex',
   rtkOptimizer: '@felan-ai/ext-rtk-optimizer',
+  codebaseMemory: '@felan-ai/ext-codebase-memory',
   // Append conversion diagnostics after result optimization, then restore the source path for progressive context.
   markitdown: '@felan-ai/ext-markitdown',
   context: '@felan-ai/ext-context',

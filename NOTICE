@@ -135,6 +135,15 @@ packages/ext-rtk-optimizer/NOTICE and LICENSE.
 The optional managed installer and RTK binary are downloaded only after
 explicit user confirmation and are not bundled in this distribution.
 
+@felan-ai/ext-codebase-memory adapts MIT-licensed portions of pi-cbm-proxy from
+https://github.com/mslavov/pi-extensions/tree/main/packages/pi-cbm-proxy.
+Copyright (c) 2026 Milko Slavov. It integrates with codebase-memory-mcp 0.10.8
+from https://github.com/DeusData/codebase-memory-mcp under the MIT License.
+The optional runtime and reviewed installer are downloaded only after explicit
+user confirmation and are not bundled in this distribution. Package-level
+attribution and license terms are included in packages/ext-codebase-memory/NOTICE
+and LICENSE.
+
 @felan-ai/ext-prewalk adapts MIT-licensed portions of packages/pi-prewalk from
 mslavov/pi-extensions at commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
 Copyright (c) 2026 Dimitar Panayotov and Milko Slavov. Package-level attribution

@@ -97,7 +97,7 @@ export class HostAgentRuntime implements AgentRuntime {
   ): Promise<ExecResult> {
     const literalArgs = [...args];
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
-    return this.#spawn(command, literalArgs, cwd, options, false);
+    return this.#spawn(command, literalArgs, cwd, options, false, options?.env);
   }
 
   async shell(command: string, options?: HostShellOptions): Promise<ExecResult> {

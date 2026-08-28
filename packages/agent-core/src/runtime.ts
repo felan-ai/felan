@@ -8,6 +8,8 @@ export type ExecOptions = PiExecOptions;
 export interface AgentRuntimeExecOptions extends PiExecOptions {
   /** Maximum combined stdout/stderr bytes retained by the host adapter. */
   readonly maxOutputBytes?: number;
+  /** Explicit environment overrides merged by the runtime adapter. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 export interface AgentRuntimeExecResult extends PiExecResult {

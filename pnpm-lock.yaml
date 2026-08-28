@@ -44,6 +44,9 @@ importers:
       '@felan-ai/ext-browser':
         specifier: workspace:*
         version: link:../../packages/ext-browser
+      '@felan-ai/ext-codebase-memory':
+        specifier: workspace:*
+        version: link:../../packages/ext-codebase-memory
       '@felan-ai/ext-codex':
         specifier: workspace:*
         version: link:../../packages/ext-codex
@@ -135,6 +138,16 @@ importers:
         version: link:../agent-core
 
   packages/ext-browser:
+    dependencies:
+      typebox:
+        specifier: 1.1.38
+        version: 1.1.38
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-codebase-memory:
     dependencies:
       typebox:
         specifier: 1.1.38
