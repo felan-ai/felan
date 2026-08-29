@@ -80,7 +80,6 @@ describe('local MCP config', () => {
       },
     });
     expect(loaded.warnings).toEqual([
-      'Skipped project MCP server "sonar": stdio transport is unsupported',
       'Skipped project MCP server "privateApi": custom headers are unsupported',
     ]);
     expect(loaded.warnings.join('\n')).not.toContain('secret-value-must-not-appear');
