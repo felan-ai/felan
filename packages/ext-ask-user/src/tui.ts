@@ -788,7 +788,7 @@ class AskPrompt extends Container {
   }
 
   override render(width: number): string[] {
-    const innerWidth = Math.max(1, width - BOX_OVERHEAD);
+    const innerWidth = Math.max(1, width - (this.displayMode === 'overlay' ? BOX_OVERHEAD : 0));
     const maxHeight = this.displayMode === 'overlay'
       ? overlayMaxRenderLines(this.tui.terminal.rows)
       : undefined;
@@ -823,11 +823,12 @@ class AskPrompt extends Container {
       ].slice(0, promptBudget);
       return this.frameBody([...promptLines, ...modeLines], width, innerWidth);
     }
-    const border = (text: string) => this.theme.fg('accent', text);
     return lines.map((line, index) => {
       if (index === 0) return this.renderTopBorder(width);
       if (index === lines.length - 1) return this.renderBottomBorder(width);
-      return `${border(BOX_LEFT)}${truncateToWidth(line, innerWidth, '', true)}${border(BOX_RIGHT)}`;
+      return this.displayMode === 'overlay'
+        ? this.boxLine(line, innerWidth)
+        : truncateToWidth(line, width, '', true);
     });
   }
 
@@ -1023,15 +1024,23 @@ class AskPrompt extends Container {
   }
 
   private frameBody(body: string[], width: number, innerWidth: number): string[] {
-    const border = (text: string) => this.theme.fg('accent', text);
+    if (this.displayMode === 'inline') {
+      return [this.renderTopBorder(width), ...body.map((line) => truncateToWidth(line, width, '', true)), this.renderBottomBorder(width)];
+    }
     return [
       this.renderTopBorder(width),
-      ...body.map((line) => `${border(BOX_LEFT)}${truncateToWidth(line, innerWidth, '', true)}${border(BOX_RIGHT)}`),
+      ...body.map((line) => this.boxLine(line, innerWidth)),
       this.renderBottomBorder(width),
     ];
   }
 
+  private boxLine(line: string, innerWidth: number): string {
+    const border = (text: string) => this.theme.fg('accent', text);
+    return `${border(BOX_LEFT)}${truncateToWidth(line, innerWidth, '', true)}${border(BOX_RIGHT)}`;
+  }
+
   private renderTopBorder(width: number): string {
+    if (this.displayMode === 'inline') return this.theme.fg('accent', '─'.repeat(Math.max(1, width)));
     return new BorderTop(
       (text) => this.theme.fg('accent', text),
       'ask_user',
@@ -1040,6 +1049,7 @@ class AskPrompt extends Container {
   }
 
   private renderBottomBorder(width: number): string {
+    if (this.displayMode === 'inline') return this.theme.fg('accent', '─'.repeat(Math.max(1, width)));
     return new BorderBottom(
       (text) => this.theme.fg('accent', text),
       `v${VERSION}`,
@@ -1099,9 +1109,13 @@ class AskWizard implements Component {
     const body = this.index === this.questions.length ? this.renderReview(width) : this.ensurePrompt().render(width);
     if (body.length < 2) return body;
     const border = (text: string) => this.theme.fg('accent', text);
-    const inner = Math.max(1, width - BOX_OVERHEAD);
-    const navigation = `${border(BOX_LEFT)}${truncateToWidth(this.navigation(), inner, '', true)}${border(BOX_RIGHT)}`;
-    const spacer = `${border(BOX_LEFT)}${truncateToWidth('', inner, '', true)}${border(BOX_RIGHT)}`;
+    const inner = Math.max(1, width - (this.displayMode === 'overlay' ? BOX_OVERHEAD : 0));
+    const navigation = this.displayMode === 'overlay'
+      ? `${border(BOX_LEFT)}${truncateToWidth(this.navigation(), inner, '', true)}${border(BOX_RIGHT)}`
+      : truncateToWidth(this.navigation(), width, '', true);
+    const spacer = this.displayMode === 'overlay'
+      ? `${border(BOX_LEFT)}${truncateToWidth('', inner, '', true)}${border(BOX_RIGHT)}`
+      : ' '.repeat(width);
     const decorated = [body[0]!, navigation, spacer, ...body.slice(1)];
     if (this.displayMode !== 'overlay') return decorated;
     const maxHeight = overlayMaxRenderLines(this.tui.terminal.rows);
@@ -1191,18 +1205,30 @@ class AskWizard implements Component {
 
   private renderReview(width: number): string[] {
     const border = (text: string) => this.theme.fg('accent', text);
-    const inner = Math.max(1, width - BOX_OVERHEAD);
+    const inner = Math.max(1, width - (this.displayMode === 'overlay' ? BOX_OVERHEAD : 0));
     const body = [this.theme.fg('accent', this.theme.bold('Review answers')), ''];
     for (const question of this.questions) {
       body.push(`${this.theme.fg('muted', `${question.header}:`)} ${this.theme.fg('text', question.question)}`);
       body.push(`  ${this.responses.has(question.id) ? formatResponse(this.responses.get(question.id)!) : this.theme.fg('muted', 'Skipped')}`);
     }
     body.push('', this.theme.fg('dim', 'Enter submit • unanswered questions are skipped • Tab/←→ navigate • Esc cancel'));
+    const bodyLines = body.map((line) => this.displayMode === 'overlay'
+      ? this.boxLine(line, inner)
+      : truncateToWidth(line, width, '', true));
     return [
-      new BorderTop(border, 'ask_user', (text) => this.theme.fg('dim', this.theme.bold(text))).render(width)[0]!,
-      ...body.map((line) => `${border(BOX_LEFT)}${truncateToWidth(line, inner, '', true)}${border(BOX_RIGHT)}`),
-      new BorderBottom(border, `v${VERSION}`, (text) => this.theme.fg('dim', text)).render(width)[0]!,
+      this.displayMode === 'overlay'
+        ? new BorderTop(border, 'ask_user', (text) => this.theme.fg('dim', this.theme.bold(text))).render(width)[0]!
+        : border('─'.repeat(Math.max(1, width))),
+      ...bodyLines,
+      this.displayMode === 'overlay'
+        ? new BorderBottom(border, `v${VERSION}`, (text) => this.theme.fg('dim', text)).render(width)[0]!
+        : border('─'.repeat(Math.max(1, width))),
     ];
+  }
+
+  private boxLine(line: string, innerWidth: number): string {
+    const border = (text: string) => this.theme.fg('accent', text);
+    return `${border(BOX_LEFT)}${truncateToWidth(line, innerWidth, '', true)}${border(BOX_RIGHT)}`;
   }
 }
 

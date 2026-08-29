@@ -10,7 +10,7 @@ describe('@felan-ai/ext-context-view package boundary', () => {
     const notice = await readFile(join(packageRoot, 'NOTICE'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-context-view',
-      version: '0.1.0',
+      version: '0.1.1',
       type: 'module',
       license: 'MIT',
       engines: { node: '>=22.19.0' },

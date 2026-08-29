@@ -182,6 +182,8 @@ The [documentation hub](docs/README.md) routes readers by audience:
 | [`@felan-ai/ext-ask-user`](packages/ext-ask-user/README.md) | Structured one-to-four-question input | [Commands](docs/user-guide/commands-and-shortcuts.md) |
 | [`@felan-ai/ext-context`](packages/ext-context/README.md) | Progressive nested project context | [Context and memory](docs/user-guide/context-and-memory.md) |
 | [`@felan-ai/ext-context-view`](packages/ext-context-view/README.md) | Estimated context-window usage inspector | [Context and memory](docs/user-guide/context-and-memory.md) |
+| [`@felan-ai/ext-insights`](packages/ext-insights/README.md) | Local session analytics reports | [Commands](docs/user-guide/commands-and-shortcuts.md) |
+| [`@felan-ai/ext-prompt-history`](packages/ext-prompt-history/README.md) | TUI prompt-history picker | [Commands](docs/user-guide/commands-and-shortcuts.md) |
 | [`@felan-ai/ext-memory`](packages/ext-memory/README.md) | Portable local-first memory contracts | [Memory architecture](docs/concepts/local-memory.md) |
 | [`@felan-ai/ext-output-style`](packages/ext-output-style/README.md) | Validated concise, explanatory, and custom response instructions | [Configuration](docs/user-guide/configuration.md#output-style) |
 | [`@felan-ai/ext-web-access`](packages/ext-web-access/README.md) | Bounded web search, source checking, and content retrieval | [Web access](docs/user-guide/web-mcp-and-browser.md) |

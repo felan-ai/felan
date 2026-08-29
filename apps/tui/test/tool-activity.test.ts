@@ -543,6 +543,11 @@ describe('ToolActivityInspector', () => {
     );
 
     const output = inspector.render(100).join('\n');
+    const lines = inspector.render(100);
+    expect(lines[0]).toBe('─'.repeat(100));
+    expect(lines.at(-1)).toBe('─'.repeat(100));
+    expect(lines.some((line) => line.startsWith('│') || line.endsWith('│'))).toBe(false);
+    expect(lines.every((line) => visibleWidth(line) <= 100)).toBe(true);
     expect(output).toContain('Specialized read view');
     expect(output).toContain('Specialized result view');
     expect(output).toContain('"path": "src/a.ts"');
@@ -573,6 +578,22 @@ describe('tool activity extension', () => {
     expect(extension.hidden).toBe(true);
     expect(registerCommand).toHaveBeenCalledWith('tools', expect.any(Object));
     expect(registerShortcut).toHaveBeenCalledWith(TOOL_ACTIVITY_SHORTCUT, expect.any(Object));
+  });
+
+  it('opens /tools inline without overlay options', async () => {
+    const registerCommand = vi.fn();
+    const extension = createToolActivityExtension(new ToolActivityState('grouped'));
+    await extension.factory({ registerCommand, registerShortcut: vi.fn(), on: vi.fn() } as never);
+    const handler = registerCommand.mock.calls[0]![1].handler as (
+      args: string,
+      ctx: { mode: string; ui: { custom: ReturnType<typeof vi.fn> } },
+    ) => Promise<void>;
+    const custom = vi.fn(async () => undefined);
+
+    await handler('', { mode: 'tui', ui: { custom } });
+
+    expect(custom).toHaveBeenCalledOnce();
+    expect(custom.mock.calls[0]).toHaveLength(1);
   });
 });
 

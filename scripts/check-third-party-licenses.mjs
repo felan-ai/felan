@@ -157,6 +157,20 @@ for (const requiredNotice of [
     errors.push(`packages/ext-context-view/NOTICE is missing ${requiredNotice}`);
   }
 }
+const insightsNotice = readFileSync(resolve(root, 'packages/ext-insights/NOTICE'), 'utf8');
+for (const requiredNotice of ['packages/pi-insights', '7e72e509fe45a5a87c4c2e176cb711de994a8c1d']) {
+  if (!insightsNotice.includes(requiredNotice)) errors.push(`packages/ext-insights/NOTICE is missing ${requiredNotice}`);
+}
+const promptHistoryNotice = readFileSync(resolve(root, 'packages/ext-prompt-history/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'packages/pi-prompt-history',
+  '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
+  'Pi-TUI 0.84.3',
+]) {
+  if (!promptHistoryNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-prompt-history/NOTICE is missing ${requiredNotice}`);
+  }
+}
 const tasksNotice = readFileSync(resolve(root, 'packages/ext-tasks/NOTICE'), 'utf8');
 if (!tasksNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-tasks/NOTICE is missing TypeBox 1.1.38');

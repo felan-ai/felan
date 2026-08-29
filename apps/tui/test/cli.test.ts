@@ -287,6 +287,20 @@ describe('felan CLI', () => {
     })]);
   });
 
+  it('parses Tasks display configuration options', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+    const exitCode = await runCli([
+      '--tasks-display-mode', 'overlay',
+      'inspect',
+    ], { launch: async (options) => launches.push(options) });
+
+    expect(exitCode).toBe(0);
+    expect(launches[0]?.extensionConfigOverrides).toEqual([expect.objectContaining({
+      extensionId: 'tasks',
+      values: { displayMode: 'overlay' },
+    })]);
+  });
+
   it('parses structured declarative extension options as JSON', async () => {
     const launches: RunLocalFelanOptions[] = [];
     const lines = '[{"segments":{"status":{"enabled":true}}}]';

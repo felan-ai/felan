@@ -34,8 +34,27 @@ active task unless it explicitly requests stale-claim recovery with `force`.
 Local TUI sessions expose `/tasks` and `Ctrl+Shift+T` for list, detail, and graph
 views. The compact footer status presents three unlabeled counts in Kanban order:
 not started, in progress, and done. `/tasks` retains ready, blocked, waiting,
-cancelled, and dependency details. Headless and cloud sessions use the same
-tools and storage without registering TUI controls.
+cancelled, and dependency details. Details group lifecycle, execution, dependency,
+work-context, and timeline information. Related tasks show their availability
+and title, while the graph shows both prerequisite and dependent directions.
+Headless and cloud sessions use the same tools and storage without registering TUI
+controls.
+
+The interactive view defaults to inline rendering with two full-width horizontal
+separators. Set
+`extensionConfig.tasks.displayMode` to `overlay` for a centered popup:
+
+```json
+{
+  "extensionConfig": {
+    "tasks": { "displayMode": "overlay" }
+  }
+}
+```
+
+The setting is applied when a new runtime is constructed. It is also available
+through `/settings` and as `--tasks-display-mode overlay`.
+Overlay mode uses a complete four-edge frame.
 
 ## Installation and composition
 

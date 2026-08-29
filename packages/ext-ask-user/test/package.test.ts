@@ -9,7 +9,7 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-ask-user',
-      version: '0.3.0',
+      version: '0.3.1',
       type: 'module',
       license: 'MIT',
       engines: { node: '>=22.19.0' },

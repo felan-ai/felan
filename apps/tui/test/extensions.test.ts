@@ -33,6 +33,26 @@ describe('local extension importer', () => {
     })]);
   });
 
+  it('discovers prompt-history display configuration', async () => {
+    const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-prompt-history']);
+    expect(definitions).toEqual([expect.objectContaining({
+      id: 'promptHistory',
+      fields: expect.objectContaining({
+        displayMode: expect.objectContaining({ default: 'inline', values: ['inline', 'overlay'] }),
+      }),
+    })]);
+  });
+
+  it('discovers Tasks display configuration', async () => {
+    const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-tasks']);
+    expect(definitions).toEqual([expect.objectContaining({
+      id: 'tasks',
+      fields: expect.objectContaining({
+        displayMode: expect.objectContaining({ default: 'inline', values: ['inline', 'overlay'] }),
+      }),
+    })]);
+  });
+
   it('imports only the source-controlled package list', async () => {
     expect(localExtensionPackages).toEqual([
       '@felan-ai/ext-subagents',
@@ -49,9 +69,11 @@ describe('local extension importer', () => {
       '@felan-ai/ext-markitdown',
       '@felan-ai/ext-context',
       '@felan-ai/ext-context-view',
+      '@felan-ai/ext-insights',
       '@felan-ai/ext-memory',
       '@felan-ai/ext-powerline',
       '@felan-ai/ext-output-style',
+      '@felan-ai/ext-prompt-history',
     ]);
 
     for (const packageName of localExtensionPackages) {
@@ -235,6 +257,8 @@ describe('local extension importer', () => {
       powerline: false,
       outputStyle: false,
       contextView: false,
+      promptHistory: false,
+      insights: false,
     })).toEqual([
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',

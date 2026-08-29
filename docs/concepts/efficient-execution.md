@@ -60,6 +60,12 @@ felan savings --monthly
 felan savings --format json
 ```
 
+The local `/insights` report includes a Savings tab when persisted measurements
+are available. Its date range follows the report's global range, and Producer,
+Category, and Project selectors provide additional breakdowns. The tab shows
+baseline, actual, and estimated avoided cost, optimization calls, daily and
+dimension breakdowns, and the underlying measurement basis.
+
 Savings are **estimated API-equivalent cost avoided**. A measurement compares
 a baseline outcome without an optimization with the actual optimized outcome.
 Its basis is either:

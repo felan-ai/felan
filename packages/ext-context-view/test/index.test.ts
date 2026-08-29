@@ -124,6 +124,33 @@ describe('@felan-ai/ext-context-view', () => {
     overlay.handleInput('enter');
   });
 
+  it('uses two horizontal separators inline and a four-edge frame in overlay mode', () => {
+    const report: ContextReport = {
+      breakdown: { systemPrompt: 1, systemTools: 2, extensions: 3, contextFiles: 4, skills: 5, memory: 6, messages: 7, other: 8, available: 0 },
+      usedTokens: 36,
+      contextWindow: null,
+      usagePercent: null,
+      estimated: true,
+      systemToolCount: 0,
+      extensionToolCount: 0,
+      contextFileCount: 0,
+      skillCount: 0,
+      memory: { summary: 1, index: 1, schema: 1, recalls: 1 },
+      extensionDetails: [],
+      skillDetails: [],
+      modelLabel: null,
+    };
+    const inline = new ContextUsageOverlay(report, theme(), vi.fn(), 'inline').render(40);
+    expect(inline[0]).toBe('─'.repeat(40));
+    expect(inline.at(-1)).toBe('─'.repeat(40));
+    expect(inline.some((line) => line.startsWith('│'))).toBe(false);
+
+    const overlay = new ContextUsageOverlay(report, theme(), vi.fn(), 'overlay').render(40);
+    expect(overlay[0]).toBe(`╭${'─'.repeat(38)}╮`);
+    expect(overlay.at(-1)).toBe(`╰${'─'.repeat(38)}╯`);
+    expect(overlay.slice(1, -1).every((line) => line.startsWith('│') && line.endsWith('│'))).toBe(true);
+  });
+
   it('uses the current Felan context-file XML and compaction-aware branch entries', () => {
     const entry = {
       type: 'message', id: 'm1', parentId: null, timestamp: '1',

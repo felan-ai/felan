@@ -7,6 +7,8 @@ export const packagePaths = [
   'packages/ext-tasks',
   'packages/ext-context',
   'packages/ext-context-view',
+  'packages/ext-insights',
+  'packages/ext-prompt-history',
   'packages/ext-prewalk',
   'packages/ext-markitdown',
   'packages/ext-background-bash',

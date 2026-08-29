@@ -52,6 +52,12 @@ from https://github.com/mslavov/pi-extensions at commit
 Package-level attribution and license terms are included in
 packages/ext-context-view/NOTICE and LICENSE.
 
+@felan-ai/ext-insights adapts MIT-licensed portions of packages/pi-insights from
+https://github.com/mslavov/pi-extensions at commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d. Copyright (c) 2026 Milko Slavov.
+Package-level attribution and license terms are included in
+packages/ext-insights/NOTICE and LICENSE.
+
 @felan-ai/ext-markitdown adapts MIT-licensed portions of
 packages/pi-markitdown from https://github.com/mslavov/pi-extensions at commit
 7e72e509fe45a5a87c4c2e176cb711de994a8c1d. Copyright (c) 2026 Milko Slavov.

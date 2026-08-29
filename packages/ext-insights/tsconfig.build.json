@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist", "noUncheckedIndexedAccess": false, "exactOptionalPropertyTypes": false },
+  "include": ["src/**/*.ts"]
+}

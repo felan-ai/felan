@@ -16,7 +16,7 @@ and first-party extensions.
 | `/memory disable` | Disable processing while keeping existing memory readable |
 | `/memory open` | Open canonical project memory in the local TUI |
 | `/agents` | Open the subagent navigator |
-| `/tools` | Inspect complete root-session tool arguments and results |
+| `/tools` | Open the inline inspector for complete root-session tool arguments and results |
 | `/savings` | Show estimated API-equivalent savings for the current root session (`project`, `all`, or `details` also supported) |
 
 `/dependencies` and `/memory open` require the interactive TUI.
@@ -42,6 +42,7 @@ to start a new session for the current directory.
 | `/markitdown install` | Explicitly install the managed converter |
 | `/progressive-context` | Show progressively loaded nested instructions |
 | `/context` | Show estimated current context-window usage inline (or in the configured overlay) |
+| `/insights` | Generate a local Felan session analytics report with date/session filters, charts, calendar, and optional Savings breakdowns |
 | `/rtk` | Open interactive RTK settings |
 | `/rtk show` | Show RTK configuration and runtime status |
 | `/rtk verify` | Recheck the active runtime for RTK |
@@ -66,6 +67,16 @@ list provided by the pinned Pi version.
 | `Ctrl+Shift+T` | Open task views |
 | `Ctrl+Shift+J` | Open Background Bash process/log views |
 | `Ctrl+O` | Toggle bounded tool and completion previews |
+| `Ctrl+R` / `Cmd+R` | Open prompt history; cycle scope while the picker is open |
+
+Prompt history starts with the current session. Press `Ctrl+R`, `Cmd+R`, or
+`Ctrl+S` inside the picker to cycle through the current project and all
+projects. Search is fuzzy, incremental, and bounded to the newest 50 unique
+prompts. `Enter` replaces the editor text; `Esc` cancels. This is interactive
+TUI functionality and is unavailable in headless modes. While the built-in is
+enabled, Felan unbinds Pi's `app.session.rename` default from `Ctrl+R`; an
+explicit alternative rename binding in `$FELAN_AGENT_DIR/keybindings.json` is
+preserved.
 
 At the newest prompt, press Down to move from the editor into the live
 subagent rail. Use Up/Down to select an agent and Enter to open it; Up from the

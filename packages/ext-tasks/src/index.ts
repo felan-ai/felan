@@ -1,4 +1,5 @@
 import {
+  associateExtensionConfig,
   StringEnum,
   type ExtensionContext,
   type FelanExtension,
@@ -12,6 +13,11 @@ import {
   type TaskState,
   type UpdateTaskInput,
 } from './contracts.js';
+import {
+  DEFAULT_TASKS_DISPLAY_MODE,
+  TASKS_CONFIG,
+  type TasksDisplayMode,
+} from './config.js';
 import { hasOpenTasks } from './graph.js';
 import {
   formatTaskContext,
@@ -97,10 +103,11 @@ type TaskGetParams = Static<typeof TaskGetParams>;
 
 const tasksExtension: FelanExtension = (pi) => {
   const store = new TaskStore(pi.runtime);
+  const displayMode = resolveDisplayMode(pi.config?.displayMode);
   let controlsRegistered = false;
   let unsubscribe: (() => void) | undefined;
   let statusContext: ExtensionContext | undefined;
-  const overlays = new Set<TasksOverlay>();
+  const taskViews = new Set<TasksOverlay>();
 
   pi.registerCapability({
     id: 'tasks',
@@ -242,30 +249,33 @@ const tasksExtension: FelanExtension = (pi) => {
     );
   };
 
-  const openOverlay = async (ctx: ExtensionContext): Promise<void> => {
+  const openTasks = async (ctx: ExtensionContext): Promise<void> => {
     if (ctx.mode !== 'tui') return;
     await ctx.ui.custom<void>(
       (tui, theme, _keybindings, done) => {
-        let overlay!: TasksOverlay;
-        overlay = new TasksOverlay(
+        let taskView!: TasksOverlay;
+        taskView = new TasksOverlay(
           store,
           theme,
           () => done(undefined),
           () => tui.requestRender(),
-          () => overlays.delete(overlay),
+          () => taskViews.delete(taskView),
+          displayMode,
         );
-        overlays.add(overlay);
-        return overlay;
+        taskViews.add(taskView);
+        return taskView;
       },
-      {
-        overlay: true,
-        overlayOptions: {
-          width: '85%',
-          minWidth: 72,
-          maxHeight: '90%',
-          margin: 2,
-        },
-      },
+      displayMode === 'overlay'
+        ? {
+            overlay: true,
+            overlayOptions: {
+              width: '85%',
+              minWidth: 72,
+              maxHeight: '90%',
+              margin: 2,
+            },
+          }
+        : undefined,
     );
   };
 
@@ -274,11 +284,11 @@ const tasksExtension: FelanExtension = (pi) => {
     controlsRegistered = true;
     pi.registerCommand('tasks', {
       description: 'View session tasks and their dependency graph',
-      handler: async (_args, ctx) => openOverlay(ctx),
+      handler: async (_args, ctx) => openTasks(ctx),
     });
     pi.registerShortcut(Key.ctrlShift('t'), {
       description: 'View session tasks and their dependency graph',
-      handler: openOverlay,
+      handler: openTasks,
     });
   };
 
@@ -302,8 +312,8 @@ const tasksExtension: FelanExtension = (pi) => {
   });
 
   pi.on('session_shutdown', () => {
-    for (const overlay of overlays) overlay.dispose();
-    overlays.clear();
+    for (const taskView of taskViews) taskView.dispose();
+    taskViews.clear();
     unsubscribe?.();
     unsubscribe = undefined;
     statusContext?.ui.setStatus('tasks', undefined);
@@ -311,6 +321,19 @@ const tasksExtension: FelanExtension = (pi) => {
     store.close();
   });
 };
+
+associateExtensionConfig(tasksExtension, TASKS_CONFIG);
+
+function resolveDisplayMode(value: unknown): TasksDisplayMode {
+  return value === 'overlay' ? 'overlay' : DEFAULT_TASKS_DISPLAY_MODE;
+}
+
+export {
+  DEFAULT_TASKS_DISPLAY_MODE,
+  TASKS_CONFIG,
+  TASKS_DISPLAY_MODES,
+} from './config.js';
+export type { TasksDisplayMode } from './config.js';
 
 export type {
   CreateTaskInput,

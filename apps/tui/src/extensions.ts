@@ -16,13 +16,16 @@ import {
   OUTPUT_STYLE_CONFIG,
 } from '@felan-ai/ext-output-style';
 import { createPowerlineExtension, POWERLINE_CONFIG } from '@felan-ai/ext-powerline';
+import { createInsightsExtension } from '@felan-ai/ext-insights';
 import {
   createSubagentsExtension,
   type SubagentHost,
 } from '@felan-ai/ext-subagents';
+import { createPromptHistoryExtension, PROMPT_HISTORY_CONFIG } from '@felan-ai/ext-prompt-history';
 import { createLocalMcpExtension } from './mcp/index.js';
 import { createLocalSavingsUsageHost, createLocalSubscriptionUsageHost } from './powerline.js';
 import type { SavingsService } from './savings.js';
+import { createLocalInsightsHost } from './insights.js';
 import {
   registerLocalSubagentNavigator,
   type AgentRailRenderer,
@@ -36,6 +39,8 @@ export const powerlineExtensionPackage = '@felan-ai/ext-powerline';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const memoryExtensionPackage = '@felan-ai/ext-memory';
 export const outputStyleExtensionPackage = '@felan-ai/ext-output-style';
+export const insightsExtensionPackage = '@felan-ai/ext-insights';
+export const promptHistoryExtensionPackage = '@felan-ai/ext-prompt-history';
 export const builtinExtensionPackages = {
   subagents: subagentsExtensionPackage,
   askUser: askUserExtensionPackage,
@@ -52,9 +57,11 @@ export const builtinExtensionPackages = {
   markitdown: '@felan-ai/ext-markitdown',
   context: '@felan-ai/ext-context',
   contextView: '@felan-ai/ext-context-view',
+  insights: insightsExtensionPackage,
   memory: memoryExtensionPackage,
   powerline: powerlineExtensionPackage,
   outputStyle: outputStyleExtensionPackage,
+  promptHistory: promptHistoryExtensionPackage,
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);
 
@@ -66,6 +73,10 @@ export async function loadLocalExtensionConfigDefinitions(
   for (const packageName of packages) {
     if (packageName === askUserExtensionPackage) {
       definitions.push(ASK_USER_CONFIG);
+      continue;
+    }
+    if (packageName === promptHistoryExtensionPackage) {
+      definitions.push(PROMPT_HISTORY_CONFIG);
       continue;
     }
     const imported = await importExtension(packageName);
@@ -141,6 +152,12 @@ export function createLocalExtensionImporter(
       associateExtensionConfig(extension, ASK_USER_CONFIG);
       return { default: extension };
     }
+    if (packageName === promptHistoryExtensionPackage) {
+      const extension = createPromptHistoryExtension(
+        (await import('./prompt-history.js')).localPromptHistoryHost,
+      );
+      return { default: extension };
+    }
     if (packageName === mcpExtensionPackage) {
       return { default: createLocalMcpExtension() };
     }
@@ -166,6 +183,9 @@ export function createLocalExtensionImporter(
     if (packageName === powerlineExtensionPackage) {
       powerlineLoaded = true;
       return { default: powerline };
+    }
+    if (packageName === insightsExtensionPackage) {
+      return { default: createInsightsExtension(createLocalInsightsHost(savings)) };
     }
     if (packageName === memoryExtensionPackage) {
       if (!memoryBinding) throw new Error('Local memory extension requires a host binding');

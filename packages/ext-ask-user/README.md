@@ -37,8 +37,10 @@ stable `q1` through `q4` IDs in normalized requests and structured result detail
 
 ## Local adapter
 
-`createTuiAskUserHost()` uses the `ExtensionContext` supplied to each tool execution. TUI
-mode provides searchable option descriptions, split-pane previews on wide terminals,
+`createTuiAskUserHost()` uses the `ExtensionContext` supplied to each tool execution. Inline
+questions use two full-width horizontal separators; overlay questions use a complete
+four-edge frame. TUI mode provides searchable option descriptions, split-pane previews
+on wide terminals,
 multi-select, freeform and comment editors, wizard navigation and review, overlay hiding,
 abort handling, and timeout handling. Long context starts collapsed so choices remain
 visible; press `ctrl+e` to expand or collapse it. Multi-select viewports are bounded by

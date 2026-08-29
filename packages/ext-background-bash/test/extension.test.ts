@@ -5,12 +5,14 @@ import {
   type FelanExtensionAPI,
   type Model,
 } from '@felan-ai/agent-core';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import backgroundBashExtension, {
   BackgroundBashManager,
   type BackgroundBashJob,
   type BackgroundBashStatus,
 } from '../src/index.js';
+import { BackgroundBashOverlay } from '../src/ui/background-bash-overlay.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 
@@ -19,6 +21,21 @@ afterEach(() => {
 });
 
 describe('background bash extension activation', () => {
+  it('renders a complete overlay frame for an empty process list', async () => {
+    const overlay = new BackgroundBashOverlay(
+      { list: vi.fn(async () => []) } as unknown as BackgroundBashManager,
+      { fg: (_color: string, text: string) => text, bold: (text: string) => text } as never,
+      vi.fn(),
+      vi.fn(),
+    );
+    await Promise.resolve();
+    const lines = overlay.render(50);
+    expect(lines[0]).toBe(`╭${'─'.repeat(48)}╮`);
+    expect(lines.at(-1)).toBe(`╰${'─'.repeat(48)}╯`);
+    expect(lines.slice(1, -1).every((line) => line.startsWith('│') && line.endsWith('│'))).toBe(true);
+    expect(lines.every((line) => visibleWidth(line) <= 50)).toBe(true);
+  });
+
   it('does not register tools for OpenAI models', async () => {
     const harness = createHarness();
     await backgroundBashExtension(harness.pi);
