@@ -241,6 +241,7 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
       modeActive = false;
       updateCheckController.abort();
       await updateNotification;
+      mode.stop();
     }
   } finally {
     try {

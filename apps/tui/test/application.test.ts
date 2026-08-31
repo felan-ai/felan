@@ -16,10 +16,12 @@ const interactive = vi.hoisted(() => ({
   latestUpdate: undefined as string | undefined,
   modeOptions: [] as unknown[],
   constructorDisposals: [] as number[],
+  constructorStops: [] as number[],
   restartCwd: undefined as string | undefined,
   runError: undefined as Error | undefined,
   runs: 0,
   runCwds: [] as string[],
+  stops: 0,
   toolRenderShells: [] as Array<string | undefined>,
   toolNames: [] as string[],
   updateCheckSignals: [] as AbortSignal[],
@@ -49,6 +51,7 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
         interactive.piVersionChecks.push(process.env.PI_SKIP_VERSION_CHECK);
         interactive.modeOptions.push(options);
         interactive.constructorDisposals.push(interactive.disposals);
+        interactive.constructorStops.push(interactive.stops);
         const dispose = runtime.dispose.bind(runtime);
         runtime.dispose = async () => {
           interactive.disposals += 1;
@@ -95,6 +98,10 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
           throw new CwdChangeRequested(interactive.restartCwd);
         }
         if (interactive.runError) throw interactive.runError;
+      }
+
+      stop() {
+        interactive.stops += 1;
       }
 
       showNewVersionNotification(release: { version: string }) {
@@ -150,10 +157,12 @@ afterEach(async () => {
   interactive.latestUpdate = undefined;
   interactive.modeOptions = [];
   interactive.constructorDisposals = [];
+  interactive.constructorStops = [];
   interactive.restartCwd = undefined;
   interactive.runError = undefined;
   interactive.runs = 0;
   interactive.runCwds = [];
+  interactive.stops = 0;
   interactive.toolRenderShells = [];
   interactive.toolNames = [];
   interactive.updateCheckSignals = [];
@@ -198,6 +207,7 @@ describe('interactive application', () => {
     expect(interactive.piTelemetry).toEqual(['0']);
     expect(interactive.headerAdapters).toEqual([true]);
     expect(interactive.disposals).toBe(1);
+    expect(interactive.stops).toBe(1);
     expect(interactive.toolRenderShells).toEqual(['self']);
     expect(process.env.PI_CODING_AGENT_DIR).toBe(previousPiAgentDir);
     expect(process.env.PI_SKIP_VERSION_CHECK).toBe(previousPiSkipVersionCheck);
@@ -232,7 +242,7 @@ describe('interactive application', () => {
     expect(interactive.updateNotifications).toEqual(['0.13.2']);
   });
 
-  it('restarts in a new cwd only after disposing the previous runtime', async () => {
+  it('restarts in a new cwd only after stopping the previous mode and disposing its runtime', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const targetCwd = join(root, 'target');
@@ -243,7 +253,9 @@ describe('interactive application', () => {
     await runLocalFelan({ cwd, agentDir, initialMessage: 'only the first session' });
 
     expect(interactive.runCwds).toEqual([cwd, targetCwd]);
+    expect(interactive.constructorStops).toEqual([0, 1]);
     expect(interactive.constructorDisposals).toEqual([0, 1]);
+    expect(interactive.stops).toBe(2);
     expect(interactive.disposals).toBe(2);
     expect(interactive.modeOptions).toEqual([
       { initialMessage: 'only the first session', tuiMode: 'fullscreen', initialThemeSetting: 'felan-light/felan-dark' },
@@ -297,6 +309,7 @@ describe('interactive application', () => {
     await expect(runLocalFelan({ cwd, agentDir })).rejects.toThrow('constructor failed');
 
     expect(interactive.runs).toBe(0);
+    expect(interactive.stops).toBe(0);
     expect(interactive.disposals).toBe(1);
   });
 
@@ -343,6 +356,7 @@ describe('interactive application', () => {
     await expect(runLocalFelan({ cwd, agentDir })).rejects.toThrow('run failed');
 
     expect(interactive.runs).toBe(1);
+    expect(interactive.stops).toBe(1);
     expect(interactive.disposals).toBe(1);
   });
 });
