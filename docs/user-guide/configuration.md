@@ -37,6 +37,7 @@ browser and Powerline extensions:
     "backgroundBash": true,
     "codex": true,
     "rtkOptimizer": true,
+    "codebaseMemory": true,
     "markitdown": true,
     "context": true,
     "contextView": true,
@@ -51,6 +52,7 @@ browser and Powerline extensions:
     "outputStyle": { "style": "concise" },
     "tasks": { "displayMode": "inline" },
     "contextView": { "displayMode": "inline" },
+    "codebaseMemory": { "maxCacheBytes": 0 },
     "promptHistory": { "displayMode": "inline" },
     "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true }
   },
@@ -370,6 +372,16 @@ unflushed RTK command-output savings. These are API-equivalent estimates, not
 provider billing; see [Efficient execution and savings](../concepts/efficient-execution.md).
 Large lossy results use a recoverable head-and-tail preview; failed results and
 complete JSON payloads are protected from false-success or mid-document cuts.
+
+### Codebase Memory
+
+`extensionConfig.codebaseMemory.maxCacheBytes` is a non-negative integer. The
+default `0` selects the runtime policy: 2 GiB for the local host and 500 MiB for
+Docker or Daytona. A positive value overrides that limit. Codebase Memory uses
+agent-scoped runtime storage, indexes once at startup, and refreshes only after
+`/codebase-memory refresh` or a model `index_repository` request; it does not
+watch files. The exact reviewed 0.10.8 executable is required. Use
+`/dependencies` or `/codebase-memory install` for an explicit local install.
 
 ## Secrets
 

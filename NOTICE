@@ -27,7 +27,7 @@ licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 
 @felan-ai/ext-subagents, @felan-ai/ext-ask-user, @felan-ai/ext-tasks,
 @felan-ai/ext-background-bash, @felan-ai/ext-browser, @felan-ai/ext-web-access,
-@felan-ai/ext-mcp, and @felan-ai/ext-codex use TypeBox 1.1.38 from
+@felan-ai/ext-mcp, @felan-ai/ext-codex, and @felan-ai/ext-codebase-memory use TypeBox 1.1.38 from
 https://github.com/sinclairzx81/typebox, licensed under the MIT License.
 Copyright (c) 2017-2026 Haydn Paterson.
 
@@ -131,6 +131,17 @@ Additional patch replacement and execution-shutdown behavior are adapted from
 b4b99630cda3c066749af0fb3ac9b8184b2a4c7d.
 Copyright (c) 2026 Umberto B. Package-level attribution and license terms are
 included in packages/ext-codex/NOTICE and LICENSE.
+
+@felan-ai/ext-codebase-memory adapts selected MIT-licensed behavior and prompt
+guidance from pi-cbm 1.2.1 at commit
+921a749d5cea74bda8f647542627ef9518fec272 from
+https://github.com/alexykn/pi-cbm. Copyright (c) 2026 alexykn. It integrates
+with codebase-memory-mcp 0.10.8 at commit
+46ae198fc11cda80e817acbc5f5908d7c2de7032 from
+https://github.com/DeusData/codebase-memory-mcp, licensed under MIT. The
+optional native executable is installed only after explicit confirmation and
+is not bundled in the npm package. Package-level attribution is included in
+packages/ext-codebase-memory/NOTICE and LICENSE.
 
 @felan-ai/ext-rtk-optimizer adapts MIT-licensed code and behavior from
 pi-rtk-optimizer 0.9.0 at source commit

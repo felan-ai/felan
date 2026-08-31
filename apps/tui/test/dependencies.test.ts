@@ -27,6 +27,7 @@ describe('local runtime dependency onboarding', () => {
     expect(localRuntimeDependencies.map(({ id }) => id)).toEqual([
       'background-bash',
       'agent-browser',
+      'codebase-memory',
       'markitdown',
       'rtk',
     ]);

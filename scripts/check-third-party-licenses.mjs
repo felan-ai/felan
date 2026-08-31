@@ -66,6 +66,8 @@ for (const requiredNotice of [
   'pi-rtk-optimizer 0.9.0',
   'Microsoft MarkItDown 0.1.7',
   'https://github.com/JuliusBrussee/caveman',
+  'pi-cbm 1.2.1',
+  'codebase-memory-mcp 0.10.8',
 ]) {
   if (!notice.includes(requiredNotice)) errors.push(`NOTICE is missing ${requiredNotice}`);
 }
@@ -125,6 +127,18 @@ for (const requiredNotice of [
 ]) {
   if (!codexNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-codex/NOTICE is missing ${requiredNotice}`);
+  }
+}
+const codebaseMemoryNotice = readFileSync(resolve(root, 'packages/ext-codebase-memory/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'pi-cbm 1.2.1',
+  '921a749d5cea74bda8f647542627ef9518fec272',
+  'codebase-memory-mcp 0.10.8',
+  '46ae198fc11cda80e817acbc5f5908d7c2de7032',
+  'TypeBox 1.1.38',
+]) {
+  if (!codebaseMemoryNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-codebase-memory/NOTICE is missing ${requiredNotice}`);
   }
 }
 const rtkOptimizerNotice = readFileSync(resolve(root, 'packages/ext-rtk-optimizer/NOTICE'), 'utf8');
@@ -208,7 +222,12 @@ if (!felanApiNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-felan-api/NOTICE is missing TypeBox 1.1.38');
 }
 const tuiNotice = readFileSync(resolve(root, 'apps/tui/NOTICE'), 'utf8');
-for (const requiredNotice of ['@napi-rs/keyring 1.3.0', 'open 11.0.0']) {
+for (const requiredNotice of [
+  '@napi-rs/keyring 1.3.0',
+  'open 11.0.0',
+  '@felan-ai/ext-codebase-memory',
+  'codebase-memory-mcp 0.10.8',
+]) {
   if (!tuiNotice.includes(requiredNotice)) {
     errors.push(`apps/tui/NOTICE is missing ${requiredNotice}`);
   }

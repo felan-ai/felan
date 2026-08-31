@@ -1,0 +1,16 @@
+@felan-ai/ext-codebase-memory
+
+This package adapts selected MIT-licensed behavior and prompt guidance from
+pi-cbm 1.2.1 at commit 921a749d5cea74bda8f647542627ef9518fec272
+(https://github.com/alexykn/pi-cbm). Copyright (c) 2026 alexykn.
+
+The runtime integration targets codebase-memory-mcp 0.10.8 at commit
+46ae198fc11cda80e817acbc5f5908d7c2de7032
+(https://github.com/DeusData/codebase-memory-mcp), licensed under MIT.
+
+This package uses TypeBox 1.1.38 from https://github.com/sinclairzx81/typebox,
+licensed under the MIT License. Copyright (c) 2017-2026 Haydn Paterson.
+
+Felan's portable AgentRuntime implementation, binary gating, explicit installer,
+bounded grep augmentation, cache policy, and four-tool model surface are Felan
+changes. The optional binary is never bundled with this npm package.

@@ -194,6 +194,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 | [`@felan-ai/ext-background-bash`](packages/ext-background-bash/README.md) | Detached Bash processes and logs | [Commands](docs/user-guide/commands-and-shortcuts.md) |
 | [`@felan-ai/ext-codex`](packages/ext-codex/README.md) | GPT-specific structured tools and request controls | [Configuration](docs/user-guide/configuration.md) |
 | [`@felan-ai/ext-rtk-optimizer`](packages/ext-rtk-optimizer/README.md) | RTK command rewriting and output compaction | [Runtime dependencies](docs/reference/runtime-dependencies.md) |
+| [`@felan-ai/ext-codebase-memory`](packages/ext-codebase-memory/README.md) | Structural code search, symbol reads, and bounded grep augmentation | [Runtime dependencies](docs/reference/runtime-dependencies.md) |
 | [`@felan-ai/ext-powerline`](packages/ext-powerline/README.md) | ANSI-aware local TUI footer | [Local CLI](docs/user-guide/local-cli.md) |
 
 ## Develop from source
