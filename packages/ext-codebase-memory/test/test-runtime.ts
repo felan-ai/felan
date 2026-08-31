@@ -16,6 +16,7 @@ export class MemoryRuntime implements AgentRuntime {
     ensureDirectory: async (_namespace: string) => codebaseMemoryRuntimeDirectory(this.storageRoot).root,
   };
   version = '0.10.8';
+  gitTopLevel: string | undefined = '/work/repo';
 
   constructor(
     readonly kind: AgentRuntime['kind'] = 'host',
@@ -51,6 +52,10 @@ export class MemoryRuntime implements AgentRuntime {
     this.execCalls.push({ command, args, ...(options === undefined ? {} : { options }) });
     if (args.includes('--version')) {
       return this.available ? result(`codebase-memory-mcp ${this.version}\n`) : result('', 127, 'not found');
+    }
+    if (command === 'git' && args[0] === 'rev-parse' && args[1] === '--show-toplevel') {
+      if (this.gitTopLevel === undefined) return result('', 128, 'fatal: not a git repository');
+      return result(`${this.gitTopLevel}\n`);
     }
     return result();
   }

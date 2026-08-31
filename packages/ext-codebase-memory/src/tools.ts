@@ -41,7 +41,7 @@ export function registerTools(
         }
         const args = input.arguments ?? {};
         const data = input.command === 'index_repository'
-          ? await projects.index(signal)
+          ? await projects.index(signal, typeof args.repo_path === 'string' ? args.repo_path : undefined)
           : (await client.call(input.command, {
             ...args,
             project: await projects.project(signal),

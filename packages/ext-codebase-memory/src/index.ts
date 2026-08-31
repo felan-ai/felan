@@ -8,7 +8,7 @@ import { acquireCbmClient, detectCbm, type CbmClientLease, type CbmDetection } f
 import { CODEBASE_MEMORY_CONFIG } from './config.js';
 import { registerGrepAugmentation } from './grep-augmentation.js';
 import { installManagedCbm } from './installer.js';
-import { ProjectService, SymbolService } from './services.js';
+import { ProjectService, SymbolService, type IndexResult } from './services.js';
 import { registerTools } from './tools.js';
 
 export const CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS = `Use Codebase Memory for structural code exploration before broad raw searches: read_symbol reads a known symbol, search_and_read_symbols finds and reads likely implementations, search_code searches indexed text, and codebase_memory proxies other structural queries or refreshes with {command:"index_repository"}. A background index starts at session startup through a lazy root-session MCP frontend shared with subagents and refreshes only when the model calls index_repository or the user invokes /codebase-memory. It may be stale after edits. Direct reads, grep, compiler output, and tests remain authoritative; grep output can include bounded Codebase Memory augmentation. Keep symbol reads focused and at no more than 220 lines per symbol.`;
@@ -130,8 +130,9 @@ async function refresh(projects: ProjectService, ctx: ExtensionContext, session?
   }
   let failed = false;
   let failure: unknown;
+  let result: IndexResult | undefined;
   try {
-    await projects.index(signal);
+    result = await projects.index(signal);
   } catch (error) {
     failed = true;
     failure = error;
@@ -139,6 +140,15 @@ async function refresh(projects: ProjectService, ctx: ExtensionContext, session?
   if (session && !session.active) return;
   try {
     ctx.ui.setStatus('codebase-memory', undefined);
+    if (result?.status === 'skipped') {
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          `Codebase Memory: ${result.reason} — skipped auto-indexing. Launch Felan from inside a git repo, or index a specific path via codebase_memory({command: "index_repository", arguments: {repo_path: "/path/to/repo"}}).`,
+          'info',
+        );
+      }
+      return;
+    }
     if (failed && ctx.hasUI) {
       ctx.ui.notify(`Codebase Memory index failed: ${failure instanceof Error ? failure.message : String(failure)}`, 'warning');
     }

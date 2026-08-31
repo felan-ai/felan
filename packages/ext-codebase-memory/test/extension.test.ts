@@ -67,6 +67,51 @@ describe('Codebase Memory extension', () => {
     expect(harness.capabilities).toEqual([]);
   });
 
+  it('skips auto-indexing when the cwd is not inside a git repository', async () => {
+    const runtime = new MemoryRuntime('host', true);
+    runtime.gitTopLevel = undefined;
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    await vi.waitFor(() => {
+      expect(harness.notifications).toEqual(expect.arrayContaining([
+        [expect.stringContaining('no git repository detected'), 'info'],
+      ]));
+    });
+    expect(runtime.shellCalls.filter((call) => call.command.includes('index_repository'))).toHaveLength(0);
+    expect(harness.notifications.at(-1)?.[0]).toContain('codebase_memory({command: "index_repository"');
+  });
+
+  it('skips auto-indexing when git rev-parse resolves to the user home directory', async () => {
+    const runtime = new MemoryRuntime('host', true);
+    runtime.gitTopLevel = '/Users/alice';
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    await vi.waitFor(() => {
+      expect(harness.notifications.at(-1)?.[0]).toContain('home directory');
+    });
+    expect(runtime.shellCalls.filter((call) => call.command.includes('index_repository'))).toHaveLength(0);
+  });
+
+  it('allows an explicit repo_path through the proxy even for paths that would auto-reject', async () => {
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('index_repository')) return result(envelope({ status: 'indexed', project: 'fixture' }));
+      if (command.includes('list_projects')) return result(envelope({ projects: [] }));
+      return result(envelope({}));
+    });
+    runtime.gitTopLevel = undefined;
+    const harness = await createHarness(runtime);
+
+    await execute(harness.tools[0]!, { command: 'index_repository', arguments: { repo_path: '/tmp/scratch-repo' } });
+
+    const indexed = runtime.shellCalls.filter((call) => call.command.includes('index_repository'));
+    expect(indexed).toHaveLength(1);
+    expect(indexed[0]?.command).toContain('/tmp/scratch-repo');
+  });
+
   it('registers exactly four tools, background startup indexing, accurate freshness guidance, and explicit refresh paths', async () => {
     const telemetry = vi.fn();
     const runtime = new MemoryRuntime('host', true, async (command) => {
