@@ -18,6 +18,7 @@ import { checkForFelanUpdate } from './update.js';
 import { showFelanUpdateNotification } from './update-notification.js';
 import { CwdChangeRequested, installFelanCwdCommand } from './cwd-command.js';
 import { installFelanSettingsCommand } from './extension-settings.js';
+import { installFelanTuiCompatibility } from './tui-compatibility.js';
 import {
   loadLocalExtensionConfigDefinitions,
   promptHistoryExtensionPackage,
@@ -192,6 +193,7 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
       initialThemeSetting: runtime.services.settingsManager.getThemeSetting() ?? 'felan-light/felan-dark',
       ...(startupDiagnostics.length === 0 ? {} : { startupDiagnostics }),
     });
+    installFelanTuiCompatibility(mode);
     if (runtime.services.resourceLoader.getExtensions().extensions.some(
       ({ path }) => path === `<inline:${promptHistoryExtensionPackage}>`,
     )) {

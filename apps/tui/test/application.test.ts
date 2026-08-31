@@ -140,6 +140,7 @@ vi.mock('../src/update.js', async (importOriginal) => {
 });
 
 import { brandResumeHint, runLocalFelan } from '../src/application.js';
+import { installFelanTuiCompatibility, normalizeFullscreenTerminalModes } from '../src/tui-compatibility.js';
 import { CwdChangeRequested } from '../src/cwd-command.js';
 
 const temporaryPaths: string[] = [];
@@ -171,6 +172,71 @@ afterEach(async () => {
 });
 
 describe('interactive application', () => {
+  it('normalizes fullscreen terminal modes without changing ordinary output', () => {
+    expect(normalizeFullscreenTerminalModes('ordinary output')).toBe('ordinary output');
+    expect(normalizeFullscreenTerminalModes('\x1b[?1049h\x1b[?1003h\x1b[?1006h')).toBe(
+      '\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1007l\x1b[?1049h\x1b[?1003h\x1b[?1006h',
+    );
+    expect(normalizeFullscreenTerminalModes('\x1b[?1049l')).toBe('\x1b[?1049l');
+  });
+
+  it('reasserts fullscreen mouse tracking after Windows raw input initialization', () => {
+    const events: string[] = [];
+    const terminal = {
+      write: (data: string) => events.push(`write:${data}`),
+      start: () => events.push('start'),
+    };
+    const mode = {
+      renderer: { mode: 'fullscreen', terminal },
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+    const previousTerm = process.env.TERM;
+    const previousTmux = process.env.TMUX;
+    const previousZellij = process.env.ZELLIJ;
+    const previousSty = process.env.STY;
+    process.env.TERM = 'xterm-256color';
+    delete process.env.TMUX;
+    delete process.env.ZELLIJ;
+    delete process.env.STY;
+
+    try {
+      installFelanTuiCompatibility(mode, 'win32');
+      terminal.start(vi.fn(), vi.fn());
+    } finally {
+      restoreEnvironment('TERM', previousTerm);
+      restoreEnvironment('TMUX', previousTmux);
+      restoreEnvironment('ZELLIJ', previousZellij);
+      restoreEnvironment('STY', previousSty);
+    }
+
+    expect(events).toEqual([
+      'start',
+      'write:\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1007l\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h',
+    ]);
+  });
+
+  it('defers live TUI mode switching and reports activation failures', async () => {
+    const writes: string[] = [];
+    const errors: string[] = [];
+    const switchTuiMode = vi.fn(() => {
+      throw new Error('test activation failure');
+    });
+    const mode = {
+      renderer: { terminal: { write: (data: string) => writes.push(data) } },
+      switchTuiMode,
+      showError: (message: string) => errors.push(message),
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+
+    installFelanTuiCompatibility(mode, 'win32');
+    expect(mode).toBeDefined();
+    const wrappedSwitch = (mode as unknown as { switchTuiMode: () => boolean }).switchTuiMode;
+    expect(wrappedSwitch()).toBe(true);
+    expect(switchTuiMode).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(switchTuiMode).toHaveBeenCalledOnce();
+    expect(errors).toEqual(['Could not switch TUI mode: test activation failure']);
+    expect(writes).toEqual([]);
+  });
+
   it('brands Pi resume hints and omits the default Felan session directory', () => {
     const resumeHint = "To resume this session: pi --session-dir 'C:\\Users\\35988\\.felan\\sessions' --session 01a033a6-db3c-7094-993f-0aad3b3dadfd\n";
     expect(brandResumeHint(resumeHint, true)).toBe(
@@ -360,6 +426,11 @@ describe('interactive application', () => {
     expect(interactive.disposals).toBe(1);
   });
 });
+
+function restoreEnvironment(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
 
 async function temporaryDirectory(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), 'felan-tui-application-'));
