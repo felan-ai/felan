@@ -4,6 +4,7 @@ import type {
   ExecOptions,
   ExecResult,
 } from '@felan-ai/agent-core';
+import { codebaseMemoryRuntimeDirectory } from '../src/runtime-path.js';
 
 export class MemoryRuntime implements AgentRuntime {
   readonly cwd = '/work/repo';
@@ -11,6 +12,9 @@ export class MemoryRuntime implements AgentRuntime {
   readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly shellCalls: Array<{ command: string; options?: Record<string, unknown> }> = [];
   readonly #storage: AgentRuntimeStorage;
+  readonly privateRuntime = {
+    ensureDirectory: async (_namespace: string) => codebaseMemoryRuntimeDirectory(this.storageRoot).root,
+  };
   version = '0.10.8';
 
   constructor(
@@ -38,6 +42,8 @@ export class MemoryRuntime implements AgentRuntime {
       },
     };
   }
+
+  get storageRoot(): string { return this.#storage.root; }
 
   storage(): AgentRuntimeStorage { return this.#storage; }
 

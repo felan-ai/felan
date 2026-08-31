@@ -16,9 +16,14 @@ four model tools:
 - `search_code` searches indexed source text.
 
 The extension starts one background index at session startup without delaying
-session readiness. It shows `cbm: idx` only while indexing and `cbm: install`
-only while installing, then clears the status. It has no file watcher or
-periodic refresh. After edits, the model can call
+session readiness. The first index or query lazily starts one stdio MCP
+frontend for the session; subsequent calls reuse and multiplex that frontend.
+It closes it during `session_shutdown`, leaving shared daemon coordination and
+the shared runtime directory to Codebase Memory. Runtimes without the optional
+stdio capability use the bounded one-shot CLI fallback. It shows `cbm: idx`
+only while indexing and `cbm: install` only while installing, then clears the
+status. Cache-size accounting is deferred after indexing and never extends
+that status. It has no file watcher or periodic refresh. After edits, the model can call
 `codebase_memory({ command: "index_repository" })`, and local users can run
 `/codebase-memory refresh`. Direct file reads, grep, compiler output, and tests
 remain authoritative because an index can be stale.
@@ -51,12 +56,14 @@ added inside that already scoped runtime storage.
 
 Daemon coordination remains keyed by that agent-storage root. POSIX runtimes
 use an owner-private `/tmp/felan-cbm-<key>` rendezvous so CBM's Unix socket path
-stays below platform limits; Windows keeps the rendezvous under
+stays below platform limits. The host runtime creates or validates this
+directory with mode `0700`, rejects symlinks and unsafe ownership, and checks
+the canonical sticky `/tmp` parent. Windows keeps the rendezvous under
 `AgentRuntime.storage('agent')/codebase-memory/runtime`.
 
 - Query timeout: 60 seconds
 - Index timeout: 20 minutes
-- Combined process output: 5 MiB
+- Maximum CBM response/output: 5 MiB
 - Maximum symbol read: 220 lines
 - Cache LRU: 2 GiB for host runtimes; 500 MiB for Docker and Daytona
 

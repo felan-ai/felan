@@ -51,6 +51,23 @@ export interface AgentRuntimeProcess {
   dispose(): Promise<void>;
 }
 
+export interface AgentRuntimeStdioProcess extends AgentRuntimeProcess {
+  readStdout(
+    afterOffset: number,
+    options?: AgentRuntimeProcessReadOptions,
+  ): Promise<AgentRuntimeProcessSnapshot>;
+  readStderr(
+    afterOffset: number,
+    options?: AgentRuntimeProcessReadOptions,
+  ): Promise<AgentRuntimeProcessSnapshot>;
+  closeInput(): Promise<void>;
+}
+
+export interface AgentRuntimeStdioProcessOptions {
+  readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string>>;
+}
+
 export interface AgentRuntimeShellProcessOptions {
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string>>;
@@ -61,6 +78,17 @@ export interface AgentRuntimeShellProcessOptions {
 
 export interface AgentRuntimeProcesses {
   startShell(command: string, options?: AgentRuntimeShellProcessOptions): Promise<AgentRuntimeProcess>;
+  /** Starts a literal-argv process whose protocol output must remain separate from diagnostics. */
+  startStdio?(
+    command: string,
+    args: readonly string[],
+    options?: AgentRuntimeStdioProcessOptions,
+  ): Promise<AgentRuntimeStdioProcess>;
+}
+
+export interface AgentRuntimePrivateRuntime {
+  /** Creates or validates an owner-private, deterministic directory for short-lived local coordination. */
+  ensureDirectory(namespace: string): Promise<string>;
 }
 
 export interface AgentRuntimeTerminals {
@@ -109,6 +137,7 @@ export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
   readonly processes?: AgentRuntimeProcesses;
+  readonly privateRuntime?: AgentRuntimePrivateRuntime;
   readonly terminals?: AgentRuntimeTerminals;
 
   storage(scope?: AgentRuntimeStorageScope): AgentRuntimeStorage;

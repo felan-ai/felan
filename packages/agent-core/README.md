@@ -55,7 +55,11 @@ storage scopes.
 Host runtimes expose optional persistent process operations for extensions that
 need incremental output and stdin. `startShell()` keeps process ownership in
 the runtime adapter and returns a bounded polling handle with write, terminate,
-interrupt, and dispose operations. The separate optional `terminals` capability
+interrupt, and dispose operations. `startStdio()` uses literal argv and exposes
+separate bounded stdout and stderr streams for protocols whose stdout must stay
+machine-readable. The optional `privateRuntime.ensureDirectory()` capability
+creates or validates owner-private short-lived coordination directories. The
+separate optional `terminals` capability
 allocates a real operating-system PTY with terminal input; adapters without PTY
 support omit that capability. The optional `readAgentFile()`
 boundary reads only inside the configured `agentDir`; ordinary runtime file

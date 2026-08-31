@@ -105,7 +105,9 @@ installers use reviewed versions, verify download/binary integrity, avoid
 package lifecycle scripts, and stage candidates in agent storage.
 
 POSIX utilities required for detached Background Bash are probed but not
-installed by Felan. See [Runtime dependencies](../reference/runtime-dependencies.md).
+installed by Felan. Binary-backed extensions may use the optional runtime
+process capabilities; these preserve literal argv and separate protocol output
+from diagnostics. See [Runtime dependencies](../reference/runtime-dependencies.md).
 
 ## Safe operating checklist
 

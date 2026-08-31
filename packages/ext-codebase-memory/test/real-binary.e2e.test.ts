@@ -66,6 +66,7 @@ describe('Codebase Memory real binary', () => {
     await writeFile(join(workspace, 'answer.ts'), 'export function slashAnswer() { return 126; }\n');
     await harness.commandHandlers.get('codebase-memory')?.('refresh', harness.context);
     expect(await readSymbol(harness.tools[1]!, 'slashAnswer')).toContain('return 126');
+    await harness.emit('session_shutdown', { reason: 'quit' });
 
     const missingRuntime = new HostAgentRuntime(workspace, {
       sessionStorageRoot: join(root, 'missing-session'),

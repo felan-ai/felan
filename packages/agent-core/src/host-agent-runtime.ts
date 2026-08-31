@@ -24,8 +24,11 @@ import type {
   AgentRuntimeProcesses,
   AgentRuntimeProcessReadOptions,
   AgentRuntimeProcessSnapshot,
+  AgentRuntimePrivateRuntime,
   AgentRuntimeShellOptions,
   AgentRuntimeShellProcessOptions,
+  AgentRuntimeStdioProcess,
+  AgentRuntimeStdioProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
   AgentRuntimeTerminals,
@@ -54,6 +57,7 @@ export class HostAgentRuntime implements AgentRuntime {
   readonly #configuredPosixShell: string | undefined;
   #posixShell: Promise<string> | undefined;
   readonly processes: AgentRuntimeProcesses;
+  readonly privateRuntime: AgentRuntimePrivateRuntime;
   readonly terminals: AgentRuntimeTerminals;
 
   constructor(cwd: string, options: HostAgentRuntimeOptions) {
@@ -70,7 +74,9 @@ export class HostAgentRuntime implements AgentRuntime {
     this.#agentStorage = createHostStorage(this.#agentStorageRoot);
     this.processes = {
       startShell: async (command, processOptions) => this.#startShellProcess(command, processOptions),
+      startStdio: async (command, args, processOptions) => this.#startStdioProcess(command, args, processOptions),
     };
+    this.privateRuntime = { ensureDirectory: async (namespace) => this.#ensurePrivateRuntimeDirectory(namespace) };
     this.terminals = {
       startShell: async (command, terminalOptions) => this.#startShellTerminal(command, terminalOptions),
     };
@@ -218,6 +224,45 @@ export class HostAgentRuntime implements AgentRuntime {
     return new HostRuntimeProcess(child);
   }
 
+  async #startStdioProcess(
+    command: string,
+    args: readonly string[],
+    options?: AgentRuntimeStdioProcessOptions,
+  ): Promise<AgentRuntimeStdioProcess> {
+    const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
+    const child = spawn(command, [...args], {
+      cwd,
+      detached: process.platform !== 'win32',
+      env: options?.env ? { ...process.env, ...options.env } : process.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    return new HostRuntimeStdioProcess(child);
+  }
+
+  async #ensurePrivateRuntimeDirectory(namespace: string): Promise<string> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(namespace)) {
+      throw new Error('Private runtime namespace must be a simple name');
+    }
+    const path = process.platform === 'win32'
+      ? join(this.#agentStorageRoot, 'codebase-memory', 'runtime')
+      : join('/tmp', namespace);
+    if (process.platform !== 'win32') await assertTrustedTmp();
+    try {
+      await mkdir(path, { recursive: false, mode: 0o700 });
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+    }
+    const stats = await lstat(path);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new Error(`Private runtime path is not a directory: ${path}`);
+    }
+    if (process.platform !== 'win32' && (stats.uid !== process.getuid?.() || (stats.mode & 0o7777) !== 0o700)) {
+      throw new Error(`Private runtime directory has unsafe ownership or mode: ${path}`);
+    }
+    return path;
+  }
+
   async #startShellTerminal(
     command: string,
     options?: AgentRuntimeShellProcessOptions,
@@ -332,9 +377,13 @@ export class HostAgentRuntime implements AgentRuntime {
 const MAX_PROCESS_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 abstract class HostBufferedProcess implements AgentRuntimeProcess {
-  readonly #output = new HostProcessOutput();
+  protected readonly output: HostProcessOutput;
   #disposed = false;
   #termination: Promise<void> | undefined;
+
+  constructor(output = new HostProcessOutput()) {
+    this.output = output;
+  }
 
   abstract get pid(): number | undefined;
 
@@ -344,11 +393,11 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
     afterOffset: number,
     options?: AgentRuntimeProcessReadOptions,
   ): Promise<AgentRuntimeProcessSnapshot> {
-    return this.#output.read(afterOffset, options);
+    return this.output.read(afterOffset, options);
   }
 
   async interrupt(): Promise<void> {
-    if (!this.#output.running) return;
+    if (!this.output.running) return;
     await this.sendSignal('SIGINT');
   }
 
@@ -363,21 +412,21 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
     try {
       await this.terminate();
     } finally {
-      this.#output.dispose();
+      this.output.dispose();
       this.onDispose();
     }
   }
 
   protected get running(): boolean {
-    return this.#output.running;
+    return this.output.running;
   }
 
   protected appendOutput(chunk: Uint8Array): void {
-    this.#output.append(chunk);
+    this.output.append(chunk);
   }
 
   protected complete(exitCode: number): void {
-    this.#output.complete(exitCode);
+    this.output.complete(exitCode);
   }
 
   protected abstract sendSignal(signal: NodeJS.Signals): void | Promise<void>;
@@ -385,25 +434,25 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
   protected onDispose(): void {}
 
   async #terminate(): Promise<void> {
-    if (!this.#output.running) return;
+    if (!this.output.running) return;
     try {
       await this.sendSignal('SIGTERM');
     } catch (error) {
-      if (this.#output.running) throw error;
+      if (this.output.running) throw error;
     }
     const deadline = Date.now() + 1_000;
-    while (this.#output.running && Date.now() < deadline) {
-      await this.#output.wait(Math.min(50, deadline - Date.now()));
+    while (this.output.running && Date.now() < deadline) {
+      await this.output.wait(Math.min(50, deadline - Date.now()));
     }
-    if (!this.#output.running) return;
+    if (!this.output.running) return;
     try {
       await this.sendSignal('SIGKILL');
     } catch (error) {
-      if (this.#output.running) throw error;
+      if (this.output.running) throw error;
     }
     const forceDeadline = Date.now() + 1_000;
-    while (this.#output.running && Date.now() < forceDeadline) {
-      await this.#output.wait(Math.min(50, forceDeadline - Date.now()));
+    while (this.output.running && Date.now() < forceDeadline) {
+      await this.output.wait(Math.min(50, forceDeadline - Date.now()));
     }
   }
 }
@@ -443,6 +492,67 @@ class HostRuntimeProcess extends HostBufferedProcess {
       return;
     }
     killChild(this.#child, signal);
+  }
+}
+
+class HostRuntimeStdioProcess extends HostBufferedProcess implements AgentRuntimeStdioProcess {
+  readonly #child: ChildProcess;
+  readonly #stdout = new HostProcessOutput();
+  readonly #stderr = new HostProcessOutput();
+  #inputClosed = false;
+
+  constructor(child: ChildProcess) {
+    super();
+    this.#child = child;
+    child.stdout?.on('data', (chunk: Uint8Array) => {
+      this.appendOutput(chunk);
+      this.#stdout.append(chunk);
+    });
+    child.stderr?.on('data', (chunk: Uint8Array) => this.#stderr.append(chunk));
+    child.once('error', (error) => this.#stderr.append(Buffer.from(`${error.message}\n`)));
+    child.once('close', (code, signal) => {
+      const exitCode = code ?? signalExitCode(signal);
+      this.complete(exitCode);
+      this.#stdout.complete(exitCode);
+      this.#stderr.complete(exitCode);
+    });
+  }
+
+  get pid(): number | undefined { return this.#child.pid; }
+
+  readStdout(afterOffset: number, options?: AgentRuntimeProcessReadOptions): Promise<AgentRuntimeProcessSnapshot> {
+    return this.#stdout.read(afterOffset, options);
+  }
+
+  readStderr(afterOffset: number, options?: AgentRuntimeProcessReadOptions): Promise<AgentRuntimeProcessSnapshot> {
+    return this.#stderr.read(afterOffset, options);
+  }
+
+  async write(content: Uint8Array): Promise<void> {
+    if (!this.running || this.#inputClosed) throw new Error('Process stdin is closed');
+    if (!this.#child.stdin) throw new Error('Process stdin is closed');
+    await new Promise<void>((resolveWrite, rejectWrite) => {
+      this.#child.stdin!.write(content, (error) => error ? rejectWrite(error) : resolveWrite());
+    });
+  }
+
+  async closeInput(): Promise<void> {
+    if (this.#inputClosed) return;
+    this.#inputClosed = true;
+    this.#child.stdin?.end();
+  }
+
+  protected sendSignal(signal: NodeJS.Signals): void {
+    if (signal === 'SIGINT' && process.platform === 'win32') {
+      killChild(this.#child, 'SIGTERM');
+      return;
+    }
+    killChild(this.#child, signal);
+  }
+
+  protected override onDispose(): void {
+    this.#stdout.dispose();
+    this.#stderr.dispose();
   }
 }
 
@@ -841,6 +951,17 @@ function signalExitCode(signal: NodeJS.Signals | null): number {
 function resolveStorageRoot(root: string): string {
   if (root.includes('\0')) throw new Error('Runtime storage root cannot contain NUL bytes');
   return resolve(root);
+}
+
+async function assertTrustedTmp(): Promise<void> {
+  const stats = await lstat(await realpath('/tmp'));
+  if (!stats.isDirectory() || stats.uid !== 0 || (stats.mode & 0o1777) !== 0o1777) {
+    throw new Error('POSIX temporary directory is not a trusted sticky directory');
+  }
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'EEXIST';
 }
 
 function resolveHostPath(cwd: string, path: string): string {

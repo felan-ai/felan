@@ -331,6 +331,25 @@ function browserArgumentPreview(args: Record<string, unknown>): string | undefin
   return operation;
 }
 
+function codebaseMemoryArgumentPreview(args: Record<string, unknown>): string | undefined {
+  const command = firstString(args, ['command']);
+  const commandArgs = asRecord(args.arguments);
+  return joinPreview(
+    command,
+    firstString(commandArgs, [
+      'query',
+      'pattern',
+      'function_name',
+      'qualified_name',
+      'name',
+      'qn_pattern',
+      'name_pattern',
+      'file_pattern',
+      'path_filter',
+    ]),
+  );
+}
+
 function argumentPreview(call: ToolActivityCall): string | undefined {
   const args = asRecord(call.args);
   const normalized = call.name.toLowerCase();
@@ -339,6 +358,8 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
     value = mcpArgumentPreview(args);
   } else if (normalized === 'browser') {
     value = browserArgumentPreview(args);
+  } else if (normalized === 'codebase_memory') {
+    value = codebaseMemoryArgumentPreview(args);
   } else if (normalized.startsWith('mcp__')) {
     value = formatToolName(call.name);
   } else if (normalized === 'apply_patch') {

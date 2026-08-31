@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -429,6 +429,31 @@ describe('HostAgentRuntime', () => {
     expect(new TextDecoder().decode(snapshot.output)).toContain('got:input');
     await processHandle.dispose();
     await expect(waitForProcessExit(pid)).resolves.toBeUndefined();
+  });
+
+  it('supports literal stdio processes with separate bounded streams', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const script = "process.stdout.write('out\\n'); process.stderr.write('err\\n'); process.stdin.once('data', () => process.exit(0))";
+    const processHandle = await runtime.processes.startStdio!(process.execPath, ['-e', script]);
+    const stdout = await processHandle.readStdout(0, { waitMs: 1_000 });
+    const stderr = await processHandle.readStderr(0, { waitMs: 1_000 });
+    expect(new TextDecoder().decode(stdout.output)).toContain('out');
+    expect(new TextDecoder().decode(stderr.output)).toContain('err');
+    await processHandle.closeInput();
+    await processHandle.dispose();
+    await expect(waitForProcessExit(processHandle.pid!)).resolves.toBeUndefined();
+  });
+
+  it.skipIf(process.platform === 'win32')('creates and validates a private runtime directory', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const namespace = `felan-test-${process.pid}-${Date.now()}`;
+    const path = await runtime.privateRuntime.ensureDirectory(namespace);
+    temporaryPaths.push(path);
+    const created = await realpath(path);
+    expect(created).toBe(await realpath(path));
+    await expect(lstat(path)).resolves.toMatchObject({ uid: process.getuid?.(), mode: 0o40700 });
+    await chmod(path, 0o755);
+    await expect(runtime.privateRuntime.ensureDirectory(namespace)).rejects.toThrow('unsafe ownership or mode');
   });
 
   it('provides a real PTY with terminal input', async () => {

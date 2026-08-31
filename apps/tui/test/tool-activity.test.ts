@@ -353,6 +353,32 @@ describe('tool activity rendering', () => {
     expect(output).not.toContain('private form value');
   });
 
+  it('shows the Codebase Memory command and its useful argument', () => {
+    const harness = activityHarness([
+      assistant([
+        toolCall('cbm-search', 'codebase_memory', {
+          command: 'search_graph',
+          arguments: {
+            query: 'authentication\u0007 flow',
+            secret: 'do-not-render',
+          },
+        }),
+        toolCall('cbm-status', 'codebase_memory', {
+          command: 'index_status',
+          arguments: {},
+        }),
+      ], 10),
+      toolResult('cbm-search', 'codebase_memory', 'matches', false, 20),
+      toolResult('cbm-status', 'codebase_memory', 'ready', false, 21),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'cbm-search', theme, false);
+    expect(output).toContain('Codebase Memory · search_graph · authentication flow');
+    expect(output).toContain('Codebase Memory · index_status');
+    expect(output).not.toContain('do-not-render');
+    expect(output).not.toMatch(/[\u0000-\u0009\u000B-\u000C\u000E-\u001F\u007F-\u009F]/u);
+  });
+
   it('shows failures in the group summary', () => {
     const harness = activityHarness([
       assistant([toolCall('exec-1', 'exec_command', { cmd: 'false' })], 10),

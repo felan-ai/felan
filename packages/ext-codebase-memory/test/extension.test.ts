@@ -104,7 +104,7 @@ describe('Codebase Memory extension', () => {
       CBM_CACHE_DIR: '/agent-storage/codebase-memory/cache',
       CBM_RUNTIME_DIR: runtimeDirectory.root,
     }));
-    expect(runtime.shellCalls[0]?.command).toContain(`umask 077 && mkdir -p -- '${runtimeDirectory.root}'`);
+    expect(runtime.shellCalls[0]?.command).toContain("cli --json 'index_repository'");
 
     await execute(harness.tools[0]!, { command: 'index_repository' });
     await harness.commandHandlers.get('codebase-memory')?.('', harness.context);

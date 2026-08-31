@@ -3,6 +3,7 @@ import { CacheManager, type CodebaseMemoryTelemetry } from './cache.js';
 import { CbmClient, INDEX_TIMEOUT_MS } from './client.js';
 
 const activeIndexes = new Map<string, Promise<unknown>>();
+const cacheAccounts = new Map<string, Promise<void>>();
 
 export class ProjectService {
   readonly #cache: CacheManager;
@@ -12,11 +13,11 @@ export class ProjectService {
     private readonly runtime: AgentRuntime,
     private readonly client: CbmClient,
     maxCacheBytes: number | undefined,
-    telemetry: CodebaseMemoryTelemetry,
+    private readonly telemetry: CodebaseMemoryTelemetry,
   ) {
     this.#cache = new CacheManager(runtime, maxCacheBytes, telemetry, async (project) => {
       await client.call('delete_project', { project }).catch(() => {});
-    }, () => this.#cacheSize());
+    });
   }
 
   async gitRoot(signal?: AbortSignal, timeout = 10_000): Promise<string> {
@@ -42,24 +43,38 @@ export class ProjectService {
       const project = typeof record.project === 'string' ? record.project : projectName(root);
       this.#project = project;
       await this.#cache.record(project, 0);
+      void this.#accountCache();
       return data;
     }).finally(() => { activeIndexes.delete(key); });
     activeIndexes.set(key, request);
     return request;
   }
 
-  async #cacheSize(): Promise<number> {
+  async #accountCache(): Promise<void> {
+    const key = this.client.cacheRoot;
+    const existing = cacheAccounts.get(key);
+    if (existing) return existing;
+    const account = this.#accountCacheOnce().finally(() => {
+      if (cacheAccounts.get(key) === account) cacheAccounts.delete(key);
+    });
+    cacheAccounts.set(key, account);
+    return account;
+  }
+
+  async #accountCacheOnce(): Promise<void> {
     try {
       const listed = await this.client.call('list_projects', {});
       const projects = arrayProperty(listed.data, 'projects');
-      return projects.reduce<number>((sum, project) => {
+      const bytes = projects.reduce<number>((sum, project) => {
         const bytes = asRecord(project).size_bytes;
         return typeof bytes === 'number' && Number.isFinite(bytes) ? sum + bytes : sum;
       }, 0);
+      this.telemetry('cache_size', { bytes, maxBytes: this.#cache.maxBytes, projects: projects.length });
     } catch {
-      return this.#cache.maxBytes + 1;
+      return;
     }
   }
+
 
   async project(signal?: AbortSignal, timeoutMs?: number): Promise<string> {
     if (this.#project) return this.#project;

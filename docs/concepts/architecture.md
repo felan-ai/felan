@@ -21,6 +21,11 @@ The same agent-core and extension contracts can therefore run in more than one
 host without moving local credential handling, storage, or presentation into a
 portable package.
 
+The Codebase Memory extension uses Agent Core's optional literal-argv stdio
+process capability for a session-scoped warm MCP frontend. This keeps protocol
+stdout separate from diagnostics and leaves daemon coordination to the exact
+upstream binary; see the [transport decision](../maintainers/codebase-memory-stdio.md).
+
 ## Ownership layers
 
 | Layer | Owns | Does not own |

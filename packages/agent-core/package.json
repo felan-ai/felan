@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/agent-core",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "Portable Felan agent contracts and composition",
   "license": "MIT",
   "type": "module",
