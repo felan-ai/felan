@@ -136,8 +136,8 @@ included in packages/ext-codex/NOTICE and LICENSE.
 guidance from pi-cbm 1.2.1 at commit
 921a749d5cea74bda8f647542627ef9518fec272 from
 https://github.com/alexykn/pi-cbm. Copyright (c) 2026 alexykn. It integrates
-with codebase-memory-mcp 0.10.1 at commit
-564d32cc87d520afd1b007babdbe71a89d3ea119 from
+with codebase-memory-mcp 0.10.8 at commit
+46ae198fc11cda80e817acbc5f5908d7c2de7032 from
 https://github.com/DeusData/codebase-memory-mcp, licensed under MIT. The
 optional native executable is installed only after explicit confirmation and
 is not bundled in the npm package. Package-level attribution is included in

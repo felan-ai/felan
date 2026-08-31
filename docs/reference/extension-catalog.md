@@ -28,7 +28,7 @@ Pi extensions or arbitrary npm packages.
 | [`@felan-ai/ext-background-bash`](../../packages/ext-background-bash/README.md) | Detached process registry and logs | `/background-bash`, `Ctrl+Shift+J` | POSIX process utilities; non-OpenAI-family models |
 | [`@felan-ai/ext-codex`](../../packages/ext-codex/README.md) | GPT-specific exec, patch, PTY, and image tools | Model-selected tool replacement | GPT model on exact `openai`/`openai-codex` provider |
 | [`@felan-ai/ext-rtk-optimizer`](../../packages/ext-rtk-optimizer/README.md) | Command rewriting and output compaction | `/rtk` | Compaction ships; rewriting needs `rtk` |
-| [`@felan-ai/ext-codebase-memory`](../../packages/ext-codebase-memory/README.md) | Structural code index, symbol reads, and bounded grep augmentation | `/codebase-memory` and four model tools | Exact reviewed `codebase-memory-mcp` 0.10.1 binary |
+| [`@felan-ai/ext-codebase-memory`](../../packages/ext-codebase-memory/README.md) | Structural code index, symbol reads, and bounded grep augmentation | `/codebase-memory` and four model tools | Exact reviewed `codebase-memory-mcp` 0.10.8 binary |
 | [`@felan-ai/ext-powerline`](../../packages/ext-powerline/README.md) | ANSI-aware local status footer | TUI footer | TUI sessions only; enabled by default locally |
 
 ## Host ownership rules

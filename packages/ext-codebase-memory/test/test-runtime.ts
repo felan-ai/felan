@@ -11,7 +11,7 @@ export class MemoryRuntime implements AgentRuntime {
   readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly shellCalls: Array<{ command: string; options?: Record<string, unknown> }> = [];
   readonly #storage: AgentRuntimeStorage;
-  version = '0.10.1';
+  version = '0.10.8';
 
   constructor(
     readonly kind: AgentRuntime['kind'] = 'host',

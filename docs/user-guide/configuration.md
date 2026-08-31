@@ -380,7 +380,7 @@ default `0` selects the runtime policy: 2 GiB for the local host and 500 MiB for
 Docker or Daytona. A positive value overrides that limit. Codebase Memory uses
 agent-scoped runtime storage, indexes once at startup, and refreshes only after
 `/codebase-memory refresh` or a model `index_repository` request; it does not
-watch files. The exact reviewed 0.10.1 executable is required. Use
+watch files. The exact reviewed 0.10.8 executable is required. Use
 `/dependencies` or `/codebase-memory install` for an explicit local install.
 
 ## Secrets

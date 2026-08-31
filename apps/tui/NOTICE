@@ -7,7 +7,7 @@ packages listed in package.json. Their package-level LICENSE and NOTICE files
 contain the applicable attribution and source provenance.
 
 The optional Codebase Memory integration uses @felan-ai/ext-codebase-memory,
-which adapts pi-cbm 1.2.1 and integrates with codebase-memory-mcp 0.10.1. The
+which adapts pi-cbm 1.2.1 and integrates with codebase-memory-mcp 0.10.8. The
 native executable is installed only after explicit confirmation and is not
 bundled in this npm package. Its package-level LICENSE and NOTICE contain the
 immutable source revisions and terms.

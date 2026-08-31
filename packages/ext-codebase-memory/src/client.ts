@@ -1,7 +1,7 @@
 import type { AgentRuntime, ExecResult } from '@felan-ai/agent-core';
 import { joinRuntimePath, shellQuote } from './runtime-path.js';
 
-export const CODEBASE_MEMORY_VERSION = '0.10.1';
+export const CODEBASE_MEMORY_VERSION = '0.10.8';
 export const QUERY_TIMEOUT_MS = 60_000;
 export const INDEX_TIMEOUT_MS = 20 * 60_000;
 export const MAX_OUTPUT_BYTES = 5 * 1024 * 1024;

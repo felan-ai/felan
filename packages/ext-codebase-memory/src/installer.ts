@@ -3,8 +3,8 @@ import type { AgentRuntime, ExecResult } from '@felan-ai/agent-core';
 import { CODEBASE_MEMORY_VERSION, detectCbm, type CbmDetection } from './client.js';
 import { joinRuntimePath } from './runtime-path.js';
 
-const INSTALLER_COMMIT = '564d32cc87d520afd1b007babdbe71a89d3ea119';
-const INSTALLER_SHA256 = 'ea347b9025eb0d12e6cf8b1e0906e3efd733e4090cb7e504f0f8c2d02dce00c3';
+const INSTALLER_COMMIT = '46ae198fc11cda80e817acbc5f5908d7c2de7032';
+const INSTALLER_SHA256 = '2fdd4d6563fc8e540bb32e233c5fdef22ecf05d7ebd5a80657cd4fec953b3475';
 const INSTALLER_URL = `https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/${INSTALLER_COMMIT}/install.sh`;
 const RELEASE_URL = `https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CODEBASE_MEMORY_VERSION}`;
 

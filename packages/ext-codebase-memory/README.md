@@ -1,7 +1,7 @@
 # @felan-ai/ext-codebase-memory
 
 Portable structural code exploration for Felan, backed by the reviewed
-`codebase-memory-mcp` 0.10.1 native executable.
+`codebase-memory-mcp` 0.10.8 native executable.
 
 ## Behavior
 
@@ -35,7 +35,7 @@ hard error log while session startup continues without Codebase Memory.
 
 Local installation is always explicit through `/dependencies` or
 `/codebase-memory install`. Felan downloads a commit-pinned upstream installer,
-verifies its SHA-256 digest, requests the pinned 0.10.1 release, passes
+verifies its SHA-256 digest, requests the pinned 0.10.8 release, passes
 `--skip-config`, and installs only into `AgentRuntime.storage('agent')`. It
 never edits agent or repository configuration. Cloud hosts must place the exact
 reviewed binary on `PATH` in the execution image.

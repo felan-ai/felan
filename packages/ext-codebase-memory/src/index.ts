@@ -59,7 +59,7 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
           return;
         }
         if (action === 'install') {
-          if (!await ctx.ui.confirm('Install Codebase Memory', 'Download the pinned reviewed installer and Codebase Memory 0.10.1 binary into Felan agent storage?')) return;
+          if (!await ctx.ui.confirm('Install Codebase Memory', 'Download the pinned reviewed installer and Codebase Memory 0.10.8 binary into Felan agent storage?')) return;
           detection = await installManagedCbm(pi.runtime, (message) => ctx.ui.setStatus('codebase-memory', `… ${message}`));
           ctx.ui.setStatus('codebase-memory', undefined);
           ctx.ui.notify(detectionMessage(detection), detection.available ? 'info' : 'error');
