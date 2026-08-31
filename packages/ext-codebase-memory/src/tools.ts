@@ -11,7 +11,6 @@ const ProxyCommand = Type.Union([
   Type.Literal('trace_path'),
   Type.Literal('get_graph_schema'),
   Type.Literal('get_architecture'),
-  Type.Literal('search_code'),
   Type.Literal('index_status'),
   Type.Literal('check_index_coverage'),
   Type.Literal('detect_changes'),
