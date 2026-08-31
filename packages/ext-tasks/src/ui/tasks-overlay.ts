@@ -1,5 +1,5 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
-import { matchesKey, truncateToWidth } from '@earendil-works/pi-tui';
+import { matchesKey, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Task, TaskState } from '../contracts.js';
 import { emptyTaskState, listTasks, taskAvailability } from '../graph.js';
 import {
@@ -9,6 +9,7 @@ import {
   taskGraphLayers,
 } from '../presentation.js';
 import type { TaskStore } from '../store.js';
+import type { TasksDisplayMode } from '../config.js';
 
 const LIST_ROWS = 18;
 const CONTENT_ROWS = 24;
@@ -25,6 +26,8 @@ export class TasksOverlay {
   #selected = 0;
   #scroll = 0;
   #contentScroll = 0;
+  #contentWidth = 80;
+  #contentLength = 0;
   #loading = true;
   #message = '';
   #view: View = 'list';
@@ -36,6 +39,7 @@ export class TasksOverlay {
     private readonly done: () => void,
     private readonly requestRender: () => void,
     private readonly onDispose: () => void = () => {},
+    private readonly displayMode: TasksDisplayMode = 'inline',
   ) {
     this.#unsubscribe = store.subscribe((state) => {
       if (this.#disposed) return;
@@ -89,15 +93,20 @@ export class TasksOverlay {
   }
 
   render(width: number): string[] {
+    const renderWidth = Math.max(1, Math.floor(width));
+    const frameWidth = this.displayMode === 'overlay' ? Math.max(1, renderWidth - 2) : renderWidth;
+    const innerWidth = Math.max(1, frameWidth - PADDING_X * 2);
+    this.#contentWidth = innerWidth;
     const lines = this.#view === 'detail'
       ? this.#renderDetail()
       : this.#view === 'graph'
         ? this.#renderGraph()
         : this.#renderList();
-    const innerWidth = Math.max(1, width - PADDING_X * 2);
     const prefix = ' '.repeat(PADDING_X);
-    const padded = lines.map((line) => `${prefix}${truncateToWidth(line, innerWidth, '…')}${prefix}`);
-    return [...Array<string>(PADDING_Y).fill(''), ...padded, ...Array<string>(PADDING_Y).fill('')];
+    const wrapped = lines.flatMap((line) => wrapLine(line, innerWidth));
+    const padded = wrapped.map((line) => `${prefix}${truncateToWidth(line, innerWidth, '…')}${prefix}`);
+    const content = [...Array<string>(PADDING_Y).fill(''), ...padded, ...Array<string>(PADDING_Y).fill('')];
+    return frameLines(content, renderWidth, this.displayMode, this.theme);
   }
 
   invalidate(): void {}
@@ -153,8 +162,14 @@ export class TasksOverlay {
     layers.forEach((layer, index) => {
       lines.push(this.theme.fg('accent', `Layer ${index}`));
       for (const task of layer) {
-        const prerequisites = task.blockedBy.length > 0 ? ` ← ${task.blockedBy.join(', ')}` : '';
-        lines.push(`  ${statusIcon(task, this.#state, this.theme)} ${task.id} ${task.title}${prerequisites}`);
+        lines.push(`  ${statusIcon(task, this.#state, this.theme)} ${task.id} ${task.title}`);
+        if (task.blockedBy.length > 0) {
+          lines.push(`    depends on: ${task.blockedBy.map((id) => relatedTaskLabel(this.#state, id)).join(' · ')}`);
+        }
+        const dependents = this.#state.tasks.filter((entry) => entry.blockedBy.includes(task.id));
+        if (dependents.length > 0) {
+          lines.push(`    unblocks: ${dependents.map((entry) => relatedTaskLabel(this.#state, entry.id)).join(' · ')}`);
+        }
       }
       lines.push('');
     });
@@ -211,8 +226,8 @@ export class TasksOverlay {
     if (matchesKey(data, 'down') || data === 'j') this.#scrollContent(1);
     if (matchesKey(data, 'ctrl+u')) this.#scrollContent(-CONTENT_ROWS);
     if (matchesKey(data, 'ctrl+d')) this.#scrollContent(CONTENT_ROWS);
-    if (matchesKey(data, 'home')) this.#scrollContent(-this.#contentLength());
-    if (matchesKey(data, 'end')) this.#scrollContent(this.#contentLength());
+    if (matchesKey(data, 'home')) this.#scrollContent(-this.#contentLength);
+    if (matchesKey(data, 'end')) this.#scrollContent(this.#contentLength);
   }
 
   #scrollContent(delta: number): void {
@@ -224,35 +239,57 @@ export class TasksOverlay {
   #clampContentScroll(): void {
     this.#contentScroll = Math.max(
       0,
-      Math.min(this.#contentScroll, Math.max(0, this.#contentLength() - CONTENT_ROWS)),
+      Math.min(this.#contentScroll, Math.max(0, this.#contentLength - CONTENT_ROWS)),
     );
   }
 
-  #contentLength(): number {
-    if (this.#view === 'detail') {
-      const task = this.#tasks[this.#selected];
-      return task ? formatTaskDetails(this.#state, task).split('\n').length + 1 : 0;
-    }
-    if (this.#view === 'graph') {
-      return taskGraphLayers(this.#state).reduce((count, layer) => count + layer.length + 2, 1);
-    }
-    return 0;
-  }
-
   #renderScrollable(header: string[], body: string[]): string[] {
-    const maxScroll = Math.max(0, body.length - CONTENT_ROWS);
+    const wrappedBody = body.flatMap((line) => wrapLine(line, this.#contentWidth));
+    this.#contentLength = wrappedBody.length;
+    const maxScroll = Math.max(0, wrappedBody.length - CONTENT_ROWS);
     this.#contentScroll = Math.min(this.#contentScroll, maxScroll);
-    const end = Math.min(body.length, this.#contentScroll + CONTENT_ROWS);
-    const range = body.length > CONTENT_ROWS
-      ? this.theme.fg('dim', `Showing lines ${this.#contentScroll + 1}-${end}/${body.length}`)
+    const end = Math.min(wrappedBody.length, this.#contentScroll + CONTENT_ROWS);
+    const range = wrappedBody.length > CONTENT_ROWS
+      ? this.theme.fg('dim', `Showing lines ${this.#contentScroll + 1}-${end}/${wrappedBody.length}`)
       : '';
-    return [...header, ...(range ? [range] : []), ...body.slice(this.#contentScroll, end)];
+    return [...header, ...(range ? [range] : []), ...wrappedBody.slice(this.#contentScroll, end)];
   }
 
   #close(): void {
     this.dispose();
     this.done();
   }
+}
+
+function frameLines(
+  lines: readonly string[],
+  width: number,
+  displayMode: TasksDisplayMode,
+  theme: Theme,
+): string[] {
+  const border = (text: string) => theme.fg('border', text);
+  if (displayMode === 'inline') {
+    return [border('─'.repeat(width)), ...lines, border('─'.repeat(width))];
+  }
+
+  const innerWidth = Math.max(1, width - 2);
+  return [
+    border(`╭${'─'.repeat(innerWidth)}╮`),
+    ...lines.map((line) => `${border('│')}${truncateToWidth(line, innerWidth, '', true)}${border('│')}`),
+    border(`╰${'─'.repeat(innerWidth)}╯`),
+  ];
+}
+
+function relatedTaskLabel(state: TaskState, id: string): string {
+  const task = state.tasks.find((entry) => entry.id === id);
+  return task ? `${task.id} (${taskAvailability(task, state)})` : `${id} (missing)`;
+}
+
+function wrapLine(line: string, width: number): string[] {
+  const indentation = line.match(/^\s*/u)?.[0] ?? '';
+  const content = line.slice(indentation.length);
+  const wrapped = wrapTextWithAnsi(content, Math.max(1, width - indentation.length));
+  return wrapped.map((part) => `${indentation}${part}`);
 }
 
 function statusIcon(task: Task, state: TaskState, theme: Theme): string {

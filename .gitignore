@@ -3,3 +3,4 @@ coverage/
 dist/
 node_modules/
 *.tgz
+packages/ext-insights/src/generated/

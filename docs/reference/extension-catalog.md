@@ -16,6 +16,8 @@ Pi extensions or arbitrary npm packages.
 | [`@felan-ai/ext-prewalk`](../../packages/ext-prewalk/README.md) | Same-session planner-to-implementation handoff | `/prewalk` | Authenticated target model and explicit mutation tool |
 | [`@felan-ai/ext-context`](../../packages/ext-context/README.md) | Progressive nested `AGENTS.md`/`CLAUDE.md` loading | `/progressive-context` | Structured reads or decoded `@file` blocks |
 | [`@felan-ai/ext-context-view`](../../packages/ext-context-view/README.md) | Estimated context-window usage inspector | `/context` | Inline by default, optional TUI overlay, or compact headless report |
+| [`@felan-ai/ext-insights`](../../packages/ext-insights/README.md) | Local session analytics reports | `/insights` | Host-owned bounded session discovery and report storage |
+| [`@felan-ai/ext-prompt-history`](../../packages/ext-prompt-history/README.md) | Prompt history search | `Ctrl+R`, `Cmd+R` | TUI-only; inline by default, optional overlay |
 | [`@felan-ai/ext-memory`](../../packages/ext-memory/README.md) | Portable Markdown memory schema and checkpoint integration | `/memory` through local host | Host supplies memory coordinator for processing |
 | [`@felan-ai/ext-output-style`](../../packages/ext-output-style/README.md) | Validated model-response style instructions | Root and child system prompts | Host selects a built-in style or supplies explicit `custom` instructions; no ambient prompt loading |
 | [`@felan-ai/ext-web-access`](../../packages/ext-web-access/README.md) | Bounded search, source checks, fetches, and retained content | Four web tools | Provider configuration and network policy |

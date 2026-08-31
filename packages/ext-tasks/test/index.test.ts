@@ -6,9 +6,9 @@ import type {
   FelanExtensionAPI,
   ToolDefinition,
 } from '@felan-ai/agent-core';
-import { HostAgentRuntime } from '@felan-ai/agent-core';
+import { getExtensionConfigDefinition, HostAgentRuntime } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import tasksExtension from '../src/index.js';
+import tasksExtension, { TASKS_CONFIG } from '../src/index.js';
 
 type Handler = (event: any, context: ExtensionContext) => unknown;
 
@@ -20,6 +20,14 @@ afterEach(async () => {
 });
 
 describe('@felan-ai/ext-tasks', () => {
+  it('declares inline as its configurable display default', () => {
+    expect(getExtensionConfigDefinition(tasksExtension)).toBe(TASKS_CONFIG);
+    expect(TASKS_CONFIG.fields.displayMode).toMatchObject({
+      default: 'inline',
+      values: ['inline', 'overlay'],
+    });
+  });
+
   it('registers the canonical tools and concise task capability', async () => {
     const harness = await createHarness();
 
@@ -102,11 +110,33 @@ describe('@felan-ai/ext-tasks', () => {
     await harness.shutdown();
     expect(harness.statuses.at(-1)).toEqual(['tasks', undefined]);
   });
+
+  it('renders inline by default and preserves the configured overlay', async () => {
+    const observedOptions: unknown[] = [];
+    for (const config of [{}, { displayMode: 'overlay' }] as const) {
+      const harness = await createHarness('main', 'tui', config);
+      await harness.emit('session_start', { reason: 'new' });
+      const command = harness.commands.get('tasks') as {
+        handler: (args: string, ctx: ExtensionContext) => Promise<void>;
+      };
+
+      await command.handler('', harness.context);
+      observedOptions.push(harness.custom.mock.calls[0]?.[1]);
+      await harness.shutdown();
+    }
+
+    expect(observedOptions[0]).toBeUndefined();
+    expect(observedOptions[1]).toMatchObject({
+      overlay: true,
+      overlayOptions: { width: '85%', minWidth: 72, maxHeight: '90%', margin: 2 },
+    });
+  });
 });
 
 async function createHarness(
   sessionId = 'main',
   mode: ExtensionContext['mode'] = 'print',
+  config: Readonly<Record<string, unknown>> = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'felan-tasks-extension-'));
   temporaryPaths.push(root);
@@ -125,9 +155,10 @@ async function createHarness(
   const shortcuts: unknown[] = [];
   const capabilities: Array<{ id: string; instructions: string }> = [];
   const statuses: Array<[string, string | undefined]> = [];
+  const custom = vi.fn();
   const ui = {
     setStatus: (key: string, value: string | undefined) => statuses.push([key, value]),
-    custom: vi.fn(),
+    custom,
     theme: {
       fg: (_color: string, text: string) => text,
       bold: (text: string) => text,
@@ -141,6 +172,7 @@ async function createHarness(
     sessionManager: { getSessionId: () => sessionId },
   } as unknown as ExtensionContext;
   const pi = {
+    config,
     runtime,
     registerCapability: (capability: { id: string; instructions: string }) => capabilities.push(capability),
     registerTool: (tool: ToolDefinition<any, any, any>) => tools.set(tool.name, tool),
@@ -170,6 +202,8 @@ async function createHarness(
   return {
     capabilities,
     commands,
+    context: ctx,
+    custom,
     emit,
     execute,
     handlers,

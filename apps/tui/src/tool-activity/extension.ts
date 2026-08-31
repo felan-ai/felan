@@ -4,21 +4,12 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import {
   Key,
-  type OverlayOptions,
 } from '@earendil-works/pi-tui';
 import { ToolActivityInspector } from './inspector.js';
 import { ToolActivityState } from './state.js';
 
 export const TOOL_ACTIVITY_EXTENSION_NAME = '@felan-ai/felan/tool-activity';
 export const TOOL_ACTIVITY_SHORTCUT = Key.alt('t');
-
-const TOOL_ACTIVITY_OVERLAY_OPTIONS: OverlayOptions = {
-  anchor: 'center',
-  width: '90%',
-  minWidth: 50,
-  maxHeight: '90%',
-  margin: 1,
-};
 
 export function createToolActivityExtension(state: ToolActivityState): InlineExtension {
   return {
@@ -73,6 +64,5 @@ async function openToolActivityInspector(
       overlays.add(overlay);
       return overlay;
     },
-    { overlay: true, overlayOptions: TOOL_ACTIVITY_OVERLAY_OPTIONS },
   );
 }

@@ -16,7 +16,8 @@ usage remains authoritative when available, including its unknown state after
 compaction before the next model response.
 
 The custom report is intentionally TUI-only and closes with `Esc`, `Enter`, or
-`q`. The Memory row separates the initial `summary.md`, `index.md`, and schema
+`q`. Inline output uses two horizontal separators; overlay output uses a complete
+four-edge frame. The Memory row separates the initial `summary.md`, `index.md`, and schema
 context from identifiable recalls of files in the session memory projection.
 The default local Felan host enables this extension as the `contextView`
 built-in; set `builtinExtensions.contextView` to `false` to disable it.

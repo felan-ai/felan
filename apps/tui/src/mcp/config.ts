@@ -156,6 +156,8 @@ function normalizeProjectMcpConfig(value: unknown, source: string): LocalMcpConf
   const mcpServers: Record<string, McpConfig['mcpServers'][string]> = {};
   const oauth: Record<string, LocalMcpOAuthConfig> = {};
   for (const [name, rawServer] of Object.entries(value.mcpServers)) {
+    if (isProjectStdioServer(rawServer)) continue;
+
     const reason = unsupportedProjectServerReason(rawServer);
     if (reason !== undefined) {
       addWarning(warnings, `Skipped project MCP server ${boundedServerName(name)}: ${reason}`);
@@ -205,7 +207,6 @@ function normalizeProjectMcpConfig(value: unknown, source: string): LocalMcpConf
 function unsupportedProjectServerReason(value: unknown): string | undefined {
   if (!isRecord(value)) return 'server configuration must be an object';
   if (value.disabled === true) return 'server is disabled';
-  if ('command' in value || 'args' in value) return 'stdio transport is unsupported';
   if ('headers' in value) return 'custom headers are unsupported';
   if ('socket' in value) return 'socket transport is unsupported';
   if (
@@ -220,6 +221,10 @@ function unsupportedProjectServerReason(value: unknown): string | undefined {
     if (!PROJECT_SERVER_FIELDS.has(field)) return 'server contains unsupported fields';
   }
   return undefined;
+}
+
+function isProjectStdioServer(value: unknown): boolean {
+  return isRecord(value) && ('command' in value || 'args' in value);
 }
 
 function normalizeProjectSettings(

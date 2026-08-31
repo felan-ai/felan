@@ -78,7 +78,8 @@ export class ToolActivityInspector implements Component {
   }
 
   render(width: number): string[] {
-    const innerWidth = Math.max(1, width - PADDING_X * 2);
+    const renderWidth = Math.max(1, Math.floor(width));
+    const innerWidth = Math.max(1, renderWidth - PADDING_X * 2);
     const calls = this.state.calls();
     const lines = [
       this.theme.fg('accent', this.theme.bold('Tool Activity'))
@@ -89,7 +90,7 @@ export class ToolActivityInspector implements Component {
 
     if (calls.length === 0) {
       lines.push(this.theme.fg('dim', 'No tool activity in this session.'));
-      return pad(lines, innerWidth);
+      return frameInlineLines(pad(lines, innerWidth), renderWidth, this.theme);
     }
 
     const listEnd = Math.min(calls.length, this.#listScroll + LIST_ROWS);
@@ -117,7 +118,7 @@ export class ToolActivityInspector implements Component {
       ));
     }
     lines.push(...detailLines.slice(this.#detailScroll, detailEnd));
-    return pad(lines, innerWidth);
+    return frameInlineLines(pad(lines, innerWidth), renderWidth, this.theme);
   }
 
   invalidate(): void {}
@@ -305,5 +306,14 @@ function pad(lines: readonly string[], width: number): string[] {
     ...Array<string>(PADDING_Y).fill(''),
     ...lines.map((line) => `${prefix}${truncateToWidth(line, width, '…')}${prefix}`),
     ...Array<string>(PADDING_Y).fill(''),
+  ];
+}
+
+function frameInlineLines(lines: readonly string[], width: number, theme: Theme): string[] {
+  const border = (text: string) => theme.fg('border', text);
+  return [
+    border('─'.repeat(width)),
+    ...lines.map((line) => truncateToWidth(line, width, '', true)),
+    border('─'.repeat(width)),
   ];
 }

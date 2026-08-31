@@ -18,7 +18,11 @@ import { checkForFelanUpdate } from './update.js';
 import { showFelanUpdateNotification } from './update-notification.js';
 import { CwdChangeRequested, installFelanCwdCommand } from './cwd-command.js';
 import { installFelanSettingsCommand } from './extension-settings.js';
-import { loadLocalExtensionConfigDefinitions } from './extensions.js';
+import {
+  loadLocalExtensionConfigDefinitions,
+  promptHistoryExtensionPackage,
+} from './extensions.js';
+import { installPromptHistoryKeybindingOverride } from './prompt-history.js';
 
 export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly initialMessage?: string;
@@ -188,6 +192,11 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
       initialThemeSetting: runtime.services.settingsManager.getThemeSetting() ?? 'felan-light/felan-dark',
       ...(startupDiagnostics.length === 0 ? {} : { startupDiagnostics }),
     });
+    if (runtime.services.resourceLoader.getExtensions().extensions.some(
+      ({ path }) => path === `<inline:${promptHistoryExtensionPackage}>`,
+    )) {
+      installPromptHistoryKeybindingOverride(mode);
+    }
     installFelanSettingsCommand(mode, {
       agentDir: runtime.services.agentDir,
       settingsManager: runtime.services.settingsManager,
@@ -232,6 +241,7 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
       modeActive = false;
       updateCheckController.abort();
       await updateNotification;
+      mode.stop();
     }
   } finally {
     try {

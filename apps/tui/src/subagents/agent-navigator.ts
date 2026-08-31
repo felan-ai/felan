@@ -271,7 +271,9 @@ export class AgentNavigator implements Component, Focusable {
     if (width <= 0) return [];
     this.#refreshRecords();
 
-    const rows = Math.max(1, this.tui.terminal.rows);
+    const renderWidth = Math.max(1, Math.floor(width));
+    const contentWidth = Math.max(1, renderWidth - 2);
+    const rows = Math.max(1, this.tui.terminal.rows - 2);
     if (this.#inputFocused && rows < 5) this.#focusNavigation(true);
     const selected = this.#selectedRecord();
     const canSteer = selected?.status === 'running';
@@ -297,16 +299,16 @@ export class AgentNavigator implements Component, Focusable {
 
     const lines: string[] = [this.#renderHeader(selected)];
     if (showStatus) lines.push(this.theme.fg('warning', this.#statusMessage));
-    lines.push(...this.#renderTranscript(width, viewportHeight, selected));
-    if (showDivider) lines.push(this.theme.fg('border', '─'.repeat(width)));
-    if (showPrompt && selected) lines.push(this.#renderInput(width, selected));
-    lines.push(...this.#renderRail(width, railRows));
+    lines.push(...this.#renderTranscript(contentWidth, viewportHeight, selected));
+    if (showDivider) lines.push(this.theme.fg('border', '─'.repeat(contentWidth)));
+    if (showPrompt && selected) lines.push(this.#renderInput(contentWidth, selected));
+    lines.push(...this.#renderRail(contentWidth, railRows));
     if (showHints) lines.push(this.#renderHints());
 
     while (lines.length < rows) {
       lines.splice(Math.max(1, lines.length - railRows - Number(showHints)), 0, '');
     }
-    return lines.slice(0, rows).map((line) => this.#fitLine(line, width));
+    return frameOverlayLines(lines.slice(0, rows).map((line) => this.#fitLine(line, contentWidth)), renderWidth, this.theme);
   }
 
   invalidate(): void {
@@ -553,6 +555,16 @@ export class AgentNavigator implements Component, Focusable {
     const truncated = truncateToWidth(line, width);
     return truncated + ' '.repeat(Math.max(0, width - visibleWidth(truncated)));
   }
+}
+
+function frameOverlayLines(lines: readonly string[], width: number, theme: Theme): string[] {
+  const border = (text: string) => theme.fg('border', text);
+  const innerWidth = Math.max(1, width - 2);
+  return [
+    border(`╭${'─'.repeat(innerWidth)}╮`),
+    ...lines.map((line) => `${border('│')}${truncateToWidth(line, innerWidth, '', true)}${border('│')}`),
+    border(`╰${'─'.repeat(innerWidth)}╯`),
+  ];
 }
 
 export async function openAgentNavigator(

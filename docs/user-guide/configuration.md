@@ -41,6 +41,8 @@ browser and Powerline extensions:
     "markitdown": true,
     "context": true,
     "contextView": true,
+    "insights": true,
+    "promptHistory": true,
     "memory": true,
     "outputStyle": true,
     "powerline": false
@@ -48,8 +50,10 @@ browser and Powerline extensions:
   "extensionConfig": {
     "prewalk": { "entryApproval": "allow", "planReview": "skip" },
     "outputStyle": { "style": "concise" },
+    "tasks": { "displayMode": "inline" },
     "contextView": { "displayMode": "inline" },
     "codebaseMemory": { "maxCacheBytes": 0 },
+    "promptHistory": { "displayMode": "inline" },
     "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true }
   },
   "felanSubagents": {
@@ -154,16 +158,41 @@ other valid fields in the same extension remain active. Invalid CLI and
 programmatic overrides remain errors. Felan does not rewrite invalid persisted
 values automatically.
 
+### Tasks
+
+The `extensionConfig.tasks.displayMode` setting controls `/tasks` and
+`Ctrl+Shift+T`. It defaults to `inline`, which replaces the current content with
+the task list until it is closed. Set it to `overlay` for a centered popup. The
+view includes list, detail, and dependency-graph modes; details show both
+prerequisites and dependents with their current availability and titles.
+
+The setting is also available in `/settings` and as the generated
+`--tasks-display-mode` CLI option. It takes effect in a newly constructed
+runtime. Inline output uses two horizontal separators; overlay output uses a
+complete four-edge frame.
+
 ### Context View
 
 The `extensionConfig.contextView.displayMode` setting controls `/context` in
 the interactive TUI. It defaults to `inline`, which replaces the current
 content with the report until it is closed. Set it to `overlay` for a centered
 popup. Headless modes always emit the compact report as text output.
+Inline output uses two horizontal separators; overlay output uses a complete
+four-edge frame.
 
 The report attributes the initial memory `summary.md`, `index.md`, and schema
 to Memory, along with identifiable reads from the session memory projection;
 ordinary conversation messages remain under Messages.
+
+### Prompt History
+
+The `extensionConfig.promptHistory.displayMode` setting controls the prompt
+history picker opened by `Ctrl+R` or `Cmd+R`. It defaults to `inline`; set it to
+`overlay` for a centered popup. Prompt history is TUI-only. The local host reads
+only bounded, read-only session files from its configured session store; older
+prompts may be unavailable when a session file exceeds the scan limit.
+Inline output uses two horizontal separators; overlay output uses a complete
+four-edge frame.
 
 ### Ask User
 
@@ -184,7 +213,8 @@ The `extensionConfig.askUser` settings control the local question presentation:
 
 The defaults are `inline`, `auto`, `alt+o`, and `ctrl+g`. Set `displayMode` to
 `overlay` for a centered popup, or set `singleSelectLayout` to `list` to hide
-the wide-terminal details pane. The shortcut fields accept a key or chord;
+the wide-terminal details pane. Inline output uses two horizontal separators; overlay
+output uses a complete four-edge frame. The shortcut fields accept a key or chord;
 `off`, `none`, `disabled`, or an empty value disables a shortcut. Per-call
 `ask_user` values override these defaults. The same fields are available in
 `/settings` and as generated `--ask-user-*` CLI options.
@@ -309,7 +339,7 @@ effect in a newly constructed process/session. The built-in is enabled by defaul
 `builtinExtensions.powerline` to `false` to remove it.
 
 Felan keeps its theme IDs namespaced instead of replacing Pi's `dark` and
-`light`: Pi 0.84.3 gives its built-in IDs precedence during HTML export. The
+`light`: Pi 0.84.4 gives its built-in IDs precedence during HTML export. The
 interactive startup view is compact by default; press `Ctrl+O` to show full
 startup help and loaded resources.
 

@@ -1,0 +1,56 @@
+{
+  "name": "@felan-ai/ext-insights",
+  "version": "0.1.0",
+  "description": "Portable session analytics reports for Felan",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felan-ai/felan.git",
+    "directory": "packages/ext-insights"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build:report": "node scripts/build-report-app.mjs",
+    "prebuild": "pnpm build:report",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "pretype-check": "pnpm build:report",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm build:report",
+    "test": "vitest run",
+    "prepack": "pnpm build"
+  },
+  "peerDependencies": {
+    "@felan-ai/agent-core": "^0.5.5"
+  },
+  "devDependencies": {
+    "@felan-ai/agent-core": "workspace:*",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "esbuild": "0.27.4",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "react-is": "19.1.0",
+    "recharts": "3.8.1",
+    "vite": "8.2.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

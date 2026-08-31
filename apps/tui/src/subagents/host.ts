@@ -703,11 +703,15 @@ export class LocalSubagentManager {
             child.usageUnsubscribe?.();
             child.usageUnsubscribe = session.subscribe((event) => {
               if (
-                event.type !== 'entry_appended'
-                || event.entry.type !== 'message'
-                || event.entry.message.role !== 'assistant'
+                event.type !== 'message_end'
+                || event.message.role !== 'assistant'
               ) return;
-              child.usage = usageFromEntries(session.sessionManager.getEntries());
+              child.usage ??= emptyUsageTotals();
+              child.usage.input += event.message.usage.input;
+              child.usage.output += event.message.usage.output;
+              child.usage.cacheRead += event.message.usage.cacheRead;
+              child.usage.cacheWrite += event.message.usage.cacheWrite;
+              child.usage.cost += event.message.usage.cost.total;
               this.#emitUsage();
             });
             await this.#persist();

@@ -45,11 +45,13 @@ export class BackgroundBashOverlay {
   }
 
   render(width: number): string[] {
+    const renderWidth = Math.max(1, Math.floor(width));
+    const contentWidth = Math.max(1, renderWidth - 2);
     const lines = this.view === 'list' ? this.renderList() : this.renderDetail();
-    const innerWidth = Math.max(1, width - PADDING_X * 2);
+    const innerWidth = Math.max(1, contentWidth - PADDING_X * 2);
     const prefix = ' '.repeat(PADDING_X);
     const padded = lines.map((line) => `${prefix}${truncateToWidth(line, innerWidth, '…')}${prefix}`);
-    return [...Array<string>(PADDING_Y).fill(''), ...padded, ...Array<string>(PADDING_Y).fill('')];
+    return frameOverlayLines([...Array<string>(PADDING_Y).fill(''), ...padded, ...Array<string>(PADDING_Y).fill('')], renderWidth, this.theme);
   }
 
   invalidate(): void {}
@@ -323,6 +325,16 @@ export class BackgroundBashOverlay {
       this.requestRender();
     }
   }
+}
+
+function frameOverlayLines(lines: readonly string[], width: number, theme: Theme): string[] {
+  const border = (text: string) => theme.fg('border', text);
+  const innerWidth = Math.max(1, width - 2);
+  return [
+    border(`╭${'─'.repeat(innerWidth)}╮`),
+    ...lines.map((line) => `${border('│')}${truncateToWidth(line, innerWidth, '', true)}${border('│')}`),
+    border(`╰${'─'.repeat(innerWidth)}╯`),
+  ];
 }
 
 function getProcessOutputLines(log: string): string[] {

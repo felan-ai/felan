@@ -97,21 +97,31 @@ describe('createTuiAskUserHost', () => {
 
   it('honors inline layout, overlay handles, and timeout', async () => {
     let customOptions: any;
+    let inlineLines: string[] = [];
     const inline = tuiContext((component, options) => {
       customOptions = options;
+      inlineLines = component.render(80);
       component.handleInput?.('\u001b');
     });
     await ask({ ...singleRequest(), displayMode: 'inline' }, inline.context);
     expect(customOptions).toBeUndefined();
+    expect(inlineLines[0]).toBe('─'.repeat(80));
+    expect(inlineLines.at(-1)).toBe('─'.repeat(80));
+    expect(inlineLines.some((line) => line.includes('│'))).toBe(false);
 
     vi.useFakeTimers();
+    let overlayLines: string[] = [];
     const overlay = tuiContext((_component, options) => {
       customOptions = options;
+      overlayLines = _component.render(80);
     });
     const pending = ask({ ...singleRequest(), displayMode: 'overlay', timeout: 25 }, overlay.context);
     await vi.advanceTimersByTimeAsync(25);
     await expect(pending).resolves.toEqual({ status: 'cancelled', reason: 'timeout' });
     expect(customOptions).toMatchObject({ overlay: true, overlayOptions: { anchor: 'center' } });
+    expect(overlayLines[0]).toMatch(/^╭.*╮$/u);
+    expect(overlayLines.at(-1)).toMatch(/^╰.*╯$/u);
+    expect(overlayLines.slice(1, -1).every((line) => line.startsWith('│') && line.endsWith('│'))).toBe(true);
   });
 
   it('uses inline display mode by default and accepts configured overlay mode', async () => {

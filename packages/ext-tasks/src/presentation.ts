@@ -30,28 +30,37 @@ export function formatTaskList(
 
 export function formatTaskDetails(state: TaskState, task: Task): string {
   const availability = taskAvailability(task, state);
-  const blockers = task.blockedBy.map((id) => {
-    const blocker = state.tasks.find((entry) => entry.id === id)!;
-    return `${id} (${blocker.status})`;
-  });
-  const dependents = taskDependents(state, task.id).map((entry) => `${entry.id} (${entry.status})`);
+  const prerequisites = task.blockedBy.map((id) => relatedTask(state, id));
+  const dependents = taskDependents(state, task.id).map((entry) => relatedTask(state, entry.id));
   return [
-    `ID: ${task.id}`,
-    `Title: ${task.title}`,
-    `Status: ${task.status}`,
-    `Availability: ${availability}`,
-    `Priority: P${task.priority}`,
-    `Owner: ${task.ownerSessionId ?? '-'}`,
-    `Blocked by: ${blockers.join(', ') || '-'}`,
-    `Blocks: ${dependents.join(', ') || '-'}`,
-    `Description: ${task.description ?? '-'}`,
-    `Acceptance criteria: ${task.acceptanceCriteria ?? '-'}`,
-    `Blocked reason: ${task.blockedReason ?? '-'}`,
-    `Notes: ${task.notes ?? '-'}`,
-    `Result: ${task.result ?? '-'}`,
-    `Created: ${task.createdAt}`,
-    `Updated: ${task.updatedAt}`,
-    `Completed: ${task.completedAt ?? '-'}`,
+    `Task ${task.id}`,
+    task.title,
+    '',
+    'Lifecycle',
+    `  Status: ${task.status}`,
+    `  Availability: ${availability}`,
+    `  Priority: P${task.priority}`,
+    '',
+    'Execution',
+    `  Owner: ${task.ownerSessionId ?? '-'}`,
+    '',
+    'Dependencies',
+    `  Depends on (${prerequisites.length}):`,
+    ...(prerequisites.length > 0 ? prerequisites.map((entry) => `    - ${entry}`) : ['    - None']),
+    `  Unblocks (${dependents.length}):`,
+    ...(dependents.length > 0 ? dependents.map((entry) => `    - ${entry}`) : ['    - None']),
+    '',
+    'Work context',
+    ...formatMultilineField('Description', task.description),
+    ...formatMultilineField('Acceptance criteria', task.acceptanceCriteria),
+    ...formatMultilineField('Blocked reason', task.blockedReason),
+    ...formatMultilineField('Notes', task.notes),
+    ...formatMultilineField('Result', task.result),
+    '',
+    'Timeline',
+    `  Created: ${task.createdAt}`,
+    `  Updated: ${task.updatedAt}`,
+    `  Completed: ${task.completedAt ?? '-'}`,
   ].join('\n');
 }
 
@@ -83,7 +92,7 @@ export function formatTaskLine(task: Task, state: TaskState): string {
   const availability = taskAvailability(task, state);
   const owner = task.ownerSessionId ? ` @${task.ownerSessionId}` : '';
   const waiting = availability === 'waiting'
-    ? ` ← ${incompleteBlockers(task, state).map((entry) => entry.id).join(',')}`
+    ? ` ← waiting on ${incompleteBlockers(task, state).map((entry) => entry.id).join(',')}`
     : task.blockedReason
       ? ` — ${oneLine(task.blockedReason, 60)}`
       : '';
@@ -111,6 +120,17 @@ export function taskGraphLayers(state: TaskState): Task[][] {
   }
   for (const layer of layers) layer.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
   return layers;
+}
+
+function relatedTask(state: TaskState, id: string): string {
+  const task = state.tasks.find((entry) => entry.id === id);
+  if (!task) return `${id} · missing`;
+  return `${task.id} · ${taskAvailability(task, state)} · ${oneLine(task.title, 80)}`;
+}
+
+function formatMultilineField(label: string, value: string | undefined): string[] {
+  const lines = (value ?? '-').split(/\r?\n/u);
+  return [`  ${label}: ${lines[0] ?? ''}`, ...lines.slice(1).map((line) => `    ${line || ' '}`)];
 }
 
 function appendContextGroup(lines: string[], label: string, tasks: readonly Task[], state: TaskState): void {

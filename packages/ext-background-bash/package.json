@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-background-bash",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "description": "Runtime-portable detached Bash processes for Felan",
   "license": "MIT",
   "type": "module",
@@ -31,7 +31,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "0.84.3",
+    "@earendil-works/pi-tui": "0.84.4",
     "typebox": "1.1.38"
   },
   "peerDependencies": {

@@ -43,6 +43,8 @@ flavor.
 - `stop_background_bash` sends `SIGTERM` or `SIGKILL`.
 - `/background-bash` and `Ctrl+Shift+J` open the interactive process/log overlay in the TUI.
 
+The process/log overlay uses a complete four-edge frame.
+
 The footer status shows the number of running processes. Foreground `bash` continues
 to use the active `AgentRuntime`. Processes started by the active session deliver a
 completion message automatically. The message steers an active run at its next

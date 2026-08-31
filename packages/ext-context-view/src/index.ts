@@ -146,7 +146,7 @@ const contextViewExtension: FelanExtension = (pi) => {
 			}
 
 			await ctx.ui.custom<void>(
-				(_tui, theme, _keybindings, done) => new ContextUsageOverlay(report, theme, done),
+				(_tui, theme, _keybindings, done) => new ContextUsageOverlay(report, theme, done, displayMode),
 				displayMode === "overlay"
 					? {
 						overlay: true,
@@ -633,6 +633,7 @@ export class ContextUsageOverlay implements Component {
 		private readonly report: ContextReport,
 		private readonly theme: Theme,
 		private readonly done: (result: void) => void,
+		private readonly displayMode: ContextViewDisplayMode = "inline",
 	) {}
 
 	handleInput(data: string): void {
@@ -644,6 +645,7 @@ export class ContextUsageOverlay implements Component {
 	render(width: number): string[] {
 		const renderWidth = Math.max(1, width);
 		const borderColor = (text: string) => this.theme.fg("border", text);
+		const contentWidth = this.displayMode === "overlay" ? Math.max(1, renderWidth - 2) : renderWidth;
 		const container = new Container();
 
 		container.addChild(new DynamicBorder(borderColor));
@@ -674,7 +676,13 @@ export class ContextUsageOverlay implements Component {
 		container.addChild(new Text(this.theme.fg("dim", "Esc, Enter, or q to close"), 1, 0));
 		container.addChild(new DynamicBorder(borderColor));
 
-		return container.render(renderWidth).map((line) => truncateToWidth(line, renderWidth, ""));
+		const lines = container.render(contentWidth).map((line) => truncateToWidth(line, contentWidth, "", true));
+		if (this.displayMode === "inline") return lines;
+		return [
+			borderColor(`╭${"─".repeat(Math.max(1, renderWidth - 2))}╮`),
+			...lines.map((line) => `${borderColor("│")}${line}${borderColor("│")}`),
+			borderColor(`╰${"─".repeat(Math.max(1, renderWidth - 2))}╯`),
+		];
 	}
 
 	invalidate(): void {}

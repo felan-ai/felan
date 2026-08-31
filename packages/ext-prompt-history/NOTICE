@@ -1,0 +1,11 @@
+@felan-ai/ext-prompt-history
+
+Includes code adapted from packages/pi-prompt-history in
+https://github.com/mslavov/pi-extensions at source commit
+7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
+
+Copyright (c) 2026 Milko Slavov
+Licensed under the MIT License included in this package.
+
+This package uses @earendil-works/pi-tui 0.84.4 (Pi-TUI 0.84.4), licensed under
+the MIT License.

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-context-view",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Local TUI context-window usage inspector for Felan",
   "license": "MIT",
   "type": "module",
@@ -31,7 +31,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "0.84.3"
+    "@earendil-works/pi-tui": "0.84.4"
   },
   "peerDependencies": {
     "@felan-ai/agent-core": "^0.5.5"

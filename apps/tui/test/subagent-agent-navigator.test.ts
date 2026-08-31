@@ -50,6 +50,9 @@ describe('AgentNavigator', () => {
 
     expect(lines).toHaveLength(12);
     expect(lines.every((line) => visibleWidth(line) === 48)).toBe(true);
+    expect(lines[0]).toMatch(/^╭.*╮$/u);
+    expect(lines.at(-1)).toMatch(/^╰.*╯$/u);
+    expect(lines.slice(1, -1).every((line) => line.startsWith('│') && line.endsWith('│'))).toBe(true);
     expect(output).toContain('Viewing reviewer');
     expect(output).toMatch(/[↑↓]\d/);
     harness.navigator.dispose();
