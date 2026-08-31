@@ -108,7 +108,8 @@ function parseResult(command: string, result: ExecResult): CbmCallResult {
     if (!candidate) throw new Error(`${command} produced invalid JSON output`);
     envelope = JSON.parse(candidate) as typeof envelope;
   }
-  const text = envelope.content?.find((block) => block.type === 'text' && typeof block.text === 'string')?.text ?? '';
+  const text = envelope.content?.find((block) => block.type === 'text' && typeof block.text === 'string')?.text;
+  if (text === undefined) throw new Error(`${command} returned an envelope with no text content`);
   let data: unknown = text;
   try { data = JSON.parse(text); } catch { /* Preserve non-JSON upstream text. */ }
   if (envelope.isError) throw new Error(sanitize(typeof data === 'string' ? data : JSON.stringify(data)));

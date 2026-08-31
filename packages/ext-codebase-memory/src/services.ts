@@ -3,7 +3,6 @@ import { CacheManager, type CodebaseMemoryTelemetry } from './cache.js';
 import { CbmClient, INDEX_TIMEOUT_MS } from './client.js';
 
 const activeIndexes = new Map<string, Promise<unknown>>();
-const CACHE_SCAN_LIMIT = 100_000;
 
 export class ProjectService {
   readonly #cache: CacheManager;
@@ -49,26 +48,14 @@ export class ProjectService {
     return request;
   }
 
-  async #cacheSize(signal?: AbortSignal): Promise<number> {
-    const storage = this.runtime.storage('agent');
+  async #cacheSize(): Promise<number> {
     try {
-      const files = await storage.listFiles('codebase-memory/cache', {
-        recursive: true,
-        limit: CACHE_SCAN_LIMIT,
-        ...(signal === undefined ? {} : { signal }),
-      });
-      if (files.length >= CACHE_SCAN_LIMIT) return this.#cache.maxBytes + 1;
-      let total = 0;
-      for (const file of files) {
-        const remaining = Math.max(1, this.#cache.maxBytes - total + 1);
-        try {
-          total += (await storage.readFile(`codebase-memory/cache/${file}`, { maxBytes: remaining })).byteLength;
-        } catch {
-          return this.#cache.maxBytes + 1;
-        }
-        if (total > this.#cache.maxBytes) return total;
-      }
-      return total;
+      const listed = await this.client.call('list_projects', {});
+      const projects = arrayProperty(listed.data, 'projects');
+      return projects.reduce<number>((sum, project) => {
+        const bytes = asRecord(project).size_bytes;
+        return typeof bytes === 'number' && Number.isFinite(bytes) ? sum + bytes : sum;
+      }, 0);
     } catch {
       return this.#cache.maxBytes + 1;
     }
