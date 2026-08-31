@@ -83,6 +83,10 @@ Existing `tuiMode` and `editorPaddingX` values in `settings.json` remain
 authoritative, so `regular` mode and zero padding continue to work. Change
 either value from `/settings`; the choice is saved for future sessions. Felan
 uses Pi's native prompt editor frame rather than adding a second box around it.
+On Windows, fullscreen mode also normalizes terminal mouse modes so supported
+terminals send wheel events to the transcript instead of treating them as
+prompt-editor arrow keys. If a terminal or PTY does not pass mouse reports
+through, use `PageUp`/`PageDown` or switch to `regular` mode.
 
 The dependency manager also stores onboarding decisions under `felanTui`.
 Prefer `/dependencies` over editing that internal state directly.
