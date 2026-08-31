@@ -11,6 +11,11 @@ import {
   MANAGED_AGENT_BROWSER_VERSION,
 } from '@felan-ai/ext-browser';
 import {
+  inspectCodebaseMemoryRuntime,
+  installManagedCodebaseMemory,
+  MANAGED_CODEBASE_MEMORY_VERSION,
+} from '@felan-ai/ext-codebase-memory';
+import {
   detectMarkitdown,
   installManagedMarkitdown,
   setActiveMarkitdownEnabled,
@@ -97,6 +102,32 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     },
     install: async (runtime, onStatus) => {
       const detected = await installManagedAgentBrowser(runtime, onStatus);
+      return detected.available
+        ? { available: true, version: detected.invocation.version }
+        : { available: false, reason: detected.reason };
+    },
+  },
+  {
+    id: 'codebase-memory',
+    label: 'Codebase Memory',
+    extension: 'codebaseMemory',
+    purpose: 'structural code indexing, symbol reads, and bounded grep augmentation',
+    unavailableMessage: (status) => formatUnavailableMessage(
+      'Codebase Memory is built into Felan, but its reviewed native executable is not installed or unavailable.',
+      'Felan can continue normally; structural code tools remain inactive until you install it.',
+      status,
+    ),
+    installConfirmation: `Download the reviewed official installer, verify its pinned digest, and install Codebase Memory ${MANAGED_CODEBASE_MEMORY_VERSION} in Felan agent storage without changing agent configuration?`,
+    unavailableChoice: 'Continue without Codebase Memory',
+    unavailableOutcome: 'continue',
+    check: async (runtime) => {
+      const detected = await inspectCodebaseMemoryRuntime(runtime);
+      return detected.available
+        ? { available: true, version: detected.invocation.version }
+        : { available: false, reason: detected.reason };
+    },
+    install: async (runtime, onStatus) => {
+      const detected = await installManagedCodebaseMemory(runtime, onStatus);
       return detected.available
         ? { available: true, version: detected.invocation.version }
         : { available: false, reason: detected.reason };
@@ -358,7 +389,12 @@ async function applyUnavailableChoice(
     return;
   }
   await setDependencyOnboardingChoice(options.agentDir, dependency.id, 'continue');
-  ctx.ui.notify(`${dependency.label} rewriting will stay bypassed while output compaction remains active.`, 'info');
+  ctx.ui.notify(
+    dependency.id === 'rtk'
+      ? 'RTK rewriting will stay bypassed while output compaction remains active.'
+      : `${dependency.label} will stay inactive. Use /dependencies to install it later.`,
+    'info',
+  );
 }
 
 async function checkDependency(

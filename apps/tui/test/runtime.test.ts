@@ -94,6 +94,7 @@ describe('local Agent Core lifecycle', () => {
         prewalk: false,
         context: false,
         contextView: false,
+        codebaseMemory: false,
         markitdown: false,
         mcp: false,
         webAccess: false,

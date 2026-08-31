@@ -143,6 +143,31 @@ try {
       if (!customStyledPrompt?.includes('<output_style>\\nPacked custom instructions.\\n</output_style>')) {
         throw new Error('Packed output-style extension did not apply custom instructions');
       }
+      const codebaseMemory = await import('@felan-ai/ext-codebase-memory');
+      const codebaseMemoryTools = [];
+      const codebaseMemoryCapabilities = [];
+      const codebaseMemoryLogs = [];
+      await codebaseMemory.createCodebaseMemoryExtension({
+        log: (level, message) => codebaseMemoryLogs.push({ level, message }),
+      })({
+        runtime: {
+          kind: 'docker',
+          cwd: process.env.PACKED_SMOKE_WORKSPACE,
+          storage: () => ({ root: process.env.FELAN_AGENT_DIR }),
+          exec: async () => ({ code: 127, killed: false, stdout: '', stderr: 'not found' }),
+        },
+        config: { maxCacheBytes: 0 },
+        registerTool: (tool) => codebaseMemoryTools.push(tool.name),
+        registerCapability: (capability) => codebaseMemoryCapabilities.push(capability.id),
+        registerCommand: () => {},
+        on: () => {},
+      });
+      if (codebaseMemoryTools.length !== 0 || codebaseMemoryCapabilities.length !== 0) {
+        throw new Error('Packed Codebase Memory exposed model behavior without its binary');
+      }
+      if (!codebaseMemoryLogs.some(({ level, message }) => level === 'error' && message.includes('unavailable'))) {
+        throw new Error('Packed Codebase Memory did not hard-log its nonfatal cloud unavailability');
+      }
       const subagents = await import('@felan-ai/ext-subagents');
       const canonicalTools = [];
       const canonicalCapabilities = [];
