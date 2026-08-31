@@ -15,7 +15,9 @@ four model tools:
   matches.
 - `search_code` searches indexed source text.
 
-The extension indexes once at session startup. It has no file watcher or
+The extension starts one background index at session startup without delaying
+session readiness. It shows `cbm: idx` only while indexing and `cbm: install`
+only while installing, then clears the status. It has no file watcher or
 periodic refresh. After edits, the model can call
 `codebase_memory({ command: "index_repository" })`, and local users can run
 `/codebase-memory refresh`. Direct file reads, grep, compiler output, and tests
@@ -46,6 +48,11 @@ Codebase Memory data is rooted at
 `AgentRuntime.storage('agent')/codebase-memory/cache`, so root sessions and
 subagents using the same runtime coordinate through one index. No tenant key is
 added inside that already scoped runtime storage.
+
+Daemon coordination remains keyed by that agent-storage root. POSIX runtimes
+use an owner-private `/tmp/felan-cbm-<key>` rendezvous so CBM's Unix socket path
+stays below platform limits; Windows keeps the rendezvous under
+`AgentRuntime.storage('agent')/codebase-memory/runtime`.
 
 - Query timeout: 60 seconds
 - Index timeout: 20 minutes

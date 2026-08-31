@@ -11,11 +11,15 @@ import { installManagedCbm } from './installer.js';
 import { ProjectService, SymbolService } from './services.js';
 import { registerTools } from './tools.js';
 
-export const CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS = `Use Codebase Memory for structural code exploration before broad raw searches: read_symbol reads a known symbol, search_and_read_symbols finds and reads likely implementations, search_code searches indexed text, and codebase_memory proxies other structural queries or refreshes with {command:"index_repository"}. The index is built at startup and refreshed only when the model calls index_repository or the user invokes /codebase-memory. It may be stale after edits. Direct reads, grep, compiler output, and tests remain authoritative; grep output can include bounded Codebase Memory augmentation. Keep symbol reads focused and at no more than 220 lines per symbol.`;
+export const CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS = `Use Codebase Memory for structural code exploration before broad raw searches: read_symbol reads a known symbol, search_and_read_symbols finds and reads likely implementations, search_code searches indexed text, and codebase_memory proxies other structural queries or refreshes with {command:"index_repository"}. A background index starts at session startup and refreshes only when the model calls index_repository or the user invokes /codebase-memory. It may be stale after edits. Direct reads, grep, compiler output, and tests remain authoritative; grep output can include bounded Codebase Memory augmentation. Keep symbol reads focused and at no more than 220 lines per symbol.`;
 
 export interface CodebaseMemoryExtensionOptions {
   readonly telemetry?: CodebaseMemoryTelemetry;
   readonly log?: (level: 'error' | 'info', message: string, fields: Record<string, unknown>) => void;
+}
+
+interface IndexSession {
+  active: boolean;
 }
 
 export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOptions = {}): FelanExtension {
@@ -30,6 +34,7 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
     let detection: CbmDetection = await detectCbm(pi.runtime);
     let hintShown = false;
     let projects: ProjectService | undefined;
+    let activeIndexSession: IndexSession | undefined;
 
     const activate = (available: Extract<CbmDetection, { available: true }>) => {
       const client = new CbmClient(pi.runtime, available.invocation);
@@ -60,7 +65,7 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
         }
         if (action === 'install') {
           if (!await ctx.ui.confirm('Install Codebase Memory', 'Download the pinned reviewed installer and Codebase Memory 0.10.8 binary into Felan agent storage?')) return;
-          detection = await installManagedCbm(pi.runtime, (message) => ctx.ui.setStatus('codebase-memory', `… ${message}`));
+          detection = await installManagedCbm(pi.runtime, () => ctx.ui.setStatus('codebase-memory', 'cbm: install'));
           ctx.ui.setStatus('codebase-memory', undefined);
           ctx.ui.notify(detectionMessage(detection), detection.available ? 'info' : 'error');
           return;
@@ -78,7 +83,9 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
       },
     });
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on('session_start', (_event, ctx) => {
+      if (activeIndexSession) activeIndexSession.active = false;
+      activeIndexSession = undefined;
       if (!projects) {
         if (pi.runtime.kind === 'host' && ctx.hasUI && !hintShown) {
           hintShown = true;
@@ -86,7 +93,15 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
         }
         return;
       }
-      await refresh(projects, ctx);
+      const session = { active: true };
+      activeIndexSession = session;
+      void refresh(projects, ctx, session);
+    });
+
+    pi.on('session_shutdown', (_event, ctx) => {
+      if (activeIndexSession) activeIndexSession.active = false;
+      activeIndexSession = undefined;
+      ctx.ui.setStatus('codebase-memory', undefined);
     });
   };
   associateExtensionConfig(extension, CODEBASE_MEMORY_CONFIG);
@@ -97,12 +112,15 @@ function detectionMessage(detection: CbmDetection): string {
   return detection.available ? 'Codebase Memory installed. Restart Felan to activate it.' : detection.reason;
 }
 
-async function refresh(projects: ProjectService, ctx: ExtensionContext): Promise<void> {
-  ctx.ui.setStatus('codebase-memory', '… Indexing repository');
+async function refresh(projects: ProjectService, ctx: ExtensionContext, session?: IndexSession): Promise<void> {
+  if (session && !session.active) return;
+  ctx.ui.setStatus('codebase-memory', 'cbm: idx');
   try {
     await projects.index(ctx.signal);
-    ctx.ui.setStatus('codebase-memory', '✓ Codebase Memory indexed');
+    if (session && !session.active) return;
+    ctx.ui.setStatus('codebase-memory', undefined);
   } catch (error) {
+    if (session && !session.active) return;
     ctx.ui.setStatus('codebase-memory', undefined);
     if (ctx.hasUI) ctx.ui.notify(`Codebase Memory index failed: ${error instanceof Error ? error.message : String(error)}`, 'warning');
   }

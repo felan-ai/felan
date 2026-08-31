@@ -4,6 +4,7 @@ import codebaseMemoryExtension, {
   CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS,
   createCodebaseMemoryExtension,
 } from '../src/index.js';
+import { codebaseMemoryRuntimeDirectory } from '../src/runtime-path.js';
 import { envelope, MemoryRuntime, result } from './test-runtime.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
@@ -52,7 +53,9 @@ describe('Codebase Memory extension', () => {
 
     await harness.emit('session_start', { reason: 'startup' });
 
-    expect(log).toHaveBeenCalledWith('info', 'telemetry.cache_size', expect.objectContaining({ bytes: 123 }));
+    await vi.waitFor(() => {
+      expect(log).toHaveBeenCalledWith('info', 'telemetry.cache_size', expect.objectContaining({ bytes: 123 }));
+    });
   });
 
   it('rejects an unreviewed binary version', async () => {
@@ -64,7 +67,7 @@ describe('Codebase Memory extension', () => {
     expect(harness.capabilities).toEqual([]);
   });
 
-  it('registers exactly four tools, startup indexing, accurate freshness guidance, and explicit refresh paths', async () => {
+  it('registers exactly four tools, background startup indexing, accurate freshness guidance, and explicit refresh paths', async () => {
     const telemetry = vi.fn();
     const runtime = new MemoryRuntime('host', true, async (command) => {
       if (command.includes('index_repository')) return result(envelope({ status: 'indexed', project: 'fixture' }));
@@ -87,19 +90,119 @@ describe('Codebase Memory extension', () => {
       instructions: CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS,
     }]);
     expect(CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS).toContain('may be stale');
+    expect(CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS).toContain('background index');
     expect(CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS).not.toMatch(/watch|periodic/iu);
 
     await harness.emit('session_start', { reason: 'startup' });
-    expect(runtime.shellCalls.some((call) => call.command.includes('index_repository'))).toBe(true);
+    await vi.waitFor(() => {
+      expect(runtime.shellCalls.some((call) => call.command.includes('index_repository'))).toBe(true);
+      expect(telemetry).toHaveBeenCalledWith('cache_size', expect.objectContaining({ bytes: 123 }));
+    });
+    expect(harness.statuses.at(-1)).toEqual(['codebase-memory', undefined]);
+    const runtimeDirectory = codebaseMemoryRuntimeDirectory('/agent-storage');
     expect(runtime.shellCalls[0]?.options?.env).toEqual(expect.objectContaining({
       CBM_CACHE_DIR: '/agent-storage/codebase-memory/cache',
-      CBM_RUNTIME_DIR: '/agent-storage/codebase-memory/runtime',
+      CBM_RUNTIME_DIR: runtimeDirectory.root,
     }));
+    expect(runtime.shellCalls[0]?.command).toContain(`umask 077 && mkdir -p -- '${runtimeDirectory.root}'`);
 
     await execute(harness.tools[0]!, { command: 'index_repository' });
     await harness.commandHandlers.get('codebase-memory')?.('', harness.context);
     expect(runtime.shellCalls.filter((call) => call.command.includes('index_repository'))).toHaveLength(3);
     expect(telemetry).toHaveBeenCalledWith('cache_size', expect.objectContaining({ bytes: 123 }));
+  });
+
+  it('renders concise search and symbol targets in tool call lines', async () => {
+    const harness = await createHarness(new MemoryRuntime());
+
+    expect(renderedCall(harness.tools[0]!, {
+      command: 'search_graph',
+      arguments: { query: 'authentication flow' },
+    })).toBe('codebase_memory search_graph · authentication flow');
+    expect(renderedCall(harness.tools[1]!, {
+      name: 'authorizeRequest',
+      file_path: 'src/auth.ts',
+    })).toBe('read_symbol authorizeRequest · src/auth.ts');
+    expect(renderedCall(harness.tools[2]!, {
+      query: 'session validation',
+      file_pattern: 'src/**/*.ts',
+    })).toBe('search_and_read_symbols session validation · src/**/*.ts');
+    expect(renderedCall(harness.tools[3]!, {
+      pattern: 'SESSION_SECRET',
+      path_filter: 'config',
+    })).toBe('search_code SESSION_SECRET · config');
+
+    const unsafeDetail = renderedCall(harness.tools[3]!, {
+      pattern: `line one\n${'x'.repeat(150)}\u001b[31m`,
+    }).slice('search_code '.length);
+    expect(unsafeDetail).not.toMatch(/[\n\u001b]/u);
+    expect([...unsafeDetail]).toHaveLength(120);
+    expect(unsafeDetail.endsWith('…')).toBe(true);
+  });
+
+  it('does not await startup indexing and shows a compact status only while active', async () => {
+    let finishIndexing!: (value: ReturnType<typeof result>) => void;
+    const indexing = new Promise<ReturnType<typeof result>>((resolve) => { finishIndexing = resolve; });
+    let markIndexingStarted!: () => void;
+    const indexingStarted = new Promise<void>((resolve) => { markIndexingStarted = resolve; });
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('index_repository')) {
+        markIndexingStarted();
+        return indexing;
+      }
+      if (command.includes('list_projects')) {
+        return result(envelope({ projects: [{ name: 'fixture', root_path: '/work/repo' }] }));
+      }
+      return result(envelope({}));
+    }, '/agent-storage/background-index');
+    const harness = await createHarness(runtime);
+
+    await expect(harness.emit('session_start', { reason: 'startup' })).resolves.toBeUndefined();
+    await indexingStarted;
+    expect(harness.statuses.at(-1)).toEqual(['codebase-memory', 'cbm: idx']);
+
+    finishIndexing(result(envelope({ status: 'indexed', project: 'fixture' })));
+    await vi.waitFor(() => {
+      expect(harness.statuses).toEqual([
+        ['codebase-memory', 'cbm: idx'],
+        ['codebase-memory', undefined],
+      ]);
+    });
+  });
+
+  it('clears the compact status when background indexing fails', async () => {
+    const runtime = new MemoryRuntime('host', true, async (command) => command.includes('index_repository')
+      ? result('', 1, 'index failed')
+      : result(envelope({})));
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+    await vi.waitFor(() => {
+      expect(harness.notifications.at(-1)?.[0]).toContain('Codebase Memory index failed');
+    });
+    expect(harness.statuses).toEqual([
+      ['codebase-memory', 'cbm: idx'],
+      ['codebase-memory', undefined],
+    ]);
+  });
+
+  it('keeps scoped POSIX coordination below the Darwin Unix socket path limit', () => {
+    const longStorageRoot = `/Users/test/${'deeply-nested/'.repeat(20)}agent`;
+    const runtimeDirectory = codebaseMemoryRuntimeDirectory(longStorageRoot);
+    const maximumDarwinSocketPath = `/private${runtimeDirectory.root}/cbm-daemon-4294967295/cbm-0123456789abcdef.sock`;
+
+    expect(runtimeDirectory.storagePath).toBeUndefined();
+    expect(runtimeDirectory.root).toMatch(/^\/tmp\/felan-cbm-[a-f0-9]{24}$/u);
+    expect(new TextEncoder().encode(maximumDarwinSocketPath)).toHaveLength(95);
+    expect(codebaseMemoryRuntimeDirectory(longStorageRoot)).toEqual(runtimeDirectory);
+    expect(codebaseMemoryRuntimeDirectory(`${longStorageRoot}-other`).root).not.toBe(runtimeDirectory.root);
+  });
+
+  it('keeps Windows coordination in scoped agent storage', () => {
+    expect(codebaseMemoryRuntimeDirectory('C:/Users/test/.felan/storage/agent')).toEqual({
+      root: 'C:\\Users\\test\\.felan\\storage\\agent\\codebase-memory\\runtime',
+      storagePath: 'codebase-memory/runtime',
+    });
   });
 
   it('rejects mutating or unknown upstream commands from the generic proxy', async () => {
@@ -219,6 +322,16 @@ async function execute(tool: ToolDefinition, params: Record<string, unknown>) {
   return tool.execute('call', params as never, new AbortController().signal, () => {}, {} as never);
 }
 
+function renderedCall(tool: ToolDefinition, params: Record<string, unknown>): string {
+  if (!tool.renderCall) throw new Error(`Tool has no call renderer: ${tool.name}`);
+  const theme = {
+    fg: (_role: string, text: string) => text,
+    bold: (text: string) => text,
+  } as Parameters<NonNullable<ToolDefinition['renderCall']>>[1];
+  const context = {} as Parameters<NonNullable<ToolDefinition['renderCall']>>[2];
+  return tool.renderCall(params as never, theme, context).render(300).map((line) => line.trimEnd()).join('\n');
+}
+
 async function createHarness(
   runtime: MemoryRuntime,
   extension = codebaseMemoryExtension,
@@ -229,6 +342,7 @@ async function createHarness(
   const commands: string[] = [];
   const commandHandlers = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void> | void>();
   const notifications: Array<[string, string | undefined]> = [];
+  const statuses: Array<[string, string | undefined]> = [];
   const context = {
     cwd: runtime.cwd,
     hasUI: runtime.kind === 'host',
@@ -236,7 +350,7 @@ async function createHarness(
     signal: new AbortController().signal,
     ui: {
       notify: (message: string, level?: string) => notifications.push([message, level]),
-      setStatus: vi.fn(),
+      setStatus: vi.fn((key: string, text: string | undefined) => statuses.push([key, text])),
       confirm: vi.fn(async () => false),
     },
   } as unknown as ExtensionContext;
@@ -254,7 +368,7 @@ async function createHarness(
   } as unknown as FelanExtensionAPI;
   await extension(pi);
   return {
-    capabilities, commands, commandHandlers, context, notifications, tools,
+    capabilities, commands, commandHandlers, context, notifications, statuses, tools,
     async emit(name: string, event: Record<string, unknown>): Promise<unknown> {
       let result: unknown;
       for (const handler of handlers.get(name) ?? []) result = await handler(event, context) ?? result;

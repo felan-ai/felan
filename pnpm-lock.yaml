@@ -155,6 +155,9 @@ importers:
 
   packages/ext-codebase-memory:
     dependencies:
+      '@earendil-works/pi-tui':
+        specifier: 0.84.4
+        version: 0.84.4
       typebox:
         specifier: 1.1.38
         version: 1.1.38

@@ -17,9 +17,10 @@ export class MemoryRuntime implements AgentRuntime {
     readonly kind: AgentRuntime['kind'] = 'host',
     readonly available = true,
     readonly shellHandler: (command: string, options?: Record<string, unknown>) => Promise<ExecResult> = async () => result(),
+    storageRoot = '/agent-storage',
   ) {
     this.#storage = {
-      root: '/agent-storage',
+      root: storageRoot,
       readFile: async (path) => {
         const bytes = this.files.get(path);
         if (!bytes) throw Object.assign(new Error(`Missing ${path}`), { code: 'ENOENT' });

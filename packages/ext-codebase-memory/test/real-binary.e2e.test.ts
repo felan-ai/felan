@@ -7,8 +7,9 @@ import {
   type FelanExtensionAPI,
   type ToolDefinition,
 } from '@felan-ai/agent-core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import codebaseMemoryExtension from '../src/index.js';
+import { codebaseMemoryRuntimeDirectory } from '../src/runtime-path.js';
 
 const binary = process.env.CBM_E2E_BINARY;
 const temporaryDirectories: string[] = [];
@@ -24,6 +25,8 @@ describe('Codebase Memory real binary', () => {
     const workspace = join(root, 'workspace');
     const sessionStorageRoot = join(root, 'session');
     const agentStorageRoot = join(root, 'agent');
+    const runtimeDirectory = codebaseMemoryRuntimeDirectory(agentStorageRoot);
+    if (!runtimeDirectory.storagePath) temporaryDirectories.push(runtimeDirectory.root);
     const managedDirectory = join(agentStorageRoot, 'codebase-memory', 'bin');
     await Promise.all([
       mkdir(workspace, { recursive: true }),
@@ -47,6 +50,12 @@ describe('Codebase Memory real binary', () => {
       'search_code',
     ]);
     await harness.emit('session_start', { reason: 'startup' });
+    await vi.waitFor(() => {
+      expect(harness.statuses).toEqual([
+        ['codebase-memory', 'cbm: idx'],
+        ['codebase-memory', undefined],
+      ]);
+    }, { timeout: 120_000 });
     expect(await readSymbol(harness.tools[1]!, 'answer')).toContain('return 42');
 
     await writeFile(join(workspace, 'answer.ts'), 'export function changedAnswer() { return 84; }\n');
@@ -72,13 +81,18 @@ async function createHarness(runtime: HostAgentRuntime) {
   const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => unknown>>();
   const tools: ToolDefinition[] = [];
   const capabilities: string[] = [];
+  const statuses: Array<[string, string | undefined]> = [];
   const commandHandlers = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void> | void>();
   const context = {
     cwd: runtime.cwd,
     hasUI: true,
     mode: 'tui',
     signal: new AbortController().signal,
-    ui: { notify: () => {}, setStatus: () => {}, confirm: async () => false },
+    ui: {
+      notify: () => {},
+      setStatus: (key: string, text: string | undefined) => statuses.push([key, text]),
+      confirm: async () => false,
+    },
   } as unknown as ExtensionContext;
   const api = {
     runtime,
@@ -97,6 +111,7 @@ async function createHarness(runtime: HostAgentRuntime) {
     capabilities,
     commandHandlers,
     context,
+    statuses,
     tools,
     async emit(event: string, payload: Record<string, unknown>): Promise<void> {
       for (const handler of handlers.get(event) ?? []) await handler(payload, context);

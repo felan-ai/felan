@@ -1,5 +1,9 @@
 import type { AgentRuntime, ExecResult } from '@felan-ai/agent-core';
-import { joinRuntimePath, shellQuote } from './runtime-path.js';
+import {
+  codebaseMemoryRuntimeDirectory,
+  joinRuntimePath,
+  shellQuote,
+} from './runtime-path.js';
 
 export const CODEBASE_MEMORY_VERSION = '0.10.8';
 export const QUERY_TIMEOUT_MS = 60_000;
@@ -29,26 +33,35 @@ export interface CbmCallResult {
 export class CbmClient {
   readonly cacheRoot: string;
   readonly runtimeRoot: string;
+  readonly #runtimeStoragePath: string | undefined;
 
   constructor(
     private readonly runtime: AgentRuntime,
     readonly invocation: CbmInvocation,
   ) {
-    this.cacheRoot = joinRuntimePath(runtime.storage('agent').root, 'codebase-memory/cache');
-    this.runtimeRoot = joinRuntimePath(runtime.storage('agent').root, 'codebase-memory/runtime');
+    const agentStorageRoot = runtime.storage('agent').root;
+    const runtimeDirectory = codebaseMemoryRuntimeDirectory(agentStorageRoot);
+    this.cacheRoot = joinRuntimePath(agentStorageRoot, 'codebase-memory/cache');
+    this.runtimeRoot = runtimeDirectory.root;
+    this.#runtimeStoragePath = runtimeDirectory.storagePath;
   }
 
   async call(command: string, args: Record<string, unknown>, options: CbmCallOptions = {}): Promise<CbmCallResult> {
     const timeout = options.timeoutMs ?? (command === 'index_repository' ? INDEX_TIMEOUT_MS : QUERY_TIMEOUT_MS);
-    await this.runtime.storage('agent').mkdir('codebase-memory/runtime', { recursive: true });
+    if (this.#runtimeStoragePath) {
+      await this.runtime.storage('agent').mkdir(this.#runtimeStoragePath, { recursive: true });
+    }
     const encoded = JSON.stringify(args);
-    const shellCommand = [
+    const invocation = [
       shellQuote(this.invocation.command),
       'cli',
       '--json',
       shellQuote(command),
       shellQuote(encoded),
     ].join(' ');
+    const shellCommand = this.#runtimeStoragePath
+      ? invocation
+      : `umask 077 && mkdir -p -- ${shellQuote(this.runtimeRoot)} && ${invocation}`;
     const result = await this.runtime.shell(shellCommand, {
       cwd: this.runtime.cwd,
       env: { CBM_CACHE_DIR: this.cacheRoot, CBM_RUNTIME_DIR: this.runtimeRoot },

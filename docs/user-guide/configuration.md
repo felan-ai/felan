@@ -378,10 +378,13 @@ complete JSON payloads are protected from false-success or mid-document cuts.
 `extensionConfig.codebaseMemory.maxCacheBytes` is a non-negative integer. The
 default `0` selects the runtime policy: 2 GiB for the local host and 500 MiB for
 Docker or Daytona. A positive value overrides that limit. Codebase Memory uses
-agent-scoped runtime storage, indexes once at startup, and refreshes only after
-`/codebase-memory refresh` or a model `index_repository` request; it does not
-watch files. The exact reviewed 0.10.8 executable is required. Use
-`/dependencies` or `/codebase-memory install` for an explicit local install.
+agent-scoped cache storage, starts one background index without delaying session
+startup, and refreshes only after `/codebase-memory refresh` or a model
+`index_repository` request; it does not watch files. Daemon coordination is
+derived from the agent-storage root and uses a bounded owner-private temporary
+path on POSIX so Unix socket paths remain portable. The exact reviewed 0.10.8
+executable is required. Use `/dependencies` or `/codebase-memory install` for an
+explicit local install.
 
 ## Secrets
 
