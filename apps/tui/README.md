@@ -105,11 +105,17 @@ All built-ins are enabled by default, including the Powerline footer in TUI
 sessions. Binary-backed features can remain inactive until their dependency is
 installed or the feature is disabled through `/dependencies`.
 
-Codebase Memory is also a default built-in. When its reviewed binary is
-available, Felan indexes the active repository at startup and exposes
-structural code tools plus bounded grep augmentation. Run
-`/codebase-memory refresh` after edits or `/codebase-memory install` for an
-explicit managed install; Felan never installs it automatically.
+Codebase Memory is a default built-in. It provides structural code
+search, symbol reads, and bounded grep augmentation, backed by the
+`codebase-memory-mcp` binary.
+
+The binary is a separate download and is not installed automatically.
+Run `/codebase-memory install` to fetch the reviewed managed binary.
+Once it is available, Felan indexes the active repository at session
+start and re-uses the index across sessions.
+
+Run `/codebase-memory refresh` to rebuild the index after significant
+edits.
 
 The local TUI provides `felan-light` and `felan-dark` as host-owned Pi themes.
 The startup view uses a compact Felan welcome; press `Ctrl+O` when you need
