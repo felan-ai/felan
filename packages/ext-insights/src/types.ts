@@ -52,6 +52,35 @@ export interface RageHit {
   msgIndex: number;
 }
 
+export interface SessionActivity {
+  timestamp: Date;
+  userMessageCount?: number;
+  assistantMessageCount?: number;
+  toolCallCount?: number;
+  tokenUsage?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+  cost?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+  models?: Record<string, { count: number; tokens: number; cost: number }>;
+  providers?: Record<string, number>;
+  thinkingLevels?: Record<string, number>;
+  toolUsage?: Record<string, number>;
+  stopReasons?: Record<string, number>;
+  toolCallErrors?: number;
+  rageHits?: RageHit[];
+  metadata?: Partial<Omit<SessionMetadata, "primaryModel" | "avgResponseTimeMs" | "firstResponseTimeMs">>;
+}
+
 export interface ParsedSession {
   id: string;
   cwd: string;
@@ -86,6 +115,17 @@ export interface ParsedSession {
   hasError: boolean;
   rageHits: RageHit[];
   metadata?: SessionMetadata;
+  activity?: SessionActivity[];
+  agentSessionCount?: number;
+}
+
+export interface InsightsSessionReference {
+  readonly id: string;
+  readonly path: string;
+  readonly size: number;
+  readonly modifiedAtMs: number;
+  readonly rootSessionId?: string;
+  readonly isAgent?: boolean;
 }
 
 export interface SessionMetadata {
@@ -328,6 +368,8 @@ export interface Analytics {
     hasError: boolean;
     rageHits: ParsedSession["rageHits"];
     metadata?: ParsedSession["metadata"];
+    activity?: Array<Omit<SessionActivity, "timestamp"> & { timestamp: string }>;
+    agentSessionCount?: number;
   }>;
   savings?: InsightsSavingsReport;
 }

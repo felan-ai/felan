@@ -33,21 +33,22 @@ export function computeAnalytics(sessions: ParsedSession[]): Analytics {
   // Daily stats
   const dailyMap = new Map<string, DailyStats>();
   for (const sess of sorted) {
-    const date = sess.startTime.toISOString().split("T")[0];
-    const existing = dailyMap.get(date);
-    if (existing) {
-      existing.sessions++;
-      existing.messages += sess.messageCount;
-      existing.tokens += sess.tokenUsage.total;
-      existing.cost += sess.cost.total;
-    } else {
-      dailyMap.set(date, {
-        date,
-        sessions: 1,
-        messages: sess.messageCount,
-        tokens: sess.tokenUsage.total,
-        cost: sess.cost.total,
-      });
+    const activity = sess.activity?.length ? sess.activity : [{
+      timestamp: sess.startTime,
+      userMessageCount: sess.userMessageCount,
+      assistantMessageCount: sess.assistantMessageCount,
+      tokenUsage: sess.tokenUsage,
+      cost: sess.cost,
+    }];
+    const firstDate = activity[0]!.timestamp.toISOString().split("T")[0];
+    for (const item of activity) {
+      const date = item.timestamp.toISOString().split("T")[0];
+      const existing = dailyMap.get(date) ?? { date, sessions: 0, messages: 0, tokens: 0, cost: 0 };
+      if (date === firstDate) existing.sessions++;
+      existing.messages += (item.userMessageCount ?? 0) + (item.assistantMessageCount ?? 0);
+      existing.tokens += item.tokenUsage?.total ?? 0;
+      existing.cost += item.cost?.total ?? 0;
+      dailyMap.set(date, existing);
     }
   }
   const dailyStats = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
@@ -243,6 +244,8 @@ export function computeAnalytics(sessions: ParsedSession[]): Analytics {
       hasError: s.hasError,
       rageHits: s.rageHits,
       metadata: s.metadata,
+      activity: s.activity?.map((item) => ({ ...item, timestamp: item.timestamp.toISOString() })),
+      agentSessionCount: s.agentSessionCount,
     })),
   };
 }

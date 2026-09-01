@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-insights",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Portable session analytics reports for Felan",
   "license": "MIT",
   "type": "module",

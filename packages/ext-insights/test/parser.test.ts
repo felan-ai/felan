@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { writeFile, unlink, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseSessionTranscript } from "../src/parser.js";
+import { parseSessionTranscript, sliceParsedSession } from "../src/parser.js";
 
 async function parseSessionFile(filePath: string) {
   try {
@@ -90,6 +90,21 @@ describe("parseSessionFile", () => {
     expect(result!.tokenUsage.cacheRead).toBe(50);
     expect(result!.tokenUsage.total).toBe(350);
     expect(result!.cost.total).toBeCloseTo(0.0035);
+  });
+
+  it("slices a resumed session by assistant-turn timestamps", async () => {
+    const filePath = await writeTempJsonl([
+      { type: "session", id: "s1", cwd: "/a", timestamp: "2025-03-14T23:59:00.000Z" },
+      { type: "message", timestamp: "2025-03-14T23:59:30.000Z", message: { role: "assistant", model: "gpt-4", content: [], usage: { input: 10, output: 20, totalTokens: 30, cost: { total: 1 } } } },
+      { type: "message", timestamp: "2025-03-15T00:00:00.000Z", message: { role: "assistant", model: "gpt-4", content: [], usage: { input: 30, output: 40, totalTokens: 70, cost: { total: 2 } } } },
+      { type: "message", timestamp: "2025-03-15T01:00:00.000Z", message: { role: "assistant", model: "gpt-4", content: [], usage: { input: 50, output: 60, totalTokens: 110, cost: { total: 3 } } } },
+    ]);
+    const parsed = await parseSessionFile(filePath);
+    const sliced = sliceParsedSession(parsed!, new Date("2025-03-15T00:00:00.000Z"), new Date("2025-03-15T01:00:00.000Z"));
+    expect(sliced?.assistantMessageCount).toBe(1);
+    expect(sliced?.tokenUsage.total).toBe(70);
+    expect(sliced?.cost.total).toBe(2);
+    expect(sliced?.startTime.toISOString()).toBe("2025-03-15T00:00:00.000Z");
   });
 
   it("tracks model changes and links them to token usage", async () => {

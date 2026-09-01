@@ -77,6 +77,22 @@ describe("computeAnalytics", () => {
       expect(result.dailyStats[0].sessions).toBe(1);
     });
 
+    it("buckets activity cost by activity date", () => {
+      const sess = makeSession({
+        startTime: new Date("2025-03-14T23:00:00Z"),
+        endTime: new Date("2025-03-15T01:00:00Z"),
+        activity: [
+          { timestamp: new Date("2025-03-14T23:00:00Z"), assistantMessageCount: 1, tokenUsage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 }, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 10 } },
+          { timestamp: new Date("2025-03-15T00:30:00Z"), assistantMessageCount: 1, tokenUsage: { input: 2, output: 2, cacheRead: 0, cacheWrite: 0, total: 4 }, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 20 } },
+        ],
+      });
+      const result = computeAnalytics([sess]);
+      expect(result.dailyStats).toEqual([
+        { date: "2025-03-14", sessions: 1, messages: 1, tokens: 2, cost: 10 },
+        { date: "2025-03-15", sessions: 0, messages: 1, tokens: 4, cost: 20 },
+      ]);
+    });
+
     it("creates projectStats from cwd basename", () => {
       const sess = makeSession();
       const result = computeAnalytics([sess]);

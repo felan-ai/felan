@@ -42,7 +42,7 @@ to start a new session for the current directory.
 | `/markitdown install` | Explicitly install the managed converter |
 | `/progressive-context` | Show progressively loaded nested instructions |
 | `/context` | Show estimated current context-window usage inline (or in the configured overlay) |
-| `/insights` | Generate a local Felan session analytics report with date/session filters, charts, calendar, and optional Savings breakdowns |
+| `/insights` | Generate a local Felan session analytics snapshot with date/session filters, charts, calendar, and optional Savings breakdowns |
 | `/rtk` | Open interactive RTK settings |
 | `/rtk show` | Show RTK configuration and runtime status |
 | `/rtk verify` | Recheck the active runtime for RTK |
@@ -50,6 +50,13 @@ to start a new session for the current directory.
 
 The Browser extension is model-facing and does not add a user slash command.
 Use `/dependencies` to manage its external CLI.
+
+Every `/insights` run rescans visible root and retained subagent transcripts,
+reparses new or changed files, and replaces the self-contained static HTML
+report. Opening that file later does not read live data; run `/insights` again
+to regenerate it. `--refresh` only forces unchanged files to be reparsed. Date
+ranges use event timestamps, including the start and excluding the end, and
+group retained subagent activity under its root session.
 
 ## Common Pi commands
 

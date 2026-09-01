@@ -1,7 +1,7 @@
 const SUPPORTED_FLAGS = [
   { value: "--no-open", label: "--no-open", description: "Generate the report without opening it" },
   { value: "--since", label: "--since <N>d", description: "Analyze sessions from the last N days" },
-  { value: "--refresh", label: "--refresh", description: "Refresh cached data when caching is available" },
+  { value: "--refresh", label: "--refresh", description: "Force reparsing of unchanged session files" },
   { value: "-r", label: "-r", description: "Alias for --refresh" },
   { value: "--md", label: "--md", description: "Export Markdown when Markdown output is available" },
 ];

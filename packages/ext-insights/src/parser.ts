@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { ParsedSession, SessionEvent, SessionMessage } from "./types.js";
+import type { ParsedSession, SessionActivity, SessionEvent, SessionMessage } from "./types.js";
 import { detectRage } from "./rage.js";
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
@@ -52,6 +52,7 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
     const gitActivity = { commits: 0, pushes: 0, statusChecks: 0, diffs: 0 };
     let lastUserMessageAt: Date | null = null;
     let userInterruptions = 0;
+    const activity: SessionActivity[] = [];
 
     for (const line of content.split(/\r?\n/u)) {
       if (!line.trim()) continue;
@@ -98,9 +99,11 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
 
         if (event.type === "message") {
           const msg = (event as unknown as { message: SessionMessage }).message;
+          const messageActivity: SessionActivity = eventTime ? { timestamp: eventTime } : { timestamp: new Date(0) };
 
           if (msg.role === "user") {
             userMessages++;
+            messageActivity.userMessageCount = 1;
             lastUserMessageAt = eventTime;
             // Collect rage hits with the message index for accurate per-message dedup
             const textParts: string[] = [];
@@ -118,6 +121,7 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
             }
           } else if (msg.role === "assistant") {
             assistantMessages++;
+            messageActivity.assistantMessageCount = 1;
 
             if (eventTime && lastUserMessageAt) {
               responseTimesMs.push(Math.max(0, eventTime.getTime() - lastUserMessageAt.getTime()));
@@ -143,35 +147,64 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
               costCacheRead += msg.usage.cost?.cacheRead ?? 0;
               costCacheWrite += msg.usage.cost?.cacheWrite ?? 0;
 
+              messageActivity.tokenUsage = { input, output, cacheRead, cacheWrite, total: tokens };
+              messageActivity.cost = {
+                input: msg.usage.cost?.input ?? 0,
+                output: msg.usage.cost?.output ?? 0,
+                cacheRead: msg.usage.cost?.cacheRead ?? 0,
+                cacheWrite: msg.usage.cost?.cacheWrite ?? 0,
+                total: cost,
+              };
+
               if (msg.model) {
                 models[msg.model] = models[msg.model] ?? { count: 0, tokens: 0, cost: 0 };
                 models[msg.model].tokens += tokens;
                 models[msg.model].cost += cost;
+                messageActivity.models = { [msg.model]: { count: 1, tokens, cost } };
               }
+              if (msg.provider) messageActivity.providers = { [msg.provider]: 1 };
             }
 
             if (msg.stopReason) {
               stopReasons[msg.stopReason] = (stopReasons[msg.stopReason] ?? 0) + 1;
+              messageActivity.stopReasons = { [msg.stopReason]: 1 };
               if (msg.stopReason.toLowerCase().includes("interrupt")) userInterruptions++;
             }
           }
 
           if (msg.content) {
+            let messageToolCallCount = 0;
+            let messageToolCallErrors = 0;
+            const messageToolUsage: Record<string, number> = {};
             for (const item of msg.content) {
               if (item.type === "toolCall" && item.name) {
+                messageToolCallCount++;
+                messageToolUsage[item.name] = (messageToolUsage[item.name] ?? 0) + 1;
                 toolCallCount++;
                 toolUsage[item.name] = (toolUsage[item.name] ?? 0) + 1;
                 collectToolSignals(item.name, [item.input, item.args, item.arguments], filesMentioned, languageCounts, gitActivity);
               }
               if (item.type === "toolResult" && item.isError) {
+                messageToolCallErrors++;
                 toolCallErrors++;
                 recordToolError(toolErrorsByName, item.name);
               }
             }
+            if (messageToolCallCount) {
+              messageActivity.toolCallCount = messageToolCallCount;
+              messageActivity.toolUsage = messageToolUsage;
+            }
+            if (messageToolCallErrors) messageActivity.toolCallErrors = messageToolCallErrors;
           }
 
           if (msg.toolCalls) {
             toolCallCount += msg.toolCalls.length;
+            messageActivity.toolCallCount = (messageActivity.toolCallCount ?? 0) + msg.toolCalls.length;
+            for (const call of msg.toolCalls) {
+              if (!call.name) continue;
+              messageActivity.toolUsage ??= {};
+              messageActivity.toolUsage[call.name] = (messageActivity.toolUsage[call.name] ?? 0) + 1;
+            }
             for (const tc of msg.toolCalls) {
               if (tc.name) {
                 toolUsage[tc.name] = (toolUsage[tc.name] ?? 0) + 1;
@@ -184,10 +217,12 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
             for (const tr of msg.toolResults) {
               if (tr.isError) {
                 toolCallErrors++;
+                messageActivity.toolCallErrors = (messageActivity.toolCallErrors ?? 0) + 1;
                 recordToolError(toolErrorsByName, tr.name);
               }
             }
           }
+          activity.push(messageActivity);
         }
       } catch {
         // Skip malformed lines
@@ -237,9 +272,95 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
         toolErrorsByName,
         userInterruptions,
       },
+      activity,
     };
   } catch {
     return null;
+  }
+}
+
+export function sliceParsedSession(session: ParsedSession, start?: Date, end?: Date): ParsedSession | null {
+  if (!start && !end) return session;
+  const activity = (session.activity ?? []).filter((item) =>
+    (!start || item.timestamp >= start) && (!end || item.timestamp < end));
+  if (!activity.length) return null;
+
+  const first = activity[0]!;
+  const last = activity[activity.length - 1]!;
+  const sliced: ParsedSession = {
+    ...session,
+    startTime: first.timestamp,
+    endTime: last.timestamp,
+    duration: Math.max(1, Math.round((last.timestamp.getTime() - first.timestamp.getTime()) / 60000)),
+    messageCount: 0,
+    userMessageCount: 0,
+    assistantMessageCount: 0,
+    toolCallCount: 0,
+    tokenUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    models: {}, providers: {}, thinkingLevels: {}, toolUsage: {}, stopReasons: {},
+    toolCallErrors: 0, hasError: false, rageHits: [], activity,
+  };
+  for (const item of activity) {
+    sliced.userMessageCount += item.userMessageCount ?? 0;
+    sliced.assistantMessageCount += item.assistantMessageCount ?? 0;
+    sliced.messageCount += (item.userMessageCount ?? 0) + (item.assistantMessageCount ?? 0);
+    sliced.toolCallCount += item.toolCallCount ?? 0;
+    sliced.toolCallErrors += item.toolCallErrors ?? 0;
+    sliced.hasError ||= (item.toolCallErrors ?? 0) > 0;
+    addNumbers(sliced.tokenUsage, item.tokenUsage);
+    addNumbers(sliced.cost, item.cost);
+    addModelRecords(sliced.models, item.models);
+    addNumbers(sliced.providers, item.providers);
+    addNumbers(sliced.thinkingLevels, item.thinkingLevels);
+    addNumbers(sliced.toolUsage, item.toolUsage);
+    addNumbers(sliced.stopReasons, item.stopReasons);
+    sliced.rageHits.push(...(item.rageHits ?? []));
+  }
+  return sliced;
+}
+
+export function mergeParsedSessions(sessions: readonly ParsedSession[], rootSessionId = sessions[0]?.id): ParsedSession | null {
+  if (!sessions.length) return null;
+  const first = sessions[0]!;
+  const merged = sliceParsedSession(first) ?? first;
+  merged.id = rootSessionId ?? merged.id;
+  merged.agentSessionCount = sessions.reduce((count, session) => count + (session.agentSessionCount ?? 1), 0);
+  for (const session of sessions.slice(1)) {
+    merged.startTime = new Date(Math.min(merged.startTime.getTime(), session.startTime.getTime()));
+    merged.endTime = new Date(Math.max(merged.endTime.getTime(), session.endTime.getTime()));
+    merged.duration = Math.max(1, Math.round((merged.endTime.getTime() - merged.startTime.getTime()) / 60000));
+    merged.messageCount += session.messageCount;
+    merged.userMessageCount += session.userMessageCount;
+    merged.assistantMessageCount += session.assistantMessageCount;
+    merged.toolCallCount += session.toolCallCount;
+    merged.toolCallErrors += session.toolCallErrors;
+    merged.hasError ||= session.hasError;
+    addNumbers(merged.tokenUsage, session.tokenUsage);
+    addNumbers(merged.cost, session.cost);
+    addModelRecords(merged.models, session.models);
+    addNumbers(merged.providers, session.providers);
+    addNumbers(merged.thinkingLevels, session.thinkingLevels);
+    addNumbers(merged.toolUsage, session.toolUsage);
+    addNumbers(merged.stopReasons, session.stopReasons);
+    merged.rageHits.push(...session.rageHits);
+    merged.activity = [...(merged.activity ?? []), ...(session.activity ?? [])].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  }
+  return merged;
+}
+
+function addNumbers(target: Record<string, number>, source: Record<string, number> | undefined): void {
+  for (const [key, value] of Object.entries(source ?? {})) target[key] = (target[key] ?? 0) + value;
+}
+
+function addModelRecords(target: Record<string, { count: number; tokens: number; cost: number }>, source: Record<string, { count: number; tokens: number; cost: number }> | undefined): void {
+  for (const [key, value] of Object.entries(source ?? {})) {
+    const existing = target[key] as { count: number; tokens: number; cost: number } | undefined;
+    if (existing) {
+      existing.count += value.count;
+      existing.tokens += value.tokens;
+      existing.cost += value.cost;
+    } else target[key] = { ...value };
   }
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderReport } from '../src/report.js';
 import { computeAnalytics } from '../src/analytics.js';
-import type { InsightsSavingsReport } from '../src/types.js';
+import type { Analytics, InsightsSavingsReport } from '../src/types.js';
 
 describe('renderReport', () => {
   it('renders a branded, offline-safe report shell with escaped values', () => {
@@ -15,6 +15,13 @@ describe('renderReport', () => {
     expect(html).toContain('felan-insights-theme');
     expect(html).not.toContain('fonts.googleapis.com');
     expect(html).not.toContain('🤬');
+  });
+
+  it('labels reports as static snapshots and preserves generation time', () => {
+    const analytics: Analytics = { ...computeAnalytics([]), export: { generatedAt: '2026-09-01T12:00:00.000Z', outputFormats: ['html'] } };
+    const html = renderReport(analytics);
+    expect(html).toContain('static snapshot; run /insights again to refresh');
+    expect(html).toContain('2026-09-01T12:00:00.000Z');
   });
 
   it('includes the filterable savings dashboard when savings are available', () => {

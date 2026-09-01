@@ -3,14 +3,16 @@ import { buildAiInsights } from './facets.js';
 import { computeAnalytics } from './analytics.js';
 import { getInsightsArgumentCompletions, getSinceCutoff, parseInsightsArgs } from './cli.js';
 import { generateMarkdown } from './markdown.js';
-import { parseSessionTranscript } from './parser.js';
+import { mergeParsedSessions, parseSessionTranscript } from './parser.js';
+import { sliceParsedSession } from './slicing.js';
 import { renderReport } from './report.js';
 import type { Analytics, ParsedSession } from './types.js';
 import type { InsightsHost, InsightsSessionReference } from './contracts.js';
 import type { FelanExtension } from '@felan-ai/agent-core';
 
 const CACHE_PREFIX = 'insights/session-meta/';
-const MAX_SESSION_BYTES = 8 * 1024 * 1024;
+const MAX_SESSION_BYTES = 64 * 1024 * 1024;
+const PARSER_VERSION = '2';
 
 export type { InsightsHost, InsightsSessionReference } from './contracts.js';
 export type { FacetModelClient } from './facets.js';
@@ -35,7 +37,7 @@ export function createInsightsExtension(host: InsightsHost): FelanExtension {
         ctx.ui.notify('Scanning available sessions…', 'info');
         let references: readonly InsightsSessionReference[];
         try { references = await host.listSessions(pi.runtime); } catch (error) { ctx.ui.notify(`Could not list sessions: ${errorMessage(error)}`, 'error'); return; }
-        const sessions: ParsedSession[] = [];
+        const grouped = new Map<string, ParsedSession[]>();
         const transcripts = new Map<string, string>();
         let cacheHits = 0;
         let cacheMisses = 0;
@@ -43,20 +45,33 @@ export function createInsightsExtension(host: InsightsHost): FelanExtension {
         for (const reference of references) {
           if (!Number.isSafeInteger(reference.size) || reference.size < 0 || reference.size > MAX_SESSION_BYTES) continue;
           const cached = options.refresh ? undefined : await readCachedSession(pi.runtime, reference);
-          if (cached) { cacheHits++; if (!cutoff || cached.startTime >= cutoff) sessions.push(cached); continue; }
+          if (cached?.activity) {
+            cacheHits++;
+            const sliced = sliceParsedSession(cached, cutoff, new Date());
+            if (sliced) addGrouped(grouped, reference, sliced);
+            continue;
+          }
           cacheMisses++;
-          const transcript = await host.readSession(pi.runtime, reference);
+          const transcript = host.readSessionLines
+            ? await collectLines(host.readSessionLines(pi.runtime, reference))
+            : await host.readSession(pi.runtime, reference);
           if (!transcript || new TextEncoder().encode(transcript).byteLength > MAX_SESSION_BYTES) continue;
           const session = parseSessionTranscript(transcript, reference.id);
           if (!session) continue;
           transcripts.set(session.id, transcript);
           await writeCachedSession(pi.runtime, reference, session);
           cacheWrites++;
-          if (!cutoff || session.startTime >= cutoff) sessions.push(session);
+          const sliced = sliceParsedSession(session, cutoff, new Date());
+          if (sliced) addGrouped(grouped, reference, sliced);
         }
+        const sessions = [...grouped.entries()].flatMap(([rootId, parts]) => {
+          const merged = mergeParsedSessions(parts, rootId);
+          return merged ? [merged] : [];
+        });
         if (!sessions.length) { ctx.ui.notify('No valid sessions found for the selected range.', 'warning'); return; }
         let analytics = computeAnalytics(sessions);
-        analytics.cache = { root: pi.runtime.storage('agent').root, refreshed: options.refresh, versions: { schema: '1', parser: '1', facetPrompt: '1' }, sessionMeta: { hits: cacheHits, misses: cacheMisses, writes: cacheWrites, errors: 0 } };
+        analytics.cache = { root: pi.runtime.storage('agent').root, refreshed: options.refresh, versions: { schema: '1', parser: PARSER_VERSION, facetPrompt: '1' }, sessionMeta: { hits: cacheHits, misses: cacheMisses, writes: cacheWrites, errors: 0 } };
+        analytics.export = { generatedAt: new Date().toISOString(), outputFormats: options.markdown ? ['html', 'markdown'] : ['html'] };
         if (host.enrichAnalytics) analytics = await host.enrichAnalytics(analytics, pi.runtime);
         if (host.savings) analytics.savings = await host.savings(pi.runtime, analytics);
         analytics.ai = await buildAiInsights({ sessions, transcriptById: transcripts, modelClient: host.modelClient?.(pi.runtime) });
@@ -67,6 +82,19 @@ export function createInsightsExtension(host: InsightsHost): FelanExtension {
       },
     });
   };
+}
+
+async function collectLines(lines: AsyncIterable<string>): Promise<string> {
+  const chunks: string[] = [];
+  for await (const line of lines) chunks.push(line);
+  return chunks.join('\n');
+}
+
+function addGrouped(groups: Map<string, ParsedSession[]>, reference: InsightsSessionReference, session: ParsedSession): void {
+  const rootId = reference.rootSessionId ?? reference.id;
+  const parts = groups.get(rootId) ?? [];
+  parts.push(session);
+  groups.set(rootId, parts);
 }
 
 export default function insightsExtension(pi: Parameters<FelanExtension>[0]): void {
@@ -82,7 +110,12 @@ async function readCachedSession(runtime: import('@felan-ai/agent-core').AgentRu
     const raw = new TextDecoder().decode(await runtime.storage('agent').readFile(`${CACHE_PREFIX}${key}.json`, { maxBytes: MAX_SESSION_BYTES }));
     const value = JSON.parse(raw) as { session?: Omit<ParsedSession, 'startTime' | 'endTime'> & { startTime: string; endTime: string } };
     if (!value.session) return undefined;
-    return { ...value.session, startTime: new Date(value.session.startTime), endTime: new Date(value.session.endTime) };
+    return {
+      ...value.session,
+      startTime: new Date(value.session.startTime),
+      endTime: new Date(value.session.endTime),
+      activity: value.session.activity?.map((item) => ({ ...item, timestamp: new Date(item.timestamp) })),
+    };
   } catch { return undefined; }
 }
 
@@ -92,5 +125,7 @@ async function writeCachedSession(runtime: import('@felan-ai/agent-core').AgentR
   await storage.writeFile(`${CACHE_PREFIX}${cacheKey(reference)}.json`, new TextEncoder().encode(JSON.stringify({ session: { ...session, startTime: session.startTime.toISOString(), endTime: session.endTime.toISOString() } })));
 }
 
-function cacheKey(reference: import('./contracts.js').InsightsSessionReference): string { return createHash('sha256').update(JSON.stringify(reference)).digest('hex'); }
+function cacheKey(reference: import('./contracts.js').InsightsSessionReference): string {
+  return createHash('sha256').update(JSON.stringify({ parser: PARSER_VERSION, reference })).digest('hex');
+}
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
