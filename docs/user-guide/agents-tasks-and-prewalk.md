@@ -30,12 +30,23 @@ each child session's captured USD cost beside its elapsed time. Running costs
 refresh after each persisted assistant response, and retained costs reload with
 the root session.
 
-`max_turns` is a hard assistant-turn budget, not a guarantee of a final prose
-answer. Leave a final turn available for the child to summarize its work. If a
-child reaches the budget while continuing tool work, it is reported as
+Delegated prompts should define disjoint scopes and a concise expected output.
+Do not repeat exploration from a child-owned scope. If no independent parent
+work remains, yield and rely on completion notices rather than polling. Cancel
+a child before taking over its unfinished scope. When using the shared task
+graph, each session claims only its own ready task; force recovery is reserved
+for an explicitly stale claim.
+
+`max_turns` is a hard assistant-turn budget. The local host reserves the final
+budgeted turn for a tool-free synthesis response. If a child reaches the budget
+while continuing tool work, it is reported as
 `cancelled` with `turn_limit_reached`; a provider failure is reported as
 `failed` with `model_request_failed` instead. Parent cancellation, timeout,
 and host shutdown have their own terminal error codes.
+
+`list_subagents` returns compact status-only records and is bounded to 20
+children by default, with a maximum of 50. Use `get_subagent_result` when the
+full result or error for one child is needed.
 
 Felan persists child session paths before the first model request. If the host
 or process exits unexpectedly, a retained JSONL session can be continued
@@ -109,12 +120,15 @@ Model-requested entry asks for user approval by default.
 
 For complex repository work that benefits from substantial exploration,
 coordinated multi-file changes, dependency-aware planning, or broad verification,
-the model can call `enter_prewalk` before exploration. In a dialog-capable host,
-the default `ask` policy prompts before entering; a denial leaves the model on
-the regular path. JSON and print modes deny `ask` because interactive approval
-is unavailable. Small localized edits and routine one-file fixes should
-normally stay on the regular path. You can also enter explicitly without a
-redundant approval prompt:
+the model can call `enter_prewalk` for a new file-changing task. Conversation
+or repository activity from earlier requests does not prevent entry. The model
+should prefer to enter before exploring the current task; if its complexity
+becomes clear after read-only exploration, it can still enter before the
+task's first mutation. In a dialog-capable host, the default `ask` policy
+prompts before entering; a denial leaves the model on the regular path. JSON
+and print modes deny `ask` because interactive approval is unavailable. Small
+localized edits and routine one-file fixes should normally stay on the regular
+path. You can also enter explicitly without a redundant approval prompt:
 
 ```text
 /prewalk refactor the parser and verify the tests

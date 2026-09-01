@@ -18,11 +18,13 @@ import type {
   SubagentSpawnRequest,
   SubagentThinking,
 } from './contracts.js';
-import { renderError, renderRecord, renderRecords } from './presentation.js';
+import { compactRecords, renderError, renderRecord, renderRecords } from './presentation.js';
 
 const thinkingSchema = StringEnum(FELAN_THINKING_LEVELS);
 const MAX_TURNS = 100;
 const MAX_TIMEOUT_SECONDS = 86_400;
+const MAX_LIST_RECORDS = 50;
+const DEFAULT_LIST_RECORDS = 20;
 
 export function createSubagentsExtension(host: SubagentHost): FelanExtension {
   return (pi) => {
@@ -49,9 +51,9 @@ function formatSubagentCapability(descriptors: readonly SubagentDescriptor[]): s
     'Use child agents for independent, parallel, or specialized work when delegation reduces latency or keeps the main context focused.',
     availableTypes,
     'Definition model and thinking settings take precedence over per-call values; otherwise per-call values apply, then the parent settings.',
-    'Child agents always run asynchronously. Give each child a self-contained task with the relevant scope, constraints, and expected output, then continue useful parent work while independent tasks run in parallel.',
+    'Child agents always run asynchronously. Give each child a self-contained task with a disjoint scope, constraints, and expected output. Do not enter a child-owned scope; if no independent parent work remains, yield and rely on completion notices instead of polling. Cancel a child before taking over its unfinished scope.',
     'Treat max_turns as a hard assistant-turn budget and leave enough room for the child to return a final result.',
-    'Completion notices surface finished work automatically; rely on them during normal execution. Use list_subagents and get_subagent_result for an immediate status check when current state is needed, steer_subagent to refine active work, and cancel_subagent when work is no longer needed. Integrate and verify child results before reporting completion.',
+    'Completion notices surface finished work automatically; rely on them during normal execution. Use list_subagents and get_subagent_result for an immediate status check when current state is needed, steer_subagent to refine active work, and cancel_subagent when work is no longer needed. Integrate and verify child results before reporting completion. When using session tasks, create or claim only work you own, keep at most one active task per session, and never force-recover another session\'s active claim unless it is stale and you are explicitly taking ownership.',
   ].join(' ');
 }
 
@@ -87,7 +89,6 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
       maximum: MAX_TIMEOUT_SECONDS,
       description: 'Wall-clock execution limit in seconds',
     })),
-    inherit_context: Type.Optional(Type.Boolean({ default: false })),
   }, { additionalProperties: false });
 
   pi.registerTool({
@@ -112,7 +113,6 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
         type,
         description: params.description,
         prompt: params.prompt,
-        inheritContext: params.inherit_context ?? false,
         ...(model.value.reference === undefined ? {} : { model: model.value.reference }),
         ...(thinking === undefined ? {} : { thinking }),
         ...(params.max_turns ?? descriptor.defaultMaxTurns) === undefined
@@ -130,17 +130,29 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
 function registerList(pi: FelanExtensionAPI, host: SubagentHost): void {
   const parameters = Type.Object({
     include_descendants: Type.Optional(Type.Boolean({ default: false })),
+    limit: Type.Optional(Type.Integer({
+      minimum: 1,
+      maximum: MAX_LIST_RECORDS,
+      default: DEFAULT_LIST_RECORDS,
+      description: `Maximum number of compact status records to return (1-${MAX_LIST_RECORDS})`,
+    })),
   }, { additionalProperties: false });
   pi.registerTool({
     name: 'list_subagents',
     label: 'List Subagents',
-    description: 'List tracked direct children or a read-only descendant view.',
+    description: `List compact status records for tracked direct children or a read-only descendant view; results are bounded to ${MAX_LIST_RECORDS}.`,
     parameters,
     execute: async (_id, params, _signal, _update, _ctx) => executeHost(
-      () => host.list({
+      async () => {
+        const limit = params.limit ?? DEFAULT_LIST_RECORDS;
+        const result = await host.list({
         includeDescendants: params.include_descendants ?? false,
-      }),
-      renderRecords,
+          limit,
+        });
+        if (!result.ok) return result;
+        return { ok: true as const, value: compactRecords(result.value) };
+      },
+      (records) => renderRecords(records, params.limit ?? DEFAULT_LIST_RECORDS),
     ),
   });
 }
@@ -328,7 +340,6 @@ export type {
   SubagentErrorCode,
   SubagentHost,
   SubagentHostResult,
-  SubagentParentContextEntry,
   SubagentParentPort,
   SubagentPolicy,
   SubagentRecord,

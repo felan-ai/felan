@@ -433,74 +433,6 @@ describe('LocalSubagentHost', () => {
     if (second.ok) await waitForResult(host, second.value.agentId);
   });
 
-  it('removes pre-acceptance aborts and leaves accepted asynchronous work independent', async () => {
-    let releaseSnapshot!: () => void;
-    let snapshotStarted!: () => void;
-    const snapshotStart = new Promise<void>((resolve) => {
-      snapshotStarted = resolve;
-    });
-    const snapshot = new Promise<void>((resolve) => {
-      releaseSnapshot = resolve;
-    });
-    let releaseRun!: () => void;
-    const runner: LocalSubagentRunner = async (input) => {
-      input.onReady({ steer: async () => {}, cancel: async () => {} });
-      await new Promise<void>((resolve) => {
-        releaseRun = resolve;
-      });
-      return { result: 'done' };
-    };
-    const { host } = await harness({ runner });
-    host.attachParent({
-      ...parentPort([]),
-      snapshotContext: async () => {
-        snapshotStarted();
-        await snapshot;
-        return [];
-      },
-    });
-    const controller = new AbortController();
-    const starting = host.spawn(request({ inheritContext: true }), controller.signal);
-    await snapshotStart;
-    controller.abort();
-    releaseSnapshot();
-    await expect(starting).resolves.toMatchObject({ ok: false, error: { code: 'invalid_request' } });
-    await expect(host.list({ includeDescendants: false })).resolves.toMatchObject({
-      ok: true,
-      value: [],
-    });
-
-    host.attachParent({
-      ...parentPort([]),
-      snapshotContext: async () => {
-        throw new Error('secret provider context failure');
-      },
-    });
-    await expect(host.spawn(request({ inheritContext: true }))).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'parent_unavailable', message: 'Parent context could not be captured' },
-    });
-    await expect(host.list({ includeDescendants: false })).resolves.toMatchObject({
-      ok: true,
-      value: [],
-    });
-
-    const acceptedController = new AbortController();
-    const accepted = await host.spawn(request(), acceptedController.signal);
-    expect(accepted).toMatchObject({ ok: true });
-    acceptedController.abort();
-    await settle();
-    releaseRun();
-    if (accepted.ok) {
-      await expect(waitForResult(host, accepted.value.agentId)).resolves.toMatchObject({
-        ok: true,
-        value: { status: 'completed' },
-      });
-    }
-    await settle();
-    await host.shutdown();
-  });
-
   it('reports timeout cancellation and max-turn termination', async () => {
     let cancelled = 0;
     const timeoutRunner: LocalSubagentRunner = async (input) => {
@@ -762,38 +694,6 @@ describe('LocalSubagentHost', () => {
     expect(nested).toMatchObject({ ok: false, error: { code: 'parent_unavailable' } });
   });
 
-  it('closes spawn admission and waits for in-flight construction during shutdown', async () => {
-    const constructionStarted = deferred();
-    const releaseConstruction = deferred();
-    const { host } = await harness({
-      runner: async () => ({ result: 'unexpected' }),
-    });
-    host.attachParent({
-      ...parentPort([]),
-      snapshotContext: async () => {
-        constructionStarted.resolve();
-        await releaseConstruction.promise;
-        return [];
-      },
-    });
-    const spawning = host.spawn(request({ inheritContext: true }));
-    await constructionStarted.promise;
-    let stopped = false;
-    const shutdown = host.shutdown().then(() => {
-      stopped = true;
-    });
-    await settle();
-    expect(stopped).toBe(false);
-    releaseConstruction.resolve();
-
-    await expect(spawning).resolves.toMatchObject({ ok: false, error: { code: 'host_unavailable' } });
-    await shutdown;
-    await expect(host.list({ includeDescendants: false })).resolves.toMatchObject({
-      ok: true,
-      value: [],
-    });
-  });
-
   it('keeps queued completion intent replayable until durable delivery', async () => {
     const { host } = await harness({
       runner: async (input) => {
@@ -1033,6 +933,67 @@ describe('LocalSubagentHost', () => {
       cost: 1.625,
     });
     await host.shutdown();
+  });
+
+  it('reserves a tool-free synthesis turn at the max-turn boundary', async () => {
+    const responses = [createAssistantMessageEventStream(), createAssistantMessageEventStream()];
+    const contexts: Array<{ tools: readonly unknown[]; messages: readonly unknown[] }> = [];
+    let responseIndex = 0;
+    const model = {
+      id: 'test-model',
+      name: 'Test Model',
+      api: 'anthropic-messages',
+      provider: 'test-provider',
+      baseUrl: 'https://example.invalid',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 100_000,
+      maxTokens: 4_096,
+    };
+    const modelRuntime = {
+      getAvailableSnapshot: () => [model],
+      hasConfiguredAuth: () => true,
+      getModel: (provider: string, id: string) => (
+        provider === model.provider && id === model.id ? model : undefined
+      ),
+      streamSimple: (_model: unknown, context: { tools: readonly unknown[]; messages: readonly unknown[] }) => {
+        contexts.push(context);
+        return responses[responseIndex++]!;
+      },
+    } as unknown as ModelRuntime;
+    const { host } = await harness({ modelRuntime });
+    const spawned = await host.spawn(request({ maxTurns: 2, model: `${model.provider}/${model.id}` }));
+    expect(spawned).toMatchObject({ ok: true });
+    if (!spawned.ok) return;
+
+    await vi.waitFor(() => expect(responseIndex).toBe(1));
+    pushUsageResponse(responses[0]!, {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0,
+    }, 'tool-1');
+    await vi.waitFor(() => expect(responseIndex).toBe(2));
+    expect(contexts[1]!.tools).toEqual([]);
+    expect(contexts[1]!.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.arrayContaining([
+        expect.objectContaining({ text: expect.stringContaining('Stop using tools') }),
+      ]),
+    });
+    pushUsageResponse(responses[1]!, {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0,
+    });
+    await expect(waitForResult(host, spawned.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed' },
+    });
   });
 
   it('does not double-count a continued child session', async () => {
@@ -1275,14 +1236,12 @@ function request(overrides: Partial<SubagentSpawnRequest> = {}): SubagentSpawnRe
     type: 'reviewer',
     description: 'review',
     prompt: 'Review this',
-    inheritContext: false,
     ...overrides,
   };
 }
 
 function parentPort(notices: SubagentCompletionNotice[]): SubagentParentPort {
   return {
-    snapshotContext: async () => [],
     deliverCompletion: async (notice) => {
       notices.push(notice);
       return 'delivered';

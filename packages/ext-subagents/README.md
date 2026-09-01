@@ -25,15 +25,24 @@ setting is inherited. Extension-facing thinking accepts `off`, `low`, `medium`,
 All child launches are asynchronous and return after admission. Result reads
 return the latest record immediately, while completion notices surface finished
 work to the parent session. Notices steer active parent work at the next
-model-call boundary and trigger a turn when the parent is idle.
+model-call boundary and trigger a turn when the parent is idle. Delegated tasks
+should have disjoint scopes; the parent should yield when no independent work
+remains, cancel a child before taking over its unfinished scope, and use the
+shared task graph's session ownership instead of force-recovering another
+worker's active task.
 
-`max_turns` is a hard assistant-turn budget. A child that reaches the budget
-while it still has tool work is cancelled with `turn_limit_reached`; callers
-should leave enough budget for a final textual result. The local host reserves
-that outcome separately from provider failures, parent cancellation, timeouts,
-and host shutdown. A retained child may be explicitly continued when its
-session history is available; Felan never replays interrupted work
-automatically after a restart.
+`list_subagents` returns compact status records, omits result and error bodies,
+and is bounded to 20 records by default (50 maximum). A bounded response tells
+the caller to use `get_subagent_result` for a specific child.
+
+`max_turns` is a hard assistant-turn budget. The local host reserves the final
+turn for a tool-free synthesis response. A child that still requests tool work
+at that boundary is cancelled with `turn_limit_reached`; callers should leave
+enough budget for the final textual result. The local host reserves that
+outcome separately from provider failures, parent cancellation, timeouts, and
+host shutdown. A retained child may be explicitly continued when its session
+history is available; Felan never replays interrupted work automatically after
+a restart.
 
 Terminal errors use stable codes: `model_request_failed`,
 `cancelled_by_parent`, `timed_out`, `host_shutdown`, and

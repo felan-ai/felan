@@ -199,16 +199,20 @@ separate planning agent, or read-only mode. Model-requested entry asks for user
 approval by default, but that approval starts Prewalk rather than approving a
 non-mutating plan artifact or later edits.
 
-The model can call `enter_prewalk` before complex repository work, or the user
-can invoke `/prewalk`. Small localized edits and routine one-file fixes should
-normally stay on the regular path. Once active, the current model explores,
-creates and claims a prompted task graph of at most nine tasks, begins
-implementation, and performs a focused mutation. When both task tools are
-active, successful `TaskCreate` and `TaskUpdate` calls claiming `in_progress`
-work are required before that mutation marks the turn for handoff. If the task
-tools are unavailable, a successful explicit mutation marks it directly. The
-next request goes to the configured tier or exact model at the configured
-implementation thinking level (exact `medium` by default) with
+The model can call `enter_prewalk` for a new complex repository task, or the
+user can invoke `/prewalk`. Conversation or repository activity from earlier
+requests does not prevent entry. The model should prefer to enter before
+exploring the current task; if its complexity becomes clear after read-only
+exploration, it can still enter before the task's first mutation. Small
+localized edits and routine one-file fixes should normally stay on the regular
+path. Once active, the current model explores, creates and claims a prompted
+task graph of at most nine tasks, begins implementation, and performs a focused
+mutation. When both task tools are active, successful `TaskCreate` and
+`TaskUpdate` calls claiming `in_progress` work are required before that
+mutation marks the turn for handoff. If the task tools are unavailable, a
+successful explicit mutation marks it directly. The next request goes to the
+configured tier or exact model, using the configured implementation thinking
+level (exact `medium` by default) with
 the useful transcript and tool history; successful entry controls and stale
 phase guidance are filtered from model context, while the current transient
 guidance stays at a stable position within its phase. The target finishes and

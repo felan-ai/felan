@@ -2,12 +2,10 @@ import type { AgentSession } from '@felan-ai/agent-core';
 import type {
   SubagentCompletionNotice,
   SubagentHost,
-  SubagentParentContextEntry,
   SubagentParentPort,
 } from './contracts.js';
 
 export const SUBAGENT_COMPLETION_MESSAGE_TYPE = 'felan-subagent-completion';
-const encoder = new TextEncoder();
 
 export function bindSubagentSession(options: {
   readonly host: SubagentHost;
@@ -99,23 +97,6 @@ function createParentPort(
       unsubscribe();
       if (session.clearQueue === observedClearQueue) session.clearQueue = originalClearQueue;
     },
-    async snapshotContext({ maxBytes }) {
-      const entries = contextEntries(sessionManager);
-      const selected: SubagentParentContextEntry[] = [];
-      let bytes = 0;
-
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const entry = entries[index]!;
-        const size = encoder.encode(entry.text).byteLength;
-        if (bytes + size > maxBytes) {
-          break;
-        }
-        selected.unshift(entry);
-        bytes += size;
-      }
-
-      return selected;
-    },
     async deliverCompletion(notice) {
       const run = async (): Promise<'delivered' | 'queued' | 'unavailable'> => {
         if (closed) return 'unavailable';
@@ -149,29 +130,6 @@ function createParentPort(
       return delivery;
     },
   };
-}
-
-function contextEntries(
-  sessionManager: AgentSession['sessionManager'],
-): SubagentParentContextEntry[] {
-  const entries: SubagentParentContextEntry[] = [];
-  for (const entry of sessionManager.buildContextEntries()) {
-    if (entry.type === 'compaction' || entry.type === 'branch_summary') {
-      entries.push({ role: 'summary', text: entry.summary });
-      continue;
-    }
-    if (entry.type !== 'message') continue;
-    const message = entry.message;
-    if (message.role !== 'user' && message.role !== 'assistant') continue;
-    const text = typeof message.content === 'string'
-      ? message.content
-      : message.content
-          .filter((part) => part.type === 'text')
-          .map((part) => part.text)
-          .join('\n');
-    if (text) entries.push({ role: message.role, text });
-  }
-  return entries;
 }
 
 function completionIds(data: unknown): string[] {

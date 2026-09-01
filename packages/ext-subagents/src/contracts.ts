@@ -26,7 +26,6 @@ export interface SubagentSpawnRequest {
   readonly thinking?: SubagentThinking;
   readonly maxTurns?: number;
   readonly timeoutSeconds?: number;
-  readonly inheritContext: boolean;
 }
 
 export type SubagentStatus =
@@ -78,11 +77,6 @@ export type SubagentHostResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: SubagentError };
 
-export interface SubagentParentContextEntry {
-  readonly role: 'user' | 'assistant' | 'summary';
-  readonly text: string;
-}
-
 export type SubagentTerminalStatus = Extract<
   SubagentStatus,
   'completed' | 'failed' | 'timed_out' | 'cancelled'
@@ -99,10 +93,6 @@ export interface SubagentCompletionNotice {
 }
 
 export interface SubagentParentPort {
-  snapshotContext(options: {
-    readonly maxBytes: number;
-  }): Promise<readonly SubagentParentContextEntry[]>;
-
   deliverCompletion(
     notice: SubagentCompletionNotice,
   ): Promise<'delivered' | 'queued' | 'unavailable'>;
@@ -120,7 +110,7 @@ export interface SubagentHost {
   ): Promise<SubagentHostResult<SubagentRecord>>;
 
   list(
-    options: { readonly includeDescendants: boolean },
+    options: { readonly includeDescendants: boolean; readonly limit?: number },
   ): Promise<SubagentHostResult<readonly SubagentRecord[]>>;
 
   getResult(

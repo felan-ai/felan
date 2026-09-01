@@ -133,7 +133,7 @@ const ApprovePrewalkPlanParams = Type.Object({}, { additionalProperties: false }
 function registerPrewalk(pi: FelanExtensionAPI): void {
   pi.registerCapability({
     id: 'prewalk',
-    instructions: 'Use Prewalk for complex repository work that benefits from substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification. Do not use it for small localized edits, routine one-file fixes, read-only requests, or when injected planning or implementation guidance is already present. When a complex file-changing task begins without that guidance, call enter_prewalk as the first and only tool call before repository exploration or mutation. Depending on the configured entry policy, the tool may ask the user for approval or decline model-requested entry; if declined, continue on the regular path. The tool is available in the root session and mutation-capable subagents. During an active run, follow the injected planning, task-tracking, implementation, and verification guidance. The user can enter explicitly with /prewalk or exit with /prewalk exit (or /prewalk off).',
+    instructions: 'Use Prewalk for complex repository work that benefits from substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification. Do not use it for small localized edits, routine one-file fixes, read-only requests, or when injected planning or implementation guidance is already present. For a new complex file-changing task without that guidance, call enter_prewalk as the only tool call in the response. Conversation or repository activity from earlier requests does not prevent entry. Prefer to enter before exploring the current task; if its complexity becomes clear after read-only exploration, enter before its first mutation. Depending on the configured entry policy, the tool may ask the user for approval or decline model-requested entry; if declined, continue on the regular path. The tool is available in the root session and mutation-capable subagents. During an active run, follow the injected planning, task-tracking, implementation, and verification guidance. The user can enter explicitly with /prewalk or exit with /prewalk exit (or /prewalk off).',
   });
 
   let config = pi.config as unknown as PrewalkConfig;
@@ -542,8 +542,8 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   pi.registerTool({
     name: ENTER_PREWALK_TOOL,
     label: 'Enter Prewalk',
-    description: 'Enter same-session Prewalk for a complex repository task that requires substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification. Do not call it for small localized edits, routine one-file fixes, read-only work, or when injected guidance already directs planning or implementation. Call this once, as the only tool call in the response and before exploration or mutation.',
-    promptSnippet: 'Enter Prewalk for complex repository work before exploration',
+    description: 'Enter same-session Prewalk for a complex repository task that requires substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification. Do not call it for small localized edits, routine one-file fixes, read-only work, or when injected guidance already directs planning or implementation. Call this once, as the only tool call in the response. Conversation or repository activity from earlier requests does not prevent entry. Prefer to enter before exploring the current task; if its complexity becomes clear after read-only exploration, enter before its first mutation.',
+    promptSnippet: 'Enter Prewalk for complex repository work before mutation',
     executionMode: 'sequential',
     parameters: EnterPrewalkParams,
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {

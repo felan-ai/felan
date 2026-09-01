@@ -53,14 +53,13 @@ describe('@felan-ai/ext-subagents', () => {
       'thinking',
       'max_turns',
       'timeout_seconds',
-      'inherit_context',
     ]);
     const resultSchema = harness.tools.get('get_subagent_result')!.parameters as any;
     expect(Object.keys(resultSchema.properties)).toEqual(['agent_id']);
     expect(harness.capabilities).toEqual([
       expect.objectContaining({
         id: 'subagents',
-        instructions: expect.stringMatching(/reviewer \(Review changes; thinking: high\).*always run asynchronously.*hard assistant-turn budget.*Completion notices/s),
+        instructions: expect.stringMatching(/reviewer \(Review changes; thinking: high\).*always run asynchronously.*disjoint scope.*hard assistant-turn budget.*Completion notices.*one active task per session/s),
       }),
     ]);
     expect(harness.tools.get('Agent')!.description).toContain(
@@ -68,6 +67,7 @@ describe('@felan-ai/ext-subagents', () => {
     );
     expect(harness.tools.get('Agent')!.promptSnippet).toContain('asynchronous');
     expect(harness.tools.get('get_subagent_result')!.description).toContain('immediately');
+    expect((harness.tools.get('list_subagents')!.parameters as any).properties.limit.maximum).toBe(50);
   });
 
   it('uses definition settings before parent fallbacks', async () => {
@@ -81,7 +81,6 @@ describe('@felan-ai/ext-subagents', () => {
     expect(harness.host.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'reviewer',
-        inheritContext: false,
         model: 'provider/model',
         thinking: 'high',
         maxTurns: 7,
@@ -291,15 +290,34 @@ describe('@felan-ai/ext-subagents', () => {
 
   it('maps list, result, steer, and cancel requests to the host', async () => {
     const harness = createHarness();
-    await execute(harness, 'list_subagents', { include_descendants: true });
+    await execute(harness, 'list_subagents', { include_descendants: true, limit: 5 });
     await execute(harness, 'get_subagent_result', { agent_id: 'child' });
     await execute(harness, 'steer_subagent', { agent_id: 'child', message: 'focus' });
     await execute(harness, 'cancel_subagent', { agent_id: 'child', reason: 'stop' });
 
-    expect(harness.host.list).toHaveBeenCalledWith({ includeDescendants: true });
+    expect(harness.host.list).toHaveBeenCalledWith({ includeDescendants: true, limit: 5 });
     expect(harness.host.getResult).toHaveBeenCalledWith('child');
     expect(harness.host.steer).toHaveBeenCalledWith('child', 'focus');
     expect(harness.host.cancel).toHaveBeenCalledWith('child', 'stop');
+  });
+
+  it('renders bounded list status without result bodies or errors', async () => {
+    const harness = createHarness();
+    (harness.host.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      value: [{
+        ...harness.record,
+        result: 'private result body',
+        error: { code: 'internal_error', message: 'private error' },
+      }],
+    });
+
+    const result = await execute(harness, 'list_subagents', { limit: 1 });
+    expect(resultText(result)).toContain('status: running');
+    expect(resultText(result)).not.toContain('private result body');
+    expect(resultText(result)).not.toContain('private error');
+    expect((result as any).details[0]).not.toHaveProperty('result');
+    expect((result as any).details[0]).not.toHaveProperty('error');
   });
 
   it('renders normalized terminal error codes without changing the tool surface', async () => {
@@ -404,7 +422,7 @@ function createHarness(options: {
     },
     scopedModels: (options.scopedModels ?? []).map((model) => ({ model })),
   } as unknown as ExtensionContext;
-  return { pi, tools, host, capabilities, context };
+  return { pi, tools, host, capabilities, context, record };
 }
 
 async function execute(

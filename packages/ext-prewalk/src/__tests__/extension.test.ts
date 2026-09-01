@@ -413,6 +413,12 @@ describe('flags and commands', () => {
         instructions: expect.stringMatching(/complex repository work.*multi-file changes.*small localized edits.*call enter_prewalk/s),
       }),
     ]);
+    expect(harness.capabilities[0]?.instructions).toContain(
+      'Conversation or repository activity from earlier requests does not prevent entry.',
+    );
+    expect(harness.capabilities[0]?.instructions).toContain(
+      'if its complexity becomes clear after read-only exploration, enter before its first mutation.',
+    );
   });
 
   it('registers the sequential model-entry tool with no parameters', () => {
@@ -428,6 +434,10 @@ describe('flags and commands', () => {
     });
     expect(tool.description).toContain('complex repository task');
     expect(tool.description).toContain('small localized edits');
+    expect(tool.description).toContain(
+      'Conversation or repository activity from earlier requests does not prevent entry.',
+    );
+    expect(tool.description).toContain('enter before its first mutation.');
   });
 
   it('registers namespaced Pi flags with defaults', () => {

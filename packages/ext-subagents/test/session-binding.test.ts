@@ -8,7 +8,7 @@ import {
 } from '../src/index.js';
 
 describe('subagent session binding', () => {
-  it('binds context and completion delivery to the parent session lifecycle', async () => {
+  it('binds completion delivery to the parent session lifecycle', async () => {
     const harness = sessionHarness();
     let parentPort: SubagentParentPort | undefined;
     const detach = vi.fn();
@@ -19,9 +19,6 @@ describe('subagent session binding', () => {
 
     bindSubagentSession({ host, session: harness.session });
 
-    await expect(parentPort!.snapshotContext({ maxBytes: 8 })).resolves.toEqual([
-      { role: 'assistant', text: 'latest' },
-    ]);
     const notice = completionNotice('delivery-1');
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('delivered');
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('delivered');
@@ -129,10 +126,6 @@ function sessionHarness(initialStreaming = false, persistedEntries: unknown[] = 
 function contextManager(persistedEntries: unknown[] = []): SessionManager {
   return {
     getEntries: () => persistedEntries,
-    buildContextEntries: () => [
-      { type: 'message', message: { role: 'user', content: 'older context' } },
-      { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'latest' }] } },
-    ],
   } as unknown as SessionManager;
 }
 

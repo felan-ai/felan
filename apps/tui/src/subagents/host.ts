@@ -41,6 +41,7 @@ import { LocalSubagentStore, type LocalStoredChild } from './store.js';
 
 const EXT_SUBAGENTS = '@felan-ai/ext-subagents';
 const MAX_RESULT_BYTES = 256 * 1024;
+const SYNTHESIS_PROMPT = 'Stop using tools. Summarize the work completed, findings, and any remaining uncertainty in a concise final response.';
 
 export interface LocalSubagentSettings {
   readonly concurrency?: number;
@@ -181,7 +182,7 @@ export class LocalSubagentHost implements SubagentHost {
     return this.#manager.spawn(this.#sessionId, request, signal);
   }
 
-  list(options: { readonly includeDescendants: boolean }) {
+  list(options: { readonly includeDescendants: boolean; readonly limit?: number }) {
     return this.#manager.list(this.#sessionId, options);
   }
 
@@ -345,9 +346,6 @@ export class LocalSubagentManager {
       if (context.depth >= this.#maxDepth) {
         return failure('depth_exceeded', 'Maximum local subagent depth reached');
       }
-      if (request.inheritContext && !this.#ports.has(parentSessionId)) {
-        return failure('parent_unavailable', 'Parent context is unavailable');
-      }
       const parent = context.child;
       const parentJob = this.#jobs.get(parentSessionId);
       if (
@@ -361,12 +359,6 @@ export class LocalSubagentManager {
         && !this.definitions.get(parent.record.type)?.descriptor.allowNesting
       ) {
         return failure('depth_exceeded', `${parent.record.type} does not allow nested subagents`);
-      }
-      let initialMessage: string;
-      try {
-        initialMessage = await this.#initialMessage(parentSessionId, normalizedRequest);
-      } catch {
-        return failure('parent_unavailable', 'Parent context could not be captured');
       }
       if (this.#closed) return failure('host_unavailable', 'Local subagent host is closed');
       if (signal?.aborted) return failure('invalid_request', 'Subagent startup was aborted');
@@ -389,7 +381,7 @@ export class LocalSubagentManager {
         deliveryId: randomUUID(),
         completionPending: false,
       };
-      const job = this.#job(child, initialMessage);
+      const job = this.#job(child, normalizedRequest.prompt);
       this.#children.set(agentId, child);
       this.#jobs.set(agentId, job);
       try {
@@ -418,7 +410,7 @@ export class LocalSubagentManager {
 
   async list(
     parentSessionId: string,
-    options: { readonly includeDescendants: boolean },
+    options: { readonly includeDescendants: boolean; readonly limit?: number },
   ): Promise<SubagentHostResult<readonly SubagentRecord[]>> {
     return this.#serializeControl(async () => {
       if (!this.#sessionContext(parentSessionId)) return failure('parent_unavailable', 'Parent subagent is unavailable');
@@ -435,11 +427,15 @@ export class LocalSubagentManager {
           }
         }
       }
+      const limit = boundedInteger(options.limit, 20, 1, 50);
       const records = this.#latestChildren()
         .filter((child) => direct.has(child.record.parentSessionId))
         .map((child) => cloneRecord(child.record))
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-      return success(records);
+        .sort((left, right) => (
+          subagentStatusPriority(left.status) - subagentStatusPriority(right.status)
+          || left.createdAt.localeCompare(right.createdAt)
+        ));
+      return success(records.slice(0, limit));
     });
   }
 
@@ -868,6 +864,7 @@ export class LocalSubagentManager {
 
       let turns = 0;
       let turnLimitReached = false;
+      let synthesisRequested = false;
       let cancellation: Promise<void> | undefined;
       const cancel = () => {
         cancellation ??= created.session.abort();
@@ -878,12 +875,17 @@ export class LocalSubagentManager {
         turns += 1;
         if (
           input.request.maxTurns
-          && turns >= input.request.maxTurns
           && event.message.role === 'assistant'
           && event.message.stopReason === 'toolUse'
         ) {
-          turnLimitReached = true;
-          cancel().catch(() => {});
+          if (turns >= input.request.maxTurns) {
+            turnLimitReached = true;
+            cancel().catch(() => {});
+          } else if (turns >= input.request.maxTurns - 1 && !synthesisRequested) {
+            synthesisRequested = true;
+            created.session.setActiveToolsByName([]);
+            created.session.steer(SYNTHESIS_PROMPT).catch(() => {});
+          }
         }
       });
       const abort = () => {
@@ -903,7 +905,13 @@ export class LocalSubagentManager {
           await cancel();
           return sessionFileOutcome(created.session.sessionFile);
         }
-        await created.session.prompt(input.initialMessage);
+        let initialMessage = input.initialMessage;
+        if (input.request.maxTurns === 1) {
+          synthesisRequested = true;
+          created.session.setActiveToolsByName([]);
+          initialMessage = `${initialMessage}\n\n${SYNTHESIS_PROMPT}`;
+        }
+        await created.session.prompt(initialMessage);
         await cancellation;
         const assistant = [...created.session.messages].reverse().find((message) => message.role === 'assistant');
         if (turnLimitReached) {
@@ -982,13 +990,6 @@ export class LocalSubagentManager {
     const separator = reference.indexOf('/');
     if (separator <= 0 || separator === reference.length - 1) return undefined;
     return this.#options.modelRuntime.getModel(reference.slice(0, separator), reference.slice(separator + 1));
-  }
-
-  async #initialMessage(parentSessionId: string, request: SubagentSpawnRequest): Promise<string> {
-    if (!request.inheritContext) return request.prompt;
-    const snapshot = await this.#ports.get(parentSessionId)?.snapshotContext({ maxBytes: 64 * 1024 });
-    if (!snapshot || snapshot.length === 0) return request.prompt;
-    return `${request.prompt}\n\nParent context:\n${snapshot.map((entry) => `${entry.role}: ${entry.text}`).join('\n\n')}`;
   }
 
   #directChild(
@@ -1266,6 +1267,17 @@ function boundedInteger(value: number | undefined, fallback: number, minimum: nu
   return value === undefined || !Number.isInteger(value)
     ? fallback
     : Math.max(minimum, Math.min(maximum, value));
+}
+
+function subagentStatusPriority(status: SubagentStatus): number {
+  switch (status) {
+    case 'running': return 0;
+    case 'queued': return 1;
+    case 'failed':
+    case 'timed_out':
+    case 'cancelled': return 2;
+    case 'completed': return 3;
+  }
 }
 
 function boundResult(result: string): string {
