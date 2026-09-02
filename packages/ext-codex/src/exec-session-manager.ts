@@ -47,7 +47,12 @@ const MIN_EMPTY_POLL_YIELD_MS = 5_000;
 const MAX_YIELD_MS = 30_000;
 const MAX_EMPTY_POLL_YIELD_MS = 300_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
-const MAX_RETAINED_OUTPUT_CHARS = 4 * 1024 * 1024;
+export const MAX_OUTPUT_TOKENS = 25_000;
+const MAX_RETAINED_OUTPUT_CHARS = MAX_OUTPUT_TOKENS * 4;
+const MAX_RETAINED_LINE_CHARS = 2_000;
+const LONG_LINE_PATTERN = new RegExp(`[^\\n]{${MAX_RETAINED_LINE_CHARS + 1},}`, 'g');
+const LINE_TRUNCATION_MARKER = '…[line truncated]';
+const OUTPUT_TRUNCATION_MARKER = '\n[... output truncated ...]\n';
 const COMPLETED_HISTORY_LIMIT = 32;
 const SESSION_ID_MIN = 1_000;
 const SESSION_ID_MAX_EXCLUSIVE = 100_000;
@@ -310,7 +315,7 @@ export class ExecSessionManager {
     startedAt: number,
   ): Promise<void> {
     const combined = `${session.pendingOutput}${read.output}`;
-    session.pendingOutput = tail(combined, MAX_RETAINED_OUTPUT_CHARS);
+    session.pendingOutput = headAndTail(clampLongLines(combined), MAX_RETAINED_OUTPUT_CHARS);
     session.pendingOriginalCharCount += read.originalCharCount;
     if (!read.running) {
       const result = this.#consumeRead(
@@ -404,7 +409,7 @@ async function readFor(
     const decoded = session.decoder.decode(snapshot.output, { stream: snapshot.running });
     const sanitized = session.sanitizer.write(decoded, !snapshot.running);
     originalCharCount += sanitized.length;
-    output = tail(`${output}${sanitized}`, maxChars);
+    output = headAndTail(clampLongLines(`${output}${sanitized}`), maxChars);
     offset = snapshot.nextOffset;
     if (!snapshot.running || signal?.aborted) break;
     const remaining = deadline - Date.now();
@@ -440,14 +445,15 @@ function truncateOutput(
   original_token_count?: number;
 } {
   const maxChars = maxCharsForTokens(maxOutputTokens);
+  const clampedOutput = clampLongLines(output);
   const originalTokenCount = Math.ceil(Math.max(output.length, originalCharCount) / 4);
-  if (output.length <= maxChars) {
-    return output || originalCharCount > 0
-      ? { output, original_token_count: originalTokenCount }
-      : { output };
+  if (clampedOutput.length <= maxChars) {
+    return clampedOutput || originalCharCount > 0
+      ? { output: clampedOutput, original_token_count: originalTokenCount }
+      : { output: clampedOutput };
   }
   return {
-    output: tail(output, maxChars),
+    output: headAndTail(clampedOutput, maxChars),
     original_token_count: originalTokenCount,
   };
 }
@@ -459,7 +465,29 @@ function maxCharsForTokens(maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS): number 
   return Math.min(MAX_RETAINED_OUTPUT_CHARS, requested);
 }
 
-function tail(output: string, maxChars: number): string {
+function clampLongLines(output: string): string {
+  return output.replace(
+    LONG_LINE_PATTERN,
+    (line) => `${safeHead(line, MAX_RETAINED_LINE_CHARS)}${LINE_TRUNCATION_MARKER}`,
+  );
+}
+
+function headAndTail(output: string, maxChars: number): string {
+  if (output.length <= maxChars) return output;
+  const retained = maxChars - OUTPUT_TRUNCATION_MARKER.length;
+  if (retained <= 0) return safeHead(output, maxChars);
+  const head = safeHead(output, Math.ceil(retained / 2));
+  const tail = safeTail(output, Math.floor(retained / 2));
+  return `${head}${OUTPUT_TRUNCATION_MARKER}${tail}`;
+}
+
+function safeHead(output: string, maxChars: number): string {
+  let end = Math.min(output.length, Math.max(0, maxChars));
+  if (end > 0 && /[\uD800-\uDBFF]/u.test(output[end - 1]!)) end -= 1;
+  return output.slice(0, end);
+}
+
+function safeTail(output: string, maxChars: number): string {
   let start = Math.max(0, output.length - maxChars);
   if (start > 0 && /[\uDC00-\uDFFF]/u.test(output[start]!)) start += 1;
   return output.slice(start);

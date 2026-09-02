@@ -15,6 +15,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ExecSessionManager,
+  MAX_OUTPUT_TOKENS,
   MAX_VIEW_IMAGE_INPUT_BYTES,
   createCodexTools,
   formatExecResult,
@@ -84,17 +85,42 @@ describe('Codex runtime-backed tools', () => {
     await sessions.shutdown();
   });
 
+  it('clamps long lines while keeping nearby useful output', async () => {
+    const runtime = await createRuntime();
+    const sessions = new ExecSessionManager(runtime);
+    const script = [
+      "process.stdout.write('dist/main.js.map:1:needle' + 'x'.repeat(200000) + '\\n')",
+      "process.stdout.write('dist/main.js:1:needle\\n')",
+    ].join(';');
+
+    const result = await sessions.exec({
+      cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      yield_time_ms: 30_000,
+    });
+
+    expect(result.output.length).toBeLessThan(5_000);
+    expect(result.output).toContain('dist/main.js.map:1:needle');
+    expect(result.output).toContain('…[line truncated]');
+    expect(result.output).toContain('dist/main.js:1:needle');
+    expect(result.original_token_count).toBeGreaterThan(40_000);
+    await sessions.shutdown();
+  });
+
   it('enforces a fixed retained-output ceiling even when a larger limit is requested', async () => {
     const runtime = await createRuntime();
     const sessions = new ExecSessionManager(runtime);
+    const script = "for (let i = 0; i < 150; i += 1) process.stdout.write(String(i).padStart(3, '0') + ':' + 'x'.repeat(996) + '\\n')";
     const result = await sessions.exec({
-      cmd: `${JSON.stringify(process.execPath)} -e "process.stdout.write('x'.repeat(5 * 1024 * 1024))"`,
+      cmd: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
       yield_time_ms: 30_000,
       max_output_tokens: Number.MAX_SAFE_INTEGER,
     });
 
-    expect(result.output).toHaveLength(4 * 1024 * 1024);
-    expect(result.original_token_count).toBe(5 * 1024 * 1024 / 4);
+    expect(result.output).toHaveLength(MAX_OUTPUT_TOKENS * 4);
+    expect(result.output).toContain('000:');
+    expect(result.output).toContain('\n[... output truncated ...]\n');
+    expect(result.output).toContain('149:');
+    expect(result.original_token_count).toBe(37_538);
     await sessions.shutdown();
   });
 

@@ -55,7 +55,7 @@ const codexExtension: FelanExtension = async (pi) => {
 
 export { CODEX_CONFIG, DEFAULT_CODEX_CONFIG, validateCodexConfig } from './config.js';
 export type { CodexConfig, CodexVerbosity } from './config.js';
-export { ExecSessionManager, formatExecResult } from './exec-session-manager.js';
+export { ExecSessionManager, MAX_OUTPUT_TOKENS, formatExecResult } from './exec-session-manager.js';
 export type { ExecCommandInput, UnifiedExecResult, WriteStdinInput } from './exec-session-manager.js';
 export { supportsCodexModel, supportsCodexResponsesRequest } from './model-policy.js';
 export { applyCodexRequestOptions } from './request-options.js';
