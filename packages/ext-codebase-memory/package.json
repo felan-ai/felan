@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-codebase-memory",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Portable Codebase Memory tools and grep augmentation for Felan",
   "license": "MIT",
   "type": "module",
