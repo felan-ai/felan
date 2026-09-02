@@ -16,7 +16,7 @@ const ExecCommandParams = Type.Object({
   shell: Type.Optional(Type.String()),
   tty: Type.Optional(Type.Boolean({ description: 'Run the command in a real PTY for ongoing interaction' })),
   yield_time_ms: Type.Optional(Type.Number({ description: 'Wait before yielding output. Defaults to 10000 ms and clamps to 250-30000 ms; Windows uses a 10000 ms minimum.' })),
-  max_output_tokens: Type.Optional(Type.Number({ description: 'Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.' })),
+  max_output_tokens: Type.Optional(Type.Number({ description: 'Output token budget. Defaults to 10000 tokens and caps at 25000 tokens; long lines are clamped before head/tail truncation.' })),
   login: Type.Optional(Type.Boolean({ description: 'Login shell' })),
 }, { additionalProperties: false });
 
@@ -24,7 +24,7 @@ const WriteStdinParams = Type.Object({
   session_id: Type.Number({ description: 'Session ID' }),
   chars: Type.Optional(Type.String({ description: 'Bytes to write to stdin. Defaults to empty, which polls without writing.' })),
   yield_time_ms: Type.Optional(Type.Number({ description: 'Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default.' })),
-  max_output_tokens: Type.Optional(Type.Number({ description: 'Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.' })),
+  max_output_tokens: Type.Optional(Type.Number({ description: 'Output token budget. Defaults to 10000 tokens and caps at 25000 tokens; long lines are clamped before head/tail truncation.' })),
 }, { additionalProperties: false });
 
 const ApplyPatchParams = Type.Object({

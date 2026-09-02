@@ -45,7 +45,12 @@ unsupported, and unresizable images are rejected.
 capability. `write_stdin` sends terminal input; for non-TTY sessions, the exact
 Ctrl-C byte interrupts the process group and other input is rejected. Process
 output is decoded incrementally and terminal control sequences are removed
-before tool text is returned to the model.
+before tool text is returned to the model. Each `exec_command` or `write_stdin`
+result defaults to a 10000-token output budget, clamps requested budgets above
+25000 tokens, shortens individual lines over 2000 characters with an explicit
+`…[line truncated]` marker, and keeps a head-and-tail preview marked
+`[... output truncated ...]` when the total output still exceeds the budget.
+`Original token count` reports the untruncated size.
 
 Initial commands wait 250-30000 ms and default to 10000 ms; Windows uses a
 10000 ms minimum. Non-empty `write_stdin` calls wait 250-30000 ms and default
