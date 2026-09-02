@@ -180,6 +180,28 @@ describe('interactive application', () => {
     expect(normalizeFullscreenTerminalModes('\x1b[?1049l')).toBe('\x1b[?1049l');
   });
 
+  it('hides expected Pi compaction cancellation noise', () => {
+    const statuses: string[] = [];
+    const errors: string[] = [];
+    const mode = {
+      showStatus: (message: string) => statuses.push(message),
+      showError: (message: string) => errors.push(message),
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+
+    installFelanTuiCompatibility(mode, 'darwin');
+    const internals = mode as unknown as {
+      showStatus(message: string): void;
+      showError(message: string): void;
+    };
+    internals.showStatus('Auto-compaction cancelled');
+    internals.showStatus('Other status');
+    internals.showError('Compaction failed: Turn prefix summarization failed: This operation was aborted');
+    internals.showError('Compaction failed: Provider unavailable');
+
+    expect(statuses).toEqual(['Other status']);
+    expect(errors).toEqual(['Compaction failed: Provider unavailable']);
+  });
+
   it('reasserts fullscreen mouse tracking after Windows raw input initialization', () => {
     const events: string[] = [];
     const terminal = {

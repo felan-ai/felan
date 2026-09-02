@@ -4,14 +4,14 @@ import {
   type FelanExtension,
 } from '@felan-ai/agent-core';
 import { type CodebaseMemoryTelemetry } from './cache.js';
-import { CbmClient, detectCbm, type CbmDetection } from './client.js';
+import { acquireCbmClient, detectCbm, type CbmClientLease, type CbmDetection } from './client.js';
 import { CODEBASE_MEMORY_CONFIG } from './config.js';
 import { registerGrepAugmentation } from './grep-augmentation.js';
 import { installManagedCbm } from './installer.js';
 import { ProjectService, SymbolService } from './services.js';
 import { registerTools } from './tools.js';
 
-export const CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS = `Use Codebase Memory for structural code exploration before broad raw searches: read_symbol reads a known symbol, search_and_read_symbols finds and reads likely implementations, search_code searches indexed text, and codebase_memory proxies other structural queries or refreshes with {command:"index_repository"}. A background index starts at session startup through a lazy session-scoped MCP frontend and refreshes only when the model calls index_repository or the user invokes /codebase-memory. It may be stale after edits. Direct reads, grep, compiler output, and tests remain authoritative; grep output can include bounded Codebase Memory augmentation. Keep symbol reads focused and at no more than 220 lines per symbol.`;
+export const CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS = `Use Codebase Memory for structural code exploration before broad raw searches: read_symbol reads a known symbol, search_and_read_symbols finds and reads likely implementations, search_code searches indexed text, and codebase_memory proxies other structural queries or refreshes with {command:"index_repository"}. A background index starts at session startup through a lazy root-session MCP frontend shared with subagents and refreshes only when the model calls index_repository or the user invokes /codebase-memory. It may be stale after edits. Direct reads, grep, compiler output, and tests remain authoritative; grep output can include bounded Codebase Memory augmentation. Keep symbol reads focused and at no more than 220 lines per symbol.`;
 
 export interface CodebaseMemoryExtensionOptions {
   readonly telemetry?: CodebaseMemoryTelemetry;
@@ -33,12 +33,13 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
     });
     let detection: CbmDetection = await detectCbm(pi.runtime);
     let hintShown = false;
-    let client: CbmClient | undefined;
+    let clientLease: CbmClientLease | undefined;
     let projects: ProjectService | undefined;
     let activeIndexSession: IndexSession | undefined;
 
-    const activate = (available: Extract<CbmDetection, { available: true }>) => {
-      client = new CbmClient(pi.runtime, available.invocation);
+    const activate = async (available: Extract<CbmDetection, { available: true }>) => {
+      clientLease = await acquireCbmClient(pi.runtime, available.invocation);
+      const client = clientLease.client;
       const configured = pi.config.maxCacheBytes;
       const maxCacheBytes = typeof configured === 'number' && configured > 0 ? configured : undefined;
       projects = new ProjectService(pi.runtime, client, maxCacheBytes, telemetry);
@@ -48,7 +49,7 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
       registerGrepAugmentation(pi, client, projects, telemetry);
     };
 
-    if (detection.available) activate(detection);
+    if (detection.available) await activate(detection);
     else if (pi.runtime.kind !== 'host') {
       log('error', 'Compatible codebase-memory-mcp binary is unavailable; extension disabled nonfatally.', {
         runtimeKind: pi.runtime.kind,
@@ -84,10 +85,9 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
       },
     });
 
-    pi.on('session_start', async (_event, ctx) => {
+    pi.on('session_start', (_event, ctx) => {
       if (activeIndexSession) activeIndexSession.active = false;
       activeIndexSession = undefined;
-      await client?.reset();
       if (!projects) {
         if (pi.runtime.kind === 'host' && ctx.hasUI && !hintShown) {
           hintShown = true;
@@ -103,8 +103,11 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
     pi.on('session_shutdown', async (_event, ctx) => {
       if (activeIndexSession) activeIndexSession.active = false;
       activeIndexSession = undefined;
-      ctx.ui.setStatus('codebase-memory', undefined);
-      await client?.close();
+      try {
+        ctx.ui.setStatus('codebase-memory', undefined);
+      } finally {
+        await clientLease?.release();
+      }
     });
   };
   associateExtensionConfig(extension, CODEBASE_MEMORY_CONFIG);

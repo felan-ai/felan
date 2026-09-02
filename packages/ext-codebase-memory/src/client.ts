@@ -30,6 +30,71 @@ export interface CbmCallResult {
   readonly stderr: string;
 }
 
+export interface CbmClientLease {
+  readonly client: CbmClient;
+  release(): Promise<void>;
+}
+
+interface SharedCbmClient {
+  readonly client: CbmClient;
+  references: number;
+  closing?: Promise<void>;
+}
+
+const sharedClients = new Map<string, SharedCbmClient>();
+
+export async function acquireCbmClient(runtime: AgentRuntime, invocation: CbmInvocation): Promise<CbmClientLease> {
+  if (!runtime.processes?.startStdio) {
+    const client = new CbmClient(runtime, invocation);
+    return clientLease(client, () => client.close());
+  }
+
+  const key = sharedClientKey(runtime, invocation);
+  let shared = sharedClients.get(key);
+  if (shared?.closing) {
+    await shared.closing;
+    shared = sharedClients.get(key);
+  }
+  if (!shared) {
+    shared = { client: new CbmClient(runtime, invocation), references: 0 };
+    sharedClients.set(key, shared);
+  }
+  const entry = shared;
+  entry.references += 1;
+  return clientLease(entry.client, async () => {
+    entry.references -= 1;
+    if (entry.references > 0) return;
+    const closing = entry.client.close().finally(() => {
+      if (sharedClients.get(key) === entry) sharedClients.delete(key);
+    });
+    entry.closing = closing;
+    await closing;
+  });
+}
+
+function clientLease(client: CbmClient, releaseClient: () => Promise<void>): CbmClientLease {
+  let released = false;
+  return {
+    client,
+    async release() {
+      if (released) return;
+      released = true;
+      await releaseClient();
+    },
+  };
+}
+
+function sharedClientKey(runtime: AgentRuntime, invocation: CbmInvocation): string {
+  // Session storage is shared by a root and its descendants but isolated between top-level sessions.
+  return [
+    runtime.storage('session').root,
+    runtime.storage('agent').root,
+    invocation.source,
+    invocation.command,
+    invocation.version,
+  ].join('\u0000');
+}
+
 export class CbmClient {
   readonly cacheRoot: string;
   readonly runtimeRoot: string;
@@ -57,7 +122,7 @@ export class CbmClient {
     try {
       return await session.call(command, args, timeout, options.signal);
     } catch (error) {
-      if (!session.isUsable) this.#session = undefined;
+      if (!session.isUsable && this.#session === session) this.#session = undefined;
       throw error;
     }
   }
@@ -67,18 +132,14 @@ export class CbmClient {
     await this.#closeSession();
   }
 
-  async reset(): Promise<void> {
-    this.#closed = false;
-    await this.#closeSession();
-  }
-
   async #closeSession(): Promise<void> {
     const session = this.#session;
     const starting = this.#sessionStart;
     this.#session = undefined;
     this.#sessionStart = undefined;
     await session?.close();
-    await starting?.catch(() => undefined);
+    const started = await starting?.catch(() => undefined);
+    if (started && started !== session) await started.close();
   }
 
   async #getSession(): Promise<CbmMcpSession> {
@@ -86,8 +147,11 @@ export class CbmClient {
     if (!startStdio) throw new Error('Codebase Memory stdio transport is unavailable');
     if (this.#sessionStart) return this.#sessionStart;
     if (this.#session) return this.#session;
-    this.#sessionStart ??= this.#startSession(startStdio).finally(() => { this.#sessionStart = undefined; });
-    const session = await this.#sessionStart;
+    const starting = this.#startSession(startStdio);
+    this.#sessionStart = starting;
+    const session = await starting.finally(() => {
+      if (this.#sessionStart === starting) this.#sessionStart = undefined;
+    });
     if (!this.#closed) this.#session = session;
     return session;
   }

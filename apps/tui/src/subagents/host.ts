@@ -958,7 +958,7 @@ export class LocalSubagentManager {
         unsubscribe();
       }
     } finally {
-      created.session.dispose();
+      await shutdownSubagentSession(created.session);
     }
   }
 
@@ -1162,6 +1162,16 @@ export class LocalSubagentManager {
     } catch {
       return record;
     }
+  }
+}
+
+async function shutdownSubagentSession(session: AgentSession): Promise<void> {
+  try {
+    if (session.extensionRunner.hasHandlers('session_shutdown')) {
+      await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
+    }
+  } finally {
+    session.dispose();
   }
 }
 

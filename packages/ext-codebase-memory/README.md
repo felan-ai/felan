@@ -16,11 +16,12 @@ four model tools:
 - `search_code` searches indexed source text.
 
 The extension starts one background index at session startup without delaying
-session readiness. The first index or query lazily starts one stdio MCP
-frontend for the session; subsequent calls reuse and multiplex that frontend.
-It closes it during `session_shutdown`, leaving shared daemon coordination and
-the shared runtime directory to Codebase Memory. Runtimes without the optional
-stdio capability use the bounded one-shot CLI fallback. It shows `cbm: idx`
+session readiness. The first root or subagent index or query lazily starts one
+stdio MCP frontend for the root session. The root and all descendants reuse and
+multiplex that frontend, which closes after its last session consumer shuts
+down. Shared daemon coordination and the runtime directory remain owned by
+Codebase Memory. Runtimes without the optional stdio capability use the bounded
+one-shot CLI fallback. It shows `cbm: idx`
 only while indexing and `cbm: install` only while installing, then clears the
 status. Cache-size accounting is deferred after indexing and never extends
 that status. It has no file watcher or periodic refresh. After edits, the model can call
@@ -51,8 +52,8 @@ reviewed binary on `PATH` in the execution image.
 
 Codebase Memory data is rooted at
 `AgentRuntime.storage('agent')/codebase-memory/cache`, so root sessions and
-subagents using the same runtime coordinate through one index. No tenant key is
-added inside that already scoped runtime storage.
+subagents using the same root-session storage coordinate through one frontend
+and index. No tenant key is added inside that already scoped runtime storage.
 
 Daemon coordination remains keyed by that agent-storage root. POSIX runtimes
 use an owner-private `/tmp/felan-cbm-<key>` rendezvous so CBM's Unix socket path

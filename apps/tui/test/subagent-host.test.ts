@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createAssistantMessageEventStream,
+  type ExtensionPackageImporter,
   type FelanExtensionAPI,
   ModelRuntime,
   SessionManager,
@@ -122,6 +123,77 @@ describe('LocalSubagentHost', () => {
       '<output_style>\nChild custom instructions.\n</output_style>',
     );
     await host.shutdown();
+  });
+
+  it('awaits child extension shutdown before completing the subagent', async () => {
+    const response = createAssistantMessageEventStream();
+    const shutdownStarted = deferred();
+    const allowShutdown = deferred();
+    let requests = 0;
+    const model = {
+      id: 'test-model',
+      name: 'Test Model',
+      api: 'anthropic-messages',
+      provider: 'test-provider',
+      baseUrl: 'https://example.invalid',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 100_000,
+      maxTokens: 4_096,
+    };
+    const modelRuntime = {
+      getAvailableSnapshot: () => [model],
+      hasConfiguredAuth: () => true,
+      getModel: (provider: string, id: string) => (
+        provider === model.provider && id === model.id ? model : undefined
+      ),
+      streamSimple: () => {
+        requests += 1;
+        return response;
+      },
+    } as unknown as ModelRuntime;
+    const importExtension: ExtensionPackageImporter = async () => ({
+      default: (pi: FelanExtensionAPI) => {
+        pi.on('session_shutdown', async () => {
+          shutdownStarted.resolve();
+          await allowShutdown.promise;
+        });
+      },
+    });
+    const { host } = await harness({
+      modelRuntime,
+      extensionPackages: ['test-lifecycle-extension'],
+      importExtension,
+    });
+
+    try {
+      const spawned = await host.spawn(request({ model: `${model.provider}/${model.id}` }));
+      expect(spawned).toMatchObject({ ok: true });
+      if (!spawned.ok) return;
+      await vi.waitFor(() => expect(requests).toBe(1));
+      pushUsageResponse(response, {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: 0,
+      });
+      await shutdownStarted.promise;
+
+      await expect(host.getResult(spawned.value.agentId)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'running' },
+      });
+      allowShutdown.resolve();
+      await expect(waitForResult(host, spawned.value.agentId)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'completed' },
+      });
+    } finally {
+      allowShutdown.resolve();
+      await host.shutdown();
+    }
   });
 
   it('continues one child with the same agent ID, session file, and latest result', async () => {
@@ -1209,6 +1281,8 @@ async function harness(options: {
   maxDepth?: number;
   root?: string;
   modelRuntime?: ModelRuntime;
+  extensionPackages?: readonly string[];
+  importExtension?: ExtensionPackageImporter;
 }) {
   const root = options.root ?? await temporaryDirectory();
   const cwd = join(root, 'workspace');
@@ -1223,8 +1297,8 @@ async function harness(options: {
     homeDir: root,
     modelRuntime,
     settingsManager: SettingsManager.inMemory(),
-    extensionPackages: [],
-    importExtension: async () => ({}),
+    extensionPackages: options.extensionPackages ?? [],
+    importExtension: options.importExtension ?? (async () => ({})),
     settings: { concurrency: options.concurrency ?? 4, maxDepth: options.maxDepth ?? 3 },
     ...(options.runner === undefined ? {} : { runChild: options.runner }),
   });

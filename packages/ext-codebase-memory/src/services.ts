@@ -2,7 +2,7 @@ import type { AgentRuntime } from '@felan-ai/agent-core';
 import { CacheManager, type CodebaseMemoryTelemetry } from './cache.js';
 import { CbmClient, INDEX_TIMEOUT_MS } from './client.js';
 
-const activeIndexes = new Map<string, Promise<unknown>>();
+const activeIndexes = new WeakMap<CbmClient, Map<string, Promise<unknown>>>();
 const cacheAccounts = new Map<string, Promise<void>>();
 
 export class ProjectService {
@@ -32,8 +32,12 @@ export class ProjectService {
 
   async index(signal?: AbortSignal): Promise<unknown> {
     const root = await this.gitRoot(signal);
-    const key = `${this.client.cacheRoot}\u0000${root}`;
-    const existing = activeIndexes.get(key);
+    let clientIndexes = activeIndexes.get(this.client);
+    if (!clientIndexes) {
+      clientIndexes = new Map();
+      activeIndexes.set(this.client, clientIndexes);
+    }
+    const existing = clientIndexes.get(root);
     if (existing) return existing;
     const request = this.client.call('index_repository', { repo_path: root, mode: 'full' }, {
       ...(signal === undefined ? {} : { signal }),
@@ -45,8 +49,10 @@ export class ProjectService {
       await this.#cache.record(project, 0);
       void this.#accountCache();
       return data;
-    }).finally(() => { activeIndexes.delete(key); });
-    activeIndexes.set(key, request);
+    }).finally(() => {
+      if (clientIndexes.get(root) === request) clientIndexes.delete(root);
+    });
+    clientIndexes.set(root, request);
     return request;
   }
 

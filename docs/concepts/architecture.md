@@ -22,9 +22,10 @@ host without moving local credential handling, storage, or presentation into a
 portable package.
 
 The Codebase Memory extension uses Agent Core's optional literal-argv stdio
-process capability for a session-scoped warm MCP frontend. This keeps protocol
-stdout separate from diagnostics and leaves daemon coordination to the exact
-upstream binary; see the [transport decision](../maintainers/codebase-memory-stdio.md).
+process capability for a root-session-scoped warm MCP frontend shared by the
+root agent and its subagents. This keeps protocol stdout separate from
+diagnostics and leaves daemon coordination to the exact upstream binary; see
+the [transport decision](../maintainers/codebase-memory-stdio.md).
 
 ## Ownership layers
 

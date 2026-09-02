@@ -17,18 +17,21 @@ interface InteractiveModeTerminalInternals {
     mode?: string;
   };
   showError?(message: string): void;
+  showStatus?(message: string): void;
   switchTuiMode?(mode: string, restoreProgress?: boolean, startRenderer?: boolean): boolean;
 }
 
 const installedTerminals = new WeakSet<object>();
 const installedModes = new WeakSet<object>();
+const installedMessageFilters = new WeakSet<object>();
 
 export function installFelanTuiCompatibility(
   mode: InteractiveMode,
   platform: NodeJS.Platform = process.platform,
 ): void {
-  if (platform !== 'win32') return;
   const internals = mode as unknown as InteractiveModeTerminalInternals;
+  installPiMessageFilters(mode, internals);
+  if (platform !== 'win32') return;
   const terminal = internals.renderer?.terminal;
   if (!terminal || typeof terminal.write !== 'function') return;
   if (!installedTerminals.has(terminal)) {
@@ -62,6 +65,31 @@ export function installFelanTuiCompatibility(
     });
     return true;
   };
+}
+
+function installPiMessageFilters(
+  mode: InteractiveMode,
+  internals: InteractiveModeTerminalInternals,
+): void {
+  if (installedMessageFilters.has(mode)) return;
+  installedMessageFilters.add(mode);
+
+  const showStatus = internals.showStatus;
+  if (typeof showStatus === 'function') {
+    internals.showStatus = (message) => {
+      if (message === 'Auto-compaction cancelled') return;
+      Reflect.apply(showStatus, mode, [message]);
+    };
+  }
+
+  const showError = internals.showError;
+  if (typeof showError === 'function') {
+    internals.showError = (message) => {
+      if (message.startsWith('Compaction failed:')
+        && /(?:operation was aborted|compaction cancelled)$/iu.test(message)) return;
+      Reflect.apply(showError, mode, [message]);
+    };
+  }
 }
 
 export function normalizeFullscreenTerminalModes(data: string): string {

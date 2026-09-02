@@ -148,6 +148,81 @@ describe('Codex extension activation', () => {
     expect(compact).toHaveBeenCalledTimes(1);
   });
 
+  it('does not schedule another post-agent compaction while one is in flight', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai-codex', 'gpt-5.3-codex');
+    ctx.isIdle = () => false;
+
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+    const options = vi.mocked(ctx.compact).mock.calls[0]![0]!;
+
+    await expect(harness.emit('session_before_compact', { reason: 'threshold' }, ctx))
+      .resolves.toEqual([{ cancel: true }]);
+    options.onComplete?.({} as never);
+    await harness.emit('agent_settled', {}, ctx);
+
+    expect(ctx.compact).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report user-aborted post-agent compaction as a failure', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai', 'gpt-5.4');
+    const notify = vi.fn();
+    ctx.isIdle = () => false;
+    ctx.ui = { notify } as never;
+
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+    const options = vi.mocked(ctx.compact).mock.calls[0]![0]!;
+    options.onError?.(new Error('Turn prefix summarization failed: This operation was aborted'));
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it.each(['manual', 'overflow'] as const)(
+    'lets %s compaction supersede a deferred threshold without another post-agent compaction',
+    async (reason) => {
+      const harness = createHarness();
+      await codexExtension(harness.pi);
+      const ctx = context('openai', 'gpt-5.4');
+      ctx.isIdle = () => false;
+
+      await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+      await expect(harness.emit('session_before_compact', { reason }, ctx))
+        .resolves.toEqual([undefined]);
+      await harness.emit('agent_settled', {}, ctx);
+
+      expect(ctx.compact).not.toHaveBeenCalled();
+    },
+  );
+
+  it('ignores completion callbacks from a replaced session', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai', 'gpt-5.4');
+    ctx.isIdle = () => false;
+
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+    const previousOptions = vi.mocked(ctx.compact).mock.calls[0]![0]!;
+
+    await harness.emit('session_start', {}, ctx);
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+    const currentOptions = vi.mocked(ctx.compact).mock.calls[1]![0]!;
+    previousOptions.onComplete?.({} as never);
+
+    await expect(harness.emit('session_before_compact', { reason: 'threshold' }, ctx))
+      .resolves.toEqual([{ cancel: true }]);
+    currentOptions.onComplete?.({} as never);
+    await harness.emit('agent_settled', {}, ctx);
+
+    expect(ctx.compact).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps Pi threshold timing when post-agent compaction is disabled', async () => {
     const harness = createHarness(true, { postAgentRunCompaction: false });
     await codexExtension(harness.pi);
