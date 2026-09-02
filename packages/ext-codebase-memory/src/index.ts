@@ -80,7 +80,7 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
           );
           return;
         }
-        await refresh(projects, ctx);
+        await refresh(projects, ctx, activeIndexSession);
       },
     });
 
@@ -117,16 +117,36 @@ function detectionMessage(detection: CbmDetection): string {
 
 async function refresh(projects: ProjectService, ctx: ExtensionContext, session?: IndexSession): Promise<void> {
   if (session && !session.active) return;
-  ctx.ui.setStatus('codebase-memory', 'cbm: idx');
+  let signal: AbortSignal | undefined;
   try {
-    await projects.index(ctx.signal);
-    if (session && !session.active) return;
-    ctx.ui.setStatus('codebase-memory', undefined);
+    ctx.ui.setStatus('codebase-memory', 'cbm: idx');
+    signal = ctx.signal;
   } catch (error) {
-    if (session && !session.active) return;
-    ctx.ui.setStatus('codebase-memory', undefined);
-    if (ctx.hasUI) ctx.ui.notify(`Codebase Memory index failed: ${error instanceof Error ? error.message : String(error)}`, 'warning');
+    if (isStaleExtensionContextError(error)) return;
+    throw error;
   }
+  let failed = false;
+  let failure: unknown;
+  try {
+    await projects.index(signal);
+  } catch (error) {
+    failed = true;
+    failure = error;
+  }
+  if (session && !session.active) return;
+  try {
+    ctx.ui.setStatus('codebase-memory', undefined);
+    if (failed && ctx.hasUI) {
+      ctx.ui.notify(`Codebase Memory index failed: ${failure instanceof Error ? failure.message : String(failure)}`, 'warning');
+    }
+  } catch (error) {
+    if (!isStaleExtensionContextError(error)) throw error;
+  }
+}
+
+function isStaleExtensionContextError(error: unknown): boolean {
+  return error instanceof Error
+    && error.message.startsWith('This extension ctx is stale after session replacement or reload.');
 }
 
 const codebaseMemoryExtension = createCodebaseMemoryExtension();

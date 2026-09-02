@@ -186,6 +186,31 @@ describe('Codebase Memory extension', () => {
     ]);
   });
 
+  it('does not reuse a stale command context after refresh indexing completes', async () => {
+    let finishIndexing!: (value: ReturnType<typeof result>) => void;
+    const indexing = new Promise<ReturnType<typeof result>>((resolve) => { finishIndexing = resolve; });
+    let markIndexingStarted!: () => void;
+    const indexingStarted = new Promise<void>((resolve) => { markIndexingStarted = resolve; });
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('index_repository')) {
+        markIndexingStarted();
+        return indexing;
+      }
+      if (command.includes('list_projects')) return result(envelope({ projects: [] }));
+      return result(envelope({}));
+    });
+    const harness = await createHarness(runtime);
+
+    const refresh = harness.commandHandlers.get('codebase-memory')?.('', harness.context);
+    await indexingStarted;
+    harness.invalidateContext();
+    finishIndexing(result(envelope({ status: 'indexed', project: 'fixture' })));
+
+    await expect(refresh).resolves.toBeUndefined();
+    expect(harness.statuses).toEqual([['codebase-memory', 'cbm: idx']]);
+    await expect(harness.commandHandlers.get('codebase-memory')?.('', harness.context)).resolves.toBeUndefined();
+  });
+
   it('keeps scoped POSIX coordination below the Darwin Unix socket path limit', () => {
     const longStorageRoot = `/Users/test/${'deeply-nested/'.repeat(20)}agent`;
     const runtimeDirectory = codebaseMemoryRuntimeDirectory(longStorageRoot);
@@ -385,17 +410,26 @@ async function createHarness(
   const commandHandlers = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void> | void>();
   const notifications: Array<[string, string | undefined]> = [];
   const statuses: Array<[string, string | undefined]> = [];
-  const context = {
+  let contextActive = true;
+  const ui = {
+    notify: (message: string, level?: string) => notifications.push([message, level]),
+    setStatus: vi.fn((key: string, text: string | undefined) => statuses.push([key, text])),
+    confirm: vi.fn(async () => false),
+  };
+  const context = Object.defineProperties({
     cwd: runtime.cwd,
-    hasUI: runtime.kind === 'host',
     mode: runtime.kind === 'host' ? 'tui' : 'print',
-    signal: new AbortController().signal,
-    ui: {
-      notify: (message: string, level?: string) => notifications.push([message, level]),
-      setStatus: vi.fn((key: string, text: string | undefined) => statuses.push([key, text])),
-      confirm: vi.fn(async () => false),
-    },
-  } as unknown as ExtensionContext;
+  }, {
+    hasUI: { get: () => activeContextValue(runtime.kind === 'host') },
+    signal: { get: () => activeContextValue(new AbortController().signal) },
+    ui: { get: () => activeContextValue(ui) },
+  }) as unknown as ExtensionContext;
+  function activeContextValue<T>(value: T): T {
+    if (!contextActive) {
+      throw new Error('This extension ctx is stale after session replacement or reload. Do not use a captured ctx.');
+    }
+    return value;
+  }
   const pi = {
     runtime,
     config: {},
@@ -411,6 +445,7 @@ async function createHarness(
   await extension(pi);
   return {
     capabilities, commands, commandHandlers, context, notifications, statuses, tools,
+    invalidateContext: () => { contextActive = false; },
     async emit(name: string, event: Record<string, unknown>): Promise<unknown> {
       let result: unknown;
       for (const handler of handlers.get(name) ?? []) result = await handler(event, context) ?? result;
