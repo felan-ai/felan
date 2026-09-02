@@ -112,7 +112,7 @@ export class SymbolService {
           || candidate.name === requestedName
           || qualifiedName.split('.').at(-1) === requestedName)
         && (!params.qualified_name || qualifiedName === params.qualified_name)
-        && (!params.file_path || String(candidate.file_path ?? '').includes(String(params.file_path)));
+        && (!params.file_path || String(candidate.file ?? candidate.file_path ?? '').includes(String(params.file_path)));
     });
     if (matches.length > 1) {
       return {
@@ -163,11 +163,22 @@ function searchCandidates(value: unknown): unknown[] {
   const results = arrayProperty(value, 'results');
   if (results.length > 0) return results;
   const record = asRecord(value);
-  if (!Array.isArray(record.cols) || !Array.isArray(record.rows)) return [];
+  if (!Array.isArray(record.cols)) return [];
   const columns = record.cols.filter((column): column is string => typeof column === 'string');
-  return record.rows.filter(Array.isArray).map((row) => Object.fromEntries(
+  if (Array.isArray(record.groups)) return searchGroupedCandidates(record, columns);
+  return arrayProperty(record, 'rows').filter(Array.isArray).map((row) => Object.fromEntries(
     columns.map((column, index) => [column === 'qn' ? 'qualified_name' : column, row[index]]),
   ));
+}
+
+function searchGroupedCandidates(record: Record<string, unknown>, columns: readonly string[]): unknown[] {
+  return arrayProperty(record, 'groups').flatMap((group) => {
+    const { qn_prefix: prefix, file } = asRecord(group);
+    return arrayProperty(group, 'rows').filter(Array.isArray).map((row) => {
+      const candidate = Object.fromEntries(columns.map((column, index) => [column, row[index]]));
+      return { ...candidate, file, qualified_name: `${prefix}.${candidate.name}` };
+    });
+  });
 }
 
 function projectName(path: string): string {

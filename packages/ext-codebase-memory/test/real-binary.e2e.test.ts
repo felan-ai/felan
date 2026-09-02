@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   HostAgentRuntime,
+  type ExecOptions,
+  type ExecResult,
   type ExtensionContext,
   type FelanExtensionAPI,
   type ToolDefinition,
@@ -56,7 +58,10 @@ describe('Codebase Memory real binary', () => {
         ['codebase-memory', undefined],
       ]);
     }, { timeout: 120_000 });
-    expect(await readSymbol(harness.tools[1]!, 'answer')).toContain('return 42');
+    const byNameAndFile = await readSymbolPayload(harness.tools[1]!, { name: 'answer', file_path: 'answer.ts' });
+    expect(byNameAndFile.snippet.source).toContain('return 42');
+    const byQualifiedName = await readSymbolPayload(harness.tools[1]!, { qualified_name: byNameAndFile.symbol.qualified_name });
+    expect(byQualifiedName.snippet.source).toContain('return 42');
 
     await writeFile(join(workspace, 'answer.ts'), 'export function changedAnswer() { return 84; }\n');
     expect(await readSymbol(harness.tools[1]!, 'changedAnswer')).toContain('No matching symbol found');
@@ -68,7 +73,7 @@ describe('Codebase Memory real binary', () => {
     expect(await readSymbol(harness.tools[1]!, 'slashAnswer')).toContain('return 126');
     await harness.emit('session_shutdown', { reason: 'quit' });
 
-    const missingRuntime = new HostAgentRuntime(workspace, {
+    const missingRuntime = new MissingBinaryRuntime(workspace, {
       sessionStorageRoot: join(root, 'missing-session'),
       agentStorageRoot: join(root, 'missing-agent'),
     });
@@ -126,8 +131,26 @@ async function readSymbol(tool: ToolDefinition, name: string): Promise<string> {
   return content?.type === 'text' ? content.text : '';
 }
 
+async function readSymbolPayload(tool: ToolDefinition, params: Record<string, unknown>) {
+  const result = await executeTool(tool, params);
+  const content = result.content[0];
+  return JSON.parse(content?.type === 'text' ? content.text : 'null') as {
+    symbol: { qualified_name: string };
+    snippet: { source: string };
+  };
+}
+
 function executeTool(tool: ToolDefinition, params: Record<string, unknown>) {
   return tool.execute('e2e', params as never, new AbortController().signal, () => {}, {} as never);
+}
+
+class MissingBinaryRuntime extends HostAgentRuntime {
+  override async exec(command: string, args: readonly string[], options?: ExecOptions): Promise<ExecResult> {
+    if (args.includes('--version') && command.endsWith('codebase-memory-mcp')) {
+      return { stdout: '', stderr: 'not found', code: 127, killed: false };
+    }
+    return super.exec(command, args, options);
+  }
 }
 
 async function runGit(cwd: string, args: readonly string[]): Promise<void> {

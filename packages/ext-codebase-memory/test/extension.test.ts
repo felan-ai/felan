@@ -242,7 +242,13 @@ describe('Codebase Memory extension', () => {
     const source = Array.from({ length: 300 }, (_, index) => `line ${index + 1}`).join('\n');
     const runtime = new MemoryRuntime('host', true, async (command) => {
       if (command.includes('list_projects')) return result(envelope({ projects: [] }));
-      if (command.includes('search_graph')) return result(envelope({ results: [{ qualified_name: 'fixture.answer' }] }));
+      if (command.includes('search_graph')) {
+        return result(envelope({
+          total: 1,
+          cols: ['qn', 'label', 'file', 'lines', 'rank'],
+          rows: [['fixture.answer', 'Function', 'src/answer.ts', '1-3', 1]],
+        }));
+      }
       if (command.includes('get_code_snippet')) return result(envelope({ code: source }));
       return result(envelope({}));
     });
@@ -257,14 +263,50 @@ describe('Codebase Memory extension', () => {
     expect(payload.snippet.truncated).toBe(true);
   });
 
+  it('reads symbols from real flat and grouped search_graph response shapes', async () => {
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('list_projects')) return result(envelope({ projects: [{ name: 'fixture', root_path: '/work/repo' }] }));
+      if (command.includes('search_graph') && command.includes('qn_pattern')) {
+        return result(envelope({
+          total: 1,
+          count: 1,
+          cols: ['name', 'label', 'lines', 'in', 'out'],
+          groups: [{ qn_prefix: 'fixture.src.answer', file: 'src/answer.ts', rows: [['answer', 'Function', '1-3', 0, 1]] }],
+        }));
+      }
+      if (command.includes('search_graph')) {
+        return result(envelope({
+          total: 1,
+          cols: ['qn', 'label', 'file', 'lines', 'rank'],
+          rows: [['fixture.src.answer.answer', 'Function', 'src/answer.ts', '1-3', 1]],
+        }));
+      }
+      if (command.includes('get_code_snippet')) return result(envelope({ source: 'export function answer() { return 42; }' }));
+      return result(envelope({}));
+    });
+    const harness = await createHarness(runtime);
+
+    for (const params of [
+      { qualified_name: 'fixture.src.answer.answer' },
+      { name: 'answer', file_path: 'src/answer.ts' },
+    ]) {
+      const response = await execute(harness.tools[1]!, params);
+      const content = response.content[0];
+      const payload = JSON.parse(content?.type === 'text' ? content.text : '') as { snippet: { source: string } };
+      expect(payload.snippet.source).toContain('return 42');
+    }
+  });
+
   it('fails closed when a symbol name is ambiguous', async () => {
     const runtime = new MemoryRuntime('host', true, async (command) => {
       if (command.includes('list_projects')) return result(envelope({ projects: [] }));
       if (command.includes('search_graph')) {
         return result(envelope({
-          results: [
-            { qualified_name: 'fixture.first.answer', file_path: 'src/first.ts' },
-            { qualified_name: 'fixture.second.answer', file_path: 'src/second.ts' },
+          total: 2,
+          cols: ['qn', 'label', 'file', 'lines', 'rank'],
+          rows: [
+            ['fixture.first.answer', 'Function', 'src/first.ts', '1-3', 1],
+            ['fixture.second.answer', 'Function', 'src/second.ts', '1-3', 1],
           ],
         }));
       }
