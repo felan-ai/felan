@@ -6,12 +6,14 @@ export interface CodexConfig {
   readonly fast: boolean;
   readonly verbosity: CodexVerbosity;
   readonly forceCachedWebSockets: boolean;
+  readonly postAgentRunCompaction: boolean;
 }
 
 export const DEFAULT_CODEX_CONFIG: CodexConfig = {
   fast: false,
   verbosity: 'low',
   forceCachedWebSockets: true,
+  postAgentRunCompaction: true,
 };
 
 export const CODEX_CONFIG = defineExtensionConfig({
@@ -21,6 +23,10 @@ export const CODEX_CONFIG = defineExtensionConfig({
     fast: configField.boolean({ default: false, description: 'Request priority service tier' }),
     verbosity: configField.enum(['low', 'medium', 'high'], { default: 'low', description: 'Codex response verbosity' }),
     forceCachedWebSockets: configField.boolean({ default: true, description: 'Prefer cached WebSocket transport' }),
+    postAgentRunCompaction: configField.boolean({
+      default: true,
+      description: 'Defer GPT threshold compaction until the agent run settles',
+    }),
   },
 });
 
@@ -31,6 +37,9 @@ export function validateCodexConfig(value: unknown, source = 'settings.json.exte
   }
   if (value.forceCachedWebSockets !== undefined && typeof value.forceCachedWebSockets !== 'boolean') {
     throw new Error(`${source}.forceCachedWebSockets must be a boolean`);
+  }
+  if (value.postAgentRunCompaction !== undefined && typeof value.postAgentRunCompaction !== 'boolean') {
+    throw new Error(`${source}.postAgentRunCompaction must be a boolean`);
   }
   if (
     value.verbosity !== undefined
@@ -45,6 +54,8 @@ export function validateCodexConfig(value: unknown, source = 'settings.json.exte
     verbosity: value.verbosity ?? DEFAULT_CODEX_CONFIG.verbosity,
     forceCachedWebSockets: value.forceCachedWebSockets
       ?? DEFAULT_CODEX_CONFIG.forceCachedWebSockets,
+    postAgentRunCompaction: value.postAgentRunCompaction
+      ?? DEFAULT_CODEX_CONFIG.postAgentRunCompaction,
   };
 }
 

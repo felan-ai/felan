@@ -36,7 +36,7 @@ describe('OpenAI request options', () => {
     expect(applyCodexRequestOptions(
       { model: model.id, text: { format: { type: 'text' } } },
       { model },
-      { fast: true, verbosity: 'medium', forceCachedWebSockets: true },
+      { fast: true, verbosity: 'medium', forceCachedWebSockets: true, postAgentRunCompaction: false },
     )).toEqual({
       model: model.id,
       service_tier: 'priority',
@@ -45,7 +45,7 @@ describe('OpenAI request options', () => {
   });
 
   it('leaves non-GPT, other-provider, and non-Responses requests untouched', () => {
-    const config = { fast: true, verbosity: 'high', forceCachedWebSockets: true } as const;
+    const config = { fast: true, verbosity: 'high', forceCachedWebSockets: true, postAgentRunCompaction: false } as const;
     for (const model of [
       { provider: 'anthropic', id: 'gpt-5.4', api: 'openai-responses' },
       { provider: 'openai', id: 'o3', api: 'openai-responses' },
@@ -69,7 +69,7 @@ describe('OpenAI Codex transport policy', () => {
   });
 
   it('sets native options only for eligible requests', () => {
-    const config = { fast: true, verbosity: 'high', forceCachedWebSockets: true } as const;
+    const config = { fast: true, verbosity: 'high', forceCachedWebSockets: true, postAgentRunCompaction: false } as const;
     expect(resolveCodexStreamOptions(
       responseModel('openai-codex', 'gpt-5.3-codex', 'openai-codex-responses'),
       { transport: 'websocket', sessionId: 'session-1' },
@@ -105,11 +105,13 @@ describe('OpenAI Codex transport policy', () => {
       fast: true,
       verbosity: 'high',
       forceCachedWebSockets: true,
+      postAgentRunCompaction: false,
     })(first);
     const secondWrapped = createCodexStreamFunctionWrapper({
       fast: false,
       verbosity: 'low',
       forceCachedWebSockets: false,
+      postAgentRunCompaction: false,
     })(second);
     const model = responseModel('openai-codex', 'gpt-5.3-codex', 'openai-codex-responses');
 

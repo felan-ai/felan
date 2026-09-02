@@ -132,9 +132,73 @@ describe('Codex extension activation', () => {
 
     expect(harness.unregisterProvider).not.toHaveBeenCalled();
   });
+
+  it('defers eligible threshold compaction until the agent settles by default', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai-codex', 'gpt-5.3-codex');
+    const compact = vi.fn();
+    ctx.isIdle = () => false;
+    ctx.compact = compact;
+
+    await expect(harness.emit('session_before_compact', { reason: 'threshold' }, ctx))
+      .resolves.toEqual([{ cancel: true }]);
+    await harness.emit('agent_settled', {}, ctx);
+
+    expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Pi threshold timing when post-agent compaction is disabled', async () => {
+    const harness = createHarness(true, { postAgentRunCompaction: false });
+    await codexExtension(harness.pi);
+    const ctx = context('openai-codex', 'gpt-5.3-codex');
+    ctx.isIdle = () => false;
+
+    await expect(harness.emit('session_before_compact', { reason: 'threshold' }, ctx))
+      .resolves.toEqual([undefined]);
+    await harness.emit('agent_settled', {}, ctx);
+
+    expect(ctx.compact).not.toHaveBeenCalled();
+  });
+
+  it('does not defer threshold compaction for non-GPT models', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai', 'o3');
+    ctx.isIdle = () => false;
+
+    await expect(harness.emit('session_before_compact', { reason: 'threshold' }, ctx))
+      .resolves.toEqual([undefined]);
+  });
+
+  it('does not defer manual or overflow compaction', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai', 'gpt-5.4');
+    ctx.isIdle = () => false;
+
+    await expect(harness.emit('session_before_compact', { reason: 'manual' }, ctx))
+      .resolves.toEqual([undefined]);
+    await expect(harness.emit('session_before_compact', { reason: 'overflow' }, ctx))
+      .resolves.toEqual([undefined]);
+  });
+
+  it('clears deferred state if the model changes before settlement', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const gpt = context('openai', 'gpt-5.4');
+    gpt.isIdle = () => false;
+    await harness.emit('session_before_compact', { reason: 'threshold' }, gpt);
+
+    const other = context('anthropic', 'claude-opus');
+    await harness.emit('agent_settled', {}, other);
+    await harness.emit('agent_settled', {}, gpt);
+
+    expect(gpt.compact).not.toHaveBeenCalled();
+  });
 });
 
-function createHarness(processSupport = true) {
+function createHarness(processSupport = true, config: Record<string, unknown> = {}) {
   const handlers = new Map<string, Handler[]>();
   const activeTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate'];
   const registerTool = vi.fn();
@@ -143,6 +207,7 @@ function createHarness(processSupport = true) {
   const pi = {
     runtime: unusedRuntime(processSupport),
     agentDir: '/agent',
+    config,
     registerCapability: vi.fn(),
     registerTool,
     registerProvider,
@@ -170,7 +235,12 @@ function createHarness(processSupport = true) {
 }
 
 function context(provider: string, id: string): ExtensionContext {
-  return { mode: 'print', model: model(provider, id) } as ExtensionContext;
+  return {
+    mode: 'print',
+    model: model(provider, id),
+    isIdle: () => true,
+    compact: vi.fn(),
+  } as unknown as ExtensionContext;
 }
 
 function model(provider: string, id: string): Model<Api> {

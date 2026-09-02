@@ -54,7 +54,7 @@ browser and Powerline extensions:
     "contextView": { "displayMode": "inline" },
     "codebaseMemory": { "maxCacheBytes": 0 },
     "promptHistory": { "displayMode": "inline" },
-    "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true }
+    "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true }
   },
   "felanSubagents": {
     "concurrency": 4,
@@ -270,18 +270,24 @@ to disable the extension.
 
 ### Codex tools
 
-`extensionConfig.codex` accepts exactly three fields:
+`extensionConfig.codex` accepts these fields:
 
 ```json
 {
   "fast": false,
   "verbosity": "low",
-  "forceCachedWebSockets": true
+  "forceCachedWebSockets": true,
+  "postAgentRunCompaction": true
 }
 ```
 
 `verbosity` may be `low`, `medium`, or `high`. These controls apply only to
 eligible GPT models on the exact `openai` or `openai-codex` provider.
+`postAgentRunCompaction` defaults to `true`, making automatic threshold
+compaction wait until the active GPT run settles and preserving the pre-0.84.4
+timing. Set it to `false` to use Pi's standard timing. Manual and
+overflow-recovery compaction are unchanged. Pi continues to generate the
+compaction summary; this is not OpenAI native Responses compaction.
 
 ### Web access
 

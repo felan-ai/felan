@@ -7,6 +7,7 @@ describe('Codex configuration', () => {
       fast: false,
       verbosity: 'low',
       forceCachedWebSockets: true,
+      postAgentRunCompaction: true,
     });
   });
 
@@ -15,14 +16,18 @@ describe('Codex configuration', () => {
       fast: true,
       verbosity: 'high',
       forceCachedWebSockets: false,
+      postAgentRunCompaction: false,
     }, 'settings.json.extensionConfig.codex')).toEqual({
       fast: true,
       verbosity: 'high',
       forceCachedWebSockets: false,
+      postAgentRunCompaction: false,
     });
     expect(() => validateCodexConfig({ verbosity: 'max' }, 'settings.json.extensionConfig.codex'))
       .toThrow('settings.json.extensionConfig.codex.verbosity must be low, medium, or high');
     expect(() => validateCodexConfig({ fast: 'yes' }, 'settings.json.extensionConfig.codex'))
       .toThrow('settings.json.extensionConfig.codex.fast must be a boolean');
+    expect(() => validateCodexConfig({ postAgentRunCompaction: 'yes' }, 'settings.json.extensionConfig.codex'))
+      .toThrow('settings.json.extensionConfig.codex.postAgentRunCompaction must be a boolean');
   });
 });

@@ -12,7 +12,7 @@ import { createLocalCodexStreamFunctionWrapper } from '../src/codex.js';
 describe('local Codex stream composition', () => {
   it('loads the same agent config for root and nested session wrappers', async () => {
     const agentDir = '/agent';
-    const config = { fast: true, verbosity: 'high', forceCachedWebSockets: true };
+    const config = { fast: true, verbosity: 'high', forceCachedWebSockets: true, postAgentRunCompaction: false };
     const rootRuntime = runtimeWithConfig(config);
     const childRuntime = runtimeWithConfig(config);
     const rootOriginal = vi.fn<StreamFunction>(() => endedStream());

@@ -5,6 +5,7 @@ import {
   type Model,
 } from '@felan-ai/agent-core';
 import { CODEX_CONFIG, DEFAULT_CODEX_CONFIG } from './config.js';
+import { registerPostAgentRunCompaction } from './compaction.js';
 import { ExecSessionManager } from './exec-session-manager.js';
 import { supportsCodexModel, supportsImageInput } from './model-policy.js';
 import { injectCodexSkills } from './prompt.js';
@@ -17,6 +18,7 @@ const CODEX_TOOL_NAME_SET: ReadonlySet<string> = new Set(CODEX_TOOL_NAMES);
 const codexExtension: FelanExtension = async (pi) => {
   const config = { ...DEFAULT_CODEX_CONFIG, ...pi.config } as import('./config.js').CodexConfig;
   const sessions = new ExecSessionManager(pi.runtime);
+  registerPostAgentRunCompaction(pi, config);
   for (const tool of createCodexTools(pi.runtime, sessions)) pi.registerTool(tool);
   registerPatchResultEvent(pi);
 
@@ -58,6 +60,7 @@ export type { CodexConfig, CodexVerbosity } from './config.js';
 export { ExecSessionManager, MAX_OUTPUT_TOKENS, formatExecResult } from './exec-session-manager.js';
 export type { ExecCommandInput, UnifiedExecResult, WriteStdinInput } from './exec-session-manager.js';
 export { supportsCodexModel, supportsCodexResponsesRequest } from './model-policy.js';
+export { registerPostAgentRunCompaction } from './compaction.js';
 export { applyCodexRequestOptions } from './request-options.js';
 export { CODEX_TOOL_NAMES, MAX_VIEW_IMAGE_INPUT_BYTES, createCodexTools } from './tools.js';
 export {

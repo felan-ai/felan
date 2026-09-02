@@ -24,7 +24,8 @@ Optional settings live under `extensionConfig.codex` in
 {
   "fast": false,
   "verbosity": "low",
-  "forceCachedWebSockets": true
+  "forceCachedWebSockets": true,
+  "postAgentRunCompaction": true
 }
 ```
 
@@ -60,9 +61,16 @@ leaves its process available for a later `write_stdin` call, while session
 shutdown terminates all remaining processes. Sessions are in-memory and do
 not survive application restart.
 
+`postAgentRunCompaction` is enabled by default. It makes eligible GPT runs defer
+Pi's automatic threshold compaction until the current agent run settles, which
+preserves the pre-0.84.4 timing while allowing the completed tool loop to
+finish. Set it to `false` to use Pi's standard timing. Manual and
+overflow-recovery compaction remain immediate. Pi still owns summary generation;
+this setting does not enable upstream OpenAI native Responses compaction.
+
 The extension excludes restart-durable jobs, web access, image generation,
-Code Mode/Responses Lite, prompt replacement, compaction, voice, and UI
-widgets.
+Code Mode/Responses Lite, prompt replacement, native Responses compaction,
+voice, and UI widgets.
 
 ## Development
 
