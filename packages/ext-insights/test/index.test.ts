@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createInsightsExtension } from '../src/index.js';
 
 describe('createInsightsExtension', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
   it('registers the bounded insights command and reports an empty range', async () => {
     let command: { handler: (args: string, ctx: unknown) => Promise<void> } | undefined;
     const notify = vi.fn();
@@ -42,6 +44,9 @@ describe('createInsightsExtension', () => {
   });
 
   it('counts turns from resumed roots and retained agents inside --since', async () => {
+    // --since resolves against the wall clock, so pin it to keep the fixture timestamps in range.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-01T12:00:00Z'));
     let command: { handler: (args: string, ctx: unknown) => Promise<void> } | undefined;
     let report = '';
     let cache = '';
