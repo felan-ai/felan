@@ -1,114 +1,287 @@
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
-import type { AgentRuntime } from '@felan-ai/agent-core';
-import { positiveInteger, positiveNumber, type WebAccessConfig } from './config.js';
-import { extractGitHubRepository, parseGitHubUrl } from './github.js';
+import { pdfSettings, type WebAccessConfig } from './config.js';
 import { combinedSignal, readResponseBytes } from './http.js';
+import {
+  isPdfConversionResult,
+  requestPdfConversion,
+  sanitizedPdfConversionError,
+  unavailablePdfConversionError,
+  type PdfConversionEvents,
+} from './pdf-service.js';
 import { fetchRemoteUrl, ssrfSettings, validateRemoteUrl } from './ssrf.js';
 import type { ExtractedContent } from './types.js';
 
 const MAX_HTTP_RESPONSE_BYTES = 5 * 1024 * 1024;
-const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+const MAX_LLMS_TXT_RESPONSE_BYTES = 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS = 750_000;
-const DEFAULT_PDF_MAX_SIZE_MB = 20;
-const MAX_PDF_MAX_SIZE_MB = 50;
-const DEFAULT_PDF_MAX_PAGES = 100;
 const HTTP_TIMEOUT_MS = 30_000;
+const PDF_SIGNATURE = /^%PDF-[0-9]\.[0-9]/u;
 
-export interface ExtractOptions {
-  mode?: 'readable' | 'raw';
-  forceClone?: boolean;
-  allowGitHub?: boolean;
+export type LlmsTxtProbeMap = Map<string, Promise<ExtractedContent | undefined>>;
+
+export interface ExtractContentOptions {
+  ignoreLlmsTxt?: boolean;
+  llmsTxtProbes?: LlmsTxtProbeMap;
 }
 
 export async function extractContent(
   rawUrl: string,
-  runtime: AgentRuntime,
   config: WebAccessConfig,
+  pdfEvents?: PdfConversionEvents,
   signal?: AbortSignal,
-  options: ExtractOptions = {},
+  timeoutMs = HTTP_TIMEOUT_MS,
+  options: ExtractContentOptions = {},
 ): Promise<ExtractedContent> {
   const settings = ssrfSettings(config);
-  const url = await validateRemoteUrl(rawUrl, settings);
-  const github = options.allowGitHub === false ? undefined : parseGitHubUrl(url.toString());
-  if (github && options.mode !== 'raw') {
-    return extractGitHubRepository(url.toString(), github, runtime, config, signal, options.forceClone);
-  }
-
-  const response = await fetchRemoteUrl(url, {
+  const requestSignal = combinedSignal(signal, timeoutMs);
+  const validatedUrl = await validateRemoteUrl(rawUrl, settings, { signal: requestSignal });
+  const response = await fetchRemoteUrl(validatedUrl, {
     headers: {
-      Accept: 'text/html,application/xhtml+xml,application/json,text/plain,application/pdf,image/*;q=0.8,*/*;q=0.5',
+      Accept: 'text/html,application/xhtml+xml,application/json,application/pdf,text/plain;q=0.9,text/*;q=0.8',
       'User-Agent': 'Felan-Web-Access/0.1',
     },
-    signal: combinedSignal(signal, HTTP_TIMEOUT_MS),
+    signal: requestSignal,
   }, settings);
+  const responseUrl = response.url ? new URL(response.url) : validatedUrl;
   if (!response.ok) {
-    return { url: url.toString(), title: url.hostname, content: '', error: `HTTP ${response.status}` };
-  }
-  const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
-  const contentLength = Number(response.headers.get('content-length'));
-  if (contentType.startsWith('image/') && Number.isFinite(contentLength) && contentLength > MAX_IMAGE_BYTES) {
-    throw new Error(`Image exceeds the ${MAX_IMAGE_BYTES}-byte limit`);
-  }
-  const pdfMaximumBytes = positiveNumber(config.pdf?.maxSizeMB, DEFAULT_PDF_MAX_SIZE_MB, MAX_PDF_MAX_SIZE_MB) * 1024 * 1024;
-  if (isPdf(url, contentType) && Number.isFinite(contentLength) && contentLength > pdfMaximumBytes) {
-    throw new Error(`PDF exceeds the configured ${pdfMaximumBytes}-byte limit`);
-  }
-  const maximumBytes = contentType.startsWith('image/')
-    ? MAX_IMAGE_BYTES
-    : isPdf(url, contentType) ? pdfMaximumBytes : MAX_HTTP_RESPONSE_BYTES;
-  const bytes = await readResponseBytes(response, maximumBytes);
-
-  if (contentType.startsWith('image/')) {
+    await response.body?.cancel();
     return {
-      url: url.toString(),
-      title: fileTitle(url, 'image'),
-      content: `[Remote image: ${contentType}, ${bytes.byteLength} bytes]`,
-      error: null,
-      contentType,
-      image: { data: Buffer.from(bytes).toString('base64'), mimeType: contentType },
+      url: responseUrl.toString(),
+      title: responseUrl.hostname,
+      content: '',
+      error: `HTTP ${response.status}`,
     };
   }
-  if (isPdf(url, contentType)) return extractPdf(bytes, url, config, contentType);
+
+  const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
+  if (!isSupportedContentType(contentType) && contentType !== 'application/octet-stream') {
+    await response.body?.cancel();
+    throw new Error(`Unsupported content type: ${contentType || 'unknown'}`);
+  }
+  const declaredPdf = contentType === 'application/pdf' || contentType === 'application/octet-stream';
+  if (declaredPdf) {
+    const limits = pdfSettings(config);
+    try {
+      return await extractDeclaredPdf(
+        response,
+        responseUrl,
+        contentType,
+        limits,
+        pdfEvents,
+        signal,
+        requestSignal,
+      );
+    } catch (error) {
+      await response.body?.cancel().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  const maximumBytes = MAX_HTTP_RESPONSE_BYTES;
+  const contentLengthHeader = response.headers.get('content-length');
+  const contentLength = contentLengthHeader !== null && /^\d+$/u.test(contentLengthHeader)
+    ? Number(contentLengthHeader)
+    : undefined;
+  if (contentLength !== undefined && (!Number.isSafeInteger(contentLength) || contentLength > maximumBytes)) {
+    await response.body?.cancel();
+    throw new Error(`Response exceeds the ${maximumBytes}-byte limit`);
+  }
+  const bytes = await readResponseBytes(response, maximumBytes, requestSignal);
+
+  const pdfSignature = hasPdfSignature(bytes);
+  if (pdfSignature) {
+    throw new Error(`PDF file signature does not match content type: ${contentType || 'unknown'}`);
+  }
 
   const text = new TextDecoder().decode(bytes);
-  if (options.mode === 'raw') {
-    return { url: url.toString(), title: fileTitle(url, url.hostname), content: text, error: null, contentType };
+  if (isHtml(contentType, text)) {
+    if (!options.ignoreLlmsTxt
+      && !isDirectLlmsTxt(validatedUrl)
+      && !isDirectLlmsTxt(responseUrl)
+      && shouldProbeLlmsTxt(responseUrl, contentType, text)) {
+      const replacement = await getLlmsTxtReplacement(
+        responseUrl,
+        settings,
+        options.llmsTxtProbes ?? new Map(),
+        signal,
+        timeoutMs,
+      );
+      if (replacement) return replacement;
+    }
+    if (signal?.aborted) throw signal.reason ?? new Error('Web content fetch was cancelled');
+    return extractHtml(text, responseUrl, contentType || 'text/html');
   }
-  if (contentType.includes('html') || looksLikeHtml(text)) return extractHtml(text, url, contentType);
-  if (contentType.includes('json') || looksLikeJson(text)) return extractJson(text, url, contentType);
+  if (isJson(contentType, text)) return extractJson(text, responseUrl, contentType || 'application/json');
   return boundedExtracted({
-    url: url.toString(),
-    title: fileTitle(url, url.hostname),
+    url: responseUrl.toString(),
+    title: fileTitle(responseUrl, responseUrl.hostname),
     content: text,
     error: null,
     contentType: contentType || 'text/plain',
   });
 }
 
+async function getLlmsTxtReplacement(
+  responseUrl: URL,
+  settings: ReturnType<typeof ssrfSettings>,
+  probes: LlmsTxtProbeMap,
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<ExtractedContent | undefined> {
+  const origin = responseUrl.origin;
+  let probe = probes.get(origin);
+  if (!probe) {
+    probe = probeLlmsTxt(
+      new URL('/llms.txt', responseUrl.origin),
+      settings,
+      callerSignal,
+      combinedSignal(callerSignal, timeoutMs),
+    );
+    probes.set(origin, probe);
+  }
+  const replacement = await probe;
+  if (callerSignal?.aborted) throw callerSignal.reason ?? new Error('Web content fetch was cancelled');
+  return replacement;
+}
+
+async function probeLlmsTxt(
+  llmsUrl: URL,
+  settings: ReturnType<typeof ssrfSettings>,
+  callerSignal: AbortSignal | undefined,
+  requestSignal: AbortSignal,
+): Promise<ExtractedContent | undefined> {
+  try {
+    const validatedUrl = await validateRemoteUrl(llmsUrl, settings, { signal: requestSignal });
+    const response = await fetchRemoteUrl(validatedUrl, {
+      headers: {
+        Accept: 'text/plain,text/markdown,text/*;q=0.9',
+        'User-Agent': 'Felan-Web-Access/0.1',
+      },
+      signal: requestSignal,
+    }, settings, { allowCrossOriginRedirects: false });
+    const responseUrl = response.url ? new URL(response.url) : validatedUrl;
+    if (responseUrl.origin !== llmsUrl.origin) {
+      await response.body?.cancel();
+      return undefined;
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      return undefined;
+    }
+
+    const contentType = normalizedContentType(response);
+    if (!isLlmsTxtContentType(contentType)) {
+      await response.body?.cancel();
+      return undefined;
+    }
+    const contentLength = declaredContentLength(response);
+    if (contentLength !== undefined
+      && (!Number.isSafeInteger(contentLength) || contentLength > MAX_LLMS_TXT_RESPONSE_BYTES)) {
+      await response.body?.cancel();
+      return undefined;
+    }
+    const bytes = await readResponseBytes(response, MAX_LLMS_TXT_RESPONSE_BYTES, requestSignal);
+    if (isBinaryText(bytes)) return undefined;
+    let content: string;
+    try {
+      content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      return undefined;
+    }
+    if (!content.trim() || isHtml(contentType, content)) return undefined;
+    return boundedExtracted({
+      url: responseUrl.toString(),
+      title: fileTitle(responseUrl, 'llms.txt'),
+      content,
+      error: null,
+      contentType: contentType || 'text/plain',
+      llmsTxtReplacement: true,
+    });
+  } catch (error) {
+    if (callerSignal?.aborted) throw callerSignal.reason ?? error;
+    return undefined;
+  }
+}
+
+async function extractDeclaredPdf(
+  response: Response,
+  responseUrl: URL,
+  contentType: string,
+  limits: ReturnType<typeof pdfSettings>,
+  pdfEvents: PdfConversionEvents | undefined,
+  callerSignal: AbortSignal | undefined,
+  requestSignal: AbortSignal,
+): Promise<ExtractedContent> {
+  const contentLengthHeader = response.headers.get('content-length');
+  const contentLength = contentLengthHeader !== null && /^\d+$/u.test(contentLengthHeader)
+    ? Number(contentLengthHeader)
+    : undefined;
+  if (contentLength !== undefined && (!Number.isSafeInteger(contentLength) || contentLength > limits.maximumBytes)) {
+    await response.body?.cancel();
+    throw new Error(`PDF exceeds the configured ${limits.maximumBytes}-byte limit`);
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await readResponseBytes(response, limits.maximumBytes, requestSignal);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Response exceeds the ')) {
+      throw new Error(`PDF exceeds the configured ${limits.maximumBytes}-byte limit`);
+    }
+    throw error;
+  }
+  if (!hasPdfSignature(bytes)) {
+    if (contentType === 'application/pdf') {
+      throw new Error('PDF content type does not match the file signature');
+    }
+    throw new Error('Unsupported binary content: application/octet-stream');
+  }
+  if (callerSignal?.aborted) throw callerSignal.reason ?? new Error('PDF conversion was cancelled');
+  const conversion = requestPdfConversion(pdfEvents, bytes, callerSignal);
+  if (!conversion) throw new Error(unavailablePdfConversionError());
+  try {
+    const converted = await conversion;
+    if (!isPdfConversionResult(converted)) throw new Error('invalid conversion result');
+    return boundedExtracted({
+      url: responseUrl.toString(),
+      title: fileTitle(responseUrl, 'document.pdf'),
+      content: converted.markdown,
+      error: null,
+      contentType,
+      converter: 'MarkItDown',
+    });
+  } catch (error) {
+    throw new Error(sanitizedPdfConversionError(error, callerSignal));
+  }
+}
+
 export async function fetchWithConcurrency(
   urls: string[],
   concurrency: number,
   fetchOne: (url: string) => Promise<ExtractedContent>,
-  captureErrors = true,
+  signal?: AbortSignal,
 ): Promise<ExtractedContent[]> {
   const results = new Array<ExtractedContent>(urls.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(concurrency, urls.length) }, async () => {
     while (next < urls.length) {
+      if (signal?.aborted) throw signal.reason ?? new Error('Web content fetch was cancelled');
       const index = next;
       next += 1;
       const url = urls[index]!;
       try {
         results[index] = await fetchOne(url);
       } catch (error) {
-        if (!captureErrors) throw error;
+        if (signal?.aborted) throw signal.reason ?? error;
         results[index] = { url, title: '', content: '', error: errorMessage(error) };
       }
     }
   });
-  await Promise.all(workers);
+  const settled = await Promise.allSettled(workers);
+  const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failure) throw failure.reason;
   return results;
 }
 
@@ -117,7 +290,9 @@ function extractHtml(html: string, url: URL, contentType: string): ExtractedCont
   const article = new Readability(document as unknown as Document, { charThreshold: 20 }).parse();
   const turndown = new TurndownService({ codeBlockStyle: 'fenced', headingStyle: 'atx' });
   const title = article?.title?.trim() || document.title?.trim() || fileTitle(url, url.hostname);
-  const content = article?.content ? turndown.turndown(article.content) : turndown.turndown(document.body?.innerHTML ?? html);
+  const content = article?.content
+    ? turndown.turndown(article.content)
+    : turndown.turndown(document.body?.innerHTML ?? html);
   return boundedExtracted({ url: url.toString(), title, content: content.trim(), error: null, contentType });
 }
 
@@ -126,38 +301,14 @@ function extractJson(text: string, url: URL, contentType: string): ExtractedCont
   try {
     content = JSON.stringify(JSON.parse(text), null, 2);
   } catch {
-    // Invalid JSON is still useful as exact text.
-  }
-  return boundedExtracted({ url: url.toString(), title: fileTitle(url, url.hostname), content, error: null, contentType });
-}
-
-async function extractPdf(bytes: Uint8Array, url: URL, config: WebAccessConfig, contentType: string): Promise<ExtractedContent> {
-  if (typeof (Promise as PromiseConstructor & { try?: unknown }).try !== 'function') {
-    const { default: promiseTry } = await import('promise.try');
-    promiseTry.shim();
-  }
-  const [{ getDocumentProxy }, pdfjs] = await Promise.all([import('unpdf'), import('unpdf/pdfjs')]);
-  const verbosity = (pdfjs as typeof pdfjs & { VerbosityLevel: { ERRORS: number } }).VerbosityLevel.ERRORS;
-  const pdf = await getDocumentProxy(bytes, { verbosity });
-  const metadata = await pdf.getMetadata();
-  const info = metadata.info && typeof metadata.info === 'object' ? metadata.info as Record<string, unknown> : {};
-  const title = typeof info.Title === 'string' && info.Title.trim() ? info.Title.trim() : fileTitle(url, 'document');
-  const maximumPages = positiveInteger(config.pdf?.maxPages, DEFAULT_PDF_MAX_PAGES, 500);
-  const pageCount = Math.min(pdf.numPages, maximumPages);
-  const sections = [`# ${title}`, '', `Source: ${url.toString()}`, `Pages: ${pdf.numPages}`, ''];
-  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    const pageText = textContent.items.map((item: unknown) => typeof (item as { str?: unknown }).str === 'string' ? (item as { str: string }).str : '').join(' ').replace(/\s+/gu, ' ').trim();
-    if (pageText) sections.push(`<!-- Page ${pageNumber} -->`, '', pageText, '');
+    // Preserve malformed JSON as bounded text so callers can still match it.
   }
   return boundedExtracted({
     url: url.toString(),
-    title,
-    content: sections.join('\n').trim(),
+    title: fileTitle(url, url.hostname),
+    content,
     error: null,
     contentType,
-    ...(pdf.numPages > maximumPages ? { truncated: true } : {}),
   });
 }
 
@@ -170,15 +321,56 @@ function boundedExtracted(value: ExtractedContent): ExtractedContent {
   };
 }
 
-function isPdf(url: URL, contentType: string): boolean {
-  return contentType === 'application/pdf' || url.pathname.toLowerCase().endsWith('.pdf');
+function isSupportedContentType(contentType: string): boolean {
+  return contentType === ''
+    || contentType.startsWith('text/')
+    || contentType === 'application/pdf'
+    || contentType === 'application/json'
+    || contentType.endsWith('+json')
+    || contentType === 'application/xhtml+xml';
 }
 
-function looksLikeHtml(text: string): boolean {
-  return /<!doctype html|<html[\s>]|<body[\s>]/iu.test(text.slice(0, 2_000));
+function normalizedContentType(response: Response): string {
+  return response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
 }
 
-function looksLikeJson(text: string): boolean {
+function declaredContentLength(response: Response): number | undefined {
+  const value = response.headers.get('content-length');
+  return value !== null && /^\d+$/u.test(value) ? Number(value) : undefined;
+}
+
+function isDirectLlmsTxt(url: URL): boolean {
+  return url.pathname.toLowerCase() === '/llms.txt';
+}
+
+function shouldProbeLlmsTxt(url: URL, contentType: string, text: string): boolean {
+  if (isDirectLlmsTxt(url)) return false;
+  if (contentType.includes('html')) return true;
+  return contentType === '' && isHtml(contentType, text);
+}
+
+function isLlmsTxtContentType(contentType: string): boolean {
+  return contentType === '' || (contentType.startsWith('text/') && !contentType.includes('html'));
+}
+
+function isBinaryText(bytes: Uint8Array): boolean {
+  for (const byte of bytes) {
+    if (byte === 0 || (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d)) return true;
+  }
+  return false;
+}
+
+function hasPdfSignature(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 8) return false;
+  return PDF_SIGNATURE.test(new TextDecoder('ascii').decode(bytes.subarray(0, 8)));
+}
+
+function isHtml(contentType: string, text: string): boolean {
+  return contentType.includes('html') || /<!doctype html|<html[\s>]|<body[\s>]/iu.test(text.slice(0, 2_000));
+}
+
+function isJson(contentType: string, text: string): boolean {
+  if (contentType.includes('json')) return true;
   const trimmed = text.trimStart();
   return trimmed.startsWith('{') || trimmed.startsWith('[');
 }

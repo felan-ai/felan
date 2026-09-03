@@ -24,6 +24,7 @@ interface ParsedCidr {
 
 interface ValidateOptions {
   lookup?: Lookup;
+  signal?: AbortSignal;
 }
 
 type PinnedFetchInit = RequestInit & { dispatcher?: Dispatcher };
@@ -115,7 +116,7 @@ async function resolveRemoteUrl(
   });
   const addresses = net.isIP(hostname)
     ? [{ address: hostname, family: net.isIP(hostname) }]
-    : await lookupAddresses(hostname, options.lookup ?? defaultLookup);
+    : await lookupAddresses(hostname, options.lookup ?? defaultLookup, options.signal);
   if (addresses.length === 0) throw new Error(`Failed to resolve ${hostname}: no addresses returned`);
   for (const address of addresses) assertPublicAddress(address.address, hostname, allowed);
   return { url, addresses };
@@ -129,7 +130,10 @@ export async function fetchRemoteUrl(
 ): Promise<Response> {
   const fetchImpl = options.fetchImpl ?? (undiciFetch as unknown as FetchImplementation);
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-  let resolved = await resolveRemoteUrl(input, settings, options);
+  let resolved = await resolveRemoteUrl(input, settings, {
+    ...options,
+    ...(init.signal ? { signal: init.signal } : {}),
+  });
   let url = resolved.url;
   let requestInit = init;
 
@@ -138,8 +142,9 @@ export async function fetchRemoteUrl(
     let response: Response;
     try {
       response = await fetchImpl(url, { ...requestInit, redirect: 'manual', dispatcher });
-    } catch {
+    } catch (error) {
       await dispatcher.destroy();
+      if (requestInit.signal?.aborted) throw requestInit.signal.reason ?? error;
       throw new Error(`Remote request failed for ${url.hostname}`);
     }
     void dispatcher.close().catch(() => undefined);
@@ -150,7 +155,10 @@ export async function fetchRemoteUrl(
     await response.body?.cancel();
 
     const from = url;
-    resolved = await resolveRemoteUrl(new URL(location, url), settings, options);
+    resolved = await resolveRemoteUrl(new URL(location, url), settings, {
+      ...options,
+      ...(requestInit.signal ? { signal: requestInit.signal } : {}),
+    });
     url = resolved.url;
     if (from.origin !== url.origin && options.allowCrossOriginRedirects === false) {
       throw new Error(`Cross-origin redirect blocked: ${from.origin} to ${url.origin}`);
@@ -170,12 +178,39 @@ async function defaultLookup(hostname: string): Promise<LookupAddress[]> {
   return dnsLookup(hostname, { all: true, verbatim: true });
 }
 
-async function lookupAddresses(hostname: string, lookup: Lookup): Promise<LookupAddress[]> {
+async function lookupAddresses(
+  hostname: string,
+  lookup: Lookup,
+  signal?: AbortSignal,
+): Promise<LookupAddress[]> {
   try {
-    return await lookup(hostname);
+    return await waitForLookup(lookup(hostname), signal);
   } catch (error) {
+    if (signal?.aborted) throw signal.reason ?? error;
     throw new Error(`Failed to resolve ${hostname}: ${errorMessage(error)}`);
   }
+}
+
+async function waitForLookup<T>(lookup: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return lookup;
+  if (signal.aborted) throw signal.reason ?? new Error('DNS lookup was cancelled');
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener('abort', abort);
+      reject(signal.reason ?? new Error('DNS lookup was cancelled'));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    void lookup.then(
+      (value) => {
+        signal.removeEventListener('abort', abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function createPinnedLookup(hostname: string, addresses: LookupAddress[]): net.LookupFunction {

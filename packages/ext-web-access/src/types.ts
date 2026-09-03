@@ -8,7 +8,6 @@ export interface SearchOptions {
   numResults: number;
   recencyFilter?: RecencyFilter;
   domainFilter?: string[];
-  includeContent?: boolean;
   signal?: AbortSignal;
 }
 
@@ -18,13 +17,9 @@ export interface SearchResult {
   snippet: string;
 }
 
-export interface GitHubRepositoryProvenance {
-  owner: string;
-  repo: string;
-  mode: 'local-checkout' | 'github-api';
-  commit: string;
-  requestedRef?: string;
-  checkoutPath?: string;
+export interface SearchResponse {
+  provider: ProviderName;
+  results: SearchResult[];
 }
 
 export interface ExtractedContent {
@@ -33,74 +28,7 @@ export interface ExtractedContent {
   content: string;
   error: string | null;
   contentType?: string;
+  converter?: 'MarkItDown';
   truncated?: boolean;
-  image?: {
-    data: string;
-    mimeType: string;
-  };
-  repository?: GitHubRepositoryProvenance;
-}
-
-export interface SearchResponse {
-  provider: ProviderName;
-  answer: string;
-  results: SearchResult[];
-  inlineContent?: ExtractedContent[];
-}
-
-export interface SearchQueryRecord {
-  query: string;
-  responses: SearchResponse[];
-  fetched: ExtractedContent[];
-  errors: Array<{ provider: ProviderName; error: string }>;
-}
-
-export interface ResearchPassage {
-  passageId: string;
-  sourceUrl: string;
-  sourceRank: number;
-  text: string;
-  extractionSpan?: { start: number; end: number };
-  contentHash: string;
-}
-
-export interface ResearchArtifact {
-  id: string;
-  type: 'research';
-  timestamp: number;
-  claim: string;
-  provider: string;
-  status: 'supported' | 'contradicted' | 'unclear' | 'missing-evidence';
-  confidence: number;
-  rationale: string;
-  summaries: Array<{ provider: ProviderName; text: string }>;
-  sources: Array<{
-    rank: number;
-    url: string;
-    title: string;
-    snippet: string;
-    quality: string;
-    fetched: boolean;
-    fetchError?: string;
-    contentHash?: string;
-  }>;
-  passages: ResearchPassage[];
-  supportingPassages: string[];
-  contradictingPassages: string[];
-  filters: {
-    recency?: RecencyFilter;
-    domainInclude: string[];
-    domainExclude: string[];
-  };
-  errors: Array<{ query: string; error: string }>;
-}
-
-export interface StoredResult {
-  id: string;
-  type: 'search' | 'fetch' | 'research';
-  timestamp: number;
-  queries?: SearchQueryRecord[];
-  urls?: ExtractedContent[];
-  artifact?: ResearchArtifact;
-  answer?: string;
+  llmsTxtReplacement?: true;
 }

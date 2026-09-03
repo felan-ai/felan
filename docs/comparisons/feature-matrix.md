@@ -121,7 +121,7 @@ and [RTK optimizer][felan-rtk]; Codex [shell schema][codex-shell]; OpenCode
 | Persistent Python/JavaScript evaluation | No | **Conditional:** experimental Code Mode exists in source but is disabled by default | No built-in persistent kernel | No persistent general-purpose eval kernel; does have `NotebookEdit` | **Integration:** required | **Ships:** persistent Python and Bun/JavaScript kernels that can call agent tools |
 | Notebook editing | No specialized tool | No specialized tool | Read can attach PDFs/images; no notebook cell editor documented | `NotebookEdit` | **Integration:** required | Unified read plus notebook-aware operations |
 | Image input/inspection | Pi image attachment support; GPT tool mode adds bounded `view_image` | Image attachments and paste | Image attachments and image-returning web fetch | Image paste/read and screenshots from integrations | Image paste and drag/drop | Image inspection, browser/desktop screenshots, terminal rendering; generation is setting-gated |
-| PDF handling | Web fetch extracts bounded PDF text | No dedicated local PDF reader documented | `read` recognizes PDF attachments; web fetch itself is not a PDF extractor | `Read` supports PDFs within documented limits | No core PDF reader | Unified `read` handles local and remote PDFs |
+| PDF handling | Web Access fetches remote PDFs behind SSRF controls and returns matching passages via awaited MarkItDown conversion; no parser fallback | No dedicated local PDF reader documented | `read` recognizes PDF attachments; web fetch itself is not a PDF extractor | `Read` supports PDFs within documented limits | No core PDF reader | Unified `read` handles local and remote PDFs |
 | Specialized Git/review tools | Uses ordinary Git/`gh` through shell and reviewer subagents | Dedicated local `codex review` plus patch application | Git-backed undo/redo; ordinary Git through shell | Worktrees, checkpoints, `/code-review`, `/security-review`, and structured findings | Ordinary Git through shell/extensions | Review fan-out, PR/issue URL schemes, atomic commit planning, conflict URLs, and patch merging; the dedicated GitHub tool is setting-gated |
 
 ### Web research
@@ -133,14 +133,13 @@ Claude Code [tools][claude-tools] and [permissions][claude-permissions]; Pi
 
 | Feature | Felan | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
 | --- | --- | --- | --- | --- | --- | --- |
-| Search backends | SearXNG, OpenAI, Exa, and Brave | Remote-backed OpenAI web search | Remote-backed Exa or Parallel | Remote-backed Anthropic web search | No core web search | 23 remote backends including APIs, self-hosted SearXNG, and keyless sources |
-| Provider selection/fan-out | `auto`, strict named provider, selected provider array, or `all`; selected providers run concurrently | Cached by default; indexed, live, or disabled modes | One provider is selected per session or by environment override | Remote backend can refine one call into multiple searches | No core web search | `auto` walks a ranked fallback chain or one provider can be pinned |
-| Multi-query search | Up to four queries per call; up to 20 results per query | Provider-managed | One query per tool call | Tool may issue up to eight backend searches while refining | No core web search | One query per tool call |
-| Fetch/reader | Up to five URLs; readable Markdown, exact/raw text, page-grounded answer, or direct image | Search tool can expose results; no separate general local URL reader is documented | One HTTP(S) URL as Markdown, text, HTML, or image; 5 MiB limit | `WebFetch` takes a URL and extraction prompt, converts HTML, then normally returns a small model's answer rather than raw page content | No core fetcher | URLs use the same multi-format `read` surface as files |
-| PDFs and repositories | PDF text with size/page limits; exact local GitHub checkout with bounded API fallback; images | Search result pages, not a dedicated Git/PDF fetch pipeline | No web PDF/Git clone pipeline; scout agent can research dependency source | WebFetch is page-oriented; local `Read` handles PDFs | **Integration:** required | PDF, GitHub/GitLab, registries, arXiv, Stack Overflow, docs, archives, and internal schemes |
-| Claim verification | Dedicated `source_check` creates a bounded artifact with exact extracted passages | Search citations; no dedicated claim-check artifact | No dedicated claim-check tool | Search citations and prompted WebFetch extraction; no exact-passage claim-check artifact | **Integration:** required | Search answer/citations and structured readers; no separate claim-check tool documented |
-| Full-result retrieval | One-hour externalized cache; response IDs, paging, offsets, exact/case-insensitive/fuzzy matching; 32 MiB per result and 64 MiB total | Provider-managed transcript results | Generic truncation saves local output; no search-result paging API | Large tool outputs can be saved to files; WebFetch is intentionally lossy | **Integration:** required | Internal URL schemes and file-like reads retain structured source access |
-| Remote-content boundary | Every result, schema, image, and derived summary is explicitly marked as untrusted before model delivery | Official docs instruct treating web results as untrusted; cached mode reduces exposure | Permission-gated tools, but no equivalent explicit untrusted-content envelope is documented | Permission prompts and domain rules; fetched content is external model input | **Integration:** implementation-defined | Broad remote readers; reviewed docs do not describe Felan's explicit envelope contract |
+| Search backends | SearXNG, OpenAI, Exa API or public MCP, and Brave; results are discovery metadata only | Remote-backed OpenAI web search | Remote-backed Exa or Parallel | Remote-backed Anthropic web search | No core web search | 23 remote backends including APIs, self-hosted SearXNG, and keyless sources |
+| Provider selection/fan-out | `auto` fallback, one strict provider, `all`, or an explicit provider array; credentials/endpoints are user configuration and requests may consume quotas or incur provider charges | Cached by default; indexed, live, or disabled modes | One provider is selected per session or by environment override | Remote backend can refine one call into multiple searches | No core web search | `auto` walks a ranked fallback chain or one provider can be pinned |
+| Multi-query search | One query or up to four sequential queries per call; up to ten results per provider/query | Provider-managed | One query per tool call | Tool may issue up to eight backend searches while refining | No core web search | One query per tool call |
+| Fetch/reader | One call fetches up to five selected URLs and returns only case-insensitive matching text/PDF snippets under a shared 4,000-byte maximum | Search tool can expose results; no separate general local URL reader is documented | One HTTP(S) URL as Markdown, text, HTML, or image; 5 MiB limit | `WebFetch` takes a URL and extraction prompt, converts HTML, then normally returns a small model's answer rather than raw page content | No core fetcher | URLs use the same multi-format `read` surface as files |
+| PDFs, images, and repositories | Remote PDFs use SSRF controls and filtered passage bounds; no dedicated native image fetch and no repository-specific reader | Search result pages, not a dedicated Git/PDF fetch pipeline | No web PDF/Git clone pipeline; scout agent can research dependency source | WebFetch is page-oriented; local `Read` handles PDFs | **Integration:** required | PDF, GitHub/GitLab, registries, arXiv, Stack Overflow, docs, archives, and internal schemes |
+| Full-result retrieval | No full-result storage or paging; only matching passages are returned | Provider-managed transcript results | Generic truncation saves local output; no search-result paging API | Large tool outputs can be saved to files; WebFetch is intentionally lossy | **Integration:** required | Internal URL schemes and file-like reads retain structured source access |
+| Remote-content boundary | Search metadata and returned passages are explicitly wrapped as untrusted | Official docs instruct treating web results as untrusted; cached mode reduces exposure | Permission-gated tools, but no equivalent explicit untrusted-content envelope is documented | Permission prompts and domain rules; fetched content is external model input | **Integration:** implementation-defined | Broad remote readers; reviewed docs do not describe Felan's explicit envelope contract |
 | SSRF/private-network controls | Private, loopback, link-local, reserved, and internal destinations blocked by default; DNS pinned and redirects revalidated | Remote search is outside local command networking; optional command-network proxy blocks private destinations | `webfetch` validates HTTP(S), timeout, and size; no private-network/DNS-rebinding control is documented | Sandbox network allow/deny rules apply separately; WebFetch has domain permissions | **Integration:** implementation-defined | Broad URL/browser surface; no equivalent default private-network policy is claimed here |
 | JavaScript/cookie-authenticated pages | Web access is HTTP/content extraction; the separate browser CLI does not import ambient browser cookies | No core browser in CLI | Plugin/custom tool | **Integration:** Claude-in-Chrome is separate from WebFetch | **Integration:** required | Browser automation ships; existing-tab control uses a browser relay integration |
 
@@ -236,32 +235,20 @@ permission policy, and Claude Code/OMP expose their own plan guards and approval
 flows. Pi leaves both workflows to extensions. OMP also implements a separate
 Prewalk workflow.
 
-### Felan web access is an evidence pipeline, not only search
+### Felan web access separates discovery from bounded retrieval
 
-Felan's four web tools form one bounded retrieval workflow:
-
-1. `web_search` can run up to four queries and search one, several, or all
-   configured providers.
-2. `source_check` searches for evidence about a claim and can retain exact
-   passages from up to five fetched pages.
-3. `fetch_content` handles readable or raw pages, grounded answers, PDF text,
-   images, and GitHub repository content.
-4. `get_search_content` pages through externally cached results or finds exact,
-   case-insensitive, or fuzzy matches without placing every fetched byte in the
-   active transcript.
-
+Felan's `web_search` discovers bounded result metadata through SearXNG,
+OpenAI, Exa, or Brave. It does not fetch result pages. `fetch_content` accepts
+selected public URLs and required match terms, reduces HTML to readable
+Markdown, extracts bounded PDF text, and returns only matching passages.
 The retrieval layer validates DNS, pins connections, rechecks redirects, blocks
 private/reserved destinations by default, bounds model-visible output, and marks
 remote content as untrusted at each model boundary.
 
-That adds evidence and retrieval operations beyond the search/fetch pair in
-OpenCode and the remote search plus lossy prompted fetch in Claude Code. Codex
-has a lower-exposure cached-search default and OS-enforced command-network
-isolation, but not the same local evidence artifact/paging interface. OMP
-prevents a simple claim that Felan has “more web”: OMP has far more providers,
-specialized handlers, browser automation, and one file-like reader for URLs and
-PDFs. Felan's additional depth is specifically in **claim checking, bounded
-retained content, explicit trust marking, and SSRF controls**.
+There is no retained result storage, paging, source-check tool, Git checkout,
+full-page/raw mode, or nested answer generation. Its specific depth is
+**discovery followed by bounded multi-URL passage filtering, explicit trust
+marking, and SSRF controls**.
 
 ### Progressive context is shared by Felan, OpenCode, and Claude Code
 

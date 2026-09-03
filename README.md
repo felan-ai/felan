@@ -108,7 +108,7 @@ versus host-managed memory lifecycle.
 | **Ask instead of guessing** | Searchable one-question and one-to-four-question wizards with multi-select, freeform answers, comments, and timeout handling. |
 | **Load context where it applies** | Cwd instructions plus progressive nested `AGENTS.md`/`CLAUDE.md` discovery and explicit Agent Skills. |
 | **Remember locally** | An account-free, project-scoped Markdown wiki with bounded evidence ingestion, validation, citations, and retryable host-owned publication. |
-| **Research with evidence** | Multi-provider search, claim checking with exact passages, bounded page/PDF/GitHub retrieval, retained-content paging, untrusted-content markers, and SSRF protections. |
+| **Retrieve web evidence** | Provider-backed URL discovery, bounded matching text/PDF passages, and explicit SSRF-untrusted remote content boundaries. |
 | **Connect external tools carefully** | A lazy OAuth-only remote MCP gateway, explicit credential ownership, and bounded untrusted remote results. |
 | **Use the right model tools** | GPT-specific structured command/patch/image tools, detached Background Bash for other providers, and RTK-backed command/output optimization. |
 | **Inspect efficiency** | Session, project, and retained local estimates through `/savings`, `felan savings`, and the default Powerline footer. |
@@ -186,7 +186,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 | [`@felan-ai/ext-prompt-history`](packages/ext-prompt-history/README.md) | TUI prompt-history picker | [Commands](docs/user-guide/commands-and-shortcuts.md) |
 | [`@felan-ai/ext-memory`](packages/ext-memory/README.md) | Portable local-first memory contracts | [Memory architecture](docs/concepts/local-memory.md) |
 | [`@felan-ai/ext-output-style`](packages/ext-output-style/README.md) | Validated concise, explanatory, and custom response instructions | [Configuration](docs/user-guide/configuration.md#output-style) |
-| [`@felan-ai/ext-web-access`](packages/ext-web-access/README.md) | Bounded web search, source checking, and content retrieval | [Web access](docs/user-guide/web-mcp-and-browser.md) |
+| [`@felan-ai/ext-web-access`](packages/ext-web-access/README.md) | Bounded web discovery and matching text/PDF passages | [Web access](docs/user-guide/web-mcp-and-browser.md) |
 | [`@felan-ai/ext-mcp`](packages/ext-mcp/README.md) | Portable OAuth-only remote MCP gateway | [MCP](docs/user-guide/web-mcp-and-browser.md) |
 | [`@felan-ai/ext-felan-api`](packages/ext-felan-api/README.md) | Single authenticated Felan API gateway | [Configuration](docs/user-guide/configuration.md#felan-api) |
 | [`@felan-ai/ext-browser`](packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration | [Browser](docs/user-guide/web-mcp-and-browser.md) |

@@ -80,15 +80,26 @@ describe('Agent Core resource loading', () => {
   it('orders enabled extension capabilities before consumer appends and resets them on reload', async () => {
     const root = await temporaryDirectory();
     const runtime = new TestAgentRuntime(root);
+    let eventGeneration = 0;
+    const observedEventGenerations: number[] = [];
     const extensionsByName: Record<string, FelanExtension> = {
-      '@felan-ai/one': (pi) => pi.registerCapability({
-        id: 'one',
-        instructions: 'First capability.',
-      }),
-      '@felan-ai/two': (pi) => pi.registerCapability({
-        id: 'two',
-        instructions: 'Second capability.',
-      }),
+      '@felan-ai/one': (pi) => {
+        pi.registerCapability({
+          id: 'one',
+          instructions: 'First capability.',
+        });
+        pi.events.on('felan:test-reload:v1', (data) => {
+          if (typeof data === 'object' && data !== null && 'generation' in data
+            && typeof data.generation === 'number') observedEventGenerations.push(data.generation);
+        });
+      },
+      '@felan-ai/two': (pi) => {
+        pi.registerCapability({
+          id: 'two',
+          instructions: 'Second capability.',
+        });
+        pi.events.emit('felan:test-reload:v1', { generation: ++eventGeneration });
+      },
       '@felan-ai/disabled': (pi) => pi.registerCapability({
         id: 'disabled',
         instructions: 'Disabled capability.',
@@ -122,13 +133,16 @@ describe('Agent Core resource loading', () => {
       'Consumer append',
     ]);
     expect(loader.getAppendSystemPrompt().join('\n')).not.toContain('Disabled capability.');
+    expect(observedEventGenerations).toEqual([1]);
 
+    loader.getExtensions().runtime.invalidate('test reload');
     await loader.reload();
 
     expect(loader.getAppendSystemPrompt()).toEqual([
       expectedCapabilities,
       'Consumer append',
     ]);
+    expect(observedEventGenerations).toEqual([1, 2]);
   });
 
   it('rejects duplicate and invalid capability registrations with extension sources', async () => {

@@ -182,6 +182,22 @@ describe('ToolActivityState', () => {
 });
 
 describe('tool activity rendering', () => {
+  it('renders the current Web Access tools as web activity', () => {
+    const harness = activityHarness([
+      assistant([
+        toolCall('web-search', 'web_search', { query: 'release notes' }),
+        toolCall('web-content', 'fetch_content', { urls: ['https://example.com/docs'], findText: ['version'] }),
+      ], 10),
+      toolResult('web-search', 'web_search', 'results', false, 20),
+      toolResult('web-content', 'fetch_content', 'passages', false, 21),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'web-search', theme, false);
+    expect(output).toContain('Completed 2 web actions');
+    expect(output).toContain('Searched the web · release notes');
+    expect(output).toContain('Fetched content · https://example.com/docs');
+  });
+
   it('renders one-line action rows, bounded previews, and no rows for non-anchor calls', () => {
     const harness = activityHarness([
       assistant([

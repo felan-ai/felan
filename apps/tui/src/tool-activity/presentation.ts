@@ -221,7 +221,7 @@ function toolCategory(name: string): ToolCategory {
   const normalized = name.toLowerCase();
   if (normalized === 'mcp' || normalized.startsWith('mcp__')) return 'mcp';
   if (normalized === 'read' || normalized === 'read_file') return 'read';
-  if (['web_search', 'source_check', 'fetch_content', 'get_search_content'].includes(normalized)) return 'web';
+  if (['web_search', 'fetch_content'].includes(normalized)) return 'web';
   if (['grep', 'find', 'ls'].includes(normalized) || normalized.includes('search')) return 'search';
   if (
     normalized === 'bash'
@@ -276,9 +276,7 @@ function callLabel(call: ToolActivityCall): string {
   if (toolCategory(call.name) === 'edit') return running ? 'Editing' : 'Edited';
   if (toolCategory(call.name) === 'command') return running ? 'Running command' : 'Ran command';
   if (normalized === 'web_search') return running ? 'Searching the web' : 'Searched the web';
-  if (normalized === 'source_check') return running ? 'Checking sources' : 'Checked sources';
   if (normalized === 'fetch_content') return running ? 'Fetching content' : 'Fetched content';
-  if (normalized === 'get_search_content') return running ? 'Reading web content' : 'Read web content';
   if (normalized === 'agent') return running ? 'Starting subagent' : 'Started subagent';
   if (normalized === 'list_subagents') return running ? 'Listing subagents' : 'Listed subagents';
   if (normalized === 'get_subagent_result') return running ? 'Reading subagent result' : 'Read subagent result';
@@ -383,8 +381,6 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
       : firstString(args, ['title', 'task_id', 'view']);
   } else if (normalized === 'web_search') {
     value = firstString(args, ['query']) ?? firstArrayString(args, 'queries');
-  } else if (normalized === 'source_check') {
-    value = firstString(args, ['claim']);
   } else if (normalized === 'fetch_content') {
     value = firstString(args, ['url']) ?? firstArrayString(args, 'urls');
   } else if (normalized === 'agent') {

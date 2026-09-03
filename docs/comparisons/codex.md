@@ -8,7 +8,7 @@
 
 Felan is a good fit when you want a host-owned, model-portable terminal agent
 with a shared dependency-aware task graph, same-session Prewalk handoff,
-bounded evidence-oriented web tools, and explicit source-controlled built-ins.
+bounded web discovery and passage filtering, and explicit source-controlled built-ins.
 
 Codex is a good fit when you want OpenAI's structured command surface, native
 Plan mode, OS-enforced command sandboxing and approvals, and Codex-specific
@@ -24,7 +24,7 @@ and safety model around the coding agent, not only the model that is selected.
 | Planning | Prewalk hands one useful session from a planner to a target model after a focused mutation; model-requested entry asks by default, but it is not a plan-review gate | Explicit non-mutating Plan mode and plan transition |
 | Coding tools | Ordinary Pi tools, with a GPT-specific `exec_command`/`write_stdin`/`apply_patch` mode when the exact provider/model policy matches | Structured shell, patch, PTY, and approval/sandbox controls designed for Codex models |
 | Local safety | Host filesystem/process permissions; no general OS sandbox or action-approval system | OS-enforced sandbox and configurable approval/network policies |
-| Web research | Search, claim checking with exact passages, bounded fetching, paging, and default SSRF protection | Remote-backed web search with documented cached/live modes |
+| Web research | Provider-backed discovery, matching text/PDF passages, and default SSRF protection | Remote-backed web search with documented cached/live modes |
 | Extensibility and MCP | Source-controlled built-ins; remote HTTP OAuth MCP through one bounded gateway | Hooks and broader MCP configuration are part of the documented Codex surface |
 | Hosting and providers | Portable Agent Core and extension contracts; host supplies authenticated model scope | Codex-oriented OpenAI product and model surface |
 
@@ -74,14 +74,15 @@ overall host remains unsandboxed.
 
 ### Web access optimizes for evidence versus remote search
 
-Felan's `source_check` can retain exact passages from bounded fetched sources,
-and `get_search_content` pages retained results without placing every byte in
-the active transcript. DNS and redirects are checked for SSRF safety, and
-external text is explicitly untrusted.
+Felan's `web_search` returns bounded discovery metadata through SearXNG,
+OpenAI, Exa, or Brave. Selected URLs then go to `fetch_content`, which returns
+only requested matching text or PDF passages rather than a full page.
+DNS and redirects are checked for SSRF safety, and remote content is explicitly
+untrusted.
 
 Codex's web search is a strong remote search surface with cached/live modes and
 its own network and approval guidance. It is not documented in the reviewed
-source as the same local evidence-artifact and exact-passage workflow.
+source as the same local multi-URL passage-filtering workflow.
 
 ## Choose Felan when...
 
@@ -91,8 +92,8 @@ source as the same local evidence-artifact and exact-passage workflow.
   without losing the useful session history;
 - provider portability and host-supplied model scope matter more than a
   single-vendor workflow;
-- web research must include bounded claim checking, retained passages, and
-  default private-network protections; or
+- web work must separate discovery from bounded retrieval and use default
+  private-network protections; or
 - you want built-ins selected by the local application rather than arbitrary
   project extensions being loaded automatically.
 

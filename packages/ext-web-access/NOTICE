@@ -6,20 +6,12 @@ https://github.com/nicobailon/pi-web-access at npm gitHead
 d2aab00dcf0547572276d9de4bc4a2a49d640e13, distributed under the MIT License.
 Copyright (c) 2025 Nico Bailon.
 
-The runtime-storage result cache additionally adapts cache behavior reviewed in
-pi-web-access 0.23.0 at commit c77b28221d527f298d409d7e61ade661e548f50c,
-including metadata-only session references, bounded one-hour retention, and
-oldest-first eviction. Felan routes this behavior through AgentRuntime storage
-instead of the upstream direct-filesystem implementation.
-
 Runtime dependencies include:
 - @mozilla/readability 0.6.0, Apache License 2.0
 - linkedom 0.16.11, ISC License
-- promise.try 2.0.1, MIT License
 - Turndown 7.2.0, MIT License
 - TypeBox 1.1.38, MIT License
 - undici 8.10.0, MIT License
-- unpdf 1.6.2, MIT License
 
 The full license text for this package is in LICENSE. Dependency license texts
 are available in their published packages.

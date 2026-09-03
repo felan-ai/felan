@@ -1,7 +1,7 @@
 {
   "name": "@felan-ai/ext-web-access",
-  "version": "0.4.2",
-  "description": "Secure native web search and content access for Felan",
+  "version": "0.5.0",
+  "description": "Secure bounded web search and content access for Felan",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -25,19 +25,18 @@
     }
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && pnpm run test:dist",
+    "test:dist": "pnpm run build && vitest run --config test/vitest.dist.config.ts",
     "prepack": "pnpm build"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
     "linkedom": "0.16.11",
-    "promise.try": "2.0.1",
     "turndown": "7.2.0",
     "typebox": "1.1.38",
-    "undici": "8.10.0",
-    "unpdf": "1.6.2"
+    "undici": "8.10.0"
   },
   "peerDependencies": {
     "@felan-ai/agent-core": "^0.5.0"

@@ -3,12 +3,22 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const root = resolve(import.meta.dirname, '..');
-const result = spawnSync('pnpm', ['licenses', 'list', '--prod', '--json'], {
-  cwd: root,
-  encoding: 'utf8',
-});
+const result = spawnSync(
+  process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : 'pnpm',
+  process.platform === 'win32'
+    ? ['/d', '/s', '/c', 'pnpm.cmd licenses list --prod --json']
+    : ['licenses', 'list', '--prod', '--json'],
+  {
+    cwd: root,
+    encoding: 'utf8',
+  },
+);
+if (result.error) {
+  process.stderr.write(`${result.error.message}\n`);
+  process.exit(1);
+}
 if (result.status !== 0) {
-  process.stderr.write(result.stderr);
+  process.stderr.write(result.stderr ?? 'Unable to collect production dependency licenses\n');
   process.exit(result.status ?? 1);
 }
 
@@ -58,7 +68,6 @@ for (const requiredNotice of [
   'pi-mcp-adapter 2.21.0',
   'pi-mcp-adapter 2.26.0',
   'pi-ask-user 0.14.0',
-  'pi-web-access 0.23.0',
   '@howaboua/pi-codex-conversion 3.0.15',
   '@modelcontextprotocol/client 2.0.0',
   '@napi-rs/keyring 1.3.0',
@@ -194,8 +203,9 @@ for (const requiredNotice of [
   'pi-web-access 0.18.0',
   'https://github.com/nicobailon/pi-web-access',
   'd2aab00dcf0547572276d9de4bc4a2a49d640e13',
-  'pi-web-access 0.23.0',
-  'c77b28221d527f298d409d7e61ade661e548f50c',
+  '@mozilla/readability 0.6.0',
+  'linkedom 0.16.11',
+  'Turndown 7.2.0',
   'TypeBox 1.1.38',
   'undici 8.10.0',
 ]) {
