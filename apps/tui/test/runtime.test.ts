@@ -108,6 +108,7 @@ describe('local Agent Core lifecycle', () => {
         outputStyle: false,
         promptHistory: false,
         insights: false,
+        sessionTitle: false,
       },
     }));
     await writeFile(join(agentDir, 'APPEND_SYSTEM.md'), 'Local application instructions');

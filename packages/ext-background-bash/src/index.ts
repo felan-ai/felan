@@ -122,14 +122,13 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     try {
       const running = await manager.list('running');
       if (target.generation !== statusGeneration) return;
-      const count = running.length;
-      const label = count === 1 ? '1 process' : `${count} processes`;
-      const icon = count > 0
-        ? target.ui.theme.fg('accent', '●')
-        : target.ui.theme.fg('dim', '○');
-      const text = count > 0
-        ? target.ui.theme.fg('accent', label)
-        : target.ui.theme.fg('dim', label);
+      if (running.length === 0) {
+        target.ui.setStatus('background-bash', undefined);
+        return;
+      }
+      const label = running.length === 1 ? '1 process' : `${running.length} processes`;
+      const icon = target.ui.theme.fg('accent', '●');
+      const text = target.ui.theme.fg('accent', label);
       target.ui.setStatus('background-bash', `${icon} ${text}`);
     } catch {
       if (target.generation !== statusGeneration) return;

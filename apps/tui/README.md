@@ -85,6 +85,10 @@ Ctrl+N to filter to named sessions, and Ctrl+P to toggle session paths. Escape
 cancels without creating a session. `felan --continue` remains the quick path
 for the most recent session in the current directory.
 
+New interactive root sessions receive an asynchronous, concise name derived
+from the first prompt. Names are persisted in the session file and existing
+names are never replaced. Disable this with `builtinExtensions.sessionTitle`.
+
 `felan --diagnostics` reports Felan, Agent Core, Pi, and Node.js versions plus
 runtime and credential modes.
 

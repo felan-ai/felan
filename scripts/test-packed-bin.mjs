@@ -100,6 +100,8 @@ try {
           if (typeof extension.createMcpExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (packageName === '@felan-ai/ext-memory') {
           if (typeof extension.createMemoryExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
+        } else if (packageName === '@felan-ai/ext-session-title') {
+          if (typeof extension.createSessionTitleExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (typeof extension.default !== 'function') {
           throw new Error(packageName + ' has no extension factory');
         }

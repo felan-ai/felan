@@ -30,6 +30,7 @@ Pi extensions or arbitrary npm packages.
 | [`@felan-ai/ext-rtk-optimizer`](../../packages/ext-rtk-optimizer/README.md) | Command rewriting and output compaction | `/rtk` | Compaction ships; rewriting needs `rtk` |
 | [`@felan-ai/ext-codebase-memory`](../../packages/ext-codebase-memory/README.md) | Structural code index, symbol reads, and bounded grep augmentation | `/codebase-memory` and four model tools | Exact reviewed `codebase-memory-mcp` 0.10.8 binary |
 | [`@felan-ai/ext-powerline`](../../packages/ext-powerline/README.md) | ANSI-aware local status footer | TUI footer | TUI sessions only; enabled by default locally |
+| [`@felan-ai/ext-session-title`](../../packages/ext-session-title/README.md) | Automatic first-prompt session names | Persisted Pi session name | Interactive root sessions only; enabled by default locally |
 
 ## Host ownership rules
 

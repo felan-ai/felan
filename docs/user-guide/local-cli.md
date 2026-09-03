@@ -36,6 +36,12 @@ only named sessions, and Ctrl+P to toggle session-file paths. Escape cancels
 without creating or launching a session. `felan --continue` remains the quick
 path for the most recent session in the current directory.
 
+For a new interactive root session, Felan asynchronously creates a concise
+session name from the first prompt. The name is persisted in the local session
+file and appears in the resume picker. Existing names, resumed sessions,
+subagents, and headless runs are not renamed. If generation fails, the picker
+continues to use the first prompt as its fallback.
+
 ### Update Felan
 
 Update a globally installed Felan CLI with:

@@ -75,6 +75,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-powerline',
       '@felan-ai/ext-output-style',
       '@felan-ai/ext-prompt-history',
+      '@felan-ai/ext-session-title',
     ]);
 
     for (const packageName of localExtensionPackages) {
@@ -87,6 +88,8 @@ describe('local extension importer', () => {
         expect(imported).toMatchObject({ createMcpExtension: expect.any(Function) });
       } else if (packageName === '@felan-ai/ext-memory') {
         expect(imported).toMatchObject({ createMemoryExtension: expect.any(Function) });
+      } else if (packageName === '@felan-ai/ext-session-title') {
+        expect(imported).toMatchObject({ createSessionTitleExtension: expect.any(Function) });
       } else {
         expect(imported).toMatchObject({ default: expect.any(Function) });
       }
@@ -134,6 +137,16 @@ describe('local extension importer', () => {
     });
 
     await expect(importer('@felan-ai/ext-powerline')).resolves.toMatchObject({
+      default: expect.any(Function),
+    });
+  });
+
+  it('creates the local session-title extension without invoking the generic importer', async () => {
+    const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => {
+      throw new Error('The generic importer must not load the session-title extension');
+    });
+
+    await expect(importer('@felan-ai/ext-session-title')).resolves.toMatchObject({
       default: expect.any(Function),
     });
   });
@@ -261,6 +274,7 @@ describe('local extension importer', () => {
       contextView: false,
       promptHistory: false,
       insights: false,
+      sessionTitle: false,
     })).toEqual([
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',

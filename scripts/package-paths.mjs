@@ -20,5 +20,6 @@ export const packagePaths = [
   'packages/ext-rtk-optimizer',
   'packages/ext-codebase-memory',
   'packages/ext-powerline',
+  'packages/ext-session-title',
   'apps/tui',
 ];

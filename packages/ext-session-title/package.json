@@ -1,13 +1,13 @@
 {
-  "name": "@felan-ai/ext-background-bash",
-  "version": "0.4.4",
-  "description": "Runtime-portable detached Bash processes for Felan",
+  "name": "@felan-ai/ext-session-title",
+  "version": "0.1.0",
+  "description": "Portable automatic session title generation for Felan",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felan-ai/felan.git",
-    "directory": "packages/ext-background-bash"
+    "directory": "packages/ext-session-title"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -30,12 +30,8 @@
     "test": "vitest run",
     "prepack": "pnpm build"
   },
-  "dependencies": {
-    "@earendil-works/pi-tui": "0.84.4",
-    "typebox": "1.1.38"
-  },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.5.0"
+    "@felan-ai/agent-core": "^0.5.7"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

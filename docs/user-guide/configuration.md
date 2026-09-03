@@ -45,7 +45,8 @@ browser and Powerline extensions:
     "promptHistory": true,
     "memory": true,
     "outputStyle": true,
-    "powerline": false
+    "powerline": false,
+    "sessionTitle": true
   },
   "extensionConfig": {
     "prewalk": { "entryApproval": "allow", "planReview": "skip" },
@@ -77,6 +78,9 @@ Defaults:
 - editor horizontal padding is `1`;
 - tool display is `grouped`; and
 - local memory processing is enabled.
+
+`builtinExtensions.sessionTitle` controls automatic names for interactive root
+sessions. Disable it to keep the first prompt as the session-picker fallback.
 
 New installations use Pi's `fullscreen` TUI mode and editor padding `1`.
 Existing `tuiMode` and `editorPaddingX` values in `settings.json` remain

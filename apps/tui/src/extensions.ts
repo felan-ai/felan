@@ -1,3 +1,6 @@
+import { appendFile, mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   associateExtensionConfig,
   getExtensionConfigDefinition,
@@ -16,6 +19,7 @@ import {
   OUTPUT_STYLE_CONFIG,
 } from '@felan-ai/ext-output-style';
 import { createPowerlineExtension, POWERLINE_CONFIG } from '@felan-ai/ext-powerline';
+import { createSessionTitleExtension, type SessionTitleHost, type SessionTitleSkip } from '@felan-ai/ext-session-title';
 import { createInsightsExtension } from '@felan-ai/ext-insights';
 import {
   createSubagentsExtension,
@@ -41,6 +45,7 @@ export const memoryExtensionPackage = '@felan-ai/ext-memory';
 export const outputStyleExtensionPackage = '@felan-ai/ext-output-style';
 export const insightsExtensionPackage = '@felan-ai/ext-insights';
 export const promptHistoryExtensionPackage = '@felan-ai/ext-prompt-history';
+export const sessionTitleExtensionPackage = '@felan-ai/ext-session-title';
 export const builtinExtensionPackages = {
   subagents: subagentsExtensionPackage,
   askUser: askUserExtensionPackage,
@@ -63,6 +68,7 @@ export const builtinExtensionPackages = {
   powerline: powerlineExtensionPackage,
   outputStyle: outputStyleExtensionPackage,
   promptHistory: promptHistoryExtensionPackage,
+  sessionTitle: sessionTitleExtensionPackage,
 } as const;
 export const localExtensionPackages = Object.values(builtinExtensionPackages);
 
@@ -144,6 +150,7 @@ export function createLocalExtensionImporter(
     ...(additionalSessionUsageHost === undefined ? {} : { additionalSessionUsageHost }),
     footerRows: (width) => agentRailRenderer?.(width) ?? [],
   });
+  const sessionTitle = createSessionTitleExtension(createLocalSessionTitleHost(modelRuntime));
   associateExtensionConfig(powerline, POWERLINE_CONFIG);
   return async (packageName) => {
     if (packageName === askUserExtensionPackage) {
@@ -185,6 +192,9 @@ export function createLocalExtensionImporter(
       powerlineLoaded = true;
       return { default: powerline };
     }
+    if (packageName === sessionTitleExtensionPackage) {
+      return { default: sessionTitle };
+    }
     if (packageName === insightsExtensionPackage) {
       return { default: createInsightsExtension(createLocalInsightsHost(savings)) };
     }
@@ -204,6 +214,51 @@ export function createLocalExtensionImporter(
     }
     return importExtension(packageName);
   };
+}
+
+function createLocalSessionTitleHost(modelRuntime: ModelRuntime): SessionTitleHost {
+  return {
+    async prepare(request) {
+      if (request.mode !== 'tui' || request.parentSession !== undefined || !request.currentModel) return undefined;
+      return {
+        prompt: request.prompt,
+        provider: request.currentModel.provider,
+        models: await modelRuntime.getAvailable(request.currentModel.provider),
+      };
+    },
+    async complete(request) {
+      return modelRuntime.completeSimple(request.model, request.context, request.options);
+    },
+    reportError(failure) {
+      void appendSessionTitleDiagnostic(
+        `[session-title] ${failure.stage} failed for session ${failure.sessionId}: ${sessionTitleError(failure.error)}`,
+      );
+    },
+    reportSkip(skip) {
+      if (skip.reason === 'title-already-set' || skip.reason === 'resumed-session') return;
+      void appendSessionTitleDiagnostic(
+        `[session-title] skipped (${skip.reason}) for session ${skip.sessionId}${sessionTitleDetail(skip)}`,
+      );
+    },
+  };
+}
+
+function sessionTitleDetail(skip: SessionTitleSkip): string {
+  return skip.detail ? `: ${skip.detail}` : '';
+}
+
+function sessionTitleError(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error);
+}
+
+async function appendSessionTitleDiagnostic(line: string): Promise<void> {
+  try {
+    const dir = join(homedir(), '.felan', 'logs');
+    await mkdir(dir, { recursive: true });
+    await appendFile(join(dir, 'session-title.log'), `${new Date().toISOString()} ${line}\n`);
+  } catch {
+    return;
+  }
 }
 
 function isSessionUsageHost(value: object): value is object & {

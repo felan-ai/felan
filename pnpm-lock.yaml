@@ -86,6 +86,9 @@ importers:
       '@felan-ai/ext-rtk-optimizer':
         specifier: workspace:*
         version: link:../../packages/ext-rtk-optimizer
+      '@felan-ai/ext-session-title':
+        specifier: workspace:*
+        version: link:../../packages/ext-session-title
       '@felan-ai/ext-subagents':
         specifier: workspace:*
         version: link:../../packages/ext-subagents
@@ -300,6 +303,12 @@ importers:
         version: link:../agent-core
 
   packages/ext-rtk-optimizer:
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-session-title:
     devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*
