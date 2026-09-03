@@ -39,20 +39,23 @@ export async function resolveCredential(options: CredentialOptions): Promise<str
     const command = configured.slice(1).trim();
     if (!command) throw new Error(`${options.provider} credential source is empty`);
     const environment = commandEnvironment(process.env);
-    const args = [
+    const isolatedCommand = [
+      'env',
       '-i',
-      ...Object.entries(environment).map(([name, value]) => `${name}=${value}`),
+      ...Object.entries(environment).map(([name, value]) => `${name}=${shellQuote(value)}`),
       '/bin/sh',
       '-lc',
-      command,
-    ];
-    const result = await options.runtime.exec('/usr/bin/env', args, {
+      shellQuote(command),
+    ].join(' ');
+    const result = await options.runtime.shell(isolatedCommand, {
       ...(options.signal ? { signal: options.signal } : {}),
+      maxOutputBytes: MAX_CREDENTIAL_BYTES,
+      shellFlavor: 'posix',
       timeout: COMMAND_TIMEOUT_MS,
     });
     if (options.signal?.aborted || result.killed) throw new Error(`${options.provider} credential command was aborted`);
     if (result.code !== 0) throw new Error(`${options.provider} credential command failed`);
-    if (Buffer.byteLength(result.stdout, 'utf8') > MAX_CREDENTIAL_BYTES) {
+    if (result.truncated || Buffer.byteLength(result.stdout, 'utf8') > MAX_CREDENTIAL_BYTES) {
       throw new Error(`${options.provider} credential command output is too large`);
     }
     const value = result.stdout.trim();
@@ -79,6 +82,10 @@ export function redactCredential(value: string, credential: string | undefined):
 
 function normalize(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function commandEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {

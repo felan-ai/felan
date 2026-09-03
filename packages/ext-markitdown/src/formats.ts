@@ -1,4 +1,5 @@
 export const MARKITDOWN_EXTENSIONS = [
+  '.pdf',
   '.docx',
   '.doc',
   '.pptx',
@@ -11,7 +12,6 @@ export const MARKITDOWN_EXTENSIONS = [
 ] as const;
 
 export const MARKITDOWN_EXCLUDED_EXTENSIONS = [
-  '.pdf',
   '.jpg',
   '.jpeg',
   '.png',

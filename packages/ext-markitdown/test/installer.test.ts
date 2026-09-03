@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import type {
   AgentRuntime,
   AgentRuntimeStorage,
@@ -16,7 +15,7 @@ import {
 describe('MarkItDown installation', () => {
   it('prefers a compatible managed environment and falls back to PATH', async () => {
     const managed = runtime((command, args) => (
-      command.includes(join('markitdown', 'venv')) && args.join(' ') === '-m markitdown --version'
+      isManagedCommand(command) && (args.join(' ') === '-m markitdown --version' || args.includes('-o'))
         ? success(`markitdown ${MARKITDOWN_VERSION}`)
         : failure('not found')
     ));
@@ -25,13 +24,13 @@ describe('MarkItDown installation', () => {
       invocation: { source: 'managed', version: MARKITDOWN_VERSION },
     });
     expect(managed.exec).toHaveBeenCalledWith(
-      expect.stringContaining(join('markitdown', 'venv')),
+      expect.stringMatching(/markitdown[\\/]venv/u),
       ['-m', 'markitdown', '--version'],
       expect.objectContaining({ timeout: 60_000 }),
     );
 
     const path = runtime((command, args) => (
-      command === 'markitdown' && args.join(' ') === '--version'
+      command === 'markitdown' && (args.join(' ') === '--version' || args.includes('-o'))
         ? success(`markitdown ${MARKITDOWN_VERSION}`)
         : failure('not found')
     ));
@@ -43,6 +42,26 @@ describe('MarkItDown installation', () => {
       'markitdown',
       ['--version'],
       expect.objectContaining({ timeout: 60_000 }),
+    );
+  });
+
+  it('rejects an exact-version installation whose PDF extra is missing', async () => {
+    const fixture = runtime((command, args) => {
+      if (isManagedCommand(command) && args.join(' ') === '-m markitdown --version') {
+        return success(`markitdown ${MARKITDOWN_VERSION}`);
+      }
+      if (isManagedCommand(command) && args.includes('-o')) return failure('PDF converter dependency is missing');
+      return failure('not found');
+    });
+
+    const detected = await detectMarkitdown(fixture.runtime);
+
+    expect(detected).toMatchObject({ available: false });
+    if (!detected.available) expect(detected.reason).toContain('/markitdown install');
+    expect(fixture.exec).toHaveBeenCalledWith(
+      expect.stringMatching(/markitdown[\\/]venv/u),
+      expect.arrayContaining(['-o']),
+      expect.objectContaining({ maxOutputBytes: 64 * 1024, timeout: 60_000 }),
     );
   });
 
@@ -67,17 +86,20 @@ describe('MarkItDown installation', () => {
         venvCreated = true;
         return success('');
       }
-      if (command.includes(join('markitdown', 'venv')) && joined === '--version') {
+      if (isManagedCommand(command) && joined === '--version') {
         return venvCreated ? success('Python 3.12.4') : failure('not found');
       }
-      if (command.includes(join('markitdown', 'venv')) && joined.includes('-m pip install')) {
+      if (isManagedCommand(command) && joined.includes('-m pip install')) {
         installed = true;
         return success('');
       }
-      if (command.includes(join('markitdown', 'venv')) && joined === '-m markitdown --version') {
+      if (isManagedCommand(command) && joined === '-m markitdown --version') {
         return installed && options?.timeout === 60_000
           ? success(`markitdown ${MARKITDOWN_VERSION}`)
           : killed();
+      }
+      if (isManagedCommand(command) && args.includes('-o')) {
+        return installed ? success('') : failure('PDF converter dependency is missing');
       }
       return failure('not found');
     });
@@ -100,8 +122,9 @@ describe('MarkItDown installation', () => {
       expect.objectContaining({ timeout: 10_000 }),
     );
     const pipCall = fixture.exec.mock.calls.find(([, args]) => (args as readonly string[]).includes('pip'));
-    expect(pipCall?.[1]).toContain(`markitdown[docx,pptx,xlsx,xls,outlook]==${MARKITDOWN_VERSION}`);
+    expect(pipCall?.[1]).toContain(`markitdown[pdf,docx,pptx,xlsx,xls,outlook]==${MARKITDOWN_VERSION}`);
     expect(pipCall?.[1]).not.toContain('all');
+    expect(pipCall?.[2]).toMatchObject({ maxOutputBytes: 64 * 1024 });
     const verificationCall = fixture.exec.mock.calls.find(([, args]) => (
       (args as readonly string[]).join(' ') === '-m markitdown --version'
     ));
@@ -126,7 +149,7 @@ describe('MarkItDown installation', () => {
     await expect(detectMarkitdown(fixture.runtime)).resolves.toMatchObject({ available: false });
     expect(fixture.exec).toHaveBeenCalledTimes(2);
     for (const [, , options] of fixture.exec.mock.calls) {
-      expect(options).toMatchObject({ timeout: 60_000 });
+      expect(options).toMatchObject({ maxOutputBytes: 64 * 1024, timeout: 60_000 });
     }
   });
 });
@@ -136,17 +159,33 @@ function runtime(handler: (
   args: readonly string[],
   options?: ExecOptions,
 ) => ExecResult) {
+  const files = new Map<string, Uint8Array>();
   const storage: AgentRuntimeStorage = {
     root: '/agent-storage',
-    readFile: vi.fn(),
-    writeFile: vi.fn(),
+    readFile: vi.fn(async (path: string) => {
+      const value = files.get(path);
+      if (!value) throw new Error('not found');
+      return value;
+    }),
+    writeFile: vi.fn(async (path: string, content: Uint8Array | string) => {
+      files.set(path, typeof content === 'string' ? new TextEncoder().encode(content) : Uint8Array.from(content));
+    }),
     listFiles: vi.fn(),
     mkdir: vi.fn(),
-    remove: vi.fn(),
+    remove: vi.fn(async (path: string) => {
+      files.delete(path);
+    }),
   };
-  const exec = vi.fn(async (command: string, args: readonly string[], options?: ExecOptions) => (
-    handler(command, args, options)
-  ));
+  const exec = vi.fn(async (command: string, args: readonly string[], options?: ExecOptions) => {
+    const result = handler(command, args, options);
+    const outputIndex = args.indexOf('-o');
+    if (result.code === 0 && !result.killed && outputIndex >= 0) {
+      const outputPath = args[outputIndex + 1]!;
+      const relativePath = outputPath.replace(/^[/\\]agent-storage[/\\]?/u, '').replaceAll('\\', '/');
+      files.set(relativePath, new TextEncoder().encode('Felan MarkItDown PDF probe\n'));
+    }
+    return result;
+  });
   const unused = async (): Promise<never> => { throw new Error('unused'); };
   const agentRuntime: AgentRuntime = {
     kind: 'host',
@@ -173,4 +212,8 @@ function failure(stderr: string): ExecResult {
 
 function killed(): ExecResult {
   return { stdout: '', stderr: '', code: 143, killed: true };
+}
+
+function isManagedCommand(command: string): boolean {
+  return /markitdown[\\/]venv/u.test(command);
 }

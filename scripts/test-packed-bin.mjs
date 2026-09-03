@@ -287,12 +287,33 @@ try {
         registerTool: (tool) => webAccessTools.push(tool.name),
         on: () => {},
       });
-      const expectedWebAccessTools = ['web_search', 'source_check', 'fetch_content', 'get_search_content'];
+      const expectedWebAccessTools = ['web_search', 'fetch_content'];
       if (JSON.stringify(webAccessTools) !== JSON.stringify(expectedWebAccessTools)) {
-        throw new Error('Packed web access extension tools differ from the canonical four: ' + webAccessTools.join(', '));
+        throw new Error('Packed web access extension tools differ from the canonical two-tool surface: ' + webAccessTools.join(', '));
       }
-      if (JSON.stringify(webAccessCapabilities) !== JSON.stringify(['web-access'])) {
-        throw new Error('Packed web access extension capability is unavailable');
+      if (webAccessCapabilities.length !== 0) {
+        throw new Error('Packed web access extension must not add always-on capability instructions');
+      }
+      const expectedWebAccessConfigFields = [
+        'provider',
+        'searchProvider',
+        'openaiApiKey',
+        'openaiSearchModel',
+        'exaApiKey',
+        'braveApiKey',
+        'searxngBaseUrl',
+        'searxngHeaders',
+        'pdf',
+        'fetchContent',
+        'ssrf',
+      ];
+      if (JSON.stringify(Object.keys(webAccess.WEB_ACCESS_CONFIG.fields)) !== JSON.stringify(expectedWebAccessConfigFields)) {
+        throw new Error('Packed web access configuration fields differ from the canonical surface');
+      }
+      for (const field of ['openaiApiKey', 'exaApiKey', 'braveApiKey', 'searxngHeaders']) {
+        if (webAccess.WEB_ACCESS_CONFIG.fields[field].sensitive !== true) {
+          throw new Error('Packed web access sensitive field is not marked sensitive: ' + field);
+        }
       }
       const browser = await import('@felan-ai/ext-browser');
       const browserTools = [];
@@ -450,7 +471,10 @@ try {
       if (prompt.includes('operating inside pi')) {
         throw new Error('Packed runtime retained the Pi base prompt');
       }
-      const capabilityPositions = ['### subagents', '### ask-user', '### tasks', '### prewalk', '### web-access', '### browser', '### markitdown', '### progressive-context']
+      if (prompt.includes('### web-access')) {
+        throw new Error('Packed runtime retained a Web Access capability heading');
+      }
+      const capabilityPositions = ['### subagents', '### ask-user', '### tasks', '### prewalk', '### browser', '### markitdown', '### progressive-context']
         .map((heading) => prompt.indexOf(heading));
       if (capabilityPositions.some((position) => position < 0)
         || capabilityPositions.some((position, index) => index > 0 && position <= capabilityPositions[index - 1])) {

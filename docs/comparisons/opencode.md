@@ -84,8 +84,8 @@ tools, or MCP server configuration.
 - workers need one dependency-aware graph with explicit claims and results;
 - you want same-session planner-to-implementer routing rather than a separate
   plan artifact;
-- web research needs source checking, exact passages, bounded retention, and
-  default SSRF protections;
+- web work needs provider-backed discovery, bounded matching text/PDF passages,
+  and default SSRF protections;
 - you want the local app to load a reviewed built-in set instead of ambient
   project extensions; or
 - portable extensions must run behind a host-provided runtime and credential

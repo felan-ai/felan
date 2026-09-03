@@ -96,9 +96,6 @@ packages/ext-ask-user/NOTICE and LICENSE.
 @felan-ai/ext-web-access initially adapts MIT-licensed portions of
 pi-web-access 0.18.0 from https://github.com/nicobailon/pi-web-access at npm gitHead
 d2aab00dcf0547572276d9de4bc4a2a49d640e13. Copyright (c) 2025 Nico Bailon.
-Its runtime-backed fetched-content cache also adapts behavior reviewed in
-pi-web-access 0.23.0 at npm gitHead
-c77b28221d527f298d409d7e61ade661e548f50c.
 Package-level dependency attribution and license terms are included in
 packages/ext-web-access/NOTICE and LICENSE.
 

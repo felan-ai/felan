@@ -291,11 +291,17 @@ compaction summary; this is not OpenAI native Responses compaction.
 
 ### Web access
 
-`extensionConfig.webAccess` configures OpenAI, Exa, Brave, and self-hosted
-SearXNG search, plus PDF, repository clone, domain, and SSRF policy. Credential
-fields preserve literal values, `$NAME`/`${NAME}` environment references, and
-trusted `!command` sources; sensitive values are redacted in `/settings` and
-are not exposed as CLI options. See [Web, MCP, browser, and documents](web-mcp-and-browser.md).
+`extensionConfig.webAccess` exposes provider selection, OpenAI/Exa/Brave
+credential sources, the OpenAI search model, SearXNG endpoint and sensitive
+headers, PDF size limit, `fetchContent.domainPolicy`, and
+`ssrf.allowRanges`. Credential sources and SearXNG headers are redacted in
+settings presentation. The removed `githubClone` field is not available.
+
+Search provider requests can consume quotas or incur provider charges,
+especially with `all` or an array. Use `web_search` for discovery, then pass
+selected URLs to `fetch_content`. See
+[Web, MCP, browser, and documents](web-mcp-and-browser.md) for the full schema,
+limits, and migration guidance.
 
 ### MCP
 

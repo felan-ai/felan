@@ -1,13 +1,18 @@
+import { randomUUID } from 'node:crypto';
 import type { AgentRuntime, ExecResult } from '@felan-ai/agent-core';
 import { isWindowsRuntimePath, joinRuntimePath } from './runtime-path.js';
 
 export const MARKITDOWN_VERSION = '0.1.7';
 
-const MARKITDOWN_REQUIREMENT = `markitdown[docx,pptx,xlsx,xls,outlook]==${MARKITDOWN_VERSION}`;
+const MARKITDOWN_REQUIREMENT = `markitdown[pdf,docx,pptx,xlsx,xls,outlook]==${MARKITDOWN_VERSION}`;
+const MAX_INSTALLER_PROCESS_OUTPUT_BYTES = 64 * 1024;
 const PYTHON_PROBE_TIMEOUT_MS = 10_000;
 const MARKITDOWN_PROBE_TIMEOUT_MS = 60_000;
 const VENV_TIMEOUT_MS = 60_000;
 const INSTALL_TIMEOUT_MS = 180_000;
+const PDF_PROBE_OUTPUT_BYTES = 64 * 1024;
+const PDF_PROBE_MARKER = 'Felan MarkItDown PDF probe';
+const PDF_PROBE_BYTES = buildPdfProbe();
 
 export interface MarkitdownInvocation {
   readonly command: string;
@@ -158,7 +163,70 @@ async function probe(
       reason: `${label} ${version} does not match reviewed version ${MARKITDOWN_VERSION}`,
     };
   }
+  const pdfProbe = await probePdfConversion(runtime, command, prefix);
+  if (pdfProbe !== undefined) {
+    return { available: false, reason: `${label} lacks working PDF support: ${pdfProbe}` };
+  }
   return { available: true, version };
+}
+
+async function probePdfConversion(
+  runtime: AgentRuntime,
+  command: string,
+  prefix: readonly string[],
+): Promise<string | undefined> {
+  const storage = runtime.storage('session');
+  const nonce = randomUUID();
+  const directory = 'markitdown/probe';
+  const inputRelativePath = `${directory}/${nonce}.pdf`;
+  const outputRelativePath = `${directory}/${nonce}.md`;
+  const inputPath = joinRuntimePath(storage.root, inputRelativePath);
+  const outputPath = joinRuntimePath(storage.root, outputRelativePath);
+  try {
+    await storage.mkdir(directory, { recursive: true });
+    await storage.writeFile(inputRelativePath, PDF_PROBE_BYTES);
+    const result = await execute(
+      runtime,
+      command,
+      [...prefix, '-o', outputPath, inputPath],
+      MARKITDOWN_PROBE_TIMEOUT_MS,
+    );
+    if (!successful(result)) return resultDiagnostic(result);
+    const output = await storage.readFile(outputRelativePath, { maxBytes: PDF_PROBE_OUTPUT_BYTES });
+    const markdown = new TextDecoder().decode(output);
+    if (!markdown.includes(PDF_PROBE_MARKER)) return 'PDF capability probe returned unexpected output';
+    return undefined;
+  } catch (error) {
+    return sanitizeDiagnostic(error instanceof Error ? error.message : String(error));
+  } finally {
+    await Promise.allSettled([
+      storage.remove(inputRelativePath),
+      storage.remove(outputRelativePath),
+    ]);
+  }
+}
+
+function buildPdfProbe(): Uint8Array {
+  const encoder = new TextEncoder();
+  const stream = `BT /F1 12 Tf 72 720 Td (${PDF_PROBE_MARKER}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${encoder.encode(stream).byteLength} >>\nstream\n${stream}\nendstream`,
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(encoder.encode(pdf).byteLength);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = encoder.encode(pdf).byteLength;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return encoder.encode(pdf);
 }
 
 async function execute(
@@ -168,7 +236,11 @@ async function execute(
   timeout: number,
 ): Promise<ExecResult | Error> {
   try {
-    return await runtime.exec(command, args, { cwd: runtime.cwd, timeout });
+    return await runtime.exec(command, args, {
+      cwd: runtime.cwd,
+      timeout,
+      maxOutputBytes: MAX_INSTALLER_PROCESS_OUTPUT_BYTES,
+    });
   } catch (error) {
     return error instanceof Error ? error : new Error(String(error));
   }

@@ -4,40 +4,89 @@ Felan separates external HTTP research, remote MCP, browser automation, and
 local document conversion. Each surface has its own trust and installation
 boundary.
 
-## Web research
+## Web discovery and retrieval
 
-The Web Access extension provides four tools:
+The Web Access extension provides two tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `web_search` | Search one or more OpenAI, Exa, Brave, or SearXNG providers |
-| `source_check` | Check a claim and retain bounded exact passages |
-| `fetch_content` | Fetch readable/raw pages, grounded answers, PDF text, images, or GitHub content; local hosts expose a bounded exact checkout and managed runtimes use the GitHub API |
-| `get_search_content` | Page or search content retained from an earlier response |
+| `web_search` | Discover bounded titles, public URLs, snippets, and provider attribution |
+| `fetch_content` | Fetch selected URLs and return only matching text or PDF passages under one shared byte budget |
 
-Search can run up to four queries per call. Retrieved content is bounded,
-externalized when large, and marked as untrusted before model delivery.
+`web_search` is discovery-only. It does not fetch result pages. Search can use
+SearXNG, OpenAI, Exa, or Brave and accepts one query or up to four sequential
+queries. Provider selection can be `auto`, `all`, one named provider, or a
+non-empty array. `auto` tries configured SearXNG, OpenAI, Exa, then Brave.
 
-Configure providers in `$FELAN_AGENT_DIR/settings.json` under
-`extensionConfig.webAccess`. Provider selection
-can be `auto`, `all`, one named provider, or a non-empty array of named
-providers. Keep API credentials in this user-owned file rather than a project
-repository.
+SearXNG needs `searxngBaseUrl` or `SEARXNG_BASE_URL`. OpenAI can use eligible
+host model authentication, `openaiApiKey`, or `OPENAI_API_KEY`. Exa uses
+`exaApiKey` or `EXA_API_KEY` when set and otherwise uses its public MCP search
+endpoint. Brave needs `braveApiKey` or `BRAVE_API_KEY`. Configured credentials
+may be literal, environment references, or trusted `!command` sources. API
+keys and SearXNG headers are sensitive settings. Search calls can consume
+provider quotas or incur provider charges; `all` and arrays can make several
+requests.
+
+After discovery, pass only selected URLs to `fetch_content`. Each call requires
+one to five HTTP(S) URLs and one to ten case-insensitive terms. HTML and XHTML
+are reduced to readable Markdown. Text, JSON, and PDF are supported. The shared
+snippet budget defaults to 3,000 bytes and has a 4,000-byte maximum; the full
+escaped response is capped at 12 KiB. Text input is limited to 5 MiB.
+
+Remote PDF retrieval belongs to Web Access. PDFs pass through the same URL,
+DNS, redirect, SSRF, passage-filtering, and output bounds. PDF input defaults
+to and cannot exceed 20 MiB. PDF conversion uses the reload-scoped
+`felan:markitdown:pdf-convert:v1` event and awaits the result; there is no
+parser fallback.
 
 Private, loopback, link-local, reserved, and internal network targets are
-blocked by default. DNS is pinned and redirects are revalidated. Only explicit
-user-owned `ssrf.allowRanges` configuration should relax that boundary.
+blocked by default. DNS is pinned and every redirect is revalidated. Only
+explicit user-owned `ssrf.allowRanges` configuration should relax that
+boundary. Remote text, metadata, provider output, and PDFs are
+untrusted data, not instructions or configuration.
 
-Web fetching is HTTP/content extraction, not a JavaScript browser and not an
-authenticated-tab reader.
+Web Access is not a JavaScript browser or authenticated-tab reader. It does not
+store full results, page retained content, register session hooks, run
+`source_check`, expose `get_search_content`, create GitHub checkouts, provide a
+special raw/full-page mode, or ask a nested model to answer. A known GitHub raw
+or API URL can be supplied directly and receives the same filtered HTTP path.
 
-GitHub repository URLs are handled specially. On the local host, Felan creates
-a shallow checkout verified at an exact commit and returns a trusted path for
-ordinary inspection tools, alongside a concise tree/README or requested file.
-Managed runtimes do not execute Git; they receive a bounded GitHub API view.
-Checkout paths are session-local, capped by the Web Access `maxCheckouts`
-setting, and removed when the session ends. Repository content is still
-untrusted external data.
+### Configuration
+
+Configure `extensionConfig.webAccess` in
+`$FELAN_AGENT_DIR/settings.json`:
+
+```json
+{
+  "provider": "auto",
+  "openaiApiKey": "$OPENAI_API_KEY",
+  "openaiSearchModel": "",
+  "exaApiKey": "$EXA_API_KEY",
+  "braveApiKey": "$BRAVE_API_KEY",
+  "searxngBaseUrl": "https://search.example.com",
+  "searxngHeaders": {},
+  "pdf": { "maxSizeMB": 20 },
+  "fetchContent": {
+    "domainPolicy": { "allow": [], "deny": [] }
+  },
+  "ssrf": { "allowRanges": [] }
+}
+```
+
+`searchProvider` remains a legacy alias for `provider`. The removed
+`githubClone` field is no longer discovered or supported; remove it from
+existing settings.
+
+### Migration to Web Access 0.5
+
+For released 0.4 callers, replace `source_check` with `web_search` followed by
+`fetch_content`. Replace `get_search_content` and saved response IDs with a new
+bounded fetch. Remove assumptions about retained content, paging, GitHub
+checkouts, full-page/raw modes, source-check summaries, and nested answers.
+
+The interim unreleased one-tool design exposed only `fetch_content` for HTML,
+text, and JSON. The final 0.5 contract adds discovery-only `web_search`, remote
+PDF passage extraction through `fetch_content`.
 
 ## Remote MCP
 
@@ -103,6 +152,7 @@ for Chrome for Testing.
 
 MarkItDown extends ordinary `read` calls for:
 
+- PDF
 - DOC and DOCX
 - PPT and PPTX
 - XLS and XLSX
@@ -110,7 +160,7 @@ MarkItDown extends ordinary `read` calls for:
 - EPUB
 - Outlook MSG
 
-PDFs, images, audio, and generic archives remain outside this converter. Inputs,
+Images, audio, and generic archives remain outside this converter. Inputs,
 conversion time, and output are bounded; extracted text is labelled as
 untrusted. Use `/markitdown` for status and `/markitdown install` for an
 explicit managed installation.

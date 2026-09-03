@@ -36,7 +36,7 @@ use the reviewed path revision.
 | `@felan-ai/ext-rtk-optimizer` | Adapted code and behavior | [`pi-rtk-optimizer` 0.9.0 at `d155d253`][rtk-baseline] | Same release and revision | No upstream change; Felan additionally supports managed runtime discovery and an explicit digest-verified official installer pinned to RTK 0.45.0. |
 | `@felan-ai/ext-subagents` | Design reference only; no source copied | [`pi-subagents` 0.5.2-patched.1 at `7e72e509`][subagents-baseline] | Same release and revision | No upstream change. |
 | `@felan-ai/ext-tasks` | Design reference only; no source copied | [`pi-todo-write` 0.1.0 at `9571293d`][tasks-baseline] | [`0.1.0` at monorepo `7e72e509`][tasks-reviewed] | No path changes since the design review. |
-| `@felan-ai/ext-web-access` | Adapted source and behavior | [`pi-web-access` 0.18.0 at `d2aab00d`][web-access-baseline] | Release [`0.23.0` at `c77b2822`][web-access-reviewed], plus main through [`81e18785`][web-access-main-reviewed] | Ported metadata-only session references backed by bounded runtime storage; kept Felan's smaller provider set and stricter credential/SSRF boundary. |
+| `@felan-ai/ext-web-access` | Adapted source and behavior | [`pi-web-access` 0.18.0 at `d2aab00d`][web-access-baseline] | Release [`0.23.0` at `c77b2822`][web-access-reviewed], plus main through [`81e18785`][web-access-main-reviewed] | Retained provider search and bounded extraction concepts, then replaced cached research artifacts with discovery-only search, filtered text/PDF passages, and a stricter SSRF boundary. |
 
 ## 2026-08-17 decisions
 
@@ -50,9 +50,9 @@ extension:
   and prevent process work from entering a session manager after shutdown.
 - MCP: recover a complete gateway request accidentally nested in `args`, while
   rejecting malformed nesting with sanitized guidance.
-- Web Access: keep full fetched content out of session entries and tool details;
-  store it in bounded `AgentRuntime.storage('session')` cache files referenced
-  by metadata-only session entries.
+- Web Access: the reviewed cache design was later superseded. Version 0.5 keeps
+  full fetched content out of session state entirely and exposes no retained
+  result storage, paging, or session hooks.
 
 The review deliberately did **not** add ambient browser-cookie access, hosted
 URL extractors, new web providers, MCP stdio/direct tools/resources/apps or

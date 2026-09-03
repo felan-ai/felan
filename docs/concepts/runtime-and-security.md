@@ -51,7 +51,7 @@ contains:
 
 | Surface | Boundary |
 | --- | --- |
-| Web search and fetching | Remote text, metadata, images, PDFs, repositories, provider responses, and derived summaries are bounded and marked untrusted |
+| Web search and fetching | Search metadata, fetched text/PDF passages, and provider responses are bounded and marked untrusted |
 | MCP | Server metadata, schemas, descriptions, results, resources, and errors are untrusted; the model receives a bounded gateway surface |
 | Browser | Page content, CLI output, and version-matched skill text are untrusted; screenshot bytes are validated before image delivery |
 | Felan API | Authenticated API responses are bounded, marked untrusted, and never receive the API key in model-visible details |
@@ -72,6 +72,15 @@ host configuration and should be limited to services the user owns.
 
 The web surface is an HTTP/content-extraction pipeline. It does not import
 browser cookies or silently turn a page into an authenticated browser session.
+`web_search` returns discovery metadata only. Selected URLs must be passed to
+`fetch_content`, which returns matching passages rather than full pages.
+Remote PDFs use the same SSRF checks; they are converted through the
+reload-scoped `felan:markitdown:pdf-convert:v1` event with awaited semantics
+and no fallback parser. MarkItDown is otherwise used for supported local
+documents, including PDFs and Office documents.
+
+Web Access does not retain remote bodies, page stored results, register session
+hooks, create GitHub checkouts, or generate nested answers.
 
 ## MCP controls
 

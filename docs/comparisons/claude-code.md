@@ -8,7 +8,7 @@
 
 Felan is a good fit when you want a model-portable local host, a structured
 dependency-aware task graph, same-session Prewalk model routing, bounded
-evidence-oriented web research, and source-controlled built-ins with explicit
+web discovery and passage filtering, and source-controlled built-ins with explicit
 host ownership.
 
 Claude Code is a good fit when you want Anthropic's mature permission modes,
@@ -77,10 +77,12 @@ the rest of Claude Code's ambient commands, agents, rules, or MCP configuration.
 
 ### Felan's web surface is evidence-oriented; Claude's is broader elsewhere
 
-Felan provides `source_check`, bounded exact passages, retained-result paging,
-PDF/GitHub fetching, explicit untrusted-content envelopes, and default SSRF
-protections. It is intentionally an HTTP/content pipeline rather than a
-cookie-authenticated browser.
+Felan separates provider-backed URL discovery from retrieval. `web_search`
+returns bounded metadata through SearXNG, OpenAI, Exa, or Brave;
+`fetch_content` returns matching passages from selected HTML, text, JSON, or PDF
+URLs. Remote material is untrusted and private-network targets
+are blocked by default. Felan does not retain full pages, page stored results,
+create GitHub checkouts, or use browser cookies.
 
 Claude Code has its own web tools and a separate Claude-in-Chrome integration
 for browser-backed workflows. That is a better fit when logged-in browser
@@ -100,8 +102,9 @@ it means Claude Code configurations are not drop-in Felan plugins.
 
 - provider and model portability are core requirements;
 - your workflow benefits from a hard dependency graph shared with child agents;
-- you want bounded web evidence and a default private-network boundary;
-- host-owned credential, storage, and extension policy matters more than a broad
+- you want explicit discovery followed by bounded web evidence and a default
+  private-network boundary;
+- host-owned extension policy matters more than a broad
   ambient plugin ecosystem; or
 - you want Pi-compatible foundations without carrying a Pi source fork.
 
