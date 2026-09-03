@@ -364,10 +364,13 @@ try {
       if (JSON.stringify(markitdownEvents) !== JSON.stringify(['session_shutdown', 'tool_call', 'tool_result'])) {
         throw new Error('Packed MarkItDown read interception is unavailable');
       }
-      const existingBinaryHandlers = ['.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'];
-      if (markitdown.MARKITDOWN_EXTENSIONS.some((extension) => existingBinaryHandlers.includes(extension))
-        || existingBinaryHandlers.some((extension) => !markitdown.MARKITDOWN_EXCLUDED_EXTENSIONS.includes(extension))) {
-        throw new Error('Packed MarkItDown extension overlaps PDF or image handling');
+      const imageHandlers = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'];
+      if (!markitdown.MARKITDOWN_EXTENSIONS.includes('.pdf')) {
+        throw new Error('Packed MarkItDown extension must own PDF conversion');
+      }
+      if (markitdown.MARKITDOWN_EXTENSIONS.some((extension) => imageHandlers.includes(extension))
+        || imageHandlers.some((extension) => !markitdown.MARKITDOWN_EXCLUDED_EXTENSIONS.includes(extension))) {
+        throw new Error('Packed MarkItDown extension overlaps image handling');
       }
       const mcp = await import('@felan-ai/ext-mcp');
       const mcpTools = [];
