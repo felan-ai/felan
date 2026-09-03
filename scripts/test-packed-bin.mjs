@@ -353,6 +353,7 @@ try {
         registerCapability: (capability) => markitdownCapabilities.push(capability.id),
         registerCommand: (name) => markitdownCommands.push(name),
         on: (name) => markitdownEvents.push(name),
+        events: { on: () => {}, emit: () => {} },
       });
       if (JSON.stringify(markitdownCapabilities) !== JSON.stringify(['markitdown'])) {
         throw new Error('Packed MarkItDown capability is unavailable');
@@ -360,7 +361,7 @@ try {
       if (JSON.stringify(markitdownCommands) !== JSON.stringify(['markitdown'])) {
         throw new Error('Packed MarkItDown command is unavailable');
       }
-      if (JSON.stringify(markitdownEvents) !== JSON.stringify(['tool_call', 'tool_result'])) {
+      if (JSON.stringify(markitdownEvents) !== JSON.stringify(['session_shutdown', 'tool_call', 'tool_result'])) {
         throw new Error('Packed MarkItDown read interception is unavailable');
       }
       const existingBinaryHandlers = ['.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif', '.webp'];
