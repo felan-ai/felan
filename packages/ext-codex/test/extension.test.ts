@@ -148,12 +148,13 @@ describe('Codex extension activation', () => {
     expect(compact).toHaveBeenCalledTimes(1);
   });
 
-  it('does not schedule another post-agent compaction while one is in flight', async () => {
+  it('schedules at most one post-agent compaction per agent run', async () => {
     const harness = createHarness();
     await codexExtension(harness.pi);
     const ctx = context('openai-codex', 'gpt-5.3-codex');
     ctx.isIdle = () => false;
 
+    await harness.emit('agent_start', {}, ctx);
     await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
     await harness.emit('agent_settled', {}, ctx);
     const options = vi.mocked(ctx.compact).mock.calls[0]![0]!;
@@ -161,9 +162,17 @@ describe('Codex extension activation', () => {
     await expect(harness.emit('session_before_compact', { reason: 'threshold' }, ctx))
       .resolves.toEqual([{ cancel: true }]);
     options.onComplete?.({} as never);
+    await expect(harness.emit('session_before_compact', { reason: 'threshold' }, ctx))
+      .resolves.toEqual([{ cancel: true }]);
     await harness.emit('agent_settled', {}, ctx);
 
     expect(ctx.compact).toHaveBeenCalledTimes(1);
+
+    await harness.emit('agent_start', {}, ctx);
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+
+    expect(ctx.compact).toHaveBeenCalledTimes(2);
   });
 
   it('does not report user-aborted post-agent compaction as a failure', async () => {
@@ -178,8 +187,31 @@ describe('Codex extension activation', () => {
     await harness.emit('agent_settled', {}, ctx);
     const options = vi.mocked(ctx.compact).mock.calls[0]![0]!;
     options.onError?.(new Error('Turn prefix summarization failed: This operation was aborted'));
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
 
     expect(notify).not.toHaveBeenCalled();
+    expect(ctx.compact).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not follow a completed immediate compaction with post-agent compaction', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai', 'gpt-5.4');
+    ctx.isIdle = () => false;
+
+    await harness.emit('agent_start', {}, ctx);
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('session_before_compact', { reason: 'overflow' }, ctx);
+    const compactionEntry = persistCompaction(ctx, 'immediate-compaction');
+    await harness.emit('session_compact', {
+      reason: 'overflow',
+      compactionEntry,
+    }, ctx);
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+
+    expect(ctx.compact).not.toHaveBeenCalled();
   });
 
   it.each(['manual', 'overflow'] as const)(
@@ -219,6 +251,123 @@ describe('Codex extension activation', () => {
       .resolves.toEqual([{ cancel: true }]);
     currentOptions.onComplete?.({} as never);
     await harness.emit('agent_settled', {}, ctx);
+
+    expect(ctx.compact).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a successful compaction event from a replaced session', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const previousCtx = context('openai', 'gpt-5.4');
+    const currentCtx = context('openai', 'gpt-5.4');
+    previousCtx.isIdle = () => false;
+    currentCtx.isIdle = () => false;
+
+    await harness.emit('session_before_compact', {
+      reason: 'overflow',
+      branchEntries: [{ id: 'previous-leaf' }],
+    }, previousCtx);
+    await harness.emit('session_start', {}, currentCtx);
+    await harness.emit('agent_start', {}, currentCtx);
+    await harness.emit('session_before_compact', {
+      reason: 'overflow',
+      branchEntries: [{ id: 'current-leaf' }],
+    }, currentCtx);
+    await harness.emit('session_compact', {
+      reason: 'overflow',
+      compactionEntry: { id: 'previous-compaction', parentId: 'previous-leaf' },
+    }, currentCtx);
+    const currentEntry = persistCompaction(currentCtx, 'current-compaction', 'current-leaf');
+    await harness.emit('session_compact', {
+      reason: 'overflow',
+      compactionEntry: currentEntry,
+    }, currentCtx);
+    await harness.emit('session_before_compact', { reason: 'threshold' }, currentCtx);
+    await harness.emit('agent_settled', {}, currentCtx);
+
+    expect(currentCtx.compact).not.toHaveBeenCalled();
+  });
+
+  it('recognizes a successful compaction after its branch advances', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai', 'gpt-5.4');
+    ctx.isIdle = () => false;
+
+    await harness.emit('agent_start', {}, ctx);
+    await harness.emit('session_before_compact', {
+      reason: 'overflow',
+      branchEntries: [{ id: 'initial-leaf' }],
+    }, ctx);
+    const compactionEntry = persistCompaction(ctx, 'advanced-compaction', 'new-custom-entry');
+    await harness.emit('session_compact', {
+      reason: 'overflow',
+      compactionEntry,
+    }, ctx);
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+
+    expect(ctx.compact).not.toHaveBeenCalled();
+  });
+
+  it('supersedes stale Pi compaction attribution after a failure', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai', 'gpt-5.4');
+    ctx.isIdle = () => false;
+
+    await harness.emit('agent_start', {}, ctx);
+    await harness.emit('session_before_compact', {
+      reason: 'overflow',
+      branchEntries: [{ id: 'failed-leaf' }],
+    }, ctx);
+    await harness.emit('session_compact_failed', { reason: 'overflow' }, ctx);
+    await harness.emit('session_before_compact', {
+      reason: 'overflow',
+      branchEntries: [{ id: 'current-leaf' }],
+    }, ctx);
+    const compactionEntry = persistCompaction(ctx, 'current-compaction', 'current-leaf');
+    await harness.emit('session_compact', {
+      reason: 'overflow',
+      compactionEntry,
+    }, ctx);
+    await harness.emit('session_before_compact', {
+      reason: 'threshold',
+      branchEntries: [{ id: 'current-leaf' }],
+    }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+
+    expect(ctx.compact).not.toHaveBeenCalled();
+  });
+
+  it('preserves a queued run compaction request until the previous compaction completes', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai', 'gpt-5.4');
+    let idle = false;
+    ctx.isIdle = () => idle;
+
+    await harness.emit('agent_start', {}, ctx);
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+    const previousOptions = vi.mocked(ctx.compact).mock.calls[0]![0]!;
+    await harness.emit('session_before_compact', {
+      reason: 'manual',
+      branchEntries: [{ id: 'previous-leaf' }],
+    }, ctx);
+
+    await harness.emit('agent_start', {}, ctx);
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    await harness.emit('agent_settled', {}, ctx);
+    expect(ctx.compact).toHaveBeenCalledTimes(1);
+
+    const compactionEntry = persistCompaction(ctx, 'previous-compaction', 'previous-leaf');
+    await harness.emit('session_compact', {
+      reason: 'manual',
+      compactionEntry,
+    }, ctx);
+    idle = true;
+    previousOptions.onComplete?.({} as never);
 
     expect(ctx.compact).toHaveBeenCalledTimes(2);
   });
@@ -310,12 +459,24 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
 }
 
 function context(provider: string, id: string): ExtensionContext {
-  return {
+  const entries = new Map<string, unknown>();
+  const ctx = {
     mode: 'print',
     model: model(provider, id),
     isIdle: () => true,
     compact: vi.fn(),
+    sessionManager: { getEntry: (entryId: string) => entries.get(entryId) },
   } as unknown as ExtensionContext;
+  sessionEntries.set(ctx, entries);
+  return ctx;
+}
+
+const sessionEntries = new WeakMap<ExtensionContext, Map<string, unknown>>();
+
+function persistCompaction(ctx: ExtensionContext, id: string, parentId?: string): Record<string, unknown> {
+  const entry = { type: 'compaction', id, parentId };
+  sessionEntries.get(ctx)?.set(id, entry);
+  return entry;
 }
 
 function model(provider: string, id: string): Model<Api> {
