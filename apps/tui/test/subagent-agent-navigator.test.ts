@@ -451,6 +451,54 @@ describe('registerLocalSubagentNavigator', () => {
     expect(expanded.join('\n')).toContain('1 more lines');
     expect(expanded.every((line) => visibleWidth(line) <= 60)).toBe(true);
   });
+
+  it('renders batched completion notices as one bounded summary', () => {
+    const messageRenderers = new Map<string, CompletionRenderer>();
+    const pi = {
+      on: vi.fn(),
+      registerCommand: vi.fn(),
+      registerMessageRenderer: vi.fn((name, renderer) => messageRenderers.set(name, renderer)),
+      registerShortcut: vi.fn(),
+    };
+    registerLocalSubagentNavigator(pi as never, navigatorHost(() => []));
+    const renderer = messageRenderers.get(SUBAGENT_COMPLETION_MESSAGE_TYPE)!;
+    const notices: SubagentCompletionNotice[] = [
+      {
+        deliveryId: 'delivery-one',
+        parentSessionId: 'parent-1',
+        agentId: '11111111-1111-1111-1111-111111111111',
+        type: 'explore',
+        status: 'completed',
+        summary: 'first result',
+      },
+      {
+        deliveryId: 'delivery-two',
+        parentSessionId: 'parent-1',
+        agentId: '22222222-2222-2222-2222-222222222222',
+        type: 'reviewer',
+        status: 'completed',
+        summary: 'second result',
+      },
+    ];
+    const message = {
+      role: 'custom' as const,
+      customType: SUBAGENT_COMPLETION_MESSAGE_TYPE,
+      content: 'Subagent completions',
+      display: true,
+      details: { notices },
+      timestamp: 1,
+    };
+
+    const collapsed = renderer(message, { expanded: false, outputPad: 1 }, theme)!.render(60);
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]).toContain('2 subagents completed');
+    expect(collapsed.every((line) => visibleWidth(line) <= 60)).toBe(true);
+
+    const expanded = renderer(message, { expanded: true, outputPad: 1 }, theme)!.render(60);
+    expect(expanded.join('\n')).toContain('first result');
+    expect(expanded.join('\n')).toContain('second result');
+    expect(expanded.every((line) => visibleWidth(line) <= 60)).toBe(true);
+  });
 });
 
 type CompletionRenderer = (
@@ -459,7 +507,7 @@ type CompletionRenderer = (
     customType: string;
     content: string;
     display: boolean;
-    details: { notice: SubagentCompletionNotice };
+    details: { notice?: SubagentCompletionNotice; notices?: readonly SubagentCompletionNotice[] };
     timestamp: number;
   },
   options: { expanded: boolean; outputPad: number },

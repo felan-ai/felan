@@ -186,8 +186,8 @@ export class LocalSubagentHost implements SubagentHost {
     return this.#manager.list(this.#sessionId, options);
   }
 
-  getResult(agentId: string) {
-    return this.#manager.getResult(this.#sessionId, agentId);
+  getResult(agentId: string, options?: { readonly acknowledge?: boolean }) {
+    return this.#manager.getResult(this.#sessionId, agentId, options);
   }
 
   listLocalSubagents(): readonly LocalSubagentView[] {
@@ -442,10 +442,23 @@ export class LocalSubagentManager {
   async getResult(
     parentSessionId: string,
     agentId: string,
+    options?: { readonly acknowledge?: boolean },
   ): Promise<SubagentHostResult<SubagentRecord>> {
     const authorized = await this.#serializeControl(async () => this.#directChild(parentSessionId, agentId));
     if (!authorized.ok) return authorized;
-    return success(await this.#resultRecord(authorized.value));
+    const result = await this.#resultRecord(authorized.value);
+    if (options?.acknowledge !== true || !isTerminal(result.status)) return success(result);
+    await this.#serializeControl(async () => {
+      const current = this.#directChild(parentSessionId, agentId);
+      if (!current.ok || current.value !== authorized.value) return;
+      const child = current.value;
+      if (!child.completionPending || child.deliveryId === undefined) return;
+      const deliveryId = child.deliveryId;
+      child.completionPending = false;
+      this.#ports.get(parentSessionId)?.acknowledgeCompletion?.(deliveryId);
+      await this.#persist();
+    });
+    return success(result);
   }
 
   listLocalSubagents(parentSessionId: string): readonly LocalSubagentView[] {
@@ -514,6 +527,9 @@ export class LocalSubagentManager {
       const previousRecord = child.record;
       const previousDeliveryId = child.deliveryId;
       const previousCompletionPending = child.completionPending;
+      if (previousCompletionPending && previousDeliveryId !== undefined) {
+        this.#ports.get(parentSessionId)?.acknowledgeCompletion?.(previousDeliveryId);
+      }
       child.record = {
         agentId: child.record.agentId,
         parentSessionId: child.record.parentSessionId,

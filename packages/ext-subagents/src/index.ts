@@ -160,14 +160,15 @@ function registerList(pi: FelanExtensionAPI, host: SubagentHost): void {
 function registerResult(pi: FelanExtensionAPI, host: SubagentHost): void {
   const parameters = Type.Object({
     agent_id: Type.String({ minLength: 1 }),
+    acknowledge_completion: Type.Optional(Type.Boolean({ default: false })),
   }, { additionalProperties: false });
   pi.registerTool({
     name: 'get_subagent_result',
     label: 'Get Subagent Result',
-    description: 'Read the latest direct child status or result immediately without consuming its completion delivery.',
+    description: 'Read the latest direct child status or result; completion delivery is non-consuming unless acknowledge_completion is true.',
     parameters,
     execute: async (_id, params, _signal, _update, _ctx) => executeHost(
-      () => host.getResult(params.agent_id),
+      () => host.getResult(params.agent_id, { acknowledge: params.acknowledge_completion ?? false }),
       renderRecord,
     ),
   });

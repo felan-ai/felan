@@ -46,9 +46,13 @@ and host shutdown have their own terminal error codes.
 
 `list_subagents` returns compact status-only records and is bounded to 20
 children by default, with a maximum of 50. Use `get_subagent_result` when the
-full result or error for one child is needed.
+full result or error for one child is needed. Result reads do not consume a
+completion notice by default; pass `acknowledge_completion: true` after
+handling a terminal result to suppress its still-pending notice.
 
-Felan persists child session paths before the first model request. If the host
+Felan persists child session paths before the first model request. Completion
+notices arriving before the next parent boundary are coalesced into one parent
+turn, and a child continuation supersedes its prior undelivered notice. If the host
 or process exits unexpectedly, a retained JSONL session can be continued
 explicitly with `steer_subagent` under the same child identity. Interrupted
 work is never replayed automatically, because tool side effects may already

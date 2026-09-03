@@ -52,9 +52,46 @@ function createParentPort(
         ? completionIds(entry.details)
         : []),
   );
+  const pending = new Map<string, SubagentCompletionNotice>();
   const queued = new Map<string, 'queued' | 'retry-when-idle'>();
-  let delivery = Promise.resolve<'delivered' | 'queued' | 'unavailable'>('delivered');
+  let wakeScheduled = false;
   let closed = false;
+
+  const flushPending = () => {
+    if (closed || pending.size === 0) return;
+    const notices = [...pending.values()];
+    pending.clear();
+    for (const notice of notices) queued.set(notice.deliveryId, 'queued');
+    const details = notices.length === 1
+      ? { notice: notices[0] }
+      : { notices };
+    void Promise.resolve().then(() => session.sendCustomMessage(
+      {
+        customType: SUBAGENT_COMPLETION_MESSAGE_TYPE,
+        content: formatCompletionNotices(notices),
+        display: true,
+        details,
+      },
+      {
+        triggerTurn: true,
+        deliverAs: 'steer',
+      },
+    )).catch(() => {
+      for (const notice of notices) {
+        queued.delete(notice.deliveryId);
+        if (!delivered.has(notice.deliveryId)) pending.set(notice.deliveryId, notice);
+      }
+      if (!session.isStreaming) scheduleIdleWake();
+    });
+  };
+  const scheduleIdleWake = () => {
+    if (wakeScheduled || closed) return;
+    wakeScheduled = true;
+    queueMicrotask(() => {
+      wakeScheduled = false;
+      if (!session.isStreaming) flushPending();
+    });
+  };
   const originalClearQueue = session.clearQueue;
   const clearQueue = originalClearQueue.bind(session);
   const observedClearQueue: AgentSession['clearQueue'] = () => {
@@ -65,10 +102,15 @@ function createParentPort(
   };
   session.clearQueue = observedClearQueue;
   const unsubscribe = session.subscribe((event) => {
+    if (event.type === 'turn_end') {
+      flushPending();
+      return;
+    }
     if (event.type === 'agent_settled') {
       for (const [id, state] of queued) {
         if (state === 'retry-when-idle') queued.delete(id);
       }
+      scheduleIdleWake();
       return;
     }
     if (
@@ -94,40 +136,22 @@ function createParentPort(
     close: () => {
       if (closed) return;
       closed = true;
+      pending.clear();
+      queued.clear();
       unsubscribe();
       if (session.clearQueue === observedClearQueue) session.clearQueue = originalClearQueue;
     },
     async deliverCompletion(notice) {
-      const run = async (): Promise<'delivered' | 'queued' | 'unavailable'> => {
-        if (closed) return 'unavailable';
-        if (delivered.has(notice.deliveryId)) return 'delivered';
-        if (queued.has(notice.deliveryId)) return 'queued';
+      if (closed) return 'unavailable';
+      if (delivered.has(notice.deliveryId)) return 'delivered';
+      if (pending.has(notice.deliveryId) || queued.has(notice.deliveryId)) return 'queued';
 
-        queued.set(notice.deliveryId, 'queued');
-        try {
-          await session.sendCustomMessage(
-            {
-              customType: SUBAGENT_COMPLETION_MESSAGE_TYPE,
-              content: formatCompletionNotice(notice),
-              display: true,
-              details: { notice },
-            },
-            {
-              triggerTurn: true,
-              deliverAs: 'steer',
-            },
-          );
-          if (session.isStreaming) return 'queued';
-          delivered.add(notice.deliveryId);
-          queued.delete(notice.deliveryId);
-          return 'delivered';
-        } catch {
-          queued.delete(notice.deliveryId);
-          return 'unavailable';
-        }
-      };
-      delivery = delivery.then(run, run);
-      return delivery;
+      pending.set(notice.deliveryId, notice);
+      if (!session.isStreaming) scheduleIdleWake();
+      return 'queued';
+    },
+    acknowledgeCompletion(deliveryId) {
+      pending.delete(deliveryId);
     },
   };
 }
@@ -135,11 +159,26 @@ function createParentPort(
 function completionIds(data: unknown): string[] {
   if (typeof data !== 'object' || data === null) return [];
   const notice = Reflect.get(data, 'notice');
-  return typeof notice === 'object'
+  const notices = Reflect.get(data, 'notices');
+  const ids = typeof notice === 'object'
     && notice !== null
     && typeof Reflect.get(notice, 'deliveryId') === 'string'
     ? [Reflect.get(notice, 'deliveryId') as string]
     : [];
+  if (!Array.isArray(notices)) return ids;
+  for (const entry of notices) {
+    if (
+      typeof entry === 'object'
+      && entry !== null
+      && typeof Reflect.get(entry, 'deliveryId') === 'string'
+    ) ids.push(Reflect.get(entry, 'deliveryId') as string);
+  }
+  return [...new Set(ids)];
+}
+
+function formatCompletionNotices(notices: readonly SubagentCompletionNotice[]): string {
+  if (notices.length === 1) return formatCompletionNotice(notices[0]!);
+  return `Subagent completions:\n${notices.map((notice) => `- ${formatCompletionNotice(notice)}`).join('\n')}`;
 }
 
 function formatCompletionNotice(notice: SubagentCompletionNotice): string {

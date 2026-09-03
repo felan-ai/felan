@@ -16,6 +16,7 @@ const INLINE_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/gu;
 
 interface CompletionMessageDetails {
   readonly notice?: unknown;
+  readonly notices?: unknown;
 }
 
 export function registerSubagentCompletionRenderer(
@@ -24,7 +25,7 @@ export function registerSubagentCompletionRenderer(
   pi.registerMessageRenderer<CompletionMessageDetails>(
     SUBAGENT_COMPLETION_MESSAGE_TYPE,
     (message, options, theme) => new SubagentCompletionComponent(
-      completionNotice(message.details?.notice),
+      completionNotices(message.details),
       messageText(message.content),
       options.expanded,
       options.outputPad,
@@ -34,21 +35,25 @@ export function registerSubagentCompletionRenderer(
 }
 
 class SubagentCompletionComponent implements Component {
-  readonly #notice: SubagentCompletionNotice | undefined;
+  readonly #notices: readonly SubagentCompletionNotice[];
   readonly #detailLines: readonly string[];
 
   constructor(
-    notice: SubagentCompletionNotice | undefined,
+    notices: readonly SubagentCompletionNotice[],
     fallbackText: string,
     private readonly expanded: boolean,
     private readonly outputPad: number,
     private readonly theme: Theme,
   ) {
-    this.#notice = notice;
+    this.#notices = notices;
     this.#detailLines = summaryLines(
-      notice
-        ? notice.summary ?? notice.error?.message ?? ''
-        : fallbackText,
+      notices.length === 1
+        ? notices[0]!.summary ?? notices[0]!.error?.message ?? notices[0]!.status
+        : notices.length > 1
+          ? notices.map((notice) => (
+            `${notice.type} ${shortAgentId(notice.agentId)}: ${notice.summary ?? notice.error?.message ?? notice.status}`
+          ))
+          : fallbackText,
     );
   }
 
@@ -83,13 +88,18 @@ class SubagentCompletionComponent implements Component {
   invalidate(): void {}
 
   #header(): string {
-    const notice = this.#notice;
-    if (!notice) {
+    const notices = this.#notices;
+    if (notices.length === 0) {
       const summary = this.#detailLines[0];
       return `${this.theme.fg('success', '✓')} ${this.theme.bold('Subagent completed')}`
         + (summary ? this.theme.fg('muted', ` · ${summary}`) : '');
     }
 
+    if (notices.length > 1) {
+      return `${this.theme.fg('success', '✓')} ${this.theme.bold(`${notices.length} subagents completed`)} `
+        + this.theme.fg('muted', `· ${this.#detailLines[0] ?? ''} · Alt+A details`);
+    }
+    const notice = notices[0]!;
     const title = `Subagent ${inlineText(notice.type)} ${formatStatus(notice.status)}`;
     const metadata = [shortAgentId(notice.agentId)];
     if (!this.expanded && this.#detailLines[0]) metadata.push(this.#detailLines[0]);
@@ -116,6 +126,19 @@ function completionNotice(value: unknown): SubagentCompletionNotice | undefined 
   return value as unknown as SubagentCompletionNotice;
 }
 
+function completionNotices(details: CompletionMessageDetails | undefined): SubagentCompletionNotice[] {
+  const notices = Array.isArray(details?.notices)
+    ? details.notices.map(completionNotice).filter(isNotice)
+    : [];
+  if (notices.length > 0) return notices;
+  const notice = completionNotice(details?.notice);
+  return notice ? [notice] : [];
+}
+
+function isNotice(value: SubagentCompletionNotice | undefined): value is SubagentCompletionNotice {
+  return value !== undefined;
+}
+
 function isTerminalStatus(value: unknown): value is SubagentCompletionNotice['status'] {
   return value === 'completed'
     || value === 'failed'
@@ -138,8 +161,9 @@ function shortAgentId(agentId: string): string {
   return inlineText(agentId).slice(0, 8);
 }
 
-function summaryLines(value: string): string[] {
-  return stripTerminalSequences(value)
+function summaryLines(value: string | readonly string[]): string[] {
+  const text = typeof value === 'string' ? value : value.join('\n');
+  return stripTerminalSequences(text)
     .replace(/\r/g, '')
     .split('\n')
     .map((line) => inlineText(line).replace(/^(?:#{1,6}|[-*+])\s+/u, ''))

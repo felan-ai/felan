@@ -20,7 +20,22 @@ describe('subagent session binding', () => {
     bindSubagentSession({ host, session: harness.session });
 
     const notice = completionNotice('delivery-1');
-    await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('delivered');
+    await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('queued');
+    await settle();
+    harness.emit({
+      type: 'message_end',
+      message: {
+        role: 'custom',
+        customType: 'felan-subagent-completion',
+        details: { notice },
+      },
+    });
+    harness.persistedEntries.push({
+      type: 'custom_message',
+      customType: 'felan-subagent-completion',
+      details: { notice },
+    });
+    await settle();
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('delivered');
     expect(harness.sendCustomMessage).toHaveBeenCalledOnce();
     expect(harness.sendCustomMessage).toHaveBeenCalledWith(
@@ -49,11 +64,42 @@ describe('subagent session binding', () => {
 
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('queued');
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('queued');
-    expect(harness.sendCustomMessage).toHaveBeenCalledOnce();
     harness.session.clearQueue();
+    (harness.session as any).isStreaming = false;
     harness.emit({ type: 'agent_settled' });
+    await settle();
+    expect(harness.sendCustomMessage).toHaveBeenCalledOnce();
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('queued');
-    expect(harness.sendCustomMessage).toHaveBeenCalledTimes(2);
+    expect(harness.sendCustomMessage).toHaveBeenCalledOnce();
+  });
+
+  it('batches completions that arrive before the parent becomes idle', async () => {
+    const harness = sessionHarness(true);
+    let parentPort: SubagentParentPort | undefined;
+    bindSubagentSession({
+      host: hostWithAttachment((port) => {
+        parentPort = port;
+        return () => {};
+      }),
+      session: harness.session,
+    });
+    const first = completionNotice('delivery-batch-1');
+    const second = completionNotice('delivery-batch-2');
+
+    await expect(parentPort!.deliverCompletion(first)).resolves.toBe('queued');
+    await expect(parentPort!.deliverCompletion(second)).resolves.toBe('queued');
+    (harness.session as any).isStreaming = false;
+    harness.emit({ type: 'turn_end' });
+    await settle();
+
+    expect(harness.sendCustomMessage).toHaveBeenCalledOnce();
+    expect(harness.sendCustomMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Subagent completions:'),
+        details: { notices: [first, second] },
+      }),
+      { triggerTurn: true, deliverAs: 'steer' },
+    );
   });
 
   it('acknowledges persisted completion delivery', async () => {
@@ -119,8 +165,13 @@ function sessionHarness(initialStreaming = false, persistedEntries: unknown[] = 
     session,
     dispose,
     sendCustomMessage,
+    persistedEntries,
     emit: (event: any) => listener?.(event),
   };
+}
+
+async function settle(): Promise<void> {
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
 }
 
 function contextManager(persistedEntries: unknown[] = []): SessionManager {

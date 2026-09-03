@@ -824,6 +824,7 @@ describe('LocalSubagentHost', () => {
     const deliveryOutcome = new Promise<'queued'>((resolve) => {
       releaseDelivery = resolve;
     });
+    const acknowledged: string[] = [];
     const { host } = await harness({
       root,
       runner: async (input) => {
@@ -838,6 +839,7 @@ describe('LocalSubagentHost', () => {
         deliveryStarted();
         return deliveryOutcome;
       },
+      acknowledgeCompletion: (deliveryId) => acknowledged.push(deliveryId),
     });
     const spawned = await host.spawn(request());
     if (!spawned.ok) return;
@@ -859,6 +861,41 @@ describe('LocalSubagentHost', () => {
       ok: true,
       value: { status: 'completed', result: 'original result' },
     });
+    expect(acknowledged).toHaveLength(1);
+    expect(acknowledged[0]).toBeTruthy();
+    await host.shutdown();
+  });
+
+  it('acknowledges only a terminal completion when explicitly requested', async () => {
+    const notices: SubagentCompletionNotice[] = [];
+    const acknowledgeCompletion = vi.fn();
+    const { host } = await harness({
+      runner: async (input) => {
+        await input.onReady({ steer: async () => {}, cancel: async () => {} });
+        return { result: 'done' };
+      },
+    });
+    host.attachParent({
+      deliverCompletion: async (notice) => {
+        notices.push(notice);
+        return 'queued';
+      },
+      acknowledgeCompletion,
+    });
+    const spawned = await host.spawn(request());
+    if (!spawned.ok) return;
+    await waitForResult(host, spawned.value.agentId);
+
+    await expect(host.getResult(spawned.value.agentId, { acknowledge: true })).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed', result: 'done' },
+    });
+    expect(acknowledgeCompletion).toHaveBeenCalledWith(expect.any(String));
+    await expect(host.getResult(spawned.value.agentId, { acknowledge: true })).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed', result: 'done' },
+    });
+    expect(acknowledgeCompletion).toHaveBeenCalledOnce();
     await host.shutdown();
   });
 

@@ -96,6 +96,7 @@ export interface SubagentParentPort {
   deliverCompletion(
     notice: SubagentCompletionNotice,
   ): Promise<'delivered' | 'queued' | 'unavailable'>;
+  acknowledgeCompletion?(deliveryId: string): void;
 }
 
 export interface SubagentHost {
@@ -115,6 +116,7 @@ export interface SubagentHost {
 
   getResult(
     agentId: string,
+    options?: { readonly acknowledge?: boolean },
   ): Promise<SubagentHostResult<SubagentRecord>>;
 
   steer(
