@@ -5,6 +5,8 @@ import {
   createAssistantMessageEventStream,
   type ExtensionPackageImporter,
   type FelanExtensionAPI,
+  type SavingsMeasurement,
+  type SavingsReporterProvider,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -1157,6 +1159,7 @@ describe('LocalSubagentHost', () => {
       output: 20,
       cacheRead: 30,
       cacheWrite: 40,
+      cacheWrite1h: 0,
       cost: 0.75,
     });
     expect(first.host.getLocalSubagent(spawned.value.agentId)).toMatchObject({
@@ -1170,6 +1173,7 @@ describe('LocalSubagentHost', () => {
       output: 20,
       cacheRead: 30,
       cacheWrite: 40,
+      cacheWrite1h: 0,
       cost: 0.75,
     });
     expect(second.host.getLocalSubagent(spawned.value.agentId)).toMatchObject({
@@ -1237,6 +1241,7 @@ describe('LocalSubagentHost', () => {
       output: 22,
       cacheRead: 33,
       cacheWrite: 44,
+      cacheWrite1h: 0,
       cost: 1,
     });
 
@@ -1273,7 +1278,164 @@ describe('LocalSubagentHost', () => {
       output: 48,
       cacheRead: 70,
       cacheWrite: 92,
+      cacheWrite1h: 0,
       cost: 1.625,
+    });
+    await host.shutdown();
+  });
+
+  it('reports completed explore usage as an incremental parent-model reprice', async () => {
+    const root = await temporaryDirectory();
+    const sessionDirectory = join(root, 'routing-sessions');
+    const reports: SavingsMeasurement[] = [];
+    const savings: SavingsReporterProvider = {
+      createReporter: vi.fn((producerId) => ({
+        report: async (measurement) => {
+          expect(producerId).toBe('@felan-ai/ext-subagents');
+          reports.push(measurement);
+        },
+      })),
+    };
+    let invocation = 0;
+    const runner: LocalSubagentRunner = async (input) => {
+      const manager = input.sessionFile
+        ? SessionManager.open(input.sessionFile)
+        : SessionManager.create(input.cwd, sessionDirectory, { id: input.sessionId });
+      manager.appendMessage(usageAssistantMessage(invocation++ === 0
+        ? { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, cacheWrite1h: 5, cost: 0.75 }
+        : { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cacheWrite1h: 1, cost: 0.25 }));
+      return { result: 'explored', sessionFile: manager.getSessionFile() };
+    };
+    const first = await harness({
+      runner,
+      root,
+      savings,
+      modelRuntime: routingModelRuntime(),
+    });
+    const spawned = await first.host.spawn(request({
+      type: 'explore',
+      parentModel: 'test/parent',
+      model: 'test/child',
+    }));
+    if (!spawned.ok) return;
+    await waitForResult(first.host, spawned.value.agentId);
+
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toEqual({
+      category: 'model-routing',
+      operation: 'explore-child',
+      baseline: {
+        model: { provider: 'test', id: 'parent' },
+        tokens: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, cacheWrite1h: 5 },
+      },
+      actual: {
+        model: { provider: 'test', id: 'child' },
+        tokens: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, cacheWrite1h: 5 },
+        costUsd: 0.75,
+      },
+      basis: { kind: 'estimated-baseline', method: 'parent-model-reprice-observed-child-usage-v1' },
+      dimensions: { techniques: ['explore', 'same-usage-reprice'] },
+    });
+
+    await first.host.shutdown();
+    const second = await harness({
+      runner,
+      root,
+      savings,
+      modelRuntime: routingModelRuntime(),
+    });
+    await second.host.steer(spawned.value.agentId, 'continue');
+    await waitForResult(second.host, spawned.value.agentId);
+    expect(reports).toHaveLength(2);
+    expect(reports[1]).toMatchObject({
+      baseline: { tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cacheWrite1h: 1 } },
+      actual: {
+        tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cacheWrite1h: 1 },
+        costUsd: 0.25,
+      },
+    });
+    await second.host.shutdown();
+  });
+
+  it('does not include a failed explore interval in a later successful continuation', async () => {
+    const root = await temporaryDirectory();
+    const sessionDirectory = join(root, 'routing-sessions');
+    const report = vi.fn(async () => undefined);
+    let invocation = 0;
+    const runner: LocalSubagentRunner = async (input) => {
+      const manager = input.sessionFile
+        ? SessionManager.open(input.sessionFile)
+        : SessionManager.create(input.cwd, sessionDirectory, { id: input.sessionId });
+      const failed = invocation++ === 0;
+      manager.appendMessage(usageAssistantMessage(failed
+        ? { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, cost: 0.75 }
+        : { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cost: 0.25 }));
+      return failed
+        ? { error: { code: 'model_request_failed', message: 'failed' }, sessionFile: manager.getSessionFile() }
+        : { result: 'recovered', sessionFile: manager.getSessionFile() };
+    };
+    const { host } = await harness({
+      runner,
+      root,
+      savings: { createReporter: () => ({ report }) },
+      modelRuntime: routingModelRuntime(),
+    });
+    const spawned = await host.spawn(request({
+      type: 'explore', parentModel: 'test/parent', model: 'test/child',
+    }));
+    if (!spawned.ok) return;
+    await waitForResult(host, spawned.value.agentId);
+    expect(report).not.toHaveBeenCalled();
+
+    await host.steer(spawned.value.agentId, 'continue');
+    await waitForResult(host, spawned.value.agentId);
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      baseline: expect.objectContaining({
+        tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cacheWrite1h: 0 },
+      }),
+      actual: expect.objectContaining({
+        tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cacheWrite1h: 0 },
+        costUsd: 0.25,
+      }),
+    }));
+    await host.shutdown();
+  });
+
+  it('does not claim routing savings for unsuccessful, non-explore, or same-model children', async () => {
+    const report = vi.fn(async () => { throw new Error('unavailable'); });
+    const savings: SavingsReporterProvider = { createReporter: () => ({ report }) };
+    const runner: LocalSubagentRunner = async (input) => {
+      const sessionDirectory = join(input.cwd, 'sessions');
+      const manager = SessionManager.create(input.cwd, sessionDirectory, { id: input.sessionId });
+      manager.appendMessage(usageAssistantMessage({
+        input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.1,
+      }));
+      return input.request.description === 'failed'
+        ? { error: { code: 'model_request_failed', message: 'failed' }, sessionFile: manager.getSessionFile() }
+        : { result: 'done', sessionFile: manager.getSessionFile() };
+    };
+    const { host } = await harness({ runner, savings, modelRuntime: routingModelRuntime() });
+
+    const eligible = await host.spawn(request({
+      type: 'explore', description: 'eligible', parentModel: 'test/parent', model: 'test/child',
+    }));
+    const failed = await host.spawn(request({
+      type: 'explore', description: 'failed', parentModel: 'test/parent', model: 'test/child',
+    }));
+    const same = await host.spawn(request({
+      type: 'explore', description: 'same', parentModel: 'test/child', model: 'test/child',
+    }));
+    const reviewer = await host.spawn(request({
+      type: 'reviewer', description: 'reviewer', parentModel: 'test/parent', model: 'test/child',
+    }));
+    for (const result of [eligible, failed, same, reviewer]) {
+      if (result.ok) await waitForResult(host, result.value.agentId);
+    }
+
+    expect(report).toHaveBeenCalledOnce();
+    expect(eligible.ok && (await host.getResult(eligible.value.agentId))).toMatchObject({
+      ok: true,
+      value: { status: 'completed' },
     });
     await host.shutdown();
   });
@@ -1369,6 +1531,7 @@ describe('LocalSubagentHost', () => {
       output: 20,
       cacheRead: 30,
       cacheWrite: 40,
+      cacheWrite1h: 0,
       cost: 0.75,
     });
     await host.shutdown();
@@ -1403,6 +1566,7 @@ describe('LocalSubagentHost', () => {
       output: 0,
       cacheRead: 0,
       cacheWrite: 0,
+      cacheWrite1h: 0,
       cost: 0,
     });
     expect(missing.host.getLocalSubagent(spawned.value.agentId)?.usage).toBeUndefined();
@@ -1552,6 +1716,7 @@ async function harness(options: {
   maxDepth?: number;
   root?: string;
   modelRuntime?: ModelRuntime;
+  savings?: SavingsReporterProvider;
   extensionPackages?: readonly string[];
   importExtension?: ExtensionPackageImporter;
 }) {
@@ -1571,6 +1736,7 @@ async function harness(options: {
     extensionPackages: options.extensionPackages ?? [],
     importExtension: options.importExtension ?? (async () => ({})),
     settings: { concurrency: options.concurrency ?? 4, maxDepth: options.maxDepth ?? 3 },
+    ...(options.savings === undefined ? {} : { savings: options.savings }),
     ...(options.runner === undefined ? {} : { runChild: options.runner }),
   });
   return { host, modelRuntime };
@@ -1619,6 +1785,7 @@ interface UsageFixture {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  cacheWrite1h?: number;
   cost: number;
 }
 
@@ -1631,7 +1798,7 @@ function usageAssistantMessage(usage: UsageFixture) {
     model: 'test-model',
     usage: {
       ...usage,
-      totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+      totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite + (usage.cacheWrite1h ?? 0),
       cost: {
         input: 0,
         output: 0,
@@ -1643,6 +1810,26 @@ function usageAssistantMessage(usage: UsageFixture) {
     stopReason: 'stop' as const,
     timestamp: Date.now(),
   };
+}
+
+function routingModelRuntime(): ModelRuntime {
+  const models = ['parent', 'child'].map((id) => ({
+    id,
+    name: id,
+    api: 'anthropic-messages',
+    provider: 'test',
+    baseUrl: 'https://example.invalid',
+    reasoning: false,
+    input: ['text'],
+    cost: { input: id === 'parent' ? 10 : 1, output: id === 'parent' ? 20 : 2, cacheRead: 0.5, cacheWrite: 3 },
+    contextWindow: 100_000,
+    maxTokens: 4_096,
+  }));
+  return {
+    getAvailableSnapshot: () => models,
+    hasConfiguredAuth: () => true,
+    getModel: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
+  } as unknown as ModelRuntime;
 }
 
 function pushUsageResponse(

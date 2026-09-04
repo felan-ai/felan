@@ -51,8 +51,10 @@ interface.
 
 ## Current behavior and gap
 
-The RTK optimizer now reports both RTK command-output measurements and Felan
-post-tool measurements through the shared savings service. The former RTK metric
+The RTK optimizer reports RTK command-output and Felan post-tool measurements;
+Prewalk reports implementation-model routing; MarkItDown and concise output
+style report benchmark-calibrated output boundaries; and the local subagent host
+reports successful `explore` routing-price comparisons. The former RTK metric
 subcommands have been removed; `/savings` is the only interactive savings report.
 
 How the command-output optimizer obtains its baseline
@@ -195,6 +197,51 @@ host therefore calculates the dollar saving as the planner-model baseline cost
 minus the target-model actual cost. Planning, same-model, failed, and aborted
 turns are excluded; an unavailable or failing reporter does not affect agent
 execution. The method identifier is `planner-two-thirds-usage-v1`.
+
+### MarkItDown document-result producer
+
+MarkItDown reports one `output-optimization` measurement for each successful
+converted `read` or `read_document` result with an active model. Both outcomes
+use UTF-8-bytes/4 estimates as model input. Actual is the returned converted
+text; baseline is `ceil(actual * 272915 / 232004)`, calibrated from pooled prompt
+tokens in the corrected 2026-09-02 normal-document matrix. The method is
+`markitdown-normal-document-prompt-ratio-20260902-v1`.
+
+The measurement owns only the converted-result boundary. It excludes failed or
+unavailable conversion, missing model/reporter attribution, and the model-less
+PDF conversion event used by peer extensions. It does not apply the warm-cache
+result, infer local converter cost, or claim exact workflow savings.
+
+### Concise visible-output producer
+
+The built-in concise style reports one `output-optimization` measurement for
+each successful assistant turn with visible text and an active model. Both
+outcomes use UTF-8-bytes/4 estimates as model output. Actual is the emitted text;
+baseline is `ceil(actual * 3271 / 2686)`, calibrated from the one-attempt
+Terra-v2 full-visible comparison. The method is
+`concise-visible-text-ratio-terra-v2-20260827-v1`.
+
+This boundary deliberately excludes input/cache/request effects. The source
+matrix reduced visible text by 17.88% but increased total tokens by 12.00% and
+cost by 5.88%; its built-in grader passed concise 4/5 versus 5/5 disabled. The
+one-attempt Opus comparison also had one concise correctness omission. Therefore
+this producer is not evidence of whole-workflow savings.
+`explanatory`, `custom`, empty, errored, aborted, and unattributed turns do not
+report.
+
+### Explore subagent routing producer
+
+The local host reports one `model-routing` measurement for each newly completed,
+successful, non-empty, cross-model `explore` usage interval. Actual retains the
+child model, every observed token/cache class, and provider-reported cost when
+positive. Baseline prices exactly the same usage at the parent model. The method
+is `parent-model-reprice-observed-child-usage-v1`.
+
+This is a routing-price comparison, not a token-saving or full parent-execution
+counterfactual. Failed, cancelled, timed-out, turn-limited, same-model, empty,
+and non-`explore` children are excluded. A persisted cumulative watermark makes
+continued runs report only new usage and prevents replay after reload. There is
+no completed subagent benchmark artifact supporting a stronger claim.
 
 Categories and dimension keys come from a Felan-owned registry so that reports
 remain comparable. Operation, tool, and technique values are bounded lowercase

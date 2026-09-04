@@ -54,7 +54,11 @@ describe('MarkItDown extension', () => {
     const fixture = await createFixture();
     const sourcePath = join(fixture.workspace, '-- quarterly report.DOCX');
     await writeFile(sourcePath, 'binary document one');
-    const harness = createHarness(fixture.runtime);
+    const savings: unknown[] = [];
+    const harness = createHarness(fixture.runtime, {
+      model: { provider: 'test', id: 'document-model' },
+      savings: { report: async (measurement) => { savings.push(measurement); } },
+    });
     markitdownExtension(harness.pi);
 
     expect(harness.capabilities).toEqual([{
@@ -103,6 +107,20 @@ describe('MarkItDown extension', () => {
       isError: false,
     }) as { content: Array<{ type: string; text: string }> };
     expect(secondResult.content[0]!.text).toContain('"cache":"hit"');
+    expect(savings).toHaveLength(2);
+    expect(savings[0]).toMatchObject({
+      category: 'output-optimization',
+      operation: 'document-read',
+      baseline: { model: { provider: 'test', id: 'document-model' } },
+      actual: { model: { provider: 'test', id: 'document-model' } },
+      basis: {
+        kind: 'estimated-baseline',
+        method: 'markitdown-normal-document-prompt-ratio-20260902-v1',
+      },
+      dimensions: { tool: 'read' },
+    });
+    const firstSavings = savings[0] as any;
+    expect(firstSavings.baseline.tokens.input).toBeGreaterThan(firstSavings.actual.tokens.input);
 
     await writeFile(sourcePath, 'binary document two');
     const changed = readCall('call-3', sourcePath);
@@ -460,7 +478,11 @@ describe('MarkItDown extension', () => {
     const fixture = await createFixture();
     const sourcePath = join(fixture.workspace, 'report.docx');
     await writeFile(sourcePath, 'office document');
-    const harness = createHarness(fixture.runtime);
+    const savings: unknown[] = [];
+    const harness = createHarness(fixture.runtime, {
+      model: { provider: 'test', id: 'document-model' },
+      savings: { report: async (measurement) => { savings.push(measurement); } },
+    });
     markitdownExtension(harness.pi);
 
     expect(harness.toolNames()).toEqual([]);
@@ -488,6 +510,8 @@ describe('MarkItDown extension', () => {
     const cached = await harness.readDocument({ path: sourcePath }) as { details: { cacheHit: boolean } };
     expect(cached.details.cacheHit).toBe(true);
     expect(fixture.conversions).toHaveLength(1);
+    expect(savings).toHaveLength(2);
+    expect(savings[0]).toMatchObject({ dimensions: { tool: 'read_document' } });
 
     harness.setCodexToolMode(false);
     expect(harness.activeTools).toEqual(['read']);
@@ -739,7 +763,10 @@ async function createFixture(options: {
   };
 }
 
-function createHarness(runtime: AgentRuntime) {
+function createHarness(runtime: AgentRuntime, options: {
+  model?: { provider: string; id: string };
+  savings?: { report(measurement: unknown): Promise<void> };
+} = {}) {
   const handlers = new Map<string, Handler[]>();
   const eventHandlers = new Map<string, Set<(data: unknown) => void>>();
   const commands = new Map<string, CommandHandler>();
@@ -752,6 +779,7 @@ function createHarness(runtime: AgentRuntime) {
   const pi = {
     runtime,
     agentDir: '/agent',
+    ...(options.savings === undefined ? {} : { savings: options.savings }),
     registerCapability: (capability: { id: string; instructions: string }) => capabilities.push(capability),
     registerTool: (tool: { name: string; execute: (...args: any[]) => Promise<unknown> }) => {
       toolRegistrations.push(tool.name);
@@ -798,7 +826,13 @@ function createHarness(runtime: AgentRuntime) {
     readDocument: (params: Record<string, unknown>, signal?: AbortSignal) => {
       const tool = tools.get('read_document');
       if (!tool) throw new Error('read_document tool was not registered');
-      return tool.execute('read-document-test', params, signal, undefined, context(notifications, statuses));
+      return tool.execute(
+        'read-document-test',
+        params,
+        signal,
+        undefined,
+        context(notifications, statuses, options.model),
+      );
     },
     eventChannels: () => [...eventHandlers.keys()],
     convertPdf(bytes: Uint8Array, signal?: AbortSignal) {
@@ -828,7 +862,7 @@ function createHarness(runtime: AgentRuntime) {
     async emit(name: string, event: unknown) {
       let result: unknown;
       for (const handler of handlers.get(name) ?? []) {
-        const next = await handler(event, context(notifications, statuses));
+        const next = await handler(event, context(notifications, statuses, options.model));
         if (next !== undefined) result = next;
       }
       return result;
@@ -839,10 +873,12 @@ function createHarness(runtime: AgentRuntime) {
 function context(
   notifications: Array<{ message: string; type?: string }>,
   statuses: Array<{ key: string; value: string | undefined }> = [],
+  model?: { provider: string; id: string },
 ): ExtensionContext {
   return {
     mode: 'print',
     hasUI: false,
+    ...(model === undefined ? {} : { model }),
     ui: {
       setStatus: (key: string, value: string | undefined) => statuses.push({ key, value }),
       notify: (message: string, type?: string) => notifications.push({

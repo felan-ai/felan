@@ -36,6 +36,30 @@ The local TUI, CLI, `/settings`, and Agent Core consumers resolve these fields
 before activating the extension for root and child sessions. A custom style
 requires non-empty instructions.
 
+## Savings measurement
+
+Only the built-in `concise` style contributes a savings measurement. For each
+successful assistant turn containing visible text, the extension estimates the
+actual output as UTF-8 bytes divided by four and rounded up. It estimates the
+disabled-style baseline as:
+
+```text
+ceil(actual visible-output estimate * 3271 / 2686)
+```
+
+Those totals come from the one-attempt 2026-08-27 Terra-v2 matrix. All five
+concise cases passed supplemental full-visible grading, but the built-in grader
+passed 4/5 versus 5/5 with output style disabled. Concise produced 2,686 visible
+characters versus 3,271 when disabled, a 17.88% reduction. The method identifier
+is `concise-visible-text-ratio-terra-v2-20260827-v1`.
+
+This measurement isolates the visible-output boundary. It is not a claim of
+whole-workflow savings: the same Terra-v2 run used 12.00% more total tokens and
+cost 5.88% more. A separate one-attempt Claude Opus 4.8 run cost 2.90% less for
+concise but omitted required information in one case. Empty, errored, aborted,
+or unattributed turns do not report. `explanatory` and `custom` have no supported
+baseline and never contribute savings.
+
 ## Package boundary and requirements
 
 The package owns the supported style names, built-in instructions, custom-text
@@ -61,6 +85,7 @@ pnpm --filter @felan-ai/ext-output-style test
 - [Configuration](../../docs/user-guide/configuration.md#output-style)
 - [Extension catalog](../../docs/reference/extension-catalog.md)
 - [Architecture](../../docs/concepts/architecture.md)
+- [Efficient execution and savings](../../docs/concepts/efficient-execution.md)
 
 ## Attribution
 

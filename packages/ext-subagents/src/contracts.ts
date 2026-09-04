@@ -22,6 +22,7 @@ export interface SubagentSpawnRequest {
   readonly type: string;
   readonly description: string;
   readonly prompt: string;
+  readonly parentModel?: string;
   readonly model?: string;
   readonly thinking?: SubagentThinking;
   readonly maxTurns?: number;

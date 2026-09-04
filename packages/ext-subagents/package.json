@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-subagents",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Portable Felan subagent tools",
   "license": "MIT",
   "type": "module",
