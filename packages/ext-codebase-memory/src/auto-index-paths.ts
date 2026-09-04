@@ -3,15 +3,17 @@ export type AutoIndexPathValidation =
   | { ok: false; reason: string };
 
 const SYSTEM_PATHS = new Set([
-  '/Applications', '/Library', '/Network', '/System', '/Users', '/Volumes',
-  '/bin', '/boot', '/cores', '/dev', '/etc', '/home', '/lib', '/lib64',
-  '/media', '/mnt', '/opt', '/private', '/proc', '/root', '/run', '/sbin',
-  '/sys', '/tmp', '/usr', '/var',
+  '/applications', '/bin', '/boot', '/cores', '/dev', '/etc', '/home',
+  '/lib', '/lib64', '/library', '/media', '/mnt', '/network', '/opt',
+  '/perflogs', '/private', '/proc', '/program files', '/program files (x86)',
+  '/programdata', '/recovery', '/root', '/run', '/sbin', '/sys', '/system',
+  '/system volume information', '/tmp', '/usr', '/users', '/var', '/volumes',
+  '/windows',
 ]);
 
 const HOME_BUILTIN_DIRECTORIES = new Set([
-  '.Trash', 'Applications', 'Desktop', 'Documents', 'Downloads',
-  'Library', 'Movies', 'Music', 'Pictures', 'Public',
+  '.trash', 'applications', 'desktop', 'documents', 'downloads',
+  'library', 'movies', 'music', 'pictures', 'public',
 ]);
 
 export function validateAutoIndexPath(path: string): AutoIndexPathValidation {
@@ -21,25 +23,28 @@ export function validateAutoIndexPath(path: string): AutoIndexPathValidation {
   if (normalized === '/' || /^[A-Za-z]:[/\\]?$/u.test(normalized)) {
     return { ok: false, reason: 'refusing to auto-index filesystem root' };
   }
-  if (SYSTEM_PATHS.has(normalized)) {
+
+  const pathWithoutDrive = normalized.replace(/^[A-Za-z]:/u, '');
+
+  if (SYSTEM_PATHS.has(pathWithoutDrive.toLowerCase())) {
     return { ok: false, reason: `refusing to auto-index system directory: ${normalized}` };
   }
-  if (isHomeDirectory(normalized)) {
+  if (isHomeDirectory(pathWithoutDrive)) {
     return { ok: false, reason: 'refusing to auto-index home directory' };
   }
-  if (isHomeBuiltinDirectory(normalized)) {
+  if (isHomeBuiltinDirectory(pathWithoutDrive)) {
     return { ok: false, reason: 'refusing to auto-index builtin user directory' };
   }
   return { ok: true, path: normalized };
 }
 
 function isHomeDirectory(path: string): boolean {
-  return /^\/(?:Users|home)\/[^/]+$/u.test(path);
+  return /^\/(?:Users|home)\/[^/]+$/iu.test(path);
 }
 
 function isHomeBuiltinDirectory(path: string): boolean {
-  const match = /^\/(?:Users|home)\/[^/]+\/([^/]+)$/u.exec(path);
-  return match ? HOME_BUILTIN_DIRECTORIES.has(match[1]!) : false;
+  const match = /^\/(?:Users|home)\/[^/]+\/([^/]+)$/iu.exec(path);
+  return match ? HOME_BUILTIN_DIRECTORIES.has(match[1]!.toLowerCase()) : false;
 }
 
 function normalizePath(path: string): string {

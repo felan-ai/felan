@@ -37,11 +37,9 @@ export class ProjectService {
   }
 
   async index(signal?: AbortSignal, repoPath?: string): Promise<IndexResult> {
-    const root = repoPath ?? await this.gitRoot(signal);
-    if (!root) {
-      return { status: 'skipped', reason: 'no git repository detected at current directory' };
-    }
-    if (repoPath === undefined) {
+    const targetPath = typeof repoPath === 'string' && repoPath.trim() ? repoPath.trim() : undefined;
+    const root = targetPath ?? (await this.gitRoot(signal)) ?? this.runtime.cwd;
+    if (targetPath === undefined) {
       const validation = validateAutoIndexPath(root);
       if (!validation.ok) return { status: 'skipped', reason: validation.reason };
     }

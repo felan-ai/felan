@@ -7,7 +7,7 @@ import type {
 import { codebaseMemoryRuntimeDirectory } from '../src/runtime-path.js';
 
 export class MemoryRuntime implements AgentRuntime {
-  readonly cwd = '/work/repo';
+  cwd: string = '/work/repo';
   readonly files = new Map<string, Uint8Array>();
   readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly shellCalls: Array<{ command: string; options?: Record<string, unknown> }> = [];

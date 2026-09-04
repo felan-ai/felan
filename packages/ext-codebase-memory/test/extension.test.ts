@@ -67,8 +67,26 @@ describe('Codebase Memory extension', () => {
     expect(harness.capabilities).toEqual([]);
   });
 
-  it('skips auto-indexing when the cwd is not inside a git repository', async () => {
+  it('auto-indexes a non-git working directory when path is valid', async () => {
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('index_repository')) return result(envelope({ status: 'indexed', project: 'repo' }));
+      if (command.includes('list_projects')) return result(envelope({ projects: [] }));
+      return result(envelope({}));
+    });
+    runtime.gitTopLevel = undefined;
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    await vi.waitFor(() => {
+      const indexed = runtime.shellCalls.filter((call) => call.command.includes('index_repository'));
+      expect(indexed.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('skips auto-indexing when launched in user home directory without git', async () => {
     const runtime = new MemoryRuntime('host', true);
+    runtime.cwd = '/Users/alice';
     runtime.gitTopLevel = undefined;
     const harness = await createHarness(runtime);
 
@@ -76,7 +94,7 @@ describe('Codebase Memory extension', () => {
 
     await vi.waitFor(() => {
       expect(harness.notifications).toEqual(expect.arrayContaining([
-        [expect.stringContaining('no git repository detected'), 'info'],
+        [expect.stringContaining('refusing to auto-index home directory'), 'info'],
       ]));
     });
     expect(runtime.shellCalls.filter((call) => call.command.includes('index_repository'))).toHaveLength(0);
@@ -92,6 +110,21 @@ describe('Codebase Memory extension', () => {
 
     await vi.waitFor(() => {
       expect(harness.notifications.at(-1)?.[0]).toContain('home directory');
+    });
+    expect(runtime.shellCalls.filter((call) => call.command.includes('index_repository'))).toHaveLength(0);
+  });
+
+  it('skips auto-indexing when target directory is a system directory', async () => {
+    const runtime = new MemoryRuntime('host', true);
+    runtime.gitTopLevel = 'C:\\Windows';
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    await vi.waitFor(() => {
+      expect(harness.notifications).toEqual(expect.arrayContaining([
+        [expect.stringContaining('refusing to auto-index system directory'), 'info'],
+      ]));
     });
     expect(runtime.shellCalls.filter((call) => call.command.includes('index_repository'))).toHaveLength(0);
   });
