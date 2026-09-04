@@ -26,19 +26,31 @@ Felan has several independent efficiency boundaries:
 
 - **Model routing:** Prewalk can hand the same conversation trajectory from a
   planner model to a configured implementation model instead of starting a new
-  session with only a plan document.
+  session with only a plan document. Successful cross-model `explore` children
+  also report the price difference between their observed usage on the child
+  model and the same usage priced on the parent model.
 - **Context control:** nested project instructions load where they apply;
   subagents receive bounded tasks; MCP tools are discovered lazily; web and
   document results are bounded and pageable.
 - **Tool-output optimization:** RTK-backed command rewriting and Felan's
   post-tool compaction reduce noisy model input while protecting failures,
-  complete JSON, and recoverable source output.
+  complete JSON, and recoverable source output. Successful MarkItDown document
+  results report a benchmark-calibrated input estimate, while concise output
+  style reports a benchmark-calibrated visible-output estimate.
 - **Explicit work state:** tasks, structured questions, retained subagent
   records, and local project memory keep decisions and progress available
   without relying on one opaque chat transcript.
 
 Not every boundary produces a savings measurement today. User-facing totals
 include only measurements reported by supported optimization producers.
+
+Current producers are RTK/post-tool compaction, Prewalk implementation routing,
+MarkItDown document reads, concise output style, and local `explore` subagent
+routing. MarkItDown and concise use `estimated-baseline` ratios from retained
+benchmark artifacts; they do not replay an unoptimized request. Explore routing
+reprices observed child usage at the parent model and does not claim fewer
+tokens. Explanatory/custom output styles and unsuccessful subagents do not
+contribute.
 
 ## Reading a savings report
 
@@ -88,6 +100,12 @@ The report is not:
 - a claim that every Felan feature saves money;
 - proof that the current task passed its acceptance criteria; or
 - evidence that one configuration is universally faster or cheaper.
+
+The headline can combine direct observed comparisons and versioned
+counterfactual methods. Read the detailed or JSON report before attributing the
+total to one feature. Sequential producers own distinct boundaries: for example,
+concise text length and subagent model choice may both apply to a child turn,
+but neither may claim the other's decision.
 
 Subscription users may experience an optimization as more work before a usage
 limit rather than literal cash saved. API users may see a lower catalog-price

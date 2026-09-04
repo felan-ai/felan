@@ -21,6 +21,8 @@ settings are authoritative. When a definition omits either setting, the
 corresponding explicit tool argument applies; when both omit it, the parent
 setting is inherited. Extension-facing thinking accepts `off`, `low`, `medium`,
 `high`, `xhigh`, and `max`; an inherited Pi `minimal` level normalizes to `low`.
+The extension also sends the resolved parent model to the host as internal
+attribution metadata; this is not an `Agent` tool parameter.
 
 All child launches are asynchronous and return after admission. Result reads
 return the latest record immediately, while completion notices surface finished
@@ -59,6 +61,26 @@ loaded.
 
 Ambient Pi agent and extension discovery is outside this package and remains
 disabled by Felan applications.
+
+## Explore routing measurement
+
+Felan's local host reports one `model-routing` measurement after each successful,
+non-empty, cross-model `explore` completion. It preserves the child's observed
+input, output, cache-read, cache-write, and one-hour cache-write usage. The
+baseline prices that same usage at the parent model; the actual outcome retains
+the child model and observed provider cost. The method identifier is
+`parent-model-reprice-observed-child-usage-v1`.
+
+This measures only the routing-price advantage. It does not claim that the
+parent would have used the same number of tokens, that delegation reduces token
+count, or that the whole task was cheaper. No completed subagent benchmark
+artifact currently supports a stronger counterfactual. Same-model, empty,
+failed, cancelled, timed-out, turn-limited, and non-`explore` children do not
+claim savings. Continued children report only usage added since the previous
+terminal interval, including after a host reload; this prevents an earlier
+failed interval from being attributed to a later successful continuation.
+Missing catalog pricing makes the aggregate incomplete instead of inventing a
+zero price.
 
 ## Installation and composition
 
@@ -102,3 +124,4 @@ The architecture was informed by the MIT-licensed `pi-subagents` project. See
 - [Agents, tasks, and Prewalk](../../docs/user-guide/agents-tasks-and-prewalk.md)
 - [Extension catalog](../../docs/reference/extension-catalog.md)
 - [Architecture](../../docs/concepts/architecture.md)
+- [Efficient execution and savings](../../docs/concepts/efficient-execution.md)

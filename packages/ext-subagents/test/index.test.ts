@@ -94,6 +94,7 @@ describe('@felan-ai/ext-subagents', () => {
     expect(harness.host.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'reviewer',
+        parentModel: 'provider/model',
         model: 'provider/model',
         thinking: 'high',
         maxTurns: 7,
@@ -133,6 +134,7 @@ describe('@felan-ai/ext-subagents', () => {
 
     expect(harness.host.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
+        parentModel: 'anthropic/claude-opus-4-6',
         model: 'openai-codex/gpt-5.6-luna',
         thinking: 'off',
       }),
