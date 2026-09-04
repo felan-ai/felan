@@ -67,6 +67,138 @@ describe('Codebase Memory extension', () => {
     expect(harness.capabilities).toEqual([]);
   });
 
+  it('auto-indexes a non-git working directory when path is valid', async () => {
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('index_repository')) return result(envelope({ status: 'indexed', project: 'repo' }));
+      if (command.includes('list_projects')) return result(envelope({ projects: [] }));
+      return result(envelope({}));
+    });
+    runtime.gitTopLevel = undefined;
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    await vi.waitFor(() => {
+      const indexed = runtime.shellCalls.filter((call) => call.command.includes('index_repository'));
+      expect(indexed.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('skips auto-indexing when launched in user home directory without git', async () => {
+    const runtime = new MemoryRuntime('host', true);
+    runtime.cwd = '/Users/alice';
+    runtime.gitTopLevel = undefined;
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    await vi.waitFor(() => {
+      expect(harness.notifications).toEqual(expect.arrayContaining([
+        [expect.stringContaining('refusing to auto-index home directory'), 'warning'],
+      ]));
+    });
+    expect(runtime.shellCalls.filter((call) => call.command.includes('index_repository'))).toHaveLength(0);
+    expect(harness.notifications.at(-1)?.[0]).toContain('ask the agent to index it explicitly');
+  });
+
+  it('skips auto-indexing when git rev-parse resolves to the user home directory', async () => {
+    const runtime = new MemoryRuntime('host', true);
+    runtime.gitTopLevel = '/Users/alice';
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    await vi.waitFor(() => {
+      expect(harness.notifications).toEqual(expect.arrayContaining([
+        [expect.stringContaining('home directory'), 'warning'],
+      ]));
+    });
+    expect(runtime.shellCalls.filter((call) => call.command.includes('index_repository'))).toHaveLength(0);
+  });
+
+  it('skips auto-indexing when target directory is a system directory', async () => {
+    const runtime = new MemoryRuntime('host', true);
+    runtime.gitTopLevel = 'C:\\Windows';
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    await vi.waitFor(() => {
+      expect(harness.notifications).toEqual(expect.arrayContaining([
+        [expect.stringContaining('refusing to auto-index system directory'), 'warning'],
+      ]));
+    });
+    expect(runtime.shellCalls.filter((call) => call.command.includes('index_repository'))).toHaveLength(0);
+  });
+
+  it('returns informative error and disables grep augmentation when directory is not auto-indexed', async () => {
+    const telemetry = vi.fn();
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('search_code')) throw new Error('should not search unindexed directory');
+      return result(envelope({}));
+    });
+    runtime.cwd = '/Users/alice';
+    runtime.gitTopLevel = undefined;
+    const harness = await createHarness(runtime, createCodebaseMemoryExtension({ telemetry }));
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    const symbolResponse = await execute(harness.tools[1]!, { name: 'answer' });
+    expect(textOf(symbolResponse)).toContain('This folder is not auto-indexed due to: refusing to auto-index home directory');
+    expect(textOf(symbolResponse)).toContain('Index it only after explicit user approval/request');
+
+    const searchResponse = await execute(harness.tools[3]!, { pattern: 'answer' });
+    expect(textOf(searchResponse)).toContain('This folder is not auto-indexed due to: refusing to auto-index home directory');
+
+    const proxyResponse = await execute(harness.tools[0]!, { command: 'search_graph', arguments: { query: 'answer' } });
+    expect(textOf(proxyResponse)).toContain('This folder is not auto-indexed due to: refusing to auto-index home directory');
+
+    await harness.emit('tool_call', {
+      type: 'tool_call',
+      toolName: 'bash',
+      toolCallId: 'grep-unindexed',
+      input: { command: "grep -R 'Needle' src" },
+    });
+    const augmented = await harness.emit('tool_result', {
+      type: 'tool_result',
+      toolName: 'bash',
+      toolCallId: 'grep-unindexed',
+      input: { command: "grep -R 'Needle' src" },
+      content: [{ type: 'text', text: 'src/a.ts:3:Needle' }],
+      details: {},
+      isError: false,
+    });
+    expect(augmented).toBeUndefined();
+    expect(telemetry).not.toHaveBeenCalledWith('grep_augmentation', expect.anything());
+  });
+
+  it('allows an explicit repo_path through the proxy even for paths that would auto-reject and enables searches', async () => {
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('index_repository')) return result(envelope({ status: 'indexed', project: 'fixture' }));
+      if (command.includes('list_projects')) return result(envelope({ projects: [] }));
+      if (command.includes('search_graph')) return result(envelope({ results: [{ qualified_name: 'fixture.answer' }] }));
+      if (command.includes('get_code_snippet')) return result(envelope({ code: '42' }));
+      return result(envelope({}));
+    });
+    runtime.cwd = '/Users/alice';
+    runtime.gitTopLevel = undefined;
+    const harness = await createHarness(runtime);
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    const beforeIndex = await execute(harness.tools[1]!, { name: 'answer' });
+    expect(textOf(beforeIndex)).toContain('refusing to auto-index home directory');
+
+    await execute(harness.tools[0]!, { command: 'index_repository', arguments: { repo_path: '/tmp/scratch-repo' } });
+
+    const indexed = runtime.shellCalls.filter((call) => call.command.includes('index_repository'));
+    expect(indexed).toHaveLength(1);
+    expect(indexed[0]?.command).toContain('/tmp/scratch-repo');
+
+    const afterIndex = await execute(harness.tools[1]!, { name: 'answer' });
+    expect(textOf(afterIndex)).toContain('42');
+  });
+
   it('registers exactly four tools, background startup indexing, accurate freshness guidance, and explicit refresh paths', async () => {
     const telemetry = vi.fn();
     const runtime = new MemoryRuntime('host', true, async (command) => {
@@ -387,6 +519,11 @@ describe('Codebase Memory extension', () => {
 
 async function execute(tool: ToolDefinition, params: Record<string, unknown>) {
   return tool.execute('call', params as never, new AbortController().signal, () => {}, {} as never);
+}
+
+function textOf(response: { content: Array<{ type: string; text?: string }> }): string {
+  const content = response.content[0];
+  return content?.type === 'text' && typeof content.text === 'string' ? content.text : '';
 }
 
 function renderedCall(tool: ToolDefinition, params: Record<string, unknown>): string {

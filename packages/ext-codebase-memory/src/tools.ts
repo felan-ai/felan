@@ -40,12 +40,20 @@ export function registerTools(
           throw new Error(`Unsupported Codebase Memory command: ${input.command}`);
         }
         const args = input.arguments ?? {};
-        const data = input.command === 'index_repository'
-          ? await projects.index(signal)
-          : (await client.call(input.command, {
-            ...args,
-            project: await projects.project(signal),
-          }, signal === undefined ? {} : { signal })).data;
+        if (input.command === 'index_repository') {
+          const data = await projects.index(signal, typeof args.repo_path === 'string' ? args.repo_path : undefined);
+          return toolResult(data);
+        }
+        const rejection = await projects.autoIndexRejectionReason(signal);
+        if (rejection) {
+          return toolResult({
+            error: `This folder is not auto-indexed due to: ${rejection}. Index it only after explicit user approval/request.`,
+          });
+        }
+        const data = (await client.call(input.command, {
+          ...args,
+          project: await projects.project(signal),
+        }, signal === undefined ? {} : { signal })).data;
         return toolResult(data);
       },
       renderCall(params, theme) {
@@ -119,6 +127,12 @@ export function registerTools(
         max_symbol_lines: MaxSymbolLines,
       }, { additionalProperties: false }),
       execute: async (_id, params, signal) => {
+        const rejection = await projects.autoIndexRejectionReason(signal);
+        if (rejection) {
+          return toolResult({
+            error: `This folder is not auto-indexed due to: ${rejection}. Index it only after explicit user approval/request.`,
+          });
+        }
         const input = params as Record<string, unknown>;
         const project = await projects.project(signal);
         return toolResult((await client.call('search_code', { ...input, project }, signal === undefined ? {} : { signal })).data);

@@ -1,13 +1,19 @@
 import type { AgentRuntime } from '@felan-ai/agent-core';
+import { validateAutoIndexPath } from './auto-index-paths.js';
 import { CacheManager, type CodebaseMemoryTelemetry } from './cache.js';
 import { CbmClient, INDEX_TIMEOUT_MS } from './client.js';
 
-const activeIndexes = new WeakMap<CbmClient, Map<string, Promise<unknown>>>();
+const activeIndexes = new WeakMap<CbmClient, Map<string, Promise<IndexResult>>>();
 const cacheAccounts = new Map<string, Promise<void>>();
+
+export type IndexResult =
+  | { status: 'indexed'; data: unknown }
+  | { status: 'skipped'; reason: string };
 
 export class ProjectService {
   readonly #cache: CacheManager;
   #project: string | undefined;
+  #skipReason: string | undefined;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -20,18 +26,27 @@ export class ProjectService {
     });
   }
 
-  async gitRoot(signal?: AbortSignal, timeout = 10_000): Promise<string> {
+  async gitRoot(signal?: AbortSignal, timeout = 10_000): Promise<string | undefined> {
     const result = await this.runtime.exec('git', ['rev-parse', '--show-toplevel'], {
       cwd: this.runtime.cwd,
       maxOutputBytes: 64 * 1024,
       ...(signal === undefined ? {} : { signal }),
       timeout,
     });
-    return result.code === 0 && !result.killed ? result.stdout.trim() || this.runtime.cwd : this.runtime.cwd;
+    if (result.code !== 0 || result.killed) return undefined;
+    return result.stdout.trim() || undefined;
   }
 
-  async index(signal?: AbortSignal): Promise<unknown> {
-    const root = await this.gitRoot(signal);
+  async index(signal?: AbortSignal, repoPath?: string): Promise<IndexResult> {
+    const targetPath = typeof repoPath === 'string' && repoPath.trim() ? repoPath.trim() : undefined;
+    const root = targetPath ?? (await this.gitRoot(signal)) ?? this.runtime.cwd;
+    if (targetPath === undefined) {
+      const validation = validateAutoIndexPath(root);
+      if (!validation.ok) {
+        this.#skipReason = validation.reason;
+        return { status: 'skipped', reason: validation.reason };
+      }
+    }
     let clientIndexes = activeIndexes.get(this.client);
     if (!clientIndexes) {
       clientIndexes = new Map();
@@ -42,13 +57,14 @@ export class ProjectService {
     const request = this.client.call('index_repository', { repo_path: root, mode: 'full' }, {
       ...(signal === undefined ? {} : { signal }),
       timeoutMs: INDEX_TIMEOUT_MS,
-    }).then(async ({ data }) => {
+    }).then(async ({ data }): Promise<IndexResult> => {
       const record = asRecord(data);
       const project = typeof record.project === 'string' ? record.project : projectName(root);
       this.#project = project;
+      this.#skipReason = undefined;
       await this.#cache.record(project, 0);
       void this.#accountCache();
-      return data;
+      return { status: 'indexed', data };
     }).finally(() => {
       if (clientIndexes.get(root) === request) clientIndexes.delete(root);
     });
@@ -82,9 +98,34 @@ export class ProjectService {
   }
 
 
+  async autoIndexRejectionReason(signal?: AbortSignal, timeoutMs?: number): Promise<string | undefined> {
+    if (this.#project) return undefined;
+    if (this.#skipReason) return this.#skipReason;
+    const root = (await this.gitRoot(signal, timeoutMs)) ?? this.runtime.cwd;
+    const clientIndexes = activeIndexes.get(this.client);
+    const inFlight = clientIndexes?.get(root);
+    if (inFlight) {
+      try {
+        const result = await inFlight;
+        if (result.status === 'skipped') {
+          this.#skipReason = result.reason;
+          return result.reason;
+        }
+      } catch {
+        // Fall through to path validation
+      }
+    }
+    const validation = validateAutoIndexPath(root);
+    if (!validation.ok) {
+      this.#skipReason = validation.reason;
+      return validation.reason;
+    }
+    return undefined;
+  }
+
   async project(signal?: AbortSignal, timeoutMs?: number): Promise<string> {
     if (this.#project) return this.#project;
-    const root = await this.gitRoot(signal, timeoutMs);
+    const root = (await this.gitRoot(signal, timeoutMs)) ?? this.runtime.cwd;
     const listed = await this.client.call('list_projects', {}, {
       ...(signal === undefined ? {} : { signal }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -100,6 +141,12 @@ export class SymbolService {
   constructor(private readonly client: CbmClient, private readonly projects: ProjectService) {}
 
   async read(params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    const rejection = await this.projects.autoIndexRejectionReason(signal);
+    if (rejection) {
+      return {
+        error: `This folder is not auto-indexed due to: ${rejection}. Index it only after explicit user approval/request.`,
+      };
+    }
     const project = await this.projects.project(signal);
     const search = await this.client.call('search_graph', {
       project,
@@ -135,6 +182,12 @@ export class SymbolService {
   }
 
   async searchAndRead(params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    const rejection = await this.projects.autoIndexRejectionReason(signal);
+    if (rejection) {
+      return {
+        error: `This folder is not auto-indexed due to: ${rejection}. Index it only after explicit user approval/request.`,
+      };
+    }
     const project = await this.projects.project(signal);
     const search = await this.client.call('search_graph', {
       project,
