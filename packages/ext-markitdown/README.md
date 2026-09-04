@@ -80,6 +80,29 @@ Markdown lines are split into stable pagination segments so every continuation
 advances, and the complete tool response is limited to 50 KiB. PDF reads remain
 with the ordinary `read` interception and the PDF-bytes event owner.
 
+## Savings measurement
+
+When Felan supplies its savings reporter and an active model, each successful
+converted `read` or `read_document` result contributes an
+`output-optimization` measurement. The actual input estimate is the returned
+text's UTF-8 byte length divided by four and rounded up. Its estimated baseline
+is:
+
+```text
+ceil(actual input estimate / 0.68)
+```
+
+This applies the selected 32% MarkItDown benchmark savings rate: the converted
+result is treated as 68% of the estimated baseline. The method identifier is
+`markitdown-benchmark-32pct-v1`.
+
+This is a benchmark-calibrated estimate for the converted-result boundary, not
+a replay of the unoptimized workflow. It does not claim the warm-cache suite's
+larger gain, local Python CPU savings, or universal savings for unbenchmarked
+formats. Failed or unavailable conversions, missing model/reporter context, and
+PDF event-bridge conversions do not report a measurement. Cache hits remain
+eligible because each successful result is supplied to the model again.
+
 ## Composition and package boundary
 
 ```ts
@@ -142,6 +165,7 @@ pnpm --filter @felan-ai/ext-markitdown test
 - [Web, MCP, browser, and documents](../../docs/user-guide/web-mcp-and-browser.md)
 - [Runtime dependencies](../../docs/reference/runtime-dependencies.md)
 - [Runtime and security](../../docs/concepts/runtime-and-security.md)
+- [Efficient execution and savings](../../docs/concepts/efficient-execution.md)
 
 ## Attribution
 

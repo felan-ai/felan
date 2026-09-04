@@ -113,6 +113,7 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
         type,
         description: params.description,
         prompt: params.prompt,
+        ...(ctx.model === undefined ? {} : { parentModel: formatModelReference(ctx.model) }),
         ...(model.value.reference === undefined ? {} : { model: model.value.reference }),
         ...(thinking === undefined ? {} : { thinking }),
         ...(params.max_turns ?? descriptor.defaultMaxTurns) === undefined

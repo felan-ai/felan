@@ -7,6 +7,14 @@ export interface LocalStoredChild {
   readonly record: SubagentRecord;
   readonly request: SubagentSpawnRequest;
   readonly depth: number;
+  readonly reportedSavings?: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheWrite: number;
+    readonly cacheWrite1h: number;
+    readonly cost: number;
+  };
   readonly sessionFile?: string;
   readonly deliveryId?: string;
   readonly completionPending: boolean;
