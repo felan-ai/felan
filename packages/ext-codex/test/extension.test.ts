@@ -272,6 +272,34 @@ describe('Codex extension activation', () => {
     expect(ctx.compact).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['onComplete', 'onError'] as const)(
+    'ignores %s callbacks after session shutdown invalidates the context',
+    async (callback) => {
+      const harness = createHarness();
+      await codexExtension(harness.pi);
+      const ctx = context('openai', 'gpt-5.4');
+      let contextActive = true;
+      ctx.isIdle = () => {
+        if (!contextActive) {
+          throw new Error('This extension ctx is stale after session replacement or reload.');
+        }
+        return false;
+      };
+
+      await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+      await harness.emit('agent_settled', {}, ctx);
+      const options = vi.mocked(ctx.compact).mock.calls[0]![0]!;
+
+      await harness.emit('session_shutdown', { reason: 'resume' }, ctx);
+      contextActive = false;
+
+      expect(() => {
+        if (callback === 'onComplete') options.onComplete?.({} as never);
+        else options.onError?.(new Error('Compaction cancelled'));
+      }).not.toThrow();
+    },
+  );
+
   it('ignores a successful compaction event from a replaced session', async () => {
     const harness = createHarness();
     await codexExtension(harness.pi);

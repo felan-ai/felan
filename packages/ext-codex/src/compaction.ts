@@ -12,6 +12,14 @@ export function registerPostAgentRunCompaction(
   let compactionAttemptAgentRun: number | undefined;
   let pendingPiCompactionAgentRun: number | undefined;
 
+  const resetSessionState = (): void => {
+    deferredAgentRun = undefined;
+    activeCompaction = undefined;
+    agentRun += 1;
+    compactionAttemptAgentRun = undefined;
+    pendingPiCompactionAgentRun = undefined;
+  };
+
   const startDeferredCompaction = (ctx: ExtensionContext): void => {
     if (deferredAgentRun !== agentRun) return;
     if (compactionAttemptAgentRun === agentRun) {
@@ -73,13 +81,8 @@ export function registerPostAgentRunCompaction(
     if (completedAgentRun === agentRun) compactionAttemptAgentRun = completedAgentRun;
   });
 
-  pi.on('session_start', () => {
-    deferredAgentRun = undefined;
-    activeCompaction = undefined;
-    agentRun += 1;
-    compactionAttemptAgentRun = undefined;
-    pendingPiCompactionAgentRun = undefined;
-  });
+  pi.on('session_start', resetSessionState);
+  pi.on('session_shutdown', resetSessionState);
 }
 
 function isCurrentSessionCompaction(
