@@ -143,8 +143,8 @@ async function refresh(projects: ProjectService, ctx: ExtensionContext, session?
     if (result?.status === 'skipped') {
       if (ctx.hasUI) {
         ctx.ui.notify(
-          `Codebase Memory: ${result.reason} — skipped auto-indexing. Launch Felan from inside a project directory, or index a specific path via codebase_memory({command: "index_repository", arguments: {repo_path: "/path/to/repo"}}).`,
-          'info',
+          `Codebase Memory: ${result.reason} — skipped auto-indexing. Launch Felan from inside a project directory, or ask the agent to index it explicitly.`,
+          'warning',
         );
       }
       return;

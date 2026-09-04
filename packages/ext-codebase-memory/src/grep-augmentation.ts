@@ -26,6 +26,8 @@ export function registerGrepAugmentation(
     if (event.isError) return undefined;
     const startedAt = Date.now();
     try {
+      const rejection = await projects.autoIndexRejectionReason(undefined, remainingMs(startedAt));
+      if (rejection) return undefined;
       const project = await projects.project(undefined, remainingMs(startedAt));
       const result = await client.call('search_code', {
         project,
