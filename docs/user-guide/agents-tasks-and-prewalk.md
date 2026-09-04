@@ -166,7 +166,13 @@ without implementation. The review boundary is model guidance rather than a
 tool sandbox. JSON and print modes auto-approve required review with a warning
 because they cannot accept interactive discussion.
 
-The plan argument must be non-empty and no longer than 32,000 characters.
+The plan argument must be non-empty and no longer than 32,000 characters. In
+the TUI, review opens fullscreen with a scrollable, theme-styled Markdown plan
+pane and fixed actions, so long plans do not push the choices off screen. Use
+the mouse wheel or trackpad, Page Up/Page Down, or Home/End to scroll the plan
+and the select bindings to choose an action. The display copy is terminal-safe
+while the original plan argument remains in model context. RPC mode retains the
+host's select dialog.
 
 ### Lifecycle
 

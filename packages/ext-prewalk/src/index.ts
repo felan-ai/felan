@@ -42,6 +42,12 @@ import {
   type PrewalkPhase,
   type PrewalkState,
 } from './state.js';
+import {
+  APPROVE_PLAN_OPTION,
+  CANCEL_PREWALK_OPTION,
+  FEEDBACK_PLAN_OPTION,
+  presentPlanReview,
+} from './plan-review.js';
 
 type PlannerModel = NonNullable<ExtensionContext['model']>;
 type PlannerThinkingLevel = ReturnType<FelanExtensionAPI['getThinkingLevel']>;
@@ -125,9 +131,6 @@ interface ContextBuildResult {
 const HEADLESS_TASK_MESSAGE_TYPE = 'pi-prewalk-task';
 const ENTER_PREWALK_TOOL = 'enter_prewalk';
 const EXIT_PLAN_MODE_TOOL = 'exit_plan_mode';
-const APPROVE_PLAN_OPTION = 'Approve plan';
-const FEEDBACK_PLAN_OPTION = 'Provide feedback';
-const CANCEL_PREWALK_OPTION = 'Cancel Prewalk';
 const MAX_PLAN_LENGTH = 32_000;
 const IMPLEMENTATION_BASELINE_RATIO = 2 / 3;
 const EnterPrewalkParams = Type.Object({}, { additionalProperties: false });
@@ -661,13 +664,8 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
         return approvedPlanResult();
       }
 
-      const dialogOptions = signal ? { signal } : undefined;
       try {
-        const action = await ctx.ui.select(
-          `Review Prewalk plan\n\n${params.plan}`,
-          [APPROVE_PLAN_OPTION, FEEDBACK_PLAN_OPTION, CANCEL_PREWALK_OPTION],
-          dialogOptions,
-        );
+        const action = await presentPlanReview(ctx, params.plan, signal);
 
         if (action === APPROVE_PLAN_OPTION) {
           if (!resumePlanningAfterReview(ctx, reviewRun, true)) {
@@ -683,7 +681,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
           const feedback = await ctx.ui.input(
             'Feedback on Prewalk plan',
             'Tell the planner what to change...',
-            dialogOptions,
+            signal ? { signal } : undefined,
           );
           if (!resumePlanningAfterReview(ctx, reviewRun, false)) {
             return stalePlanReviewResult(state.phase);

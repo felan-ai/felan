@@ -128,6 +128,30 @@ function createHarness(
   let thinkingLevel = options.thinkingLevel ?? 'max';
   let authenticated = options.authenticated ?? true;
   let idle = options.idle ?? true;
+  let planDecision = options.planDecision;
+  const tui = { terminal: { rows: 40, columns: 80 }, requestRender: vi.fn() };
+  const testKeys: Record<string, string> = {
+    'tui.select.up': 'up',
+    'tui.select.down': 'down',
+    'tui.select.pageUp': 'pageUp',
+    'tui.select.pageDown': 'pageDown',
+    'tui.select.confirm': 'enter',
+    'tui.select.cancel': 'escape',
+  };
+  const keybindings = {
+    getKeys: vi.fn((binding: string) => testKeys[binding] ? [testKeys[binding]] : []),
+    matches: vi.fn((data: string, binding: string) => {
+      const key = keybindings.getKeys(binding)[0];
+      const raw: Record<string, string> = {
+        up: '\x1b[A',
+        down: '\x1b[B',
+        pageUp: '\x1b[5~',
+        pageDown: '\x1b[6~',
+        escape: '\x1b',
+      };
+      return key !== undefined && (key === data || raw[key] === data || (key === 'enter' && data === '\r'));
+    }),
+  };
 
   const ui = {
     notify: vi.fn(),
@@ -138,6 +162,27 @@ function createHarness(
       if (options.planDecision === 'cancel') return 'Cancel Prewalk';
       if (options.planDecision === 'dismiss') return undefined;
       return 'Approve plan';
+    }),
+    custom: vi.fn(async (factory: any) => {
+      if ((options.mode ?? 'tui') !== 'tui') return undefined;
+      let result: unknown;
+      const component = await factory(tui, {
+        fg: (_color: string, text: string) => text,
+        bg: (_color: string, text: string) => text,
+        bold: (text: string) => text,
+        italic: (text: string) => text,
+        underline: (text: string) => text,
+        strikethrough: (text: string) => text,
+      }, keybindings, (value: unknown) => { result = value; });
+      component.render(80);
+      const decision = planDecision;
+      if (decision === 'feedback') component.handleInput?.('\x1b[B');
+      if (decision === 'cancel') {
+        component.handleInput?.('\x1b[B');
+        component.handleInput?.('\x1b[B');
+      }
+      component.handleInput?.(decision === 'dismiss' ? '\x1b' : '\r');
+      return result;
     }),
     input: vi.fn(async () => options.planFeedback),
   };
@@ -236,6 +281,9 @@ function createHarness(
     },
     setIdle(value: boolean) {
       idle = value;
+    },
+    setPlanDecision(value: 'approve' | 'feedback' | 'cancel' | 'dismiss') {
+      planDecision = value;
     },
   };
 }
@@ -775,10 +823,12 @@ describe('plan review', () => {
     const plan = '1. Update implementation\n2. Verify behavior';
     const approval = await exitPlanMode(harness, plan);
 
-    expect(harness.ui.select).toHaveBeenCalledWith(
-      `Review Prewalk plan\n\n${plan}`,
-      ['Approve plan', 'Provide feedback', 'Cancel Prewalk'],
-      undefined,
+    expect(harness.ui.custom).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        overlay: true,
+        overlayOptions: expect.objectContaining({ width: '100%', maxHeight: '100%' }),
+      }),
     );
     expect(harness.ui.setStatus).toHaveBeenCalledWith('prewalk', 'Prewalk reviewing');
     expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', 'Prewalk planning');
@@ -856,7 +906,7 @@ describe('plan review', () => {
     expect(feedback.content[0]?.text).toContain('Keep the public API unchanged.');
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_REVIEW_MESSAGE_TYPE);
 
-    harness.ui.select.mockResolvedValueOnce('Approve plan');
+    harness.setPlanDecision('approve');
     const approval = await exitPlanMode(harness, '1. Preserve the API\n2. Update internals');
     expect(approval).toMatchObject({ details: { decision: 'approved' } });
   });
@@ -899,8 +949,8 @@ describe('plan review', () => {
 
   it('ignores a stale approval after Prewalk exits while the review dialog is open', async () => {
     const harness = createHarness({ prewalkOptions: { planReview: 'ask' } });
-    let resolveReview!: (value: 'Approve plan' | undefined) => void;
-    harness.ui.select.mockImplementationOnce(() => new Promise<'Approve plan' | undefined>((resolve) => {
+    let resolveReview!: (value: undefined) => void;
+    harness.ui.custom.mockImplementationOnce(() => new Promise<undefined>((resolve) => {
       resolveReview = resolve;
     }));
     await startPlanning(harness);
@@ -911,7 +961,7 @@ describe('plan review', () => {
       expect(harness.ui.setStatus).toHaveBeenCalledWith('prewalk', 'Prewalk reviewing');
     });
     await harness.command.handler('exit', harness.ctx);
-    resolveReview('Approve plan');
+    resolveReview(undefined);
 
     const stale = await pendingReview;
     expect(stale).toMatchObject({
@@ -999,6 +1049,22 @@ describe('plan review', () => {
     expect(approval).toMatchObject({ details: { phase: 'planning', decision: 'approved' } });
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_APPROVED_MESSAGE_TYPE);
     log.mockRestore();
+  });
+
+  it('keeps RPC plan review on the host select dialog', async () => {
+    const harness = createHarness({ mode: 'rpc', prewalkOptions: { planReview: 'ask' } });
+    await startPlanning(harness);
+    await preparePlanForReview(harness);
+
+    const approval = await exitPlanMode(harness, '# Preserve the API');
+
+    expect(harness.ui.select).toHaveBeenCalledWith(
+      'Review Prewalk plan\n\n# Preserve the API',
+      ['Approve plan', 'Provide feedback', 'Cancel Prewalk'],
+      undefined,
+    );
+    expect(harness.ui.custom).not.toHaveBeenCalled();
+    expect(approval).toMatchObject({ details: { decision: 'approved' } });
   });
 });
 

@@ -197,7 +197,8 @@ Prewalk is automatic model routing within one session with an optional
 tool-driven plan-review gate. It is not a separate planning agent, read-only
 permission mode, or sandbox. Model-requested entry approval starts Prewalk;
 when plan review is active, the planner later passes the complete plan to
-`exit_plan_mode`, which displays it for approval, feedback, or cancellation.
+`exit_plan_mode`, which displays a fullscreen, scrollable Markdown review for
+approval, feedback, or cancellation in the TUI (and a select dialog in RPC).
 
 The model can call `enter_prewalk` for a new complex repository task, or the
 user can invoke `/prewalk`. Conversation or repository activity from earlier
