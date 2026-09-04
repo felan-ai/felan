@@ -14,6 +14,12 @@ import { CODEX_TOOL_NAMES, createCodexTools, registerPatchResultEvent } from './
 
 const REPLACED_TOOL_NAMES: ReadonlySet<string> = new Set(['read', 'bash', 'edit', 'write']);
 const CODEX_TOOL_NAME_SET: ReadonlySet<string> = new Set(CODEX_TOOL_NAMES);
+export const CODEX_TOOL_MODE_EVENT = 'felan:codex:tool-mode:v1';
+
+export interface CodexToolModeEvent {
+  readonly version: 1;
+  readonly active: boolean;
+}
 
 const codexExtension: FelanExtension = async (pi) => {
   const config = { ...DEFAULT_CODEX_CONFIG, ...pi.config } as import('./config.js').CodexConfig;
@@ -26,18 +32,20 @@ const codexExtension: FelanExtension = async (pi) => {
   const synchronizeTools = (model: Model<Api> | undefined) => {
     const current = pi.getActiveTools();
     ordinaryTools ??= current.filter((name) => !CODEX_TOOL_NAME_SET.has(name));
-    if (supportsCodexModel(model) && pi.runtime.processes) {
+    const active = supportsCodexModel(model) && pi.runtime.processes !== undefined;
+    if (active) {
       pi.setActiveTools([
         ...current.filter((name) => !REPLACED_TOOL_NAMES.has(name) && !CODEX_TOOL_NAME_SET.has(name)),
         ...CODEX_TOOL_NAMES.filter((name) => name !== 'view_image' || supportsImageInput(model)),
       ]);
-      return;
+    } else {
+      const restored = current.filter((name) => !CODEX_TOOL_NAME_SET.has(name));
+      for (const name of ordinaryTools) {
+        if (REPLACED_TOOL_NAMES.has(name) && !restored.includes(name)) restored.push(name);
+      }
+      pi.setActiveTools(restored);
     }
-    const restored = current.filter((name) => !CODEX_TOOL_NAME_SET.has(name));
-    for (const name of ordinaryTools) {
-      if (REPLACED_TOOL_NAMES.has(name) && !restored.includes(name)) restored.push(name);
-    }
-    pi.setActiveTools(restored);
+    pi.events.emit(CODEX_TOOL_MODE_EVENT, { version: 1, active } satisfies CodexToolModeEvent);
   };
 
   pi.on('session_start', (_event, ctx) => synchronizeTools(ctx.model));

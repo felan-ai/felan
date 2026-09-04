@@ -7,7 +7,7 @@ import type {
   Skill,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import codexExtension from '../src/index.js';
+import codexExtension, { CODEX_TOOL_MODE_EVENT } from '../src/index.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 
@@ -27,6 +27,16 @@ describe('Codex extension activation', () => {
     ]);
   });
 
+  it('announces active Codex tool mode for eligible models', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+
+    await harness.emit('session_start', {}, context('openai-codex', 'gpt-5.3-codex'));
+
+    expect(harness.activeTools).not.toContain('read');
+    expect(harness.toolModeEvents).toEqual([{ version: 1, active: true }]);
+  });
+
   it('restores ordinary tools when switching away and activates on a later GPT selection', async () => {
     const harness = createHarness();
     await codexExtension(harness.pi);
@@ -41,6 +51,11 @@ describe('Codex extension activation', () => {
     await harness.emit('model_select', { model: model('openai', 'gpt-5.4') }, context('openai', 'gpt-5.4'));
     expect(harness.activeTools).toContain('exec_command');
     expect(harness.activeTools).not.toContain('bash');
+    expect(harness.toolModeEvents).toEqual([
+      { version: 1, active: true },
+      { version: 1, active: false },
+      { version: 1, active: true },
+    ]);
   });
 
   it('keeps ordinary tools for non-GPT OpenAI models', async () => {
@@ -51,6 +66,7 @@ describe('Codex extension activation', () => {
     expect(harness.activeTools).toEqual([
       'read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate',
     ]);
+    expect(harness.toolModeEvents).toEqual([{ version: 1, active: false }]);
   });
 
   it('keeps ordinary tools when the runtime lacks persistent-process support', async () => {
@@ -61,6 +77,7 @@ describe('Codex extension activation', () => {
     expect(harness.activeTools).toEqual([
       'read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate',
     ]);
+    expect(harness.toolModeEvents).toEqual([{ version: 1, active: false }]);
   });
 
   it('activates view_image only for models with image input', async () => {
@@ -428,6 +445,7 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
   const registerTool = vi.fn();
   const registerProvider = vi.fn();
   const unregisterProvider = vi.fn();
+  const toolModeEvents: Array<{ version: number; active: boolean }> = [];
   const pi = {
     runtime: unusedRuntime(processSupport),
     agentDir: '/agent',
@@ -436,6 +454,13 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
     registerTool,
     registerProvider,
     unregisterProvider,
+    events: {
+      emit: (channel: string, data: unknown) => {
+        if (channel === CODEX_TOOL_MODE_EVENT) {
+          toolModeEvents.push(data as { version: number; active: boolean });
+        }
+      },
+    },
     getActiveTools: () => [...activeTools],
     setActiveTools: (names: string[]) => activeTools.splice(0, activeTools.length, ...names),
     on: (name: string, handler: Handler) => {
@@ -450,6 +475,7 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
     registerTool,
     registerProvider,
     unregisterProvider,
+    toolModeEvents,
     async emit(name: string, event: unknown, ctx: ExtensionContext) {
       const results: unknown[] = [];
       for (const handler of handlers.get(name) ?? []) results.push(await handler(event, ctx));

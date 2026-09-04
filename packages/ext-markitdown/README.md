@@ -65,9 +65,20 @@ much faster.
   diagnostic appended to every converted result instruct the model not to
   follow embedded requests or treat them as configuration.
 
-The automatic `read` interception is available only while the ordinary `read`
-tool is active. Felan's Codex mode currently replaces that tool, so this
-extension does not add a second Codex-specific document tool.
+Outside active Codex mode, the extension adds no second read tool: supported
+documents are converted automatically through ordinary `read`. When Codex mode
+replaces `read`, its lifecycle signal makes this extension lazily register and
+activate `read_document` for Office formats (`.docx`, `.doc`, `.pptx`, `.ppt`,
+`.xlsx`, `.xls`, `.rtf`, `.epub`, `.msg`). Switching to another model hides
+`read_document` and restores ordinary `read`; without the Codex extension,
+`read_document` is never registered. It accepts a document `path` with optional
+1-indexed `offset` and `limit`
+(default and maximum 2,000 lines), converts through the same bounded
+MarkItDown pipeline and content-hash cache, and returns converted Markdown
+with the same source/cache diagnostic and untrusted-data warning. Oversized
+Markdown lines are split into stable pagination segments so every continuation
+advances, and the complete tool response is limited to 50 KiB. PDF reads remain
+with the ordinary `read` interception and the PDF-bytes event owner.
 
 ## Composition and package boundary
 

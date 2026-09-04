@@ -20,9 +20,11 @@ export interface MarkitdownConversion {
   readonly extension: string;
 }
 
-export interface MarkitdownPdfConversion extends MarkitdownConversion {
+export interface MarkitdownDocumentConversion extends MarkitdownConversion {
   readonly markdown: string;
 }
+
+export type MarkitdownPdfConversion = MarkitdownDocumentConversion;
 
 export interface MarkitdownConversionOptions {
   readonly signal?: AbortSignal;
@@ -33,11 +35,11 @@ export async function convertDocument(
   invocation: MarkitdownInvocation,
   sourcePath: string,
   options: MarkitdownConversionOptions = {},
-): Promise<MarkitdownConversion> {
+): Promise<MarkitdownDocumentConversion> {
   const extension = getDocumentExtension(sourcePath);
   const source = await readBoundedInput(runtime, sourcePath);
   validateDocumentContent(source, extension);
-  const { markdown: _markdown, ...conversion } = await convertBytes(
+  return convertBytes(
     runtime,
     invocation,
     source,
@@ -45,7 +47,6 @@ export async function convertDocument(
     safePath(sourcePath),
     options,
   );
-  return conversion;
 }
 
 export async function convertPdfBytes(
@@ -132,7 +133,7 @@ async function convertBytes(
     await storage.writeFile(cacheRelativePath, cached);
     return { cachePath, cacheHit: false, extension, markdown };
   } catch (error) {
-    if (options.signal?.aborted) throw new Error('MarkItDown PDF conversion was cancelled');
+    if (options.signal?.aborted) throw new Error('MarkItDown conversion was cancelled');
     throw new Error(`MarkItDown could not convert ${sourceDescription}: ${commandDiagnostic(errorMessage(error))}`);
   } finally {
     await Promise.allSettled([

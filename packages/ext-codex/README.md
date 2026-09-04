@@ -9,6 +9,10 @@ Active mode replaces `read`, `bash`, `edit`, and `write` with
 `view_image`. Other Felan tools remain active. Switching to another model
 restores the ordinary tools. All shell and filesystem operations use the
 current `AgentRuntime`.
+After each tool-mode synchronization, the extension publishes whether Codex
+replacement is active. MarkItDown uses that lifecycle signal to expose its
+`read_document` fallback only while ordinary `read` is replaced; non-Codex
+models therefore see only the ordinary reader.
 Runtimes without persistent-process support keep Felan's ordinary coding tools.
 Because Pi normally exposes skill metadata only while `read` is active, Codex
 mode restores that metadata from Pi's structured prompt options. Matching

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-codex",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Codex-compatible structured tools and OpenAI request controls for Felan",
   "license": "MIT",
   "type": "module",

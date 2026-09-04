@@ -242,6 +242,10 @@ importers:
         version: 8.2.0(@types/node@24.12.4)(esbuild@0.27.4)(jiti@2.7.0)(yaml@2.9.0)
 
   packages/ext-markitdown:
+    dependencies:
+      typebox:
+        specifier: 1.1.38
+        version: 1.1.38
     devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*
