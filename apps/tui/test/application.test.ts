@@ -1,6 +1,9 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
+import { initTheme } from '@earendil-works/pi-coding-agent';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const interactive = vi.hoisted(() => ({
@@ -200,6 +203,50 @@ describe('interactive application', () => {
 
     expect(statuses).toEqual(['Other status']);
     expect(errors).toEqual(['Compaction failed: Provider unavailable']);
+  });
+
+  it('uses a stable, theme-colored Felan mark as the default working indicator', () => {
+    initTheme('dark');
+    const indicators: Array<{ frames?: string[]; intervalMs?: number } | undefined> = [];
+    const onThemeChanged = vi.fn();
+    const themeController = { onChanged: onThemeChanged };
+    const mode = {
+      setWorkingIndicator: (options?: { frames?: string[]; intervalMs?: number }) => {
+        indicators.push(options);
+      },
+      themeController,
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+
+    installFelanTuiCompatibility(mode, 'darwin');
+    const setWorkingIndicator = (mode as unknown as {
+      setWorkingIndicator(options?: { frames?: string[]; intervalMs?: number }): void;
+    }).setWorkingIndicator;
+    const darkFrames = indicators[0]?.frames;
+
+    expect(darkFrames?.map(stripVTControlCharacters)).toEqual([
+      '⠐◉ ', '⠈◉ ', ' ◉⠁', ' ◉⠂', ' ◉⠄', '⠠◉ ',
+    ]);
+    expect(darkFrames?.map(visibleWidth)).toEqual([3, 3, 3, 3, 3, 3]);
+    expect(darkFrames?.every((frame) => frame.includes('\x1b['))).toBe(true);
+    expect(indicators[0]?.intervalMs).toBe(120);
+
+    setWorkingIndicator({ frames: ['custom'], intervalMs: 50 });
+    themeController.onChanged();
+    expect(onThemeChanged).toHaveBeenCalledOnce();
+    expect(indicators).toHaveLength(2);
+
+    setWorkingIndicator();
+    initTheme('light');
+    themeController.onChanged();
+
+    const lightFrames = indicators[3]?.frames;
+    expect(indicators[1]).toEqual({ frames: ['custom'], intervalMs: 50 });
+    expect(lightFrames?.map(stripVTControlCharacters)).toEqual([
+      '⠐◉ ', '⠈◉ ', ' ◉⠁', ' ◉⠂', ' ◉⠄', '⠠◉ ',
+    ]);
+    expect(lightFrames).not.toEqual(darkFrames);
+    expect(onThemeChanged).toHaveBeenCalledTimes(2);
+    initTheme('dark');
   });
 
   it('reasserts fullscreen mouse tracking after Windows raw input initialization', () => {

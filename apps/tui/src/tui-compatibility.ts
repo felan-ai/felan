@@ -1,4 +1,4 @@
-import type { InteractiveMode } from '@earendil-works/pi-coding-agent';
+import { getSelectListTheme, type InteractiveMode } from '@earendil-works/pi-coding-agent';
 
 const ENTER_ALT_SCREEN = '\x1b[?1049h';
 const DISABLE_ALT_SCROLL = '\x1b[?1007l';
@@ -16,14 +16,26 @@ interface InteractiveModeTerminalInternals {
     terminal?: TerminalWriter;
     mode?: string;
   };
+  setWorkingIndicator?(options?: WorkingIndicatorOptions): void;
   showError?(message: string): void;
   showStatus?(message: string): void;
   switchTuiMode?(mode: string, restoreProgress?: boolean, startRenderer?: boolean): boolean;
+  themeController?: {
+    onChanged?: () => void;
+  };
 }
 
+interface WorkingIndicatorOptions {
+  frames?: string[];
+  intervalMs?: number;
+}
+
+const FELAN_WORKING_FRAMES = ['⠐◉ ', '⠈◉ ', ' ◉⠁', ' ◉⠂', ' ◉⠄', '⠠◉ '];
+const FELAN_WORKING_INTERVAL_MS = 120;
 const installedTerminals = new WeakSet<object>();
 const installedModes = new WeakSet<object>();
 const installedMessageFilters = new WeakSet<object>();
+const installedWorkingIndicators = new WeakSet<object>();
 
 export function installFelanTuiCompatibility(
   mode: InteractiveMode,
@@ -31,6 +43,7 @@ export function installFelanTuiCompatibility(
 ): void {
   const internals = mode as unknown as InteractiveModeTerminalInternals;
   installPiMessageFilters(mode, internals);
+  installFelanWorkingIndicator(mode, internals);
   if (platform !== 'win32') return;
   const terminal = internals.renderer?.terminal;
   if (!terminal || typeof terminal.write !== 'function') return;
@@ -64,6 +77,41 @@ export function installFelanTuiCompatibility(
       }
     });
     return true;
+  };
+}
+
+function installFelanWorkingIndicator(
+  mode: InteractiveMode,
+  internals: InteractiveModeTerminalInternals,
+): void {
+  if (installedWorkingIndicators.has(mode)) return;
+  const setWorkingIndicator = internals.setWorkingIndicator;
+  if (typeof setWorkingIndicator !== 'function') return;
+  installedWorkingIndicators.add(mode);
+
+  let usesFelanIndicator = true;
+  internals.setWorkingIndicator = (options) => {
+    usesFelanIndicator = options === undefined;
+    Reflect.apply(setWorkingIndicator, mode, [options ?? createFelanWorkingIndicator()]);
+  };
+
+  // Pi renders custom frames verbatim, so rebuild their ANSI colors when the active theme changes.
+  const themeController = internals.themeController;
+  const onThemeChanged = themeController?.onChanged;
+  if (themeController && typeof onThemeChanged === 'function') {
+    themeController.onChanged = () => {
+      Reflect.apply(onThemeChanged, themeController, []);
+      if (usesFelanIndicator) internals.setWorkingIndicator?.();
+    };
+  }
+  internals.setWorkingIndicator();
+}
+
+function createFelanWorkingIndicator(): WorkingIndicatorOptions {
+  const accent = getSelectListTheme().selectedPrefix;
+  return {
+    frames: FELAN_WORKING_FRAMES.map((frame) => accent(frame)),
+    intervalMs: FELAN_WORKING_INTERVAL_MS,
   };
 }
 
