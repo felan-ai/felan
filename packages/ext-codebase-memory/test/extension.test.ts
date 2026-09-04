@@ -164,7 +164,7 @@ describe('Codebase Memory extension', () => {
       toolName: 'bash',
       toolCallId: 'grep-unindexed',
       input: { command: "grep -R 'Needle' src" },
-      content: [{ type: 'text', text: 'src/a.ts:3:Needle' }],
+      content: [],
       details: {},
       isError: false,
     });
@@ -454,6 +454,61 @@ describe('Codebase Memory extension', () => {
     }
   });
 
+  it('returns compact search results and reads snippets concurrently in rank order', async () => {
+    let activeReads = 0;
+    let maximumActiveReads = 0;
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('list_projects')) return result(envelope({ projects: [{ name: 'fixture', root_path: '/work/repo' }] }));
+      if (command.includes('search_graph')) {
+        return result(envelope({
+          total: 3,
+          cols: ['qn', 'label', 'file', 'lines', 'rank'],
+          rows: [
+            ['fixture.first', 'Function', 'src/first.ts', '1-3', 1],
+            ['fixture.second', 'Function', 'src/second.ts', '4-6', 2],
+            ['fixture.third', 'Function', 'src/third.ts', '7-9', 3],
+          ],
+        }));
+      }
+      if (command.includes('get_code_snippet')) {
+        activeReads += 1;
+        maximumActiveReads = Math.max(maximumActiveReads, activeReads);
+        await new Promise((resolve) => setTimeout(resolve, command.includes('first') ? 20 : 1));
+        activeReads -= 1;
+        const name = command.includes('first') ? 'first' : command.includes('second') ? 'second' : 'third';
+        return result(envelope({ source: `const ${name} = true;` }));
+      }
+      return result(envelope({}));
+    });
+    const harness = await createHarness(runtime);
+
+    const response = await execute(harness.tools[2]!, { query: 'fixture', read_limit: 3 });
+    const content = response.content[0];
+    const payload = JSON.parse(content?.type === 'text' ? content.text : '') as {
+      total_candidates: number;
+      read_candidates: number;
+      omitted_candidates: number;
+      candidates?: unknown[];
+      symbols: Array<{ symbol: { qualified_name: string }; snippet: { source: string } }>;
+    };
+
+    expect(payload.total_candidates).toBe(3);
+    expect(payload.read_candidates).toBe(3);
+    expect(payload.omitted_candidates).toBe(0);
+    expect(payload.candidates).toBeUndefined();
+    expect(payload.symbols.map(({ symbol }) => symbol.qualified_name)).toEqual([
+      'fixture.first',
+      'fixture.second',
+      'fixture.third',
+    ]);
+    expect(payload.symbols.map(({ snippet }) => snippet.source)).toEqual([
+      'const first = true;',
+      'const second = true;',
+      'const third = true;',
+    ]);
+    expect(maximumActiveReads).toBeGreaterThan(1);
+  });
+
   it('fails closed when a symbol name is ambiguous', async () => {
     const runtime = new MemoryRuntime('host', true, async (command) => {
       if (command.includes('list_projects')) return result(envelope({ projects: [] }));
@@ -487,7 +542,7 @@ describe('Codebase Memory extension', () => {
   it.each([
     ['bash', { command: "grep -R 'Needle' src" }],
     ['exec_command', { cmd: "grep -R 'Needle' src" }],
-    ['exec_command', { cmd: "rg --glob '*.ts' 'Needle' src" }],
+    ['exec_command', { cmd: "rg 'Needle' src" }],
   ])('augments %s grep results within the dedicated deadline and emits hit-rate telemetry', async (toolName, input) => {
     const telemetry = vi.fn();
     const runtime = new MemoryRuntime('host', true, async (command, options) => {
@@ -496,7 +551,6 @@ describe('Codebase Memory extension', () => {
       if (command.includes('list_projects')) return result(envelope({ projects: [] }));
       expect(command).toContain('search_code');
       expect(command).toContain('Needle');
-      expect(command).not.toContain('*.ts');
       return result(envelope({ results: [{ file_path: 'src/a.ts', line: 3, text: 'Needle' }] }));
     });
     const harness = await createHarness(runtime, createCodebaseMemoryExtension({ telemetry }));
@@ -504,7 +558,7 @@ describe('Codebase Memory extension', () => {
     await harness.emit('tool_call', { type: 'tool_call', toolName, toolCallId: 'grep-1', input });
     const augmented = await harness.emit('tool_result', {
       type: 'tool_result', toolName, toolCallId: 'grep-1', input,
-      content: [{ type: 'text', text: 'src/a.ts:3:Needle' }], details: {}, isError: false,
+      content: [], details: {}, isError: false,
     }) as { content: Array<{ type: string; text: string }> };
 
     expect(augmented.content.at(-1)?.text).toContain('Codebase Memory augmentation');
@@ -514,6 +568,45 @@ describe('Codebase Memory extension', () => {
     }));
     const gitCall = runtime.execCalls.find(({ command }) => command === 'git');
     expect(gitCall?.options?.timeout).toBeLessThanOrEqual(1_500);
+  });
+
+  it('skips grep augmentation when focused results are already available', async () => {
+    const telemetry = vi.fn();
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('list_projects')) return result(envelope({ projects: [] }));
+      throw new Error('focused grep results must not trigger CBM');
+    });
+    const harness = await createHarness(runtime, createCodebaseMemoryExtension({ telemetry }));
+    const input = { cmd: "grep -R 'Needle' src" };
+
+    await harness.emit('tool_call', { type: 'tool_call', toolName: 'exec_command', toolCallId: 'focused-grep', input });
+    const original = { type: 'tool_result', toolName: 'exec_command', toolCallId: 'focused-grep', input,
+      content: [{ type: 'text', text: 'src/a.ts:3:Needle' }], details: {}, isError: false };
+    const resultValue = await harness.emit('tool_result', original) as { content: Array<{ text: string }> };
+
+    expect(resultValue).toBeUndefined();
+    expect(runtime.shellCalls.some(({ command }) => command.includes('search_code'))).toBe(false);
+    expect(telemetry).toHaveBeenCalledWith('grep_augmentation', expect.objectContaining({
+      skipped: true,
+      reason: 'focused-result',
+    }));
+  });
+
+  it('skips grep augmentation when the grep pattern is uncertain', async () => {
+    const runtime = new MemoryRuntime('host', true, async () => {
+      throw new Error('uncertain grep commands must not trigger CBM');
+    });
+    const harness = await createHarness(runtime);
+    const input = { cmd: "rg --glob '*.ts' 'Needle' src" };
+
+    await harness.emit('tool_call', { type: 'tool_call', toolName: 'exec_command', toolCallId: 'uncertain-grep', input });
+    const resultValue = await harness.emit('tool_result', {
+      type: 'tool_result', toolName: 'exec_command', toolCallId: 'uncertain-grep', input,
+      content: [], details: {}, isError: false,
+    });
+
+    expect(resultValue).toBeUndefined();
+    expect(runtime.shellCalls).toEqual([]);
   });
 });
 

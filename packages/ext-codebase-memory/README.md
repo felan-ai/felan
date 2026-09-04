@@ -12,7 +12,8 @@ four model tools:
   an explicit `index_repository` refresh for the active git repository.
 - `read_symbol` resolves and reads one named symbol.
 - `search_and_read_symbols` searches symbols and reads a bounded set of likely
-  matches.
+  matches, returning compact match-count metadata and the selected symbols
+  rather than repeating the full candidate list.
 - `search_code` searches indexed source text.
 
 The extension starts one background index at session startup without delaying
@@ -30,9 +31,12 @@ that status. It has no file watcher or periodic refresh. After edits, the model 
 remain authoritative because an index can be stale.
 
 Grep and ripgrep calls made through `bash` or Codex `exec_command` receive a
-best-effort Codebase Memory appendix by default. Augmentation has its own
-1.5-second deadline, never replaces the original command result, and emits
-hit/error telemetry only through a host-supplied callback.
+best-effort Codebase Memory appendix when the original result is empty or
+likely truncated and a simple search pattern can be identified. Focused
+non-empty results and commands with uncertain shell syntax are left unchanged.
+Augmentation has its own 1.5-second deadline, never replaces the original
+command result, and emits hit/error/skip telemetry only through a host-supplied
+callback.
 
 ## Availability and installation
 

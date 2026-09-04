@@ -24,6 +24,17 @@ export function registerGrepAugmentation(
     if (!pending) return undefined;
     patterns.delete(event.toolCallId);
     if (event.isError) return undefined;
+    if (!needsAugmentation(event)) {
+      telemetry('grep_augmentation', {
+        tool: pending.tool,
+        hit: false,
+        skipped: true,
+        reason: 'focused-result',
+        durationMs: 0,
+        deadlineMs: GREP_AUGMENT_TIMEOUT_MS,
+      });
+      return undefined;
+    }
     const startedAt = Date.now();
     try {
       const rejection = await projects.autoIndexRejectionReason(undefined, remainingMs(startedAt));
@@ -78,27 +89,35 @@ function grepPattern(command: string): string | undefined {
   if (!segment) return undefined;
   const tokens = segment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/gu) ?? [];
   const index = tokens.findIndex((token) => token === 'grep' || token === 'rg');
-  const optionsWithValues = new Set([
-    '-A', '-B', '-C', '-f', '-g', '-j', '-m', '-t', '-T',
-    '--after-context', '--before-context', '--context', '--encoding', '--engine',
-    '--file', '--glob', '--iglob', '--max-count', '--sort', '--sortr', '--threads',
-    '--type', '--type-not',
-  ]);
   for (let position = index + 1; position < tokens.length; position += 1) {
     const token = tokens[position]!;
     if (token === '-e' || token === '--regexp') return unquote(tokens[position + 1]);
-    if (optionsWithValues.has(token)) {
-      position += 1;
-      continue;
-    }
+    if (token.startsWith('--')) return undefined;
+    if (token.startsWith('-') && !isFlagOnlyToken(token)) return undefined;
     if (token.startsWith('-')) continue;
     return unquote(token);
   }
   return undefined;
 }
 
+function isFlagOnlyToken(token: string): boolean {
+  return /^-[RrInFiEsvHx]+$/u.test(token);
+}
+
 function unquote(token: string | undefined): string | undefined {
   return token?.replace(/^(['"])(.*)\1$/u, '$2');
+}
+
+function needsAugmentation(event: any): boolean {
+  if (event.details?.truncated === true || event.truncated === true) return true;
+  const text = Array.isArray(event.content)
+    ? event.content
+      .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
+      .map((block: any) => block.text)
+      .join('\n')
+    : '';
+  if (text.length === 0) return true;
+  return /(?:output|result)\s+(?:was\s+)?truncated|\btruncated\b|\.{3}\s*$/iu.test(text);
 }
 
 function hasResults(value: unknown): boolean {

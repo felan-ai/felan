@@ -198,14 +198,22 @@ export class SymbolService {
     }, signal === undefined ? {} : { signal });
     const candidates = searchCandidates(search.data);
     const readLimit = clampInt(params.read_limit, 1, 12, 6);
-    const symbols = [];
-    for (const candidate of candidates.slice(0, readLimit)) {
+    const selectedCandidates = candidates.slice(0, readLimit);
+    const readableCandidates = selectedCandidates.flatMap((candidate) => {
       const qualifiedName = asRecord(candidate).qualified_name;
-      if (typeof qualifiedName !== 'string') continue;
+      return typeof qualifiedName === 'string' ? [{ candidate, qualifiedName }] : [];
+    });
+    const symbols = await Promise.all(readableCandidates.map(async ({ candidate, qualifiedName }) => {
       const snippet = await this.client.call('get_code_snippet', { project, qualified_name: qualifiedName }, signal === undefined ? {} : { signal });
-      symbols.push({ symbol: candidate, snippet: boundSnippet(snippet.data, params.max_symbol_lines) });
-    }
-    return { project, candidates, symbols };
+      return { symbol: candidate, snippet: boundSnippet(snippet.data, params.max_symbol_lines) };
+    }));
+    return {
+      project,
+      total_candidates: candidates.length,
+      read_candidates: readableCandidates.length,
+      omitted_candidates: Math.max(0, candidates.length - selectedCandidates.length),
+      symbols,
+    };
   }
 }
 
