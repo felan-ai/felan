@@ -106,8 +106,17 @@ export function renderToolActivityGroup(
 
 export function toolCallLabel(call: ToolActivityCall): string {
   const label = callLabel(call);
-  const preview = argumentPreview(call);
+  const preview = resultChoicePreview(call) ?? argumentPreview(call);
   return preview ? `${label} · ${preview}` : label;
+}
+
+function resultChoicePreview(call: ToolActivityCall): string | undefined {
+  if (call.name.toLowerCase() !== 'exit_plan_mode' || call.status !== 'completed') return undefined;
+  const decision = asRecord(call.result?.details).decision;
+  if (decision === 'approved') return 'Approve plan';
+  if (decision === 'feedback') return 'Provide feedback';
+  if (decision === 'cancelled') return 'Cancel Prewalk';
+  return undefined;
 }
 
 export function toolGroupSummary(calls: readonly ToolActivityCall[]): string {

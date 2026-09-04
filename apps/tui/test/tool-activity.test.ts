@@ -483,6 +483,29 @@ describe('tool activity rendering', () => {
     expect(output).not.toContain('T-AAAAAA');
   });
 
+  it.each([
+    ['approved', 'Approve plan'],
+    ['feedback', 'Provide feedback'],
+    ['cancelled', 'Cancel Prewalk'],
+  ])('shows the Exit Plan Mode %s choice alongside the tool label', (decision, choice) => {
+    const plan = '1. Keep this plan out of the collapsed activity row.';
+    const harness = activityHarness([
+      assistant([toolCall('exit-plan-mode-1', 'exit_plan_mode', { plan })], 10),
+      toolResult(
+        'exit-plan-mode-1',
+        'exit_plan_mode',
+        'Plan review completed.',
+        false,
+        20,
+        { phase: decision === 'cancelled' ? 'idle' : 'planning', decision },
+      ),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'exit-plan-mode-1', theme, false);
+    expect(output).toContain(`  ✓ Exit Plan Mode · ${choice}`);
+    expect(output).not.toContain(plan);
+  });
+
   it('suppresses Pi fallback output while retaining bounded expansion', () => {
     const harness = activityHarness([
       assistant([toolCall('read-1', 'read', { path: 'src/a.ts' })], 10),

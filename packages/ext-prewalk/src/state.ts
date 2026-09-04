@@ -37,7 +37,6 @@ export interface TurnDecision {
   state: PrewalkRunState;
   shouldHandoff: boolean;
   shouldContinue: boolean;
-  shouldReview: boolean;
 }
 
 export type ValidationResult = { ok: true } | { ok: false; reason: string };
@@ -107,7 +106,7 @@ export function recordToolCall(state: PrewalkRunState, call: ToolCallSummary): P
 export function reduceTurn(
   state: PrewalkRunState,
   results: readonly ToolResultSummary[],
-  options: { allowContinuation?: boolean; planPresented?: boolean } = {},
+  options: { allowContinuation?: boolean } = {},
 ): TurnDecision {
   const successfulIds = new Set(results.filter((result) => !result.isError).map((result) => result.toolCallId));
   const taskCreateSucceeded = state.taskCreateSucceeded
@@ -119,18 +118,12 @@ export function reduceTurn(
     && taskGraphReady
     && (!state.reviewRequired || state.reviewApproved)
     && state.mutationCallIds.some((toolCallId) => successfulIds.has(toolCallId));
-  const shouldReview = state.reviewRequired
-    && !state.reviewApproved
-    && taskGraphReady
-    && options.planPresented === true;
-
   let continuationArmed = results.some((result) => !result.isError) || state.continuationArmed;
   let continuationCount = state.continuationCount;
   let shouldContinue = false;
 
   if (
     !shouldHandoff
-    && !shouldReview
     && options.allowContinuation !== false
     && results.length === 0
     && continuationArmed
@@ -158,7 +151,6 @@ export function reduceTurn(
     },
     shouldHandoff,
     shouldContinue,
-    shouldReview,
   };
 }
 

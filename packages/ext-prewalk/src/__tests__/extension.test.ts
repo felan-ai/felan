@@ -3,8 +3,7 @@ import type {
   FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import prewalkExtension, {
-} from '../index.js';
+import prewalkExtension from '../index.js';
 import {
   CONTINUATION_INSTRUCTION,
   CONTINUATION_MESSAGE_TYPE,
@@ -88,6 +87,8 @@ function createHarness(
     flags?: Record<string, boolean | string>;
     thinkingLevel?: string;
     entryApproved?: boolean;
+    planDecision?: 'approve' | 'feedback' | 'cancel' | 'dismiss';
+    planFeedback?: string;
     prewalkOptions?: { entryApproval?: string; planReview?: string };
     savings?: { report(measurement: unknown): Promise<void> };
   } = {},
@@ -132,6 +133,13 @@ function createHarness(
     notify: vi.fn(),
     setStatus: vi.fn(),
     confirm: vi.fn(async () => options.entryApproved ?? true),
+    select: vi.fn(async () => {
+      if (options.planDecision === 'feedback') return 'Provide feedback';
+      if (options.planDecision === 'cancel') return 'Cancel Prewalk';
+      if (options.planDecision === 'dismiss') return undefined;
+      return 'Approve plan';
+    }),
+    input: vi.fn(async () => options.planFeedback),
   };
   const waitForIdle = vi.fn(async () => undefined);
 
@@ -267,7 +275,7 @@ async function recordTaskGraph(harness: ReturnType<typeof createHarness>, prefix
   });
 }
 
-async function presentPlanForReview(harness: ReturnType<typeof createHarness>) {
+async function preparePlanForReview(harness: ReturnType<typeof createHarness>) {
   await harness.emit('turn_start', { type: 'turn_start', turnIndex: 0, timestamp: Date.now() });
   await recordTaskGraph(harness, 'review-task');
   await harness.emit('turn_end', {
@@ -277,12 +285,19 @@ async function presentPlanForReview(harness: ReturnType<typeof createHarness>) {
     toolResults: taskGraphResults('review-task'),
   });
   await harness.emit('turn_start', { type: 'turn_start', turnIndex: 1, timestamp: Date.now() });
-  await harness.emit('turn_end', {
-    type: 'turn_end',
-    turnIndex: 1,
-    message: assistant('stop', [{ type: 'text', text: '1. Update implementation\n2. Verify behavior\n\nApprove?' }]),
-    toolResults: [],
-  });
+}
+
+async function exitPlanMode(
+  harness: ReturnType<typeof createHarness>,
+  plan = '1. Update implementation\n2. Verify behavior',
+) {
+  return harness.tools.get('exit_plan_mode').execute(
+    'exit-plan-mode',
+    { plan },
+    undefined,
+    undefined,
+    harness.ctx,
+  );
 }
 
 function taskGraphResults(prefix = 'task') {
@@ -425,7 +440,7 @@ describe('flags and commands', () => {
     const harness = createHarness();
     const tool = harness.tools.get('enter_prewalk');
 
-    expect([...harness.tools.keys()]).toEqual(['enter_prewalk', 'approve_prewalk_plan']);
+    expect([...harness.tools.keys()]).toEqual(['enter_prewalk', 'exit_plan_mode']);
     expect(tool.executionMode).toBe('sequential');
     expect(tool.parameters).toMatchObject({
       type: 'object',
@@ -438,6 +453,20 @@ describe('flags and commands', () => {
       'Conversation or repository activity from earlier requests does not prevent entry.',
     );
     expect(tool.description).toContain('enter before its first mutation.');
+
+    const exitPlanModeTool = harness.tools.get('exit_plan_mode');
+    expect(exitPlanModeTool.executionMode).toBe('sequential');
+    expect(exitPlanModeTool.parameters).toMatchObject({
+      type: 'object',
+      properties: {
+        plan: expect.objectContaining({ type: 'string', minLength: 1, maxLength: 32_000 }),
+      },
+      required: ['plan'],
+      additionalProperties: false,
+    });
+    expect(exitPlanModeTool.description).toContain('Approval returns to planning');
+    expect(exitPlanModeTool.description).toContain('Feedback keeps planning active');
+    expect(exitPlanModeTool.description).toContain('cancellation exits Prewalk');
   });
 
   it('registers namespaced Pi flags with defaults', () => {
@@ -737,29 +766,33 @@ describe('model entry', () => {
 });
 
 describe('plan review', () => {
-  it('inherits ask from entry approval and waits for explicit approval before mutation handoff', async () => {
+  it('presents the plan argument for ask plus inherit and hands off after approval and mutation', async () => {
     const harness = createHarness({ prewalkOptions: { planReview: 'inherit' } });
     await startPlanning(harness);
 
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_REVIEW_MESSAGE_TYPE);
-    await presentPlanForReview(harness);
-    await harness.emit('agent_settled', { type: 'agent_settled' });
+    await preparePlanForReview(harness);
+    const plan = '1. Update implementation\n2. Verify behavior';
+    const approval = await exitPlanMode(harness, plan);
 
-    expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', 'Prewalk reviewing');
-    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_REVIEW_MESSAGE_TYPE);
-    expect(harness.setModel).not.toHaveBeenCalled();
-
-    const approval = await harness.tools.get('approve_prewalk_plan').execute(
-      'approve-plan', {}, undefined, undefined, harness.ctx,
+    expect(harness.ui.select).toHaveBeenCalledWith(
+      `Review Prewalk plan\n\n${plan}`,
+      ['Approve plan', 'Provide feedback', 'Cancel Prewalk'],
+      undefined,
     );
-    expect(approval).toMatchObject({ details: { phase: 'planning', approved: true } });
+    expect(harness.ui.setStatus).toHaveBeenCalledWith('prewalk', 'Prewalk reviewing');
+    expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', 'Prewalk planning');
+    expect(approval).toMatchObject({ details: { phase: 'planning', decision: 'approved' } });
     const approvedContext = await contextMessages(harness, [
       assistant('toolUse', [{
-        type: 'toolCall', id: 'approve-plan', name: 'approve_prewalk_plan', arguments: {},
+        type: 'toolCall', id: 'exit-plan-mode', name: 'exit_plan_mode', arguments: { plan },
       }]),
-      toolResult('approve-plan', 'approve_prewalk_plan'),
+      toolResult('exit-plan-mode', 'exit_plan_mode'),
     ]);
-    expect(approvedContext).toHaveLength(1);
+    expect(approvedContext).toHaveLength(3);
+    expect(approvedContext[0]).toMatchObject({
+      content: [expect.objectContaining({ name: 'exit_plan_mode', arguments: { plan } })],
+    });
     expect(approvedContext.at(-1)?.customType).toBe(PLAN_APPROVED_MESSAGE_TYPE);
 
     await harness.emit('turn_start', { type: 'turn_start', turnIndex: 2, timestamp: Date.now() });
@@ -774,6 +807,119 @@ describe('plan review', () => {
     });
 
     expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false });
+  });
+
+  it('keeps ask plus inherit planning active when a conversational plan settles without the tool', async () => {
+    const harness = createHarness({ prewalkOptions: { entryApproval: 'ask', planReview: 'inherit' } });
+    await startPlanning(harness);
+    await preparePlanForReview(harness);
+    await harness.emit('turn_end', {
+      type: 'turn_end',
+      turnIndex: 1,
+      message: assistant('stop', [{ type: 'text', text: 'Plan presented outside exit_plan_mode' }]),
+      toolResults: [],
+    });
+    await harness.emit('agent_settled', { type: 'agent_settled' });
+
+    const approval = await exitPlanMode(harness);
+
+    expect(approval).toMatchObject({ details: { phase: 'planning', decision: 'approved' } });
+    expect(harness.ui.notify).not.toHaveBeenCalledWith(
+      'Prewalk ended before a qualifying first mutation.',
+      'warning',
+    );
+  });
+
+  it('returns user feedback and remains in planning until a revised plan is approved', async () => {
+    const harness = createHarness({
+      planDecision: 'feedback',
+      planFeedback: 'Keep the public API unchanged.',
+      prewalkOptions: { planReview: 'ask' },
+    });
+    await startPlanning(harness);
+    await preparePlanForReview(harness);
+
+    const feedback = await exitPlanMode(harness, '1. Change the API');
+
+    expect(harness.ui.input).toHaveBeenCalledWith(
+      'Feedback on Prewalk plan',
+      'Tell the planner what to change...',
+      undefined,
+    );
+    expect(feedback).toMatchObject({
+      details: {
+        phase: 'planning',
+        decision: 'feedback',
+        feedback: 'Keep the public API unchanged.',
+      },
+    });
+    expect(feedback.content[0]?.text).toContain('Keep the public API unchanged.');
+    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_REVIEW_MESSAGE_TYPE);
+
+    harness.ui.select.mockResolvedValueOnce('Approve plan');
+    const approval = await exitPlanMode(harness, '1. Preserve the API\n2. Update internals');
+    expect(approval).toMatchObject({ details: { decision: 'approved' } });
+  });
+
+  it('cancels Prewalk without implementation when the user selects cancel', async () => {
+    const harness = createHarness({
+      planDecision: 'cancel',
+      prewalkOptions: { planReview: 'ask' },
+    });
+    await startPlanning(harness);
+    await preparePlanForReview(harness);
+
+    const cancellation = await exitPlanMode(harness);
+
+    expect(cancellation).toMatchObject({
+      details: { phase: 'idle', decision: 'cancelled' },
+      terminate: true,
+    });
+    expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', undefined);
+    expect(harness.setModel).not.toHaveBeenCalled();
+    expect(await contextMessages(harness, [])).toEqual([]);
+  });
+
+  it('dismisses the dialog without approving or exiting Prewalk', async () => {
+    const harness = createHarness({
+      planDecision: 'dismiss',
+      prewalkOptions: { planReview: 'ask' },
+    });
+    await startPlanning(harness);
+    await preparePlanForReview(harness);
+
+    const dismissal = await exitPlanMode(harness);
+
+    expect(dismissal).toMatchObject({
+      details: { phase: 'planning', decision: 'dismissed' },
+      terminate: true,
+    });
+    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_REVIEW_MESSAGE_TYPE);
+  });
+
+  it('ignores a stale approval after Prewalk exits while the review dialog is open', async () => {
+    const harness = createHarness({ prewalkOptions: { planReview: 'ask' } });
+    let resolveReview!: (value: 'Approve plan' | undefined) => void;
+    harness.ui.select.mockImplementationOnce(() => new Promise<'Approve plan' | undefined>((resolve) => {
+      resolveReview = resolve;
+    }));
+    await startPlanning(harness);
+    await preparePlanForReview(harness);
+
+    const pendingReview = exitPlanMode(harness);
+    await vi.waitFor(() => {
+      expect(harness.ui.setStatus).toHaveBeenCalledWith('prewalk', 'Prewalk reviewing');
+    });
+    await harness.command.handler('exit', harness.ctx);
+    resolveReview('Approve plan');
+
+    const stale = await pendingReview;
+    expect(stale).toMatchObject({
+      details: { phase: 'idle', decision: 'stale' },
+      terminate: true,
+    });
+    expect(harness.ui.setStatus).toHaveBeenLastCalledWith('prewalk', undefined);
+    expect(harness.setModel).not.toHaveBeenCalled();
   });
 
   it('does not hand off for a mutation before plan approval', async () => {
@@ -794,25 +940,36 @@ describe('plan review', () => {
     expect(harness.setModel).not.toHaveBeenCalled();
   });
 
-  it('rejects approval outside the review phase', async () => {
+  it('rejects exit_plan_mode outside an active planning run', async () => {
     const harness = createHarness({ prewalkOptions: { planReview: 'ask' } });
 
-    await expect(harness.tools.get('approve_prewalk_plan').execute(
-      'approve-plan', {}, undefined, undefined, harness.ctx,
-    )).rejects.toThrow('No Prewalk plan is awaiting approval');
+    await expect(exitPlanMode(harness)).rejects.toThrow(
+      'exit_plan_mode requires an active Prewalk planning run; current phase is idle.',
+    );
   });
 
-  it('rejects duplicate approval after the plan is approved', async () => {
+  it('rejects an empty plan and presenting a plan before the task gate is ready', async () => {
     const harness = createHarness({ prewalkOptions: { planReview: 'ask' } });
     await startPlanning(harness);
-    await presentPlanForReview(harness);
-    await harness.tools.get('approve_prewalk_plan').execute(
-      'approve-plan', {}, undefined, undefined, harness.ctx,
-    );
 
-    await expect(harness.tools.get('approve_prewalk_plan').execute(
-      'duplicate-approval', {}, undefined, undefined, harness.ctx,
-    )).rejects.toThrow('No Prewalk plan is awaiting approval');
+    await expect(exitPlanMode(harness, '   ')).rejects.toThrow('requires a non-empty plan');
+    await expect(exitPlanMode(harness, 'x'.repeat(32_001))).rejects.toThrow(
+      'plan must not exceed 32000 characters',
+    );
+    await expect(exitPlanMode(harness)).rejects.toThrow(
+      'Complete the required TaskCreate and in-progress TaskUpdate calls',
+    );
+  });
+
+  it('rejects a second plan submission after approval', async () => {
+    const harness = createHarness({ prewalkOptions: { planReview: 'ask' } });
+    await startPlanning(harness);
+    await preparePlanForReview(harness);
+    await exitPlanMode(harness);
+
+    await expect(exitPlanMode(harness, 'Another plan')).rejects.toThrow(
+      'The Prewalk plan is already approved.',
+    );
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_APPROVED_MESSAGE_TYPE);
   });
 
@@ -823,21 +980,23 @@ describe('plan review', () => {
     await startPlanning(harness);
 
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLANNING_MESSAGE_TYPE);
+    await expect(exitPlanMode(harness)).rejects.toThrow(
+      'Plan review is disabled for the active Prewalk run.',
+    );
   });
 
   it.each(['json', 'print'] as const)('auto-approves ask review with a trace in %s mode', async (mode) => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const harness = createHarness({ mode, prewalkOptions: { planReview: 'ask' } });
     await startPlanning(harness);
-    await presentPlanForReview(harness);
+    await preparePlanForReview(harness);
+
+    const approval = await exitPlanMode(harness);
 
     expect(log).toHaveBeenCalledWith(
       `Prewalk auto-approved plan review because interactive input is unavailable in ${mode} mode.`,
     );
-    expect(harness.sendMessage).toHaveBeenLastCalledWith(
-      expect.objectContaining({ customType: PLAN_APPROVED_MESSAGE_TYPE }),
-      { deliverAs: 'followUp' },
-    );
+    expect(approval).toMatchObject({ details: { phase: 'planning', decision: 'approved' } });
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_APPROVED_MESSAGE_TYPE);
     log.mockRestore();
   });

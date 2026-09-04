@@ -27,7 +27,6 @@ import {
   IMPLEMENTATION_MESSAGE_TYPE,
   PLAN_APPROVED_INSTRUCTION,
   PLAN_APPROVED_MESSAGE_TYPE,
-  PLAN_REVIEW_INSTRUCTION,
   PLAN_REVIEW_MESSAGE_TYPE,
   PLAN_REVIEW_PLANNING_INSTRUCTION,
   PLANNING_INSTRUCTION,
@@ -109,7 +108,7 @@ interface ModelTransitionResult {
   externalThinkingLevel?: PlannerThinkingLevel;
 }
 
-type GuidedPhase = Extract<PrewalkPhase, 'planning' | 'reviewing' | 'implementing'>;
+type GuidedPhase = Extract<PrewalkPhase, 'planning' | 'implementing'>;
 
 interface PhaseContextAnchor {
   phase: GuidedPhase;
@@ -125,10 +124,20 @@ interface ContextBuildResult {
 
 const HEADLESS_TASK_MESSAGE_TYPE = 'pi-prewalk-task';
 const ENTER_PREWALK_TOOL = 'enter_prewalk';
-const APPROVE_PREWALK_PLAN_TOOL = 'approve_prewalk_plan';
+const EXIT_PLAN_MODE_TOOL = 'exit_plan_mode';
+const APPROVE_PLAN_OPTION = 'Approve plan';
+const FEEDBACK_PLAN_OPTION = 'Provide feedback';
+const CANCEL_PREWALK_OPTION = 'Cancel Prewalk';
+const MAX_PLAN_LENGTH = 32_000;
 const IMPLEMENTATION_BASELINE_RATIO = 2 / 3;
 const EnterPrewalkParams = Type.Object({}, { additionalProperties: false });
-const ApprovePrewalkPlanParams = Type.Object({}, { additionalProperties: false });
+const ExitPlanModeParams = Type.Object({
+  plan: Type.String({
+    minLength: 1,
+    maxLength: MAX_PLAN_LENGTH,
+    description: 'The complete plan to present to the user for review.',
+  }),
+}, { additionalProperties: false });
 
 function registerPrewalk(pi: FelanExtensionAPI): void {
   pi.registerCapability({
@@ -521,22 +530,49 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
         };
   }
 
-  function approvePlan(ctx: ExtensionContext): boolean {
-    if (state.phase !== 'reviewing' || !state.run) return false;
+  function beginPlanReview(ctx: ExtensionContext): PrewalkState['run'] | undefined {
+    if (
+      state.phase !== 'planning'
+      || !state.run
+      || !state.run.reviewRequired
+      || state.run.reviewApproved
+    ) return undefined;
+    if (state.run.taskGateRequired && !state.run.taskGraphReady) return undefined;
+    const reviewRun = { ...state.run };
+    state = {
+      phase: 'reviewing',
+      run: reviewRun,
+    };
+    phaseContextAnchor = undefined;
+    updateStatus(ctx);
+    return reviewRun;
+  }
+
+  function resumePlanningAfterReview(
+    ctx: ExtensionContext,
+    reviewRun: NonNullable<PrewalkState['run']>,
+    approved: boolean,
+  ): boolean {
+    if (state.phase !== 'reviewing' || state.run !== reviewRun) return false;
     state = {
       phase: 'planning',
       run: {
-        ...state.run,
+        ...reviewRun,
         mutationCallIds: [],
         taskCreateCallIds: [],
         taskClaimCallIds: [],
         handoffArmed: false,
-        reviewApproved: true,
+        reviewRequired: true,
+        reviewApproved: approved,
       },
     };
     phaseContextAnchor = undefined;
     updateStatus(ctx);
     return true;
+  }
+
+  function isActivePlanReview(reviewRun: NonNullable<PrewalkState['run']>): boolean {
+    return state.phase === 'reviewing' && state.run === reviewRun;
   }
 
   pi.registerTool({
@@ -564,7 +600,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
 
       startRun(ctx, false);
       const reviewText = effectivePlanReview(config) === 'ask'
-        ? ' present the plan for explicit user approval,'
+        ? ` submit the plan through ${EXIT_PLAN_MODE_TOOL} for user review,`
         : '';
       return {
         content: [{
@@ -581,25 +617,113 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: APPROVE_PREWALK_PLAN_TOOL,
-    label: 'Approve Prewalk Plan',
-    description: 'Record explicit user approval of the plan currently under Prewalk review. Call only after the user explicitly approves, and call it as the only tool in the response.',
-    promptSnippet: 'Approve the reviewed Prewalk plan after explicit user approval',
+    name: EXIT_PLAN_MODE_TOOL,
+    label: 'Exit Plan Mode',
+    description: 'Present the completed Prewalk plan for user review. Pass the full plan and call this as the only tool in the response. Approval returns to planning so the first focused mutation can trigger the implementation-model handoff. Feedback keeps planning active; cancellation exits Prewalk.',
+    promptSnippet: 'Present a completed Prewalk plan for approval, feedback, or cancellation',
     executionMode: 'sequential',
-    parameters: ApprovePrewalkPlanParams,
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      if (!approvePlan(ctx)) {
+    parameters: ExitPlanModeParams,
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      if (params.plan.trim().length === 0) {
+        return prewalkToolError('exit_plan_mode requires a non-empty plan.');
+      }
+      if (params.plan.length > MAX_PLAN_LENGTH) {
+        return prewalkToolError(`exit_plan_mode plan must not exceed ${MAX_PLAN_LENGTH} characters.`);
+      }
+      if (state.phase !== 'planning' || !state.run) {
         return prewalkToolError(
-          'No Prewalk plan is awaiting approval. Continue the current phase without calling approve_prewalk_plan.',
+          `exit_plan_mode requires an active Prewalk planning run; current phase is ${state.phase}.`,
         );
       }
-      return {
-        content: [{
-          type: 'text',
-          text: 'The Prewalk plan is approved. On the next model turn, make one focused mutation that establishes the implementation direction before handoff.',
-        }],
-        details: { phase: 'planning', approved: true },
-      };
+      if (state.run.reviewApproved) {
+        return prewalkToolError(
+          'The Prewalk plan is already approved. Make the focused mutation that triggers implementation handoff.',
+        );
+      }
+      if (!state.run.reviewRequired) {
+        return prewalkToolError('Plan review is disabled for the active Prewalk run. Continue the configured focused-mutation flow.');
+      }
+      if (state.run.taskGateRequired && !state.run.taskGraphReady) {
+        return prewalkToolError(
+          'Complete the required TaskCreate and in-progress TaskUpdate calls before presenting the Prewalk plan.',
+        );
+      }
+      const reviewRun = beginPlanReview(ctx);
+      if (!reviewRun) {
+        return prewalkToolError('Prewalk could not enter plan review from the current state.');
+      }
+
+      if (!ctx.hasUI) {
+        notify(ctx, `Prewalk auto-approved plan review because interactive input is unavailable in ${ctx.mode} mode.`, 'warning');
+        if (!resumePlanningAfterReview(ctx, reviewRun, true)) {
+          return stalePlanReviewResult(state.phase);
+        }
+        return approvedPlanResult();
+      }
+
+      const dialogOptions = signal ? { signal } : undefined;
+      try {
+        const action = await ctx.ui.select(
+          `Review Prewalk plan\n\n${params.plan}`,
+          [APPROVE_PLAN_OPTION, FEEDBACK_PLAN_OPTION, CANCEL_PREWALK_OPTION],
+          dialogOptions,
+        );
+
+        if (action === APPROVE_PLAN_OPTION) {
+          if (!resumePlanningAfterReview(ctx, reviewRun, true)) {
+            return stalePlanReviewResult(state.phase);
+          }
+          return approvedPlanResult();
+        }
+
+        if (action === FEEDBACK_PLAN_OPTION) {
+          if (!isActivePlanReview(reviewRun)) {
+            return stalePlanReviewResult(state.phase);
+          }
+          const feedback = await ctx.ui.input(
+            'Feedback on Prewalk plan',
+            'Tell the planner what to change...',
+            dialogOptions,
+          );
+          if (!resumePlanningAfterReview(ctx, reviewRun, false)) {
+            return stalePlanReviewResult(state.phase);
+          }
+          const normalizedFeedback = feedback?.trim();
+          if (normalizedFeedback) {
+            return {
+              content: [{
+                type: 'text',
+                text: `The user requested plan changes:\n\n${normalizedFeedback}\n\nRevise the plan and call exit_plan_mode again with the complete updated plan. Do not modify the repository before approval.`,
+              }],
+              details: { phase: 'planning', decision: 'feedback', feedback: normalizedFeedback },
+            };
+          }
+          return dismissedPlanResult();
+        }
+
+        if (action === CANCEL_PREWALK_OPTION) {
+          if (!isActivePlanReview(reviewRun)) {
+            return stalePlanReviewResult(state.phase);
+          }
+          await turnOff(ctx);
+          return {
+            content: [{ type: 'text', text: 'The user cancelled Prewalk. Stop this run and wait for new instructions.' }],
+            details: { phase: 'idle', decision: 'cancelled' },
+            terminate: true,
+          };
+        }
+
+        if (!resumePlanningAfterReview(ctx, reviewRun, false)) {
+          return stalePlanReviewResult(state.phase);
+        }
+        return dismissedPlanResult();
+      } catch (error) {
+        if (!isActivePlanReview(reviewRun)) {
+          return stalePlanReviewResult(state.phase);
+        }
+        resumePlanningAfterReview(ctx, reviewRun, false);
+        throw error;
+      }
     },
   });
 
@@ -683,29 +807,9 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     const textOnlyCompletion = isTextOnlyCompletion(event.message);
     const decision = reduceTurn(state.run, event.toolResults, {
       allowContinuation: textOnlyCompletion,
-      planPresented: textOnlyCompletion,
     });
     state = { phase: 'planning', run: decision.state };
     updateStatus(ctx);
-
-    if (decision.shouldReview) {
-      state = { phase: 'reviewing', run: decision.state };
-      phaseContextAnchor = undefined;
-      updateStatus(ctx);
-      if (!ctx.hasUI) {
-        notify(ctx, `Prewalk auto-approved plan review because interactive input is unavailable in ${ctx.mode} mode.`, 'warning');
-        approvePlan(ctx);
-        pi.sendMessage(
-          {
-            customType: PLAN_APPROVED_MESSAGE_TYPE,
-            content: PLAN_APPROVED_INSTRUCTION,
-            display: false,
-          },
-          { deliverAs: 'followUp' },
-        );
-      }
-      return;
-    }
 
     if (decision.shouldHandoff) {
       const handoff = switchToTarget(ctx).finally(() => {
@@ -792,6 +896,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     if (state.phase === 'reviewing') return;
 
     if (state.phase === 'planning') {
+      if (state.run?.reviewRequired && !state.run.reviewApproved) return;
       clearAutomation(ctx);
       notify(ctx, 'Prewalk ended before a qualifying first mutation.', 'warning');
     }
@@ -807,6 +912,38 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       clearAutomation(ctx);
     }
   });
+}
+
+function approvedPlanResult() {
+  return {
+    content: [{
+      type: 'text' as const,
+      text: 'The user approved the Prewalk plan. On the next model turn, make one focused mutation that establishes the implementation direction before handoff.',
+    }],
+    details: { phase: 'planning' as const, decision: 'approved' as const },
+  };
+}
+
+function dismissedPlanResult() {
+  return {
+    content: [{
+      type: 'text' as const,
+      text: 'Plan review was dismissed. Prewalk remains in planning; wait for the user or call exit_plan_mode again with the complete plan.',
+    }],
+    details: { phase: 'planning' as const, decision: 'dismissed' as const },
+    terminate: true,
+  };
+}
+
+function stalePlanReviewResult(phase: PrewalkPhase) {
+  return {
+    content: [{
+      type: 'text' as const,
+      text: `The plan review is no longer active; Prewalk is ${phase}. Ignore the stale selection and stop this tool turn.`,
+    }],
+    details: { phase, decision: 'stale' as const },
+    terminate: true,
+  };
 }
 
 async function reportImplementationSavings(
@@ -893,7 +1030,7 @@ function buildContextMessages(
     const stripped = stripSuccessfulControlCalls(message, successfulControls);
     if (stripped !== undefined) filtered.push(stripped);
   }
-  const guidedPhase = phase === 'planning' || phase === 'reviewing' || phase === 'implementing'
+  const guidedPhase = phase === 'planning' || phase === 'implementing'
     ? phase
     : undefined;
   const instruction = guidedPhase === 'planning'
@@ -902,14 +1039,12 @@ function buildContextMessages(
       : state.run?.reviewApproved
         ? { customType: PLAN_APPROVED_MESSAGE_TYPE, content: PLAN_APPROVED_INSTRUCTION }
         : { customType: PLANNING_MESSAGE_TYPE, content: PLANNING_INSTRUCTION }
-    : guidedPhase === 'reviewing'
-      ? { customType: PLAN_REVIEW_MESSAGE_TYPE, content: PLAN_REVIEW_INSTRUCTION }
-      : guidedPhase === 'implementing'
-        ? {
-            customType: IMPLEMENTATION_MESSAGE_TYPE,
-            content: VERIFICATION_INSTRUCTION,
-          }
-        : undefined;
+    : guidedPhase === 'implementing'
+      ? {
+          customType: IMPLEMENTATION_MESSAGE_TYPE,
+          content: VERIFICATION_INSTRUCTION,
+        }
+      : undefined;
 
   if (guidedPhase === undefined || instruction === undefined) return { messages: filtered };
 
@@ -996,7 +1131,7 @@ function successfulControlCallIds(messages: readonly unknown[]): ReadonlyMap<str
     if (
       isRecord(message)
       && message.role === 'toolResult'
-      && (message.toolName === ENTER_PREWALK_TOOL || message.toolName === APPROVE_PREWALK_PLAN_TOOL)
+      && message.toolName === ENTER_PREWALK_TOOL
       && message.isError !== true
       && typeof message.toolCallId === 'string'
     ) {

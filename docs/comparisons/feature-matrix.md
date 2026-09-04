@@ -191,12 +191,13 @@ it is not Beads or a project issue tracker. It is scoped to one root session and
 has no durable project backlog, remote synchronization, labels, estimates,
 comments, or due dates.
 
-### Prewalk still is not plan mode
+### Prewalk is not a sandboxed plan mode
 
-Prewalk is automatic model routing within one session—not a plan-review gate,
-separate planning agent, or read-only mode. Model-requested entry asks for user
-approval by default, but that approval starts Prewalk rather than approving a
-non-mutating plan artifact or later edits.
+Prewalk is automatic model routing within one session with an optional
+tool-driven plan-review gate. It is not a separate planning agent, read-only
+permission mode, or sandbox. Model-requested entry approval starts Prewalk;
+when plan review is active, the planner later passes the complete plan to
+`exit_plan_mode`, which displays it for approval, feedback, or cancellation.
 
 The model can call `enter_prewalk` for a new complex repository task, or the
 user can invoke `/prewalk`. Conversation or repository activity from earlier
@@ -205,9 +206,9 @@ exploring the current task; if its complexity becomes clear after read-only
 exploration, it can still enter before the task's first mutation. Small
 localized edits and routine one-file fixes should normally stay on the regular
 path. Once active, the current model explores, creates and claims a prompted
-task graph of at most nine tasks, begins implementation, and performs a focused
-mutation. When both task tools are active, successful `TaskCreate` and
-`TaskUpdate` calls claiming `in_progress` work are required before that
+task graph of at most nine tasks, obtains plan approval when configured, and
+performs a focused mutation. When both task tools are active, successful
+`TaskCreate` and `TaskUpdate` calls claiming `in_progress` work are required before that
 mutation marks the turn for handoff. If the task tools are unavailable, a
 successful explicit mutation marks it directly. The next request goes to the
 configured tier or exact model, using the configured implementation thinking
@@ -314,8 +315,8 @@ This list is intentionally explicit.
 
 ### Planning and recovery
 
-- Read-only or edit-restricted plan review and approval in Codex, OpenCode,
-  Claude Code, and OMP.
+- Dedicated read-only or edit-restricted planning modes in Codex, OpenCode,
+  Claude Code, and OMP. Felan's Prewalk review boundary remains model guidance.
 - Git-backed message/file undo and redo in OpenCode.
 - Automatic code checkpoints and rewind in Claude Code.
 - Checkpoint/rewind and context-pruning tools in OMP.

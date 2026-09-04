@@ -1,6 +1,6 @@
 # @felan-ai/ext-prewalk
 
-Same-session Prewalk for Felan's complex repository work: the current model explores and plans the work in the session task graph, optionally reviews that plan with the user, then makes one focused mutation. Felan switches the next model request to the `low` model tier at exact `medium` thinking by default, which finishes and verifies the task with the full conversation and tool history intact. Tier resolution prefers the planner's provider and model family before falling back to another authenticated provider.
+Same-session Prewalk for Felan's complex repository work: the current model explores and plans the work in the session task graph, optionally submits that plan for user review, then makes one focused mutation after approval. Felan switches the next model request to the `low` model tier at exact `medium` thinking by default, which finishes and verifies the task with the full conversation and tool history intact. Tier resolution prefers the planner's provider and model family before falling back to another authenticated provider.
 
 After the run settles, Prewalk restores the original planner model and thinking level by default. All of these automated changes are scoped to the active session and do not change the user's or project's default model or thinking preference.
 
@@ -36,19 +36,27 @@ enter_prewalk {}  Enter Prewalk for complex repository work
 
 The no-argument tool requests a transition of the current run into planning, so it works while the agent is active. With the default `ask` policy, dialog-capable hosts ask the user before entering. A denial returns a tool error that directs the model to continue normally. JSON and print modes deny `ask` rather than blocking for unavailable input. Hosts can initialize the extension with `allow` for unattended environments such as a cloud platform, or `deny` to reject model-requested entry. Use the tool for complex repository work rather than small localized edits or routine one-file fixes. It must be called once and by itself. Conversation or repository activity from earlier requests does not prevent entry. Prefer entry before exploring the current task; if its complexity becomes clear after read-only exploration, call the tool before its first mutation. A mutation in the same model turn as a successful entry call cannot trigger handoff; the planning guidance must reach a later model turn first.
 
-The successful entry call and result are orchestration controls. They remain in the stored session transcript but are removed from model context. Current phase guidance is transient and replaced at the phase boundary, so the target receives the useful exploration, task graph, and first valid change with implementation guidance rather than an instruction to keep planning.
+The successful entry call and result are orchestration controls. They remain in the stored session transcript but are removed from model context. The `exit_plan_mode` call remains in context so the implementation model receives the approved plan argument. Current phase guidance is transient and replaced at the phase boundary, so the target receives the useful exploration, task graph, approved plan, and first valid change with implementation guidance rather than an instruction to keep planning.
 
 ## Plan review
 
-When plan review is active, the planner presents a concise numbered summary after preparing the task graph and asks the user to raise concerns by point number or explicitly approve. Discussion and revisions stay with the planner, which updates the task graph and re-presents the summary as needed. After explicit approval, the planner calls `approve_prewalk_plan`; Prewalk then allows the existing focused-mutation gate to trigger the model handoff. Mutation tools remain available during review, so the non-mutation boundary is guidance enforced rather than a security sandbox.
+When plan review is active, the planner calls the following tool after preparing the task graph:
 
-In modes without interactive input, an `ask` review is auto-approved after the plan is presented. Prewalk emits a warning explaining the mode-based auto-approval, then continues through the same focused-mutation handoff.
+```text
+exit_plan_mode { plan: "<complete concise plan>" }
+```
+
+The plan must be non-empty and no longer than 32,000 characters. The tool displays it exactly and lets the user approve it, provide feedback, or cancel Prewalk. Approval returns control to the planner, whose first focused mutation triggers the existing model handoff. Feedback returns to planning so the planner can update the task graph and call `exit_plan_mode` again with the complete revised plan. Cancellation exits Prewalk without implementation. Dismissing the dialog leaves Prewalk in planning. The tool call remains in model context; Prewalk does not create a separate plan file or persisted plan record.
+
+Mutation tools remain available during review, so the non-mutation boundary is guidance enforced rather than a security sandbox.
+
+In modes without interactive input, `exit_plan_mode` auto-approves an `ask` review after receiving the plan argument. Prewalk emits a warning explaining the mode-based auto-approval, then continues through the same focused-mutation handoff.
 
 ## Lifecycle
 
 1. The planner explores the relevant repository surface and determines the complete implementation scope.
 2. When the task tools are available, the planner creates a concise graph of at most nine outcome-oriented tasks with `TaskCreate`, includes concrete validation in their acceptance criteria, links them with `blocked_by` dependencies that encode the execution order, and claims the first ready task with `TaskUpdate`.
-3. When plan review is active, the planner presents a concise numbered summary, discusses concerns, revises the task graph as needed, and waits for explicit approval.
+3. When plan review is active, the planner passes a concise numbered plan to `exit_plan_mode`. The tool displays it and either records approval, returns feedback for another planning iteration, or cancels Prewalk.
 4. When both task tools are active, successful `TaskCreate` and `TaskUpdate`
    calls claiming `in_progress` work open the task gate. The planner then
    performs one focused successful `edit`, `write`, or `apply_patch`.
@@ -117,11 +125,11 @@ user intent.
 - A failed planner restoration clears Prewalk, reports the failure once, and keeps the current model.
 - A manual model change cancels Prewalk without restoring over the user's selection.
 - Repeated entry calls do not replace the active run or its planner snapshot.
-- Plan approval calls outside an active review are rejected without changing the run.
+- `exit_plan_mode` calls outside active unapproved planning, with an empty plan, or before the required task gate is ready are rejected without changing the run.
 - A successful mutation before required plan approval does not trigger handoff; Prewalk relies on planner guidance rather than disabling mutation tools.
 - Exit requests during active target inference restore only after the run settles.
 - Session quit, reload, replacement, or fork while the target is active attempts planner restoration as a graceful shutdown backstop.
-- Reaching the automatic continuation limit lets the run settle normally.
+- Reaching the automatic continuation limit lets the agent run settle. Required review remains in planning so a later `exit_plan_mode` call can recover; other incomplete planning clears normally.
 
 ## Attribution
 
@@ -149,8 +157,8 @@ target selection, and restoration lifecycle. Agent Core supplies model tiers and
 authenticated model scope, session lifecycle, and active tools. Prewalk does not
 inspect or execute the task graph beyond the successful TaskCreate/TaskUpdate
 handoff gate described above. Entry approval controls only whether a model may
-start Prewalk. Plan review is a conversational approval checkpoint, not a
-sandbox or a tool-level mutation restriction.
+start Prewalk. Plan review is a tool-driven approval checkpoint, not a sandbox
+or a tool-level mutation restriction.
 
 The package requires compatible Agent Core and Tasks peers plus an explicit
 `edit`, `write`, or Codex `apply_patch` tool in the composed session.

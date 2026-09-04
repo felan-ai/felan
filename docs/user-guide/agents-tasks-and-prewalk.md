@@ -119,7 +119,7 @@ tracker or durable cross-session backlog.
 ## Prewalk
 
 Prewalk is a same-session planner-to-implementer handoff. It can include a
-conversational plan-approval checkpoint before its first focused edit.
+tool-driven plan-approval checkpoint before its first focused edit.
 Model-requested entry asks for user approval by default.
 
 For complex repository work that benefits from substantial exploration,
@@ -157,19 +157,25 @@ uses the default `ask` without rewriting `settings.json`.
 The `extensionConfig.prewalk.planReview` setting accepts `inherit`, `ask`, or
 `skip`. The default `inherit` asks for plan review when `entryApproval` is
 `ask`, and skips review otherwise. Explicit `ask` applies to every entry path,
-including `/prewalk`. During review, the planner presents a concise numbered
-summary, discusses and revises it, and calls `approve_prewalk_plan` only after
-explicit user approval. The review boundary is model guidance rather than a
+including `/prewalk`. During review, the planner calls `exit_plan_mode` with the
+complete concise plan. The tool displays that exact argument and lets the user
+approve, provide feedback, or cancel Prewalk. Approval returns to planning so
+the first focused mutation can trigger the configured handoff. Feedback keeps
+planning active for a revised `exit_plan_mode` call, while cancellation exits
+without implementation. The review boundary is model guidance rather than a
 tool sandbox. JSON and print modes auto-approve required review with a warning
 because they cannot accept interactive discussion.
+
+The plan argument must be non-empty and no longer than 32,000 characters.
 
 ### Lifecycle
 
 1. The planner explores the relevant repository surface.
 2. When both task tools are active, it creates a concise task graph and claims
    the first ready task.
-3. When plan review is active, it presents and discusses a concise numbered
-   summary until the user explicitly approves it.
+3. When plan review is active, it passes a concise numbered plan to
+   `exit_plan_mode`. The user can approve it, return feedback for another
+   planning iteration, or cancel Prewalk.
 4. It makes one focused successful `edit`, `write`, or Codex `apply_patch`.
 5. At the turn boundary, Felan switches the next model request to the configured
    target and applies the configured implementation thinking level.

@@ -27,7 +27,8 @@ optimizations.
 
 ## Install and run
 
-Felan supports Node.js 22.19.0 or newer. Run it without a global install:
+Felan supports Node.js 22.19.0 or newer. Run the published package without a
+global installation:
 
 ```sh
 npx @felan-ai/felan
