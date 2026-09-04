@@ -2,22 +2,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { reportMarkitdownSavings } from '../src/savings.js';
 
 describe('MarkItDown savings', () => {
-  it('uses the retained normal-document prompt ratio for the converted text boundary', () => {
+  it('uses the 32% benchmark rate for the converted text boundary', () => {
     const report = vi.fn(async () => undefined);
 
     reportMarkitdownSavings(
       { report },
       { provider: 'test', id: 'model' },
       'read',
-      [{ type: 'text', text: 'abcdefgh' }],
+      [{ type: 'text', text: 'a'.repeat(68) }],
     );
 
     expect(report).toHaveBeenCalledWith(expect.objectContaining({
-      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 3, output: 0 } },
-      actual: { model: { provider: 'test', id: 'model' }, tokens: { input: 2, output: 0 } },
+      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 25, output: 0 } },
+      actual: { model: { provider: 'test', id: 'model' }, tokens: { input: 17, output: 0 } },
       basis: {
         kind: 'estimated-baseline',
-        method: 'markitdown-normal-document-prompt-ratio-20260902-v1',
+        method: 'markitdown-benchmark-32pct-v1',
       },
       dimensions: { tool: 'read' },
     }));

@@ -4,10 +4,9 @@ import type {
   SavingsReporter,
 } from '@felan-ai/agent-core';
 
-const NORMAL_DOCUMENT_BASELINE_PROMPT_TOKENS = 272_915;
-const NORMAL_DOCUMENT_MARKITDOWN_PROMPT_TOKENS = 232_004;
+const MARKITDOWN_RETAINED_PERCENT = 68;
 
-export const MARKITDOWN_SAVINGS_METHOD = 'markitdown-normal-document-prompt-ratio-20260902-v1';
+export const MARKITDOWN_SAVINGS_METHOD = 'markitdown-benchmark-32pct-v1';
 
 export function reportMarkitdownSavings(
   reporter: SavingsReporter | undefined,
@@ -18,9 +17,7 @@ export function reportMarkitdownSavings(
   if (!reporter || !model) return;
   const actualInput = estimateTextTokens(content);
   if (actualInput === 0) return;
-  const baselineInput = Math.ceil(
-    actualInput * NORMAL_DOCUMENT_BASELINE_PROMPT_TOKENS / NORMAL_DOCUMENT_MARKITDOWN_PROMPT_TOKENS,
-  );
+  const baselineInput = Math.ceil(actualInput * 100 / MARKITDOWN_RETAINED_PERCENT);
   const measurement: SavingsMeasurement = {
     category: 'output-optimization',
     operation: 'document-read',

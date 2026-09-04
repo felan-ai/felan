@@ -3,19 +3,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { createOutputStyleExtension } from '../src/index.js';
 
 describe('output-style savings', () => {
-  it('reports the concise visible-text boundary with the retained Terra-v2 ratio', async () => {
+  it('reports the concise visible-text boundary with the 15% benchmark rate', async () => {
     const harness = savingsHarness('concise');
 
-    await harness.turn(assistant('abcdefgh'));
+    await harness.turn(assistant('a'.repeat(68)));
 
     expect(harness.report).toHaveBeenCalledWith(expect.objectContaining({
       category: 'output-optimization',
       operation: 'concise-response',
-      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 0, output: 3 } },
-      actual: { model: { provider: 'test', id: 'model' }, tokens: { input: 0, output: 2 } },
+      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 0, output: 20 } },
+      actual: { model: { provider: 'test', id: 'model' }, tokens: { input: 0, output: 17 } },
       basis: {
         kind: 'estimated-baseline',
-        method: 'concise-visible-text-ratio-terra-v2-20260827-v1',
+        method: 'concise-benchmark-15pct-v1',
       },
       dimensions: { techniques: ['concise'] },
     }));
