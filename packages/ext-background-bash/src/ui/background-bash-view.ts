@@ -1,5 +1,5 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
-import { matchesKey, truncateToWidth } from '@earendil-works/pi-tui';
+import { matchesKey, stripTerminalSequences, truncateToWidth } from '@earendil-works/pi-tui';
 import type { BackgroundBashJob } from '../job-store.js';
 import type { BackgroundBashManager } from '../process-manager.js';
 
@@ -8,11 +8,12 @@ const LOG_VISIBLE_LINES = 28;
 const JOB_LIST_VISIBLE_ROWS = 18;
 const PADDING_X = 2;
 const PADDING_Y = 1;
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/gu;
 
 type Theme = ExtensionContext['ui']['theme'];
-type OverlayView = 'list' | 'detail';
+type ProcessView = 'list' | 'detail';
 
-export class BackgroundBashOverlay {
+export class BackgroundBashView {
   private jobs: BackgroundBashJob[] = [];
   private selected = 0;
   private listScroll = 0;
@@ -20,7 +21,8 @@ export class BackgroundBashOverlay {
   private logScroll = 0;
   private loading = false;
   private message = '';
-  private view: OverlayView = 'list';
+  private view: ProcessView = 'list';
+  private closed = false;
 
   constructor(
     private readonly manager: BackgroundBashManager,
@@ -32,7 +34,9 @@ export class BackgroundBashOverlay {
   }
 
   handleInput(data: string): void {
+    if (this.closed) return;
     if (matchesKey(data, 'escape') || data === 'q') {
+      this.closed = true;
       this.done();
       return;
     }
@@ -46,12 +50,12 @@ export class BackgroundBashOverlay {
 
   render(width: number): string[] {
     const renderWidth = Math.max(1, Math.floor(width));
-    const contentWidth = Math.max(1, renderWidth - 2);
     const lines = this.view === 'list' ? this.renderList() : this.renderDetail();
-    const innerWidth = Math.max(1, contentWidth - PADDING_X * 2);
-    const prefix = ' '.repeat(PADDING_X);
+    const padding = Math.min(PADDING_X, Math.max(0, Math.floor((renderWidth - 1) / 2)));
+    const innerWidth = Math.max(1, renderWidth - padding * 2);
+    const prefix = ' '.repeat(padding);
     const padded = lines.map((line) => `${prefix}${truncateToWidth(line, innerWidth, '…')}${prefix}`);
-    return frameOverlayLines([...Array<string>(PADDING_Y).fill(''), ...padded, ...Array<string>(PADDING_Y).fill('')], renderWidth, this.theme);
+    return frameInlineLines([...Array<string>(PADDING_Y).fill(''), ...padded, ...Array<string>(PADDING_Y).fill('')], renderWidth, this.theme);
   }
 
   invalidate(): void {}
@@ -76,13 +80,13 @@ export class BackgroundBashOverlay {
     if (matchesKey(data, 'home') || data === 'g') {
       this.selected = 0;
       this.clampListScroll();
-      this.requestRender();
+      this.requestViewRender();
       return;
     }
     if (matchesKey(data, 'end') || data === 'G') {
       this.selected = Math.max(0, this.jobs.length - 1);
       this.clampListScroll();
-      this.requestRender();
+      this.requestViewRender();
       return;
     }
     if (matchesKey(data, 'return') || matchesKey(data, 'right')) {
@@ -103,7 +107,7 @@ export class BackgroundBashOverlay {
   private handleDetailInput(data: string): void {
     if (matchesKey(data, 'backspace') || matchesKey(data, 'left')) {
       this.view = 'list';
-      this.requestRender();
+      this.requestViewRender();
       return;
     }
     if (matchesKey(data, 'up')) {
@@ -124,12 +128,12 @@ export class BackgroundBashOverlay {
     }
     if (matchesKey(data, 'home') || data === 'g') {
       this.logScroll = 0;
-      this.requestRender();
+      this.requestViewRender();
       return;
     }
     if (matchesKey(data, 'end') || data === 'G') {
       this.scrollLogToBottom();
-      this.requestRender();
+      this.requestViewRender();
       return;
     }
     if (data === 'r') {
@@ -157,7 +161,7 @@ export class BackgroundBashOverlay {
       + this.theme.fg('dim', '  ↑↓ select • enter/→ open • s stop • k kill • r refresh • q/esc close'),
     );
     if (this.loading) lines.push(this.theme.fg('warning', 'Refreshing...'));
-    if (this.message) lines.push(this.theme.fg('muted', this.message));
+    if (this.message) lines.push(this.theme.fg('muted', singleLine(this.message)));
     lines.push('');
 
     if (this.jobs.length === 0) {
@@ -172,7 +176,7 @@ export class BackgroundBashOverlay {
       const job = this.jobs[index]!;
       const marker = index === this.selected ? this.theme.fg('accent', '▶') : ' ';
       lines.push(
-        `${marker} ${job.meta.id}  ${colorStatus(job, this.theme)}  ${formatDuration(job)}  ${oneLine(job.meta.command, 90)}`,
+        `${marker} ${singleLine(job.meta.id)}  ${colorStatus(job, this.theme)}  ${formatDuration(job)}  ${oneLine(job.meta.command, 90)}`,
       );
     }
     return lines;
@@ -184,14 +188,14 @@ export class BackgroundBashOverlay {
     if (!current) return [this.theme.fg('dim', 'No process selected.')];
 
     lines.push(
-      this.theme.fg('accent', this.theme.bold(current.meta.id))
+      this.theme.fg('accent', this.theme.bold(singleLine(current.meta.id)))
       + this.theme.fg('dim', '  backspace/← processes • ↑↓ scroll • ctrl+u/d page • g/G top/bottom • r refresh • s stop • k kill • q/esc close'),
     );
     if (this.loading) lines.push(this.theme.fg('warning', 'Refreshing...'));
-    if (this.message) lines.push(this.theme.fg('muted', this.message));
+    if (this.message) lines.push(this.theme.fg('muted', singleLine(this.message)));
     lines.push('');
     lines.push(`status=${colorStatus(current, this.theme)}  duration=${formatDuration(current)}`);
-    lines.push(`command=${current.meta.command}`);
+    lines.push(`command=${singleLine(current.meta.command)}`);
     lines.push('');
 
     const totalLines = this.logLines.length;
@@ -201,14 +205,14 @@ export class BackgroundBashOverlay {
     lines.push(this.theme.fg('accent', this.theme.bold('Log')) + this.theme.fg('dim', `  ${range}`));
     const visible = this.logLines.slice(start, end);
     for (const line of visible.length > 0 ? visible : ['(log is empty)']) {
-      lines.push(this.theme.fg('toolOutput', line));
+      lines.push(this.theme.fg('toolOutput', sanitizeTerminalText(line)));
     }
     return lines;
   }
 
   private async refresh(): Promise<void> {
     this.loading = true;
-    this.requestRender();
+    this.requestViewRender();
     try {
       const selectedId = this.jobs[this.selected]?.meta.id;
       this.jobs = await this.manager.list('all');
@@ -225,7 +229,7 @@ export class BackgroundBashOverlay {
       this.message = errorMessage(error);
     } finally {
       this.loading = false;
-      this.requestRender();
+      this.requestViewRender();
     }
   }
 
@@ -239,7 +243,7 @@ export class BackgroundBashOverlay {
     if (!current) {
       this.logLines = [];
       this.logScroll = 0;
-      if (render) this.requestRender();
+      if (render) this.requestViewRender();
       return;
     }
 
@@ -251,14 +255,14 @@ export class BackgroundBashOverlay {
     }
     if (scrollToBottom) this.scrollLogToBottom();
     else this.clampLogScroll();
-    if (render) this.requestRender();
+    if (render) this.requestViewRender();
   }
 
   private selectListJob(delta: number): void {
     if (this.jobs.length === 0) return;
     this.selected = Math.max(0, Math.min(this.jobs.length - 1, this.selected + delta));
     this.clampListScroll();
-    this.requestRender();
+    this.requestViewRender();
   }
 
   private async openDetail(): Promise<void> {
@@ -281,7 +285,7 @@ export class BackgroundBashOverlay {
   private scrollLog(delta: number): void {
     this.logScroll += delta;
     this.clampLogScroll();
-    this.requestRender();
+    this.requestViewRender();
   }
 
   private scrollLogToBottom(): void {
@@ -312,7 +316,7 @@ export class BackgroundBashOverlay {
     if (!current) return;
     this.loading = true;
     this.message = `${action} ${current.meta.id}...`;
-    this.requestRender();
+    this.requestViewRender();
     try {
       await this.manager.stop(current.meta.id, signal);
       await this.refresh();
@@ -322,18 +326,21 @@ export class BackgroundBashOverlay {
       this.message = errorMessage(error);
     } finally {
       this.loading = false;
-      this.requestRender();
+      this.requestViewRender();
     }
+  }
+
+  private requestViewRender(): void {
+    if (!this.closed) this.requestRender();
   }
 }
 
-function frameOverlayLines(lines: readonly string[], width: number, theme: Theme): string[] {
+function frameInlineLines(lines: readonly string[], width: number, theme: Theme): string[] {
   const border = (text: string) => theme.fg('border', text);
-  const innerWidth = Math.max(1, width - 2);
   return [
-    border(`╭${'─'.repeat(innerWidth)}╮`),
-    ...lines.map((line) => `${border('│')}${truncateToWidth(line, innerWidth, '', true)}${border('│')}`),
-    border(`╰${'─'.repeat(innerWidth)}╯`),
+    border('─'.repeat(width)),
+    ...lines,
+    border('─'.repeat(width)),
   ];
 }
 
@@ -374,8 +381,16 @@ function colorStatus(job: BackgroundBashJob, theme: Theme): string {
 }
 
 function oneLine(value: string, max: number): string {
-  const compact = value.replace(/\s+/gu, ' ').trim();
+  const compact = singleLine(value);
   return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
+}
+
+function singleLine(value: string): string {
+  return sanitizeTerminalText(value).replace(/\s+/gu, ' ').trim();
+}
+
+function sanitizeTerminalText(value: string): string {
+  return stripTerminalSequences(value).replace(CONTROL_CHARACTERS, ' ');
 }
 
 function formatDuration(job: BackgroundBashJob): string {

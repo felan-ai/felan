@@ -41,9 +41,10 @@ flavor.
 - `read_background_bash` reads trailing process output.
 - `wait_background_bash` waits for terminal status without returning log output.
 - `stop_background_bash` sends `SIGTERM` or `SIGKILL`.
-- `/background-bash` and `Ctrl+Shift+J` open the interactive process/log overlay in the TUI.
+- `/background-bash` and `Ctrl+Shift+J` open the interactive process/log view inline in the TUI.
 
-The process/log overlay uses a complete four-edge frame.
+The process/log view uses an inline frame. Automatic completion messages use a
+compact one-line summary; `Alt+A` reveals bounded details.
 
 The footer status shows the number of running processes. Foreground `bash` continues
 to use the active `AgentRuntime`. Processes started by the active session deliver a
@@ -78,7 +79,7 @@ import backgroundBashExtension from '@felan-ai/ext-background-bash';
 const extension = backgroundBashExtension;
 ```
 
-Hosts provide the `AgentRuntime`; the local TUI owns the process overlay,
+Hosts provide the `AgentRuntime`; the local TUI owns the process view,
 shortcut, status polling, and dependency onboarding. Compatible runtimes need
 the POSIX shell/process facilities listed in
 [runtime dependencies](../../docs/reference/runtime-dependencies.md). Felan

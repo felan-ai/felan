@@ -16,12 +16,15 @@ import {
 } from './job-store.js';
 import { BackgroundBashManager } from './process-manager.js';
 import { inspectBackgroundBashRuntime } from './runtime-support.js';
-import { BackgroundBashOverlay } from './ui/background-bash-overlay.js';
+import { BackgroundBashView } from './ui/background-bash-view.js';
+import {
+  BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE,
+  registerBackgroundBashCompletionRenderer,
+} from './ui/completion-message.js';
 
 const STATUS_VALUES = ['running', 'completed', 'failed', 'killed', 'unknown', 'all'] as const;
 const SIGNAL_VALUES = ['SIGTERM', 'SIGKILL'] as const;
 const OPENAI_PROVIDER_IDS: ReadonlySet<string> = new Set(['openai', 'openai-codex']);
-const COMPLETION_MESSAGE_TYPE = 'felan-background-bash-completion';
 const COMPLETION_POLL_MS = 500;
 const BACKGROUND_TOOL_NAMES = [
   'list_background_bash',
@@ -93,6 +96,7 @@ export function supportsBackgroundBashModel(model: Model<Api> | undefined): bool
 }
 
 const backgroundBashExtension: FelanExtension = (pi) => {
+  registerBackgroundBashCompletionRenderer(pi);
   const manager = new BackgroundBashManager(pi.runtime);
   const foregroundBash = createRuntimeCodingTools(pi.runtime, { shellFlavor: 'posix' })
     .find((tool) => tool.name === 'bash')!;
@@ -165,7 +169,7 @@ const backgroundBashExtension: FelanExtension = (pi) => {
 
   const deliverCompletion = (job: BackgroundBashJob) => {
     pi.sendMessage({
-      customType: COMPLETION_MESSAGE_TYPE,
+      customType: BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE,
       content: formatCompletionNotice(job),
       display: true,
       details: { job: completionDetails(job) },
@@ -244,29 +248,24 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     watchedJobIds.clear();
   };
 
-  const openOverlay = async (ctx: ExtensionContext) => {
+  const openProcessView = async (ctx: ExtensionContext) => {
     if (!supportsBackgroundBashModel(ctx.model)) {
       if (ctx.mode === 'tui') ctx.ui.notify('Background Bash is unavailable for this model.', 'info');
+      return;
+    }
+    if (!backgroundBashActive) {
+      if (ctx.mode === 'tui') ctx.ui.notify('Background Bash is unavailable in this runtime.', 'info');
       return;
     }
     const target = createStatusTarget(ctx);
     if (!target) return;
     await target.ui.custom<void>(
-      (tui, theme, _keybindings, done) => new BackgroundBashOverlay(
+      (tui, theme, _keybindings, done) => new BackgroundBashView(
         manager,
         theme,
         () => done(undefined),
         () => tui.requestRender(),
       ),
-      {
-        overlay: true,
-        overlayOptions: {
-          width: '85%',
-          minWidth: 72,
-          maxHeight: '90%',
-          margin: 2,
-        },
-      },
     );
     await updateStatus(target);
   };
@@ -445,11 +444,11 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     controlsRegistered = true;
     pi.registerCommand('background-bash', {
       description: 'View Background Bash processes and logs',
-      handler: async (_args, ctx) => openOverlay(ctx),
+      handler: async (_args, ctx) => openProcessView(ctx),
     });
     pi.registerShortcut(Key.ctrlShift('j'), {
       description: 'View Background Bash processes and logs',
-      handler: openOverlay,
+      handler: openProcessView,
     });
   };
 
@@ -485,10 +484,7 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     registerHelperTools();
     activateRegisteredTools();
     resumeCompletionPolling();
-    if (ctx.mode === 'tui') {
-      registerControls();
-      startStatusPolling(ctx);
-    }
+    if (ctx.mode === 'tui') startStatusPolling(ctx);
   };
 
   const disableExtension = () => {
@@ -506,7 +502,10 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     ]);
   };
 
-  pi.on('session_start', (_event, ctx) => enableExtension(ctx));
+  pi.on('session_start', async (_event, ctx) => {
+    if (ctx.mode === 'tui') registerControls();
+    await enableExtension(ctx);
+  });
   pi.on('model_select', async (event, ctx) => {
     if (supportsBackgroundBashModel(event.model)) await enableExtension(ctx);
     else disableExtension();
