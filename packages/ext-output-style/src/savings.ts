@@ -5,10 +5,9 @@ import type {
   SavingsReporter,
 } from '@felan-ai/agent-core';
 
-const TERRA_V2_DISABLED_VISIBLE_CHARACTERS = 3_271;
-const TERRA_V2_CONCISE_VISIBLE_CHARACTERS = 2_686;
+const CONCISE_RETAINED_PERCENT = 85;
 
-export const CONCISE_SAVINGS_METHOD = 'concise-visible-text-ratio-terra-v2-20260827-v1';
+export const CONCISE_SAVINGS_METHOD = 'concise-benchmark-15pct-v1';
 
 export function reportConciseSavings(
   reporter: SavingsReporter | undefined,
@@ -18,9 +17,7 @@ export function reportConciseSavings(
   if (!reporter || !model || message.stopReason === 'error' || message.stopReason === 'aborted') return;
   const actualOutput = estimateVisibleTextTokens(message.content);
   if (actualOutput === 0) return;
-  const baselineOutput = Math.ceil(
-    actualOutput * TERRA_V2_DISABLED_VISIBLE_CHARACTERS / TERRA_V2_CONCISE_VISIBLE_CHARACTERS,
-  );
+  const baselineOutput = Math.ceil(actualOutput * 100 / CONCISE_RETAINED_PERCENT);
   const measurement: SavingsMeasurement = {
     category: 'output-optimization',
     operation: 'concise-response',

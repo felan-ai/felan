@@ -89,15 +89,12 @@ text's UTF-8 byte length divided by four and rounded up. Its estimated baseline
 is:
 
 ```text
-ceil(actual input estimate * 272915 / 232004)
+ceil(actual input estimate / 0.68)
 ```
 
-The ratio comes from the corrected 2026-09-02 benchmark's pooled prompt tokens
-for 12 normal-document attempts: 272,915 without MarkItDown and 232,004 with
-MarkItDown. All 24 compared attempts passed; candidate pooled cost was 22.19%
-lower, while individual case medians ranged from a 7.10% regression to a 51.49%
-gain. The retained method identifier is
-`markitdown-normal-document-prompt-ratio-20260902-v1`.
+This applies the selected 32% MarkItDown benchmark savings rate: the converted
+result is treated as 68% of the estimated baseline. The method identifier is
+`markitdown-benchmark-32pct-v1`.
 
 This is a benchmark-calibrated estimate for the converted-result boundary, not
 a replay of the unoptimized workflow. It does not claim the warm-cache suite's

@@ -44,14 +44,14 @@ actual output as UTF-8 bytes divided by four and rounded up. It estimates the
 disabled-style baseline as:
 
 ```text
-ceil(actual visible-output estimate * 3271 / 2686)
+ceil(actual visible-output estimate / 0.85)
 ```
 
-Those totals come from the one-attempt 2026-08-27 Terra-v2 matrix. All five
-concise cases passed supplemental full-visible grading, but the built-in grader
-passed 4/5 versus 5/5 with output style disabled. Concise produced 2,686 visible
-characters versus 3,271 when disabled, a 17.88% reduction. The method identifier
-is `concise-visible-text-ratio-terra-v2-20260827-v1`.
+This applies a conservative 15% rate to the concise benchmark result: emitted
+text is treated as 85% of the estimated baseline. The one-attempt 2026-08-27
+Terra-v2 matrix measured a 17.88% visible-character reduction, while its built-in
+grader passed concise 4/5 versus 5/5 with output style disabled. The method
+identifier is `concise-benchmark-15pct-v1`.
 
 This measurement isolates the visible-output boundary. It is not a claim of
 whole-workflow savings: the same Terra-v2 run used 12.00% more total tokens and

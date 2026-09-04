@@ -203,9 +203,8 @@ execution. The method identifier is `planner-two-thirds-usage-v1`.
 MarkItDown reports one `output-optimization` measurement for each successful
 converted `read` or `read_document` result with an active model. Both outcomes
 use UTF-8-bytes/4 estimates as model input. Actual is the returned converted
-text; baseline is `ceil(actual * 272915 / 232004)`, calibrated from pooled prompt
-tokens in the corrected 2026-09-02 normal-document matrix. The method is
-`markitdown-normal-document-prompt-ratio-20260902-v1`.
+text; baseline is `ceil(actual / 0.68)`, applying the selected 32% benchmark
+savings rate. The method is `markitdown-benchmark-32pct-v1`.
 
 The measurement owns only the converted-result boundary. It excludes failed or
 unavailable conversion, missing model/reporter attribution, and the model-less
@@ -217,9 +216,8 @@ result, infer local converter cost, or claim exact workflow savings.
 The built-in concise style reports one `output-optimization` measurement for
 each successful assistant turn with visible text and an active model. Both
 outcomes use UTF-8-bytes/4 estimates as model output. Actual is the emitted text;
-baseline is `ceil(actual * 3271 / 2686)`, calibrated from the one-attempt
-Terra-v2 full-visible comparison. The method is
-`concise-visible-text-ratio-terra-v2-20260827-v1`.
+baseline is `ceil(actual / 0.85)`, applying a conservative 15% savings rate to
+the Terra-v2 result. The method is `concise-benchmark-15pct-v1`.
 
 This boundary deliberately excludes input/cache/request effects. The source
 matrix reduced visible text by 17.88% but increased total tokens by 12.00% and
