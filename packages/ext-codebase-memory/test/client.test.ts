@@ -158,6 +158,8 @@ async function fixture(closeDelayMs = 0): Promise<{
     mkdir(workspace, { recursive: true }),
     mkdir(session, { recursive: true }),
     mkdir(agent, { recursive: true }),
+  ]);
+  await Promise.all([
     writeFile(script, `#!/usr/bin/env node
 process.stdin.setEncoding('utf8');
 process.stdin.on('end', () => setTimeout(() => {}, ${closeDelayMs}));
