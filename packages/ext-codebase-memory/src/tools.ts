@@ -5,6 +5,7 @@ import type { CbmClient } from './client.js';
 import { asRecord, type ProjectService, type SymbolService } from './services.js';
 
 const MaxSymbolLines = Type.Optional(Type.Integer({ minimum: 1, maximum: 220, default: 220 }));
+const MaxSearchAndReadSymbolLines = Type.Optional(Type.Integer({ minimum: 1, maximum: 220, default: 120 }));
 const ProxyCommand = Type.Union([
   Type.Literal('index_repository'),
   Type.Literal('search_graph'),
@@ -104,7 +105,7 @@ export function registerTools(
         file_pattern: Type.Optional(Type.String()),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 20 })),
         read_limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 12, default: 6 })),
-        max_symbol_lines: MaxSymbolLines,
+        max_symbol_lines: MaxSearchAndReadSymbolLines,
       }, { additionalProperties: false }),
       execute: async (_id, params, signal) => toolResult(await symbols.searchAndRead(params as Record<string, unknown>, signal)),
       renderCall(params, theme) {

@@ -420,6 +420,41 @@ describe('Codebase Memory extension', () => {
     expect(payload.snippet.truncated).toBe(true);
   });
 
+  it('uses a smaller default bound for multi-symbol reads while allowing an explicit larger read', async () => {
+    const source = Array.from({ length: 300 }, (_, index) => `line ${index + 1}`).join('\n');
+    const runtime = new MemoryRuntime('host', true, async (command) => {
+      if (command.includes('list_projects')) return result(envelope({ projects: [] }));
+      if (command.includes('search_graph')) {
+        return result(envelope({
+          total: 1,
+          cols: ['qn', 'label', 'file', 'lines', 'rank'],
+          rows: [['fixture.answer', 'Function', 'src/answer.ts', '1-300', 1]],
+        }));
+      }
+      if (command.includes('get_code_snippet')) return result(envelope({ code: source }));
+      return result(envelope({}));
+    });
+    const harness = await createHarness(runtime);
+
+    const defaultResponse = await execute(harness.tools[2]!, { query: 'answer', read_limit: 1 });
+    const defaultContent = defaultResponse.content[0];
+    const defaultPayload = JSON.parse(defaultContent?.type === 'text' ? defaultContent.text : '') as {
+      symbols: Array<{ snippet: { code: string; truncated: boolean } }>;
+    };
+
+    expect(defaultPayload.symbols[0]?.snippet.code.split('\n')).toHaveLength(120);
+    expect(defaultPayload.symbols[0]?.snippet.truncated).toBe(true);
+
+    const expandedResponse = await execute(harness.tools[2]!, { query: 'answer', read_limit: 1, max_symbol_lines: 220 });
+    const expandedContent = expandedResponse.content[0];
+    const expandedPayload = JSON.parse(expandedContent?.type === 'text' ? expandedContent.text : '') as {
+      symbols: Array<{ snippet: { code: string; truncated: boolean } }>;
+    };
+
+    expect(expandedPayload.symbols[0]?.snippet.code.split('\n')).toHaveLength(220);
+    expect(expandedPayload.symbols[0]?.snippet.truncated).toBe(true);
+  });
+
   it('reads symbols from real flat and grouped search_graph response shapes', async () => {
     const runtime = new MemoryRuntime('host', true, async (command) => {
       if (command.includes('list_projects')) return result(envelope({ projects: [{ name: 'fixture', root_path: '/work/repo' }] }));
@@ -489,18 +524,14 @@ describe('Codebase Memory extension', () => {
       read_candidates: number;
       omitted_candidates: number;
       candidates?: unknown[];
-      symbols: Array<{ symbol: { qualified_name: string }; snippet: { source: string } }>;
+      symbols: Array<{ symbol?: unknown; snippet: { source: string } }>;
     };
 
     expect(payload.total_candidates).toBe(3);
     expect(payload.read_candidates).toBe(3);
     expect(payload.omitted_candidates).toBe(0);
     expect(payload.candidates).toBeUndefined();
-    expect(payload.symbols.map(({ symbol }) => symbol.qualified_name)).toEqual([
-      'fixture.first',
-      'fixture.second',
-      'fixture.third',
-    ]);
+    expect(payload.symbols.some(({ symbol }) => symbol !== undefined)).toBe(false);
     expect(payload.symbols.map(({ snippet }) => snippet.source)).toEqual([
       'const first = true;',
       'const second = true;',

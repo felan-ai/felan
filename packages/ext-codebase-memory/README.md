@@ -12,8 +12,8 @@ four model tools:
   an explicit `index_repository` refresh for the active git repository.
 - `read_symbol` resolves and reads one named symbol.
 - `search_and_read_symbols` searches symbols and reads a bounded set of likely
-  matches, returning compact match-count metadata and the selected symbols
-  rather than repeating the full candidate list.
+  matches, returning compact match-count metadata and selected snippets rather
+  than repeating candidate metadata.
 - `search_code` searches indexed source text.
 
 The extension starts one background index at session startup without delaying

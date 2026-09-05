@@ -203,9 +203,9 @@ export class SymbolService {
       const qualifiedName = asRecord(candidate).qualified_name;
       return typeof qualifiedName === 'string' ? [{ candidate, qualifiedName }] : [];
     });
-    const symbols = await Promise.all(readableCandidates.map(async ({ candidate, qualifiedName }) => {
+    const symbols = await Promise.all(readableCandidates.map(async ({ qualifiedName }) => {
       const snippet = await this.client.call('get_code_snippet', { project, qualified_name: qualifiedName }, signal === undefined ? {} : { signal });
-      return { symbol: candidate, snippet: boundSnippet(snippet.data, params.max_symbol_lines) };
+      return { snippet: boundSnippet(snippet.data, params.max_symbol_lines, 120) };
     }));
     return {
       project,
@@ -256,8 +256,8 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return typeof value === 'number' && Number.isSafeInteger(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
 
-function boundSnippet(value: unknown, requestedLines: unknown): unknown {
-  const maxLines = clampInt(requestedLines, 1, 220, 220);
+function boundSnippet(value: unknown, requestedLines: unknown, defaultLines = 220): unknown {
+  const maxLines = clampInt(requestedLines, 1, 220, defaultLines);
   if (typeof value === 'string') return boundText(value, maxLines);
   const record = asRecord(value);
   for (const field of ['code', 'source', 'snippet'] as const) {
