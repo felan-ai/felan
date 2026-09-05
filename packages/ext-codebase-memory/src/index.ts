@@ -44,8 +44,9 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
       const maxCacheBytes = typeof configured === 'number' && configured > 0 ? configured : undefined;
       projects = new ProjectService(pi.runtime, client, maxCacheBytes, telemetry);
       const symbols = new SymbolService(client, projects);
-      pi.registerCapability({ id: 'codebase-memory', instructions: CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS });
-      registerTools(pi, client, projects, symbols);
+      const mode = pi.config.mode === 'direct' || pi.config.mode === 'proxy' ? pi.config.mode : 'curated';
+      pi.registerCapability({ id: 'codebase-memory', instructions: capabilityInstructions(mode) });
+      registerTools(pi, client, projects, symbols, mode);
       registerGrepAugmentation(pi, client, projects, telemetry);
     };
 
@@ -112,6 +113,12 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
   };
   associateExtensionConfig(extension, CODEBASE_MEMORY_CONFIG);
   return extension;
+}
+
+function capabilityInstructions(mode: 'curated' | 'direct' | 'proxy'): string {
+  if (mode === 'direct') return 'Use the Codebase Memory tools for structural code exploration. These tools map directly to the bounded codebase-memory-mcp command surface.';
+  if (mode === 'proxy') return 'Use codebase_memory with an allowed command and arguments for structural code exploration. The command surface is bounded.';
+  return CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS;
 }
 
 function detectionMessage(detection: CbmDetection): string {

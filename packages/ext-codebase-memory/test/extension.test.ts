@@ -10,6 +10,21 @@ import { envelope, MemoryRuntime, result } from './test-runtime.js';
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 
 describe('Codebase Memory extension', () => {
+  it.each([
+    ['curated', ['codebase_memory', 'read_symbol', 'search_and_read_symbols', 'search_code']],
+    ['direct', ['index_repository', 'search_graph', 'query_graph', 'trace_path', 'get_graph_schema', 'get_architecture', 'index_status', 'check_index_coverage', 'detect_changes', 'get_code_snippet', 'search_code', 'list_projects']],
+    ['proxy', ['codebase_memory']],
+  ])('registers the %s model-facing mode', async (mode, expected) => {
+    const harness = await createHarness(new MemoryRuntime('host', true), undefined, { mode });
+    expect(harness.tools.map((tool) => tool.name)).toEqual(expected);
+    if (mode !== 'curated') expect(harness.capabilities[0]?.instructions).not.toContain('read_symbol');
+  });
+
+  it('uses the curated capability instructions by default', async () => {
+    const harness = await createHarness(new MemoryRuntime('host', true));
+    expect(harness.capabilities[0]?.instructions).toBe(CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS);
+  });
+
   it('gates all model-visible behavior on a compatible binary and gives one local hint', async () => {
     const runtime = new MemoryRuntime('host', false);
     const harness = await createHarness(runtime);
@@ -663,6 +678,7 @@ function renderedCall(tool: ToolDefinition, params: Record<string, unknown>): st
 async function createHarness(
   runtime: MemoryRuntime,
   extension = codebaseMemoryExtension,
+  config: Record<string, unknown> = {},
 ) {
   const handlers = new Map<string, Handler[]>();
   const tools: ToolDefinition[] = [];
@@ -693,7 +709,7 @@ async function createHarness(
   }
   const pi = {
     runtime,
-    config: {},
+    config,
     agentDir: '/agent',
     registerTool: (tool: ToolDefinition) => tools.push(tool),
     registerCapability: (capability: { id: string; instructions: string }) => capabilities.push(capability),

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.21.15",
+  "version": "0.21.16-cbm.0",
   "description": "Open-source, model-portable coding agent built for cost-efficient, verifiable software work",
   "keywords": [
     "ai",

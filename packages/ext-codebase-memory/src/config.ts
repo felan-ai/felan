@@ -4,6 +4,10 @@ export const CODEBASE_MEMORY_CONFIG = defineExtensionConfig({
   id: 'codebaseMemory',
   title: 'Codebase Memory',
   fields: {
+    mode: configField.enum(['curated', 'direct', 'proxy'], {
+      default: 'curated',
+      description: 'Model-facing Codebase Memory tool surface',
+    }),
     maxCacheBytes: configField.number({
       default: 0,
       description: 'Maximum bytes retained by the Codebase Memory LRU cache; 0 uses the runtime default',

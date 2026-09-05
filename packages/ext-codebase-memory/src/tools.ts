@@ -3,6 +3,8 @@ import { Text } from '@earendil-works/pi-tui';
 import { Type } from 'typebox';
 import type { CbmClient } from './client.js';
 import { asRecord, type ProjectService, type SymbolService } from './services.js';
+import { dispatchRawCommand } from './raw-dispatch.js';
+import { RAW_COMMAND_SCHEMA, RAW_TOOL_CATALOG, type CodebaseMemoryMode } from './raw-catalog.js';
 
 const MaxSymbolLines = Type.Optional(Type.Integer({ minimum: 1, maximum: 220, default: 220 }));
 const MaxSearchAndReadSymbolLines = Type.Optional(Type.Integer({ minimum: 1, maximum: 220, default: 120 }));
@@ -24,7 +26,40 @@ export function registerTools(
   client: CbmClient,
   projects: ProjectService,
   symbols: SymbolService,
+  mode: CodebaseMemoryMode = 'curated',
 ): void {
+  if (mode !== 'curated') {
+    const entries = mode === 'proxy' ? [RAW_TOOL_CATALOG[0]!] : RAW_TOOL_CATALOG;
+    for (const entry of entries) {
+      pi.registerTool({
+        name: mode === 'proxy' ? 'codebase_memory' : entry.name,
+        label: mode === 'proxy' ? 'codebase_memory' : entry.name,
+        description: mode === 'proxy'
+          ? 'Proxy an allowed Codebase Memory command.'
+          : entry.description,
+        promptSnippet: mode === 'proxy' ? 'Run an allowed Codebase Memory command' : entry.description,
+        parameters: mode === 'proxy'
+          ? Type.Object({
+            command: RAW_COMMAND_SCHEMA,
+            arguments: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+          }, { additionalProperties: false })
+          : entry.parameters,
+        execute: async (_id, params, signal) => {
+          if (mode === 'proxy') {
+            const input = params as { command: string; arguments?: Record<string, unknown> };
+            return toolResult(await dispatchRawCommand(client, projects, input.command, input.arguments ?? {}, signal));
+          }
+          return toolResult(await dispatchRawCommand(client, projects, entry.name, params, signal));
+        },
+        renderCall(params, theme) {
+          const input = asRecord(params);
+          return renderToolCall(theme, mode === 'proxy' ? 'codebase_memory' : entry.name,
+            mode === 'proxy' ? input.command : firstString(input.query, input.pattern, input.qualified_name, input.file_pattern));
+        },
+      });
+    }
+    return;
+  }
   const tools: ToolDefinition[] = [
     {
       name: 'codebase_memory',
