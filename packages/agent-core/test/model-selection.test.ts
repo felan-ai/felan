@@ -8,10 +8,13 @@ describe('model selection persistence scope', () => {
       defaultProvider: 'planner-provider',
       defaultModel: 'planner-model',
       defaultThinkingLevel: 'high',
+      modelThinkingLevels: { 'implementation-provider/implementation-model': 'max' },
     });
     const scope = installModelSelectionPersistenceScope(settings);
 
     scope.run(false, () => {
+      expect(settings.getDefaultThinkingLevel()).toBeUndefined();
+      expect(settings.getModelThinkingLevel('implementation-provider', 'implementation-model')).toBeUndefined();
       settings.setDefaultModelAndProvider('implementation-provider', 'implementation-model');
       settings.setDefaultThinkingLevel('low');
     });
@@ -19,6 +22,7 @@ describe('model selection persistence scope', () => {
     expect(settings.getDefaultProvider()).toBe('planner-provider');
     expect(settings.getDefaultModel()).toBe('planner-model');
     expect(settings.getDefaultThinkingLevel()).toBe('high');
+    expect(settings.getModelThinkingLevel('implementation-provider', 'implementation-model')).toBe('max');
 
     settings.setDefaultModelAndProvider('manual-provider', 'manual-model');
     settings.setDefaultThinkingLevel('medium');

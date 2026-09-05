@@ -14,9 +14,19 @@ export function installModelSelectionPersistenceScope(
   if (installed) return installed;
 
   const updateDefaultScope = new AsyncLocalStorage<boolean>();
+  const getDefaultThinkingLevel = settingsManager.getDefaultThinkingLevel.bind(settingsManager);
+  const getModelThinkingLevel = settingsManager.getModelThinkingLevel.bind(settingsManager);
   const setDefaultModelAndProvider = settingsManager.setDefaultModelAndProvider.bind(settingsManager);
   const setDefaultThinkingLevel = settingsManager.setDefaultThinkingLevel.bind(settingsManager);
 
+  // Pi consults persisted thinking defaults during setModel. Hide them from
+  // session-only switches so the active effort carries across the transition.
+  settingsManager.getDefaultThinkingLevel = () => (
+    updateDefaultScope.getStore() === false ? undefined : getDefaultThinkingLevel()
+  );
+  settingsManager.getModelThinkingLevel = (provider, modelId) => (
+    updateDefaultScope.getStore() === false ? undefined : getModelThinkingLevel(provider, modelId)
+  );
   settingsManager.setDefaultModelAndProvider = (provider, modelId) => {
     if (updateDefaultScope.getStore() !== false) {
       setDefaultModelAndProvider(provider, modelId);

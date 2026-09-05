@@ -80,7 +80,9 @@ selection options to Pi's extension API; feature-specific contracts remain in
 their owning extension packages. Feature automation can pass
 `{ updateDefault: false }` to `setModel` or `setThinkingLevel` to update the
 active session without changing the user's default model or thinking
-preference. Ordinary selections retain Pi's default-updating behavior.
+preference. Session-only model switches carry the active thinking level instead
+of applying persisted global or per-model defaults. Ordinary selections retain
+Pi's default-updating behavior.
 Applications may also pass adapter-neutral `inlineExtensions` directly into
 session composition for host-owned integration such as presentation controls;
 these remain opt-in and are not discovered from ambient configuration.

@@ -168,6 +168,42 @@ describe('Agent Core session composition', () => {
     result.session.dispose();
   });
 
+  it('carries the active thinking level across a session-only model switch', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const modelRuntime = await createModelRuntime(agentDir);
+    const planner = modelRuntime.getModel('openai-codex', 'gpt-5.6-sol');
+    const target = modelRuntime.getModel('openai-codex', 'gpt-5.6-luna');
+    if (!planner || !target) throw new Error('Expected built-in OpenAI Codex models');
+    vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+    vi.spyOn(modelRuntime, 'checkAuth').mockResolvedValue({} as never);
+    const settingsManager = SettingsManager.inMemory({ defaultThinkingLevel: 'max' });
+    let extensionApi: Parameters<FelanExtension>[0] | undefined;
+
+    const result = await createAgentCoreSession({
+      runtime: new TestAgentRuntime(cwd),
+      extensionPackages: ['@felan-ai/test-selection'],
+      importExtension: async () => ({
+        default: ((pi) => { extensionApi = pi; }) satisfies FelanExtension,
+      }),
+      modelRuntime,
+      settingsManager,
+      sessionManager: SessionManager.inMemory(cwd),
+      model: planner,
+      thinkingLevel: 'xhigh',
+    });
+    await result.session.bindExtensions({ mode: 'print' });
+
+    await extensionApi!.setModel(target, { updateDefault: false });
+
+    expect(result.session.model).toBe(target);
+    expect(result.session.thinkingLevel).toBe('xhigh');
+    expect(settingsManager.getDefaultThinkingLevel()).toBe('max');
+    result.session.dispose();
+  });
+
   it('loads cwd CLAUDE.md as fallback and prefers AGENTS.md', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
