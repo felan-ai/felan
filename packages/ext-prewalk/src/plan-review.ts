@@ -1,5 +1,7 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import {
+  CURSOR_MARKER,
+  Editor,
   Key,
   Markdown,
   matchesKey,
@@ -7,11 +9,14 @@ import {
   truncateToWidth,
   visibleWidth,
   type Component,
+  type Focusable,
   type Keybinding,
   type KeybindingsManager,
   type MarkdownTheme,
   type OverlayOptions,
   type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@earendil-works/pi-tui';
 
 type Theme = ExtensionContext['ui']['theme'];
@@ -28,6 +33,19 @@ export const PLAN_REVIEW_OPTIONS = [
 
 export type PlanReviewAction = (typeof PLAN_REVIEW_OPTIONS)[number];
 
+export interface PlanReviewResult {
+  action: PlanReviewAction;
+  feedback?: string;
+}
+
+interface EditorLayout {
+  top: number;
+  width: number;
+  height: number;
+  offset: number;
+  fullHeight: number;
+}
+
 export const PLAN_REVIEW_OVERLAY_OPTIONS: OverlayOptions = {
   anchor: 'top-left',
   width: '100%',
@@ -41,25 +59,25 @@ export async function presentPlanReview(
   ctx: ExtensionContext,
   plan: string,
   signal?: AbortSignal,
-): Promise<PlanReviewAction | undefined> {
+): Promise<PlanReviewResult | undefined> {
   if (ctx.mode !== 'tui') {
     const action = await ctx.ui.select(
       `Review Prewalk plan\n\n${plan}`,
       [...PLAN_REVIEW_OPTIONS],
       signal ? { signal } : undefined,
     );
-    return isPlanReviewAction(action) ? action : undefined;
+    return isPlanReviewAction(action) ? { action } : undefined;
   }
 
   let removeAbortListener: (() => void) | undefined;
   try {
-    return await ctx.ui.custom<PlanReviewAction | undefined>(
+    return await ctx.ui.custom<PlanReviewResult | undefined>(
       (tui, theme, keybindings, done) => {
         let settled = false;
-        const finish = (action: PlanReviewAction | undefined): void => {
+        const finish = (result: PlanReviewResult | undefined): void => {
           if (settled) return;
           settled = true;
-          done(action);
+          done(result);
         };
         const onAbort = (): void => finish(undefined);
         if (signal?.aborted) queueMicrotask(onAbort);
@@ -76,8 +94,12 @@ export async function presentPlanReview(
   }
 }
 
-export class PlanReview implements Component {
+export class PlanReview implements Component, Focusable {
   readonly #markdown: Markdown;
+  readonly #editor: Editor;
+  #editorLayout: EditorLayout | undefined;
+  #editingFeedback = false;
+  #focused = false;
   #selectedIndex = 0;
   #scrollOffset = 0;
   #contentLength = 0;
@@ -90,7 +112,7 @@ export class PlanReview implements Component {
     private readonly theme: Theme,
     private readonly keybindings: KeybindingsManager,
     plan: string,
-    private readonly done: (action: PlanReviewAction | undefined) => void,
+    private readonly done: (result: PlanReviewResult | undefined) => void,
   ) {
     this.#markdown = new Markdown(
       sanitizePlanForDisplay(plan),
@@ -100,6 +122,28 @@ export class PlanReview implements Component {
       undefined,
       { preserveOrderedListMarkers: true },
     );
+    this.#editor = new Editor(tui, {
+      borderColor: (text) => theme.fg('accent', text),
+      selectList: {
+        selectedPrefix: (text) => theme.fg('accent', text),
+        selectedText: (text) => theme.fg('accent', text),
+        description: (text) => theme.fg('muted', text),
+        scrollInfo: (text) => theme.fg('dim', text),
+        noMatch: (text) => theme.fg('warning', text),
+      },
+    });
+    this.#editor.onSubmit = (feedback) => {
+      if (feedback.trim()) this.#finish({ action: FEEDBACK_PLAN_OPTION, feedback });
+    };
+  }
+
+  get focused(): boolean {
+    return this.#focused;
+  }
+
+  set focused(value: boolean) {
+    this.#focused = value;
+    this.#editor.focused = value && this.#editingFeedback;
   }
 
   handleInput(data: string): void {
@@ -110,21 +154,27 @@ export class PlanReview implements Component {
       return;
     }
     if (this.keybindings.matches(data, 'tui.select.cancel')) {
-      this.#finish(undefined);
+      if (this.#editingFeedback) this.#setEditingFeedback(false);
+      else this.#finish(undefined);
       return;
     }
     if (
       this.keybindings.matches(data, 'tui.select.pageUp')
-      || matchesKey(data, Key.ctrl('u'))
+      || (!this.#editingFeedback && matchesKey(data, Key.ctrl('u')))
     ) {
       this.#scrollBy(-this.#viewportHeight);
       return;
     }
     if (
       this.keybindings.matches(data, 'tui.select.pageDown')
-      || matchesKey(data, Key.ctrl('d'))
+      || (!this.#editingFeedback && matchesKey(data, Key.ctrl('d')))
     ) {
       this.#scrollBy(this.#viewportHeight);
+      return;
+    }
+    if (this.#editingFeedback) {
+      this.#editor.handleInput(data);
+      this.tui.requestRender();
       return;
     }
     if (matchesKey(data, Key.home)) {
@@ -144,22 +194,50 @@ export class PlanReview implements Component {
       return;
     }
     if (this.keybindings.matches(data, 'tui.select.confirm') || matchesKey(data, Key.enter)) {
-      this.#finish(PLAN_REVIEW_OPTIONS[this.#selectedIndex]);
+      const action = PLAN_REVIEW_OPTIONS[this.#selectedIndex];
+      if (action === FEEDBACK_PLAN_OPTION) this.#setEditingFeedback(true);
+      else if (action) this.#finish({ action });
     }
   }
 
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.#closed) return undefined;
+    if (event.type === 'wheel') {
+      this.#scrollBy(Math.sign(event.wheelDelta ?? 0));
+      return { handled: true };
+    }
+    const layout = this.#editorLayout;
+    if (
+      !this.#editingFeedback || !layout
+      || event.x < 1 || event.x >= layout.width + 1
+      || event.y < layout.top || event.y >= layout.top + layout.height
+    ) return undefined;
+    return this.#editor.handleMouse({
+      ...event,
+      x: event.x - 1,
+      y: event.y - layout.top + layout.offset,
+      width: layout.width,
+      height: layout.fullHeight,
+    });
+  }
+
   render(width: number): string[] {
+    this.#editorLayout = undefined;
     const renderWidth = normalizeDimension(width);
     const rows = normalizeDimension(this.tui.terminal.rows);
     if (rows === 1) return [fitLine(this.theme.fg('border', '─'.repeat(renderWidth)), renderWidth)];
 
     const innerWidth = renderWidth >= 3 ? renderWidth - 2 : 0;
     const innerRows = Math.max(0, rows - 2);
-    const actionRows = Math.min(PLAN_REVIEW_OPTIONS.length, innerRows);
+    const feedback = this.#editingFeedback
+      ? this.#renderFeedback(innerWidth, Math.min(innerRows, Math.max(1, innerRows - 3)))
+      : undefined;
+    const feedbackLines = feedback?.lines;
+    const actionRows = feedbackLines?.length ?? Math.min(PLAN_REVIEW_OPTIONS.length, innerRows);
     let viewportHeight = Math.max(0, innerRows - actionRows);
     const showHeader = viewportHeight >= 2;
     if (showHeader) viewportHeight -= 1;
-    const showDivider = viewportHeight >= 2;
+    const showDivider = !this.#editingFeedback && viewportHeight >= 2;
     if (showDivider) viewportHeight -= 1;
     const showHints = viewportHeight >= 2;
     if (showHints) viewportHeight -= 1;
@@ -180,8 +258,13 @@ export class PlanReview implements Component {
     body.push(...visiblePlan);
     while (body.length < Number(showHeader) + viewportHeight) body.push('');
     if (showDivider) body.push(this.theme.fg('border', '─'.repeat(innerWidth)));
-    body.push(...this.#renderActions(innerWidth, actionRows));
+    const feedbackTop = body.length + 1;
+    body.push(...(feedbackLines ?? this.#renderActions(innerWidth, actionRows)));
     if (showHints) body.push(this.#renderHints());
+    this.#editorLayout = feedback?.editorLayout;
+    if (this.#editorLayout) {
+      this.#editorLayout.top += feedbackTop + Math.max(0, innerRows - body.length);
+    }
     while (body.length < innerRows) body.unshift('');
 
     return frameLines(body.slice(-innerRows), renderWidth, this.theme);
@@ -189,16 +272,24 @@ export class PlanReview implements Component {
 
   invalidate(): void {
     this.#markdown.invalidate();
+    this.#editor.invalidate();
   }
 
   dispose(): void {
     this.#closed = true;
   }
 
-  #finish(action: PlanReviewAction | undefined): void {
+  #finish(result: PlanReviewResult | undefined): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.done(action);
+    this.done(result);
+  }
+
+  #setEditingFeedback(editing: boolean): void {
+    this.#editingFeedback = editing;
+    this.#editorLayout = undefined;
+    this.#editor.focused = editing && this.#focused;
+    this.tui.requestRender();
   }
 
   #select(delta: number): void {
@@ -261,14 +352,50 @@ export class PlanReview implements Component {
   #renderHints(): string {
     const pageUp = bindingLabel(this.keybindings, 'tui.select.pageUp', 'pageUp');
     const pageDown = bindingLabel(this.keybindings, 'tui.select.pageDown', 'pageDown');
+    const cancel = bindingLabel(this.keybindings, 'tui.select.cancel', 'escape');
+    if (this.#editingFeedback) {
+      const submit = bindingLabel(this.keybindings, 'tui.input.submit', 'enter');
+      const newLine = bindingLabel(this.keybindings, 'tui.input.newLine', 'shift+enter/ctrl+j');
+      return this.theme.fg('dim', `${submit} send · ${newLine} newline · ${cancel} back`);
+    }
     const selectUp = bindingLabel(this.keybindings, 'tui.select.up', 'up');
     const selectDown = bindingLabel(this.keybindings, 'tui.select.down', 'down');
     const confirm = bindingLabel(this.keybindings, 'tui.select.confirm', 'enter');
-    const cancel = bindingLabel(this.keybindings, 'tui.select.cancel', 'escape');
     return this.theme.fg(
       'dim',
       `wheel or ${pageUp}/${pageDown} scroll · home/end limits · ${selectUp}/${selectDown} choose · ${confirm} select · ${cancel} dismiss`,
     );
+  }
+
+  #renderFeedback(width: number, maxRows: number): { lines: string[]; editorLayout?: EditorLayout } {
+    if (maxRows <= 0) return { lines: [] };
+    if (width <= 0) return { lines: [''] };
+    const pageUp = bindingLabel(this.keybindings, 'tui.select.pageUp', 'pageUp');
+    const pageDown = bindingLabel(this.keybindings, 'tui.select.pageDown', 'pageDown');
+    const label = this.theme.fg('accent', this.theme.bold('Feedback'))
+      + this.theme.fg('dim', ` · wheel/${pageUp}/${pageDown} scroll plan`);
+    const header = maxRows >= 2 ? [label] : [];
+    const editorRows = maxRows - header.length;
+    const lines = this.#editor.render(width);
+    let visibleLines = lines;
+    let offset = 0;
+    if (lines.length > editorRows) {
+      const content = lines.slice(1, -1);
+      const cursorRow = content.findIndex((line) => line.includes(CURSOR_MARKER));
+      const start = Math.max(0, Math.min(cursorRow, content.length - editorRows));
+      visibleLines = content.slice(start, start + editorRows);
+      offset = start + 1;
+    }
+    return {
+      lines: [...header, ...visibleLines],
+      editorLayout: {
+        top: header.length,
+        width,
+        height: visibleLines.length,
+        offset,
+        fullHeight: lines.length,
+      },
+    };
   }
 }
 

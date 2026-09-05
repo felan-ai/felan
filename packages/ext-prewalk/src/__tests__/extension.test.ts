@@ -182,6 +182,10 @@ function createHarness(
         component.handleInput?.('\x1b[B');
       }
       component.handleInput?.(decision === 'dismiss' ? '\x1b' : '\r');
+      if (decision === 'feedback') {
+        component.handleInput?.(`\x1b[200~${options.planFeedback ?? ''}\x1b[201~`);
+        component.handleInput?.('\r');
+      }
       return result;
     }),
     input: vi.fn(async () => options.planFeedback),
@@ -883,7 +887,7 @@ describe('plan review', () => {
   it('returns user feedback and remains in planning until a revised plan is approved', async () => {
     const harness = createHarness({
       planDecision: 'feedback',
-      planFeedback: 'Keep the public API unchanged.',
+      planFeedback: 'Keep the public API unchanged.\n\nAdd regression tests.',
       prewalkOptions: { planReview: 'ask' },
     });
     await startPlanning(harness);
@@ -891,19 +895,16 @@ describe('plan review', () => {
 
     const feedback = await exitPlanMode(harness, '1. Change the API');
 
-    expect(harness.ui.input).toHaveBeenCalledWith(
-      'Feedback on Prewalk plan',
-      'Tell the planner what to change...',
-      undefined,
-    );
+    expect(harness.ui.input).not.toHaveBeenCalled();
+    expect(harness.ui.custom).toHaveBeenCalledTimes(1);
     expect(feedback).toMatchObject({
       details: {
         phase: 'planning',
         decision: 'feedback',
-        feedback: 'Keep the public API unchanged.',
+        feedback: 'Keep the public API unchanged.\n\nAdd regression tests.',
       },
     });
-    expect(feedback.content[0]?.text).toContain('Keep the public API unchanged.');
+    expect(feedback.content[0]?.text).toContain('Keep the public API unchanged.\n\nAdd regression tests.');
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLAN_REVIEW_MESSAGE_TYPE);
 
     harness.setPlanDecision('approve');
@@ -1065,6 +1066,29 @@ describe('plan review', () => {
     );
     expect(harness.ui.custom).not.toHaveBeenCalled();
     expect(approval).toMatchObject({ details: { decision: 'approved' } });
+  });
+
+  it('keeps RPC feedback on the host input dialog', async () => {
+    const harness = createHarness({
+      mode: 'rpc',
+      planDecision: 'feedback',
+      planFeedback: 'Keep the API unchanged.',
+      prewalkOptions: { planReview: 'ask' },
+    });
+    await startPlanning(harness);
+    await preparePlanForReview(harness);
+
+    const feedback = await exitPlanMode(harness);
+
+    expect(harness.ui.input).toHaveBeenCalledWith(
+      'Feedback on Prewalk plan',
+      'Tell the planner what to change...',
+      undefined,
+    );
+    expect(harness.ui.custom).not.toHaveBeenCalled();
+    expect(feedback).toMatchObject({
+      details: { phase: 'planning', decision: 'feedback', feedback: 'Keep the API unchanged.' },
+    });
   });
 });
 

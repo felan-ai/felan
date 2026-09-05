@@ -665,7 +665,8 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       }
 
       try {
-        const action = await presentPlanReview(ctx, params.plan, signal);
+        const review = await presentPlanReview(ctx, params.plan, signal);
+        const action = review?.action;
 
         if (action === APPROVE_PLAN_OPTION) {
           if (!resumePlanningAfterReview(ctx, reviewRun, true)) {
@@ -678,11 +679,13 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
           if (!isActivePlanReview(reviewRun)) {
             return stalePlanReviewResult(state.phase);
           }
-          const feedback = await ctx.ui.input(
-            'Feedback on Prewalk plan',
-            'Tell the planner what to change...',
-            signal ? { signal } : undefined,
-          );
+          const feedback = ctx.mode === 'tui'
+            ? review?.feedback
+            : await ctx.ui.input(
+              'Feedback on Prewalk plan',
+              'Tell the planner what to change...',
+              signal ? { signal } : undefined,
+            );
           if (!resumePlanningAfterReview(ctx, reviewRun, false)) {
             return stalePlanReviewResult(state.phase);
           }
