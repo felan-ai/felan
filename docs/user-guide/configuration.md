@@ -9,6 +9,7 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 | Path | Purpose |
 | --- | --- |
 | `settings.json` | Built-in enablement, extension configuration, local TUI behavior, model scope, and subagent limits |
+| `models.json` | Pi provider credentials, custom models, and model metadata overrides |
 | `APPEND_SYSTEM.md` | Optional local application prompt append |
 | `mcp.json` | Felan-owned remote OAuth MCP servers |
 | `<workspace>/.mcp.json` | Project MCP entries; higher precedence by server name |
@@ -359,7 +360,7 @@ effect in a newly constructed process/session. The built-in is enabled by defaul
 `builtinExtensions.powerline` to `false` to remove it.
 
 Felan keeps its theme IDs namespaced instead of replacing Pi's `dark` and
-`light`: Pi 0.84.4 gives its built-in IDs precedence during HTML export. The
+`light`: Pi 0.85.0 gives its built-in IDs precedence during HTML export. The
 interactive startup view is compact by default; press `Ctrl+O` to show full
 startup help and loaded resources.
 

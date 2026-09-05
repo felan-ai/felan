@@ -145,6 +145,7 @@ function modelVersionScore(id: string): number {
 }
 
 function classifyOpenAi(id: string): ModelTier {
+  if (id === 'gpt-6-astra') return 'high';
   if (/(?:^|-)(?:luna|nano|mini|spark)(?:-|$)/u.test(id)) return 'low';
   if (/(?:^|-)(?:sol|pro)(?:-|$)/u.test(id) || /(?:^|-)o[13](?:-|$)/u.test(id)) return 'high';
   if (/gpt-5\.5(?:-|$)/u.test(id)) return 'high';

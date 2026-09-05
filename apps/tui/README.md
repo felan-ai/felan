@@ -125,7 +125,7 @@ The local TUI provides `felan-light` and `felan-dark` as host-owned Pi themes.
 The startup view uses a compact Felan welcome; press `Ctrl+O` when you need
 the full startup help and loaded-resource listing. When no theme is saved,
 Felan follows the terminal appearance automatically. The `felan-*` names are
-intentional: Pi 0.84.4 reserves `dark` and `light` for its built-in export
+intentional: Pi 0.85.0 reserves `dark` and `light` for its built-in export
 themes, so colliding IDs would make exported sessions use different colors.
 Powerline consumes that same active theme instead of defining its own colors.
 New installs use Pi's fullscreen TUI mode by default. A saved `tuiMode` setting

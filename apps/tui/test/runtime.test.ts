@@ -47,6 +47,77 @@ afterEach(async () => {
 });
 
 describe('local Agent Core lifecycle', () => {
+  it('loads GPT-6 Astra from the configured Pi model catalog', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, 'agent');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'models.json'), JSON.stringify({
+      providers: {
+        'openai-codex': {
+          models: [{
+            id: 'gpt-6-astra',
+            name: 'GPT-6 Astra',
+            api: 'openai-codex-responses',
+            reasoning: true,
+            input: ['text', 'image'],
+            contextWindow: 272_000,
+            maxTokens: 128_000,
+            cost: {
+              input: 10,
+              output: 50,
+              cacheRead: 1,
+              cacheWrite: 12.5,
+              tiers: [{
+                inputTokensAbove: 272_000,
+                input: 20,
+                output: 75,
+                cacheRead: 2,
+                cacheWrite: 25,
+              }],
+            },
+            thinkingLevelMap: {
+              off: null,
+              minimal: 'low',
+              xhigh: 'xhigh',
+              max: 'max',
+            },
+          }],
+        },
+      },
+    }));
+
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    expect(modelRuntime.getModel('openai-codex', 'gpt-6-astra')).toMatchObject({
+      id: 'gpt-6-astra',
+      name: 'GPT-6 Astra',
+      api: 'openai-codex-responses',
+      provider: 'openai-codex',
+      reasoning: true,
+      input: ['text', 'image'],
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+      cost: {
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+        tiers: [{
+          inputTokensAbove: 272_000,
+          input: 20,
+          output: 75,
+          cacheRead: 2,
+          cacheWrite: 25,
+        }],
+      },
+      thinkingLevelMap: {
+        off: null,
+        minimal: 'low',
+        xhigh: 'xhigh',
+        max: 'max',
+      },
+    });
+  });
+
   it('guards concurrent Pi credential writes with the local async lock', async () => {
     const root = await temporaryDirectory();
     const agentDir = join(root, 'agent');

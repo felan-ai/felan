@@ -194,7 +194,7 @@ Felan supplies two host-owned Pi themes, `felan-light` and `felan-dark`, and
 uses `felan-light/felan-dark` by default when no saved theme setting exists.
 The active Pi theme is shared by built-in UI, Felan overlays, and the Powerline
 footer. Felan keeps these namespaced rather than replacing Pi's `dark` and
-`light` IDs: Pi 0.84.4 resolves those built-in names first when exporting HTML,
+`light` IDs: Pi 0.85.0 resolves those built-in names first when exporting HTML,
 which would make runtime and exported sessions disagree.
 
 Startup is intentionally compact: it shows a Felan welcome and key hints

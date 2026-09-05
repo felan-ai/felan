@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/agent-core",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "Portable Felan agent contracts and composition",
   "license": "MIT",
   "type": "module",
@@ -31,8 +31,9 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.4",
-    "@earendil-works/pi-coding-agent": "0.84.4",
+    "@earendil-works/pi-ai": "0.85.0",
+    "@earendil-works/pi-coding-agent": "0.85.0",
+    "@earendil-works/pi-server": "0.85.0",
     "@lydell/node-pty": "1.2.0-beta.14"
   },
   "publishConfig": {

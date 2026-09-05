@@ -17,6 +17,7 @@ describe('Codex model policy', () => {
   it.each([
     ['openai', 'gpt-5.4', true],
     ['openai-codex', 'gpt-5.3-codex', true],
+    ['openai-codex', 'gpt-6-astra', true],
     ['openai', 'o3', false],
     ['openai-codex', 'codex-mini', false],
     ['custom', 'gpt-5.4', false],
@@ -53,6 +54,70 @@ describe('OpenAI request options', () => {
     ] as Model<Api>[]) {
       expect(applyCodexRequestOptions({ untouched: true }, { model }, config)).toBeUndefined();
     }
+  });
+
+  it.each([
+    ['openai', 'openai-responses'],
+    ['openai-codex', 'openai-codex-responses'],
+  ] as const)('normalizes nullable strictness for %s/%s function tools', (provider, api) => {
+    const model = { provider, id: 'gpt-6-astra', api } as Model<Api>;
+    const payload = {
+      model: model.id,
+      tools: [
+        { type: 'function', name: 'optional', strict: null, parameters: {} },
+        { type: 'function', name: 'strict', strict: true, parameters: {} },
+        { type: 'function', name: 'loose', strict: false, parameters: {} },
+        { type: 'function', name: 'absent', parameters: {} },
+        { type: 'custom', name: 'grammar', strict: null, format: { type: 'grammar' } },
+        { type: 'web_search_preview', strict: null },
+      ],
+    };
+
+    const result = applyCodexRequestOptions(payload, { model }, {
+      fast: false,
+      verbosity: 'high',
+      forceCachedWebSockets: true,
+      postAgentRunCompaction: false,
+    }) as typeof payload & { text: { verbosity: string } };
+
+    expect(result.tools).toEqual([
+      { type: 'function', name: 'optional', strict: false, parameters: {} },
+      { type: 'function', name: 'strict', strict: true, parameters: {} },
+      { type: 'function', name: 'loose', strict: false, parameters: {} },
+      { type: 'function', name: 'absent', parameters: {} },
+      { type: 'custom', name: 'grammar', strict: null, format: { type: 'grammar' } },
+      { type: 'web_search_preview', strict: null },
+    ]);
+    expect(result.text).toEqual({ verbosity: 'high' });
+    expect(payload.tools[0]).toEqual({
+      type: 'function', name: 'optional', strict: null, parameters: {},
+    });
+  });
+
+  it('does not normalize malformed or already-compatible tool payloads', () => {
+    const model = { provider: 'openai', id: 'gpt-5.4', api: 'openai-responses' } as Model<Api>;
+    const noNull = { tools: [{ type: 'function', name: 'tool', strict: false }] };
+    const malformed = { tools: 'not-an-array' };
+
+    expect(applyCodexRequestOptions(noNull, { model }, {
+      fast: false, verbosity: 'low', forceCachedWebSockets: true, postAgentRunCompaction: false,
+    })).toMatchObject({ tools: noNull.tools });
+    expect(applyCodexRequestOptions(malformed, { model }, {
+      fast: false, verbosity: 'low', forceCachedWebSockets: true, postAgentRunCompaction: false,
+    })).toMatchObject(malformed);
+  });
+
+  it('does not normalize tools for an ineligible model or non-object payload', () => {
+    const payload = { tools: [{ type: 'function', strict: null }] };
+    const config = {
+      fast: false, verbosity: 'low', forceCachedWebSockets: true, postAgentRunCompaction: false,
+    } as const;
+    expect(applyCodexRequestOptions(payload, {
+      model: { provider: 'anthropic', id: 'gpt-6-astra', api: 'openai-responses' } as Model<Api>,
+    }, config)).toBeUndefined();
+    expect(applyCodexRequestOptions(null, {
+      model: { provider: 'openai', id: 'gpt-6-astra', api: 'openai-responses' } as Model<Api>,
+    }, config)).toBeUndefined();
   });
 });
 
@@ -96,6 +161,13 @@ describe('OpenAI Codex transport policy', () => {
       { transport: 'websocket' },
       config,
     )).toEqual({ transport: 'websocket' });
+    expect(resolveCodexStreamOptions(
+      responseModel('openai-codex', 'gpt-6-astra', 'openai-codex-responses'),
+      { transport: 'websocket' },
+      config,
+    )).toMatchObject({
+      transport: 'websocket-cached', serviceTier: 'priority', textVerbosity: 'high',
+    });
   });
 
   it('wraps each session independently without extra provider calls', () => {

@@ -7,5 +7,5 @@ https://github.com/mslavov/pi-extensions at source commit
 Copyright (c) 2026 Milko Slavov
 Licensed under the MIT License included in this package.
 
-This package uses @earendil-works/pi-tui 0.84.4 (Pi-TUI 0.84.4), licensed under
+This package uses @earendil-works/pi-tui 0.85.0 (Pi-TUI 0.85.0), licensed under
 the MIT License.

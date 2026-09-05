@@ -3,11 +3,21 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const root = resolve(import.meta.dirname, '..');
-const result = spawnSync(
-  process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : 'pnpm',
-  process.platform === 'win32'
+const usingPnpm = process.env.npm_config_user_agent?.startsWith('pnpm/')
+  && process.env.npm_execpath;
+const command = usingPnpm
+  ? (process.env.npm_node_execpath ?? process.execPath)
+  : process.platform === 'win32'
+    ? (process.env.ComSpec ?? 'cmd.exe')
+    : 'pnpm';
+const commandArgs = usingPnpm
+  ? [process.env.npm_execpath, 'licenses', 'list', '--prod', '--json']
+  : process.platform === 'win32'
     ? ['/d', '/s', '/c', 'pnpm.cmd licenses list --prod --json']
-    : ['licenses', 'list', '--prod', '--json'],
+    : ['licenses', 'list', '--prod', '--json'];
+const result = spawnSync(
+  command,
+  commandArgs,
   {
     cwd: root,
     encoding: 'utf8',
@@ -31,6 +41,7 @@ const allowedLicenses = new Set([
   'BlueOak-1.0.0',
   'ISC',
   'MIT',
+  'Unlicense',
 ]);
 const errors = [];
 const packages = [];
@@ -46,10 +57,11 @@ for (const [license, entries] of Object.entries(inventory)) {
 }
 
 for (const required of [
-  '@earendil-works/pi-agent-core@0.84.4',
-  '@earendil-works/pi-ai@0.84.4',
-  '@earendil-works/pi-coding-agent@0.84.4',
-  '@earendil-works/pi-tui@0.84.4',
+  '@earendil-works/pi-agent-core@0.85.0',
+  '@earendil-works/pi-ai@0.85.0',
+  '@earendil-works/pi-coding-agent@0.85.0',
+  '@earendil-works/pi-server@0.85.0',
+  '@earendil-works/pi-tui@0.85.0',
   '@lydell/node-pty@1.2.0-beta.14',
   '@modelcontextprotocol/client@2.0.0',
   '@modelcontextprotocol/core@2.0.0',
@@ -62,13 +74,15 @@ for (const required of [
 
 const notice = readFileSync(resolve(root, 'NOTICE'), 'utf8');
 for (const requiredNotice of [
-  'Pi 0.84.4',
+  'Pi 0.85.0',
+  '@earendil-works/pi-server 0.85.0',
   '@lydell/node-pty 1.2.0-beta.14',
   'TypeBox 1.1.38',
   'pi-mcp-adapter 2.21.0',
   'pi-mcp-adapter 2.26.0',
   'pi-ask-user 0.14.0',
   '@howaboua/pi-codex-conversion 3.0.15',
+  '@howaboua/pi-codex-conversion 3.0.26',
   '@modelcontextprotocol/client 2.0.0',
   '@napi-rs/keyring 1.3.0',
   'open 11.0.0',
@@ -104,7 +118,7 @@ for (const requiredNotice of [
   '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
   'pi-ask-user 0.14.0',
   '2de7e145227f7a527e995e323a50e7ee9bf88b0e',
-  'Pi-TUI 0.84.4',
+  'Pi-TUI 0.85.0',
   'TypeBox 1.1.38',
 ]) {
   if (!askUserNotice.includes(requiredNotice)) {
@@ -174,7 +188,7 @@ const contextViewNotice = readFileSync(resolve(root, 'packages/ext-context-view/
 for (const requiredNotice of [
   'packages/pi-context',
   '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
-  'Pi-TUI 0.84.4',
+  'Pi-TUI 0.85.0',
 ]) {
   if (!contextViewNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-context-view/NOTICE is missing ${requiredNotice}`);
@@ -188,7 +202,7 @@ const promptHistoryNotice = readFileSync(resolve(root, 'packages/ext-prompt-hist
 for (const requiredNotice of [
   'packages/pi-prompt-history',
   '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
-  'Pi-TUI 0.84.4',
+  'Pi-TUI 0.85.0',
 ]) {
   if (!promptHistoryNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-prompt-history/NOTICE is missing ${requiredNotice}`);

@@ -8,7 +8,7 @@ describe('@felan-ai/ext-prompt-history package boundary', () => {
   it('publishes metadata and source attribution', async () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     const notice = await readFile(join(packageRoot, 'NOTICE'), 'utf8');
-    expect(manifest).toMatchObject({ name: '@felan-ai/ext-prompt-history', version: '0.1.1', dependencies: { '@earendil-works/pi-tui': '0.84.4' }, peerDependencies: { '@felan-ai/agent-core': '^0.5.5' }, publishConfig: { access: 'public', provenance: true } });
+    expect(manifest).toMatchObject({ name: '@felan-ai/ext-prompt-history', version: '0.1.2', dependencies: { '@earendil-works/pi-tui': '0.85.0' }, peerDependencies: { '@felan-ai/agent-core': '^0.5.5' }, publishConfig: { access: 'public', provenance: true } });
     expect(notice).toContain('packages/pi-prompt-history');
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');
   });

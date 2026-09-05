@@ -27,8 +27,10 @@ providing bounded automatic names for local interactive root sessions. Its
 package-level license and notice are included in
 packages/ext-session-title/LICENSE and NOTICE.
 
-This product uses Pi 0.84.4 from https://github.com/earendil-works/pi,
+This product uses Pi 0.85.0 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
+It also uses @earendil-works/pi-server 0.85.0 from the same project under the
+MIT License.
 
 @felan-ai/ext-subagents, @felan-ai/ext-ask-user, @felan-ai/ext-tasks,
 @felan-ai/ext-background-bash, @felan-ai/ext-browser, @felan-ai/ext-web-access,
@@ -131,6 +133,9 @@ https://github.com/IgorWarzocha/howaboua-pi-stuff.
 Additional patch replacement and execution-shutdown behavior are adapted from
 @howaboua/pi-codex-conversion 3.0.15 at npm gitHead
 b4b99630cda3c066749af0fb3ac9b8184b2a4c7d.
+The nullable function-tool strictness compatibility behavior is adapted from
+@howaboua/pi-codex-conversion 3.0.26 at npm gitHead
+f16fee563f71849cc2b9a94be2b6f70e12fca804.
 Copyright (c) 2026 Umberto B. Package-level attribution and license terms are
 included in packages/ext-codex/NOTICE and LICENSE.
 

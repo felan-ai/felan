@@ -8,12 +8,26 @@ export function applyCodexRequestOptions(
   config: CodexConfig,
 ): unknown | undefined {
   if (!supportsCodexResponsesRequest(ctx.model) || !isRecord(payload)) return undefined;
-  const text = isRecord(payload.text) ? payload.text : {};
+  const normalizedPayload = normalizeCodexFunctionToolStrictness(payload) ?? payload;
+  const text = isRecord(normalizedPayload.text) ? normalizedPayload.text : {};
   return {
-    ...payload,
+    ...normalizedPayload,
     ...(config.fast ? { service_tier: 'priority' } : {}),
     text: { ...text, verbosity: config.verbosity },
   };
+}
+
+function normalizeCodexFunctionToolStrictness(
+  payload: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!Array.isArray(payload.tools)) return undefined;
+  let changed = false;
+  const tools = payload.tools.map((tool) => {
+    if (!isRecord(tool) || tool.type !== 'function' || tool.strict !== null) return tool;
+    changed = true;
+    return { ...tool, strict: false };
+  });
+  return changed ? { ...payload, tools } : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

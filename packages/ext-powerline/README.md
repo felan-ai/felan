@@ -1,6 +1,6 @@
 # @felan-ai/ext-powerline
 
-Portable ANSI-aware TUI footer extension targeting Pi 0.84.4. The local Felan
+Portable ANSI-aware TUI footer extension targeting Pi 0.85.0. The local Felan
 TUI enables it by default and binds a host that can display Codex or Claude
 subscription usage; the package itself is hostless by default.
 

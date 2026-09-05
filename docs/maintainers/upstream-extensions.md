@@ -14,7 +14,7 @@ purposes:
   changes have been evaluated. Advance this checkpoint even when no change is
   ported, so the next review starts from a known comparison point.
 
-The latest repository-wide review was completed on **2026-08-17**. npm
+The latest repository-wide review was completed on **2026-09-05**. npm
 versions below use the published package's `gitHead`; monorepo-only packages
 use the reviewed path revision.
 
@@ -23,7 +23,7 @@ use the reviewed path revision.
 | `@felan-ai/ext-ask-user` | Adapted source; the snapshot originates from `edlsh/pi-ask-user` | [`pi-ask-user` 0.11.2 at `7e72e509`][ask-user-baseline] | Origin [`pi-ask-user` 0.14.0 at `2de7e145`][ask-user-reviewed]; Felan fork remains at `7e72e509` | Ported proxy-safe option handling and bounded TUI improvements; retained Felan's portable host contract. |
 | `@felan-ai/ext-background-bash` | Adapted source | [`pi-background-bash` 0.1.0 at `7e72e509`][background-bash-baseline] | Same release and revision | No upstream change; Felan now probes required POSIX runtime utilities and keeps the feature inactive when they are unavailable. |
 | `@felan-ai/ext-browser` | External CLI integration; no upstream source copied | [`agent-browser` 0.31.1 at `ed2e1059`][agent-browser-reviewed] | Same release and revision | Felan exposes the version-matched bundled skills and CLI through a portable tool, adds host-owned onboarding, isolates sessions, and converts safe screenshots to native image content; it does not vendor the upstream daemon or install Chrome automatically. |
-| `@felan-ai/ext-codex` | Adapted selected code and behavior | [`@howaboua/pi-codex-conversion` 3.0.8 at `62d1501a`][codex-baseline] | Release [`3.0.15` at `b4b99630`][codex-reviewed], plus main through [`2e775ab4`][codex-main-reviewed] | Ported structured skill-prompt preservation, delete-and-readd patch replacement, and shutdown fencing; excluded the upstream provider, voice, compaction, Code Mode, Notebook Mode, and the post-release display sidecar. |
+| `@felan-ai/ext-codex` | Adapted selected code and behavior | [`@howaboua/pi-codex-conversion` 3.0.8 at `62d1501a`][codex-baseline] | Release [`3.0.26` at `f16fee5`][codex-latest-reviewed] | Ported structured skill-prompt preservation, delete-and-readd patch replacement, shutdown fencing, and the narrow `strict: null` to `strict: false` compatibility normalization for direct Responses function tools; excluded the upstream provider, voice, native compaction, Code/Notebook modes, context windows, and display sidecar. |
 | `@felan-ai/ext-codebase-memory` | Adapted behavior and prompt guidance plus external native CLI integration | [`pi-cbm` 1.2.1 at `921a749d`][codebase-memory-adaptation] and [`codebase-memory-mcp` 0.10.8 at `46ae198f`][codebase-memory-runtime] | Same releases and revisions | Ported a four-tool structural exploration surface to `AgentRuntime`; added exact-binary gating, explicit no-config installation, shared agent-scoped cache coordination, bounded grep/Codex augmentation, and startup/manual refresh while excluding watchers, LSP, ambient configuration, and automatic installation. |
 | `@felan-ai/ext-context` | Adapted source | [`pi-progressive-context` 0.1.0 at `9571293d`][context-baseline] | [`0.1.0` at monorepo `7e72e509`][context-reviewed] | No path changes since the adaptation source. |
 | `@felan-ai/ext-context-view` | Adapted source | [`pi-context` 0.1.0 at `7e72e509`][context-view-baseline] | Same revision | Ported the context estimate and overlay to Felan's public Agent Core surface; adapted prompt markup, tool attribution, and TUI boundaries. |
@@ -38,7 +38,7 @@ use the reviewed path revision.
 | `@felan-ai/ext-tasks` | Design reference only; no source copied | [`pi-todo-write` 0.1.0 at `9571293d`][tasks-baseline] | [`0.1.0` at monorepo `7e72e509`][tasks-reviewed] | No path changes since the design review. |
 | `@felan-ai/ext-web-access` | Adapted source and behavior | [`pi-web-access` 0.18.0 at `d2aab00d`][web-access-baseline] | Release [`0.23.0` at `c77b2822`][web-access-reviewed], plus main through [`81e18785`][web-access-main-reviewed] | Retained provider search and bounded extraction concepts, then replaced cached research artifacts with discovery-only search, filtered text/PDF passages, and a stricter SSRF boundary. |
 
-## 2026-08-17 decisions
+## 2026-09-05 decisions
 
 The review accepted changes that fix behavior already owned by a Felan
 extension:
@@ -47,7 +47,9 @@ extension:
   inputs, normalize display preferences, bound multi-select/context rendering,
   and allow an explicit single-column layout.
 - Codex: safely treat adjacent delete/add actions for one path as replacement,
-  and prevent process work from entering a session manager after shutdown.
+  prevent process work from entering a session manager after shutdown, and
+  preserve optional Responses function-tool arguments when Pi emits nullable
+  strictness.
 - MCP: recover a complete gateway request accidentally nested in `args`, while
   rejecting malformed nesting with sanitized guidance.
 - Web Access: the reviewed cache design was later superseded. Version 0.5 keeps
@@ -85,8 +87,7 @@ outcome even when the decision is "do not port."
 [agent-browser-reviewed]: https://github.com/vercel-labs/agent-browser/tree/ed2e10598c9064aecfaeb7cf21b540684db4be2c
 [background-bash-baseline]: https://github.com/mslavov/pi-extensions/tree/7e72e509fe45a5a87c4c2e176cb711de994a8c1d/packages/pi-background-bash
 [codex-baseline]: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91/packages/pi-codex-conversion
-[codex-reviewed]: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/b4b99630cda3c066749af0fb3ac9b8184b2a4c7d/packages/pi-codex-conversion
-[codex-main-reviewed]: https://github.com/IgorWarzocha/howaboua-pi-stuff/commit/2e775ab4bb3d68bf9877332e87eccb74f7984ec9
+[codex-latest-reviewed]: https://github.com/IgorWarzocha/howaboua-pi-stuff/commit/f16fee563f71849cc2b9a94be2b6f70e12fca804
 [codebase-memory-adaptation]: https://github.com/alexykn/pi-cbm/tree/921a749d5cea74bda8f647542627ef9518fec272
 [codebase-memory-runtime]: https://github.com/DeusData/codebase-memory-mcp/tree/46ae198fc11cda80e817acbc5f5908d7c2de7032
 [context-baseline]: https://github.com/mslavov/pi-extensions/tree/9571293d422db11de893fa80ed0fc3e39945c657/packages/pi-progressive-context

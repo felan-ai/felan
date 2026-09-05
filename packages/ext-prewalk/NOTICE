@@ -10,5 +10,5 @@ Copyright (c) 2026 Milko Slavov
 The adapted source is licensed under the MIT License. The applicable MIT
 license text and copyright notices are reproduced in LICENSE.
 
-This package uses @earendil-works/pi-tui 0.84.4 from
+This package uses @earendil-works/pi-tui 0.85.0 from
 https://github.com/earendil-works/pi, licensed under the MIT License.

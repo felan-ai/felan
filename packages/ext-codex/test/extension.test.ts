@@ -37,6 +37,42 @@ describe('Codex extension activation', () => {
     expect(harness.toolModeEvents).toEqual([{ version: 1, active: true }]);
   });
 
+  it('activates the structured tool surface for GPT-6 Astra', async () => {
+    const harness = createHarness();
+    const ctx = context('openai-codex', 'gpt-6-astra');
+    await codexExtension(harness.pi);
+
+    await harness.emit('session_start', {}, ctx);
+
+    expect(harness.activeTools).toEqual(expect.arrayContaining([
+      'exec_command', 'write_stdin', 'apply_patch', 'view_image',
+    ]));
+    expect(harness.activeTools).not.toContain('read');
+  });
+
+  it('normalizes Codex function-tool strictness through the provider hook', async () => {
+    const harness = createHarness();
+    const ctx = context('openai-codex', 'gpt-6-astra');
+    await codexExtension(harness.pi);
+
+    const [result] = await harness.emit('before_provider_request', {
+      payload: {
+        tools: [
+          { type: 'function', name: 'optional', strict: null },
+          { type: 'function', name: 'strict', strict: true },
+        ],
+      },
+    }, ctx);
+
+    expect(result).toEqual({
+      tools: [
+        { type: 'function', name: 'optional', strict: false },
+        { type: 'function', name: 'strict', strict: true },
+      ],
+      text: { verbosity: 'low' },
+    });
+  });
+
   it('restores ordinary tools when switching away and activates on a later GPT selection', async () => {
     const harness = createHarness();
     await codexExtension(harness.pi);
