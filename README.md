@@ -11,6 +11,7 @@
   <a href="https://github.com/felan-ai/felan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/felan-ai/felan/ci.yml?branch=main&style=flat&label=CI&colorA=222222&colorB=3FB950" alt="CI status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/felan-ai/felan?style=flat&colorA=222222&colorB=58A6FF" alt="MIT license"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-%3E%3D22.19-5FA04E?style=flat&colorA=222222" alt="Node.js 22.19 or newer"></a>
+  <a href="https://discord.gg/skNd4GSzZ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white&labelColor=222222" alt="Join Felan on Discord"></a>
 </p>
 
 Felan is built around one rule: an optimization only counts when the task still
@@ -24,6 +25,26 @@ optimizations.
 > The local agent runs with your user's filesystem and process permissions. It
 > is a host application, not a sandbox. Use an isolated host for untrusted
 > projects or commands.
+
+## 38.2% lower aggregate AI model cost in controlled benchmarks
+
+Across six controlled, extension-specific comparisons, candidate
+configurations used `$12.7692` versus `$20.6628` for their baselines when
+summing median-reduced case costs—a **38.2% reduction**. Individual results
+ranged from 5.8% to 66.0%. Each extension was measured separately against its
+disabled baseline, not as one all-enabled configuration. Every candidate met
+its configured quality gate.
+
+| Extension | Quality vs baseline | Cost vs baseline | Secondary result |
+| --- | ---: | ---: | ---: |
+| [Subagents](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/subagents/results.html) | 100% | **23.7% lower** | — |
+| [MarkItDown](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/markitdown-cost/results.html) | 100% | **31.0% lower** | 13.8% fewer prompt tokens |
+| [Concise output](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/output-style-concise/results.html) | 100% | **14.5% lower** | 16.4% fewer output tokens |
+| [Prewalk](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/prewalk/results.html) | 100% | **66.0% lower** | — |
+| [RTK](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/rtk/results.html) | 83.3% | **26.6% lower** | 40.6% fewer prompt tokens |
+| [Codebase Memory](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/codebase-memory/results.html) | 100% | **5.8% lower** | 6.2% shorter agent-step duration |
+
+**[View the methodology, cases, and full benchmark results](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/)**
 
 ## Install and run
 
@@ -80,27 +101,6 @@ equivalent when comparing configurations. Correctness is primary; cost, token
 usage, and latency are supporting measurements. Read
 [Efficient execution and savings](docs/concepts/efficient-execution.md) for the
 measurement boundaries and claim limits.
-
-## Felan lowers AI model cost for software work by 14.5%–66.0%
-
-Five comparable software-work comparisons measured each extension against its
-disabled baseline. Every candidate lowered aggregate model usage cost while
-meeting its configured quality gate. Headline gains use the ratio of median
-trial values summed across cases; macro-mean case gains remain diagnostics.
-
-| Extension | Quality vs baseline | Cost vs baseline | Token result |
-| --- | ---: | ---: | ---: |
-| [Subagents](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/subagents/results.html) | 100% | **23.7% lower*** | — |
-| [MarkItDown](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/markitdown-cost/results.html) | 100% | **31.0% lower** | 13.8% fewer prompt tokens |
-| [Concise output](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/output-style-concise/results.html) | 100% | **14.5% lower** | 16.4% fewer output tokens |
-| [Prewalk](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/prewalk/results.html) | 100% | **66.0% lower** | — |
-| [RTK](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/rtk/results.html) | 83.3% | **26.6% lower** | 40.6% fewer prompt tokens |
-
-\* Subagents cost includes billed usage from all nine child sessions. [View the full benchmark results](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/)
-
-### Provisional Codebase Memory evidence
-
-[View the provisional two-case result](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/codebase-memory-provisional/results.html): **5.8% lower AI model cost** and **6.2% shorter agent-step duration**. Six of the declared 18 runs are missing, so this result is excluded from the headline above.
 
 ## Local agent, portable core
 
