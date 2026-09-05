@@ -336,6 +336,151 @@ describe('LocalSubagentHost', () => {
     expect(repeated).toEqual(cancelled);
   });
 
+  it('acknowledges active cancellation before child cleanup finishes', async () => {
+    const root = await temporaryDirectory();
+    const cancellationStarted = deferred();
+    const releaseCancellation = deferred();
+    const releaseRunner = deferred();
+    const notices: SubagentCompletionNotice[] = [];
+    let childSignal: AbortSignal | undefined;
+    const runner: LocalSubagentRunner = async (input) => {
+      childSignal = input.signal;
+      await input.onReady({
+        steer: async () => {},
+        cancel: async () => {
+          cancellationStarted.resolve();
+          if (input.request.description === 'first') await releaseCancellation.promise;
+        },
+      });
+      if (input.request.description === 'first') {
+        await aborted(input.signal);
+        await releaseRunner.promise;
+      }
+      return { result: 'late result' };
+    };
+    const { host } = await harness({ runner, concurrency: 1, root });
+    host.attachParent(parentPort(notices));
+
+    try {
+      const first = await host.spawn(request({ description: 'first' }));
+      expect(first).toMatchObject({ ok: true, value: { status: 'queued' } });
+      if (!first.ok) return;
+      await vi.waitFor(async () => {
+        await expect(host.getResult(first.value.agentId)).resolves.toMatchObject({
+          ok: true,
+          value: { status: 'running' },
+        });
+      });
+
+      let cancellationSettled = false;
+      const cancellation = host.cancel(first.value.agentId, 'stop now').then((result) => {
+        cancellationSettled = true;
+        return result;
+      });
+      await cancellationStarted.promise;
+      await vi.waitFor(() => expect(cancellationSettled).toBe(true));
+
+      await expect(cancellation).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'cancelled', error: { code: 'cancelled_by_parent', message: 'stop now' } },
+      });
+      expect(childSignal?.aborted).toBe(true);
+      await expect(host.getResult(first.value.agentId)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'cancelled', error: { code: 'cancelled_by_parent' } },
+      });
+
+      const stored = JSON.parse(await readFile(
+        join(root, 'agent', 'subagents', encodeURIComponent('root'), 'records.json'),
+        'utf8',
+      )) as { children: Array<{ record: { status: string; error?: { code: string } } }> };
+      expect(stored.children[0]?.record).toMatchObject({
+        status: 'cancelled',
+        error: { code: 'cancelled_by_parent' },
+      });
+
+      const second = await host.spawn(request({ description: 'second' }));
+      expect(second).toMatchObject({ ok: true, value: { status: 'queued' } });
+
+      releaseRunner.resolve();
+      await settle();
+      if (second.ok) {
+        await expect(host.getResult(second.value.agentId)).resolves.toMatchObject({
+          ok: true,
+          value: { status: 'queued' },
+        });
+      }
+
+      releaseCancellation.resolve();
+      await expect(waitForResult(host, first.value.agentId)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'cancelled' },
+      });
+      const late = await host.getResult(first.value.agentId);
+      expect(late).toMatchObject({ ok: true, value: { status: 'cancelled' } });
+      if (late.ok) expect(late.value).not.toHaveProperty('result');
+      if (second.ok) {
+        await expect(waitForResult(host, second.value.agentId)).resolves.toMatchObject({
+          ok: true,
+          value: { status: 'completed', result: 'late result' },
+        });
+      }
+      expect(notices.filter((notice) => notice.agentId === first.value.agentId)).toHaveLength(1);
+      expect(notices.find((notice) => notice.agentId === first.value.agentId)).toMatchObject({
+        status: 'cancelled',
+        error: { code: 'cancelled_by_parent' },
+      });
+      await expect(host.getResult(first.value.agentId, { acknowledge: true })).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'cancelled' },
+      });
+    } finally {
+      releaseRunner.resolve();
+      releaseCancellation.resolve();
+      await host.shutdown();
+    }
+  });
+
+  it('does not restore an acknowledged cancellation notice after cleanup', async () => {
+    const releaseRunner = deferred();
+    const notices: SubagentCompletionNotice[] = [];
+    const runner: LocalSubagentRunner = async (input) => {
+      await input.onReady({ steer: async () => {}, cancel: async () => {} });
+      await aborted(input.signal);
+      await releaseRunner.promise;
+      return { result: 'late result' };
+    };
+    const { host } = await harness({ runner });
+
+    try {
+      host.attachParent(parentPort(notices));
+      const spawned = await host.spawn(request());
+      expect(spawned).toMatchObject({ ok: true });
+      if (!spawned.ok) return;
+      await settle();
+
+      let cancellationSettled = false;
+      const cancellation = host.cancel(spawned.value.agentId, 'acknowledge stop');
+      cancellation.then(
+        () => { cancellationSettled = true; },
+        () => { cancellationSettled = true; },
+      );
+      await vi.waitFor(() => expect(cancellationSettled).toBe(true));
+      await expect(host.getResult(spawned.value.agentId, { acknowledge: true })).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'cancelled' },
+      });
+
+      releaseRunner.resolve();
+      await cancellation;
+      await host.shutdown();
+      expect(notices).toHaveLength(0);
+    } finally {
+      releaseRunner.resolve();
+      await host.shutdown();
+    }
+  });
+
   it('reconciles stale active records after an unclean restart', async () => {
     const root = await temporaryDirectory();
     const runner: LocalSubagentRunner = async (input) => {
@@ -811,6 +956,95 @@ describe('LocalSubagentHost', () => {
     await vi.waitFor(() => expect(delivered).toHaveLength(1), { timeout: 1_000 });
     expect(attempts).toBeGreaterThanOrEqual(2);
     expect(delivered[0]?.deliveryId).toBeTruthy();
+  });
+
+  it('drains queued work when completion delivery rejects', async () => {
+    const delivered: SubagentCompletionNotice[] = [];
+    let attempts = 0;
+    const { host } = await harness({
+      concurrency: 1,
+      runner: async (input) => {
+        await input.onReady({ steer: async () => {}, cancel: async () => {} });
+        return { result: input.request.description };
+      },
+    });
+    host.attachParent({
+      deliverCompletion: async (notice) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('delivery failed');
+        delivered.push(notice);
+        return 'delivered';
+      },
+    });
+
+    const first = await host.spawn(request({ description: 'first' }));
+    const second = await host.spawn(request({ description: 'second' }));
+    expect(first).toMatchObject({ ok: true });
+    expect(second).toMatchObject({ ok: true, value: { status: 'queued' } });
+    if (!first.ok || !second.ok) return;
+
+    await expect(waitForResult(host, first.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed', result: 'first' },
+    });
+    await expect(waitForResult(host, second.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed', result: 'second' },
+    });
+    await vi.waitFor(() => expect(delivered).toHaveLength(2), { timeout: 1_000 });
+    expect(attempts).toBeGreaterThanOrEqual(3);
+    await host.shutdown();
+  });
+
+  it('restores a pending completion retry after continuation persistence fails', async () => {
+    vi.useFakeTimers();
+    const root = await temporaryDirectory();
+    const sessionFile = join(root, 'retained-child.jsonl');
+    const recordsFile = join(root, 'agent', 'subagents', encodeURIComponent('root'), 'records.json');
+    const delivered: SubagentCompletionNotice[] = [];
+    let attempts = 0;
+    const runner: LocalSubagentRunner = async (input) => {
+      await input.onReady({ steer: async () => {}, cancel: async () => {} });
+      if (!input.sessionFile) await writeSessionHeader(sessionFile, root, input.sessionId);
+      return { result: 'done', sessionFile };
+    };
+    const { host } = await harness({ runner, root });
+    host.attachParent({
+      deliverCompletion: async (notice) => {
+        attempts += 1;
+        if (attempts === 1) return 'unavailable';
+        delivered.push(notice);
+        return 'delivered';
+      },
+    });
+
+    try {
+      const spawned = await host.spawn(request());
+      expect(spawned).toMatchObject({ ok: true });
+      if (!spawned.ok) return;
+      await vi.waitFor(async () => {
+        await expect(host.getResult(spawned.value.agentId)).resolves.toMatchObject({
+          ok: true,
+          value: { status: 'completed' },
+        });
+        expect(attempts).toBe(1);
+      }, { interval: 1, timeout: 50 });
+
+      await rm(recordsFile);
+      await mkdir(recordsFile);
+      await expect(host.steer(spawned.value.agentId, 'continue')).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'host_unavailable' },
+      });
+      await rm(recordsFile, { recursive: true });
+
+      await vi.runOnlyPendingTimersAsync();
+      await vi.waitFor(() => expect(delivered).toHaveLength(1));
+      expect(attempts).toBeGreaterThanOrEqual(2);
+    } finally {
+      await host.shutdown();
+      vi.useRealTimers();
+    }
   });
 
   it('continues a retained result while its completion delivery remains unacknowledged', async () => {

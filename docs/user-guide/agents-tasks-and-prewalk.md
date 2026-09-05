@@ -13,7 +13,10 @@ They work together, but each remains usable on its own.
 
 The `Agent` tool queues a child and returns immediately. The root can continue
 working, then list, inspect, steer, continue, or cancel direct children. Felan
-delivers a completion notice when a child finishes.
+delivers a completion notice when a child finishes. Cancelling a running child
+records and persists the cancellation before returning; session cleanup may
+continue in the background, so the acknowledgement does not claim that every
+underlying operation stopped instantly.
 
 The portable extension exposes exactly five tools:
 
@@ -28,7 +31,9 @@ selection, and completion delivery. `/agents` or `Alt+A` opens live and stored
 child transcripts in the TUI. The selected-agent header and agent rows show
 each child session's captured USD cost beside its elapsed time. Running costs
 refresh after each persisted assistant response, and retained costs reload with
-the root session.
+the root session. In the navigator, scroll the selected transcript with the
+mouse wheel or trackpad, Page Up/Page Down, or Home/End; the agent list and
+steering input remain fixed while the transcript moves.
 
 Delegated prompts should define disjoint scopes and a concise expected output.
 Do not repeat exploration from a child-owned scope. If no independent parent

@@ -527,6 +527,14 @@ export class LocalSubagentManager {
       const previousRecord = child.record;
       const previousDeliveryId = child.deliveryId;
       const previousCompletionPending = child.completionPending;
+      const previousDeliveryAttempt = previousDeliveryId === undefined
+        ? undefined
+        : this.#deliveryAttempts.get(previousDeliveryId);
+      const previousDeliveryTimer = previousDeliveryId === undefined
+        ? undefined
+        : this.#deliveryTimers.get(previousDeliveryId);
+      const previousDeliveryInFlight = previousDeliveryId !== undefined
+        && this.#deliveries.has(previousDeliveryId);
       if (previousCompletionPending && previousDeliveryId !== undefined) {
         this.#ports.get(parentSessionId)?.acknowledgeCompletion?.(previousDeliveryId);
       }
@@ -557,6 +565,15 @@ export class LocalSubagentManager {
         child.completionPending = previousCompletionPending;
         if (previousDeliveryId === undefined) delete child.deliveryId;
         else child.deliveryId = previousDeliveryId;
+        if (previousDeliveryId !== undefined) {
+          if (previousDeliveryAttempt === undefined) this.#deliveryAttempts.delete(previousDeliveryId);
+          else this.#deliveryAttempts.set(previousDeliveryId, previousDeliveryAttempt);
+          if (previousDeliveryTimer !== undefined) {
+            this.#scheduleDeliveryRetry(child, previousDeliveryId, previousDeliveryAttempt ?? 0);
+          } else if (previousCompletionPending && !previousDeliveryInFlight) {
+            this.#scheduleDeliveryRetry(child, previousDeliveryId, previousDeliveryAttempt ?? 0);
+          }
+        }
         return failure('host_unavailable', 'Subagent continuation could not be persisted');
       }
       this.#queue.push(job);
@@ -575,7 +592,7 @@ export class LocalSubagentManager {
   ): Promise<SubagentHostResult<SubagentRecord>> {
     const authorized = this.#directChild(parentSessionId, agentId);
     if (!authorized.ok) return authorized;
-    await this.#cancelTree(agentId, reason, 'cancelled', 'cancelled_by_parent');
+    await this.#cancelTree(agentId, reason, 'cancelled', 'cancelled_by_parent', false);
     return success(cloneRecord(this.#latest(agentId)!.record));
   }
 
@@ -609,6 +626,9 @@ export class LocalSubagentManager {
     for (const child of this.#latestChildren()) {
       if (!isTerminal(child.record.status)) await this.#cancelTree(child.record.agentId, 'Local host exited');
     }
+    await Promise.allSettled(
+      [...this.#jobs.values()].map((job) => job.runPromise ?? job.cancelPromise ?? Promise.resolve()),
+    );
     await Promise.allSettled(this.#deliveries.values());
     await this.#save;
   }
@@ -750,32 +770,38 @@ export class LocalSubagentManager {
           if (usage) child.usage = usage;
           else delete child.usage;
         }
-        if (job.terminalStatus) {
-          child.record = terminalRecord(child.record, job.terminalStatus, job.terminalError);
-        } else if (outcome?.turnLimitReached) {
-          child.record = terminalRecord(child.record, 'cancelled', {
-            code: 'turn_limit_reached',
-            message: `Subagent reached its ${child.request.maxTurns} turn limit`,
-          });
-        } else if (outcome?.error) {
-          child.record = terminalRecord(child.record, 'failed', outcome.error);
-        } else {
-          child.record = {
-            ...terminalRecord(child.record, 'completed'),
-            result: boundResult(outcome?.result ?? ''),
-          };
+        const terminalBeforeCleanup = isTerminal(child.record.status);
+        if (!terminalBeforeCleanup) {
+          if (job.terminalStatus) {
+            child.record = terminalRecord(child.record, job.terminalStatus, job.terminalError);
+          } else if (outcome?.turnLimitReached) {
+            child.record = terminalRecord(child.record, 'cancelled', {
+              code: 'turn_limit_reached',
+              message: `Subagent reached its ${child.request.maxTurns} turn limit`,
+            });
+          } else if (outcome?.error) {
+            child.record = terminalRecord(child.record, 'failed', outcome.error);
+          } else {
+            child.record = {
+              ...terminalRecord(child.record, 'completed'),
+              result: boundResult(outcome?.result ?? ''),
+            };
+          }
         }
         if (job.slotHeld) {
           job.slotHeld = false;
           this.#active -= 1;
         }
         this.#jobs.delete(child.record.agentId);
-        if (child.deliveryId) child.completionPending = true;
+        if (!terminalBeforeCleanup && child.deliveryId) child.completionPending = true;
         await this.#persist();
         this.#emit();
       });
-      if (child.deliveryId) await this.#deliver(child, child.deliveryId);
-      this.#drain();
+      try {
+        if (child.deliveryId) await this.#deliver(child, child.deliveryId);
+      } finally {
+        this.#drain();
+      }
     }
   }
 
@@ -1038,6 +1064,7 @@ export class LocalSubagentManager {
     reason: string,
     status: 'timed_out' | 'cancelled' = 'cancelled',
     errorCode: SubagentError['code'] = 'host_shutdown',
+    waitForCleanup = true,
   ): Promise<void> {
     const cancellation = await this.#serializeControl(async () => {
       const descendants = this.#latestChildren()
@@ -1071,16 +1098,29 @@ export class LocalSubagentManager {
         code: errorCode,
         message: reason,
       });
+      child.record = terminalRecord(child.record, status, {
+        code: errorCode,
+        message: reason,
+      });
+      if (child.deliveryId) child.completionPending = true;
+      await this.#persist();
+      this.#emit();
       return { descendants, cleanup: job.runPromise ?? Promise.resolve(), deliveryId: undefined };
     });
     await Promise.all(cancellation.descendants.map((childId) => (
-      this.#cancelTree(childId, reason, status, errorCode)
+      this.#cancelTree(childId, reason, status, errorCode, waitForCleanup)
     )));
-    await cancellation.cleanup;
+    if (waitForCleanup) await cancellation.cleanup;
     if (cancellation.deliveryId) {
-      const child = this.#latest(agentId);
-      if (child) await this.#deliver(child, cancellation.deliveryId);
-      this.#drain();
+      try {
+        const child = this.#latest(agentId);
+        if (child) {
+          if (waitForCleanup) await this.#deliver(child, cancellation.deliveryId);
+          else void this.#deliver(child, cancellation.deliveryId).catch(() => {});
+        }
+      } finally {
+        this.#drain();
+      }
     }
   }
 
@@ -1092,27 +1132,23 @@ export class LocalSubagentManager {
     const delivery = (async () => {
       const port = this.#ports.get(child.record.parentSessionId);
       if (!port) return;
-      const outcome = await port.deliverCompletion(notice);
-      if (outcome === 'delivered') {
-        this.#deliveryAttempts.delete(deliveryId);
-        const timer = this.#deliveryTimers.get(deliveryId);
-        if (timer !== undefined) clearTimeout(timer);
-        this.#deliveryTimers.delete(deliveryId);
-        await this.#serializeControl(async () => {
-          if (child.deliveryId !== deliveryId) return;
-          child.completionPending = false;
-          await this.#persist();
-        });
-      } else if (!this.#closed) {
-        const attempt = (this.#deliveryAttempts.get(deliveryId) ?? 0) + 1;
-        this.#deliveryAttempts.set(deliveryId, attempt);
-        const delay = Math.min(5_000, 100 * (2 ** Math.min(attempt - 1, 5)));
-        const retry = setTimeout(() => {
+      try {
+        const outcome = await port.deliverCompletion(notice);
+        if (outcome === 'delivered') {
+          this.#deliveryAttempts.delete(deliveryId);
+          const timer = this.#deliveryTimers.get(deliveryId);
+          if (timer !== undefined) clearTimeout(timer);
           this.#deliveryTimers.delete(deliveryId);
-          this.#deliver(child, deliveryId).catch(() => {});
-        }, delay);
-        retry.unref();
-        this.#deliveryTimers.set(deliveryId, retry);
+          await this.#serializeControl(async () => {
+            if (child.deliveryId !== deliveryId) return;
+            child.completionPending = false;
+            await this.#persist();
+          });
+        } else {
+          this.#scheduleDeliveryRetry(child, deliveryId);
+        }
+      } catch {
+        this.#scheduleDeliveryRetry(child, deliveryId);
       }
     })();
     this.#deliveries.set(deliveryId, delivery);
@@ -1121,6 +1157,24 @@ export class LocalSubagentManager {
     } finally {
       if (this.#deliveries.get(deliveryId) === delivery) this.#deliveries.delete(deliveryId);
     }
+  }
+
+  #scheduleDeliveryRetry(
+    child: MutableChild,
+    deliveryId: string,
+    completedAttempts?: number,
+  ): void {
+    if (this.#closed || this.#deliveryTimers.has(deliveryId)) return;
+    const attempt = completedAttempts ?? this.#deliveryAttempts.get(deliveryId) ?? 0;
+    const nextAttempt = attempt + 1;
+    this.#deliveryAttempts.set(deliveryId, nextAttempt);
+    const delay = Math.min(5_000, 100 * (2 ** Math.min(nextAttempt - 1, 5)));
+    const retry = setTimeout(() => {
+      this.#deliveryTimers.delete(deliveryId);
+      this.#deliver(child, deliveryId).catch(() => {});
+    }, delay);
+    retry.unref();
+    this.#deliveryTimers.set(deliveryId, retry);
   }
 
   async #deliverPending(parentSessionId: string): Promise<void> {

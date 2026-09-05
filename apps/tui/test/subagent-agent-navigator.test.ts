@@ -11,16 +11,19 @@ import {
 } from '@felan-ai/ext-subagents';
 import {
   KeybindingsManager as TuiKeybindingsManager,
+  TuiAltScreen,
   TUI_KEYBINDINGS,
   setKeybindings,
   visibleWidth,
   type Component,
+  type Terminal,
 } from '@earendil-works/pi-tui';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentTranscript } from '../src/subagents/agent-transcript.js';
 import {
   AgentNavigator,
   AgentRailEditor,
+  AGENT_NAVIGATOR_OVERLAY_OPTIONS,
   registerLocalSubagentNavigator,
   type AgentRailRenderer,
   type LocalSubagentNavigatorHost,
@@ -171,6 +174,97 @@ describe('AgentNavigator', () => {
     expect(harness.tui.requestRender).toHaveBeenCalled();
     expect(harness.navigator.render(80).join('\n')).toContain('live activity');
     harness.navigator.dispose();
+  });
+
+  it('scrolls the selected transcript with SGR and legacy mouse-wheel input', () => {
+    const session = sessionWithMessages(
+      Array.from({ length: 30 }, (_, index) => ({
+        role: 'user',
+        content: `transcript line ${index + 1}`,
+        timestamp: index + 1,
+      })),
+      () => {},
+    );
+    const harness = createHarness([
+      record('agent-1', 'running', { session }),
+      record('agent-2', 'completed'),
+    ], 12, 80);
+
+    const first = harness.navigator.render(80).join('\n');
+    harness.tui.requestRender.mockClear();
+    harness.navigator.handleInput('\x1b[<64;20;5M');
+    const afterWheelUp = harness.navigator.render(80).join('\n');
+
+    expect(afterWheelUp).not.toEqual(first);
+    expect(afterWheelUp).toContain('Viewing reviewer');
+    expect(afterWheelUp).toContain('✓ reviewer');
+    expect(harness.tui.requestRender).toHaveBeenCalledOnce();
+
+    harness.navigator.handleInput('\x1b[M' + String.fromCharCode(65 + 32, 33, 33));
+    expect(harness.navigator.render(80).join('\n')).toEqual(first);
+    expect(harness.tui.requestRender).toHaveBeenCalledTimes(2);
+    harness.navigator.dispose();
+  });
+
+  it('ignores non-wheel mouse input and scrolls while the steering input is focused', () => {
+    const session = sessionWithMessages(
+      Array.from({ length: 30 }, (_, index) => ({
+        role: 'user',
+        content: `transcript line ${index + 1}`,
+        timestamp: index + 1,
+      })),
+      () => {},
+    );
+    const harness = createHarness([record('agent-1', 'running', { session })], 12, 80);
+
+    const first = harness.navigator.render(80).join('\n');
+    harness.tui.requestRender.mockClear();
+    harness.navigator.handleInput('\x1b[<0;20;5M');
+    expect(harness.navigator.render(80).join('\n')).toEqual(first);
+    expect(harness.tui.requestRender).not.toHaveBeenCalled();
+
+    harness.navigator.handleInput('\r');
+    harness.tui.requestRender.mockClear();
+    harness.navigator.handleInput('\x1b[<64;20;5M');
+    expect(harness.navigator.render(80).join('\n')).not.toEqual(first);
+    expect(harness.tui.requestRender).toHaveBeenCalledOnce();
+    harness.navigator.dispose();
+  });
+
+  it('receives wheel input through a focused fullscreen TUI overlay', () => {
+    const terminal = new TestTerminal();
+    const tui = new TuiAltScreen(terminal);
+    const session = sessionWithMessages(
+      Array.from({ length: 30 }, (_, index) => ({
+        role: 'user',
+        content: `transcript line ${index + 1}`,
+        timestamp: index + 1,
+      })),
+      () => {},
+    );
+    const host = navigatorHost(() => [record('agent-1', 'running', { session })]);
+    const navigator = new AgentNavigator(
+      tui,
+      host,
+      theme,
+      new TuiKeybindingsManager(TUI_KEYBINDINGS) as unknown as KeybindingsManager,
+      vi.fn(),
+    );
+    tui.showOverlay(navigator, AGENT_NAVIGATOR_OVERLAY_OPTIONS);
+    tui.start();
+
+    try {
+      tui.renderNow(true);
+      const first = navigator.render(terminal.columns).join('\n');
+      terminal.send('\x1b[<64;20;5M');
+      const afterWheelUp = navigator.render(terminal.columns).join('\n');
+
+      expect(afterWheelUp).not.toEqual(first);
+      expect(afterWheelUp).toContain('Viewing reviewer');
+    } finally {
+      navigator.dispose();
+      tui.stop();
+    }
   });
 
   it('uses the grouped tool presentation for selected child transcripts', () => {
@@ -556,6 +650,27 @@ function navigatorHost(records: () => LocalSubagentView[]): LocalSubagentNavigat
       value: records().find((candidate) => candidate.agentId === agentId)!,
     })),
   };
+}
+
+class TestTerminal implements Terminal {
+  readonly columns = 80;
+  readonly rows = 12;
+  readonly kittyProtocolActive = false;
+  #onInput?: (data: string) => void;
+
+  start(onInput: (data: string) => void): void { this.#onInput = onInput; }
+  stop(): void {}
+  async drainInput(): Promise<void> {}
+  write(): void {}
+  moveBy(): void {}
+  hideCursor(): void {}
+  showCursor(): void {}
+  clearLine(): void {}
+  clearFromCursor(): void {}
+  clearScreen(): void {}
+  setTitle(): void {}
+  setProgress(): void {}
+  send(data: string): void { this.#onInput?.(data); }
 }
 
 function record(
