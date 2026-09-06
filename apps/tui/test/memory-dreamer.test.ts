@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -24,6 +24,99 @@ afterEach(async () => {
 });
 
 describe('createDefaultLocalMemoryDreamRunner', () => {
+  it('persists a standard memory session before creating the model session', async () => {
+    const stagingDirectory = await temporaryDirectory();
+    const session = fakeSession();
+    const runner = createDefaultLocalMemoryDreamRunner({
+      createSession: async ({ sessionManager }) => {
+        const sessionFile = sessionManager.getSessionFile();
+        expect(sessionFile).toBeTypeOf('string');
+        const entries = (await readFile(sessionFile!, 'utf8'))
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as unknown);
+        expect(entries).toEqual(expect.arrayContaining([
+          expect.objectContaining({ type: 'session', id: sessionManager.getSessionId() }),
+          expect.objectContaining({
+            type: 'custom',
+            data: expect.objectContaining({ kind: 'memory' }),
+          }),
+        ]));
+        expect(session.promptStarted).toBe(false);
+        return { session: session.session };
+      },
+    });
+
+    await expect(runner(inputFor(stagingDirectory, {
+      sessionDirectory: join(stagingDirectory, 'sessions'),
+    }))).resolves.toBeUndefined();
+    const files = await readdir(join(stagingDirectory, 'sessions'));
+    const persisted = (await readFile(join(stagingDirectory, 'sessions', files[0]!), 'utf8'))
+      .trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(persisted).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'custom', customType: 'felan-memory-run', data: expect.objectContaining({ status: 'completed' }) }),
+    ]));
+  });
+
+  it('persists a safe failed outcome when no model is available', async () => {
+    const stagingDirectory = await temporaryDirectory();
+    const sessionDirectory = join(stagingDirectory, 'sessions');
+    const runner = createDefaultLocalMemoryDreamRunner();
+
+    await expect(runner(inputFor(stagingDirectory, {
+      sessionDirectory,
+      modelRuntime: { getAvailableSnapshot: () => [] } as unknown as ModelRuntime,
+    }))).rejects.toThrow('No authenticated local memory model is configured');
+
+    const files = await readdir(sessionDirectory);
+    const entries = (await readFile(join(sessionDirectory, files[0]!), 'utf8'))
+      .trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'custom', customType: 'felan-memory-run',
+        data: expect.objectContaining({ status: 'failed', error: 'No authenticated local memory model is configured' }),
+      }),
+    ]));
+  });
+
+  it('redacts provider error fields before persisting the standard JSONL transcript', async () => {
+    const stagingDirectory = await temporaryDirectory();
+    const sessionDirectory = join(stagingDirectory, 'sessions');
+    const secret = 'private-provider-token';
+    const assistant = {
+      role: 'assistant',
+      content: [],
+      provider: 'openai',
+      model: 'fixture-model',
+      api: 'openai-responses',
+      stopReason: 'error',
+      errorMessage: `Provider failed apiKey=${secret} Bearer ${secret}`,
+      timestamp: Date.now(),
+      usage: {
+        input: 1, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const session = fakeSession({ assistant });
+    const runner = createDefaultLocalMemoryDreamRunner({
+      createSession: async ({ sessionManager }) => {
+        sessionManager.appendMessage(assistant as never);
+        return { session: session.session };
+      },
+    });
+
+    await expect(runner(inputFor(stagingDirectory, { sessionDirectory }))).rejects.toThrow('Provider failed');
+
+    const [sessionFile] = await readdir(sessionDirectory);
+    const transcript = await readFile(join(sessionDirectory, sessionFile!), 'utf8');
+    const [runId] = await readdir(join(stagingDirectory, '.memory-runs', 'runs'));
+    const manifest = await readFile(join(stagingDirectory, '.memory-runs', 'runs', runId!, 'manifest.json'), 'utf8');
+    expect(transcript).toContain('[REDACTED_TOKEN]');
+    expect(manifest).toContain('[REDACTED_TOKEN]');
+    expect(transcript).not.toContain(secret);
+    expect(manifest).not.toContain(secret);
+  });
+
   it('uses the selected authenticated model instead of the first available model', async () => {
     const stagingDirectory = await temporaryDirectory();
     const firstAvailable = { provider: 'google', id: 'fast-first-model' } as Model<Api>;
@@ -267,7 +360,7 @@ interface FakeSession {
   readonly promptText: string | undefined;
 }
 
-function fakeSession(options: { readonly waitForPrompt?: boolean } = {}): FakeSession {
+function fakeSession(options: { readonly waitForPrompt?: boolean; readonly assistant?: Record<string, unknown> } = {}): FakeSession {
   let activeTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
   let bound = false;
   let disposed = false;
@@ -287,7 +380,7 @@ function fakeSession(options: { readonly waitForPrompt?: boolean } = {}): FakeSe
       disposed = true;
     },
     getActiveToolNames: () => [...activeTools],
-    messages: [{
+    messages: [options.assistant ?? {
       role: 'assistant',
       stopReason: 'stop',
       content: [{ type: 'text', text: 'The staged memory is complete.' }],
@@ -334,6 +427,7 @@ function inputFor(
     readonly modelRuntime?: ModelRuntime;
     readonly selectedModel?: Model<Api>;
     readonly signal?: AbortSignal;
+    readonly sessionDirectory?: string;
   } = {},
 ) {
   const artifact = createEmptyMemoryArtifact('.memory');
@@ -354,6 +448,7 @@ function inputFor(
     } as unknown as ModelRuntime,
     ...(options.selectedModel === undefined ? {} : { selectedModel: options.selectedModel }),
     signal: options.signal ?? new AbortController().signal,
+    ...(options.sessionDirectory === undefined ? {} : { sessionDirectory: options.sessionDirectory }),
   };
 }
 

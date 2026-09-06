@@ -29,24 +29,35 @@ import {
 import { resolveLocalMemoryProject, type LocalMemoryProject } from './project.js';
 import {
   createDefaultLocalMemoryDreamRunner,
+  MemoryModelUnavailableError,
   materializeMemoryInput,
   type LocalMemoryDreamRunner,
 } from './dreamer.js';
 import {
   LocalMemoryStore,
+  LocalMemoryControlError,
+  type LocalMemoryAttempt,
+  type LocalMemoryControl,
 } from './store.js';
+import { LocalMemoryRun, sanitizeMemoryDiagnostic } from './run.js';
 
 interface ProjectContext {
   readonly project: LocalMemoryProject;
   readonly cwd: string;
   readonly sessionDir?: string;
   readonly store: LocalMemoryStore;
-  readonly ready: Promise<void>;
-  recoveryStarted: boolean;
+  ready: Promise<void> | undefined;
+  initialized: boolean;
+  recovery: Promise<void> | undefined;
+  recoveryCompleted: boolean;
+  diagnosticsReconciled: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
   run: Promise<void> | undefined;
   readonly followUps: Set<Promise<void>>;
   abort: AbortController | undefined;
+  attempt: LocalMemoryAttempt | undefined;
+  storageBlocked: boolean;
+  statusSignature: string | undefined;
   blocked: Map<string, MemoryCheckpointCursor>;
   checkpointVersion: number;
   state: MemoryProcessingState;
@@ -73,6 +84,16 @@ export interface LocalMemoryCoordinatorOptions {
   readonly dreamRunner?: LocalMemoryDreamRunner;
   readonly selectedModel?: Model<Api>;
   readonly leaseOptions?: LocalMemoryLeaseOptions;
+  readonly retryDelaysMs?: readonly [number, number];
+  readonly monitorIntervalMs?: number;
+  readonly now?: () => number;
+}
+
+export interface LocalMemoryStatus extends MemoryStatus {
+  readonly consecutiveFailures?: number;
+  readonly nextRetryAt?: string;
+  readonly autoDisabled?: LocalMemoryControl['autoDisabled'];
+  readonly lastRunId?: string;
 }
 
 export interface LocalMemorySessionHostOptions {
@@ -89,12 +110,16 @@ export class LocalMemoryCoordinator {
   #enabled: boolean;
   #selectedModel: Model<Api> | undefined;
   #disposed = false;
+  #monitor: ReturnType<typeof setInterval> | undefined;
+  #monitoring: Promise<void> | undefined;
+  #enableVersion = 0;
 
   constructor(options: LocalMemoryCoordinatorOptions) {
     this.#options = options;
     this.#enabled = options.enabled !== false;
     this.#selectedModel = options.selectedModel;
     this.#dreamRunner = options.dreamRunner ?? createDefaultLocalMemoryDreamRunner();
+    if (this.#enabled) this.#startMonitor();
   }
 
   createSessionHost(options: LocalMemorySessionHostOptions): MemoryHost {
@@ -113,48 +138,74 @@ export class LocalMemoryCoordinator {
 
   setSelectedModel(model: Model<Api> | undefined): void {
     this.#selectedModel = model;
+    for (const context of this.#contexts.values()) {
+      context.blocked.clear();
+      if (context.initialized) void this.#trackScheduleIfPending(context);
+    }
   }
 
   setEnabled(enabled: boolean): void {
+    this.#enableVersion += 1;
     this.#enabled = enabled;
+    if (enabled) this.#startMonitor();
+    else if (this.#monitor) {
+      clearInterval(this.#monitor);
+      this.#monitor = undefined;
+    }
     for (const context of this.#contexts.values()) {
       if (!enabled && context.timer) {
         clearTimeout(context.timer);
         context.timer = undefined;
       }
+      if (!enabled) this.#cancelContext(context, 'Memory processing was disabled', true);
+      if (enabled) {
+        context.storageBlocked = false;
+        context.blocked.clear();
+        if (context.initialized) this.#startRecovery(context);
+      }
       context.state = enabled ? 'idle' : 'disabled';
     }
     if (enabled) {
       for (const context of this.#contexts.values()) {
-        void this.#trackScheduleIfPending(context, 0);
+        if (context.initialized) void this.#trackScheduleIfPending(context, 0);
       }
     }
     this.#emitStatusChange();
   }
 
-  async status(cwd: string): Promise<MemoryStatus> {
+  async status(cwd: string): Promise<LocalMemoryStatus> {
     try {
       const context = await this.#context(cwd);
       const state = await context.store.status();
+      const control = await context.store.readControl();
       const processed = Object.values(state.processed);
       const lastProcessedAt = processed
         .map((entry) => entry.processedAt)
         .sort()
         .at(-1);
       return {
-        enabled: this.#enabled,
-        state: this.#enabled ? context.state : 'disabled',
+        enabled: this.#enabled && !control.autoDisabled,
+        state: !this.#enabled || control.autoDisabled ? 'disabled'
+          : control.nextRetryAt && Date.parse(control.nextRetryAt) > this.#now() ? 'scheduled'
+          : context.state === 'error' ? 'error'
+          : control.activeAttempt ? 'processing' : context.state,
         pendingCheckpoints: Object.keys(state.pending).length,
         memoryFingerprint: state.memoryFingerprint,
         ...(lastProcessedAt === undefined ? {} : { lastProcessedAt }),
         ...(context.message === undefined ? {} : { message: context.message }),
+        consecutiveFailures: control.consecutiveFailures,
+        ...(control.nextRetryAt ? { nextRetryAt: control.nextRetryAt } : {}),
+        ...(control.autoDisabled ? { autoDisabled: control.autoDisabled } : {}),
+        ...(control.activeAttempt || control.lastOutcome ? {
+          lastRunId: control.activeAttempt?.runId ?? control.lastOutcome!.runId,
+        } : {}),
       };
-    } catch {
+    } catch (error) {
       return {
         enabled: this.#enabled,
         state: this.#enabled ? 'error' : 'disabled',
         pendingCheckpoints: 0,
-        message: 'Local memory storage is unavailable',
+        message: error instanceof LocalMemoryControlError ? error.message : 'Local memory storage is unavailable',
       };
     }
   }
@@ -177,12 +228,12 @@ export class LocalMemoryCoordinator {
     if (await context.store.recordCheckpoint(checkpoint)) {
       context.checkpointVersion += 1;
       context.blocked.delete(checkpoint.sessionId);
-      await this.#schedule(context);
+      await this.#trackScheduleIfPending(context);
       this.#emitStatusChange();
     }
   }
 
-  async runNow(cwd: string): Promise<MemoryStatus> {
+  async runNow(cwd: string): Promise<LocalMemoryStatus> {
     if (!this.#enabled) return this.status(cwd);
     const context = await this.#context(cwd);
     this.#cancelScheduledRun(context);
@@ -208,6 +259,29 @@ export class LocalMemoryCoordinator {
     return this.status(cwd);
   }
 
+  async retryProject(cwd: string): Promise<LocalMemoryStatus> {
+    if (!this.#enabled) return this.status(cwd);
+    const context = await this.#context(cwd);
+    if (!this.#enabled || this.#disposed) return this.status(cwd);
+    const enableVersion = this.#enableVersion;
+    this.#cancelScheduledRun(context);
+    try {
+      await context.store.resetProjectControl(
+        this.#now(),
+        () => this.#enabled && !this.#disposed && this.#enableVersion === enableVersion,
+      );
+    } catch (error) {
+      throw error;
+    }
+    context.abort?.abort(new Error('Memory processing was explicitly retried'));
+    if (context.run) await context.run;
+    context.blocked.clear();
+    context.storageBlocked = false;
+    context.message = undefined;
+    await this.runNow(cwd);
+    return this.status(cwd);
+  }
+
   async canonicalDirectory(cwd: string): Promise<string> {
     const context = await this.#context(cwd);
     return context.store.currentDirectory;
@@ -216,16 +290,21 @@ export class LocalMemoryCoordinator {
   async dispose(): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
+    if (this.#monitor) clearInterval(this.#monitor);
+    this.#monitor = undefined;
     for (const context of this.#contexts.values()) {
       if (context.timer) clearTimeout(context.timer);
       context.timer = undefined;
-      context.abort?.abort();
+      this.#cancelContext(context, 'Memory processing was cancelled during shutdown', false);
     }
     while (true) {
       const work = [...this.#contexts.values()].flatMap((context) => [
         ...(context.run ? [context.run] : []),
+        ...(context.ready ? [context.ready] : []),
+        ...(context.recovery ? [context.recovery] : []),
         ...context.followUps,
       ]);
+      if (this.#monitoring) work.push(this.#monitoring);
       if (work.length === 0) break;
       await Promise.allSettled(work);
     }
@@ -235,44 +314,173 @@ export class LocalMemoryCoordinator {
   async #context(cwd: string): Promise<ProjectContext> {
     if (this.#disposed) throw new Error('Local memory coordinator is closed');
     const project = await resolveLocalMemoryProject(cwd);
+    if (this.#disposed) throw new Error('Local memory coordinator is closed');
     const existing = this.#contexts.get(project.key);
-    if (existing) return existing;
-    const store = new LocalMemoryStore(this.#options.agentDir, project);
+    if (existing) {
+      await this.#initialize(existing);
+      return existing;
+    }
+    const store = new LocalMemoryStore(this.#options.agentDir, project, {
+      ...(this.#options.retryDelaysMs ? { retryDelaysMs: this.#options.retryDelaysMs } : {}),
+    });
     const context: ProjectContext = {
       project,
       cwd,
       ...(this.#options.sessionDir === undefined ? {} : { sessionDir: this.#options.sessionDir }),
       store,
-      ready: store.initialize(),
-      recoveryStarted: false,
+      ready: undefined,
+      initialized: false,
+      recovery: undefined,
+      recoveryCompleted: false,
+      diagnosticsReconciled: false,
       timer: undefined,
       run: undefined,
       followUps: new Set(),
       abort: undefined,
+      attempt: undefined,
+      storageBlocked: false,
+      statusSignature: undefined,
       blocked: new Map(),
       checkpointVersion: 0,
       state: this.#enabled ? 'idle' : 'disabled',
       message: undefined,
     };
     this.#contexts.set(project.key, context);
-    await context.ready;
-    if (this.#enabled) void this.#trackScheduleIfPending(context);
-    if (this.#options.recover !== false && !context.recoveryStarted) {
-      context.recoveryStarted = true;
-      void this.#recover(context).catch(() => {
-        context.message = 'Memory startup recovery could not complete';
-      });
-    }
+    await this.#initialize(context);
     return context;
   }
 
+  async #initialize(context: ProjectContext): Promise<void> {
+    if (context.ready) {
+      await context.ready;
+      return;
+    }
+    if (context.initialized && context.diagnosticsReconciled) {
+      this.#startRecovery(context);
+      return;
+    }
+    const ready = this.#initializeContext(context).finally(() => {
+      if (context.ready === ready) context.ready = undefined;
+    });
+    context.ready = ready;
+    await ready;
+  }
+
+  async #initializeContext(context: ProjectContext): Promise<void> {
+    if (!context.initialized) {
+      await context.store.initialize(this.#now()).then(() => {
+        context.initialized = true;
+        context.state = this.#enabled ? 'idle' : 'disabled';
+        context.message = undefined;
+      }).catch(async (error: unknown) => {
+        if (!(error instanceof LocalMemoryControlError)) throw error;
+        const current = await context.store.readCurrent();
+        if (current.fingerprint !== (await context.store.status()).memoryFingerprint) throw error;
+        context.message = error.message;
+      });
+    }
+    if (!context.initialized) return;
+    if (!context.diagnosticsReconciled) {
+      try {
+        const lease = await acquireLocalMemoryLease(context.store.projectDirectory, this.#options.leaseOptions);
+        if (lease) {
+          try {
+            await this.#reconcileRunDiagnostics(context, lease);
+            context.diagnosticsReconciled = true;
+          } finally {
+            await lease.release();
+          }
+        }
+      } catch (error) {
+        context.diagnosticsReconciled = true;
+        context.storageBlocked = true;
+        context.message = `Memory diagnostics recovery is blocked: ${sanitizeMemoryDiagnostic(error)}`;
+      }
+    }
+    if (this.#disposed) return;
+    if (this.#enabled) void this.#trackScheduleIfPending(context);
+    this.#startRecovery(context);
+  }
+
+  #startRecovery(context: ProjectContext): void {
+    if (this.#disposed || !this.#enabled || this.#options.recover === false
+      || context.recoveryCompleted || context.recovery) return;
+    const recovery = this.#recover(context).then((completed) => {
+      if (completed) context.recoveryCompleted = true;
+    }).catch(() => {
+      context.message = 'Memory startup recovery could not complete';
+    }).finally(() => {
+      if (context.recovery === recovery) context.recovery = undefined;
+    });
+    context.recovery = recovery;
+  }
+
+  #now(): number { return this.#options.now?.() ?? Date.now(); }
+
+  #startMonitor(): void {
+    if (this.#disposed || this.#monitor) return;
+    const interval = this.#options.monitorIntervalMs ?? 2_000;
+    if (!Number.isFinite(interval) || interval < 1) throw new Error('Memory monitor interval must be positive');
+    this.#monitor = setInterval(() => {
+      if (this.#monitoring) return;
+      this.#monitoring = this.#refresh().catch(() => {}).finally(() => { this.#monitoring = undefined; });
+    }, interval);
+    this.#monitor.unref?.();
+  }
+
+  async #refresh(): Promise<void> {
+    if (this.#disposed) return;
+    for (const context of this.#contexts.values()) {
+      try {
+        await this.#initialize(context);
+        const observedAttempt = context.attempt;
+        const control = await context.store.readControl();
+        if (observedAttempt && context.attempt === observedAttempt && (!this.#enabled || control.autoDisabled
+          || control.activeAttempt?.runId !== observedAttempt.runId
+          || control.activeAttempt?.generation !== observedAttempt.generation)) {
+          this.#cancelContext(context, 'Memory processing was cancelled by another session', true);
+        }
+        if (context.initialized) await this.#trackScheduleIfPending(context);
+        const signature = JSON.stringify([this.#enabled, context.state, context.message, control.updatedAt]);
+        if (signature !== context.statusSignature) {
+          context.statusSignature = signature;
+          this.#emitStatusChange();
+        }
+      } catch (error) {
+        context.state = 'error';
+        context.message = sanitizeMemoryDiagnostic(error);
+        context.abort?.abort(error);
+        this.#emitStatusChange();
+      }
+    }
+  }
+
+  #cancelContext(context: ProjectContext, reason: string, cancelPersisted: boolean): void {
+    const alreadyAborted = context.abort?.signal.aborted ?? false;
+    context.abort?.abort(new Error(reason));
+    if (alreadyAborted || !context.initialized || (!cancelPersisted && !context.attempt)) return;
+    const cancellation = cancelPersisted
+      ? context.store.cancelActiveAttempt(this.#now())
+      : context.store.finishAttempt(undefined, context.attempt!, { status: 'cancelled', reason }, this.#now());
+    const followUp = cancellation
+      .then(() => {})
+      .catch(() => {})
+      .finally(() => { context.followUps.delete(followUp); });
+    context.followUps.add(followUp);
+  }
+
   async #schedule(context: ProjectContext, delay = this.#options.debounceMs ?? 2_000): Promise<void> {
-    if (this.#disposed || !this.#enabled || context.run || context.timer) return;
+    if (this.#disposed || !this.#enabled || context.run || context.timer || context.storageBlocked) return;
     context.state = 'scheduled';
     const timer = setTimeout(() => {
       if (context.timer !== timer) return;
       context.timer = undefined;
-      const run = this.#run(context).finally(async () => {
+      const run = this.#run(context).catch((error: unknown) => {
+        context.state = 'error';
+        context.storageBlocked = true;
+        context.message = sanitizeMemoryDiagnostic(error);
+        this.#emitStatusChange();
+      }).finally(async () => {
         context.run = undefined;
         await this.#trackScheduleIfPending(context);
       });
@@ -285,13 +493,22 @@ export class LocalMemoryCoordinator {
   async #scheduleIfPending(context: ProjectContext, delay = this.#options.debounceMs ?? 2_000): Promise<void> {
     if (!this.#enabled || this.#disposed) return;
     try {
+      const control = await context.store.readControl();
+      if (control.autoDisabled) {
+        this.#cancelScheduledRun(context);
+        context.state = 'disabled';
+        return;
+      }
+      if (context.storageBlocked) return;
       const state = await context.store.status();
       const pending = Object.values(state.pending);
-      if (pending.some(({ checkpoint }) => !isBlockedCheckpoint(context, checkpoint))) {
-        await this.#schedule(context, delay);
+      if (control.activeAttempt || pending.some(({ checkpoint }) => !isBlockedCheckpoint(context, checkpoint))) {
+        const retryDelay = control.nextRetryAt ? Math.max(0, Date.parse(control.nextRetryAt) - this.#now()) : 0;
+        await this.#schedule(context, Math.max(delay, retryDelay));
       } else if (pending.length > 0) {
+        const message = context.state === 'blocked' ? context.message : undefined;
         context.state = 'blocked';
-        context.message = MEMORY_INPUT_BLOCKED_MESSAGE;
+        context.message = message ?? MEMORY_INPUT_BLOCKED_MESSAGE;
       }
     } catch {
       context.state = 'error';
@@ -311,7 +528,7 @@ export class LocalMemoryCoordinator {
   }
 
   async #run(context: ProjectContext): Promise<void> {
-    if (this.#disposed || !this.#enabled) return;
+    if (this.#disposed || !this.#enabled || context.storageBlocked) return;
     context.state = 'processing';
     context.message = undefined;
     let lease: LocalMemoryLease | undefined;
@@ -334,13 +551,37 @@ export class LocalMemoryCoordinator {
     };
     lease.compromised.addEventListener('abort', abortOnLeaseCompromise, { once: true });
     let staging: string | undefined;
+    let retainedRun: LocalMemoryRun | undefined;
+    let published = false;
+    let attempt: LocalMemoryAttempt | undefined;
     try {
-      const snapshot = await context.store.processingSnapshot(this.#options.batchSize ?? 8);
+      const control = await this.#reconcileRunDiagnostics(context, lease);
+      if (control.autoDisabled) {
+        context.state = 'disabled';
+        return;
+      }
+      if (control.nextRetryAt && Date.parse(control.nextRetryAt) > this.#now()) {
+        context.state = 'scheduled';
+        return;
+      }
+      const snapshot = await context.store.processingSnapshot(
+        this.#options.batchSize ?? 8,
+        (checkpoint) => !isBlockedCheckpoint(context, checkpoint),
+      );
       if (snapshot.checkpoints.length === 0) {
         context.state = 'idle';
         return;
       }
-      staging = await context.store.createStagingDirectory();
+      retainedRun = await LocalMemoryRun.create({
+        projectDirectory: context.store.projectDirectory,
+        sessionDirectory: join(this.#options.sessionDir ?? join(this.#options.agentDir, 'sessions'), 'memory'),
+        projectKey: context.project.key,
+        projectRoot: context.project.canonicalRoot,
+        checkpoints: snapshot.checkpoints.map(({ checkpoint }) => checkpoint),
+        baseFingerprint: snapshot.fingerprint,
+        ...(control.lastDisabledRunId ? { protectedRunIds: [control.lastDisabledRunId] } : {}),
+      });
+      staging = retainedRun.workspace;
       const memoryDirectory = join(staging, '.memory');
       await hydrateMemoryDirectory(snapshot.artifact, memoryDirectory, { memoryPath: '.memory', mode: 'read' });
       const manifest = await materializeMemoryInput({
@@ -368,8 +609,22 @@ export class LocalMemoryCoordinator {
       if (processedCheckpoints.length === 0) {
         context.state = 'blocked';
         context.message = MEMORY_INPUT_BLOCKED_MESSAGE;
+        await retainedRun.finish('blocked', MEMORY_INPUT_BLOCKED_MESSAGE);
         return;
       }
+      await retainedRun.record({ phase: 'model', checkpoints: processedCheckpoints.map(({ checkpoint }) => checkpoint) });
+      if (abort.signal.aborted || !this.#enabled || this.#disposed) throw new Error('Memory processing was cancelled');
+      attempt = await context.store.beginAttempt(lease, {
+        runId: retainedRun.metadata.sessionId,
+        baseFingerprint: snapshot.fingerprint,
+        checkpoints: processedCheckpoints,
+      }, this.#now());
+      if (!attempt) {
+        await retainedRun.finish('cancelled', 'Memory inputs or processing policy changed before the attempt started');
+        return;
+      }
+      context.attempt = attempt;
+      this.#emitStatusChange();
       const result = await this.#dreamRunner({
         stagingDirectory: staging,
         memoryDirectory,
@@ -378,9 +633,16 @@ export class LocalMemoryCoordinator {
         manifest,
         modelRuntime: this.#options.modelRuntime,
         ...(this.#selectedModel === undefined ? {} : { selectedModel: this.#selectedModel }),
+        sessionDirectory: join(
+          this.#options.sessionDir ?? join(this.#options.agentDir, 'sessions'),
+          'memory',
+        ),
+        run: retainedRun,
         signal: abort.signal,
       });
+      if (abort.signal.aborted || !this.#enabled || this.#disposed) throw new Error('Memory processing was cancelled');
       if (result) await hydrateMemoryDirectory(result, memoryDirectory, { replace: true, memoryPath: '.memory' });
+      await retainedRun.record({ phase: 'validate' });
       const artifact = await readMemoryDirectory(memoryDirectory, {
         memoryPath: '.memory',
         sourceSessionIds: allowedSourceIds(snapshot, manifest),
@@ -394,7 +656,20 @@ export class LocalMemoryCoordinator {
         validateNavigation: true,
       });
       if (!validation.ok || !validation.artifact) throw new Error('Memory output validation failed');
-      await context.store.commit(lease, snapshot.fingerprint, validation.artifact, processedCheckpoints);
+      await retainedRun.record({
+        phase: 'publish',
+        outputFingerprint: createMemorySnapshot(validation.artifact, '.memory').fingerprint,
+      });
+      await context.store.commit(
+        lease,
+        snapshot.fingerprint,
+        validation.artifact,
+        processedCheckpoints,
+        attempt,
+      );
+      published = true;
+      await context.store.finishAttempt(lease, attempt, { status: 'success' }, this.#now());
+      await retainedRun.finish('completed');
       if (manifest.failures.length > 0) {
         context.state = 'blocked';
         context.message = MEMORY_INPUT_BLOCKED_MESSAGE;
@@ -403,43 +678,106 @@ export class LocalMemoryCoordinator {
       }
       this.#emitStatusChange();
     } catch (error) {
+      const leaseValid = await lease.verify();
+      const explicitlyCancelled = !this.#enabled || this.#disposed
+        || (abort.signal.aborted && !lease.compromised.aborted);
+      const unavailableModel = error instanceof MemoryModelUnavailableError;
+      const blockedBeforeInference = retainedRun !== undefined && attempt === undefined && !explicitlyCancelled;
+      if (attempt && (leaseValid || explicitlyCancelled)) {
+        try {
+          const control = await context.store.finishAttempt(
+            explicitlyCancelled || unavailableModel ? undefined : lease,
+            attempt,
+            explicitlyCancelled || unavailableModel ? { status: 'cancelled' }
+              : { status: 'failure', reason: sanitizeMemoryDiagnostic(error) },
+            this.#now(),
+          );
+          published ||= control.lastOutcome?.runId === attempt.runId && control.lastOutcome.status === 'success';
+        } catch {
+          context.storageBlocked = true;
+        }
+      }
+      if (published) {
+        context.state = 'idle';
+        context.message = 'Memory was published, but its diagnostics could not be fully saved';
+        this.#emitStatusChange();
+        return;
+      }
       context.state = 'error';
-      context.message = !await lease.verify()
+      context.message = !leaseValid
         ? safeProcessingMessage(new Error('Memory writer lease was lost'))
         : safeProcessingMessage(error);
+      if (unavailableModel || blockedBeforeInference) {
+        context.state = 'blocked';
+        for (const checkpoint of retainedRun?.metadata.checkpoints ?? []) {
+          context.blocked.set(checkpoint.sessionId, checkpoint);
+        }
+      }
+      if (!retainedRun) {
+        context.storageBlocked = true;
+        context.message = `Memory processing is paused: ${sanitizeMemoryDiagnostic(error)}`;
+      }
+      await retainedRun?.finish(explicitlyCancelled ? 'cancelled'
+        : unavailableModel || blockedBeforeInference ? 'blocked'
+        : !leaseValid ? 'interrupted' : 'failed', error).catch(() => {
+        context.storageBlocked = true;
+        context.message = 'Memory diagnostics could not be saved; evidence remains pending';
+      });
+      this.#emitStatusChange();
     } finally {
       lease.compromised.removeEventListener('abort', abortOnLeaseCompromise);
       context.abort = undefined;
-      if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {});
+      context.attempt = undefined;
+      if (staging) await rm(join(staging, '.pi-memory-runtime'), { recursive: true, force: true }).catch(() => {});
       await lease.release();
     }
   }
 
-  async #recover(context: ProjectContext): Promise<void> {
-    if (!this.#enabled) return;
+  async #reconcileRunDiagnostics(context: ProjectContext, lease: LocalMemoryLease): Promise<LocalMemoryControl> {
+    let control = await context.store.readControl();
+    control = await context.store.reconcileAbandonedAttempt(lease, this.#now());
+    const options = {
+      projectDirectory: context.store.projectDirectory,
+      projectKey: context.project.key,
+      sessionDirectory: join(this.#options.sessionDir ?? join(this.#options.agentDir, 'sessions'), 'memory'),
+      ...(control.lastDisabledRunId ? { protectedRunIds: [control.lastDisabledRunId] } : {}),
+    };
+    if (control.lastOutcome) await LocalMemoryRun.reconcile(options, control.lastOutcome);
+    await LocalMemoryRun.reconcileAbandoned(options, [
+      ...(control.activeAttempt ? [control.activeAttempt.runId] : []),
+      ...(control.lastOutcome ? [control.lastOutcome.runId] : []),
+    ], this.#now());
+    return control;
+  }
+
+  async #recover(context: ProjectContext): Promise<boolean> {
     const sessionDir = context.sessionDir ?? join(this.#options.agentDir, 'sessions');
     let sessions;
     try {
       sessions = await SessionManager.list(context.cwd, sessionDir);
     } catch {
       context.message = 'Memory startup recovery could not inspect sessions';
-      return;
+      return true;
     }
+    if (this.#disposed || !this.#enabled) return false;
     let recovered = false;
     const stableAfter = this.#options.recoveryStableMs ?? 30_000;
     for (const info of sessions) {
-      if (info.parentSessionPath || Date.now() - info.modified.getTime() < stableAfter) continue;
+      if (this.#disposed || !this.#enabled) return false;
+      if (info.parentSessionPath || this.#now() - info.modified.getTime() < stableAfter) continue;
       try {
         const manager = SessionManager.open(info.path, sessionDir, context.cwd);
         const checkpoint = createSessionCheckpoint(manager);
         if (!checkpoint) continue;
+        if (this.#disposed || !this.#enabled) return false;
         recovered = (await context.store.recordCheckpoint(checkpoint)) || recovered;
       } catch {}
     }
-    if (recovered) {
+    if (recovered && !this.#disposed && this.#enabled) {
       await this.#schedule(context);
       this.#emitStatusChange();
     }
+    return true;
   }
 
   #emitStatusChange(): void {

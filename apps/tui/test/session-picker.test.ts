@@ -111,6 +111,35 @@ describe('local session picker', () => {
     await expect(result).resolves.toBe('/sessions/selected.jsonl');
     expect(tui.stop).toHaveBeenCalledOnce();
   });
+
+  it('supports a read-only history picker and disposes it after completion', async () => {
+    const tui = fakeTui();
+    const dispose = vi.fn();
+    let finish: ((path: string | undefined) => void) | undefined;
+    const createPicker = vi.fn((_tui: TUI, done: (path: string | undefined) => void) => {
+      finish = done;
+      return {
+        focused: false,
+        render: () => ['Memory history'],
+        handleInput: () => {},
+        dispose,
+      };
+    });
+    const result = selectLocalSession({
+      currentSessions: [session('memory')],
+      allSessions: [session('memory')],
+      agentDir: '/agent',
+      createTui: () => tui,
+      createPicker,
+    });
+
+    expect(createPicker).toHaveBeenCalledOnce();
+    finish?.(undefined);
+
+    await expect(result).resolves.toBeUndefined();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(tui.stop).toHaveBeenCalledOnce();
+  });
 });
 
 function createPicker(current: SessionInfo[], all: SessionInfo[]): LocalSessionPicker {

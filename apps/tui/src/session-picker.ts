@@ -23,6 +23,7 @@ export interface SelectLocalSessionOptions {
   readonly showHardwareCursor?: boolean;
   readonly clearOnShrink?: boolean;
   readonly createTui?: () => TUI;
+  readonly createPicker?: (tui: TUI, done: (path: string | undefined) => void) => Component & Focusable & { dispose?(): void };
 }
 
 interface PickerSession {
@@ -47,10 +48,11 @@ export async function selectLocalSession(
     const finish = (path: string | undefined) => {
       if (settled) return;
       settled = true;
+      picker.dispose?.();
       ui.stop();
       resolve(path);
     };
-    const picker = new LocalSessionPicker(
+    const picker: Component & Focusable & { dispose?(): void } = options.createPicker?.(ui, finish) ?? new LocalSessionPicker(
       options.currentSessions,
       options.allSessions,
       (path) => finish(path),
@@ -83,6 +85,7 @@ export class LocalSessionPicker implements Component, Focusable {
     onSelect: (path: string) => void,
     onCancel: () => void,
     requestRender: () => void = () => {},
+    private readonly presentation: { title?: string; selectLabel?: string } = {},
   ) {
     this.#currentSessions = currentSessions;
     this.#allSessions = allSessions;
@@ -109,8 +112,8 @@ export class LocalSessionPicker implements Component, Focusable {
     const scope = this.#scope === 'current' ? 'Current Folder' : 'All';
     const nameFilter = this.#namedOnly ? 'Named' : 'All';
     const lines = [
-      truncateToWidth(`Resume Session (${scope})  Sort: ${capitalize(this.#sort)}  Name: ${nameFilter}`, width),
-      truncateToWidth('Tab scope  Ctrl+S sort  Ctrl+N named  Ctrl+P path  Enter resume  Esc cancel', width),
+      truncateToWidth(`${this.presentation.title ?? 'Resume Session'} (${scope})  Sort: ${capitalize(this.#sort)}  Name: ${nameFilter}`, width),
+      truncateToWidth(`Tab scope  Ctrl+S sort  Ctrl+N named  Ctrl+P path  Enter ${this.presentation.selectLabel ?? 'resume'}  Esc cancel`, width),
       `Search: ${this.#searchInput.render(Math.max(1, width - 8))[0] ?? ''}`,
       '',
     ];

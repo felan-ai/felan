@@ -32,6 +32,7 @@ import {
   type MemorySnapshot,
   type SessionCheckpoint,
 } from '@felan-ai/ext-memory';
+import { LocalMemoryRun, memoryRunUsage, sanitizeMemoryDiagnostic } from './run.js';
 
 export interface LocalMemoryDreamInput {
   readonly stagingDirectory: string;
@@ -42,6 +43,8 @@ export interface LocalMemoryDreamInput {
   readonly modelRuntime: ModelRuntime;
   readonly selectedModel?: Model<Api>;
   readonly signal: AbortSignal;
+  readonly sessionDirectory?: string;
+  readonly run?: LocalMemoryRun;
 }
 
 export type LocalMemoryDreamRunner = (input: LocalMemoryDreamInput) => Promise<MemoryArtifact | void>;
@@ -55,7 +58,7 @@ export type LocalMemoryDreamSession = Pick<
   | 'messages'
   | 'prompt'
   | 'setActiveToolsByName'
->;
+> & Partial<Pick<AgentSession, 'thinkingLevel'>>;
 
 export type LocalMemoryDreamSessionFactory = (
   options: CreateAgentCoreSessionOptions,
@@ -68,6 +71,13 @@ export interface LocalMemoryDreamRunnerOptions {
 
 const MEMORY_DREAM_TOOLS = ['read', 'ls', 'edit', 'write'] as const;
 const DEFAULT_MEMORY_DREAM_TIMEOUT_MS = 60 * 60 * 1_000;
+
+export class MemoryModelUnavailableError extends Error {
+  constructor() {
+    super('No authenticated local memory model is configured');
+    this.name = 'MemoryModelUnavailableError';
+  }
+}
 
 const MEMORY_DREAM_PROMPT = `Process the staged memory input now.
 
@@ -174,75 +184,81 @@ export function createDefaultLocalMemoryDreamRunner(
 ): LocalMemoryDreamRunner {
   return async (input) => {
     throwIfAborted(input.signal);
-    const model = selectMemoryDreamModel(input.modelRuntime, input.selectedModel);
-    if (!model) throw new Error('No authenticated local memory model is configured');
-
-    const runtimeDirectory = join(input.stagingDirectory, '.pi-memory-runtime');
-    await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
-    throwIfAborted(input.signal);
-    const runtime = createMemoryDreamRuntime(input.stagingDirectory, runtimeDirectory);
-    const sessionManager = SessionManager.inMemory(input.stagingDirectory);
-    const settingsManager = SettingsManager.inMemory({
-      packages: [],
-      extensions: [],
-      skills: [],
-      prompts: [],
-      themes: [],
-      retry: { enabled: false },
-    });
-    const createSession = options.createSession
-      ?? (async (sessionOptions) => createAgentCoreSession(sessionOptions));
-    const created = await createSession({
-      runtime,
-      agentDir: runtimeDirectory,
-      extensionPackages: [],
-      importExtension: async (packageName) => {
-        throw new Error(`Unexpected memory dream extension: ${packageName}`);
-      },
-      modelRuntime: input.modelRuntime,
-      model,
-      settingsManager,
-      sessionManager,
-      appendSystemPrompt: [createMemoryDreamerInstructions({
-        memoryPath: '.memory',
-        inputPath: '.dreaming/input',
-        label: 'project',
-      })],
-    });
-    const session = created.session;
-    let cancellation: Promise<void> | undefined;
-    let timedOut = false;
-    const cancel = (): Promise<void> => {
-      cancellation ??= session.abort();
-      return cancellation;
-    };
-    const timeoutMs = options.timeoutMs ?? DEFAULT_MEMORY_DREAM_TIMEOUT_MS;
-
+    const run = input.run ?? (input.sessionDirectory === undefined ? undefined : await LocalMemoryRun.create({
+      projectDirectory: join(input.stagingDirectory, '.memory-runs'),
+      sessionDirectory: input.sessionDirectory,
+      projectKey: sha256(input.stagingDirectory),
+      projectRoot: input.stagingDirectory,
+      checkpoints: input.manifest.sessions.map(({ checkpoint }) => checkpoint),
+      baseFingerprint: input.baseSnapshot.fingerprint,
+    }));
+    const sessionManager = run?.sessionManager ?? SessionManager.inMemory(input.stagingDirectory);
+    if (run) sanitizePersistedDreamErrors(sessionManager);
+    let session: LocalMemoryDreamSession | undefined;
     try {
-      await session.bindExtensions({ mode: 'print' });
-      session.setActiveToolsByName([...MEMORY_DREAM_TOOLS]);
-      if (!sameToolNames(session.getActiveToolNames(), MEMORY_DREAM_TOOLS)) {
+      const runtimeDirectory = join(input.stagingDirectory, '.pi-memory-runtime');
+      await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
+      throwIfAborted(input.signal);
+      await run?.record({ phase: 'model' });
+      const model = selectMemoryDreamModel(input.modelRuntime, input.selectedModel);
+      if (!model) throw new MemoryModelUnavailableError();
+      await run?.model(model);
+      const settingsManager = SettingsManager.inMemory({
+        packages: [], extensions: [], skills: [], prompts: [], themes: [], retry: { enabled: false },
+      });
+      const createSession = options.createSession ?? (async (sessionOptions) => createAgentCoreSession(sessionOptions));
+      const created = await createSession({
+        runtime: createMemoryDreamRuntime(input.stagingDirectory, runtimeDirectory),
+        agentDir: runtimeDirectory,
+        extensionPackages: [],
+        importExtension: async (packageName) => {
+          throw new Error(`Unexpected memory dream extension: ${packageName}`);
+        },
+        modelRuntime: input.modelRuntime,
+        model,
+        settingsManager,
+        sessionManager,
+        appendSystemPrompt: [createMemoryDreamerInstructions({
+          memoryPath: '.memory', inputPath: '.dreaming/input', label: 'project',
+        })],
+      });
+      const activeSession = created.session;
+      session = activeSession;
+      await run?.model(model, activeSession.thinkingLevel);
+      let cancellation: Promise<void> | undefined;
+      let timedOut = false;
+      const cancel = (): Promise<void> => {
+        cancellation ??= activeSession.abort();
+        return cancellation;
+      };
+      await activeSession.bindExtensions({ mode: 'print' });
+      activeSession.setActiveToolsByName([...MEMORY_DREAM_TOOLS]);
+      if (!sameToolNames(activeSession.getActiveToolNames(), MEMORY_DREAM_TOOLS)) {
         throw new Error('Memory dream session could not restrict its tools');
       }
       throwIfAborted(input.signal);
-
-      const abort = (): void => {
-        void cancel().catch(() => {});
-      };
+      const abort = (): void => { void cancel().catch(() => {}); };
       const timeout = setTimeout(() => {
         timedOut = true;
         void cancel().catch(() => {});
-      }, timeoutMs);
+      }, options.timeoutMs ?? DEFAULT_MEMORY_DREAM_TIMEOUT_MS);
       timeout.unref?.();
       input.signal.addEventListener('abort', abort, { once: true });
       try {
-        await session.prompt(MEMORY_DREAM_PROMPT);
+        throwIfAborted(input.signal);
+        await activeSession.prompt(MEMORY_DREAM_PROMPT);
         await cancellation;
         throwIfAborted(input.signal);
         if (timedOut) throw new Error('Memory dream exceeded its runtime limit');
-        const assistant = [...session.messages].reverse().find((message) => message.role === 'assistant');
+        const assistant = [...activeSession.messages].reverse().find((message) => message.role === 'assistant');
         if (!assistant) throw new Error('Memory dream completed without an assistant response');
-        if (assistant.stopReason === 'error') throw new Error('Local memory model request failed');
+        if (assistant.stopReason === 'error') throw new Error(assistant.errorMessage || 'Local memory model request failed');
+        if (assistant.stopReason === 'aborted') throw new Error('Memory model request was interrupted');
+        if (run) {
+          const usage = memoryRunUsage(sessionManager.getEntries());
+          await run.record({ status: 'worker_completed', ...(usage === undefined ? {} : { usage }) });
+          if (!input.run) await run.finish('completed');
+        }
       } catch (error) {
         if (input.signal.aborted) throw new Error('Memory processing was cancelled');
         if (timedOut) throw new Error('Memory dream exceeded its runtime limit');
@@ -252,10 +268,28 @@ export function createDefaultLocalMemoryDreamRunner(
         clearTimeout(timeout);
         await cancellation?.catch(() => {});
       }
+    } catch (error) {
+      if (run) {
+        const usage = memoryRunUsage(sessionManager.getEntries());
+        if (usage) await run.record({ usage });
+        if (!input.run) await run.finish(input.signal.aborted ? 'cancelled' : 'failed', error);
+      }
+      throw error;
     } finally {
-      session.dispose();
+      session?.dispose();
     }
   };
+}
+
+function safeRetainedDreamMessage(message: Parameters<SessionManager['appendMessage']>[0]): Parameters<SessionManager['appendMessage']>[0] {
+  return message.role === 'assistant' && message.errorMessage
+    ? { ...message, errorMessage: sanitizeMemoryDiagnostic(message.errorMessage) }
+    : message;
+}
+
+function sanitizePersistedDreamErrors(sessionManager: SessionManager): void {
+  const appendMessage = sessionManager.appendMessage.bind(sessionManager);
+  sessionManager.appendMessage = (message) => appendMessage(safeRetainedDreamMessage(message));
 }
 
 function selectMemoryDreamModel(

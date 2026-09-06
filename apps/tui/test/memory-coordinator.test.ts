@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -11,10 +11,11 @@ import {
   removeMemoryContextEntries,
   type MemoryArtifact,
 } from '@felan-ai/ext-memory';
-import type { Api, Model, ModelRuntime } from '@felan-ai/agent-core';
+import { SessionManager, type Api, type Model, type ModelRuntime } from '@felan-ai/agent-core';
 import { LocalMemoryCoordinator } from '../src/memory/coordinator.js';
 import type { LocalMemoryDreamInput } from '../src/memory/dreamer.js';
 import { localMemoryProjectDirectory, resolveLocalMemoryProject } from '../src/memory/project.js';
+import { LocalMemoryStore } from '../src/memory/store.js';
 
 const temporaryPaths: string[] = [];
 
@@ -66,7 +67,7 @@ describe('LocalMemoryCoordinator', () => {
     await host.recordCheckpoint(checkpointFor(sessionFile));
     expect(statusChanged).toHaveBeenCalledTimes(1);
     await coordinator.runNow(cwd);
-    expect(statusChanged).toHaveBeenCalledTimes(2);
+    expect(statusChanged).toHaveBeenCalledTimes(3);
 
     unsubscribe();
     await coordinator.dispose();
@@ -165,7 +166,7 @@ describe('LocalMemoryCoordinator', () => {
     await coordinator.dispose();
   });
 
-  it('keeps evidence pending after a worker failure and retries it later', async () => {
+  it('keeps evidence pending and requires an explicit project retry to bypass backoff', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
@@ -186,8 +187,9 @@ describe('LocalMemoryCoordinator', () => {
     const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
     await host.recordCheckpoint(checkpointFor(sessionFile));
 
-    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'error', pendingCheckpoints: 1 });
-    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'scheduled', pendingCheckpoints: 1, consecutiveFailures: 1 });
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'scheduled', pendingCheckpoints: 1, consecutiveFailures: 1 });
+    await expect(coordinator.retryProject(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0, consecutiveFailures: 0 });
     await coordinator.dispose();
   });
 
@@ -404,6 +406,40 @@ describe('LocalMemoryCoordinator', () => {
     await coordinator.dispose();
   });
 
+  it('processes valid evidence behind a full batch of blocked checkpoints', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    let runs = 0;
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir: join(root, 'agent'),
+      modelRuntime: {} as ModelRuntime,
+      recover: false,
+      debounceMs: 100,
+      batchSize: 8,
+      dreamRunner: async (input) => {
+        runs += 1;
+        return updatedArtifact(input.manifest.sessions[0]!.checkpoint.sessionId);
+      },
+    });
+    const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
+    for (let index = 0; index < 8; index += 1) {
+      const sessionId = `invalid-${index}`;
+      const path = await writeSession(cwd, sessionId);
+      await host.recordCheckpoint({ ...checkpointFor(path, sessionId), transcriptDigest: '0'.repeat(64) });
+    }
+    expect(await coordinator.runNow(cwd)).toMatchObject({ state: 'blocked', pendingCheckpoints: 8 });
+    expect(runs).toBe(0);
+
+    const valid = await writeSession(cwd, 'valid-session');
+    await host.recordCheckpoint(checkpointFor(valid, 'valid-session'));
+    await vi.waitFor(async () => {
+      expect(runs).toBe(1);
+      expect(await coordinator.status(cwd)).toMatchObject({ state: 'blocked', pendingCheckpoints: 8 });
+    }, { timeout: 4_000 });
+    await coordinator.dispose();
+  });
+
   it('does not acknowledge pending evidence when shutdown cancels the isolated worker', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -437,18 +473,23 @@ describe('LocalMemoryCoordinator', () => {
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
+    const getAvailableSnapshot = vi.fn(() => []);
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'),
-      modelRuntime: { getAvailableSnapshot: () => [] } as unknown as ModelRuntime,
+      modelRuntime: { getAvailableSnapshot } as unknown as ModelRuntime,
       recover: false,
+      debounceMs: 60_000,
+      monitorIntervalMs: 5,
     });
     const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
     await host.recordCheckpoint(checkpointFor(sessionFile));
     await expect(coordinator.runNow(cwd)).resolves.toMatchObject({
-      state: 'error',
+      state: 'blocked',
       pendingCheckpoints: 1,
       message: 'Memory model is unavailable; evidence remains pending',
     });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(getAvailableSnapshot).toHaveBeenCalledTimes(1);
     await coordinator.dispose();
   });
 
@@ -480,6 +521,97 @@ describe('LocalMemoryCoordinator', () => {
       expect(runs).toBe(1);
       expect(await coordinator.status(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
     }, { timeout: 4_000 });
+    await coordinator.dispose();
+  });
+
+  it('defers startup recovery until processing is enabled', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    const sessionFile = await writeSession(cwd, 'deferred-root');
+    const old = new Date(Date.now() - 60_000);
+    await utimes(sessionFile, old, old);
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir: join(root, 'agent'),
+      sessionDir: cwd,
+      modelRuntime: {} as ModelRuntime,
+      enabled: false,
+      recoveryStableMs: 0,
+      debounceMs: 60_000,
+      dreamRunner: async () => updatedArtifact('deferred-root'),
+    });
+    await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
+    expect(await coordinator.status(cwd)).toMatchObject({ state: 'disabled', pendingCheckpoints: 0 });
+
+    coordinator.setEnabled(true);
+    await vi.waitFor(async () => {
+      expect(await coordinator.status(cwd)).toMatchObject({ state: 'scheduled', pendingCheckpoints: 1 });
+    }, { timeout: 4_000 });
+    await coordinator.dispose();
+  });
+
+  it('drains startup recovery without recording evidence after disposal begins', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+    const sessionFile = await writeSession(cwd, 'disposal-root');
+    const old = new Date(Date.now() - 60_000);
+    await utimes(sessionFile, old, old);
+    const sessions = await SessionManager.list(cwd, cwd);
+    let release!: () => void;
+    let listing = false;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const list = vi.spyOn(SessionManager, 'list').mockImplementationOnce(async () => {
+      listing = true;
+      await gate;
+      return sessions;
+    });
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir,
+      sessionDir: cwd,
+      modelRuntime: {} as ModelRuntime,
+      recoveryStableMs: 0,
+      debounceMs: 60_000,
+      dreamRunner: async () => updatedArtifact('disposal-root'),
+    });
+    await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
+    await expect.poll(() => listing).toBe(true);
+    const disposing = coordinator.dispose();
+    release();
+    await disposing;
+    list.mockRestore();
+
+    const store = new LocalMemoryStore(agentDir, await resolveLocalMemoryProject(cwd));
+    expect((await store.status()).pending).toEqual({});
+  });
+
+  it('pauses before model work when retained diagnostics cannot be safely accounted for', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+    const sessionFile = await writeSession(cwd, 'session-1');
+    let modelCalls = 0;
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir,
+      modelRuntime: {} as ModelRuntime,
+      recover: false,
+      debounceMs: 60_000,
+      dreamRunner: async (input) => { modelCalls += 1; return input.baseSnapshot; },
+    });
+    await coordinator.recordCheckpoint(cwd, checkpointFor(sessionFile));
+    const store = new LocalMemoryStore(agentDir, await resolveLocalMemoryProject(cwd));
+    const external = join(root, 'external-evidence');
+    await mkdir(external);
+    await writeFile(join(external, 'sentinel.txt'), 'preserve');
+    await mkdir(join(store.projectDirectory, 'runs'), { recursive: true });
+    await symlink(external, join(store.projectDirectory, 'runs', 'unsafe-run'));
+
+    expect(await coordinator.runNow(cwd)).toMatchObject({ state: 'error', pendingCheckpoints: 1, consecutiveFailures: 0 });
+    expect(modelCalls).toBe(0);
+    expect(await readFile(join(external, 'sentinel.txt'), 'utf8')).toBe('preserve');
+    expect((await store.readControl()).activeAttempt).toBeUndefined();
     await coordinator.dispose();
   });
 });

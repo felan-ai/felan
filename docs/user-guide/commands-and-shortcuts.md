@@ -12,14 +12,14 @@ and first-party extensions.
 | `/dependencies` | Inspect, install, enable, or disable external runtime dependencies |
 | `/memory status` | Show local project-memory state |
 | `/memory run` | Process pending memory evidence now |
-| `/memory enable` | Enable host-owned memory processing |
-| `/memory disable` | Disable processing while keeping existing memory readable |
+| `/memory retry` | Reset an automatically disabled current project and retry it |
+| `/memory runs [id\|latest]` | Inspect retained memory-worker sessions read-only |
 | `/memory open` | Open canonical project memory in the local TUI |
 | `/agents` | Open the subagent navigator |
 | `/tools` | Open the inline inspector for complete root-session tool arguments and results |
 | `/savings` | Show estimated API-equivalent savings for the current root session (`project`, `all`, or `details` also supported) |
 
-`/dependencies` and `/memory open` require the interactive TUI.
+`/dependencies`, `/memory open`, and `/memory runs` require the interactive TUI.
 
 `/cwd` accepts a path relative to the current agent directory, an absolute
 path, or a `~/...` path. Press Tab after `/cwd ` to complete directories. The

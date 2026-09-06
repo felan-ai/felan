@@ -46,6 +46,7 @@ export class AgentTranscript implements Component {
   readonly #renderedCompactionMessages = new Set<string>();
   readonly #expandableComponents = new Set<{ setExpanded(expanded: boolean): void }>();
   #attachment: Attachment | undefined;
+  #snapshotCwd: string | undefined;
   #activeAssistantKey: string | undefined;
   #hideThinkingBlock = false;
   #toolsExpanded = false;
@@ -54,7 +55,7 @@ export class AgentTranscript implements Component {
 
   constructor(
     private readonly tui: TUI,
-    private readonly keybindings: KeybindingsManager,
+    private readonly keybindings: Pick<KeybindingsManager, 'matches'>,
   ) {
     this.#markdownTheme = getMarkdownTheme();
   }
@@ -100,9 +101,20 @@ export class AgentTranscript implements Component {
     }
   }
 
+  showSnapshot(messages: readonly AgentMessage[], cwd: string): void {
+    this.detach();
+    this.#snapshotCwd = cwd;
+    this.#hideThinkingBlock = false;
+    this.#showImages = false;
+    for (const message of messages) this.#replayMessage(message);
+    this.#failTools(this.#pendingToolIds, 'No retained tool result.');
+    this.tui.requestRender();
+  }
+
   detach(): void {
     const attachment = this.#attachment;
     this.#attachment = undefined;
+    this.#snapshotCwd = undefined;
     if (attachment && !attachment.released) {
       attachment.released = true;
       const unsubscribe = attachment.unsubscribe;
@@ -328,8 +340,8 @@ export class AgentTranscript implements Component {
     const existing = this.#toolComponents.get(toolCallId);
     if (existing) return existing;
 
-    const session = this.#attachment?.session;
-    if (!session) throw new Error('Cannot render a tool without an attached session');
+    const cwd = this.#attachment?.sessionView.sessionManager.getCwd() ?? this.#snapshotCwd;
+    if (cwd === undefined) throw new Error('Cannot render a tool without a session or snapshot');
     const component = new ToolExecutionComponent(
       toolName,
       toolCallId,
@@ -337,7 +349,7 @@ export class AgentTranscript implements Component {
       { showImages: this.#showImages, imageWidthCells: this.#imageWidthCells },
       this.#attachment?.sessionView.getToolDefinition(toolName),
       this.tui,
-      this.#attachment?.sessionView.sessionManager.getCwd() ?? session.sessionManager.getCwd(),
+      cwd,
     );
     component.setExpanded(this.#toolsExpanded);
     this.#toolComponents.set(toolCallId, component);

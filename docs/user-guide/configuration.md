@@ -63,8 +63,7 @@ browser and Powerline extensions:
     "maxDepth": 3
   },
   "felanTui": {
-    "toolDisplay": "grouped",
-    "memoryProcessing": true
+    "toolDisplay": "grouped"
   },
   "editorPaddingX": 1,
   "tuiMode": "fullscreen"
@@ -74,6 +73,8 @@ browser and Powerline extensions:
 Defaults:
 
 - every built-in is enabled;
+- memory processing follows `builtinExtensions.memory` and changes apply when
+  Felan next constructs a root session;
 - response output style is `concise`;
 - subagent concurrency is `4` and maximum nesting depth is `3`;
 - editor horizontal padding is `1`;

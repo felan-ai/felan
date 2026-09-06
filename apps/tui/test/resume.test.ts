@@ -57,6 +57,27 @@ describe('local session resume', () => {
       "No session found matching 'missing'",
     );
   });
+
+  it('keeps explicit resume discovery flat while the picker separately discovers nested memory sessions', async () => {
+    const root = await temporaryDirectory();
+    const sessionDir = join(root, 'sessions');
+    const project = join(root, 'project');
+    await Promise.all([mkdir(join(sessionDir, 'memory'), { recursive: true }), mkdir(project)]);
+    const memory = SessionManager.create(project, join(sessionDir, 'memory'));
+    memory.appendMessage({ role: 'user', content: 'retained input', timestamp: Date.now() });
+    memory.appendMessage({
+      role: 'assistant', content: [{ type: 'text', text: 'retained output' }],
+      api: 'anthropic-messages', provider: 'anthropic', model: 'test-model', stopReason: 'stop', timestamp: Date.now(),
+      usage: {
+        input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+
+    await expect(openLocalSessionManager(memory.getSessionId(), sessionDir)).rejects.toThrow(
+      `No session found matching '${memory.getSessionId()}'`,
+    );
+  });
 });
 
 async function temporaryDirectory(): Promise<string> {

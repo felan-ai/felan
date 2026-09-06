@@ -101,7 +101,6 @@ export async function setExtensionConfigValue(
 
 export interface FelanTuiSettings {
   readonly toolDisplay?: LocalToolDisplayMode;
-  readonly memoryProcessing?: boolean;
   readonly dependencyOnboarding?: Readonly<Record<string, LocalDependencyOnboardingChoice>>;
 }
 
@@ -181,17 +180,6 @@ export function getLocalToolDisplayMode(settingsManager: SettingsManager): Local
   throw new Error('felanTui.toolDisplay must be "grouped" or "full"');
 }
 
-export function getLocalMemoryProcessingEnabled(settingsManager: SettingsManager): boolean {
-  const rawSettings = settingsManager.getGlobalSettings() as Record<string, unknown>;
-  const rawTui = rawSettings.felanTui;
-  if (rawTui === undefined) return true;
-  if (!isRecord(rawTui)) throw new Error('felanTui must be an object');
-  const value = rawTui.memoryProcessing;
-  if (value === undefined) return true;
-  if (typeof value !== 'boolean') throw new Error('felanTui.memoryProcessing must be a boolean');
-  return value;
-}
-
 export async function setBuiltinExtensionEnabled(
   agentDir: string,
   name: BuiltinExtensionName,
@@ -201,17 +189,6 @@ export async function setBuiltinExtensionEnabled(
     const raw = settings.builtinExtensions;
     if (raw !== undefined && !isRecord(raw)) throw new Error('builtinExtensions must be an object');
     settings.builtinExtensions = { ...(raw ?? {}), [name]: enabled };
-  });
-}
-
-export async function setLocalMemoryProcessingEnabled(
-  agentDir: string,
-  enabled: boolean,
-): Promise<void> {
-  await updateGlobalFelanSettings(agentDir, (settings) => {
-    const rawTui = settings.felanTui;
-    if (rawTui !== undefined && !isRecord(rawTui)) throw new Error('felanTui must be an object');
-    settings.felanTui = { ...(rawTui ?? {}), memoryProcessing: enabled };
   });
 }
 

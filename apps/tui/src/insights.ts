@@ -12,20 +12,23 @@ import type { SavingsService } from './savings.js';
 const MAX_SESSION_BYTES = 64 * 1024 * 1024;
 const REPORT_DIRECTORY = 'insights-reports';
 
-export function createLocalInsightsHost(savings?: SavingsService): InsightsHost {
+export function createLocalInsightsHost(savings?: SavingsService, configuredSessionDirectory?: string): InsightsHost {
   return {
   listSessions: async (runtime) => {
-    const sessionDirectory = join(runtimeAgentDir(runtime), 'sessions');
+    const sessionDirectory = configuredSessionDirectory ?? join(runtimeAgentDir(runtime), 'sessions');
     try {
       const entries = await readdir(sessionDirectory, { withFileTypes: true });
       const references: InsightsSessionReference[] = [];
       for (const entry of entries) {
         const path = join(sessionDirectory, entry.name);
-        if (entry.isDirectory()) {
-          for (const nested of await readdir(path, { withFileTypes: true })) {
-            if (nested.isFile() && nested.name.endsWith('.jsonl')) references.push(await reference(join(path, nested.name)));
-          }
-        } else if (entry.isFile() && entry.name.endsWith('.jsonl')) references.push(await reference(path));
+        if (entry.isFile() && entry.name.endsWith('.jsonl')) references.push(await reference(path));
+        else if (entry.isDirectory() && entry.name === 'memory') {
+          try {
+            for (const nested of await readdir(path, { withFileTypes: true })) {
+              if (nested.isFile() && nested.name.endsWith('.jsonl')) references.push(await reference(join(path, nested.name)));
+            }
+          } catch {}
+        }
       }
       const subagentsDirectory = join(runtimeAgentDir(runtime), 'subagents');
       for (const root of await safeReadDirectories(subagentsDirectory)) {

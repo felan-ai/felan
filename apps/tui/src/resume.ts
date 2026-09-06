@@ -1,24 +1,29 @@
 import { join } from 'node:path';
-import { SessionManager } from '@earendil-works/pi-coding-agent';
+import { initTheme, SessionManager } from '@earendil-works/pi-coding-agent';
 import { selectLocalSession } from './session-picker.js';
 import { getLocalAgentDir } from './runtime.js';
 import { createLocalSettingsManager } from './settings.js';
+import { listLocalSessionHistory } from './memory/history.js';
+import { MemoryHistoryView } from './memory/history-view.js';
 
 export async function selectLocalSessionManager(): Promise<SessionManager | undefined> {
   const cwd = process.cwd();
   const agentDir = getLocalAgentDir();
   const settings = createLocalSettingsManager(cwd, agentDir);
   const sessionDir = settings.getSessionDir() ?? join(agentDir, 'sessions');
-  const [currentSessions, allSessions] = await Promise.all([
-    SessionManager.list(cwd, sessionDir),
-    SessionManager.listAll(sessionDir),
-  ]);
+  const history = await listLocalSessionHistory({ cwd, agentDir, sessionDir });
   const path = await selectLocalSession({
-    currentSessions,
-    allSessions,
+    currentSessions: history.currentSessions,
+    allSessions: history.allSessions,
     agentDir,
     showHardwareCursor: settings.getShowHardwareCursor(),
     clearOnShrink: settings.getClearOnShrink(),
+    ...(history.memorySessions.size > 0 ? {
+      createPicker: (tui, done) => {
+        initTheme(settings.getTheme(), false);
+        return new MemoryHistoryView(tui, history, done);
+      },
+    } satisfies Pick<Parameters<typeof selectLocalSession>[0], 'createPicker'> : {}),
   });
   return path ? SessionManager.open(path, sessionDir) : undefined;
 }

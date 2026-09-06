@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MemoryStatus } from '@felan-ai/ext-memory';
@@ -15,44 +16,21 @@ afterEach(async () => {
 });
 
 describe('local memory controls', () => {
-  it('reports status and persists enable/disable commands without requiring a restart to stop processing', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await mkdir(cwd, { recursive: true });
-    const coordinator = new LocalMemoryCoordinator({
-      agentDir,
-      modelRuntime: await ModelRuntime.create({ authPath: join(agentDir, 'auth.json'), modelsPath: null }),
-      recover: false,
-    });
-    const commands = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void>>();
-    const notifications: string[] = [];
-    const extension = createLocalMemoryControlExtension({ coordinator, agentDir });
-    extension({
-      registerCommand: (name, command) => commands.set(name, command.handler),
+  it('does not expose runtime enable or disable commands', async () => {
+    const handlers = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void>>();
+    const notify = vi.fn();
+    const coordinator = {
+      status: vi.fn(async () => ({ enabled: true, state: 'idle' as const, pendingCheckpoints: 0 })),
+      subscribeStatusChanges: vi.fn(() => () => {}),
+    } as unknown as LocalMemoryCoordinator;
+    createLocalMemoryControlExtension({ coordinator, agentDir: '/unused' })({
+      registerCommand: (name, command) => handlers.set(name, command.handler),
       on: () => {},
     } as unknown as FelanExtensionAPI);
-    const ctx = {
-      cwd,
-      mode: 'tui',
-      hasUI: true,
-      ui: {
-        notify: (message: string) => notifications.push(message),
-        setStatus: () => {},
-      },
-    } as unknown as ExtensionContext;
 
-    await commands.get('memory')!('status', ctx);
-    expect(notifications[0]).toContain('Local memory: enabled');
-    await commands.get('memory')!('disable', ctx);
-    expect(coordinator.isEnabled()).toBe(false);
-    expect(JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8')))
-      .toMatchObject({ felanTui: { memoryProcessing: false } });
-    await commands.get('memory')!('enable', ctx);
-    expect(coordinator.isEnabled()).toBe(true);
-    expect(JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8')))
-      .toMatchObject({ felanTui: { memoryProcessing: true } });
-    await coordinator.dispose();
+    await handlers.get('memory')!('disable', { cwd: '/workspace', ui: { notify } } as unknown as ExtensionContext);
+
+    expect(notify).toHaveBeenCalledWith('Usage: /memory status|run|runs [id|latest]|retry|open', 'warning');
   });
 
   it('refreshes the footer when memory status changes and stops after shutdown', async () => {
@@ -174,6 +152,46 @@ describe('local memory controls', () => {
 
     expect(setStatus).toHaveBeenLastCalledWith('memory', 'Memory: 5 pending');
   });
+
+  it('defers the startup warning until automatic-disable control becomes readable', async () => {
+    const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+    let statusListener: (() => void) | undefined;
+    let readable = false;
+    const coordinator = {
+      status: vi.fn(async () => readable ? {
+        enabled: false,
+        state: 'disabled' as const,
+        pendingCheckpoints: 1,
+        memoryFingerprint: '1'.repeat(64),
+        consecutiveFailures: 3,
+        autoDisabled: { runId: 'run-3', at: '2026-09-01T12:00:00.000Z', reason: 'Three attempts failed' },
+      } : {
+        enabled: true,
+        state: 'error' as const,
+        pendingCheckpoints: 0,
+        message: 'Local memory storage is unavailable',
+      }),
+      subscribeStatusChanges: vi.fn((listener: () => void) => {
+        statusListener = listener;
+        return () => {};
+      }),
+    } as unknown as LocalMemoryCoordinator;
+    createLocalMemoryControlExtension({ coordinator, agentDir: '/unused' })({
+      registerCommand: () => {},
+      on: (name, handler) => handlers.set(name, handler),
+    } as unknown as FelanExtensionAPI);
+    const current = memoryContext('session-1');
+    await handlers.get('session_start')!({}, current.ctx);
+    expect(current.notify).not.toHaveBeenCalled();
+
+    readable = true;
+    statusListener!();
+    await vi.waitFor(() => expect(current.notify).toHaveBeenCalledOnce());
+    statusListener!();
+    await Promise.resolve();
+    expect(current.notify).toHaveBeenCalledOnce();
+  });
+
 });
 
 async function temporaryDirectory(): Promise<string> {
@@ -182,17 +200,23 @@ async function temporaryDirectory(): Promise<string> {
   return path;
 }
 
-function memoryContext(sessionId: string): { ctx: ExtensionContext; setStatus: ReturnType<typeof vi.fn> } {
+function memoryContext(sessionId: string, cwd = '/workspace'): {
+  ctx: ExtensionContext;
+  setStatus: ReturnType<typeof vi.fn>;
+  notify: ReturnType<typeof vi.fn>;
+} {
   const setStatus = vi.fn();
+  const notify = vi.fn();
   return {
     ctx: {
-      cwd: '/workspace',
+      cwd,
       mode: 'tui',
       hasUI: true,
       sessionManager: { getSessionId: () => sessionId },
-      ui: { setStatus },
+      ui: { setStatus, notify },
     } as unknown as ExtensionContext,
     setStatus,
+    notify,
   };
 }
 

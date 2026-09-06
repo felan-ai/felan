@@ -136,6 +136,7 @@ export function createLocalExtensionImporter(
   memoryBinding?: LocalMemoryExtensionBinding,
   outputStyle: OutputStyle = DEFAULT_OUTPUT_STYLE,
   savings?: SavingsService,
+  sessionDirectory?: string,
 ): ExtensionPackageImporter {
   let powerlineLoaded = false;
   let agentRailRenderer: AgentRailRenderer | undefined;
@@ -196,7 +197,7 @@ export function createLocalExtensionImporter(
       return { default: sessionTitle };
     }
     if (packageName === insightsExtensionPackage) {
-      return { default: createInsightsExtension(createLocalInsightsHost(savings)) };
+      return { default: createInsightsExtension(createLocalInsightsHost(savings, sessionDirectory)) };
     }
     if (packageName === memoryExtensionPackage) {
       if (!memoryBinding) throw new Error('Local memory extension requires a host binding');

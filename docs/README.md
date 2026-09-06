@@ -31,6 +31,8 @@ to do.
   correctness-first optimization, estimated savings, and claim boundaries.
 - [Local memory architecture](concepts/local-memory.md) — checkpointing,
   staging, validation, publication, and session projections.
+- [ADR 0001](decisions/0001-retain-local-memory-as-standard-sessions.md) — why
+  local memory workers use standard, segregated, read-only-inspectable sessions.
 - [Extension catalog](reference/extension-catalog.md) — every first-party
   package, its host boundary, commands, and runtime conditions.
 - [Runtime dependencies](reference/runtime-dependencies.md) — external
@@ -118,6 +120,7 @@ To keep details from drifting:
   successful run;
 - `docs/user-guide/` owns local user workflows and configuration;
 - `docs/concepts/` owns architecture and trust boundaries;
+- `docs/decisions/` records accepted architecture choices and trade-offs;
 - package READMEs own public APIs, host contracts, and package development;
 - `docs/maintainers/` owns release and provenance procedures; and
 - `docs/comparisons/` owns dated competitor claims and source snapshots.

@@ -71,12 +71,19 @@ Markdown wiki:
 
 ```text
 $FELAN_AGENT_DIR/memory/v1/projects/<project-hash>/
+  control.json
   state.json
   current/
     summary.md
     index.md
     pages/...
+  runs/<memory-run-id>/
 ```
+
+Memory worker transcripts are standard Pi JSONL sessions under
+`<sessionDir>/memory`. They appear as `Memory:` entries in the session picker
+and can be inspected without resuming them. Their linked run directories keep
+bounded input, output, manifest, and diagnostic evidence.
 
 The project key derives from the canonical Git root, or the canonical cwd when
 outside a repository. Felan does not create a canonical `.memory` directory in
@@ -110,12 +117,39 @@ Use:
 ```text
 /memory status
 /memory run
-/memory enable
-/memory disable
+/memory retry
+/memory runs [id|latest]
 /memory open
 ```
 
-Disabling processing does not delete or hide existing memory.
+After a failed processing attempt, the current project waits one minute before
+the second attempt and five minutes before the third. A third consecutive
+failure automatically disables processing for that project across prompts,
+sessions, and restarts. A successful publication resets the counter. The
+`/memory retry` command clears and retries only the current project's breaker
+when the memory extension is loaded; `/memory run` does not
+clear it.
+
+The footer shows processing, backoff, and pending counts. An automatically
+disabled project shows `Memory: disabled` and warns once when an interactive
+session starts or resumes in that project. Existing memory remains readable.
+
+Use `/memory runs` to browse retained runs, `/memory runs latest` for the newest
+current-project run, or `/memory runs <id>` for a specific current-project run.
+Inspection is read-only and never starts a model. Existing explicit session
+resume, import, fork, and switch behavior is unchanged.
+
+Felan retains the newest 50 completed run records. Each retained record keeps
+its standard JSONL and manifest; its disposable processing workspace is removed
+after completion. Active runs and the latest disable-causing evidence are
+protected. Unverifiable records are preserved and ignored rather than deleted.
+An ambiguous process interruption leaves the checkpoint pending for rerun and
+does not consume the failure budget; only durably acknowledged canonical state
+counts as a successful publication.
+
+Retained workers contribute their recorded model usage once to `/insights`, as
+standalone sessions. Missing usage remains unknown; Felan does not convert
+subscription quota percentages into token usage.
 
 ### Direct remember or forget requests
 

@@ -15,7 +15,6 @@ import {
   createLocalSettingsManager,
   getDependencyOnboardingChoice,
   getFelanSettings,
-  getLocalMemoryProcessingEnabled,
   getLocalOutputStyle,
   getLocalToolDisplayMode,
   isBuiltinExtensionEnabled,
@@ -23,7 +22,6 @@ import {
   setDependencyOnboardingChoice,
   resolveExtensionConfigSettings,
   setExtensionConfigValue,
-  setLocalMemoryProcessingEnabled,
 } from '../src/settings.js';
 import {
   formatExtensionSettingDisplayValue,
@@ -175,20 +173,9 @@ describe('local settings', () => {
     expect(getDependencyOnboardingChoice(settings, 'rtk')).toBe('continue');
     const manager = createLocalSettingsManager(root, agentDir);
     expect(getDependencyOnboardingChoice(getFelanSettings(manager), 'rtk')).toBe('continue');
-    expect(getLocalMemoryProcessingEnabled(manager)).toBe(true);
-
-    await setLocalMemoryProcessingEnabled(agentDir, false);
-    expect(getLocalMemoryProcessingEnabled(createLocalSettingsManager(root, agentDir))).toBe(false);
-
     await setDependencyOnboardingChoice(agentDir, 'rtk', undefined);
     const cleared = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8'));
-    expect(cleared.felanTui).toEqual({ toolDisplay: 'full', memoryProcessing: false });
-  });
-
-  it('defaults memory processing on and rejects invalid values', () => {
-    expect(getLocalMemoryProcessingEnabled(settingsWith({}))).toBe(true);
-    expect(() => getLocalMemoryProcessingEnabled(settingsWith({ felanTui: { memoryProcessing: 'yes' } })))
-      .toThrow('felanTui.memoryProcessing must be a boolean');
+    expect(cleared.felanTui).toEqual({ toolDisplay: 'full' });
   });
 
   it('persists namespaced extension configuration without replacing unrelated settings', async () => {
