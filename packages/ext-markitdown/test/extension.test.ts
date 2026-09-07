@@ -70,6 +70,7 @@ describe('MarkItDown extension', () => {
     expect(first.input.path).toContain(join(fixture.session, 'markitdown', 'cache'));
     const cachePath = first.input.path;
     expect(fixture.conversions).toHaveLength(1);
+    expect(harness.statuses).toEqual([]);
     expect(fixture.conversions[0]!.inputPath).toContain(join(fixture.session, 'markitdown', 'staging'));
     expect(fixture.conversions[0]!.inputPath).not.toContain(basename(sourcePath));
     await expect(readFile(first.input.path, 'utf8')).resolves.toBe('converted markdown\n');
@@ -642,7 +643,8 @@ describe('MarkItDown extension', () => {
     const harness = createHarness(fixture.runtime);
     markitdownExtension(harness.pi);
 
-    await harness.commands.get('markitdown')!('', context(harness.notifications));
+    await harness.commands.get('markitdown')!('', context(harness.notifications, harness.statuses));
+    expect(harness.statuses).toEqual([]);
     expect(harness.notifications.at(-1)?.message).toContain('Installation is never automatic');
     expect(harness.notifications.at(-1)?.message).toContain('Converted: .pdf, .docx');
     expect(harness.notifications.at(-1)?.message).toContain('Excluded images: .jpg');
@@ -743,6 +745,7 @@ function createHarness(runtime: AgentRuntime) {
   const commands = new Map<string, CommandHandler>();
   const capabilities: Array<{ id: string; instructions: string }> = [];
   const notifications: Array<{ message: string; type?: string }> = [];
+  const statuses: Array<{ key: string; value: string | undefined }> = [];
   const tools = new Map<string, { execute: (...args: any[]) => Promise<unknown> }>();
   const toolRegistrations: string[] = [];
   const activeTools = ['read'];
@@ -780,6 +783,7 @@ function createHarness(runtime: AgentRuntime) {
     commands,
     capabilities,
     notifications,
+    statuses,
     tools,
     toolRegistrations,
     activeTools,
@@ -794,7 +798,7 @@ function createHarness(runtime: AgentRuntime) {
     readDocument: (params: Record<string, unknown>, signal?: AbortSignal) => {
       const tool = tools.get('read_document');
       if (!tool) throw new Error('read_document tool was not registered');
-      return tool.execute('read-document-test', params, signal, undefined, context(notifications));
+      return tool.execute('read-document-test', params, signal, undefined, context(notifications, statuses));
     },
     eventChannels: () => [...eventHandlers.keys()],
     convertPdf(bytes: Uint8Array, signal?: AbortSignal) {
@@ -824,7 +828,7 @@ function createHarness(runtime: AgentRuntime) {
     async emit(name: string, event: unknown) {
       let result: unknown;
       for (const handler of handlers.get(name) ?? []) {
-        const next = await handler(event, context(notifications));
+        const next = await handler(event, context(notifications, statuses));
         if (next !== undefined) result = next;
       }
       return result;
@@ -832,12 +836,15 @@ function createHarness(runtime: AgentRuntime) {
   };
 }
 
-function context(notifications: Array<{ message: string; type?: string }>): ExtensionContext {
+function context(
+  notifications: Array<{ message: string; type?: string }>,
+  statuses: Array<{ key: string; value: string | undefined }> = [],
+): ExtensionContext {
   return {
     mode: 'print',
     hasUI: false,
     ui: {
-      setStatus: vi.fn(),
+      setStatus: (key: string, value: string | undefined) => statuses.push({ key, value }),
       notify: (message: string, type?: string) => notifications.push({
         message,
         ...(type === undefined ? {} : { type }),
