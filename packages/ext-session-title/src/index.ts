@@ -19,6 +19,7 @@ const SESSION_TITLE_MAX_TOKENS = 64;
 const SESSION_TITLE_PROMPT_MAX_LENGTH = 4_000;
 const SESSION_TITLE_TIMEOUT_MS = 30_000;
 const SESSION_TITLE_MAX_ATTEMPTS = 3;
+const TERMINAL_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/gu;
 const SESSION_TITLE_SYSTEM_PROMPT = [
   'Generate a concise navigation title for this work session.',
   'First determine the predominant language of the initial request.',
@@ -28,6 +29,26 @@ const SESSION_TITLE_SYSTEM_PROMPT = [
   'Return exactly one plain-text line with 3 to 10 words and no quotes, prefix, or explanation.',
   'Capture the main goal, stay within 80 characters, and make the title suitable for display in a UI.',
 ].join(' ');
+
+export function formatSessionTerminalTitle(
+  sessionName: string | undefined,
+  cwd: string,
+): string {
+  const normalizedName = sanitizeTerminalTitlePart(sessionName ?? '');
+  if (normalizedName) return normalizedName;
+
+  const normalizedCwd = cwd.replace(/[\\/]+$/gu, '');
+  if (!normalizedCwd) return sanitizeTerminalTitlePart(cwd) || '.';
+  const separatorIndex = Math.max(
+    normalizedCwd.lastIndexOf('/'),
+    normalizedCwd.lastIndexOf('\\'),
+  );
+  return sanitizeTerminalTitlePart(normalizedCwd.slice(separatorIndex + 1)) || '.';
+}
+
+function sanitizeTerminalTitlePart(value: string): string {
+  return value.replace(TERMINAL_CONTROL_CHARACTERS, ' ').replace(/\s+/gu, ' ').trim();
+}
 
 export function createSessionTitleExtension(host: SessionTitleHost): FelanExtension {
   return (pi) => {

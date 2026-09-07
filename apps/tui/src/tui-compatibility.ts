@@ -1,4 +1,5 @@
 import { getSelectListTheme, type InteractiveMode } from '@earendil-works/pi-coding-agent';
+import { formatSessionTerminalTitle } from '@felan-ai/ext-session-title';
 
 const ENTER_ALT_SCREEN = '\x1b[?1049h';
 const DISABLE_ALT_SCROLL = '\x1b[?1007l';
@@ -11,7 +12,20 @@ interface TerminalWriter {
   start?(onInput: (data: string) => void, onResize: () => void): void;
 }
 
+interface TerminalTitleWriter {
+  setTitle(title: string): void;
+}
+
+interface TerminalTitleSessionManager {
+  getCwd(): string;
+  getSessionName(): string | undefined;
+}
+
 interface InteractiveModeTerminalInternals {
+  ui?: {
+    terminal?: TerminalTitleWriter;
+  };
+  sessionManager?: TerminalTitleSessionManager;
   renderer?: {
     terminal?: TerminalWriter;
     mode?: string;
@@ -20,6 +34,7 @@ interface InteractiveModeTerminalInternals {
   showError?(message: string): void;
   showStatus?(message: string): void;
   switchTuiMode?(mode: string, restoreProgress?: boolean, startRenderer?: boolean): boolean;
+  updateTerminalTitle?(): void;
   themeController?: {
     onChanged?: () => void;
   };
@@ -35,6 +50,7 @@ const FELAN_WORKING_INTERVAL_MS = 120;
 const installedTerminals = new WeakSet<object>();
 const installedModes = new WeakSet<object>();
 const installedMessageFilters = new WeakSet<object>();
+const installedTerminalTitles = new WeakSet<object>();
 const installedWorkingIndicators = new WeakSet<object>();
 
 export function installFelanTuiCompatibility(
@@ -43,6 +59,7 @@ export function installFelanTuiCompatibility(
 ): void {
   const internals = mode as unknown as InteractiveModeTerminalInternals;
   installPiMessageFilters(mode, internals);
+  installFelanTerminalTitle(mode, internals);
   installFelanWorkingIndicator(mode, internals);
   if (platform !== 'win32') return;
   const terminal = internals.renderer?.terminal;
@@ -77,6 +94,28 @@ export function installFelanTuiCompatibility(
       }
     });
     return true;
+  };
+}
+
+function installFelanTerminalTitle(
+  mode: InteractiveMode,
+  internals: InteractiveModeTerminalInternals,
+): void {
+  const updateTerminalTitle = internals.updateTerminalTitle;
+  if (typeof updateTerminalTitle !== 'function' || installedTerminalTitles.has(mode)) return;
+  installedTerminalTitles.add(mode);
+
+  internals.updateTerminalTitle = () => {
+    const terminal = internals.ui?.terminal;
+    const sessionManager = internals.sessionManager;
+    if (!terminal || !sessionManager) {
+      Reflect.apply(updateTerminalTitle, mode, []);
+      return;
+    }
+    terminal.setTitle(formatSessionTerminalTitle(
+      sessionManager.getSessionName(),
+      sessionManager.getCwd(),
+    ));
   };
 }
 

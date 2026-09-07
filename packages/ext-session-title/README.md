@@ -7,6 +7,10 @@ bounded title, and persists it through `pi.setSessionName()`. It skips named,
 resumed, forked, and previously used sessions. Generation is detached from the
 main turn and cancelled during session shutdown.
 
+`formatSessionTerminalTitle()` returns a control-character-free terminal title
+containing the session name alone, or the working-directory basename when the
+session is unnamed. TUI hosts can use it for every terminal-title refresh.
+
 Hosts provide `SessionTitleHost` so credentials, model access, billing, and
 external persistence remain outside this package. The host must treat the
 prompt and generated title as untrusted data.

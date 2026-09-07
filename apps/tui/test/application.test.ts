@@ -205,6 +205,29 @@ describe('interactive application', () => {
     expect(errors).toEqual(['Compaction failed: Provider unavailable']);
   });
 
+  it('uses prefix-free terminal titles for every Pi title refresh', () => {
+    const titles: string[] = [];
+    let sessionName: string | undefined = 'Review auth regressions';
+    const piUpdateTerminalTitle = vi.fn();
+    const mode = {
+      ui: { terminal: { setTitle: (title: string) => titles.push(title) } },
+      sessionManager: {
+        getCwd: () => '/workspace/felan',
+        getSessionName: () => sessionName,
+      },
+      updateTerminalTitle: piUpdateTerminalTitle,
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+
+    installFelanTuiCompatibility(mode, 'darwin');
+    const updateTerminalTitle = (mode as unknown as { updateTerminalTitle(): void }).updateTerminalTitle;
+    updateTerminalTitle();
+    sessionName = undefined;
+    updateTerminalTitle();
+
+    expect(titles).toEqual(['Review auth regressions', 'felan']);
+    expect(piUpdateTerminalTitle).not.toHaveBeenCalled();
+  });
+
   it('uses a stable, theme-colored Felan mark as the default working indicator', () => {
     initTheme('dark');
     const indicators: Array<{ frames?: string[]; intervalMs?: number } | undefined> = [];

@@ -1,6 +1,10 @@
 import type { FelanExtensionAPI, ExtensionContext, Model, SessionEntry } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createSessionTitleExtension, type SessionTitleHost } from '../src/index.js';
+import {
+  createSessionTitleExtension,
+  formatSessionTerminalTitle,
+  type SessionTitleHost,
+} from '../src/index.js';
 
 const pendingTasks: Promise<unknown>[] = [];
 
@@ -135,6 +139,17 @@ describe('@felan-ai/ext-session-title', () => {
     expect(setSessionName).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['named sessions', 'Session name', '/workspace/felan', 'Session name'],
+    ['POSIX working directories', undefined, '/workspace/felan/', 'felan'],
+    ['Windows working directories', undefined, 'C:\\workspace\\felan\\', 'felan'],
+    ['filesystem roots', undefined, '/', '/'],
+    ['unsafe session names', 'Deploy\u001b]0;forged\u0007 title', '/workspace/felan', 'Deploy ]0;forged title'],
+    ['unsafe working directories', undefined, '/workspace/unsafe\u001b\u0007', 'unsafe'],
+  ])('formats %s without a Pi prefix', (_label, name, cwd, expected) => {
+    expect(formatSessionTerminalTitle(name, cwd)).toBe(expected);
+  });
+
   it('notifies when the title request fails', async () => {
     const complete = vi.fn().mockRejectedValue(new Error('title model unavailable'));
     const notify = vi.fn();
@@ -175,7 +190,10 @@ function install(
   extension: ReturnType<typeof createSessionTitleExtension>,
   setSessionName: ReturnType<typeof vi.fn>,
   options: Partial<Parameters<typeof context>[0]> = {},
-): { before: (event: { prompt: string }, ctx: ExtensionContext) => void; shutdown: () => Promise<void> } {
+): {
+  before: (event: { prompt: string }, ctx: ExtensionContext) => void;
+  shutdown: () => Promise<void>;
+} {
   let beforeHandler: ((event: { prompt: string }, ctx: ExtensionContext) => void) | undefined;
   let shutdownHandler: (() => Promise<void>) | undefined;
   const pi = {
