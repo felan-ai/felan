@@ -1,7 +1,6 @@
 export const MARKITDOWN_EXTENSIONS = [
   '.pdf',
   '.docx',
-  '.doc',
   '.pptx',
   '.ppt',
   '.xlsx',

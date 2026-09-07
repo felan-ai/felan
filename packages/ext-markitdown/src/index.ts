@@ -399,7 +399,7 @@ function blocked(reason: string): { block: true; reason: string } {
 }
 
 const READ_DOCUMENT_OFFICE_EXTENSIONS = [
-  '.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.xls', '.rtf', '.epub', '.msg',
+  '.docx', '.pptx', '.ppt', '.xlsx', '.xls', '.rtf', '.epub', '.msg',
 ] as const;
 
 function isReadDocumentExtension(extension: string): extension is (typeof READ_DOCUMENT_OFFICE_EXTENSIONS)[number] {

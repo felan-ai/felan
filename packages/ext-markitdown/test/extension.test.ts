@@ -33,10 +33,10 @@ afterEach(async () => {
 });
 
 describe('MarkItDown extension', () => {
-  it('includes PDF while excluding image, audio, and generic archive formats', () => {
+  it('uses the explicit supported-format allowlist', () => {
     expect(MARKITDOWN_EXTENSIONS).toEqual([
       '.pdf',
-      '.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.xls',
+      '.docx', '.pptx', '.ppt', '.xlsx', '.xls',
       '.rtf', '.epub', '.msg',
     ]);
     expect(MARKITDOWN_EXCLUDED_EXTENSIONS).toEqual([
@@ -44,7 +44,8 @@ describe('MarkItDown extension', () => {
     ]);
     expect(isMarkitdownDocument('REPORT.DOCX')).toBe(true);
     expect(isMarkitdownDocument('REPORT.PDF')).toBe(true);
-    for (const extension of [...MARKITDOWN_EXCLUDED_EXTENSIONS, '.zip', '.wav', '.mp3', '.txt', '.html', '.json']) {
+    expect(MARKITDOWN_CAPABILITY_INSTRUCTION).not.toMatch(/(?:^|[ ,:])\.doc(?:,|\.|$)/u);
+    for (const extension of [...MARKITDOWN_EXCLUDED_EXTENSIONS, '.doc', '.zip', '.wav', '.mp3', '.txt', '.html', '.json']) {
       expect(isMarkitdownDocument(`document${extension}`)).toBe(false);
     }
   });
@@ -528,6 +529,8 @@ describe('MarkItDown extension', () => {
       .rejects.toThrow('supports only');
     await expect(harness.readDocument({ path: join(fixture.workspace, 'image.png') }))
       .rejects.toThrow('supports only');
+    await expect(harness.readDocument({ path: join(fixture.workspace, 'legacy.doc') }))
+      .rejects.toThrow('received ".doc"');
     await expect(harness.readDocument({ path: sourcePath, offset: 0 }))
       .rejects.toThrow('offset');
     await expect(harness.readDocument({ path: sourcePath, offset: 4 }))

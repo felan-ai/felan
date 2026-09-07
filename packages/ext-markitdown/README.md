@@ -10,7 +10,7 @@ offset, limit, and truncation behavior therefore continues to work.
 The extension intercepts this explicit local-document allowlist:
 
 - PDF: `.pdf`
-- Word: `.docx`, `.doc`
+- Word: `.docx`
 - PowerPoint: `.pptx`, `.ppt`
 - spreadsheets: `.xlsx`, `.xls`
 - rich documents: `.rtf`, `.epub`
@@ -24,7 +24,7 @@ Its generic ZIP handling is excluded because it recursively converts nested
 PDFs/images and cannot enforce a safe expanded-size limit.
 
 MarkItDown's local converters vary by dependency availability. Legacy
-`.doc`/`.ppt` and RTF cleanup may not be available in every installation;
+`.ppt` and RTF cleanup may not be available in every installation;
 failed or empty conversions return a clear tool error instead of exposing
 binary bytes as text.
 
@@ -68,7 +68,7 @@ much faster.
 Outside active Codex mode, the extension adds no second read tool: supported
 documents are converted automatically through ordinary `read`. When Codex mode
 replaces `read`, its lifecycle signal makes this extension lazily register and
-activate `read_document` for Office formats (`.docx`, `.doc`, `.pptx`, `.ppt`,
+activate `read_document` for Office formats (`.docx`, `.pptx`, `.ppt`,
 `.xlsx`, `.xls`, `.rtf`, `.epub`, `.msg`). Switching to another model hides
 `read_document` and restores ordinary `read`; without the Codex extension,
 `read_document` is never registered. It accepts a document `path` with optional
