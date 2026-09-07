@@ -201,7 +201,9 @@ describe('AgentNavigator', () => {
     expect(harness.tui.requestRender).toHaveBeenCalledOnce();
 
     harness.navigator.handleInput('\x1b[M' + String.fromCharCode(65 + 32, 33, 33));
-    expect(harness.navigator.render(80).join('\n')).toEqual(first);
+    const afterWheelDown = harness.navigator.render(80).join('\n');
+    expect(afterWheelDown.replace(/\d+m \d+s/u, '<duration>'))
+      .toEqual(first.replace(/\d+m \d+s/u, '<duration>'));
     expect(harness.tui.requestRender).toHaveBeenCalledTimes(2);
     harness.navigator.dispose();
   });
