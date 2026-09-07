@@ -18,11 +18,9 @@ export function validateMemoryArtifact(
   input: MemoryArtifact | readonly MemoryFile[],
   options: MemoryValidationOptions = {},
 ): MemoryValidationResult {
-  const memoryPath = options.memoryPath ?? '.memory';
   const limits = mergeLimits(options.limits);
   const readMode = options.mode === 'read';
   const requireSources = options.requireSources ?? !readMode;
-  const validateNavigation = options.validateNavigation ?? !readMode;
   const errors: MemoryValidationError[] = [];
   const artifact = !Array.isArray(input) && isRecord(input) ? input : undefined;
   const files: readonly unknown[] = Array.isArray(input)
@@ -38,7 +36,6 @@ export function validateMemoryArtifact(
   }
   const normalized: MemoryFile[] = [];
   const seen = new Set<string>();
-  const areas = new Map<string, number>();
   let totalBytes = 0;
 
   for (const file of files) {
@@ -61,10 +58,6 @@ export function validateMemoryArtifact(
     if (bytes > limits.maxFileBytes) {
       errors.push({ code: 'file_too_large', path, message: `${path} exceeds the ${limits.maxFileBytes}-byte file limit` });
     }
-    if (path.startsWith('pages/')) {
-      const area = path.split('/')[1];
-      if (area) areas.set(area, (areas.get(area) ?? 0) + (path.endsWith('/index.md') ? 0 : 1));
-    }
     normalized.push({ path, content: file.content });
   }
 
@@ -80,7 +73,7 @@ export function validateMemoryArtifact(
   }
   if (!byPath.has('index.md')) {
     if (readMode) {
-      const index = { path: 'index.md', content: createDefaultMemoryIndex(memoryPath) } as const;
+      const index = { path: 'index.md', content: createDefaultMemoryIndex(options.memoryPath ?? '.memory') } as const;
       const bytes = Buffer.byteLength(index.content, 'utf8');
       normalized.push(index);
       byPath.set(index.path, index);
@@ -99,70 +92,6 @@ export function validateMemoryArtifact(
   if (totalBytes > limits.maxTotalBytes) {
     errors.push({ code: 'total_too_large', message: `Memory contains ${totalBytes} bytes; the limit is ${limits.maxTotalBytes}` });
   }
-  if (areas.size > limits.maxAreas) {
-    errors.push({ code: 'too_many_areas', message: `Memory contains ${areas.size} areas; the limit is ${limits.maxAreas}` });
-  }
-  for (const [area, pageCount] of areas) {
-    if (pageCount > limits.maxPagesPerArea) {
-      errors.push({ code: 'too_many_pages', path: `pages/${area}`, message: `${area} contains ${pageCount} pages; the limit is ${limits.maxPagesPerArea}` });
-    }
-  }
-
-  if (validateNavigation) {
-    const index = byPath.get('index.md');
-    if (index && !index.content.includes('## How to use this memory')) {
-      errors.push({ code: 'invalid_markdown', path: index.path, message: 'index.md is missing the required navigation guidance' });
-    }
-
-    const linksBySource = new Map<string, string[]>();
-    for (const file of normalized) {
-      const targets: string[] = [];
-      if (file.path !== 'summary.md') {
-        for (const rawTarget of extractLinks(file.content)) {
-          const target = resolveMemoryLink(file.path, rawTarget, memoryPath);
-          if (target === null) {
-            errors.push({ code: 'invalid_link', path: file.path, message: `Invalid memory link target: ${rawTarget}` });
-            continue;
-          }
-          if (target === '') continue;
-          targets.push(target);
-          if (!byPath.has(target)) {
-            errors.push({ code: 'broken_link', path: file.path, message: `Memory link points to missing file: ${rawTarget}` });
-          }
-          if (file.path === 'index.md' && target === 'summary.md') {
-            errors.push({ code: 'invalid_link', path: file.path, message: 'index.md must navigate pages, not summary.md' });
-          }
-          if (file.path.startsWith('pages/') && file.path.endsWith('/index.md')) {
-            const area = file.path.split('/')[1];
-            if (area && !target.startsWith(`pages/${area}/`)) {
-              errors.push({ code: 'invalid_link', path: file.path, message: `Area index links outside its area: ${rawTarget}` });
-            }
-          }
-        }
-      }
-      linksBySource.set(file.path, targets);
-    }
-
-    if (normalized.some((file) => file.path.startsWith('pages/'))
-      && !(linksBySource.get('index.md') ?? []).some((target) => target.startsWith('pages/'))) {
-      errors.push({
-        code: 'invalid_markdown',
-        path: 'index.md',
-        message: 'index.md must link to at least one area index or memory page',
-      });
-    }
-
-    for (const file of normalized) {
-      if (!file.path.startsWith('pages/') || file.path.endsWith('/index.md')) continue;
-      const area = file.path.split('/')[1];
-      const areaIndex = area ? `pages/${area}/index.md` : undefined;
-      const links = areaIndex ? linksBySource.get(areaIndex) ?? [] : [];
-      if (!links.includes(file.path)) {
-        errors.push({ code: 'unreachable_page', path: file.path, message: `${file.path} is not linked from its area index` });
-      }
-    }
-  }
-
   const allowedSourceIds = options.sourceSessionIds ? new Set(options.sourceSessionIds) : undefined;
   for (const file of normalized) {
     if (!file.path.startsWith('pages/') || file.path.endsWith('/index.md')) continue;

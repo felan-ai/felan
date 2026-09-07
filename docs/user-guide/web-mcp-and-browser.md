@@ -153,7 +153,7 @@ for Chrome for Testing.
 MarkItDown extends ordinary `read` calls for:
 
 - PDF
-- DOC and DOCX
+- DOCX
 - PPT and PPTX
 - XLS and XLSX
 - RTF

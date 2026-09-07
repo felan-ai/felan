@@ -65,6 +65,18 @@ describe('local memory store', () => {
     await expect(store.status()).resolves.toMatchObject({ pending: { 'session-1': { checkpoint } } });
   });
 
+  it('counts accepted newer cursors from the same session until publication', async () => {
+    const { store } = await createStore();
+    const first = checkpointFor('session-1', 'c'.repeat(64));
+    const second = { ...first, leafId: 'leaf-2', transcriptDigest: 'd'.repeat(64) };
+    await store.recordCheckpoint(first);
+    await store.recordCheckpoint(first);
+    await store.recordCheckpoint(second);
+
+    expect(await store.pendingAcceptedUpdates()).toBe(2);
+    expect((await store.status()).pending['session-1']).toMatchObject({ acceptedUpdates: 2, checkpoint: second });
+  });
+
   it('restores project control when local eligibility changes during retry reset persistence', async () => {
     const { store } = await createStore();
     const before = await store.readControl();
@@ -164,6 +176,7 @@ describe('local memory store', () => {
     await store.recordCheckpoint(newer);
     await store.commit(await writer(store), processing.fingerprint, memoryArtifact(), processing.checkpoints);
     expect((await store.status()).pending['session-1']?.checkpoint).toEqual(newer);
+    expect(await store.pendingAcceptedUpdates()).toBe(1);
     expect((await store.status()).processed['session-1']?.checkpoint).toEqual(older);
   });
 

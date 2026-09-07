@@ -33,6 +33,54 @@ describe('local memory controls', () => {
     expect(notify).toHaveBeenCalledWith('Usage: /memory status|run|runs [id|latest]|retry|open', 'warning');
   });
 
+  it('starts explicit processing commands without waiting for completion', async () => {
+    const handlers = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void>>();
+    const run = deferred<MemoryStatus>();
+    const retry = deferred<MemoryStatus>();
+    const coordinator = {
+      runNow: vi.fn(() => run.promise),
+      retryProject: vi.fn(() => retry.promise),
+      subscribeStatusChanges: vi.fn(() => () => {}),
+    } as unknown as LocalMemoryCoordinator;
+    createLocalMemoryControlExtension({ coordinator, agentDir: '/unused' })({
+      registerCommand: (name, command) => handlers.set(name, command.handler),
+      on: () => {},
+    } as unknown as FelanExtensionAPI);
+    const { ctx, notify } = memoryContext('session-1');
+
+    await handlers.get('memory')!('run', ctx);
+    expect(coordinator.runNow).toHaveBeenCalledWith('/workspace');
+    expect(notify).toHaveBeenCalledWith('Memory processing requested.', 'info');
+
+    await handlers.get('memory')!('retry', ctx);
+    expect(coordinator.retryProject).toHaveBeenCalledWith('/workspace');
+    expect(notify).toHaveBeenCalledWith('Memory retry requested.', 'info');
+
+    run.resolve(memoryStatus(0));
+    retry.resolve(memoryStatus(0));
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith('Local memory: enabled · idle · 0 pending', 'info'));
+  });
+
+  it('reports a detached processing request failure', async () => {
+    const handlers = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void>>();
+    const coordinator = {
+      retryProject: vi.fn(async () => { throw new Error('storage unavailable'); }),
+      subscribeStatusChanges: vi.fn(() => () => {}),
+    } as unknown as LocalMemoryCoordinator;
+    createLocalMemoryControlExtension({ coordinator, agentDir: '/unused' })({
+      registerCommand: (name, command) => handlers.set(name, command.handler),
+      on: () => {},
+    } as unknown as FelanExtensionAPI);
+    const { ctx, notify } = memoryContext('session-1');
+
+    await handlers.get('memory')!('retry', ctx);
+
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith(
+      'Memory processing request failed; inspect /memory status.',
+      'warning',
+    ));
+  });
+
   it('refreshes the footer when memory status changes and stops after shutdown', async () => {
     const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
     const setStatus = vi.fn();

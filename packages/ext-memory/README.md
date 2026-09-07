@@ -26,14 +26,16 @@ should follow the index to relevant area and topic pages and cite their paths
 and `Sources` session IDs. Hosts project a non-authoritative copy into each
 root session and retain canonical storage outside customer repositories.
 
-Markdown links in `summary.md` are ordinary untrusted content and never make an
-artifact invalid. Strict validation remains the default for publication.
-Availability-sensitive consumers can use `mode: 'read'`; it still enforces
-bounded regular Markdown files at safe, unique paths, but treats navigation and
-provenance defects as nonfatal and supplies empty summary/index defaults when
-either prompt file is absent. Publication callers can override individual
-checks with `validateNavigation` and `requireSources`, and restrict citations
-with `sourceSessionIds`.
+Markdown links are ordinary untrusted content and never make an artifact
+invalid. Publication validation enforces the artifact shape and version, safe
+and unique paths, required prompt files, resource limits, page provenance, and
+the optional source-session allow-list; link targets and navigation quality are
+best-effort content concerns. Availability-sensitive consumers can use
+`mode: 'read'`; it still enforces bounded regular Markdown files at safe,
+unique paths, but treats provenance defects as nonfatal and supplies empty
+summary/index defaults when either prompt file is absent. Publication callers
+can disable provenance checks with `requireSources` and restrict citations with
+`sourceSessionIds`.
 
 The extension appends one hidden, persisted memory-context message when a
 session starts. Later provider calls reuse that session context instead of
@@ -60,16 +62,22 @@ impose separate turn, tool-call, or per-file I/O budgets; its only execution
 failsafe is a one-hour wall-clock timeout. The host-side evidence
 materializer is a separate boundary: it streams the checkpoint's visible
 active-branch delta from JSONL, ignores unrelated branches, redacts it, and
-caps each staged transcript at 256 KiB. Large source session files are not
-rejected solely for their total size. Deterministic source failures remain
-pending for retry, while valid checkpoints in the same batch can still be
-published.
+caps each staged transcript at 256 KiB. The dreamer uses the structured session
+records to ignore low-value tool and bookkeeping content according to the
+retention policy. Large source session files are not rejected solely for their
+total size. Deterministic source failures remain pending for retry, while valid
+checkpoints in the same batch can still be published.
 
-The memory schema asks the dreamer to update every affected topic, entity, and
-concept page; add meaningful cross-links; preserve valid historical citations;
-mark superseded guidance and unresolved contradictions; and run a bounded
-semantic lint for stale, duplicate, weakly linked, or missing knowledge without
-inventing facts, links, or sources.
+The memory schema keeps the wiki sparse. It prioritizes durable user-authored
+facts, preferences, decisions, corrections, and uncodified rationale, followed
+by verified non-obvious discoveries, incidents, and runtime or external-system
+observations. It does not mirror repository source, documentation, configuration,
+tests, routine task status, raw tool output, or repeated summaries. Repository
+facts are retained only when they capture useful rationale, an incident, a
+mismatch, or a hard-to-rediscover constraint that is not recorded in the
+repository. Each dreaming run audits the complete existing wiki and removes
+ineligible, stale, duplicate, overlapping, or unnecessary content; valid source
+citation alone does not make a claim worth keeping.
 
 ## Development
 

@@ -49,6 +49,13 @@ export function createLocalMemoryControlExtension(
           if (refresh === statusRefresh) updateStatus(ctx, status);
           notify(ctx, formatStatus(status));
         };
+        const start = (operation: Promise<LocalMemoryStatus>, message: string) => {
+          notify(ctx, message, 'info');
+          void operation.then(report).catch(() => {
+            if (!isCurrent()) return;
+            notify(ctx, 'Memory processing request failed; inspect /memory status.', 'warning');
+          });
+        };
         if (command === 'runs' && parameters.length <= 1) {
           await showMemoryHistory(ctx, options.agentDir, parameters[0]);
           return;
@@ -59,11 +66,11 @@ export function createLocalMemoryControlExtension(
         }
         if (command === 'status') { report(await options.coordinator.status(ctx.cwd)); return; }
         if (command === 'run' || command === 'process') {
-          report(await options.coordinator.runNow(ctx.cwd));
+          start(options.coordinator.runNow(ctx.cwd), 'Memory processing requested.');
           return;
         }
         if (command === 'retry') {
-          report(await options.coordinator.retryProject(ctx.cwd));
+          start(options.coordinator.retryProject(ctx.cwd), 'Memory retry requested.');
           return;
         }
         if (command === 'open') {

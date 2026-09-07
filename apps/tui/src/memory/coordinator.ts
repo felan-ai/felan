@@ -7,7 +7,6 @@ import {
   extractSourceIds,
   hydrateMemoryDirectory,
   readMemoryDirectory,
-  validateMemoryArtifact,
   type MemoryHost,
   type MemoryProcessingState,
   type MemorySnapshot,
@@ -52,14 +51,15 @@ interface ProjectContext {
   recoveryCompleted: boolean;
   diagnosticsReconciled: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
+  timerDueAt: number | undefined;
   run: Promise<void> | undefined;
   readonly followUps: Set<Promise<void>>;
   abort: AbortController | undefined;
   attempt: LocalMemoryAttempt | undefined;
   storageBlocked: boolean;
+  writerBlocked: boolean;
   statusSignature: string | undefined;
   blocked: Map<string, MemoryCheckpointCursor>;
-  checkpointVersion: number;
   state: MemoryProcessingState;
   message: string | undefined;
 }
@@ -70,6 +70,8 @@ interface MemoryCheckpointCursor {
 }
 
 const MEMORY_INPUT_BLOCKED_MESSAGE = 'Some memory checkpoints could not be materialized; evidence remains pending';
+const MEMORY_AUTOMATIC_UPDATE_THRESHOLD = 5;
+const MEMORY_AUTOMATIC_INTERVAL_MS = 60 * 60 * 1_000;
 
 export interface LocalMemoryCoordinatorOptions {
   readonly agentDir: string;
@@ -153,13 +155,11 @@ export class LocalMemoryCoordinator {
       this.#monitor = undefined;
     }
     for (const context of this.#contexts.values()) {
-      if (!enabled && context.timer) {
-        clearTimeout(context.timer);
-        context.timer = undefined;
-      }
+      if (!enabled) this.#cancelScheduledRun(context);
       if (!enabled) this.#cancelContext(context, 'Memory processing was disabled', true);
       if (enabled) {
         context.storageBlocked = false;
+        context.writerBlocked = false;
         context.blocked.clear();
         if (context.initialized) this.#startRecovery(context);
       }
@@ -167,7 +167,7 @@ export class LocalMemoryCoordinator {
     }
     if (enabled) {
       for (const context of this.#contexts.values()) {
-        if (context.initialized) void this.#trackScheduleIfPending(context, 0);
+        if (context.initialized) void this.#trackScheduleIfPending(context);
       }
     }
     this.#emitStatusChange();
@@ -226,7 +226,6 @@ export class LocalMemoryCoordinator {
   async recordCheckpoint(cwd: string, checkpoint: SessionCheckpoint): Promise<void> {
     const context = await this.#context(cwd);
     if (await context.store.recordCheckpoint(checkpoint)) {
-      context.checkpointVersion += 1;
       context.blocked.delete(checkpoint.sessionId);
       await this.#trackScheduleIfPending(context);
       this.#emitStatusChange();
@@ -245,16 +244,13 @@ export class LocalMemoryCoordinator {
       this.#cancelScheduledRun(context);
     }
     context.blocked.clear();
-    const checkpointVersion = context.checkpointVersion;
-    const run = this.#run(context);
+    const run = this.#run(context, true);
     context.run = run;
     try {
       await run;
     } finally {
       if (context.run === run) context.run = undefined;
-      if (context.checkpointVersion !== checkpointVersion) {
-        await this.#trackScheduleIfPending(context);
-      }
+      await this.#trackScheduleIfPending(context);
     }
     return this.status(cwd);
   }
@@ -293,8 +289,7 @@ export class LocalMemoryCoordinator {
     if (this.#monitor) clearInterval(this.#monitor);
     this.#monitor = undefined;
     for (const context of this.#contexts.values()) {
-      if (context.timer) clearTimeout(context.timer);
-      context.timer = undefined;
+      this.#cancelScheduledRun(context);
       this.#cancelContext(context, 'Memory processing was cancelled during shutdown', false);
     }
     while (true) {
@@ -334,14 +329,15 @@ export class LocalMemoryCoordinator {
       recoveryCompleted: false,
       diagnosticsReconciled: false,
       timer: undefined,
+      timerDueAt: undefined,
       run: undefined,
       followUps: new Set(),
       abort: undefined,
       attempt: undefined,
       storageBlocked: false,
+      writerBlocked: false,
       statusSignature: undefined,
       blocked: new Map(),
-      checkpointVersion: 0,
       state: this.#enabled ? 'idle' : 'disabled',
       message: undefined,
     };
@@ -440,6 +436,7 @@ export class LocalMemoryCoordinator {
           || control.activeAttempt?.generation !== observedAttempt.generation)) {
           this.#cancelContext(context, 'Memory processing was cancelled by another session', true);
         }
+        context.writerBlocked = false;
         if (context.initialized) await this.#trackScheduleIfPending(context);
         const signature = JSON.stringify([this.#enabled, context.state, context.message, control.updatedAt]);
         if (signature !== context.statusSignature) {
@@ -469,12 +466,16 @@ export class LocalMemoryCoordinator {
     context.followUps.add(followUp);
   }
 
-  async #schedule(context: ProjectContext, delay = this.#options.debounceMs ?? 2_000): Promise<void> {
-    if (this.#disposed || !this.#enabled || context.run || context.timer || context.storageBlocked) return;
+  async #schedule(context: ProjectContext, dueAt: number): Promise<void> {
+    if (this.#disposed || !this.#enabled || context.run || context.storageBlocked) return;
+    if (context.timer && context.timerDueAt === dueAt) return;
+    this.#cancelScheduledRun(context);
     context.state = 'scheduled';
+    const delay = Math.max(0, dueAt - this.#now());
     const timer = setTimeout(() => {
       if (context.timer !== timer) return;
       context.timer = undefined;
+      context.timerDueAt = undefined;
       const run = this.#run(context).catch((error: unknown) => {
         context.state = 'error';
         context.storageBlocked = true;
@@ -487,10 +488,11 @@ export class LocalMemoryCoordinator {
       context.run = run;
     }, delay);
     context.timer = timer;
+    context.timerDueAt = dueAt;
     timer.unref?.();
   }
 
-  async #scheduleIfPending(context: ProjectContext, delay = this.#options.debounceMs ?? 2_000): Promise<void> {
+  async #scheduleIfPending(context: ProjectContext): Promise<void> {
     if (!this.#enabled || this.#disposed) return;
     try {
       const control = await context.store.readControl();
@@ -500,15 +502,38 @@ export class LocalMemoryCoordinator {
         return;
       }
       if (context.storageBlocked) return;
+      if (context.writerBlocked) return;
       const state = await context.store.status();
       const pending = Object.values(state.pending);
-      if (control.activeAttempt || pending.some(({ checkpoint }) => !isBlockedCheckpoint(context, checkpoint))) {
-        const retryDelay = control.nextRetryAt ? Math.max(0, Date.parse(control.nextRetryAt) - this.#now()) : 0;
-        await this.#schedule(context, Math.max(delay, retryDelay));
+      if (control.activeAttempt) {
+        this.#cancelScheduledRun(context);
+      } else if (pending.some(({ checkpoint }) => !isBlockedCheckpoint(context, checkpoint))) {
+        const acceptedUpdates = await context.store.pendingAcceptedUpdates(
+          (checkpoint) => !isBlockedCheckpoint(context, checkpoint),
+        );
+        if (acceptedUpdates < MEMORY_AUTOMATIC_UPDATE_THRESHOLD) {
+          this.#cancelScheduledRun(context);
+          if (context.state === 'scheduled') context.state = 'idle';
+          return;
+        }
+        const processedAt = Object.values(state.processed)
+          .map(({ processedAt }) => Date.parse(processedAt))
+          .filter(Number.isFinite)
+          .reduce((latest, at) => Math.max(latest, at), 0);
+        const dueAt = control.nextRetryAt
+          ? Date.parse(control.nextRetryAt)
+          : processedAt === 0
+            ? this.#now()
+            : processedAt + (this.#options.debounceMs ?? MEMORY_AUTOMATIC_INTERVAL_MS);
+        await this.#schedule(context, dueAt);
       } else if (pending.length > 0) {
+        this.#cancelScheduledRun(context);
         const message = context.state === 'blocked' ? context.message : undefined;
         context.state = 'blocked';
         context.message = message ?? MEMORY_INPUT_BLOCKED_MESSAGE;
+      } else {
+        this.#cancelScheduledRun(context);
+        if (context.state === 'scheduled') context.state = 'idle';
       }
     } catch {
       context.state = 'error';
@@ -516,18 +541,15 @@ export class LocalMemoryCoordinator {
     }
   }
 
-  #trackScheduleIfPending(
-    context: ProjectContext,
-    delay = this.#options.debounceMs ?? 2_000,
-  ): Promise<void> {
-    const followUp = this.#scheduleIfPending(context, delay).finally(() => {
+  #trackScheduleIfPending(context: ProjectContext): Promise<void> {
+    const followUp = this.#scheduleIfPending(context).finally(() => {
       context.followUps.delete(followUp);
     });
     context.followUps.add(followUp);
     return followUp;
   }
 
-  async #run(context: ProjectContext): Promise<void> {
+  async #run(context: ProjectContext, bypassRetryAt = false): Promise<void> {
     if (this.#disposed || !this.#enabled || context.storageBlocked) return;
     context.state = 'processing';
     context.message = undefined;
@@ -535,15 +557,18 @@ export class LocalMemoryCoordinator {
     try {
       lease = await acquireLocalMemoryLease(context.store.projectDirectory, this.#options.leaseOptions);
     } catch (error) {
+      context.writerBlocked = true;
       context.state = 'error';
       context.message = safeProcessingMessage(error);
       return;
     }
     if (!lease) {
+      context.writerBlocked = true;
       context.state = 'blocked';
       context.message = 'Another Felan process owns the memory writer';
       return;
     }
+    context.writerBlocked = false;
     const abort = new AbortController();
     context.abort = abort;
     const abortOnLeaseCompromise = (): void => {
@@ -560,7 +585,7 @@ export class LocalMemoryCoordinator {
         context.state = 'disabled';
         return;
       }
-      if (control.nextRetryAt && Date.parse(control.nextRetryAt) > this.#now()) {
+      if (!bypassRetryAt && control.nextRetryAt && Date.parse(control.nextRetryAt) > this.#now()) {
         context.state = 'scheduled';
         return;
       }
@@ -618,6 +643,7 @@ export class LocalMemoryCoordinator {
         runId: retainedRun.metadata.sessionId,
         baseFingerprint: snapshot.fingerprint,
         checkpoints: processedCheckpoints,
+        ...(bypassRetryAt ? { bypassRetryAt: true } : {}),
       }, this.#now());
       if (!attempt) {
         await retainedRun.finish('cancelled', 'Memory inputs or processing policy changed before the attempt started');
@@ -647,23 +673,15 @@ export class LocalMemoryCoordinator {
         memoryPath: '.memory',
         sourceSessionIds: allowedSourceIds(snapshot, manifest),
         requireSources: true,
-        validateNavigation: true,
       });
-      const validation = validateMemoryArtifact(artifact, {
-        memoryPath: '.memory',
-        sourceSessionIds: allowedSourceIds(snapshot, manifest),
-        requireSources: true,
-        validateNavigation: true,
-      });
-      if (!validation.ok || !validation.artifact) throw new Error('Memory output validation failed');
       await retainedRun.record({
         phase: 'publish',
-        outputFingerprint: createMemorySnapshot(validation.artifact, '.memory').fingerprint,
+        outputFingerprint: createMemorySnapshot(artifact, '.memory').fingerprint,
       });
       await context.store.commit(
         lease,
         snapshot.fingerprint,
-        validation.artifact,
+        artifact,
         processedCheckpoints,
         attempt,
       );
@@ -774,7 +792,7 @@ export class LocalMemoryCoordinator {
       } catch {}
     }
     if (recovered && !this.#disposed && this.#enabled) {
-      await this.#schedule(context);
+      await this.#trackScheduleIfPending(context);
       this.#emitStatusChange();
     }
     return true;
@@ -789,9 +807,9 @@ export class LocalMemoryCoordinator {
   }
 
   #cancelScheduledRun(context: ProjectContext): void {
-    if (!context.timer) return;
-    clearTimeout(context.timer);
+    if (context.timer) clearTimeout(context.timer);
     context.timer = undefined;
+    context.timerDueAt = undefined;
   }
 }
 

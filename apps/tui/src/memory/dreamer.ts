@@ -81,9 +81,13 @@ export class MemoryModelUnavailableError extends Error {
 
 const MEMORY_DREAM_PROMPT = `Process the staged memory input now.
 
-Read .dreaming/input/manifest.json and every transcript listed by that manifest. Inspect the existing .memory wiki and merge durable facts from only those target sessions into it. Edit the Markdown files under .memory in place; do not modify .dreaming/input or access repositories, integrations, credentials, or unrelated files.
+Read .dreaming/input/manifest.json and every transcript listed by that manifest. Inspect the complete existing .memory wiki before changing it. Keep memory sparse: retain only information likely to help a future session that cannot be cheaply recovered from current repository source, documentation, configuration, manifests, tests, or generated files.
 
-Do not return a JSON artifact or a patch. The filesystem under .memory is the output. Before finishing, verify the required files, links, page reachability, source provenance, and the memory schema. Return only a concise summary after the staged .memory artifact is complete.`;
+Prioritize eligible evidence in this order: (1) direct user-authored durable facts, preferences, decisions, corrections, explicit remember or forget requests, and uncodified rationale; (2) verified non-obvious agent discoveries, incidents, runtime or external-system observations, hidden constraints, and useful unresolved hypotheses. Session records identify provenance: user-role messages are direct user evidence; ordinary tool results, assistant text, subagent output, compaction summaries, and task records are not user-authored evidence. An interactive tool result counts as user evidence only when it explicitly contains the user's answer or feedback.
+
+Do not retain raw tool output, assistant plans or promises, routine task progress, ordinary verification results, transient approvals, repository inventories, implementation details, or repeated paraphrases. Keep a repository-derived conclusion only when it preserves an important rationale, incident, mismatch, or hard-to-rediscover constraint not recorded in the repository. Repetition does not increase importance; merge equivalent claims and keep the strongest provenance. Delete old repository mirrors, transient claims, duplicate claims, overlapping pages, and unnecessary pages during this run, even if they have valid citations.
+
+Edit only Markdown files under .memory; do not modify .dreaming/input or access repositories, integrations, credentials, or unrelated files. Do not return a JSON artifact or a patch. The filesystem under .memory is the output. Before finishing, verify required files, links, page reachability, source provenance, and the memory schema. Return only a concise summary after the staged .memory artifact is complete.`;
 
 export interface MaterializeMemoryInputOptions {
   readonly stagingDirectory: string;

@@ -72,16 +72,12 @@ export interface MemoryArtifactLimits {
   readonly maxFiles: number;
   readonly maxFileBytes: number;
   readonly maxTotalBytes: number;
-  readonly maxAreas: number;
-  readonly maxPagesPerArea: number;
 }
 
 export const DEFAULT_MEMORY_ARTIFACT_LIMITS: MemoryArtifactLimits = Object.freeze({
   maxFiles: 256,
   maxFileBytes: 256 * 1024,
   maxTotalBytes: 4 * 1024 * 1024,
-  maxAreas: 32,
-  maxPagesPerArea: 32,
 });
 
 export interface MemoryValidationOptions {
@@ -91,8 +87,6 @@ export interface MemoryValidationOptions {
   readonly mode?: 'strict' | 'read';
   /** Require page provenance. Defaults to true except in read mode. */
   readonly requireSources?: boolean;
-  /** Validate index/page navigation. Defaults to true except in read mode. */
-  readonly validateNavigation?: boolean;
   readonly memoryPath?: string;
 }
 
@@ -102,17 +96,10 @@ export interface MemoryValidationError {
     | 'invalid_path'
     | 'unsupported_version'
     | 'invalid_file_type'
-    | 'invalid_markdown'
     | 'missing_required_file'
     | 'file_too_large'
     | 'too_many_files'
-    | 'too_many_areas'
-    | 'too_many_pages'
     | 'total_too_large'
-    | 'summary_has_links'
-    | 'invalid_link'
-    | 'broken_link'
-    | 'unreachable_page'
     | 'missing_sources'
     | 'unknown_source';
   readonly path?: string;

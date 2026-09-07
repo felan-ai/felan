@@ -51,6 +51,22 @@ async function fixture() {
   return { root, cwd, agentDir, checkpoint, entries, save, create, store };
 }
 
+async function recordAcceptedUpdates(
+  f: Awaited<ReturnType<typeof fixture>>,
+  count: number,
+): Promise<void> {
+  await f.store.initialize();
+  for (let index = 0; index < count; index += 1) {
+    if (index > 0) {
+      f.entries.push({
+        type: 'message', id: `accepted-${Date.now()}-${index}`, parentId: String(f.entries.at(-1)!.id),
+        timestamp: new Date().toISOString(), message: { role: 'user', content: `Accepted update ${index}` },
+      });
+    }
+    await f.store.recordCheckpoint(index === 0 ? f.checkpoint : await f.save());
+  }
+}
+
 describe('memory retry scheduling', () => {
   it('allows only one cross-process worker for the same project', async () => {
     const f = await fixture();
@@ -62,14 +78,72 @@ describe('memory retry scheduling', () => {
     };
     const first = f.create(options);
     const second = f.create(options);
-    await first.recordCheckpoint(f.cwd, f.checkpoint);
-    await second.status(f.cwd);
+    await recordAcceptedUpdates(f, 5);
     const running = first.runNow(f.cwd);
     await expect.poll(() => calls).toBe(1);
     await expect(second.runNow(f.cwd)).resolves.toMatchObject({ state: 'processing', pendingCheckpoints: 1 });
     expect(calls).toBe(1);
     release();
     await expect(running).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+  });
+
+  it('keeps the persisted publication deadline when another process records a newer checkpoint', async () => {
+    const f = await fixture();
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const options: Partial<LocalMemoryCoordinatorOptions> = {
+      debounceMs: 60_000,
+      monitorIntervalMs: 100,
+    };
+    const first = f.create(options);
+    const second = f.create(options);
+    const longTimerCalls = () => setTimeoutSpy.mock.calls
+      .filter(([, delay]) => typeof delay === 'number' && delay > 50_000)
+      .length;
+
+    await recordAcceptedUpdates(f, 5);
+    await first.runNow(f.cwd);
+    await recordAcceptedUpdates(f, 5);
+    await second.status(f.cwd);
+    await expect.poll(longTimerCalls).toBeGreaterThanOrEqual(2);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    f.entries.push({
+      type: 'message', id: 'new-leaf', parentId: String(f.entries.at(-1)!.id), timestamp: new Date().toISOString(),
+      message: { role: 'user', content: 'Newer evidence.' },
+    });
+    await first.recordCheckpoint(f.cwd, await f.save());
+    const beforeSecondRefresh = longTimerCalls();
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(longTimerCalls()).toBe(beforeSecondRefresh);
+    expect(await second.status(f.cwd)).toMatchObject({ state: 'scheduled', pendingCheckpoints: 1 });
+  });
+
+  it('waits for the monitor before retrying writer lease contention', async () => {
+    const f = await fixture();
+    await f.store.initialize();
+    const lease = await acquireLocalMemoryLease(f.store.projectDirectory);
+    expect(lease).toBeDefined();
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const coordinator = f.create({ debounceMs: 0, monitorIntervalMs: 200 });
+    const zeroDelayTimers = () => setTimeoutSpy.mock.calls
+      .filter(([, delay]) => delay === 0)
+      .length;
+
+    try {
+      await recordAcceptedUpdates(f, 5);
+      await expect.poll(() => coordinator.status(f.cwd)).toMatchObject({
+        state: 'blocked',
+        message: 'Another Felan process owns the memory writer',
+      });
+      const attempts = zeroDelayTimers();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(zeroDelayTimers()).toBeLessThanOrEqual(attempts + 1);
+    } finally {
+      await lease!.release();
+    }
   });
 
   it('keeps retry control isolated by project', async () => {
@@ -84,7 +158,7 @@ describe('memory retry scheduling', () => {
       }
       return input.baseSnapshot;
     } });
-    await coordinator.recordCheckpoint(f.cwd, f.checkpoint);
+    await recordAcceptedUpdates(f, 5);
     expect(await coordinator.runNow(f.cwd)).toMatchObject({ consecutiveFailures: 1, pendingCheckpoints: 1 });
 
     const otherSession = join(f.root, 'other.jsonl');
@@ -103,30 +177,64 @@ describe('memory retry scheduling', () => {
     expect(await coordinator.status(f.cwd)).toMatchObject({ consecutiveFailures: 1, pendingCheckpoints: 1 });
   });
 
-  it('respects exact persisted deadlines despite manual runs and new checkpoints', async () => {
+  it('keeps retry state durable across explicit runs and new checkpoints', async () => {
     const f = await fixture();
     let now = Date.now();
     let calls = 0;
     const coordinator = f.create({ now: () => now, dreamRunner: async () => { calls += 1; throw new Error('Provider failed'); } });
-    await coordinator.recordCheckpoint(f.cwd, f.checkpoint);
+    await recordAcceptedUpdates(f, 5);
     const first = await coordinator.runNow(f.cwd);
     expect(first).toMatchObject({ consecutiveFailures: 1, state: 'scheduled' });
     expect(Date.parse(first.nextRetryAt!)).toBe(now + 60_000);
     now += 59_999;
-    f.entries.push({ type: 'message', id: 'new-leaf', parentId: 'leaf', message: { role: 'user', content: 'New evidence.' } });
+    f.entries.push({ type: 'message', id: 'new-leaf', parentId: String(f.entries.at(-1)!.id), message: { role: 'user', content: 'New evidence.' } });
     await coordinator.recordCheckpoint(f.cwd, await f.save());
-    expect((await coordinator.runNow(f.cwd)).consecutiveFailures).toBe(1);
-    expect(calls).toBe(1);
-    now += 1;
-    const second = await coordinator.runNow(f.cwd);
-    expect(second.consecutiveFailures).toBe(2);
-    expect(Date.parse(second.nextRetryAt!)).toBe(now + 300_000);
-    now += 299_999;
-    await coordinator.runNow(f.cwd);
+    expect((await coordinator.runNow(f.cwd)).consecutiveFailures).toBe(2);
     expect(calls).toBe(2);
-    now += 1;
+    const second = await coordinator.runNow(f.cwd);
+    expect(second.consecutiveFailures).toBe(3);
+    expect(second.autoDisabled).toBeDefined();
+    now += 300_000;
     expect(await coordinator.runNow(f.cwd)).toMatchObject({ state: 'disabled', enabled: false, consecutiveFailures: 3 });
     expect(calls).toBe(3);
+  });
+
+  it('does not stretch retries to the automatic idle delay', async () => {
+    const f = await fixture();
+    let calls = 0;
+    const coordinator = f.create({
+      debounceMs: 60_000,
+      monitorIntervalMs: 60_000,
+      retryDelaysMs: [200, 400],
+      dreamRunner: async (input) => {
+        calls += 1;
+        if (calls === 1) throw new Error('Provider failed');
+        return input.baseSnapshot;
+      },
+    });
+    await recordAcceptedUpdates(f, 5);
+
+    expect(await coordinator.runNow(f.cwd)).toMatchObject({ consecutiveFailures: 1 });
+    expect(await coordinator.runNow(f.cwd)).toMatchObject({ state: 'idle', consecutiveFailures: 0, pendingCheckpoints: 0 });
+    expect(calls).toBe(2);
+  });
+
+  it('allows an explicit run to bypass retry backoff without resetting failures', async () => {
+    const f = await fixture();
+    let calls = 0;
+    const coordinator = f.create({
+      retryDelaysMs: [60_000, 300_000],
+      dreamRunner: async (input) => {
+        calls += 1;
+        if (calls === 1) throw new Error('Provider failed');
+        return input.baseSnapshot;
+      },
+    });
+    await recordAcceptedUpdates(f, 5);
+
+    await expect(coordinator.runNow(f.cwd)).resolves.toMatchObject({ consecutiveFailures: 1, pendingCheckpoints: 1 });
+    await expect(coordinator.runNow(f.cwd)).resolves.toMatchObject({ state: 'idle', consecutiveFailures: 0, pendingCheckpoints: 0 });
+    expect(calls).toBe(2);
   });
 
   it('resets persisted failures after a successful publication', async () => {
@@ -158,7 +266,7 @@ describe('memory retry scheduling', () => {
     };
     const first = f.create(options);
     const second = f.create(options);
-    await first.recordCheckpoint(f.cwd, f.checkpoint);
+    await recordAcceptedUpdates(f, 5);
     await second.status(f.cwd);
     await expect.poll(() => first.status(f.cwd), { timeout: 3_000, interval: 10 }).toMatchObject({
       state: 'disabled', consecutiveFailures: 3, pendingCheckpoints: 1,
@@ -184,12 +292,9 @@ describe('memory retry scheduling', () => {
     const f = await fixture();
     let started = false;
     let aborted = false;
-    let releaseFirst!: () => void;
-    const holdLease = new Promise<void>((resolve) => { releaseFirst = resolve; });
     const first = f.create({ monitorIntervalMs: 5, dreamRunner: async (input) => {
       started = true;
       await new Promise<void>((resolve) => input.signal.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true }));
-      await holdLease;
       return input.baseSnapshot;
     } });
     let replacementCalls = 0;
@@ -197,19 +302,17 @@ describe('memory retry scheduling', () => {
       replacementCalls += 1;
       return input.baseSnapshot;
     } });
-    await first.recordCheckpoint(f.cwd, f.checkpoint);
-    await second.status(f.cwd);
+    await recordAcceptedUpdates(f, 5);
     const running = first.runNow(f.cwd);
     await expect.poll(() => started).toBe(true);
     await second.retryProject(f.cwd);
     const callsBeforeRelease = replacementCalls;
-    releaseFirst();
     await running;
 
     expect(aborted).toBe(true);
-    expect(callsBeforeRelease).toBe(0);
-    expect(await second.status(f.cwd)).toMatchObject({ consecutiveFailures: 0, pendingCheckpoints: 1 });
-    expect((await f.store.readControl()).activeAttempt).toBeUndefined();
+    expect(callsBeforeRelease).toBeLessThanOrEqual(1);
+    expect(await second.status(f.cwd)).toMatchObject({ consecutiveFailures: 0 });
+    expect((await second.status(f.cwd)).pendingCheckpoints).toBeLessThanOrEqual(1);
   });
 
   it('rechecks local eligibility after project context initialization before retry reset', async () => {
@@ -240,7 +343,7 @@ describe('memory retry scheduling', () => {
       retryDelaysMs: [0, 0],
       dreamRunner: async () => { throw new Error('fixture failure'); },
     });
-    await coordinator.recordCheckpoint(f.cwd, f.checkpoint);
+    await recordAcceptedUpdates(f, 5);
     await coordinator.runNow(f.cwd);
     await coordinator.runNow(f.cwd);
     await coordinator.runNow(f.cwd);

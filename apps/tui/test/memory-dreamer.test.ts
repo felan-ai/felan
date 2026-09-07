@@ -184,6 +184,10 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     expect(session.bound).toBe(true);
     expect(session.activeTools).toEqual(['read', 'ls', 'edit', 'write']);
     expect(session.promptText).toContain('Read .dreaming/input/manifest.json');
+    expect(session.promptText).toContain('Keep memory sparse');
+    expect(session.promptText).toContain('direct user-authored durable facts');
+    expect(session.promptText).toContain('not be cheaply recovered');
+    expect(session.promptText).toContain('Delete old repository mirrors');
     expect(session.promptText).not.toContain('Return only a JSON object');
     expect(session.disposed).toBe(true);
 

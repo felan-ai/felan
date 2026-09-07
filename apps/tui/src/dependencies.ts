@@ -137,7 +137,7 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     id: 'markitdown',
     label: 'MarkItDown',
     extension: 'markitdown',
-    purpose: 'document conversion for DOC/DOCX, PPT/PPTX, XLS/XLSX, RTF, EPUB, and MSG reads',
+    purpose: 'document conversion for DOCX, PPT/PPTX, XLS/XLSX, RTF, EPUB, and MSG reads',
     unavailableMessage: (status) => formatUnavailableMessage(
       'MarkItDown support is built into Felan, but the external markitdown converter is not installed or unavailable.',
       'Felan can continue normally; Office document reads remain inactive until you install it.',

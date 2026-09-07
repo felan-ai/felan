@@ -53,11 +53,15 @@ validation, hydration, root checkpoint contracts, and reader/root extension
 behavior. It does not choose a project scope, schedule a worker, call a model,
 or publish files.
 
-The local TUI owns the coordinator, idle batching, startup recovery, retries,
-shutdown cancellation, model selection, retained sessions, history UI,
-staging, validation, and publication. No portable memory-session-kind contract
-is added. A managed host can implement an equivalent coordinator without
-changing the portable package.
+The local TUI owns the coordinator, automatic evidence/time gates, startup
+recovery, retries, shutdown cancellation, model selection, retained sessions,
+history UI, staging, validation, and publication. Automatic processing requires
+five accepted checkpoint updates and one hour since the latest successful
+publication; repeated updates from one root session count. The absolute
+publication deadline is reconstructed by later processes, so closing Felan does
+not discard pending work. No portable memory-session-kind contract is added. A
+managed host can implement an
+equivalent coordinator without changing the portable package.
 
 Felan Platform keeps its separate Supabase persistence, cron scheduling, team
 archive, and entitlement flows. The local TUI policy does not change those
@@ -91,8 +95,9 @@ single-writer publication to canonical current/
 
 Settled root sessions record transcript cursors. The host reads the append-only
 JSONL source with a bounded snapshot and streams only the visible active-branch
-delta. Abandoned branches, injected hidden memory context, and unrelated large
-tool output are excluded.
+delta. Abandoned branches and injected hidden memory context are excluded. The
+dreamer applies the retention policy to distinguish useful evidence from raw
+tool output and bookkeeping.
 
 ### 2. Evidence materialization
 
@@ -116,10 +121,18 @@ authenticated model, processing remains pending.
 ### 4. Validation and publication
 
 The coordinator validates the complete staged Markdown filesystem before
-publication. It preserves valid historical citations, updates every affected
-topic/entity/concept page, adds meaningful cross-links, marks superseded claims
-and unresolved contradictions, and performs a bounded semantic lint. It never
-invents facts, links, or source IDs.
+publication. It enforces safe unique paths, bounded artifact size, required
+prompt files, and page source provenance. Links and navigation are ordinary
+content and do not block publication. The prompt keeps the wiki sparse rather than mirroring the
+repository: it prioritizes durable user-authored facts, preferences, decisions,
+corrections, and uncodified rationale, then verified non-obvious discoveries,
+incidents, and runtime or external-system observations. It omits repository
+source/docs/config/test details, raw tool output, routine task or verification
+status, and repeated paraphrases. Repository-derived content survives only for
+important rationale, incidents, mismatches, or hard-to-rediscover constraints
+not already recorded in the repository. Every run audits existing memory and
+may remove ineligible or duplicate pages even when citations are valid. It
+preserves supported contradictions and never invents facts, links, or source IDs.
 
 Publication uses a fenced single-writer lease. Model, validation, cancellation,
 timeout, or publication failures leave evidence pending for a retry rather than
@@ -150,8 +163,9 @@ disables only that project. Successful publication resets the counter, while
 prompts and process restarts do not. `/memory retry` explicitly resets and
 retries the current project only when the memory extension is loaded. `/memory
 run` does not clear a project breaker. Shutdown and intentional cancellation do
-not consume a failure. The worker retains its existing one-hour wall-clock
-timeout and has no additional turn cap.
+not consume a failure. Both commands return immediately while the requested run
+continues in the background. The worker retains its existing one-hour
+wall-clock timeout and has no additional turn cap.
 
 Completed run records are retained up to the newest 50 terminal runs. Active
 runs and the latest disable-causing evidence are protected. Terminal records
@@ -175,8 +189,8 @@ including known compaction usage; it does not infer missing usage or translate
 subscription quota percentages into tokens.
 
 Availability-safe read mode enforces filesystem safety and resource bounds but
-does not reject the whole snapshot for broken navigation or missing provenance.
-Strict validation remains the default for newly generated memory publication.
+does not reject the whole snapshot for missing provenance. Strict publication
+also treats Markdown links and navigation as best-effort content.
 
 The projection is copied from canonical files when loaded; canonical memory is
 the authority. Resolvable summary and root-index paths are rebased only in the

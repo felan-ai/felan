@@ -155,13 +155,12 @@ describe('@felan-ai/ext-memory', () => {
       memoryPath: '/work/.memory',
       sourceSessionIds: ['session-1'],
       requireSources: true,
-      validateNavigation: true,
     });
 
     expect(result).toMatchObject({ ok: true, errors: [] });
   });
 
-  it('keeps semantic checks opt-in while preserving hard artifact boundaries', () => {
+  it('keeps publication checks focused on artifact boundaries and provenance', () => {
     const result = validateMemoryArtifact([
       { path: '../summary.md', content: 'bad' },
       { path: 'summary.md', content: 'Review memory before acting.' },
@@ -172,15 +171,25 @@ describe('@felan-ai/ext-memory', () => {
       memoryPath: '/work/.memory',
       sourceSessionIds: ['session-1'],
       requireSources: true,
-      validateNavigation: true,
     });
     expect(result.ok).toBe(false);
     expect(result.errors.map(({ code }) => code)).toEqual(expect.arrayContaining([
       'invalid_path',
-      'broken_link',
-      'unreachable_page',
       'unknown_source',
     ]));
+  });
+
+  it('accepts ordinary links and incomplete navigation in retained pages', () => {
+    const result = validateMemoryArtifact([
+      { path: 'summary.md', content: '[External](https://example.com)' },
+      { path: 'index.md', content: '# Memory index' },
+      {
+        path: 'pages/discoveries/runtime.md',
+        content: '# Runtime\n\n[External](https://github.com/example/project/issues/1) [Missing](missing.md)\n\n## Sources\n- session:session-1\n',
+      },
+    ], { sourceSessionIds: ['session-1'] });
+
+    expect(result).toMatchObject({ ok: true, errors: [] });
   });
 
   it('normalizes incomplete memory for availability-safe reads', () => {
@@ -257,17 +266,26 @@ describe('@felan-ai/ext-memory', () => {
     });
     expect(dreamerInstructions).toContain('explicit user-authored requests');
     expect(dreamerInstructions).toContain('not independent evidence');
+    expect(dreamerInstructions).toContain('Memory complements authoritative project files');
+    expect(dreamerInstructions).toContain('Direct user-authored durable facts');
+    expect(dreamerInstructions).toContain('Verified, non-obvious agent discoveries');
+    expect(dreamerInstructions).toContain('not cheaply recoverable');
+    expect(dreamerInstructions).toContain('Repository-derived information is eligible only');
+    expect(dreamerInstructions).toContain('Repetition does not increase importance');
+    expect(dreamerInstructions).toContain('audit the complete existing wiki');
     expect(dreamerInstructions).toContain('Preserve relevant existing source entries');
     expect(dreamerInstructions).toContain('Add new source entries only for target session IDs');
     expect(dreamerInstructions).toContain('Update every affected topic, entity, or concept page');
     expect(dreamerInstructions).toContain('meaningful cross-links between related pages');
     expect(dreamerInstructions).toContain('preserving unresolved contradictions');
-    expect(dreamerInstructions).toContain('bounded semantic lint');
+    expect(dreamerInstructions).not.toContain('bounded semantic lint');
     expect(dreamerInstructions).toContain('stale or duplicate claims');
-    expect(dreamerInstructions).toContain('important concepts without pages');
+    expect(dreamerInstructions).not.toContain('important concepts without pages');
     expect(dreamerInstructions).toContain('never invent facts, links, or sources');
     expect(dreamerInstructions).toContain('inspect the existing memory');
     expect(dreamerInstructions).toContain('clean up problems when needed');
+    expect(dreamerInstructions).not.toContain('repair malformed or broken navigation');
+    expect(dreamerInstructions).not.toContain('Verify index and page navigation before finishing');
     expect(dreamerInstructions).toContain('preserving supported knowledge and source provenance');
     expect(dreamerInstructions).not.toContain('link-free');
     expect(dreamerInstructions).not.toContain('entries drawn only from the manifest');

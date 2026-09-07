@@ -164,9 +164,12 @@ remain the better fit for Anthropic-specific integrations.
 
 ### Does Felan have automatic memory?
 
-Yes, locally. It is an account-free Markdown wiki with host-owned idle batching
-and validation. It is not Claude Code's memory/rules implementation and does not
-silently synchronize with a team memory service.
+Yes, locally. It is an account-free Markdown wiki with host-owned evidence/time
+gates and validation. The TUI automatically processes after five accepted
+checkpoint updates and one hour since the latest successful publication; Felan
+Platform uses its separate cron-driven mechanism. It is not Claude Code's
+memory/rules implementation and does not silently synchronize with a team
+memory service.
 
 ## Sources and methodology
 

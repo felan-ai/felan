@@ -45,6 +45,19 @@ The Memory row includes the injected `summary.md`, `index.md`, and schema, plus
 identifiable reads from the session memory projection. Other conversation
 messages are counted under Messages.
 
+Memory is intentionally selective. It prioritizes durable user-authored
+preferences, decisions, corrections, important facts, and rationale not recorded
+elsewhere, followed by non-obvious agent discoveries, incidents, and runtime or
+external-system observations. It does not copy repository structure, APIs,
+commands, configuration, documentation, tests, routine task status, raw tool
+output, or repeated summaries that a future agent can cheaply recover. Each
+dreaming run also removes old duplicate or repository-mirror content when it is
+no longer useful.
+
+Existing memory is cleaned the next time that project has an ordinary pending
+memory run after a fresh process loads the updated prompt. Projects with no
+pending evidence do not start a model call solely because the prompt changed.
+
 ## Agent Skills
 
 The local host explicitly loads Agent Skills from:
@@ -109,8 +122,12 @@ available.
 ### Processing memory
 
 The local host owns scheduling and model work. A missing authenticated model
-leaves evidence pending rather than blocking startup. Processing is idle
-batched while Felan runs and catches up after a later launch.
+leaves evidence pending rather than blocking startup. Automatic processing waits
+for five accepted checkpoint updates and one hour since the latest successful
+publication. Updates from the same root session count; identical cursors do not.
+The deadline is persisted through canonical state, so a later Felan launch can
+catch up if the earlier process closes. `/memory run` and `/memory retry` remain
+explicit immediate requests.
 
 Use:
 
@@ -128,7 +145,8 @@ failure automatically disables processing for that project across prompts,
 sessions, and restarts. A successful publication resets the counter. The
 `/memory retry` command clears and retries only the current project's breaker
 when the memory extension is loaded; `/memory run` does not
-clear it.
+clear it. Both commands return immediately after requesting background work;
+use the footer or `/memory status` to follow progress.
 
 The footer shows processing, backoff, and pending counts. An automatically
 disabled project shows `Memory: disabled` and warns once when an interactive

@@ -73,9 +73,7 @@ describe.skipIf(!configPath)('memory process worker', () => {
         return;
       }
       for (let attempt = 0; attempt < 400; attempt += 1) {
-        const status = config.automatic
-          ? await coordinator.status(config.cwd)
-          : await coordinator.runNow(config.cwd);
+        const status = await coordinator.runNow(config.cwd);
         if (config.outcome === 'success' && status.pendingCheckpoints === 0 && status.state === 'idle') {
           expect(status).toMatchObject({ state: 'idle', consecutiveFailures: 0 });
           return;

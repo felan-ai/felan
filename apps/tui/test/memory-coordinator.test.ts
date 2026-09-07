@@ -73,7 +73,7 @@ describe('LocalMemoryCoordinator', () => {
     await coordinator.dispose();
   });
 
-  it('schedules newly recorded checkpoints and ignores duplicate cursors', async () => {
+  it('runs explicit processing and ignores duplicate cursors', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
@@ -83,7 +83,6 @@ describe('LocalMemoryCoordinator', () => {
       agentDir: join(root, 'agent'),
       modelRuntime: {} as ModelRuntime,
       recover: false,
-      debounceMs: 0,
       dreamRunner: async () => {
         runs += 1;
         return updatedArtifact();
@@ -94,15 +93,72 @@ describe('LocalMemoryCoordinator', () => {
     await host.recordCheckpoint(checkpoint);
     await host.recordCheckpoint(checkpoint);
 
-    for (let attempt = 0; attempt < 100 && runs === 0; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await coordinator.runNow(cwd);
     expect(runs).toBe(1);
 
     await host.recordCheckpoint(checkpoint);
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(runs).toBe(1);
     await coordinator.dispose();
+  });
+
+  it('waits for five accepted checkpoints and one hour after publication', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    const firstSessionFile = await writeSession(cwd, 'first-session');
+    let now = Date.now();
+    let runs = 0;
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir: join(root, 'agent'),
+      modelRuntime: {} as ModelRuntime,
+      recover: false,
+      debounceMs: 60 * 60 * 1_000,
+      now: () => now,
+      monitorIntervalMs: 60 * 60 * 1_000,
+      dreamRunner: async () => {
+        runs += 1;
+        return updatedArtifact();
+      },
+    });
+    const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
+    const intervalMs = 60 * 60 * 1_000;
+
+    let entries = sessionEntries();
+    const recordUpdates = async (count: number): Promise<void> => {
+      for (let index = 0; index < count; index += 1) {
+        const id = `update-${runs}-${index}`;
+        entries = [...entries, {
+          type: 'message', id, parentId: entries.at(-1)!.id,
+          timestamp: `2026-01-01T00:01:${String(runs * 10 + index).padStart(2, '0')}.000Z`,
+          message: { role: 'user', content: `accepted update ${runs}-${index}` },
+        }];
+        await writeFile(firstSessionFile, [
+          JSON.stringify({ type: 'session', version: 3, id: 'first-session', cwd }),
+          ...entries.map((entry) => JSON.stringify(entry)), '',
+        ].join('\n'));
+        await host.recordCheckpoint({
+          sessionId: 'first-session', sessionFile: firstSessionFile, leafId: id,
+          transcriptDigest: digestActiveBranch(removeMemoryContextEntries(entries)),
+        });
+      }
+    };
+
+    try {
+      await recordUpdates(5);
+      expect(await coordinator.status(cwd)).toMatchObject({ pendingCheckpoints: 1 });
+      await coordinator.runNow(cwd);
+      expect(runs).toBeGreaterThanOrEqual(1);
+      now += intervalMs - 1;
+      await recordUpdates(5);
+      expect(await coordinator.status(cwd)).toMatchObject({ pendingCheckpoints: 1 });
+      now += 1;
+      await coordinator.runNow(cwd);
+      expect(runs).toBeGreaterThanOrEqual(2);
+      expect(await coordinator.status(cwd)).toMatchObject({ pendingCheckpoints: 1 });
+    } finally {
+      await coordinator.dispose();
+    }
   });
 
   it('batches a root checkpoint, redacts/bounds evidence, publishes, and refreshes the projection', async () => {
@@ -188,7 +244,7 @@ describe('LocalMemoryCoordinator', () => {
     await host.recordCheckpoint(checkpointFor(sessionFile));
 
     await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'scheduled', pendingCheckpoints: 1, consecutiveFailures: 1 });
-    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'scheduled', pendingCheckpoints: 1, consecutiveFailures: 1 });
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0, consecutiveFailures: 0 });
     await expect(coordinator.retryProject(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0, consecutiveFailures: 0 });
     await coordinator.dispose();
   });
@@ -306,14 +362,16 @@ describe('LocalMemoryCoordinator', () => {
 
     try {
       await host.recordCheckpoint(checkpointFor(firstSessionFile, 'first-session'));
+      const firstRun = coordinator.runNow(cwd);
       await firstStarted;
       await host.recordCheckpoint(checkpointFor(secondSessionFile, 'second-session'));
-      const status = coordinator.runNow(cwd);
       releaseFirst();
+
+      await expect(firstRun).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
+      const secondRun = coordinator.runNow(cwd);
       await secondStarted;
       releaseSecond();
-
-      await expect(status).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+      await secondRun;
       expect(runs).toBe(2);
       expect(observedSessionIds).toEqual(['first-session', 'second-session']);
     } finally {
@@ -357,7 +415,7 @@ describe('LocalMemoryCoordinator', () => {
       await host.recordCheckpoint(checkpointFor(secondSessionFile, 'second-session'));
       releaseFirst();
 
-      await expect(firstRun).resolves.toMatchObject({ state: 'scheduled', pendingCheckpoints: 1 });
+      await expect(firstRun).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
       await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
       expect(runs).toBe(2);
     } finally {
@@ -388,21 +446,20 @@ describe('LocalMemoryCoordinator', () => {
       transcriptDigest: '0'.repeat(64),
     });
 
-    await vi.waitFor(async () => {
-      expect(await coordinator.status(cwd)).toMatchObject({
-        state: 'blocked',
-        pendingCheckpoints: 1,
-        message: 'Some memory checkpoints could not be materialized; evidence remains pending',
-      });
-    }, { timeout: 4_000 });
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({
+      state: 'blocked',
+      pendingCheckpoints: 1,
+      message: 'Some memory checkpoints could not be materialized; evidence remains pending',
+    });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(runs).toBe(0);
 
     await host.recordCheckpoint(checkpointFor(sessionFile));
     await vi.waitFor(async () => {
-      expect(runs).toBe(1);
-      expect(await coordinator.status(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+      expect(await coordinator.status(cwd)).toMatchObject({ pendingCheckpoints: 1 });
     }, { timeout: 4_000 });
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    expect(runs).toBe(1);
     await coordinator.dispose();
   });
 
@@ -416,7 +473,7 @@ describe('LocalMemoryCoordinator', () => {
       modelRuntime: {} as ModelRuntime,
       recover: false,
       debounceMs: 100,
-      batchSize: 8,
+      batchSize: 9,
       dreamRunner: async (input) => {
         runs += 1;
         return updatedArtifact(input.manifest.sessions[0]!.checkpoint.sessionId);
@@ -433,10 +490,8 @@ describe('LocalMemoryCoordinator', () => {
 
     const valid = await writeSession(cwd, 'valid-session');
     await host.recordCheckpoint(checkpointFor(valid, 'valid-session'));
-    await vi.waitFor(async () => {
-      expect(runs).toBe(1);
-      expect(await coordinator.status(cwd)).toMatchObject({ state: 'blocked', pendingCheckpoints: 8 });
-    }, { timeout: 4_000 });
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'blocked', pendingCheckpoints: 8 });
+    expect(runs).toBe(1);
     await coordinator.dispose();
   });
 
@@ -518,9 +573,10 @@ describe('LocalMemoryCoordinator', () => {
     });
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
     await vi.waitFor(async () => {
-      expect(runs).toBe(1);
-      expect(await coordinator.status(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+      expect(await coordinator.status(cwd)).toMatchObject({ pendingCheckpoints: 1 });
     }, { timeout: 4_000 });
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    expect(runs).toBe(1);
     await coordinator.dispose();
   });
 
@@ -545,7 +601,7 @@ describe('LocalMemoryCoordinator', () => {
 
     coordinator.setEnabled(true);
     await vi.waitFor(async () => {
-      expect(await coordinator.status(cwd)).toMatchObject({ state: 'scheduled', pendingCheckpoints: 1 });
+      expect(await coordinator.status(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
     }, { timeout: 4_000 });
     await coordinator.dispose();
   });
@@ -714,7 +770,7 @@ function updatedArtifact(sourceSessionId = 'session-1'): MemoryArtifact {
       { path: 'summary.md', content: 'The project prefers focused changes.' },
       { path: 'index.md', content: '# Memory index\n\n## How to use this memory\n\n## Memory map\n- [Workflow](.memory/pages/workflows/index.md)\n' },
       { path: 'pages/workflows/index.md', content: '# workflows\n- [Focused changes](focused.md) — Keep changes focused.\n' },
-      { path: 'pages/workflows/focused.md', content: `# Focused changes\n\n## Sources\n- session:${sourceSessionId}\n` },
+      { path: 'pages/workflows/focused.md', content: `# Focused changes\n\n[Herdr discussion](https://github.com/herdrdev/herdr/discussions/3704) [Demo PR](https://github.com/mslavov/herdr/pull/1) [Missing](missing.md)\n\n## Sources\n- session:${sourceSessionId}\n` },
     ],
   };
 }

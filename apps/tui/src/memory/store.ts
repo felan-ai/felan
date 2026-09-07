@@ -26,6 +26,7 @@ export const MEMORY_RETRY_DELAYS_MS = [60_000, 300_000] as const;
 export interface StoredCheckpoint {
   readonly checkpoint: SessionCheckpoint;
   readonly recordedAt: string;
+  readonly acceptedUpdates?: number;
 }
 
 export interface ProcessedCheckpoint extends StoredCheckpoint {
@@ -67,6 +68,7 @@ export interface BeginLocalMemoryAttempt {
   readonly baseFingerprint: string;
   readonly checkpoints: readonly StoredCheckpoint[];
   readonly deadlineAt?: string;
+  readonly bypassRetryAt?: boolean;
 }
 
 export type LocalMemoryAttemptOutcome =
@@ -187,20 +189,27 @@ export class LocalMemoryStore {
       if (sameCursor(previousPending?.checkpoint, checkpoint) || sameCursor(previousProcessed?.checkpoint, checkpoint)) {
         return false;
       }
+      const recordedAt = new Date().toISOString();
       const pending = {
         ...state.pending,
         [checkpoint.sessionId]: {
           checkpoint,
-          recordedAt: new Date().toISOString(),
+          recordedAt,
+          acceptedUpdates: previousPending === undefined ? 1 : acceptedCheckpointUpdates(previousPending) + 1,
         },
       };
-      await writeState(this.statePath, { ...state, pending, updatedAt: new Date().toISOString() });
+      await writeState(this.statePath, { ...state, pending, updatedAt: recordedAt });
       return true;
     });
   }
 
   async status(): Promise<LocalMemoryState> {
     return this.readState();
+  }
+
+  async pendingAcceptedUpdates(include: (checkpoint: SessionCheckpoint) => boolean = () => true): Promise<number> {
+    const state = await this.readState();
+    return acceptedCheckpointUpdatesFor(Object.values(state.pending).filter(({ checkpoint }) => include(checkpoint)));
   }
 
   async readControl(): Promise<LocalMemoryControl> {
@@ -216,7 +225,8 @@ export class LocalMemoryStore {
       await verifyLease(lease);
       const control = await this.readControl();
       if (control.autoDisabled || control.activeAttempt
-        || (control.nextRetryAt && Date.parse(control.nextRetryAt) > now) || input.checkpoints.length === 0) return undefined;
+        || (!input.bypassRetryAt && control.nextRetryAt && Date.parse(control.nextRetryAt) > now)
+        || input.checkpoints.length === 0) return undefined;
       const attempt: LocalMemoryAttempt = {
         runId: input.runId,
         generation: control.generation,
@@ -501,7 +511,12 @@ function acknowledgedState(
   const processed = { ...state.processed };
   for (const entry of checkpoints) {
     const sessionId = entry.checkpoint.sessionId;
-    if (sameStoredCheckpoint(pending[sessionId], entry)) delete pending[sessionId];
+    const current = pending[sessionId];
+    if (current !== undefined) {
+      const remaining = acceptedCheckpointUpdates(current) - acceptedCheckpointUpdates(entry);
+      if (remaining > 0) pending[sessionId] = { ...current!, acceptedUpdates: remaining };
+      else delete pending[sessionId];
+    }
     processed[sessionId] = { ...entry, processedAt, memoryFingerprint: fingerprint };
   }
   return { ...state, memoryFingerprint: fingerprint, pending, processed, updatedAt: processedAt };
@@ -662,6 +677,16 @@ function sameCursor(left: SessionCheckpoint | undefined, right: SessionCheckpoin
   return left?.leafId === right.leafId && left?.transcriptDigest === right.transcriptDigest;
 }
 
+function acceptedCheckpointUpdates(entry: StoredCheckpoint | undefined): number {
+  return entry?.acceptedUpdates ?? 1;
+}
+
+function acceptedCheckpointUpdatesFor(entries: Iterable<StoredCheckpoint>): number {
+  let total = 0;
+  for (const entry of entries) total += acceptedCheckpointUpdates(entry);
+  return total;
+}
+
 function sameStoredCheckpoint(left: StoredCheckpoint | undefined, right: StoredCheckpoint): boolean {
   return left?.recordedAt === right.recordedAt && left.checkpoint.sessionId === right.checkpoint.sessionId
     && left.checkpoint.sessionFile === right.checkpoint.sessionFile && sameCursor(left.checkpoint, right.checkpoint);
@@ -781,6 +806,8 @@ function sameAttempt(active: LocalMemoryAttemptIdentity | undefined, identity: L
 
 function isStoredCheckpoint(value: unknown): value is StoredCheckpoint {
   if (!isRecord(value) || !isTimestamp(value.recordedAt) || !isRecord(value.checkpoint)) return false;
+  if (value.acceptedUpdates !== undefined
+    && (!Number.isSafeInteger(value.acceptedUpdates) || Number(value.acceptedUpdates) < 1)) return false;
   const checkpoint = value.checkpoint;
   return isNonemptyString(checkpoint.sessionId) && isNonemptyString(checkpoint.sessionFile)
     && (checkpoint.leafId === null || isNonemptyString(checkpoint.leafId))

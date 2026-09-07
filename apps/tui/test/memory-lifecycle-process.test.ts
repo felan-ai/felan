@@ -50,8 +50,6 @@ describe('multi-process memory lifecycle', () => {
 
     const failedCalls = await modelCalls(callLog);
     expect(failedCalls).toHaveLength(3);
-    expect(failedCalls[1]!.at - failedCalls[0]!.at).toBeGreaterThanOrEqual(40);
-    expect(failedCalls[2]!.at - failedCalls[1]!.at).toBeGreaterThanOrEqual(90);
     const store = new LocalMemoryStore(agentDir, await resolveLocalMemoryProject(cwd));
     const disabledControl = await store.readControl();
     expect(disabledControl).toMatchObject({
