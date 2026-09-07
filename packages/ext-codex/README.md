@@ -77,11 +77,9 @@ function-tool `strict` value to `false` so optional arguments remain optional.
 Explicit `true` or `false` values, absent values, and non-function tools are
 left unchanged.
 
-Pi 0.85.0 does not include GPT-6 Astra in its built-in catalog. Add an
-`openai-codex` Astra model through Pi's `models.json`; the existing GPT policy
-then enables this extension's structured tools and native Responses controls.
-See the [configuration guide](../../docs/user-guide/configuration.md#codex-tools)
-for the model metadata example and its provider-dependent limitations.
+Pi 0.85.1 includes GPT-6 Astra in its built-in OpenAI and OpenAI Codex catalogs.
+The existing GPT policy enables this extension's structured tools and native
+Responses controls without a custom `models.json` entry.
 
 The extension excludes restart-durable jobs, web access, image generation,
 Code Mode/Responses Lite, prompt replacement, native Responses compaction,
