@@ -50,6 +50,7 @@ describe('local MCP OAuth host', () => {
       );
       expect(response.status).toBe(200);
     });
+    const attention: Array<{ active: boolean; label?: string }> = [];
     const host = createLocalMcpOAuthHost('/agent', {
       docs: { redirectUri, authorizationParams: { access_type: 'offline' } },
     }, {
@@ -57,6 +58,7 @@ describe('local MCP OAuth host', () => {
       runOAuth,
       openUrl,
       callbackTimeoutMs: 1_000,
+      onAttention: (active, label) => attention.push({ active, ...(label === undefined ? {} : { label }) }),
     });
     const controller = new AbortController();
     const context = extensionContext('tui');
@@ -74,6 +76,10 @@ describe('local MCP OAuth host', () => {
     })).resolves.toEqual({ status: 'authenticated' });
     expect(runOAuth).toHaveBeenCalledTimes(2);
     expect(openUrl).toHaveBeenCalledOnce();
+    expect(attention).toEqual([
+      { active: true, label: 'Authorize MCP server docs' },
+      { active: false },
+    ]);
     const provider = await session.providerFor(server, controller.signal);
     await expect(provider.tokens()).resolves.toMatchObject({
       access_token: 'access-secret',
@@ -107,6 +113,41 @@ describe('local MCP OAuth host', () => {
     })).resolves.toMatchObject({ status: 'unavailable', message: expect.stringContaining('root TUI') });
     expect(runOAuth).not.toHaveBeenCalled();
     expect(openUrl).not.toHaveBeenCalled();
+    await session.close();
+  });
+
+  it('clears OAuth attention when the browser flow is cancelled', async () => {
+    const attention: Array<{ active: boolean; label?: string }> = [];
+    const controller = new AbortController();
+    const session = await createLocalMcpOAuthHost('/agent', {}, {
+      secretStore: memorySecretStore(),
+      openUrl: async () => {},
+      onAttention: (active, label) => attention.push({ active, ...(label === undefined ? {} : { label }) }),
+      reserveCallback: async (redirectUri, _state, signal) => ({
+        redirectUri,
+        wait: () => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })),
+        release: () => {},
+      }),
+      runOAuth: async (provider) => {
+        await provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+        return 'REDIRECT';
+      },
+    }).createSession({
+      sessionId: 'cancel-attention',
+      signal: controller.signal,
+      extensionContext: extensionContext('tui'),
+    });
+
+    const authentication = session.authenticate(oauthServer(), {
+      reason: 'explicit',
+      signal: controller.signal,
+      extensionContext: extensionContext('tui'),
+    });
+    await vi.waitFor(() => expect(attention).toHaveLength(1));
+    controller.abort(new Error('cancelled'));
+    await expect(authentication).resolves.toMatchObject({ status: 'cancelled' });
+    expect(attention).toHaveLength(2);
+    expect(attention[1]).toEqual({ active: false });
     await session.close();
   });
 

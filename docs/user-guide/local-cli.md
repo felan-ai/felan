@@ -123,6 +123,11 @@ When Felan runs inside Herdr, the local TUI automatically reports its Felan
 session and lifecycle state to Herdr. The integration is active only when Herdr
 provides `HERDR_ENV=1`, `HERDR_PANE_ID`, and `HERDR_SOCKET_PATH`; it reports
 `working`, `idle`, and supported blocking prompts over Herdr's local socket.
+Pi UI prompts used by `ask_user` and Prewalk approval/plan review are reported
+as `blocked`; local MCP browser authorization is also reported while it waits
+for the callback. Delegated subagent work keeps the root session `working`
+through intermediate completion delivery, so the overall workflow produces
+one completion notification rather than one per child.
 Headless text and JSON sessions do not report terminal-agent state.
 
 This is a local terminal integration and is separate from ACP support. Felan

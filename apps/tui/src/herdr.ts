@@ -3,9 +3,12 @@ import type {
   ExtensionContext,
   InlineExtension,
   SessionStartEvent,
+  UIPromptEndEvent,
+  UIPromptStartEvent,
 } from '@earendil-works/pi-coding-agent';
 
 export const HERDR_EXTENSION_NAME = '@felan-ai/felan/herdr';
+export const HERDR_BLOCKED_EVENT = 'herdr:blocked';
 
 const HERDR_SOURCE = 'herdr:felan';
 const HERDR_AGENT = 'felan';
@@ -39,6 +42,12 @@ export interface CreateHerdrExtensionOptions {
   readonly environment?: HerdrEnvironment;
   readonly platform?: NodeJS.Platform;
   readonly sendRequest?: (request: HerdrRequest) => Promise<void>;
+  readonly activity?: HerdrActivity;
+}
+
+export interface HerdrActivity {
+  readonly hasPendingWork: () => boolean;
+  readonly subscribe: (listener: () => void) => () => void;
 }
 
 export function createHerdrExtension(
@@ -67,9 +76,14 @@ export function createHerdrExtension(
       let lastState: HerdrAgentState | undefined;
       let lastMessage: string | undefined;
       let rootSession = false;
+      let promptCount = 0;
+      let pendingWork = false;
+      let unsubscribeActivity: (() => void) | undefined;
 
       const publishState = (force = false) => {
-        const state = blockedCount > 0 ? 'blocked' : agentActive ? 'working' : 'idle';
+        const state = blockedCount > 0 || promptCount > 0
+          ? 'blocked'
+          : agentActive || pendingWork ? 'working' : 'idle';
         const message = state === 'blocked' ? blockedMessage : undefined;
         if (!force && state === lastState && message === lastMessage) return;
         lastState = state;
@@ -77,7 +91,7 @@ export function createHerdrExtension(
         reporter.queueState(state, message);
       };
 
-      pi.events.on('herdr:blocked', (data) => {
+      pi.events.on(HERDR_BLOCKED_EVENT, (data) => {
         if (!rootSession || !isRecord(data) || typeof data.active !== 'boolean') return;
         if (data.active) {
           blockedCount += 1;
@@ -89,13 +103,34 @@ export function createHerdrExtension(
         publishState();
       });
 
+      pi.on('ui_prompt_start', (event: UIPromptStartEvent) => {
+        if (!rootSession || !agentActive) return;
+        promptCount += 1;
+        blockedMessage = event.title;
+        publishState();
+      });
+
+      pi.on('ui_prompt_end', (_event: UIPromptEndEvent) => {
+        if (!rootSession || promptCount === 0) return;
+        promptCount -= 1;
+        if (promptCount === 0) blockedMessage = undefined;
+        publishState();
+      });
+
       pi.on('session_start', async (event, context) => {
         if (context.mode !== 'tui') return;
         rootSession = true;
+        pendingWork = options.activity?.hasPendingWork() ?? false;
         reporter.updateSessionReference(context);
         await reporter.reportSession(event.reason);
         agentActive = !context.isIdle();
         publishState(true);
+        unsubscribeActivity?.();
+        unsubscribeActivity = options.activity?.subscribe(() => {
+          if (!rootSession) return;
+          pendingWork = options.activity?.hasPendingWork() ?? false;
+          publishState();
+        });
       });
 
       pi.on('agent_start', async (_event, context) => {
@@ -110,6 +145,12 @@ export function createHerdrExtension(
         if (!rootSession || !context.isIdle()) return;
         agentActive = false;
         publishState();
+      });
+
+      pi.on('session_shutdown', () => {
+        unsubscribeActivity?.();
+        unsubscribeActivity = undefined;
+        rootSession = false;
       });
     },
   };

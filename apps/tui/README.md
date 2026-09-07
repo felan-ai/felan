@@ -107,7 +107,10 @@ prompts, themes, project settings, and package resources are filtered.
 
 When launched inside Herdr, the TUI reports its Felan lifecycle and session
 identity through Herdr's inherited local socket environment. This is TUI-only
-and does not enable ambient extensions or ACP.
+and does not enable ambient extensions or ACP. User-attention waits from Pi
+extensions, including `ask_user`, Prewalk approval/review, and local MCP OAuth,
+are reported as blocked; delegated subagent completions remain part of the
+root workflow.
 
 All built-ins are enabled by default, including the Powerline footer in TUI
 sessions. Binary-backed features can remain inactive until their dependency is

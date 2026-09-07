@@ -13,7 +13,7 @@ import {
 type Handler = (event: unknown, context: TestContext) => unknown;
 
 interface TestContext {
-  readonly mode: 'tui' | 'rpc';
+  readonly mode: 'tui' | 'rpc' | 'print';
   readonly isIdle: () => boolean;
   readonly sessionManager: {
     getSessionFile: () => string | undefined;
@@ -107,6 +107,69 @@ describe('Herdr integration', () => {
 
     harness.eventHandlers.get('herdr:blocked')?.({ active: false }, context);
     await waitFor(() => requests.at(-1)?.params.state === 'working');
+  });
+
+  it('reports active Pi UI prompts as blocked and ignores idle command prompts', async () => {
+    const requests: RequestRecord[] = [];
+    const extension = createHerdrExtension({
+      environment: herdrEnvironment(),
+      sendRequest: async (request) => { requests.push(request); },
+    });
+    const harness = createHarness(extension);
+    let idle = false;
+    const context = testContext({ idle, isIdle: () => idle });
+    await harness.handlers.get('session_start')?.({ reason: 'startup' }, context);
+
+    harness.handlers.get('ui_prompt_start')?.(
+      { type: 'ui_prompt_start', reason: 'ui_prompt', kind: 'confirm', title: 'Enter Prewalk?' },
+      context,
+    );
+    await waitFor(() => requests.at(-1)?.params.state === 'blocked');
+    expect(requests.at(-1)?.params.message).toBe('Enter Prewalk?');
+
+    harness.handlers.get('ui_prompt_end')?.(
+      { type: 'ui_prompt_end', reason: 'ui_prompt', kind: 'confirm', title: 'Enter Prewalk?' },
+      context,
+    );
+    await waitFor(() => requests.at(-1)?.params.state === 'working');
+
+    idle = true;
+    await harness.handlers.get('agent_settled')?.({}, { ...context, isIdle: () => idle });
+    await waitFor(() => requests.at(-1)?.params.state === 'idle');
+    harness.handlers.get('ui_prompt_start')?.(
+      { type: 'ui_prompt_start', reason: 'ui_prompt', kind: 'custom' },
+      { ...context, isIdle: () => idle },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests.at(-1)?.params.state).toBe('idle');
+  });
+
+  it('keeps the root working while delegated subagent work remains pending', async () => {
+    const requests: RequestRecord[] = [];
+    let pending = true;
+    const listeners = new Set<() => void>();
+    const extension = createHerdrExtension({
+      environment: herdrEnvironment(),
+      activity: {
+        hasPendingWork: () => pending,
+        subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+      },
+      sendRequest: async (request) => { requests.push(request); },
+    });
+    const harness = createHarness(extension);
+    let idle = false;
+    const context = testContext({ idle, isIdle: () => idle });
+    await harness.handlers.get('session_start')?.({ reason: 'startup' }, context);
+    await waitFor(() => requests.at(-1)?.params.state === 'working');
+
+    idle = true;
+    await harness.handlers.get('agent_settled')?.({}, { ...context, isIdle: () => idle });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests.at(-1)?.params.state).toBe('working');
+
+    pending = false;
+    for (const listener of listeners) listener();
+    await waitFor(() => requests.at(-1)?.params.state === 'idle');
   });
 
   it('maps Windows socket markers to named pipes', () => {

@@ -215,6 +215,10 @@ export class LocalSubagentHost implements SubagentHost {
     return this.#manager.subscribe(listener);
   }
 
+  hasPendingWork(): boolean {
+    return this.#manager.hasPendingWork(this.#sessionId);
+  }
+
   getUsage(): LocalSubagentUsage {
     return this.#manager.getUsage();
   }
@@ -470,6 +474,7 @@ export class LocalSubagentManager {
       child.completionPending = false;
       this.#ports.get(parentSessionId)?.acknowledgeCompletion?.(deliveryId);
       await this.#persist();
+      this.#emit();
     });
     return success(result);
   }
@@ -613,6 +618,15 @@ export class LocalSubagentManager {
     this.#listeners.add(listener);
     listener(this.#latestChildren().map(localView));
     return () => this.#listeners.delete(listener);
+  }
+
+  hasPendingWork(sessionId: string): boolean {
+    const context = this.#sessionContext(sessionId);
+    if (!context) return false;
+    return this.#latestChildren().some((child) => (
+      child.record.rootSessionId === context.rootSessionId
+      && (!isTerminal(child.record.status) || child.completionPending)
+    ));
   }
 
   getUsage(): LocalSubagentUsage {
@@ -1164,6 +1178,7 @@ export class LocalSubagentManager {
             if (child.deliveryId !== deliveryId) return;
             child.completionPending = false;
             await this.#persist();
+            this.#emit();
           });
         } else {
           this.#scheduleDeliveryRetry(child, deliveryId);

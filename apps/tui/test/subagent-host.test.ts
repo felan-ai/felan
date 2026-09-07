@@ -936,6 +936,40 @@ describe('LocalSubagentHost', () => {
     expect(new Set(delivered.map((notice) => notice.deliveryId)).size).toBe(1);
   });
 
+  it('tracks delegated work through completion delivery', async () => {
+    const release = deferred();
+    const { host } = await harness({
+      runner: async (input) => {
+        await input.onReady({ steer: async () => {}, cancel: async () => {} });
+        await release.promise;
+        return { result: 'done' };
+      },
+    });
+
+    expect(host.hasPendingWork()).toBe(false);
+    const spawned = await host.spawn(request());
+    expect(spawned).toMatchObject({ ok: true });
+    if (!spawned.ok) return;
+    await vi.waitFor(async () => {
+      await expect(host.getResult(spawned.value.agentId)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'running' },
+      });
+      expect(host.hasPendingWork()).toBe(true);
+    });
+
+    release.resolve();
+    await expect(waitForResult(host, spawned.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed' },
+    });
+    expect(host.hasPendingWork()).toBe(true);
+
+    host.attachParent(parentPort([]));
+    await vi.waitFor(() => expect(host.hasPendingWork()).toBe(false));
+    await host.shutdown();
+  });
+
   it('retries transient unavailable completion delivery with the same delivery ID', async () => {
     const delivered: SubagentCompletionNotice[] = [];
     let attempts = 0;

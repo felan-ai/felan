@@ -320,7 +320,12 @@ export function createLocalSessionRuntimeFactory(
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
       inlineExtensions: [
-        createHerdrExtension(),
+        createHerdrExtension({
+          activity: {
+            hasPendingWork: () => host.hasPendingWork(),
+            subscribe: (listener) => host.subscribe(() => listener()),
+          },
+        }),
         dependencyExtension,
         createSavingsCommandExtension(savings),
         createThinkingGroupExtension(),

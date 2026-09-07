@@ -53,6 +53,7 @@ export interface LocalMcpOAuthDependencies {
   readonly reserveCallback?: typeof reserveOAuthCallback;
   readonly callbackTimeoutMs?: number;
   readonly fetchFn?: FetchLike;
+  readonly onAttention?: (active: boolean, label?: string) => void;
 }
 
 export function createLocalMcpOAuthHost(
@@ -187,16 +188,22 @@ class LocalMcpOAuthSession implements McpOAuthSession {
 
       const authorizationUrl = provider.authorizationUrl;
       if (!authorizationUrl) throw new Error('OAuth provider did not supply an authorization URL');
-      context.extensionContext.ui.notify?.(`Opening OAuth authorization for ${server.name} in your browser`, 'info');
-      await (this.#dependencies.openUrl ?? openInBrowser)(authorizationUrl);
-      const result = await callback.wait();
-      signal.throwIfAborted();
-      const completed = await runOAuth(provider, provider.authOptions({
-        authorizationCode: result.code,
-        ...(result.iss === undefined ? {} : { iss: result.iss }),
-      }));
-      if (completed !== 'AUTHORIZED') throw new Error('OAuth token exchange did not complete');
-      return { status: 'authenticated' };
+      const attentionLabel = `Authorize MCP server ${boundedAttentionLabel(server.name)}`;
+      this.#dependencies.onAttention?.(true, attentionLabel);
+      try {
+        context.extensionContext.ui.notify?.(`Opening OAuth authorization for ${server.name} in your browser`, 'info');
+        await (this.#dependencies.openUrl ?? openInBrowser)(authorizationUrl);
+        const result = await callback.wait();
+        signal.throwIfAborted();
+        const completed = await runOAuth(provider, provider.authOptions({
+          authorizationCode: result.code,
+          ...(result.iss === undefined ? {} : { iss: result.iss }),
+        }));
+        if (completed !== 'AUTHORIZED') throw new Error('OAuth token exchange did not complete');
+        return { status: 'authenticated' };
+      } finally {
+        this.#dependencies.onAttention?.(false);
+      }
     } catch (error) {
       if (signal.aborted) {
         return { status: 'cancelled', message: `OAuth authentication for ${server.name} was cancelled.` };
@@ -214,6 +221,11 @@ class LocalMcpOAuthSession implements McpOAuthSession {
   #assertOpen(): void {
     if (this.#closed) throw new Error('Local MCP OAuth session is closed');
   }
+}
+
+function boundedAttentionLabel(value: string): string {
+  const normalized = value.replace(/[\u0000-\u001F\u007F-\u009F]/gu, ' ').replace(/\s+/gu, ' ').trim();
+  return normalized.length <= 120 ? normalized : `${normalized.slice(0, 119)}…`;
 }
 
 export class LocalOAuthProvider implements OAuthClientProvider {
