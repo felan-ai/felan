@@ -1,49 +1,38 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
-import type { KeybindingsManager } from '@earendil-works/pi-coding-agent';
+import type { KeybindingsManager, Theme } from '@earendil-works/pi-coding-agent';
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable, type TUI } from '@earendil-works/pi-tui';
 import { LocalSessionPicker } from '../session-picker.js';
 import { AgentTranscript } from '../subagents/agent-transcript.js';
 import {
-  findMemoryHistorySession,
   listLocalSessionHistory,
   readMemoryHistorySnapshot,
   safeMemoryText,
-  validMemoryRunId,
   type LocalSessionHistory,
   type MemoryHistorySession,
   type MemoryHistorySnapshot,
 } from './history.js';
 
-export async function showMemoryHistory(ctx: ExtensionContext, agentDir: string, id?: string): Promise<void> {
+export async function showMemoryHistory(ctx: ExtensionContext, agentDir: string, status: string): Promise<void> {
   if (!ctx.hasUI || ctx.mode !== 'tui') {
-    ctx.ui.notify('/memory runs requires interactive TUI mode.', 'warning');
-    return;
-  }
-  if (id !== undefined && id !== 'latest' && !validMemoryRunId(id)) {
-    ctx.ui.notify('Use /memory runs <id|latest>, not a file path.', 'warning');
+    ctx.ui.notify('/memory requires interactive TUI mode.', 'warning');
     return;
   }
   const history = await listLocalSessionHistory({
     cwd: ctx.cwd, agentDir, sessionDir: ctx.sessionManager.getSessionDir(), memoryOnly: true,
   });
-  const initialSession = id === undefined ? undefined : findMemoryHistorySession(history, id);
-  if (id !== undefined && !initialSession) {
-    ctx.ui.notify('No retained memory run found for this project.', 'warning');
-    return;
-  }
-  if (history.allSessions.length === 0) {
-    ctx.ui.notify('No retained memory runs.', 'info');
-    return;
-  }
-  await ctx.ui.custom<string | undefined>((tui, _theme, keybindings, done) => new MemoryHistoryView(tui, history, done, {
-    memoryOnly: true, keybindings, ...(initialSession ? { initialSession } : {}),
+  await ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => new MemoryHistoryView(tui, history, done, {
+    memoryOnly: true,
+    keybindings,
+    status,
+    theme,
   }));
 }
 
 interface MemoryHistoryViewOptions {
   readonly memoryOnly?: boolean;
-  readonly initialSession?: MemoryHistorySession;
   readonly keybindings?: Pick<KeybindingsManager, 'matches'>;
+  readonly status?: string;
+  readonly theme?: Theme;
 }
 
 export class MemoryHistoryView implements Component, Focusable {
@@ -76,45 +65,58 @@ export class MemoryHistoryView implements Component, Focusable {
     }, () => this.#finish(undefined), () => tui.requestRender(), options.memoryOnly
       ? { title: 'Memory Runs', selectLabel: 'inspect' }
       : { selectLabel: 'resume / inspect Memory' });
-    if (options.initialSession) void this.#inspect(options.initialSession);
   }
 
   get focused(): boolean { return this.#picker.focused; }
   set focused(value: boolean) { this.#picker.focused = value; }
 
   render(width: number): string[] {
-    if (!this.#selected) return this.#picker.render(width);
-    const lines = [truncateToWidth(`Memory run ${this.#selected.id} · read-only`, width)];
-    const body = this.#snapshot ? snapshotDetails(this.#snapshot).flatMap((line) => wrapTextWithAnsi(line, width))
+    const renderWidth = Math.max(1, Math.floor(width));
+    if (!this.#selected) {
+      const picker = this.options.memoryOnly && this.history.allSessions.length === 0
+        ? [
+            truncateToWidth('Memory Runs', renderWidth),
+            truncateToWidth('Esc close', renderWidth),
+            '',
+            truncateToWidth('No retained memory runs.', renderWidth),
+          ]
+        : this.#picker.render(width);
+      const content = this.options.status
+        ? [...wrapTextWithAnsi(this.options.status, renderWidth), '', ...picker]
+        : picker;
+      return this.#frame(content, renderWidth);
+    }
+    const lines = [truncateToWidth(`Memory run ${this.#selected.id} · read-only`, renderWidth)];
+    const body = this.#snapshot ? snapshotDetails(this.#snapshot).flatMap((line) => wrapTextWithAnsi(line, renderWidth))
       : [this.#error ?? 'Loading retained transcript…'];
     if (this.#snapshot) {
       try {
-        body.push('', ...(this.#transcript?.render(width) ?? ['Transcript could not be rendered.']));
+        body.push('', ...(this.#transcript?.render(renderWidth) ?? ['Transcript could not be rendered.']));
       } catch {
         body.push('', 'Transcript contains entries that could not be rendered.');
       }
     }
-    this.#viewportHeight = Math.max(1, (this.tui.terminal.rows || 24) - 5);
+    this.#viewportHeight = Math.max(1, (this.tui.terminal.rows || 24) - 7);
     this.#maximumScroll = Math.max(0, body.length - this.#viewportHeight);
     this.#scroll = Math.min(this.#scroll, this.#maximumScroll);
     lines.push(...body.slice(this.#scroll, this.#scroll + this.#viewportHeight));
     const hints = this.options.keybindings && this.#transcript ? this.#transcript.getToggleHints() : undefined;
-    lines.push(truncateToWidth(`↑↓/PgUp/PgDn scroll  ${hints ? `${hints.tools}  ${hints.thinking}` : 'Ctrl+O tools  Ctrl+T thinking'}  Esc ${this.options.initialSession ? 'close' : 'back'}`, width));
-    return lines;
+    lines.push(truncateToWidth(`↑↓/PgUp/PgDn scroll  ${hints ? `${hints.tools}  ${hints.thinking}` : 'Ctrl+O tools  Ctrl+T thinking'}  Esc back`, renderWidth));
+    return this.#frame(lines, renderWidth);
   }
 
   handleInput(data: string): void {
     if (this.#closed) return;
     if (!this.#selected) { this.#picker.handleInput(data); return; }
-    if (matchesKey(data, Key.escape)) {
-      if (this.options.initialSession) this.#finish(undefined);
-      else {
-        this.#generation += 1;
-        this.#selected = undefined;
-        this.#snapshot = undefined;
-        this.#transcript?.dispose();
-        this.#transcript = undefined;
-      }
+    const wheelDirection = parseWheelDirection(data);
+    if (wheelDirection !== undefined) {
+      this.#scroll = Math.max(0, Math.min(this.#maximumScroll, this.#scroll + wheelDirection));
+    } else if (matchesKey(data, Key.escape)) {
+      this.#generation += 1;
+      this.#selected = undefined;
+      this.#snapshot = undefined;
+      this.#transcript?.dispose();
+      this.#transcript = undefined;
     } else if (matchesKey(data, Key.up)) this.#scroll = Math.max(0, this.#scroll - 1);
     else if (matchesKey(data, Key.down)) this.#scroll = Math.min(this.#maximumScroll, this.#scroll + 1);
     else if (matchesKey(data, Key.pageUp)) this.#scroll = Math.max(0, this.#scroll - this.#viewportHeight);
@@ -123,6 +125,18 @@ export class MemoryHistoryView implements Component, Focusable {
     else if (matchesKey(data, Key.end)) this.#scroll = this.#maximumScroll;
     else this.#transcript?.handleInput(data);
     this.tui.requestRender();
+  }
+
+  #frame(lines: readonly string[], width: number): string[] {
+    if (!this.options.memoryOnly) return [...lines];
+    const theme = this.options.theme;
+    if (!theme || typeof theme.fg !== 'function') return [
+      '─'.repeat(width),
+      ...lines.map((line) => truncateToWidth(line, width, '', true)),
+      '─'.repeat(width),
+    ];
+    const border = theme.fg('border', '─'.repeat(width));
+    return [border, ...lines.map((line) => truncateToWidth(line, width, '', true)), border];
   }
 
   invalidate(): void {
@@ -183,4 +197,20 @@ function snapshotDetails(snapshot: MemoryHistorySnapshot): string[] {
   if (snapshot.messages.length === 0) details.push('No messages were retained. The run may have stopped before the worker started.');
   else if (!snapshot.messages.some((message) => message.role === 'assistant')) details.push('No assistant response was retained.');
   return details;
+}
+
+function parseWheelDirection(data: string): -1 | 1 | undefined {
+  const sgr = /^\x1b\[<(\d+);\d+;\d+[Mm]$/u.exec(data);
+  const button = sgr?.[1];
+  if (button !== undefined) return wheelDirection(Number.parseInt(button, 10));
+  if (data.length === 6 && data.startsWith('\x1b[M')) return wheelDirection(data.charCodeAt(3) - 32);
+  return undefined;
+}
+
+function wheelDirection(button: number): -1 | 1 | undefined {
+  if ((button & 64) === 0) return undefined;
+  const direction = button & 3;
+  if (direction === 0) return -1;
+  if (direction === 1) return 1;
+  return undefined;
 }

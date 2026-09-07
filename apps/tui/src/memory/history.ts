@@ -86,13 +86,6 @@ export async function listLocalSessionHistory(options: MemoryHistoryOptions): Pr
   return { currentSessions: currentSessions.sort(recent), allSessions: allSessions.sort(recent), memorySessions };
 }
 
-export function findMemoryHistorySession(history: LocalSessionHistory, id: string): MemoryHistorySession | undefined {
-  if (id !== 'latest' && !validMemoryRunId(id)) throw new Error('Use a memory run ID or latest, not a file path.');
-  const current = history.currentSessions.filter((session) => history.memorySessions.has(session.path));
-  const selected = id === 'latest' ? current[0] : current.find((session) => session.id === id);
-  return selected ? history.memorySessions.get(selected.path) : undefined;
-}
-
 export async function readMemoryHistorySnapshot(session: MemoryHistorySession): Promise<MemoryHistorySnapshot> {
   const diagnostics: string[] = [];
   let metadata = session.memory.metadata;

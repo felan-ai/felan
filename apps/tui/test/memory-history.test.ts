@@ -12,7 +12,6 @@ import { Key, type TUI } from '@earendil-works/pi-tui';
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  findMemoryHistorySession,
   listLocalSessionHistory,
   readMemoryHistorySnapshot,
   safeMemoryText,
@@ -56,15 +55,13 @@ describe('local memory history', () => {
       memory: { metadata: { status: 'failed', phase: 'model' } },
     });
     expect(retained?.allMessagesText).toContain('Memory: workspace · failed');
-    expect(findMemoryHistorySession(history, 'latest')?.path).toBe(fixture.memoryFile);
-    expect(findMemoryHistorySession(history, fixture.memory.getSessionId())?.path).toBe(fixture.memoryFile);
 
     const snapshot = await readMemoryHistorySnapshot(retained!);
     expect(snapshot.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
     expect(snapshot.metadata).toMatchObject({ status: 'failed', error: fixture.error });
   });
 
-  it('keeps direct selection project-scoped and rejects path-like run IDs', async () => {
+  it('keeps retained runs project-scoped', async () => {
     const current = await memoryFixture();
     const otherRoot = await temporaryDirectory('felan-memory-other-');
     const otherProject = join(otherRoot, 'other');
@@ -78,10 +75,6 @@ describe('local memory history', () => {
 
     expect(history.memorySessions.has(other.getSessionFile()!)).toBe(true);
     expect(history.currentSessions.some((session) => session.path === other.getSessionFile())).toBe(false);
-    expect(findMemoryHistorySession(history, other.getSessionId())).toBeUndefined();
-    expect(() => findMemoryHistorySession(history, '../../settings.json')).toThrow(
-      'Use a memory run ID or latest, not a file path.',
-    );
     expect(validMemoryRunId('../run')).toBe(false);
     expect(validMemoryRunId('run_01-AB')).toBe(true);
   });
@@ -250,15 +243,22 @@ describe('local memory history', () => {
     view.dispose();
   });
 
-  it('opens /memory runs latest directly and handles unsupported or absent history safely', async () => {
+  it('opens the combined /memory overview and handles absent history safely', async () => {
     const fixture = await memoryFixture();
     const rendered: string[] = [];
     const notifications: Array<[string, string]> = [];
     const tui = fakeTui();
     const custom = vi.fn(async (factory: (...args: never[]) => MemoryHistoryView) => {
       const view = factory(tui as never, {} as never, { matches: () => false } as never, vi.fn() as never);
+      const overview = view.render(120);
+      expect(overview[0]).toBe('─'.repeat(120));
+      expect(overview.at(-1)).toBe('─'.repeat(120));
+      expect(overview.join('\n')).toContain('Local memory: enabled · idle · 1 pending');
+      view.handleInput(keyData('enter'));
       await vi.waitFor(() => expect(view.render(120).join('\n')).toContain('Retained response'));
       rendered.push(view.render(120).join('\n'));
+      expect(rendered[0]?.startsWith('─'.repeat(120))).toBe(true);
+      expect(rendered[0]?.endsWith('─'.repeat(120))).toBe(true);
       view.dispose();
     });
     const context = {
@@ -272,26 +272,28 @@ describe('local memory history', () => {
       },
     } as unknown as ExtensionContext;
 
-    await showMemoryHistory(context, fixture.agentDir, 'latest');
+    await showMemoryHistory(context, fixture.agentDir, 'Local memory: enabled · idle · 1 pending');
 
     expect(custom).toHaveBeenCalledOnce();
     expect(rendered[0]).toContain(fixture.memory.getSessionId());
     expect(rendered[0]).toContain('Retained response');
 
-    await showMemoryHistory(context, fixture.agentDir, '../../settings.json');
-    expect(notifications.at(-1)).toEqual(['Use /memory runs <id|latest>, not a file path.', 'warning']);
-    expect(custom).toHaveBeenCalledOnce();
-
     const emptyRoot = await temporaryDirectory('felan-memory-empty-');
     const emptyCwd = join(emptyRoot, 'workspace');
     await mkdir(emptyCwd);
+    const emptyCustom = vi.fn(async (factory: (...args: never[]) => MemoryHistoryView) => {
+      const view = factory(fakeTui() as never, {} as never, { matches: () => false } as never, vi.fn() as never);
+      expect(view.render(120).join('\n')).toContain('No retained memory runs.');
+      view.dispose();
+    });
     const empty = {
       ...context,
       cwd: emptyCwd,
       sessionManager: { getSessionDir: () => join(emptyRoot, 'sessions') },
+      ui: { ...context.ui, custom: emptyCustom },
     } as unknown as ExtensionContext;
-    await showMemoryHistory(empty, join(emptyRoot, 'agent'));
-    expect(notifications.at(-1)).toEqual(['No retained memory runs.', 'info']);
+    await showMemoryHistory(empty, join(emptyRoot, 'agent'), 'Local memory: enabled · idle · 0 pending');
+    expect(emptyCustom).toHaveBeenCalledOnce();
   });
 });
 

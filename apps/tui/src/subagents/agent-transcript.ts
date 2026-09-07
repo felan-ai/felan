@@ -9,6 +9,7 @@ import {
   type AgentSession,
   type AgentSessionEvent,
   type KeybindingsManager,
+  type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import {
   Container,
@@ -19,6 +20,7 @@ import {
 } from '@earendil-works/pi-tui';
 import { getLocalToolDisplayMode } from '../settings.js';
 import { createToolActivitySessionView } from '../tool-activity/runtime-view.js';
+import { createToolActivityDisplayDefinition } from '../tool-activity/presentation.js';
 import { ToolActivityState } from '../tool-activity/state.js';
 import { renderThinkingGroupMarkdown } from '../thinking-groups.js';
 
@@ -46,6 +48,7 @@ export class AgentTranscript implements Component {
   readonly #renderedCompactionMessages = new Set<string>();
   readonly #expandableComponents = new Set<{ setExpanded(expanded: boolean): void }>();
   #attachment: Attachment | undefined;
+  #snapshotToolActivityState: ToolActivityState | undefined;
   #snapshotCwd: string | undefined;
   #activeAssistantKey: string | undefined;
   #hideThinkingBlock = false;
@@ -104,6 +107,20 @@ export class AgentTranscript implements Component {
   showSnapshot(messages: readonly AgentMessage[], cwd: string): void {
     this.detach();
     this.#snapshotCwd = cwd;
+    const toolActivityState = new ToolActivityState('grouped');
+    toolActivityState.showSnapshot(messages, cwd);
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue;
+      for (const content of message.content) {
+        if (content.type !== 'toolCall' || toolActivityState.definition(content.name)) continue;
+        const definition = snapshotToolDefinition(content.name);
+        toolActivityState.rememberDefinition(
+          content.name,
+          createToolActivityDisplayDefinition(toolActivityState, content.name, definition),
+        );
+      }
+    }
+    this.#snapshotToolActivityState = toolActivityState;
     this.#hideThinkingBlock = false;
     this.#showImages = false;
     for (const message of messages) this.#replayMessage(message);
@@ -122,6 +139,8 @@ export class AgentTranscript implements Component {
       unsubscribe?.();
     }
     attachment?.toolActivityState.dispose();
+    this.#snapshotToolActivityState?.dispose();
+    this.#snapshotToolActivityState = undefined;
     this.#clear();
   }
 
@@ -347,7 +366,8 @@ export class AgentTranscript implements Component {
       toolCallId,
       args,
       { showImages: this.#showImages, imageWidthCells: this.#imageWidthCells },
-      this.#attachment?.sessionView.getToolDefinition(toolName),
+      this.#attachment?.sessionView.getToolDefinition(toolName)
+        ?? this.#snapshotToolActivityState?.definition(toolName),
       this.tui,
       cwd,
     );
@@ -404,4 +424,16 @@ export class AgentTranscript implements Component {
       .map((content) => content.text)
       .join('');
   }
+}
+
+function snapshotToolDefinition(name: string): ToolDefinition<any, any, any> {
+  return {
+    name,
+    label: name,
+    description: 'Retained memory transcript tool call.',
+    parameters: { type: 'object' } as never,
+    async execute() {
+      throw new Error('Retained memory transcripts are read-only');
+    },
+  };
 }

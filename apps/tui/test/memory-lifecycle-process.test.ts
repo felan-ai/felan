@@ -89,7 +89,7 @@ describe('multi-process memory lifecycle', () => {
     await handlers.get('session_start')!({}, context);
     expect(setStatus).toHaveBeenLastCalledWith('memory', 'Memory: disabled');
     expect(notify).toHaveBeenCalledOnce();
-    expect(notify.mock.calls[0]?.[0]).toContain('/memory retry');
+    expect(notify.mock.calls[0]?.[0]).toContain('/memory run');
     await coordinator.dispose();
 
     entries.push({

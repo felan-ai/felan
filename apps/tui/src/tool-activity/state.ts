@@ -86,6 +86,7 @@ export class ToolActivityState {
   #placements = new Map<string, ToolActivityPlacement>();
   #activeAssistant: AssistantSegment | undefined;
   #session: AgentSession | undefined;
+  #snapshotCwd: string | undefined;
   #unsubscribe: (() => void) | undefined;
 
   constructor(
@@ -102,7 +103,7 @@ export class ToolActivityState {
   }
 
   get cwd(): string {
-    return this.#session?.sessionManager.getCwd() ?? process.cwd();
+    return this.#session?.sessionManager.getCwd() ?? this.#snapshotCwd ?? process.cwd();
   }
 
   setMode(mode: LocalToolDisplayMode): void {
@@ -119,24 +120,36 @@ export class ToolActivityState {
   attach(session: AgentSession): void {
     this.#unsubscribe?.();
     this.#session = session;
+    this.#snapshotCwd = undefined;
     this.rebuild();
     this.#unsubscribe = session.subscribe((event) => this.#handleEvent(event));
+  }
+
+  showSnapshot(messages: readonly AgentMessage[], cwd: string): void {
+    this.#unsubscribe?.();
+    this.#unsubscribe = undefined;
+    this.#session = undefined;
+    this.#snapshotCwd = cwd;
+    this.#resetTranscript();
+    for (const message of messages) this.#replayMessage(message);
+    for (const call of this.#calls.values()) {
+      if (call.status !== 'pending') continue;
+      call.status = 'error';
+      call.isError = true;
+      call.isPartial = false;
+      call.completedAt = call.startedAt ?? Date.now();
+      call.result = { content: [{ type: 'text', text: 'No retained tool result.' }] };
+    }
+    this.#rebuildGroups();
   }
 
   dispose(): void {
     this.#unsubscribe?.();
     this.#unsubscribe = undefined;
     this.#session = undefined;
-    this.#activeAssistant = undefined;
-    this.#calls.clear();
-    this.#execCommands.clear();
-    this.#sessionCommands.clear();
-    this.#relatedCommands.clear();
+    this.#snapshotCwd = undefined;
+    this.#resetTranscript();
     this.#definitions.clear();
-    this.#segments = [];
-    this.#groups = [];
-    this.#groupsById.clear();
-    this.#placements.clear();
     this.#rendererInvalidators.clear();
     this.#listeners.clear();
   }
@@ -145,10 +158,8 @@ export class ToolActivityState {
     const session = this.#session;
     if (!session) return;
 
-    this.#calls.clear();
+    this.#resetTranscript();
     this.#rebuildCommandLinks(session);
-    this.#segments = [];
-    this.#activeAssistant = undefined;
 
     for (const entry of session.sessionManager.buildContextEntries()) {
       const messages = sessionEntryToContextMessages(entry);
@@ -169,6 +180,18 @@ export class ToolActivityState {
     }
 
     this.#rebuildGroups();
+  }
+
+  #resetTranscript(): void {
+    this.#activeAssistant = undefined;
+    this.#calls.clear();
+    this.#execCommands.clear();
+    this.#sessionCommands.clear();
+    this.#relatedCommands.clear();
+    this.#segments = [];
+    this.#groups = [];
+    this.#groupsById.clear();
+    this.#placements.clear();
   }
 
   subscribe(listener: ActivityListener): () => void {

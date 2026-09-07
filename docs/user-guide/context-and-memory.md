@@ -126,16 +126,14 @@ leaves evidence pending rather than blocking startup. Automatic processing waits
 for five accepted checkpoint updates and one hour since the latest successful
 publication. Updates from the same root session count; identical cursors do not.
 The deadline is persisted through canonical state, so a later Felan launch can
-catch up if the earlier process closes. `/memory run` and `/memory retry` remain
-explicit immediate requests.
+catch up if the earlier process closes. `/memory run` remains an explicit
+immediate request.
 
 Use:
 
 ```text
-/memory status
+/memory
 /memory run
-/memory retry
-/memory runs [id|latest]
 /memory open
 ```
 
@@ -143,19 +141,18 @@ After a failed processing attempt, the current project waits one minute before
 the second attempt and five minutes before the third. A third consecutive
 failure automatically disables processing for that project across prompts,
 sessions, and restarts. A successful publication resets the counter. The
-`/memory retry` command clears and retries only the current project's breaker
-when the memory extension is loaded; `/memory run` does not
-clear it. Both commands return immediately after requesting background work;
-use the footer or `/memory status` to follow progress.
+`/memory run` clears the current project's backoff or automatic-disable breaker
+when needed, then retries it. It otherwise starts ordinary immediate
+processing. The command returns immediately after requesting background work;
+use the footer or `/memory` to follow progress.
 
 The footer shows processing, backoff, and pending counts. An automatically
 disabled project shows `Memory: disabled` and warns once when an interactive
 session starts or resumes in that project. Existing memory remains readable.
 
-Use `/memory runs` to browse retained runs, `/memory runs latest` for the newest
-current-project run, or `/memory runs <id>` for a specific current-project run.
-Inspection is read-only and never starts a model. Existing explicit session
-resume, import, fork, and switch behavior is unchanged.
+Use `/memory` to view status and browse retained runs in one pane. Selecting a
+run is read-only and never starts a model. Existing explicit session resume,
+import, fork, and switch behavior is unchanged.
 
 Felan retains the newest 50 completed run records. Each retained record keeps
 its standard JSONL and manifest; its disposable processing workspace is removed

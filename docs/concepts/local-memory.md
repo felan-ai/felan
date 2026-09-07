@@ -162,10 +162,10 @@ in the same batch can still proceed when one source fails deterministically.
 After the first failed processing attempt, processing waits 60 seconds; after
 the second, it waits 300 seconds. The third consecutive failure durably
 disables only that project. Successful publication resets the counter, while
-prompts and process restarts do not. `/memory retry` explicitly resets and
-retries the current project only when the memory extension is loaded. `/memory
-run` does not clear a project breaker. Shutdown and intentional cancellation do
-not consume a failure. Both commands return immediately while the requested run
+prompts and process restarts do not. `/memory run` explicitly resets and retries
+the current project when a backoff or breaker requires recovery; it otherwise
+starts immediate processing. Shutdown and intentional cancellation do not
+consume a failure. The command returns immediately while the requested run
 continues in the background. The worker retains its existing one-hour
 wall-clock timeout and has no additional turn cap.
 
@@ -180,9 +180,9 @@ remains pending and may be rerun without consuming a failure-budget attempt.
 Only durable canonical state plus exact checkpoint cursors proves publication.
 
 Retained sessions appear as `Memory:` entries in the normal picker and through
-`/memory runs [id|latest]`. That transcript view is read-only and performs no
-model work. Existing explicit resume, import, fork, switch, prompt-history, and
-recovery behavior is unchanged; the segregated directory relies on existing
+the status-and-history pane opened by `/memory`. Selecting a transcript is
+read-only and performs no model work. Existing explicit resume, import, fork,
+switch, prompt-history, and recovery behavior is unchanged; the segregated directory relies on existing
 flat ordinary-session discovery rather than a new session-kind guard.
 
 Insights reads retained memory JSONL from the configured session directory and

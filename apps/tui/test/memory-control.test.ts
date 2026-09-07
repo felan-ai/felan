@@ -1,19 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { MemoryStatus } from '@felan-ai/ext-memory';
 import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
-import { ModelRuntime } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLocalMemoryControlExtension } from '../src/memory/control.js';
 import { LocalMemoryCoordinator } from '../src/memory/coordinator.js';
-
-const temporaryPaths: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
-});
 
 describe('local memory controls', () => {
   it('does not expose runtime enable or disable commands', async () => {
@@ -28,9 +17,12 @@ describe('local memory controls', () => {
       on: () => {},
     } as unknown as FelanExtensionAPI);
 
-    await handlers.get('memory')!('disable', { cwd: '/workspace', ui: { notify } } as unknown as ExtensionContext);
+    for (const command of ['disable', 'status', 'process', 'runs', 'retry']) {
+      await handlers.get('memory')!(command, { cwd: '/workspace', ui: { notify } } as unknown as ExtensionContext);
+    }
 
-    expect(notify).toHaveBeenCalledWith('Usage: /memory status|run|runs [id|latest]|retry|open', 'warning');
+    expect(notify).toHaveBeenCalledTimes(5);
+    expect(notify).toHaveBeenCalledWith('Usage: /memory | /memory run | /memory open', 'warning');
   });
 
   it('starts explicit processing commands without waiting for completion', async () => {
@@ -38,6 +30,9 @@ describe('local memory controls', () => {
     const run = deferred<MemoryStatus>();
     const retry = deferred<MemoryStatus>();
     const coordinator = {
+      status: vi.fn()
+        .mockResolvedValueOnce(memoryStatus(0))
+        .mockResolvedValueOnce({ ...memoryStatus(1), autoDisabled: { runId: 'run-1', at: '2026-09-01T12:00:00.000Z', reason: 'failed' } }),
       runNow: vi.fn(() => run.promise),
       retryProject: vi.fn(() => retry.promise),
       subscribeStatusChanges: vi.fn(() => () => {}),
@@ -49,12 +44,12 @@ describe('local memory controls', () => {
     const { ctx, notify } = memoryContext('session-1');
 
     await handlers.get('memory')!('run', ctx);
-    expect(coordinator.runNow).toHaveBeenCalledWith('/workspace');
     expect(notify).toHaveBeenCalledWith('Memory processing requested.', 'info');
+    await vi.waitFor(() => expect(coordinator.runNow).toHaveBeenCalledWith('/workspace'));
 
-    await handlers.get('memory')!('retry', ctx);
-    expect(coordinator.retryProject).toHaveBeenCalledWith('/workspace');
-    expect(notify).toHaveBeenCalledWith('Memory retry requested.', 'info');
+    await handlers.get('memory')!('run', ctx);
+    expect(notify).toHaveBeenCalledWith('Memory processing requested.', 'info');
+    await vi.waitFor(() => expect(coordinator.retryProject).toHaveBeenCalledWith('/workspace'));
 
     run.resolve(memoryStatus(0));
     retry.resolve(memoryStatus(0));
@@ -64,7 +59,8 @@ describe('local memory controls', () => {
   it('reports a detached processing request failure', async () => {
     const handlers = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void>>();
     const coordinator = {
-      retryProject: vi.fn(async () => { throw new Error('storage unavailable'); }),
+      status: vi.fn(async () => memoryStatus(1)),
+      runNow: vi.fn(async () => { throw new Error('storage unavailable'); }),
       subscribeStatusChanges: vi.fn(() => () => {}),
     } as unknown as LocalMemoryCoordinator;
     createLocalMemoryControlExtension({ coordinator, agentDir: '/unused' })({
@@ -73,10 +69,10 @@ describe('local memory controls', () => {
     } as unknown as FelanExtensionAPI);
     const { ctx, notify } = memoryContext('session-1');
 
-    await handlers.get('memory')!('retry', ctx);
+    await handlers.get('memory')!('run', ctx);
 
     await vi.waitFor(() => expect(notify).toHaveBeenCalledWith(
-      'Memory processing request failed; inspect /memory status.',
+      'Memory processing request failed; inspect /memory.',
       'warning',
     ));
   });
@@ -241,12 +237,6 @@ describe('local memory controls', () => {
   });
 
 });
-
-async function temporaryDirectory(): Promise<string> {
-  const path = await mkdtemp(join(tmpdir(), 'felan-memory-control-'));
-  temporaryPaths.push(path);
-  return path;
-}
 
 function memoryContext(sessionId: string, cwd = '/workspace'): {
   ctx: ExtensionContext;

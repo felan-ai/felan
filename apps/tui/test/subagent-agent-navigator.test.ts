@@ -292,6 +292,23 @@ describe('AgentNavigator', () => {
     transcript.dispose();
   });
 
+  it('uses grouped tool presentation for retained snapshots', () => {
+    const transcript = new AgentTranscript(
+      { requestRender: vi.fn() } as never,
+      new TuiKeybindingsManager(TUI_KEYBINDINGS) as unknown as KeybindingsManager,
+    );
+
+    transcript.showSnapshot([
+      assistantToolCall('read-1', 'read', { path: 'src/a.ts' }) as never,
+    ], process.cwd());
+    const output = transcript.render(100).join('\n');
+
+    expect(output).toContain('Read 1 file');
+    expect(output).toContain('Read · src/a.ts');
+    expect(output).not.toContain('"path":');
+    transcript.dispose();
+  });
+
   it('uses grouped thinking rows for selected child transcripts', () => {
     const session = sessionWithMessages([
       assistantThinking('Inspect the child session. Render the next sentence.'),

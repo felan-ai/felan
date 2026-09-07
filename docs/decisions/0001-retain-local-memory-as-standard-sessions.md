@@ -21,9 +21,9 @@ and `@felan-ai/ext-memory` must remain adapter-neutral.
 
 The local TUI retains every memory worker as a standard Pi session under
 `<sessionDir>/memory`, linked by validated metadata to a project-scoped run
-directory. The normal picker labels these entries `Memory:`, and `/memory runs`
-opens a read-only transcript and diagnostic view. Existing explicit session
-operations remain unchanged.
+directory. The normal picker labels these entries `Memory:`, and `/memory`
+opens a status, retained-run, and read-only transcript view. Existing explicit
+session operations remain unchanged.
 
 The subdirectory is organizational, not an execution sandbox or portable
 session-kind contract. Metadata classifies records for presentation and
