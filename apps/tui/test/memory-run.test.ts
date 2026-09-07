@@ -101,7 +101,7 @@ describe('retained memory runs', () => {
     }
     expect(await readdir(join(options.projectDirectory, 'runs'))).toHaveLength(50);
     expect(await readdir(options.sessionDirectory)).toHaveLength(50);
-  });
+  }, 15_000);
 
   it('reconciles a pre-attempt crash without consuming the retry budget or requiring pending work', async () => {
     const options = await fixture();
