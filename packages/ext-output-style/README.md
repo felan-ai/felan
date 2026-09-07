@@ -36,6 +36,28 @@ The local TUI, CLI, `/settings`, and Agent Core consumers resolve these fields
 before activating the extension for root and child sessions. A custom style
 requires non-empty instructions.
 
+## Savings measurement
+
+Only the built-in `concise` style contributes a savings measurement. For each
+successful assistant turn containing visible text, the extension estimates the
+actual output as UTF-8 bytes divided by four and rounded up. It estimates the
+disabled-style baseline as:
+
+```text
+ceil(actual visible-output estimate * 4187 / 3500)
+```
+
+This uses the current repeated benchmark's pooled output-token result: 4,187
+baseline tokens versus 3,500 concise tokens, a 16.4% reduction. The producer
+only sees UTF-8 visible text, so this is a documented byte-to-token proxy rather
+than an observed tokenizer count. The method identifier is
+`concise-output-token-ratio-202609-v1`.
+
+This measurement isolates the visible-output boundary and is not a claim of
+whole-workflow savings; the benchmark's prompt tokens increased. Empty, errored,
+aborted, or unattributed turns do not report. `explanatory` and `custom` have no
+supported baseline and never contribute savings.
+
 ## Package boundary and requirements
 
 The package owns the supported style names, built-in instructions, custom-text
@@ -61,6 +83,7 @@ pnpm --filter @felan-ai/ext-output-style test
 - [Configuration](../../docs/user-guide/configuration.md#output-style)
 - [Extension catalog](../../docs/reference/extension-catalog.md)
 - [Architecture](../../docs/concepts/architecture.md)
+- [Efficient execution and savings](../../docs/concepts/efficient-execution.md)
 
 ## Attribution
 

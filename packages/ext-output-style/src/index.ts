@@ -1,4 +1,5 @@
 import { associateExtensionConfig, configField, defineExtensionConfig, type FelanExtension, type FelanExtensionAPI } from '@felan-ai/agent-core';
+import { reportConciseSavings } from './savings.js';
 
 export const OUTPUT_STYLES = ['concise', 'explanatory', 'custom'] as const;
 export type OutputStyle = typeof OUTPUT_STYLES[number];
@@ -76,6 +77,16 @@ export function createOutputStyleExtension(
     pi.on('before_agent_start', (event) => {
       return { systemPrompt: `${event.systemPrompt}\n\n${section}` };
     });
+    if (style === 'concise') {
+      pi.on('turn_end', (event, ctx) => {
+        if (event.message.role !== 'assistant') return;
+        reportConciseSavings(
+          pi.savings,
+          ctx.model === undefined ? undefined : { provider: ctx.model.provider, id: ctx.model.id },
+          event.message,
+        );
+      });
+    }
   };
 }
 

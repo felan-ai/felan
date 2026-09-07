@@ -9,7 +9,10 @@ import {
   type ModelRuntime,
   type SettingsManager,
   type ExtensionConfigOverride,
+  type SavingsMeasurement,
+  type SavingsReporter,
   type SavingsReporterProvider,
+  type SavingsTokenUsage,
 } from '@felan-ai/agent-core';
 import {
   bindSubagentSession,
@@ -53,6 +56,7 @@ export interface LocalSubagentUsage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  cacheWrite1h: number;
   cost: number;
 }
 
@@ -137,6 +141,7 @@ interface MutableChild {
   session?: AgentSession;
   sessionFile?: string;
   usage?: LocalSubagentUsage;
+  reportedSavings?: LocalSubagentUsage;
   usageUnsubscribe?: () => void;
   deliveryId?: string;
   completionPending: boolean;
@@ -230,6 +235,7 @@ export class LocalSubagentManager {
   readonly policy: SubagentPolicy;
   readonly #options: CreateLocalSubagentHostOptions;
   readonly #store: LocalSubagentStore;
+  readonly #savingsReporter: SavingsReporter | undefined;
   readonly #children = new Map<string, MutableChild>();
   readonly #ports = new Map<string, SubagentParentPort>();
   readonly #jobs = new Map<string, Job>();
@@ -256,6 +262,7 @@ export class LocalSubagentManager {
     this.descriptors = Object.freeze(definitions.map((definition) => definition.descriptor));
     this.#concurrency = boundedInteger(options.settings?.concurrency, 4, 1, 32);
     this.#maxDepth = boundedInteger(options.settings?.maxDepth, 3, 1, 10);
+    this.#savingsReporter = options.savings?.createReporter(EXT_SUBAGENTS);
     this.policy = Object.freeze({
       maxPromptBytes: 128 * 1024,
       maxDescriptionBytes: 512,
@@ -271,6 +278,7 @@ export class LocalSubagentManager {
     const manager = new LocalSubagentManager(options, definitions);
     const loaded = await manager.#store.load();
     let reconciled = false;
+    const interrupted = new Set<string>();
     for (const stored of loaded) {
       const child = fromStored(stored);
       if (child.record.status === 'queued' || child.record.status === 'running') {
@@ -279,6 +287,7 @@ export class LocalSubagentManager {
           message: 'Local subagent was interrupted when the previous Felan process exited',
         });
         child.completionPending = child.deliveryId !== undefined;
+        interrupted.add(child.record.agentId);
         reconciled = true;
       }
       manager.#children.set(child.record.agentId, child);
@@ -288,6 +297,10 @@ export class LocalSubagentManager {
       const usage = await loadSessionUsage(child.sessionFile, child.record.agentId);
       if (usage) child.usage = usage;
       else delete child.usage;
+      if (usage && (interrupted.has(child.record.agentId) || child.reportedSavings === undefined)) {
+        child.reportedSavings = { ...usage };
+        reconciled = true;
+      }
     }
     if (reconciled) await manager.#persist();
     return manager;
@@ -743,6 +756,7 @@ export class LocalSubagentManager {
               child.usage.output += event.message.usage.output;
               child.usage.cacheRead += event.message.usage.cacheRead;
               child.usage.cacheWrite += event.message.usage.cacheWrite;
+              child.usage.cacheWrite1h += event.message.usage.cacheWrite1h ?? 0;
               child.usage.cost += event.message.usage.cost.total;
               this.#emitUsage();
             });
@@ -757,6 +771,7 @@ export class LocalSubagentManager {
       outcome = { error: { code: 'internal_error', message: 'Local subagent failed unexpectedly' } };
     } finally {
       if (timeout) clearTimeout(timeout);
+      let savingsMeasurement: SavingsMeasurement | undefined;
       await this.#serializeControl(async () => {
         child.usageUnsubscribe?.();
         delete child.usageUnsubscribe;
@@ -788,6 +803,7 @@ export class LocalSubagentManager {
             };
           }
         }
+        savingsMeasurement = this.#prepareExploreSavings(child);
         if (job.slotHeld) {
           job.slotHeld = false;
           this.#active -= 1;
@@ -797,6 +813,11 @@ export class LocalSubagentManager {
         await this.#persist();
         this.#emit();
       });
+      if (savingsMeasurement && this.#savingsReporter) {
+        try {
+          await this.#savingsReporter.report(savingsMeasurement);
+        } catch {}
+      }
       try {
         if (child.deliveryId) await this.#deliver(child, child.deliveryId);
       } finally {
@@ -1203,6 +1224,49 @@ export class LocalSubagentManager {
     for (const listener of this.#usageListeners) listener();
   }
 
+  #prepareExploreSavings(child: MutableChild): SavingsMeasurement | undefined {
+    if (child.record.type !== 'explore' || !child.usage) return undefined;
+    if (
+      !this.#savingsReporter
+      || child.record.status !== 'completed'
+      || !child.record.result?.trim()
+      || !child.request.parentModel
+      || !child.request.model
+      || child.request.parentModel.toLowerCase() === child.request.model.toLowerCase()
+    ) {
+      child.reportedSavings = { ...child.usage };
+      return undefined;
+    }
+    const usage = subtractUsage(child.usage, child.reportedSavings);
+    if (!usage) {
+      child.reportedSavings = { ...child.usage };
+      return undefined;
+    }
+    const parent = modelReference(child.request.parentModel);
+    const actual = modelReference(child.request.model);
+    if (!parent || !actual) {
+      child.reportedSavings = { ...child.usage };
+      return undefined;
+    }
+    const tokens = savingsTokens(usage);
+    child.reportedSavings = { ...child.usage };
+    return {
+      category: 'model-routing',
+      operation: 'explore-child',
+      baseline: { model: parent, tokens },
+      actual: {
+        model: actual,
+        tokens,
+        ...(usage.cost > 0 ? { costUsd: usage.cost } : {}),
+      },
+      basis: {
+        kind: 'estimated-baseline',
+        method: 'parent-model-reprice-observed-child-usage-v1',
+      },
+      dimensions: { techniques: ['explore', 'same-usage-reprice'] },
+    };
+  }
+
   async #persist(): Promise<void> {
     const snapshot = [...this.#children.values()].map(toStored);
     this.#save = this.#save.catch(() => {}).then(() => this.#store.save(snapshot));
@@ -1337,6 +1401,7 @@ function toStored(child: MutableChild): LocalStoredChild {
     record: child.record,
     request: child.request,
     depth: child.depth,
+    ...(child.reportedSavings === undefined ? {} : { reportedSavings: child.reportedSavings }),
     ...(child.sessionFile === undefined ? {} : { sessionFile: child.sessionFile }),
     ...(child.deliveryId === undefined ? {} : { deliveryId: child.deliveryId }),
     completionPending: child.completionPending,
@@ -1372,7 +1437,7 @@ function byteLength(value: string): number {
 }
 
 function emptyUsageTotals(): LocalSubagentUsage {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cost: 0 };
 }
 
 function addUsage(target: LocalSubagentUsage, source: LocalSubagentUsage | undefined): void {
@@ -1381,6 +1446,7 @@ function addUsage(target: LocalSubagentUsage, source: LocalSubagentUsage | undef
   target.output += source.output;
   target.cacheRead += source.cacheRead;
   target.cacheWrite += source.cacheWrite;
+  target.cacheWrite1h += source.cacheWrite1h;
   target.cost += source.cost;
 }
 
@@ -1392,6 +1458,7 @@ function usageFromEntries(entries: ReturnType<SessionManager['getEntries']>): Lo
     totals.output += entry.message.usage.output;
     totals.cacheRead += entry.message.usage.cacheRead;
     totals.cacheWrite += entry.message.usage.cacheWrite;
+    totals.cacheWrite1h += entry.message.usage.cacheWrite1h ?? 0;
     totals.cost += entry.message.usage.cost.total;
   }
   return totals;
@@ -1448,10 +1515,44 @@ function addPersistedAssistantUsage(target: LocalSubagentUsage, entry: unknown):
     output: Reflect.get(usage, 'output'),
     cacheRead: Reflect.get(usage, 'cacheRead'),
     cacheWrite: Reflect.get(usage, 'cacheWrite'),
+    cacheWrite1h: Reflect.get(usage, 'cacheWrite1h') ?? 0,
     cost: Reflect.get(cost, 'total'),
   };
   if (!Object.values(values).every((value) => typeof value === 'number' && Number.isFinite(value))) return;
   addUsage(target, values as LocalSubagentUsage);
+}
+
+function subtractUsage(
+  current: LocalSubagentUsage,
+  previous: LocalSubagentUsage | undefined,
+): LocalSubagentUsage | undefined {
+  const baseline = previous ?? emptyUsageTotals();
+  const result = {
+    input: current.input - baseline.input,
+    output: current.output - baseline.output,
+    cacheRead: current.cacheRead - baseline.cacheRead,
+    cacheWrite: current.cacheWrite - baseline.cacheWrite,
+    cacheWrite1h: current.cacheWrite1h - baseline.cacheWrite1h,
+    cost: current.cost - baseline.cost,
+  };
+  if (Object.values(result).some((value) => !Number.isFinite(value) || value < 0)) return undefined;
+  return result.input + result.output + result.cacheRead + result.cacheWrite > 0 ? result : undefined;
+}
+
+function savingsTokens(usage: LocalSubagentUsage): SavingsTokenUsage {
+  return {
+    input: usage.input,
+    output: usage.output,
+    cacheRead: usage.cacheRead,
+    cacheWrite: usage.cacheWrite,
+    cacheWrite1h: usage.cacheWrite1h,
+  };
+}
+
+function modelReference(value: string): { provider: string; id: string } | undefined {
+  const separator = value.indexOf('/');
+  if (separator <= 0 || separator === value.length - 1) return undefined;
+  return { provider: value.slice(0, separator), id: value.slice(separator + 1) };
 }
 
 function sessionFileOutcome(sessionFile: string | undefined): Pick<LocalSubagentRunOutcome, 'sessionFile'> {
