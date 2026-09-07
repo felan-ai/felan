@@ -115,7 +115,7 @@ describe('MarkItDown extension', () => {
       actual: { model: { provider: 'test', id: 'document-model' } },
       basis: {
         kind: 'estimated-baseline',
-        method: 'markitdown-benchmark-32pct-v1',
+        method: 'markitdown-prompt-token-ratio-202609-v1',
       },
       dimensions: { tool: 'read' },
     });

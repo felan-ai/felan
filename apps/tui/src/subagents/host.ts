@@ -9,6 +9,7 @@ import {
   type ModelRuntime,
   type SettingsManager,
   type ExtensionConfigOverride,
+  type SavingsMeasurement,
   type SavingsReporter,
   type SavingsReporterProvider,
   type SavingsTokenUsage,
@@ -277,6 +278,7 @@ export class LocalSubagentManager {
     const manager = new LocalSubagentManager(options, definitions);
     const loaded = await manager.#store.load();
     let reconciled = false;
+    const interrupted = new Set<string>();
     for (const stored of loaded) {
       const child = fromStored(stored);
       if (child.record.status === 'queued' || child.record.status === 'running') {
@@ -285,6 +287,7 @@ export class LocalSubagentManager {
           message: 'Local subagent was interrupted when the previous Felan process exited',
         });
         child.completionPending = child.deliveryId !== undefined;
+        interrupted.add(child.record.agentId);
         reconciled = true;
       }
       manager.#children.set(child.record.agentId, child);
@@ -294,7 +297,7 @@ export class LocalSubagentManager {
       const usage = await loadSessionUsage(child.sessionFile, child.record.agentId);
       if (usage) child.usage = usage;
       else delete child.usage;
-      if (isTerminal(child.record.status) && usage && child.reportedSavings === undefined) {
+      if (usage && (interrupted.has(child.record.agentId) || child.reportedSavings === undefined)) {
         child.reportedSavings = { ...usage };
         reconciled = true;
       }
@@ -768,6 +771,7 @@ export class LocalSubagentManager {
       outcome = { error: { code: 'internal_error', message: 'Local subagent failed unexpectedly' } };
     } finally {
       if (timeout) clearTimeout(timeout);
+      let savingsMeasurement: SavingsMeasurement | undefined;
       await this.#serializeControl(async () => {
         child.usageUnsubscribe?.();
         delete child.usageUnsubscribe;
@@ -799,7 +803,7 @@ export class LocalSubagentManager {
             };
           }
         }
-        await this.#reportExploreSavings(child);
+        savingsMeasurement = this.#prepareExploreSavings(child);
         if (job.slotHeld) {
           job.slotHeld = false;
           this.#active -= 1;
@@ -809,6 +813,11 @@ export class LocalSubagentManager {
         await this.#persist();
         this.#emit();
       });
+      if (savingsMeasurement && this.#savingsReporter) {
+        try {
+          await this.#savingsReporter.report(savingsMeasurement);
+        } catch {}
+      }
       try {
         if (child.deliveryId) await this.#deliver(child, child.deliveryId);
       } finally {
@@ -1215,8 +1224,8 @@ export class LocalSubagentManager {
     for (const listener of this.#usageListeners) listener();
   }
 
-  async #reportExploreSavings(child: MutableChild): Promise<void> {
-    if (child.record.type !== 'explore' || !child.usage) return;
+  #prepareExploreSavings(child: MutableChild): SavingsMeasurement | undefined {
+    if (child.record.type !== 'explore' || !child.usage) return undefined;
     if (
       !this.#savingsReporter
       || child.record.status !== 'completed'
@@ -1226,35 +1235,36 @@ export class LocalSubagentManager {
       || child.request.parentModel.toLowerCase() === child.request.model.toLowerCase()
     ) {
       child.reportedSavings = { ...child.usage };
-      return;
+      return undefined;
     }
     const usage = subtractUsage(child.usage, child.reportedSavings);
-    if (!usage) return;
+    if (!usage) {
+      child.reportedSavings = { ...child.usage };
+      return undefined;
+    }
     const parent = modelReference(child.request.parentModel);
     const actual = modelReference(child.request.model);
     if (!parent || !actual) {
       child.reportedSavings = { ...child.usage };
-      return;
+      return undefined;
     }
     const tokens = savingsTokens(usage);
-    try {
-      await this.#savingsReporter.report({
-        category: 'model-routing',
-        operation: 'explore-child',
-        baseline: { model: parent, tokens },
-        actual: {
-          model: actual,
-          tokens,
-          ...(usage.cost > 0 ? { costUsd: usage.cost } : {}),
-        },
-        basis: {
-          kind: 'estimated-baseline',
-          method: 'parent-model-reprice-observed-child-usage-v1',
-        },
-        dimensions: { techniques: ['explore', 'same-usage-reprice'] },
-      });
-      child.reportedSavings = { ...child.usage };
-    } catch {}
+    child.reportedSavings = { ...child.usage };
+    return {
+      category: 'model-routing',
+      operation: 'explore-child',
+      baseline: { model: parent, tokens },
+      actual: {
+        model: actual,
+        tokens,
+        ...(usage.cost > 0 ? { costUsd: usage.cost } : {}),
+      },
+      basis: {
+        kind: 'estimated-baseline',
+        method: 'parent-model-reprice-observed-child-usage-v1',
+      },
+      dimensions: { techniques: ['explore', 'same-usage-reprice'] },
+    };
   }
 
   async #persist(): Promise<void> {

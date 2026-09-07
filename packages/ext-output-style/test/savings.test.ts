@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createOutputStyleExtension } from '../src/index.js';
 
 describe('output-style savings', () => {
-  it('reports the concise visible-text boundary with the 15% benchmark rate', async () => {
+  it('reports the concise visible-text boundary with the current output-token ratio', async () => {
     const harness = savingsHarness('concise');
 
     await harness.turn(assistant('a'.repeat(68)));
@@ -11,13 +11,28 @@ describe('output-style savings', () => {
     expect(harness.report).toHaveBeenCalledWith(expect.objectContaining({
       category: 'output-optimization',
       operation: 'concise-response',
-      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 0, output: 20 } },
+      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 0, output: 21 } },
       actual: { model: { provider: 'test', id: 'model' }, tokens: { input: 0, output: 17 } },
       basis: {
         kind: 'estimated-baseline',
-        method: 'concise-benchmark-15pct-v1',
+        method: 'concise-output-token-ratio-202609-v1',
       },
       dimensions: { techniques: ['concise'] },
+    }));
+  });
+
+  it('estimates UTF-8 bytes across mixed visible-text blocks', async () => {
+    const harness = savingsHarness('concise');
+
+    await harness.turn(assistantBlocks([
+      { type: 'text', text: 'éééé' },
+      { type: 'thinking', thinking: 'ignored' },
+      { type: 'text', text: 'x' },
+    ]));
+
+    expect(harness.report).toHaveBeenCalledWith(expect.objectContaining({
+      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 0, output: 4 } },
+      actual: { model: { provider: 'test', id: 'model' }, tokens: { input: 0, output: 3 } },
     }));
   });
 
@@ -87,9 +102,16 @@ function savingsHarness(
 }
 
 function assistant(text: string, stopReason: AssistantMessage['stopReason'] = 'stop'): AssistantMessage {
+  return assistantBlocks(text ? [{ type: 'text', text }] : [], stopReason);
+}
+
+function assistantBlocks(
+  content: AssistantMessage['content'],
+  stopReason: AssistantMessage['stopReason'] = 'stop',
+): AssistantMessage {
   return {
     role: 'assistant',
-    content: text ? [{ type: 'text', text }] : [],
+    content,
     api: 'test',
     provider: 'test',
     model: 'model',

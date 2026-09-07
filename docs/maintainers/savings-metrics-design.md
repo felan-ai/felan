@@ -203,8 +203,10 @@ execution. The method identifier is `planner-two-thirds-usage-v1`.
 MarkItDown reports one `output-optimization` measurement for each successful
 converted `read` or `read_document` result with an active model. Both outcomes
 use UTF-8-bytes/4 estimates as model input. Actual is the returned converted
-text; baseline is `ceil(actual / 0.68)`, applying the selected 32% benchmark
-savings rate. The method is `markitdown-benchmark-32pct-v1`.
+text; baseline is `ceil(actual * 21569 / 18603)`, using the pooled prompt-token
+ratio from the current repeated benchmark (21,569 baseline tokens versus 18,603
+converted tokens, a 13.8% reduction). The method is
+`markitdown-prompt-token-ratio-202609-v1`.
 
 The measurement owns only the converted-result boundary. It excludes failed or
 unavailable conversion, missing model/reporter attribution, and the model-less
@@ -215,15 +217,17 @@ result, infer local converter cost, or claim exact workflow savings.
 
 The built-in concise style reports one `output-optimization` measurement for
 each successful assistant turn with visible text and an active model. Both
-outcomes use UTF-8-bytes/4 estimates as model output. Actual is the emitted text;
-baseline is `ceil(actual / 0.85)`, applying a conservative 15% savings rate to
-the Terra-v2 result. The method is `concise-benchmark-15pct-v1`.
+outcomes use UTF-8-bytes/4 estimates as model output. Actual is the emitted
+visible text; baseline is `ceil(actual * 4187 / 3500)`, using the current pooled
+output-token benchmark (4,187 baseline tokens versus 3,500 concise tokens, a
+16.4% reduction). Because the producer sees visible text rather than tokenizer
+output, this is a documented byte-to-token proxy, not an observed token count.
+The method is `concise-output-token-ratio-202609-v1`.
 
-This boundary deliberately excludes input/cache/request effects. The source
-matrix reduced visible text by 17.88% but increased total tokens by 12.00% and
-cost by 5.88%; its built-in grader passed concise 4/5 versus 5/5 disabled. The
-one-attempt Opus comparison also had one concise correctness omission. Therefore
-this producer is not evidence of whole-workflow savings.
+This boundary deliberately excludes input/cache/request effects. The current
+repeated benchmark passed all baseline and concise attempts and reduced output
+tokens by 16.4%, while prompt tokens increased. Therefore this producer is not
+evidence of whole-workflow savings.
 `explanatory`, `custom`, empty, errored, aborted, and unattributed turns do not
 report.
 

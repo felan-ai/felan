@@ -5,9 +5,10 @@ import type {
   SavingsReporter,
 } from '@felan-ai/agent-core';
 
-const CONCISE_RETAINED_PERCENT = 85;
+const CONCISE_BASELINE_OUTPUT_TOKENS = 4_187;
+const CONCISE_ACTUAL_OUTPUT_TOKENS = 3_500;
 
-export const CONCISE_SAVINGS_METHOD = 'concise-benchmark-15pct-v1';
+export const CONCISE_SAVINGS_METHOD = 'concise-output-token-ratio-202609-v1';
 
 export function reportConciseSavings(
   reporter: SavingsReporter | undefined,
@@ -17,7 +18,7 @@ export function reportConciseSavings(
   if (!reporter || !model || message.stopReason === 'error' || message.stopReason === 'aborted') return;
   const actualOutput = estimateVisibleTextTokens(message.content);
   if (actualOutput === 0) return;
-  const baselineOutput = Math.ceil(actualOutput * 100 / CONCISE_RETAINED_PERCENT);
+  const baselineOutput = Math.ceil(actualOutput * CONCISE_BASELINE_OUTPUT_TOKENS / CONCISE_ACTUAL_OUTPUT_TOKENS);
   const measurement: SavingsMeasurement = {
     category: 'output-optimization',
     operation: 'concise-response',

@@ -44,21 +44,19 @@ actual output as UTF-8 bytes divided by four and rounded up. It estimates the
 disabled-style baseline as:
 
 ```text
-ceil(actual visible-output estimate / 0.85)
+ceil(actual visible-output estimate * 4187 / 3500)
 ```
 
-This applies a conservative 15% rate to the concise benchmark result: emitted
-text is treated as 85% of the estimated baseline. The one-attempt 2026-08-27
-Terra-v2 matrix measured a 17.88% visible-character reduction, while its built-in
-grader passed concise 4/5 versus 5/5 with output style disabled. The method
-identifier is `concise-benchmark-15pct-v1`.
+This uses the current repeated benchmark's pooled output-token result: 4,187
+baseline tokens versus 3,500 concise tokens, a 16.4% reduction. The producer
+only sees UTF-8 visible text, so this is a documented byte-to-token proxy rather
+than an observed tokenizer count. The method identifier is
+`concise-output-token-ratio-202609-v1`.
 
-This measurement isolates the visible-output boundary. It is not a claim of
-whole-workflow savings: the same Terra-v2 run used 12.00% more total tokens and
-cost 5.88% more. A separate one-attempt Claude Opus 4.8 run cost 2.90% less for
-concise but omitted required information in one case. Empty, errored, aborted,
-or unattributed turns do not report. `explanatory` and `custom` have no supported
-baseline and never contribute savings.
+This measurement isolates the visible-output boundary and is not a claim of
+whole-workflow savings; the benchmark's prompt tokens increased. Empty, errored,
+aborted, or unattributed turns do not report. `explanatory` and `custom` have no
+supported baseline and never contribute savings.
 
 ## Package boundary and requirements
 

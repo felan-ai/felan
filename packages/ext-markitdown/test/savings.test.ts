@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { reportMarkitdownSavings } from '../src/savings.js';
 
 describe('MarkItDown savings', () => {
-  it('uses the 32% benchmark rate for the converted text boundary', () => {
+  it('uses the current prompt-token benchmark ratio for the converted text boundary', () => {
     const report = vi.fn(async () => undefined);
 
     reportMarkitdownSavings(
@@ -13,13 +13,29 @@ describe('MarkItDown savings', () => {
     );
 
     expect(report).toHaveBeenCalledWith(expect.objectContaining({
-      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 25, output: 0 } },
+      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 20, output: 0 } },
       actual: { model: { provider: 'test', id: 'model' }, tokens: { input: 17, output: 0 } },
       basis: {
         kind: 'estimated-baseline',
-        method: 'markitdown-benchmark-32pct-v1',
+        method: 'markitdown-prompt-token-ratio-202609-v1',
       },
       dimensions: { tool: 'read' },
+    }));
+  });
+
+  it('estimates UTF-8 bytes across mixed content blocks', () => {
+    const report = vi.fn(async () => undefined);
+
+    reportMarkitdownSavings(
+      { report },
+      { provider: 'test', id: 'model' },
+      'read',
+      [{ type: 'text', text: 'éééé' }, { type: 'image', data: 'ignored' }, { type: 'text', text: 'x' }],
+    );
+
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      baseline: { model: { provider: 'test', id: 'model' }, tokens: { input: 4, output: 0 } },
+      actual: { model: { provider: 'test', id: 'model' }, tokens: { input: 3, output: 0 } },
     }));
   });
 

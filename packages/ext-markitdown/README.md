@@ -89,12 +89,12 @@ text's UTF-8 byte length divided by four and rounded up. Its estimated baseline
 is:
 
 ```text
-ceil(actual input estimate / 0.68)
+ceil(actual input estimate * 21569 / 18603)
 ```
 
-This applies the selected 32% MarkItDown benchmark savings rate: the converted
-result is treated as 68% of the estimated baseline. The method identifier is
-`markitdown-benchmark-32pct-v1`.
+This uses the current repeated benchmark's pooled prompt-token result: 21,569
+baseline tokens versus 18,603 converted tokens, a 13.8% reduction. The method
+identifier is `markitdown-prompt-token-ratio-202609-v1`.
 
 This is a benchmark-calibrated estimate for the converted-result boundary, not
 a replay of the unoptimized workflow. It does not claim the warm-cache suite's

@@ -7,6 +7,30 @@ import { SavingsService, createModelPriceSource, formatSavingsReport } from '../
 import { TestAgentRuntime } from '../../../packages/agent-core/test/test-agent-runtime.js';
 
 describe('SavingsService', () => {
+  it('prices parent-model repricing measurements and reports the USD delta', async () => {
+    const service = new SavingsService({
+      runtime: new TestAgentRuntime(),
+      rootSessionId: 'session-a',
+      projectKey: 'project-a',
+      priceSource: createModelPriceSource((model) => model.id === 'parent'
+        ? { model, input: 10, output: 20, cacheRead: 0, cacheWrite: 0, fingerprint: 'parent-v1' }
+        : { model, input: 1, output: 2, cacheRead: 0, cacheWrite: 0, fingerprint: 'child-v1' }),
+    });
+
+    await service.report('subagents', {
+      category: 'model-routing',
+      operation: 'explore-child',
+      baseline: { model: { provider: 'test', id: 'parent' }, tokens: { input: 10, output: 20 } },
+      actual: { model: { provider: 'test', id: 'child' }, tokens: { input: 10, output: 20 } },
+      basis: { kind: 'estimated-baseline', method: 'parent-model-reprice-observed-child-usage-v1' },
+    });
+
+    const report = await service.query();
+    expect(report.baselineCostUsd).toBeCloseTo(0.0005);
+    expect(report.actualCostUsd).toBeCloseTo(0.00005);
+    expect(report.savedCostUsd).toBeCloseTo(0.00045);
+  });
+
   it('persists producer buckets and reports lower cost with higher token usage', async () => {
     const runtime = new TestAgentRuntime('/workspace');
     const service = new SavingsService({

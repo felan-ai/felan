@@ -1317,7 +1317,8 @@ describe('LocalSubagentHost', () => {
       parentModel: 'test/parent',
       model: 'test/child',
     }));
-    if (!spawned.ok) return;
+    expect(spawned).toMatchObject({ ok: true });
+    if (!spawned.ok) throw new Error('explore child was not admitted');
     await waitForResult(first.host, spawned.value.agentId);
 
     expect(reports).toHaveLength(1);
@@ -1383,7 +1384,8 @@ describe('LocalSubagentHost', () => {
     const spawned = await host.spawn(request({
       type: 'explore', parentModel: 'test/parent', model: 'test/child',
     }));
-    if (!spawned.ok) return;
+    expect(spawned).toMatchObject({ ok: true });
+    if (!spawned.ok) throw new Error('explore child was not admitted');
     await waitForResult(host, spawned.value.agentId);
     expect(report).not.toHaveBeenCalled();
 
@@ -1399,6 +1401,100 @@ describe('LocalSubagentHost', () => {
       }),
     }));
     await host.shutdown();
+  });
+
+  it('does not hold control serialization while savings reporting is pending', async () => {
+    const root = await temporaryDirectory();
+    const sessionDirectory = join(root, 'routing-sessions');
+    const reportStarted = deferred();
+    const releaseReport = deferred();
+    const report = vi.fn(async () => {
+      reportStarted.resolve();
+      await releaseReport.promise;
+    });
+    const { host } = await harness({
+      root,
+      runner: async (input) => {
+        const manager = SessionManager.create(input.cwd, sessionDirectory, { id: input.sessionId });
+        manager.appendMessage(usageAssistantMessage({
+          input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.1,
+        }));
+        return { result: 'explored', sessionFile: manager.getSessionFile() };
+      },
+      savings: { createReporter: () => ({ report }) },
+      modelRuntime: routingModelRuntime(),
+    });
+
+    const first = await host.spawn(request({
+      type: 'explore', parentModel: 'test/parent', model: 'test/child',
+    }));
+    expect(first).toMatchObject({ ok: true });
+    if (!first.ok) throw new Error('explore child was not admitted');
+    await expect(waitForResult(host, first.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed' },
+    });
+    await reportStarted.promise;
+
+    const second = await host.spawn(request({ type: 'reviewer' }));
+    expect(second).toMatchObject({ ok: true });
+
+    releaseReport.resolve();
+    await host.shutdown();
+  });
+
+  it('does not attribute usage from a crashed continuation to a later success', async () => {
+    const root = await temporaryDirectory();
+    const sessionDirectory = join(root, 'routing-sessions');
+    const recordsFile = join(root, 'agent', 'subagents', encodeURIComponent('root'), 'records.json');
+    const reports: SavingsMeasurement[] = [];
+    let invocation = 0;
+    const runner: LocalSubagentRunner = async (input) => {
+      const manager = input.sessionFile
+        ? SessionManager.open(input.sessionFile)
+        : SessionManager.create(input.cwd, sessionDirectory, { id: input.sessionId });
+      manager.appendMessage(usageAssistantMessage(invocation++ === 0
+        ? { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.5 }
+        : { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.1 }));
+      return { result: 'explored', sessionFile: manager.getSessionFile() };
+    };
+    const first = await harness({ runner, root, modelRuntime: routingModelRuntime() });
+    const spawned = await first.host.spawn(request({
+      type: 'explore', parentModel: 'test/parent', model: 'test/child',
+    }));
+    expect(spawned).toMatchObject({ ok: true });
+    if (!spawned.ok) throw new Error('explore child was not admitted');
+    await waitForResult(first.host, spawned.value.agentId);
+    await first.host.shutdown();
+
+    const stored = JSON.parse(await readFile(recordsFile, 'utf8')) as {
+      children: Array<{ record: { status: string }; sessionFile?: string }>;
+    };
+    const child = stored.children.find(({ record }) => record.status === 'completed');
+    expect(child?.sessionFile).toBeTruthy();
+    child!.record.status = 'running';
+    await writeFile(recordsFile, `${JSON.stringify(stored, null, 2)}\n`);
+    const interruptedSession = SessionManager.open(child!.sessionFile!);
+    interruptedSession.appendMessage(usageAssistantMessage({
+      input: 5, output: 6, cacheRead: 0, cacheWrite: 0, cost: 0.25,
+    }));
+
+    const second = await harness({
+      runner,
+      root,
+      savings: { createReporter: () => ({ report: async (measurement) => { reports.push(measurement); } }) },
+      modelRuntime: routingModelRuntime(),
+    });
+    await expect(second.host.steer(spawned.value.agentId, 'continue')).resolves.toMatchObject({ ok: true });
+    await waitForResult(second.host, spawned.value.agentId);
+
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      baseline: { tokens: { input: 1, output: 2 } },
+      actual: { tokens: { input: 1, output: 2 } },
+    });
+    expect(reports[0]?.actual.costUsd).toBeCloseTo(0.1);
+    await second.host.shutdown();
   });
 
   it('does not claim routing savings for unsuccessful, non-explore, or same-model children', async () => {
