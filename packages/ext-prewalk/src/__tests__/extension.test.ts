@@ -22,6 +22,7 @@ const alternateTarget = { provider: 'anthropic', id: 'claude-opus', name: 'Opus'
 const externalModel = { provider: 'anthropic', id: 'claude-sonnet', name: 'Sonnet', reasoning: true } as any;
 const anthropicPlanner = { provider: 'anthropic', id: 'claude-opus-4-6', name: 'Opus', reasoning: true } as any;
 const anthropicTarget = { provider: 'anthropic', id: 'claude-haiku-4-5', name: 'Haiku', reasoning: true } as any;
+const xhighTarget = { provider: 'anthropic', id: 'claude-fable-5', name: 'Fable', reasoning: true } as any;
 const nonReasoningTarget = { provider: 'openai-codex', id: 'gpt-5.6-fast', name: 'Fast', reasoning: false } as any;
 
 function assistant(
@@ -1432,6 +1433,17 @@ describe('model handoff and restoration', () => {
     await qualifyHandoff(harness);
 
     expect(harness.setModel).toHaveBeenCalledWith(anthropicTarget, { updateDefault: false });
+  });
+
+  it('resolves an explicitly configured xhigh implementation tier', async () => {
+    const harness = createHarness({
+      flags: { 'prewalk-target-model': 'xhigh' },
+      models: [plannerModel, xhighTarget],
+    });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).toHaveBeenCalledWith(xhighTarget, { updateDefault: false });
   });
 
   it('resolves tiers only from the current session model scope', async () => {

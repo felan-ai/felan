@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-insights",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Portable session analytics reports for Felan",
   "license": "MIT",
   "type": "module",
@@ -35,7 +35,7 @@
     "prepack": "pnpm build"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.5.5"
+    "@felan-ai/agent-core": "^0.6.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*",

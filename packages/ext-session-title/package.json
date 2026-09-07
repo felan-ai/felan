@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-session-title",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Portable automatic session title generation for Felan",
   "license": "MIT",
   "type": "module",
@@ -31,7 +31,7 @@
     "prepack": "pnpm build"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.5.7"
+    "@felan-ai/agent-core": "^0.6.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

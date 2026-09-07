@@ -12,10 +12,13 @@ execution, latest records, continuation, persistence, completion delivery, and p
 Agent Core remains unaware of subagent execution and provides generic runtime,
 session, coding-tool, extension composition, and model-tier selection.
 
-The `Agent` tool accepts `inherit`, `high`, `medium`, `low`, or an exact
+The `Agent` tool accepts `inherit`, `xhigh`, `high`, `medium`, `low`, or an exact
 `provider/model-id` in its `model` field. Tier selection uses the models already
 allowed and authenticated for the active session, prefers the parent model's
 provider and family, and sends the resolved exact model reference to the host.
+Use `xhigh` selectively for unusually complex architecture, design, planning,
+difficult debugging, or high-stakes code review; it is not intended for routine
+delegation.
 Model tiers do not imply a thinking level. A descriptor's `model` and `thinking`
 settings are authoritative. When a definition omits either setting, the
 corresponding explicit tool argument applies; when both omit it, the parent

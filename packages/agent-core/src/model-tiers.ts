@@ -1,6 +1,6 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 
-export const MODEL_TIERS = ['high', 'medium', 'low'] as const;
+export const MODEL_TIERS = ['xhigh', 'high', 'medium', 'low'] as const;
 export type ModelTier = typeof MODEL_TIERS[number];
 
 export interface ModelReference {
@@ -107,11 +107,13 @@ function modelPriority(model: ModelReference, tier: ModelTier): number {
   let role = 0;
 
   if (family === 'openai') {
+    if (tier === 'xhigh') role = tokenPriority(id, ['astra']);
     if (tier === 'high') role = tokenPriority(id, ['sol', 'pro']);
     if (tier === 'medium') role = tokenPriority(id, ['terra']);
     if (tier === 'low') role = tokenPriority(id, ['luna', 'nano', 'mini', 'spark']);
   } else if (family === 'anthropic') {
-    if (tier === 'high') role = tokenPriority(id, ['fable', 'opus']);
+    if (tier === 'xhigh') role = tokenPriority(id, ['fable']);
+    if (tier === 'high') role = tokenPriority(id, ['opus']);
   } else if (family === 'google') {
     if (tier === 'high') role = tokenPriority(id, ['pro']);
     if (tier === 'medium') role = tokenPriority(id, ['flash']);
@@ -145,7 +147,7 @@ function modelVersionScore(id: string): number {
 }
 
 function classifyOpenAi(id: string): ModelTier {
-  if (id === 'gpt-6-astra') return 'high';
+  if (/(?:^|-)astra(?:-|$)/u.test(id)) return 'xhigh';
   if (/(?:^|-)(?:luna|nano|mini|spark)(?:-|$)/u.test(id)) return 'low';
   if (/(?:^|-)(?:sol|pro)(?:-|$)/u.test(id) || /(?:^|-)o[13](?:-|$)/u.test(id)) return 'high';
   if (/gpt-5\.5(?:-|$)/u.test(id)) return 'high';
@@ -153,7 +155,8 @@ function classifyOpenAi(id: string): ModelTier {
 }
 
 function classifyAnthropic(id: string): ModelTier {
-  if (/(?:^|-)(?:fable|opus)(?:-|$)/u.test(id)) return 'high';
+  if (/(?:^|-)fable(?:-|$)/u.test(id)) return 'xhigh';
+  if (/(?:^|-)opus(?:-|$)/u.test(id)) return 'high';
   if (/(?:^|-)haiku(?:-|$)/u.test(id)) return 'low';
   return 'medium';
 }
@@ -205,7 +208,8 @@ function classifyGeneric(id: string): ModelTier {
   if (/(?:^|-)(?:flash-lite|nano|mini|small|lite|micro|air|scout|edge|spark)(?:-|$)/u.test(id)) {
     return 'low';
   }
-  if (/(?:^|-)(?:fable|opus|sol|ultra|premier|max|pro|large|reasoner|thinking)(?:-|$)/u.test(id)) {
+  if (/(?:^|-)(?:astra|fable)(?:-|$)/u.test(id)) return 'xhigh';
+  if (/(?:^|-)(?:opus|sol|ultra|premier|max|pro|large|reasoner|thinking)(?:-|$)/u.test(id)) {
     return 'high';
   }
   return parameterTier(id) ?? 'medium';

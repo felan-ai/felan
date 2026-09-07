@@ -9,7 +9,7 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-ask-user',
-      version: '0.3.4',
+      version: '0.4.0',
       type: 'module',
       license: 'MIT',
       engines: { node: '>=22.19.0' },
@@ -17,7 +17,7 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
         '@earendil-works/pi-tui': '0.85.1',
         typebox: '1.1.38',
       },
-      peerDependencies: { '@felan-ai/agent-core': '^0.5.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.6.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
       exports: {

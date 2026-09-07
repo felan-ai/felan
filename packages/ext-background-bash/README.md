@@ -30,9 +30,8 @@ surface instead. Keeping eligibility here gives cloud and local consumers
 identical behavior without duplicating model filters in their composition
 roots.
 
-This release requires `@felan-ai/agent-core` 0.4.11 or newer within the 0.x
-compatible-minor range because it uses the runtime's explicit POSIX shell
-flavor.
+This release requires `@felan-ai/agent-core` `^0.6.0` because it uses the
+runtime's explicit POSIX shell flavor.
 
 ## Tools and controls
 

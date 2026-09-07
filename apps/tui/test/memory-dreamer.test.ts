@@ -166,8 +166,12 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
   it('runs a filesystem-backed Pi session with no extensions or process access', async () => {
     const stagingDirectory = await temporaryDirectory();
     await mkdir(join(stagingDirectory, '.memory'), { recursive: true });
+    await mkdir(join(stagingDirectory, '.memory', 'pages', 'evaluations'), { recursive: true });
     await mkdir(join(stagingDirectory, '.dreaming', 'input'), { recursive: true });
     await writeFile(join(stagingDirectory, '.memory', 'summary.md'), 'existing memory', 'utf8');
+    await writeFile(join(stagingDirectory, '.memory', 'index.md'), '# Memory index', 'utf8');
+    await writeFile(join(stagingDirectory, '.memory', 'pages', 'evaluations', 'index.md'), '# Evaluations', 'utf8');
+    await writeFile(join(stagingDirectory, '.memory', 'pages', 'evaluations', 'stale.md'), 'stale memory', 'utf8');
     await writeFile(join(stagingDirectory, '.dreaming', 'input', 'manifest.json'), '{}', 'utf8');
     const session = fakeSession();
     let captured: Parameters<LocalMemoryDreamSessionFactory>[0] | undefined;
@@ -181,13 +185,15 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     expect(captured?.extensionPackages).toEqual([]);
     expect(captured?.appendSystemPrompt?.[0]).toContain('.dreaming/input');
     expect(captured?.appendSystemPrompt?.[0]).toContain('.memory');
+    expect(captured?.customTools?.map(({ name }) => name)).toEqual(['remove_memory_page']);
     expect(session.bound).toBe(true);
-    expect(session.activeTools).toEqual(['read', 'ls', 'edit', 'write']);
+    expect(session.activeTools).toEqual(['read', 'ls', 'edit', 'write', 'remove_memory_page']);
     expect(session.promptText).toContain('Read .dreaming/input/manifest.json');
     expect(session.promptText).toContain('Keep memory sparse');
     expect(session.promptText).toContain('direct user-authored durable facts');
     expect(session.promptText).toContain('not be cheaply recovered');
     expect(session.promptText).toContain('Delete old repository mirrors');
+    expect(session.promptText).toContain('Use remove_memory_page');
     expect(session.promptText).not.toContain('Return only a JSON object');
     expect(session.disposed).toBe(true);
 
@@ -214,6 +220,39 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
       join(stagingDirectory, '.dreaming', 'input', 'manifest.json'),
       new TextEncoder().encode('tampered'),
     )).rejects.toThrow('outside the staged memory inputs');
+    const removeMemoryPage = captured!.customTools![0]!;
+    await expect(removeMemoryPage.execute(
+      'remove-stale',
+      { path: '.memory/pages/evaluations/stale.md' },
+      undefined,
+      undefined,
+      {} as never,
+    )).resolves.toMatchObject({
+      content: [{ type: 'text', text: 'Removed .memory/pages/evaluations/stale.md' }],
+      details: { path: '.memory/pages/evaluations/stale.md' },
+    });
+    await expect(readFile(join(stagingDirectory, '.memory', 'pages', 'evaluations', 'stale.md'), 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    for (const path of [
+      '.memory/summary.md',
+      '.memory/index.md',
+      '.memory/pages/evaluations/index.md',
+      '.memory/pages/evaluations/InDeX.Md',
+      '.memory/pages/evaluations',
+      '.memory/pages/evaluations/../../index.md',
+      '.dreaming/input/manifest.json',
+      'outside.md',
+    ]) {
+      await expect(removeMemoryPage.execute(
+        'reject-protected-path',
+        { path },
+        undefined,
+        undefined,
+        {} as never,
+      )).rejects.toThrow(
+        'remove_memory_page only removes individual Markdown content pages under .memory/pages',
+      );
+    }
     await expect(runtime.exec('cat', ['.memory/summary.md'])).rejects.toThrow(
       'does not permit process execution',
     );

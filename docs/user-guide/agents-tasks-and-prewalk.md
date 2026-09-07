@@ -150,6 +150,11 @@ or `max`. Pi clamps that request to the target model's capabilities. The
 original planner model and thinking level are restored after the run settles by
 default.
 
+The optional `xhigh` model tier is intended for unusually complex architecture,
+design, planning, difficult debugging, or high-stakes code review. It is
+available to subagents and explicit Prewalk configuration, but is not a routine
+default. This model tier is separate from the `xhigh` thinking level.
+
 The `extensionConfig.prewalk.entryApproval` setting accepts `ask`, `allow`, or
 `deny`. `ask` is the default; cloud or other unattended hosts can choose
 `allow`. Felan also exposes it as the generated

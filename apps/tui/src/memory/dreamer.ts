@@ -3,8 +3,10 @@ import { createReadStream } from 'node:fs';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { Type } from 'typebox';
 import {
   createAgentCoreSession,
+  defineTool,
   HostAgentRuntime,
   SessionManager,
   SettingsManager,
@@ -26,6 +28,7 @@ import {
   createMemoryInputManifest,
   createMemoryDreamerInstructions,
   isMemoryContextEntry,
+  isSafeMemoryPath,
   type MemoryArtifact,
   type MemoryInputManifest,
   type MemoryInputSession,
@@ -69,8 +72,16 @@ export interface LocalMemoryDreamRunnerOptions {
   readonly timeoutMs?: number;
 }
 
-const MEMORY_DREAM_TOOLS = ['read', 'ls', 'edit', 'write'] as const;
+const REMOVE_MEMORY_PAGE_TOOL_NAME = 'remove_memory_page';
+const MEMORY_DREAM_TOOLS = ['read', 'ls', 'edit', 'write', REMOVE_MEMORY_PAGE_TOOL_NAME] as const;
 const DEFAULT_MEMORY_DREAM_TIMEOUT_MS = 60 * 60 * 1_000;
+const RemoveMemoryPageParameters = Type.Object({
+  path: Type.String({
+    minLength: 1,
+    maxLength: 4_096,
+    description: 'Path to an individual Markdown page under .memory/pages',
+  }),
+}, { additionalProperties: false });
 
 export class MemoryModelUnavailableError extends Error {
   constructor() {
@@ -85,7 +96,7 @@ Read .dreaming/input/manifest.json and every transcript listed by that manifest.
 
 Prioritize eligible evidence in this order: (1) direct user-authored durable facts, preferences, decisions, corrections, explicit remember or forget requests, and uncodified rationale; (2) verified non-obvious agent discoveries, incidents, runtime or external-system observations, hidden constraints, and useful unresolved hypotheses. Session records identify provenance: user-role messages are direct user evidence; ordinary tool results, assistant text, subagent output, compaction summaries, and task records are not user-authored evidence. An interactive tool result counts as user evidence only when it explicitly contains the user's answer or feedback.
 
-Do not retain raw tool output, assistant plans or promises, routine task progress, ordinary verification results, transient approvals, repository inventories, implementation details, or repeated paraphrases. Keep a repository-derived conclusion only when it preserves an important rationale, incident, mismatch, or hard-to-rediscover constraint not recorded in the repository. Repetition does not increase importance; merge equivalent claims and keep the strongest provenance. Delete old repository mirrors, transient claims, duplicate claims, overlapping pages, and unnecessary pages during this run, even if they have valid citations.
+Do not retain raw tool output, assistant plans or promises, routine task progress, ordinary verification results, transient approvals, repository inventories, implementation details, or repeated paraphrases. Keep a repository-derived conclusion only when it preserves an important rationale, incident, mismatch, or hard-to-rediscover constraint not recorded in the repository. Repetition does not increase importance; merge equivalent claims and keep the strongest provenance. Delete old repository mirrors, transient claims, duplicate claims, overlapping pages, and unnecessary pages during this run, even if they have valid citations. Use remove_memory_page to delete an individual page; do not replace deleted pages with empty files, redirects, or tombstones.
 
 Edit only Markdown files under .memory; do not modify .dreaming/input or access repositories, integrations, credentials, or unrelated files. Do not return a JSON artifact or a patch. The filesystem under .memory is the output. Before finishing, verify required files, links, page reachability, source provenance, and the memory schema. Return only a concise summary after the staged .memory artifact is complete.`;
 
@@ -211,8 +222,9 @@ export function createDefaultLocalMemoryDreamRunner(
         packages: [], extensions: [], skills: [], prompts: [], themes: [], retry: { enabled: false },
       });
       const createSession = options.createSession ?? (async (sessionOptions) => createAgentCoreSession(sessionOptions));
+      const runtime = createMemoryDreamRuntime(input.stagingDirectory, runtimeDirectory);
       const created = await createSession({
-        runtime: createMemoryDreamRuntime(input.stagingDirectory, runtimeDirectory),
+        runtime,
         agentDir: runtimeDirectory,
         extensionPackages: [],
         importExtension: async (packageName) => {
@@ -222,6 +234,7 @@ export function createDefaultLocalMemoryDreamRunner(
         model,
         settingsManager,
         sessionManager,
+        customTools: [createRemoveMemoryPageTool(runtime)],
         appendSystemPrompt: [createMemoryDreamerInstructions({
           memoryPath: '.memory', inputPath: '.dreaming/input', label: 'project',
         })],
@@ -604,6 +617,42 @@ function createMemoryDreamRuntime(stagingDirectory: string, runtimeDirectory: st
     agentDir: runtimeDirectory,
   });
   return new RestrictedMemoryDreamRuntime(base, resolve(stagingDirectory));
+}
+
+function createRemoveMemoryPageTool(runtime: AgentRuntime) {
+  return defineTool({
+    name: REMOVE_MEMORY_PAGE_TOOL_NAME,
+    label: 'Remove Memory Page',
+    description: 'Delete one staged Markdown content page under .memory/pages. Root files, area indexes, directories, and files outside staged memory cannot be removed.',
+    promptSnippet: 'Delete an obsolete staged memory content page',
+    parameters: RemoveMemoryPageParameters,
+    async execute(_toolCallId, { path }) {
+      const removablePath = removableMemoryPagePath(runtime, path);
+      await runtime.readFile(removablePath);
+      await runtime.remove(removablePath);
+      return {
+        content: [{ type: 'text', text: `Removed ${removablePath}` }],
+        details: { path: removablePath },
+      };
+    },
+  });
+}
+
+function removableMemoryPagePath(runtime: AgentRuntime, path: string): string {
+  if (path.includes('\0')) throw new Error('Memory page path contains a NUL byte');
+  const relativePath = relative(runtime.cwd, resolve(runtime.cwd, path)).split(sep).join('/');
+  const memoryPath = relativePath.startsWith('.memory/')
+    ? relativePath.slice('.memory/'.length)
+    : undefined;
+  if (
+    memoryPath === undefined
+    || !memoryPath.startsWith('pages/')
+    || memoryPath.toLowerCase().endsWith('/index.md')
+    || !isSafeMemoryPath(memoryPath)
+  ) {
+    throw new Error('remove_memory_page only removes individual Markdown content pages under .memory/pages');
+  }
+  return relativePath;
 }
 
 class RestrictedMemoryDreamRuntime implements AgentRuntime {

@@ -96,7 +96,7 @@ resource, skill, tool, and context-inspection symbols needed to compose Felan ap
 consumers import those symbols from `@felan-ai/agent-core` without declaring
 Pi packages directly.
 
-Agent Core also exposes shared `high`, `medium`, and `low` model tiers for
+Agent Core also exposes shared `xhigh`, `high`, `medium`, and `low` model tiers for
 extensions that need model-strength selection:
 
 ```ts
@@ -114,15 +114,18 @@ Callers provide the models already allowed and authenticated by their host.
 Selection prefers candidates from the current provider and model family, then
 falls back across the supplied model scope. `getModelFamily` and
 `getModelStrength` classify the host's live model list with version-independent
-family and role names, so new Opus, Sonnet, Haiku, Sol, Terra, Luna, Pro, Flash,
-Max, and similar releases do not require an exact-ID catalog update. Aggregate
+family and role names, so Claude Fable, GPT Astra, Opus, Sonnet, Haiku, Sol,
+Terra, Luna, Pro, Flash, Max, and similar releases do not require an exact-ID
+catalog update. Aggregate
 providers including OpenCode, OpenCode Go, OpenRouter, and GitHub Copilot are
 classified from each model's identity rather than treated as one family.
 Unknown naming schemes default to `medium`, and hosts can pass a custom
 `classifyModel` function to `selectModelForTier`. Model tiers do not imply a
-thinking level. `FELAN_THINKING_LEVELS` separately defines `off`, `low`,
-`medium`, `high`, `xhigh`, and `max`; `minimal` is outside the Felan-facing
-scale. Agent Core also re-exports Pi's `clampThinkingLevel` so extensions can
+thinking level. `xhigh` is reserved for exceptional model-assisted work such as
+complex architecture, design, planning, difficult debugging, and high-stakes
+code review; it is not a routine default. `FELAN_THINKING_LEVELS` separately
+defines `off`, `low`, `medium`, `high`, `xhigh`, and `max`; `minimal` is outside
+the Felan-facing scale. Agent Core also re-exports Pi's `clampThinkingLevel` so extensions can
 resolve a requested effort against a host-provided model without duplicating
 provider capability rules. Agent Core does not load model-tier configuration or
 resolve credentials.

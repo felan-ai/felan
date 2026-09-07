@@ -109,10 +109,12 @@ checkpoints in the same batch.
 ### 3. Dreamer worker
 
 The worker is one disposable headless Pi session over immutable staged input and
-staged Markdown. It has only `read`, `ls`, `edit`, and `write`; no normal Felan
-extensions, skills, repository context, credentials, or process execution. Its
-only execution failsafe is a one-hour wall-clock timeout. It returns a concise
-summary only after editing the staged filesystem.
+staged Markdown. It has only `read`, `ls`, `edit`, `write`, and
+`remove_memory_page`; no normal Felan extensions, skills, repository context,
+credentials, or process execution. The removal tool can delete only individual
+non-index Markdown pages under the staged `.memory/pages` directory. Its only
+execution failsafe is a one-hour wall-clock timeout. It returns a concise summary
+only after editing the staged filesystem.
 
 The active authenticated root-session model is preferred; another authenticated
 available model may be used when the selected model is unavailable. With no

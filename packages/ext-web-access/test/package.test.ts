@@ -11,11 +11,11 @@ describe('@felan-ai/ext-web-access package boundary', () => {
 
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-web-access',
-      version: '0.5.0',
+      version: '0.6.0',
       description: 'Secure bounded web search and content access for Felan',
       license: 'MIT',
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
-      peerDependencies: { '@felan-ai/agent-core': '^0.5.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.6.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
       scripts: {

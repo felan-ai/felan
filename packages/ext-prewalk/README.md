@@ -99,7 +99,7 @@ Prewalk declares typed settings. Felan exposes them through
 and Agent Core's programmatic configuration API.
 
 ```text
---prewalk-target-model <high|medium|low|provider/model-id>
+--prewalk-target-model <xhigh|high|medium|low|provider/model-id>
 --prewalk-target-thinking <off|low|medium|high|xhigh|max>
 --prewalk-restore-planner
 --no-prewalk-restore-planner
@@ -112,7 +112,8 @@ and Agent Core's programmatic configuration API.
 `planReview` defaults to `inherit`. `inherit` resolves to `ask` when
 `entryApproval` is `ask`, and to `skip` otherwise. An explicit `ask` reviews
 every Prewalk run, including `/prewalk`; `skip` preserves the automatic planning
-and focused-mutation flow.
+and focused-mutation flow. An explicit `xhigh` target is available for unusually
+complex work, but does not change the `low` default.
 The local CLI equivalent is `felan --prewalk-entry-approval allow`. This policy
 applies only to model-called `enter_prewalk`; `/prewalk` is already explicit
 user intent.

@@ -242,7 +242,7 @@ export async function connectMcpServer(
 
   for (const kind of kinds) {
     signal.throwIfAborted();
-    const client = new Client({ name: 'felan-mcp', version: '0.2.0' });
+    const client = new Client({ name: 'felan-mcp', version: '0.3.0' });
     const transport: Transport = kind === 'streamable-http'
       ? new StreamableHTTPClientTransport(new URL(server.url), {
         authProvider: provider,

@@ -50,6 +50,7 @@ function formatSubagentCapability(descriptors: readonly SubagentDescriptor[]): s
   return [
     'Use child agents for independent, parallel, or specialized work when delegation reduces latency or keeps the main context focused.',
     availableTypes,
+    'Use the xhigh model tier selectively for unusually complex architecture, design, planning, difficult debugging, or high-stakes code review; do not use it for routine delegation.',
     'Definition model and thinking settings take precedence over per-call values; otherwise per-call values apply, then the parent settings.',
     'Child agents always run asynchronously. Give each child a self-contained task with a disjoint scope, constraints, and expected output. Do not enter a child-owned scope; if no independent parent work remains, yield and rely on completion notices instead of polling. Cancel a child before taking over its unfinished scope.',
     'Treat max_turns as a hard assistant-turn budget and leave enough room for the child to return a final result.',
@@ -76,7 +77,7 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
     subagent_type: typeSchema,
     model: Type.Optional(Type.String({
       minLength: 1,
-      description: 'For definitions without a model: inherit, high, medium, low, or an exact provider/model reference',
+      description: 'For definitions without a model: inherit, xhigh, high, medium, low, or an exact provider/model reference',
     })),
     thinking: Type.Optional(thinkingSchema),
     max_turns: Type.Optional(Type.Integer({
@@ -233,7 +234,7 @@ function validateSpawn(
   if (model && !isCanonicalModelSelector(model)) {
     return error(
       'unsupported_model',
-      'model must be inherit, high, medium, low, or an exact provider/model reference',
+      'model must be inherit, xhigh, high, medium, low, or an exact provider/model reference',
     );
   }
 }

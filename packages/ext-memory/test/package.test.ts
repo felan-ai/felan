@@ -9,9 +9,9 @@ describe('@felan-ai/ext-memory package boundary', () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-memory',
-      version: '0.3.0',
+      version: '0.4.0',
       license: 'MIT',
-      peerDependencies: { '@felan-ai/agent-core': '^0.5.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.6.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },

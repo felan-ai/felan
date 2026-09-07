@@ -52,14 +52,15 @@ to that request.
 
 Local Felan's host-owned coordinator runs dreaming as a disposable headless Pi
 session over staged `.dreaming/input` and `.memory` directories. The dreamer
-uses only read/list/edit/write file tools, has no normal extensions, skills,
-repository access, or process execution, and returns a summary only after
-editing the staged Markdown artifact. The host validates and publishes that
-filesystem output; failed or cancelled work remains pending. The local worker
-uses the host-selected authenticated session model and may fall back to another
-authenticated available model when that selection is unavailable. It does not
-impose separate turn, tool-call, or per-file I/O budgets; its only execution
-failsafe is a one-hour wall-clock timeout. The host-side evidence
+uses only read/list/edit/write file tools plus a scoped tool that removes
+individual non-index Markdown pages under staged `.memory/pages`. It has no
+normal extensions, skills, repository access, or process execution, and returns
+a summary only after editing the staged Markdown artifact. The host validates
+and publishes that filesystem output; failed or cancelled work remains pending.
+The local worker uses the host-selected authenticated session model and may fall
+back to another authenticated available model when that selection is unavailable.
+It does not impose separate turn, tool-call, or per-file I/O budgets; its only
+execution failsafe is a one-hour wall-clock timeout. The host-side evidence
 materializer is a separate boundary: it streams the checkpoint's visible
 active-branch delta from JSONL, ignores unrelated branches, redacts it, and
 caps each staged transcript at 256 KiB. The dreamer uses the structured session

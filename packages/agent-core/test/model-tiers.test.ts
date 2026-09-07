@@ -4,6 +4,7 @@ import {
   getModelFamily,
   getModelStrength,
   isModelTier,
+  MODEL_TIERS,
   parseModelReference,
   selectModelForTier,
   type ModelReference,
@@ -21,16 +22,19 @@ describe('model tiers', () => {
     });
     expect(formatModelReference(model('anthropic', 'claude-opus-5'))).toBe('anthropic/claude-opus-5');
     expect(parseModelReference('missing-provider')).toBeUndefined();
+    expect(MODEL_TIERS).toEqual(['xhigh', 'high', 'medium', 'low']);
+    expect(isModelTier('xhigh')).toBe(true);
     expect(isModelTier('high')).toBe(true);
     expect(isModelTier('auto')).toBe(false);
   });
 
   it.each([
+    ['anthropic', 'claude-fable-5', 'anthropic', 'xhigh'],
     ['anthropic', 'claude-opus-5', 'anthropic', 'high'],
     ['anthropic', 'claude-sonnet-5', 'anthropic', 'medium'],
     ['anthropic', 'claude-haiku-4-5', 'anthropic', 'low'],
     ['openai-codex', 'gpt-5.7-sol', 'openai', 'high'],
-    ['openai-codex', 'gpt-6-astra', 'openai', 'high'],
+    ['openai-codex', 'gpt-6-astra', 'openai', 'xhigh'],
     ['openai', 'gpt-5.7-terra', 'openai', 'medium'],
     ['openai', 'gpt-5.7-luna', 'openai', 'low'],
     ['google', 'gemini-4-pro-preview', 'google', 'high'],
@@ -51,6 +55,10 @@ describe('model tiers', () => {
   });
 
   it('recognizes model families exposed through OpenCode and other aggregate providers', () => {
+    expect(getModelFamily(model('opencode', 'claude-fable-5'))).toBe('anthropic');
+    expect(getModelStrength(model('opencode', 'claude-fable-5'))).toBe('xhigh');
+    expect(getModelFamily(model('openrouter', 'openai/gpt-6-astra'))).toBe('openai');
+    expect(getModelStrength(model('openrouter', 'openai/gpt-6-astra'))).toBe('xhigh');
     expect(getModelFamily(model('opencode', 'claude-opus-4-8'))).toBe('anthropic');
     expect(getModelStrength(model('opencode', 'claude-opus-4-8'))).toBe('high');
     expect(getModelFamily(model('opencode-go', 'qwen3.7-max'))).toBe('qwen');
@@ -99,15 +107,27 @@ describe('model tiers', () => {
     })?.model).toBe(flashLite);
   });
 
+  it('selects xhigh models without treating them as high-tier candidates', () => {
+    const fable = model('anthropic', 'claude-fable-5');
+    const astra = model('openai-codex', 'gpt-6-astra');
+    const opus = model('anthropic', 'claude-opus-5');
+
+    expect(selectModelForTier('xhigh', [opus, astra, fable], {
+      preferredModel: model('anthropic', 'claude-opus-5'),
+    })?.model).toBe(fable);
+    expect(selectModelForTier('high', [fable, astra, opus])?.model).toBe(opus);
+    expect(selectModelForTier('xhigh', [opus])).toBeUndefined();
+  });
+
   it('classifies unknown families dynamically and supports host overrides', () => {
     const small = model('custom', 'future-small-v2');
     const unknown = model('custom', 'future-standard-v2');
 
     expect(getModelStrength(small)).toBe('low');
     expect(getModelStrength(unknown)).toBe('medium');
-    expect(selectModelForTier('high', [unknown], {
-      classifyModel: () => 'high',
-    })).toEqual({ model: unknown, tier: 'high' });
+    expect(selectModelForTier('xhigh', [unknown], {
+      classifyModel: () => 'xhigh',
+    })).toEqual({ model: unknown, tier: 'xhigh' });
     expect(selectModelForTier('low', [])).toBeUndefined();
   });
 });
