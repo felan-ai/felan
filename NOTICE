@@ -27,9 +27,9 @@ providing bounded automatic names for local interactive root sessions. Its
 package-level license and notice are included in
 packages/ext-session-title/LICENSE and NOTICE.
 
-This product uses Pi 0.85.0 from https://github.com/earendil-works/pi,
+This product uses Pi 0.85.1 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
-It also uses @earendil-works/pi-server 0.85.0 from the same project under the
+It also uses @earendil-works/pi-server 0.85.1 from the same project under the
 MIT License.
 
 @felan-ai/ext-subagents, @felan-ai/ext-ask-user, @felan-ai/ext-tasks,

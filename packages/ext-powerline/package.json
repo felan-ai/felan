@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-powerline",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Terminal powerline extension for Felan",
   "license": "MIT",
   "type": "module",
@@ -31,7 +31,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "0.85.0"
+    "@earendil-works/pi-tui": "0.85.1"
   },
   "peerDependencies": {
     "@felan-ai/agent-core": "^0.5.0"

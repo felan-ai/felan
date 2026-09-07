@@ -57,11 +57,11 @@ for (const [license, entries] of Object.entries(inventory)) {
 }
 
 for (const required of [
-  '@earendil-works/pi-agent-core@0.85.0',
-  '@earendil-works/pi-ai@0.85.0',
-  '@earendil-works/pi-coding-agent@0.85.0',
-  '@earendil-works/pi-server@0.85.0',
-  '@earendil-works/pi-tui@0.85.0',
+  '@earendil-works/pi-agent-core@0.85.1',
+  '@earendil-works/pi-ai@0.85.1',
+  '@earendil-works/pi-coding-agent@0.85.1',
+  '@earendil-works/pi-server@0.85.1',
+  '@earendil-works/pi-tui@0.85.1',
   '@lydell/node-pty@1.2.0-beta.14',
   '@modelcontextprotocol/client@2.0.0',
   '@modelcontextprotocol/core@2.0.0',
@@ -74,8 +74,8 @@ for (const required of [
 
 const notice = readFileSync(resolve(root, 'NOTICE'), 'utf8');
 for (const requiredNotice of [
-  'Pi 0.85.0',
-  '@earendil-works/pi-server 0.85.0',
+  'Pi 0.85.1',
+  '@earendil-works/pi-server 0.85.1',
   '@lydell/node-pty 1.2.0-beta.14',
   'TypeBox 1.1.38',
   'pi-mcp-adapter 2.21.0',
@@ -118,7 +118,7 @@ for (const requiredNotice of [
   '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
   'pi-ask-user 0.14.0',
   '2de7e145227f7a527e995e323a50e7ee9bf88b0e',
-  'Pi-TUI 0.85.0',
+  'Pi-TUI 0.85.1',
   'TypeBox 1.1.38',
 ]) {
   if (!askUserNotice.includes(requiredNotice)) {
@@ -188,7 +188,7 @@ const contextViewNotice = readFileSync(resolve(root, 'packages/ext-context-view/
 for (const requiredNotice of [
   'packages/pi-context',
   '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
-  'Pi-TUI 0.85.0',
+  'Pi-TUI 0.85.1',
 ]) {
   if (!contextViewNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-context-view/NOTICE is missing ${requiredNotice}`);
@@ -202,7 +202,7 @@ const promptHistoryNotice = readFileSync(resolve(root, 'packages/ext-prompt-hist
 for (const requiredNotice of [
   'packages/pi-prompt-history',
   '7e72e509fe45a5a87c4c2e176cb711de994a8c1d',
-  'Pi-TUI 0.85.0',
+  'Pi-TUI 0.85.1',
 ]) {
   if (!promptHistoryNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-prompt-history/NOTICE is missing ${requiredNotice}`);
