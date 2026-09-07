@@ -117,6 +117,22 @@ extension failures return a non-zero status. `--resume` and UI-only commands are
 interactive-only. Headless startup does not open the TUI, run the update check,
 or wait for dependency onboarding.
 
+### Herdr integration
+
+When Felan runs inside Herdr, the local TUI automatically reports its Felan
+session and lifecycle state to Herdr. The integration is active only when Herdr
+provides `HERDR_ENV=1`, `HERDR_PANE_ID`, and `HERDR_SOCKET_PATH`; it reports
+`working`, `idle`, and supported blocking prompts over Herdr's local socket.
+Headless text and JSON sessions do not report terminal-agent state.
+
+This is a local terminal integration and is separate from ACP support. Felan
+reports the `felan` agent identity and its session ID. Herdr versions without a
+native Felan agent kind still accept its lifecycle reports as a custom agent;
+native managed launch and session restoration require Felan support in Herdr.
+Restoration resolves the ID from Felan's configured or default session
+directory, so a one-off `--session-dir` outside that directory cannot be
+restored automatically.
+
 ## Diagnostics
 
 ```sh

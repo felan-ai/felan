@@ -37,6 +37,7 @@ import {
 } from '../src/runtime.js';
 import type { LocalAgentRuntimeFactoryRequest } from '../src/runtime-factory.js';
 import { SAVINGS_COMMAND_EXTENSION_NAME } from '../src/savings-command.js';
+import { HERDR_EXTENSION_NAME } from '../src/herdr.js';
 import { createToolActivityRuntimeView } from '../src/tool-activity/runtime-view.js';
 import { LocalMemoryCoordinator } from '../src/memory/coordinator.js';
 import { builtinExtensionPackages } from '../src/extensions.js';
@@ -244,6 +245,10 @@ describe('local Agent Core lifecycle', () => {
     expect(loadedExtensions.filter((extension) => !extension.hidden)).toEqual([]);
     expect(loadedExtensions).toContainEqual(expect.objectContaining({
       path: `<inline:${SAVINGS_COMMAND_EXTENSION_NAME}>`,
+      hidden: true,
+    }));
+    expect(loadedExtensions).toContainEqual(expect.objectContaining({
+      path: `<inline:${HERDR_EXTENSION_NAME}>`,
       hidden: true,
     }));
     expect(runtime.services.resourceLoader.getSkills().skills.map(({ name }) => name)).toEqual([

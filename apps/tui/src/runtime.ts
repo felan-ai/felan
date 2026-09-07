@@ -60,6 +60,7 @@ import { SavingsService, createModelPriceSource } from './savings.js';
 import { createHash } from 'node:crypto';
 import { installPiAsyncFileLockGuard } from './pi-lock.js';
 import { createThinkingGroupExtension } from './thinking-groups.js';
+import { createHerdrExtension } from './herdr.js';
 import { fileURLToPath } from 'node:url';
 
 installPiAsyncFileLockGuard();
@@ -319,6 +320,7 @@ export function createLocalSessionRuntimeFactory(
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
       inlineExtensions: [
+        createHerdrExtension(),
         dependencyExtension,
         createSavingsCommandExtension(savings),
         createThinkingGroupExtension(),

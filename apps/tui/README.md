@@ -105,6 +105,10 @@ settings and prompt appends, explicit Felan agents and Agent Skills, and the
 Agent Core-selected cwd instruction file. Ambient Pi extensions, packages,
 prompts, themes, project settings, and package resources are filtered.
 
+When launched inside Herdr, the TUI reports its Felan lifecycle and session
+identity through Herdr's inherited local socket environment. This is TUI-only
+and does not enable ambient extensions or ACP.
+
 All built-ins are enabled by default, including the Powerline footer in TUI
 sessions. Binary-backed features can remain inactive until their dependency is
 installed or the feature is disabled through `/dependencies`.
