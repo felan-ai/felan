@@ -1,4 +1,4 @@
-<h1 align="center">Felan</h1>
+<h1 align="center"><img src="docs/assets/felan-logo.svg" alt="" width="38" height="39"> Felan</h1>
 
 <p align="center">
   <strong>Get the job done. Waste less.</strong><br>
