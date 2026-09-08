@@ -4,7 +4,7 @@ import { Type } from 'typebox';
 import type { CbmClient } from './client.js';
 import { asRecord, type ProjectService, type SymbolService } from './services.js';
 import { dispatchRawCommand } from './raw-dispatch.js';
-import { RAW_COMMAND_SCHEMA, RAW_TOOL_CATALOG, type CodebaseMemoryMode } from './raw-catalog.js';
+import { describeRawCommands, RAW_COMMAND_SCHEMA, RAW_TOOL_CATALOG, type CodebaseMemoryMode } from './raw-catalog.js';
 
 const MaxSymbolLines = Type.Optional(Type.Integer({ minimum: 1, maximum: 220, default: 220 }));
 const MaxSearchAndReadSymbolLines = Type.Optional(Type.Integer({ minimum: 1, maximum: 220, default: 120 }));
@@ -35,7 +35,9 @@ export function registerTools(
         name: mode === 'proxy' ? 'codebase_memory' : entry.name,
         label: mode === 'proxy' ? 'codebase_memory' : entry.name,
         description: mode === 'proxy'
-          ? 'Proxy an allowed Codebase Memory command.'
+          ? `Proxy an allowed Codebase Memory command. Pass the command's own fields in "arguments";`
+            + ` a trailing "?" marks an optional field and unknown fields are rejected.`
+            + ` Commands: ${describeRawCommands()}.`
           : entry.description,
         promptSnippet: mode === 'proxy' ? 'Run an allowed Codebase Memory command' : entry.description,
         parameters: mode === 'proxy'

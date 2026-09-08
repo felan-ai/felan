@@ -4,6 +4,7 @@ import codebaseMemoryExtension, {
   CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS,
   createCodebaseMemoryExtension,
 } from '../src/index.js';
+import { RAW_COMMANDS } from '../src/raw-catalog.js';
 import { codebaseMemoryRuntimeDirectory } from '../src/runtime-path.js';
 import { envelope, MemoryRuntime, result } from './test-runtime.js';
 
@@ -18,6 +19,16 @@ describe('Codebase Memory extension', () => {
     const harness = await createHarness(new MemoryRuntime('host', true), undefined, { mode });
     expect(harness.tools.map((tool) => tool.name)).toEqual(expected);
     if (mode !== 'curated') expect(harness.capabilities[0]?.instructions).not.toContain('read_symbol');
+  });
+
+  it('gives proxy mode a discoverable per-command field list', async () => {
+    const harness = await createHarness(new MemoryRuntime('host', true), undefined, { mode: 'proxy' });
+    const description = harness.tools[0]!.description;
+    // The single proxy tool erases the per-command schemas, so its description is
+    // the only place the model can learn field names before calling.
+    expect(description).toContain('search_code(pattern, project?, file_pattern?, path_filter?');
+    expect(description).toContain('get_code_snippet(qualified_name, project?, include_neighbors?)');
+    for (const command of RAW_COMMANDS) expect(description).toContain(`${command}(`);
   });
 
   it('uses the curated capability instructions by default', async () => {

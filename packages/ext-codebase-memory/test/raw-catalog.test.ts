@@ -1,6 +1,6 @@
 import type { ToolDefinition } from '@felan-ai/agent-core';
 import { describe, expect, it } from 'vitest';
-import { RAW_COMMANDS, RAW_TOOL_CATALOG, validateRawArguments } from '../src/raw-catalog.js';
+import { describeRawCommands, RAW_COMMANDS, RAW_TOOL_CATALOG, validateRawArguments } from '../src/raw-catalog.js';
 
 const minimalArguments: Record<string, Record<string, unknown>> = {
   query_graph: { query: 'MATCH (n) RETURN n LIMIT 1' },
@@ -82,6 +82,47 @@ describe('raw command catalog', () => {
     ['list_projects', { offset: 0.5 }],
   ])('validates upstream field constraints for %s', (command, args) => {
     expect(() => validateRawArguments(command as string, args)).toThrow('Invalid arguments');
+  });
+
+  it('describes every command with its required and optional field names', () => {
+    const described = describeRawCommands();
+    for (const tool of RAW_TOOL_CATALOG) {
+      const required = tool.parameters.required ?? [];
+      const all = Object.keys(tool.parameters.properties ?? {});
+      expect(described).toContain(`${tool.name}(${
+        [...required, ...all.filter((field) => !required.includes(field)).map((field) => `${field}?`)].join(', ')
+      })`);
+    }
+    // search_code is the command the model got wrong in benchmarks: it guessed
+    // query/path/max_results for pattern/path_filter/limit.
+    expect(described).toContain('search_code(pattern, project?, file_pattern?, path_filter?');
+    expect(described).not.toContain('max_results');
+  });
+
+  it('names every accepted field on rejection so a retry can succeed', () => {
+    try {
+      validateRawArguments('search_code', { query: 'FelanExtensionAPI', path: 'packages', max_results: 100 });
+      expect.unreachable('Expected argument rejection');
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain('required fields: pattern');
+      for (const field of ['file_pattern', 'path_filter', 'limit', 'mode', 'regex', 'context']) {
+        expect(message).toContain(field);
+      }
+      // Schema field names only - never the caller's values.
+      expect(message).not.toContain('FelanExtensionAPI');
+      expect(message).not.toContain('100');
+    }
+  });
+
+  it('reports commands that accept no required fields without inventing one', () => {
+    try {
+      validateRawArguments('index_status', { unexpected: true });
+      expect.unreachable('Expected argument rejection');
+    } catch (error) {
+      expect((error as Error).message).toContain('required fields: none');
+      expect((error as Error).message).toContain('optional fields: project, verbose');
+    }
   });
 
   it('rejects unsupported commands with bounded errors without leaking argument values', () => {

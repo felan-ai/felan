@@ -185,6 +185,23 @@ export const RAW_TOOL_CATALOG: ReadonlyArray<{
   },
 ];
 
+function commandFields(tool: { parameters: TObject }): { required: string[]; optional: string[] } {
+  const required = tool.parameters.required ?? [];
+  const all = Object.keys(tool.parameters.properties ?? {});
+  return { required: [...required], optional: all.filter((field) => !required.includes(field)) };
+}
+
+// One `name(required, optional?)` entry per command. Proxy mode erases the
+// per-command schemas behind an untyped `arguments` record, so without this the
+// model can only guess field names; every observed proxy failure was a wrong
+// name, not a wrong type.
+export function describeRawCommands(): string {
+  return RAW_TOOL_CATALOG.map((tool) => {
+    const { required, optional } = commandFields(tool);
+    return `${tool.name}(${[...required, ...optional.map((field) => `${field}?`)].join(', ')})`;
+  }).join('; ');
+}
+
 export function validateRawArguments(command: string, args: unknown): Record<string, unknown> {
   const tool = RAW_TOOL_CATALOG.find((entry) => entry.name === command);
   if (!tool) {
@@ -194,9 +211,12 @@ export function validateRawArguments(command: string, args: unknown): Record<str
     throw new Error(`Invalid arguments for ${tool.name}: expected an object.`);
   }
   if (!Check(tool.parameters, args)) {
-    const required = tool.parameters.required?.join(', ') || 'none';
+    // Name every accepted field so a retry can succeed. Schema field names only:
+    // never the caller's argument values.
+    const { required, optional } = commandFields(tool);
     throw new Error(
-      `Invalid arguments for ${tool.name}: expected the command schema; required fields: ${required}. Unknown fields are not allowed.`,
+      `Invalid arguments for ${tool.name}: expected the command schema; required fields: ${required.join(', ') || 'none'};`
+      + ` optional fields: ${optional.join(', ') || 'none'}. Unknown fields are not allowed.`,
     );
   }
   return args as Record<string, unknown>;

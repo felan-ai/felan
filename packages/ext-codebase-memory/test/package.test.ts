@@ -11,7 +11,7 @@ describe('@felan-ai/ext-codebase-memory package boundary', () => {
     const notice = await readFile(join(packageRoot, 'NOTICE'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-codebase-memory',
-      version: '0.3.0',
+      version: '0.3.1',
       peerDependencies: { '@felan-ai/agent-core': '^0.6.0' },
       publishConfig: { access: 'public', provenance: true },
     });
