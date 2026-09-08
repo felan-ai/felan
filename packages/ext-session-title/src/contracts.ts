@@ -8,6 +8,10 @@ import type {
 
 export type SessionTitleMode = 'tui' | 'rpc' | 'json' | 'print';
 
+export interface SessionTitleExtensionOptions {
+  readonly maxAttempts?: number;
+}
+
 export interface SessionTitlePreparationRequest {
   readonly sessionId: string;
   readonly prompt: string;
@@ -21,6 +25,7 @@ export interface SessionTitlePreparation {
   readonly prompt: string;
   readonly provider: string;
   readonly models: readonly Model<Api>[];
+  readonly preferredModel?: Model<Api>;
 }
 
 export interface SessionTitleCompletionRequest {

@@ -10,7 +10,13 @@ import {
   type Model,
   type SessionEntry,
 } from '@felan-ai/agent-core';
-import type { SessionTitleFailureStage, SessionTitleHost, SessionTitlePreparation, SessionTitleSkipReason } from './contracts.js';
+import type {
+  SessionTitleExtensionOptions,
+  SessionTitleFailureStage,
+  SessionTitleHost,
+  SessionTitlePreparation,
+  SessionTitleSkipReason,
+} from './contracts.js';
 
 export * from './contracts.js';
 
@@ -50,17 +56,21 @@ function sanitizeTerminalTitlePart(value: string): string {
   return value.replace(TERMINAL_CONTROL_CHARACTERS, ' ').replace(/\s+/gu, ' ').trim();
 }
 
-export function createSessionTitleExtension(host: SessionTitleHost): FelanExtension {
+export function createSessionTitleExtension(
+  host: SessionTitleHost,
+  options: SessionTitleExtensionOptions = {},
+): FelanExtension {
   return (pi) => {
     let attempts = 0;
     let controller: AbortController | undefined;
     let activeTask: Promise<void> | undefined;
 
     pi.on('before_agent_start', (event, ctx) => {
-      if (attempts >= SESSION_TITLE_MAX_ATTEMPTS || activeTask !== undefined) return;
+      const maxAttempts = normalizeMaxAttempts(options.maxAttempts);
+      if (attempts >= maxAttempts || activeTask !== undefined) return;
       const precheck = precheckSession(ctx.sessionManager.getEntries(), pi.getSessionName());
       if (precheck) {
-        attempts = SESSION_TITLE_MAX_ATTEMPTS;
+        attempts = maxAttempts;
         void reportSkip(host, ctx.sessionManager.getSessionId(), precheck, controller?.signal);
         return;
       }
@@ -73,7 +83,7 @@ export function createSessionTitleExtension(host: SessionTitleHost): FelanExtens
       ]);
       const task = generateSessionTitle(host, pi, ctx, event.prompt, signal, controller.signal)
         .then((outcome) => {
-          if (outcome === 'done' || outcome === 'stop') attempts = SESSION_TITLE_MAX_ATTEMPTS;
+          if (outcome === 'done' || outcome === 'stop') attempts = maxAttempts;
         })
         .finally(() => {
           if (activeTask === task) activeTask = undefined;
@@ -100,10 +110,6 @@ async function generateSessionTitle(
 ): Promise<'done' | 'retry' | 'stop'> {
   const sessionId = ctx.sessionManager.getSessionId();
   const parentSession = ctx.sessionManager.getHeader()?.parentSession;
-  if (ctx.mode !== 'tui') {
-    await reportSkip(host, sessionId, { reason: 'non-tui-mode', detail: ctx.mode }, shutdownSignal);
-    return 'stop';
-  }
   if (parentSession !== undefined) {
     await reportSkip(host, sessionId, { reason: 'forked-session' }, shutdownSignal);
     return 'stop';
@@ -144,7 +150,7 @@ async function generateSessionTitle(
     await reportSkip(host, sessionId, { reason: 'empty-prompt' }, shutdownSignal);
     return 'stop';
   }
-  const model = selectSessionTitleModel(preparation, ctx.model);
+  const model = selectSessionTitleModel(preparation, preparation.preferredModel ?? ctx.model);
   if (!model) {
     await reportSkip(
       host,
@@ -236,6 +242,14 @@ async function generateSessionTitle(
     await reportError(host, ctx, sessionId, 'persist', error, shutdownSignal);
     return 'retry';
   }
+}
+
+function normalizeMaxAttempts(value: number | undefined): number {
+  if (value === undefined) return SESSION_TITLE_MAX_ATTEMPTS;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error('Session title maxAttempts must be a positive safe integer');
+  }
+  return value;
 }
 
 function precheckSession(
@@ -365,6 +379,7 @@ async function reportError(
     } catch {
       return;
     }
+    return;
   }
   try {
     ctx.ui.notify(`Session title generation failed at ${stage}: ${errorMessage(error)}`, 'warning');

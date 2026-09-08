@@ -76,11 +76,15 @@ describe('@felan-ai/ext-session-title', () => {
     }
     expect(complete).toHaveBeenCalledTimes(3);
 
-    const declineHost = { ...testHost(vi.fn()), reportSkip: skip };
+    const declineHost = {
+      ...testHost(vi.fn()),
+      prepare: vi.fn().mockResolvedValue(undefined),
+      reportSkip: skip,
+    };
     const decline = install(createSessionTitleExtension(declineHost), vi.fn(), { mode: 'print' });
     decline.before({ prompt: 'Do work' }, context({ entries: [], mode: 'print' }));
     await vi.waitFor(() => expect(skip).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'session-1', reason: 'non-tui-mode' }),
+      expect.objectContaining({ sessionId: 'session-1', reason: 'host-declined' }),
     ));
   });
 
@@ -115,13 +119,46 @@ describe('@felan-ai/ext-session-title', () => {
     ['existing name', { name: 'Manual name', entries: [] }, false],
     ['follow-up', { entries: [userEntry()] }, false],
     ['fork', { entries: [], parentSession: '/parent.jsonl' }, false],
-    ['headless', { entries: [], mode: 'print' as const }, false],
   ])('does not generate for %s', async (_label, options, shouldCall) => {
     const complete = vi.fn();
     const handlers = install(createSessionTitleExtension(testHost(complete)), vi.fn(), options);
     handlers.before({ prompt: 'Do work' }, context(options));
     await Promise.resolve();
     expect(complete).toHaveBeenCalledTimes(shouldCall ? 1 : 0);
+  });
+
+  it.each(['tui', 'rpc', 'json', 'print'] as const)('generates in %s mode when the host accepts it', async (mode) => {
+    const complete = vi.fn().mockResolvedValue(response('Headless title'));
+    const setSessionName = vi.fn();
+    const host = testHost(complete);
+    const handlers = install(createSessionTitleExtension(host), setSessionName, { mode });
+
+    handlers.before({ prompt: 'Do work' }, context({ entries: [], mode }));
+    await vi.waitFor(() => expect(setSessionName).toHaveBeenCalledWith('Headless title'));
+    expect(host.prepare).toHaveBeenCalledWith(expect.objectContaining({ mode }));
+  });
+
+  it('uses a host-selected preferred model and configured attempt limit', async () => {
+    const complete = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValue(response('Recovered title'));
+    const preferredModel = model('muse-spark-1.3-contributor-free', 5, 5);
+    const host = testHost(complete, [model('cheap', 1, 1), preferredModel]);
+    vi.mocked(host.prepare).mockImplementation(async (request) => ({
+      prompt: request.prompt,
+      provider: 'test',
+      models: [model('cheap', 1, 1), preferredModel],
+      preferredModel,
+    }));
+    const handlers = install(createSessionTitleExtension(host, { maxAttempts: 1 }), vi.fn());
+
+    handlers.before({ prompt: 'Do work' }, context({ entries: [] }));
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    handlers.before({ prompt: 'Retry' }, context({ entries: [] }));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete.mock.calls[0]?.[0].model.id).toBe('muse-spark-1.3-contributor-free');
   });
 
   it('does not overwrite a manual name set while generation is running', async () => {
@@ -163,6 +200,20 @@ describe('@felan-ai/ext-session-title', () => {
     ));
   });
 
+  it('does not require UI notifications when the host reports a failure', async () => {
+    const complete = vi.fn().mockRejectedValue(new Error('title model unavailable'));
+    const reportError = vi.fn();
+    const notify = vi.fn();
+    const host = { ...testHost(complete), reportError };
+    const handlers = install(createSessionTitleExtension(host), vi.fn());
+
+    handlers.before({ prompt: 'Do work' }, context({ entries: [], notify }));
+    await vi.waitFor(() => expect(reportError).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'complete' }),
+    ));
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it('aborts and waits for pending work during shutdown', async () => {
     const complete = vi.fn().mockImplementation(({ options }: { options: { signal: AbortSignal } }) => (
       new Promise((_resolve, reject) => {
@@ -179,7 +230,7 @@ describe('@felan-ai/ext-session-title', () => {
 
 function testHost(complete: ReturnType<typeof vi.fn>, models = [model('cheap', 1, 1)]): SessionTitleHost {
   return {
-    prepare: vi.fn().mockImplementation(async (request) => request.mode === 'tui' && request.parentSession === undefined && request.currentModel
+    prepare: vi.fn().mockImplementation(async (request) => request.parentSession === undefined && request.currentModel
       ? { prompt: request.prompt, provider: request.currentModel.provider, models }
       : undefined),
     complete: complete as SessionTitleHost['complete'],
