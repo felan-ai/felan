@@ -3,6 +3,7 @@ import {
   InteractiveMode,
   resolveCliModel,
   runPrintMode,
+  type AgentSessionRuntimeDiagnostic,
   type PrintModeOptions,
 } from '@earendil-works/pi-coding-agent';
 import type { CreateAgentSessionOptions } from '@felan-ai/agent-core';
@@ -27,6 +28,7 @@ import { installPromptHistoryKeybindingOverride } from './prompt-history.js';
 
 export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly initialMessage?: string;
+  readonly startupDiagnostics?: readonly AgentSessionRuntimeDiagnostic[];
   readonly verbose?: boolean;
 }
 
@@ -70,6 +72,7 @@ export async function runLocalFelan(options: RunLocalFelanOptions = {}): Promise
       memoryCoordinator: _memoryCoordinator,
       sessionManager: _sessionManager,
       skillPaths: _skillPaths,
+      startupDiagnostics: _startupDiagnostics,
       ...restartOptions
     } = nextOptions;
     nextOptions = {
@@ -183,7 +186,10 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
   }) as typeof process.stdout.write;
 
   try {
-    const startupDiagnostics = runtime.diagnostics.filter(({ type }) => type !== 'info');
+    const startupDiagnostics = [
+      ...(options.startupDiagnostics ?? []),
+      ...runtime.diagnostics.filter(({ type }) => type !== 'info'),
+    ];
     const mode = new InteractiveMode(createToolActivityRuntimeView(runtime), {
       ...(options.initialMessage === undefined ? {} : { initialMessage: options.initialMessage }),
       ...(options.verbose === undefined ? {} : { verbose: options.verbose }),

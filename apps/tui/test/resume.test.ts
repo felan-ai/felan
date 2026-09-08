@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
-import { openLocalSessionManager } from '../src/resume.js';
+import { findLocalSessionManager, openLocalSessionManager } from '../src/resume.js';
 
 const temporaryPaths: string[] = [];
 
@@ -56,6 +56,13 @@ describe('local session resume', () => {
     await expect(openLocalSessionManager('missing', sessionDir)).rejects.toThrow(
       "No session found matching 'missing'",
     );
+  });
+
+  it('supports a non-throwing lookup for an unknown session id', async () => {
+    const root = await temporaryDirectory();
+    const sessionDir = join(root, 'missing-sessions');
+
+    await expect(findLocalSessionManager('missing', sessionDir)).resolves.toBeUndefined();
   });
 
   it('keeps explicit resume discovery flat while the picker separately discovers nested memory sessions', async () => {

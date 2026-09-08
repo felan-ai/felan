@@ -218,6 +218,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   }
 
   let sessionManager: SessionManager | undefined;
+  let missingSessionWarning: string | undefined;
   if (resume) {
     const pickSession = dependencies.pickSession
       ?? (await import('./resume.js')).selectLocalSessionManager;
@@ -225,8 +226,12 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     if (!sessionManager) return 0;
   } else if (sessionId !== undefined) {
     const openSession = dependencies.openSession
-      ?? (await import('./resume.js')).openLocalSessionManager;
+      ?? (await import('./resume.js')).findLocalSessionManager;
     sessionManager = await openSession(sessionId, sessionDir);
+    if (!sessionManager) {
+      missingSessionWarning = `Session with id '${sessionId}' was not found. Starting a new session.`;
+      if (mode !== undefined) writeError(`Warning: ${missingSessionWarning}`);
+    }
   }
 
   if (mode !== undefined) {
@@ -242,6 +247,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
       continueRecent,
       ...(sessionManager === undefined ? {} : { sessionManager }),
+      ...(sessionManager !== undefined || sessionDir === undefined ? {} : { sessionDir }),
       ...(cliOverrides.size === 0 ? {} : {
         extensionConfigOverrides: [...cliOverrides].map(([extensionId, values]) => ({
           extensionId,
@@ -260,6 +266,10 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     continueRecent,
     verbose,
     ...(sessionManager === undefined ? {} : { sessionManager }),
+    ...(sessionManager !== undefined || sessionDir === undefined ? {} : { sessionDir }),
+    ...(missingSessionWarning === undefined ? {} : {
+      startupDiagnostics: [{ type: 'warning', message: missingSessionWarning }],
+    }),
     ...(messageParts.length === 0 ? {} : { initialMessage: messageParts.join(' ') }),
     ...(cliOverrides.size === 0 ? {} : {
       extensionConfigOverrides: [...cliOverrides].map(([extensionId, values]) => ({

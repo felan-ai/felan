@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AGENT_CORE_VERSION } from '@felan-ai/agent-core';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
@@ -182,6 +185,61 @@ describe('felan CLI', () => {
       sessionDir: 'C:\\Users\\35988\\.felan\\sessions',
     }]);
     expect(launches[0]?.sessionManager).toBe(sessionManager);
+  });
+
+  it('starts a new interactive session with a warning when the requested session is missing', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+    const root = await mkdtemp(join(tmpdir(), 'felan-cli-'));
+    const sessionDir = join(root, 'missing-sessions');
+
+    const exitCode = await runCli([
+      '--session-dir', sessionDir,
+      '--session', '01a07c3c-8baf-7219-87e5-6ab6f35cc3bb',
+    ], { launch: async (options) => launches.push(options) }).finally(
+      () => rm(root, { force: true, recursive: true }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(launches).toEqual([{
+      continueRecent: false,
+      verbose: false,
+      sessionDir,
+      startupDiagnostics: [{
+        type: 'warning',
+        message: "Session with id '01a07c3c-8baf-7219-87e5-6ab6f35cc3bb' was not found. Starting a new session.",
+      }],
+    }]);
+  });
+
+  it('starts a new headless session and writes a warning when the requested session is missing', async () => {
+    const errors: string[] = [];
+    const launches: unknown[] = [];
+    const root = await mkdtemp(join(tmpdir(), 'felan-cli-'));
+    const sessionDir = join(root, 'missing-sessions');
+
+    const exitCode = await runCli([
+      '--mode', 'text',
+      '--session-dir', sessionDir,
+      '--session', 'missing',
+      'inspect', 'this',
+    ], {
+      writeError: (line) => errors.push(line),
+      launchHeadless: async (options) => {
+        launches.push(options);
+        return 7;
+      },
+    }).finally(() => rm(root, { force: true, recursive: true }));
+
+    expect(exitCode).toBe(7);
+    expect(errors).toEqual([
+      "Warning: Session with id 'missing' was not found. Starting a new session.",
+    ]);
+    expect(launches).toEqual([{
+      mode: 'text',
+      initialMessage: 'inspect this',
+      continueRecent: false,
+      sessionDir,
+    }]);
   });
 
   it('rejects conflicting resume flags before selection or launch', async () => {

@@ -504,6 +504,25 @@ describe('interactive application', () => {
     }]);
   });
 
+  it('forwards caller diagnostics as visible startup notices', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+
+    await runLocalFelan({
+      cwd,
+      agentDir,
+      startupDiagnostics: [{ type: 'warning', message: 'Requested session was not found.' }],
+    });
+
+    expect(interactive.modeOptions).toEqual([{
+      tuiMode: 'fullscreen',
+      initialThemeSetting: 'felan-light/felan-dark',
+      startupDiagnostics: [{ type: 'warning', message: 'Requested session was not found.' }],
+    }]);
+  });
+
   it('disposes the runtime when InteractiveMode.run fails', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

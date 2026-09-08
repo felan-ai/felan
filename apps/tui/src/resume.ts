@@ -32,6 +32,15 @@ export async function openLocalSessionManager(
   sessionId: string,
   sessionDirOverride?: string,
 ): Promise<SessionManager> {
+  const sessionManager = await findLocalSessionManager(sessionId, sessionDirOverride);
+  if (!sessionManager) throw new Error(`No session found matching '${sessionId}'`);
+  return sessionManager;
+}
+
+export async function findLocalSessionManager(
+  sessionId: string,
+  sessionDirOverride?: string,
+): Promise<SessionManager | undefined> {
   const cwd = process.cwd();
   const agentDir = getLocalAgentDir();
   const sessionDir = sessionDirOverride
@@ -40,6 +49,5 @@ export async function openLocalSessionManager(
   const sessions = await SessionManager.listAll(sessionDir);
   const session = sessions.find(({ id }) => id === sessionId)
     ?? sessions.find(({ id }) => id.startsWith(sessionId));
-  if (!session) throw new Error(`No session found matching '${sessionId}'`);
-  return SessionManager.open(session.path, sessionDir);
+  return session ? SessionManager.open(session.path, sessionDir) : undefined;
 }
