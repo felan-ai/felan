@@ -15,6 +15,7 @@ interface CacheManifest { version: 1; entries: CacheEntry[] }
 
 export class CacheManager {
   readonly maxBytes: number;
+  private readonly storageScope: 'agent' | 'session';
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -22,8 +23,10 @@ export class CacheManager {
     private readonly telemetry: CodebaseMemoryTelemetry = () => {},
     private readonly onEvict: (project: string) => Promise<void> = async () => {},
     private readonly measureBytes?: () => Promise<number>,
+    storageScope: 'agent' | 'session' = 'agent',
   ) {
     this.maxBytes = maxBytes;
+    this.storageScope = storageScope;
   }
 
   record(project: string, bytes: number, lastAccessedAt = Date.now()): Promise<void> {
@@ -32,41 +35,39 @@ export class CacheManager {
       const entries = manifest.entries.filter((entry) => entry.project !== project);
       entries.push({ project, bytes: Math.max(0, bytes), lastAccessedAt });
       entries.sort((left, right) => left.lastAccessedAt - right.lastAccessedAt);
-      let total = this.measureBytes
-        ? await this.measureBytes()
-        : entries.reduce((sum, entry) => sum + entry.bytes, 0);
+      let total = await this.#measureBytes(entries);
       while (total > this.maxBytes && entries.length > 0) {
         const evicted = entries.shift();
         if (!evicted) break;
         await this.onEvict(evicted.project);
-        await this.runtime.storage('agent').remove(
+        await this.runtime.storage(this.storageScope).remove(
           `codebase-memory/cache/${projectStorageKey(evicted.project)}`,
           { recursive: true },
         ).catch(() => {});
-        total = this.measureBytes ? await this.measureBytes() : total - evicted.bytes;
+        total = await this.#measureBytes(entries);
         this.telemetry('cache_eviction', {
           projectKey: projectStorageKey(evicted.project),
           bytes: evicted.bytes,
           maxBytes: this.maxBytes,
         });
       }
-      await this.runtime.storage('agent').mkdir('codebase-memory', { recursive: true });
+      await this.runtime.storage(this.storageScope).mkdir('codebase-memory', { recursive: true });
       if (entries.some((entry) => entry.project === project)) {
         const storageKey = projectStorageKey(project);
-        await this.runtime.storage('agent').mkdir(`codebase-memory/cache/${storageKey}`, { recursive: true });
-        await this.runtime.storage('agent').writeFile(
+        await this.runtime.storage(this.storageScope).mkdir(`codebase-memory/cache/${storageKey}`, { recursive: true });
+        await this.runtime.storage(this.storageScope).writeFile(
           `codebase-memory/cache/${storageKey}/.felan-lru`,
           encoder.encode(String(lastAccessedAt)),
         );
       }
-      await this.runtime.storage('agent').writeFile('codebase-memory/lru.json', encoder.encode(JSON.stringify({ version: 1, entries })));
+      await this.runtime.storage(this.storageScope).writeFile('codebase-memory/lru.json', encoder.encode(JSON.stringify({ version: 1, entries })));
       this.telemetry('cache_size', { bytes: total, maxBytes: this.maxBytes, projects: entries.length });
     });
   }
 
   async #readManifest(): Promise<CacheManifest> {
     try {
-      const parsed = JSON.parse(decoder.decode(await this.runtime.storage('agent').readFile(
+      const parsed = JSON.parse(decoder.decode(await this.runtime.storage(this.storageScope).readFile(
         'codebase-memory/lru.json',
         { maxBytes: MAX_MANIFEST_BYTES },
       ))) as Record<string, unknown>;
@@ -89,8 +90,13 @@ export class CacheManager {
     }
   }
 
+  async #measureBytes(entries: readonly CacheEntry[]): Promise<number> {
+    if (this.measureBytes) return this.measureBytes();
+    return entries.reduce((sum, entry) => sum + entry.bytes, 0);
+  }
+
   async #run(operation: () => Promise<void>): Promise<void> {
-    const key = this.runtime.storage('agent').root;
+    const key = `${this.storageScope}:${this.runtime.storage(this.storageScope).root}`;
     const previous = cacheControls.get(key) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => { release = resolve; });

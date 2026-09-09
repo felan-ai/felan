@@ -38,6 +38,19 @@ export function validateAutoIndexPath(path: string): AutoIndexPathValidation {
   return { ok: true, path: normalized };
 }
 
+export function validateConfiguredAutoIndexPath(value: unknown): string | undefined {
+  if (typeof value !== 'string') return 'must be a string';
+  if (value === '') return undefined;
+  if (value !== value.trim()) return 'must not include leading or trailing whitespace';
+  if (value.includes('\0')) return 'must not contain NUL bytes';
+  if (!isAbsoluteRuntimePath(value)) return 'must be an absolute path';
+  if (value.split(/[\\/]+/u).some((segment) => segment === '.' || segment === '..')) {
+    return 'must not contain dot path segments';
+  }
+  const validation = validateAutoIndexPath(value);
+  return validation.ok ? undefined : validation.reason;
+}
+
 function isHomeDirectory(path: string): boolean {
   return /^\/(?:Users|home)\/[^/]+$/iu.test(path);
 }
@@ -51,4 +64,8 @@ function normalizePath(path: string): string {
   if (!path) return '';
   const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
   return normalized || '/';
+}
+
+function isAbsoluteRuntimePath(path: string): boolean {
+  return path.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(path) || /^\\\\/u.test(path);
 }

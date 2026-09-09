@@ -42,7 +42,10 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
       const client = clientLease.client;
       const configured = pi.config.maxCacheBytes;
       const maxCacheBytes = typeof configured === 'number' && configured > 0 ? configured : undefined;
-      projects = new ProjectService(pi.runtime, client, maxCacheBytes, telemetry);
+      const autoIndexPath = typeof pi.config.autoIndexPath === 'string' && pi.config.autoIndexPath.trim()
+        ? pi.config.autoIndexPath
+        : undefined;
+      projects = new ProjectService(pi.runtime, client, maxCacheBytes, telemetry, autoIndexPath);
       const symbols = new SymbolService(client, projects);
       const mode = pi.config.mode === 'direct' || pi.config.mode === 'proxy' ? pi.config.mode : 'curated';
       pi.registerCapability({ id: 'codebase-memory', instructions: capabilityInstructions(mode) });

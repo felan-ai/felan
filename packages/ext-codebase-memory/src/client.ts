@@ -102,6 +102,7 @@ export class CbmClient {
   #session: CbmMcpSession | undefined;
   #sessionStart: Promise<CbmMcpSession> | undefined;
   #closed = false;
+  readonly #cacheStorageScope: 'agent' | 'session';
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -109,7 +110,8 @@ export class CbmClient {
   ) {
     const agentStorageRoot = runtime.storage('agent').root;
     const runtimeDirectory = codebaseMemoryRuntimeDirectory(agentStorageRoot);
-    this.cacheRoot = joinRuntimePath(agentStorageRoot, 'codebase-memory/cache');
+    this.#cacheStorageScope = runtime.kind === 'host' ? 'agent' : 'session';
+    this.cacheRoot = joinRuntimePath(runtime.storage(this.#cacheStorageScope).root, 'codebase-memory/cache');
     this.runtimeRoot = runtimeDirectory.root;
     this.#runtimeStoragePath = runtimeDirectory.storagePath;
   }
@@ -130,6 +132,17 @@ export class CbmClient {
   async close(): Promise<void> {
     this.#closed = true;
     await this.#closeSession();
+  }
+
+  async measureCacheBytes(): Promise<number> {
+    const listed = await this.call('list_projects', {});
+    const projects = Array.isArray(asRecord(listed.data).projects)
+      ? asRecord(listed.data).projects as unknown[]
+      : [];
+    return projects.reduce<number>((total, project) => {
+      const bytes = asRecord(project).size_bytes;
+      return total + (typeof bytes === 'number' && Number.isFinite(bytes) && bytes >= 0 ? bytes : 0);
+    }, 0);
   }
 
   async #closeSession(): Promise<void> {

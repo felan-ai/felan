@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { validateAutoIndexPath } from '../src/auto-index-paths.js';
+import {
+  validateAutoIndexPath,
+  validateConfiguredAutoIndexPath,
+} from '../src/auto-index-paths.js';
 
 describe('validateAutoIndexPath', () => {
   it('accepts a normal project path', () => {
@@ -77,5 +80,23 @@ describe('validateAutoIndexPath', () => {
       ok: true,
       path: 'C:/Users/alice/Projects/felan',
     });
+  });
+});
+
+describe('validateConfiguredAutoIndexPath', () => {
+  it('accepts empty configuration and absolute runtime paths', () => {
+    expect(validateConfiguredAutoIndexPath('')).toBeUndefined();
+    expect(validateConfiguredAutoIndexPath('/work/repos')).toBeUndefined();
+    expect(validateConfiguredAutoIndexPath('C:\\work\\repos')).toBeUndefined();
+    expect(validateConfiguredAutoIndexPath('\\\\server\\share\\repos')).toBeUndefined();
+  });
+
+  it('rejects unsafe or ambiguous configured roots', () => {
+    expect(validateConfiguredAutoIndexPath('work/repos')).toBe('must be an absolute path');
+    expect(validateConfiguredAutoIndexPath('/work/repos/../etc')).toContain('dot path segments');
+    expect(validateConfiguredAutoIndexPath(' /work/repos')).toContain('whitespace');
+    expect(validateConfiguredAutoIndexPath('/work/repos\0other')).toContain('NUL');
+    expect(validateConfiguredAutoIndexPath('/')).toContain('filesystem root');
+    expect(validateConfiguredAutoIndexPath('/Users/alice')).toContain('home directory');
   });
 });

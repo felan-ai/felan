@@ -8,6 +8,7 @@ import {
 } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { acquireCbmClient, CbmClient } from '../src/client.js';
+import { envelope, MemoryRuntime, result } from './test-runtime.js';
 
 const temporaryRoots: string[] = [];
 
@@ -16,6 +17,22 @@ afterEach(async () => {
 });
 
 describe('CbmClient stdio transport', () => {
+  it('uses session-visible cache storage for one-shot cloud calls', async () => {
+    const runtime = new (class extends MemoryRuntime {
+      override async shell(command: string, options?: Record<string, unknown>) {
+        this.shellCalls.push({ command, ...(options === undefined ? {} : { options }) });
+        return result(envelope({ projects: [] }));
+      }
+    })('daytona', true, undefined, '/agent-storage', '/work/.felan');
+    const client = new CbmClient(runtime, { command: 'codebase-memory-mcp', version: '0.10.8', source: 'path' });
+
+    await client.call('list_projects', {});
+
+    expect(runtime.shellCalls[0]?.options).toMatchObject({
+      env: { CBM_CACHE_DIR: '/work/.felan/codebase-memory/cache' },
+    });
+  });
+
   it('initializes once, reuses one frontend, and closes it cleanly', async () => {
     const { workspace, session, agent, script } = await fixture();
     const runtime = new HostAgentRuntime(workspace, { sessionStorageRoot: session, agentStorageRoot: agent });

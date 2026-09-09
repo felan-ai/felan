@@ -35,15 +35,23 @@ describe('Codebase Memory real binary', () => {
       mkdir(sessionStorageRoot, { recursive: true }),
       mkdir(managedDirectory, { recursive: true }),
     ]);
-    await writeFile(join(workspace, 'answer.ts'), 'export function answer() { return 42; }\n');
-    await runGit(workspace, ['init', '-q']);
-    await runGit(workspace, ['add', 'answer.ts']);
-    await runGit(workspace, ['-c', 'user.name=Felan', '-c', 'user.email=felan@example.test', 'commit', '-qm', 'fixture']);
+    const repositories = join(workspace, 'repos');
+    const firstRepository = join(repositories, 'repo-a');
+    const secondRepository = join(repositories, 'repo-b');
+    await mkdir(firstRepository, { recursive: true });
+    await mkdir(secondRepository, { recursive: true });
+    await writeFile(join(firstRepository, 'answer.ts'), 'export function answer() { return 42; }\n');
+    await writeFile(join(secondRepository, 'other.ts'), 'export function other() { return 84; }\n');
+    for (const repository of [firstRepository, secondRepository]) {
+      await runGit(repository, ['init', '-q']);
+      await runGit(repository, ['add', '.']);
+      await runGit(repository, ['-c', 'user.name=Felan', '-c', 'user.email=felan@example.test', 'commit', '-qm', 'fixture']);
+    }
 
     const managedBinary = join(managedDirectory, 'codebase-memory-mcp');
     await symlink(binary!, managedBinary);
     const runtime = new HostAgentRuntime(workspace, { sessionStorageRoot, agentStorageRoot });
-    const harness = await createHarness(runtime);
+    const harness = await createHarness(runtime, { autoIndexPath: repositories });
 
     expect(harness.tools.map(({ name }) => name)).toEqual([
       'codebase_memory',
@@ -62,13 +70,14 @@ describe('Codebase Memory real binary', () => {
     expect(byNameAndFile.snippet.source).toContain('return 42');
     const byQualifiedName = await readSymbolPayload(harness.tools[1]!, { qualified_name: byNameAndFile.symbol.qualified_name });
     expect(byQualifiedName.snippet.source).toContain('return 42');
+    expect(await readSymbol(harness.tools[1]!, 'other')).toContain('return 84');
 
-    await writeFile(join(workspace, 'answer.ts'), 'export function changedAnswer() { return 84; }\n');
+    await writeFile(join(firstRepository, 'answer.ts'), 'export function changedAnswer() { return 84; }\n');
     expect(await readSymbol(harness.tools[1]!, 'changedAnswer')).toContain('No matching symbol found');
     await executeTool(harness.tools[0]!, { command: 'index_repository' });
     expect(await readSymbol(harness.tools[1]!, 'changedAnswer')).toContain('return 84');
 
-    await writeFile(join(workspace, 'answer.ts'), 'export function slashAnswer() { return 126; }\n');
+    await writeFile(join(firstRepository, 'answer.ts'), 'export function slashAnswer() { return 126; }\n');
     await harness.commandHandlers.get('codebase-memory')?.('refresh', harness.context);
     expect(await readSymbol(harness.tools[1]!, 'slashAnswer')).toContain('return 126');
     await harness.emit('session_shutdown', { reason: 'quit' });
@@ -83,7 +92,7 @@ describe('Codebase Memory real binary', () => {
   }, 120_000);
 });
 
-async function createHarness(runtime: HostAgentRuntime) {
+async function createHarness(runtime: HostAgentRuntime, config: Record<string, unknown> = {}) {
   const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => unknown>>();
   const tools: ToolDefinition[] = [];
   const capabilities: string[] = [];
@@ -102,7 +111,7 @@ async function createHarness(runtime: HostAgentRuntime) {
   } as unknown as ExtensionContext;
   const api = {
     runtime,
-    config: { maxCacheBytes: 0 },
+    config: { maxCacheBytes: 0, ...config },
     registerTool: (tool: ToolDefinition) => tools.push(tool),
     registerCapability: (capability: { id: string }) => capabilities.push(capability.id),
     registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionContext) => Promise<void> | void }) => {

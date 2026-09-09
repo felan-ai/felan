@@ -110,6 +110,24 @@ describe('Codebase Memory extension', () => {
     });
   });
 
+  it('auto-indexes a configured aggregate root instead of the runtime Git root', async () => {
+    const runtime = new MemoryRuntime('daytona', true, async (command) => {
+      if (command.includes('index_repository')) return result(envelope({ status: 'indexed', project: 'repos' }));
+      if (command.includes('list_projects')) return result(envelope({ projects: [] }));
+      return result(envelope({}));
+    });
+    runtime.gitTopLevel = '/work/repos/one';
+    const harness = await createHarness(runtime, codebaseMemoryExtension, { autoIndexPath: '/work/repos' });
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    await vi.waitFor(() => {
+      const indexed = runtime.shellCalls.find((call) => call.command.includes('index_repository'))?.command ?? '';
+      expect(indexed).toContain('/work/repos');
+      expect(indexed).not.toContain('/work/repos/one');
+    });
+  });
+
   it('skips auto-indexing when launched in user home directory without git', async () => {
     const runtime = new MemoryRuntime('host', true);
     runtime.cwd = '/Users/alice';

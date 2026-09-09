@@ -55,9 +55,11 @@ reviewed binary on `PATH` in the execution image.
 ## Cache and limits
 
 Codebase Memory data is rooted at
-`AgentRuntime.storage('agent')/codebase-memory/cache`, so root sessions and
-subagents using the same root-session storage coordinate through one frontend
-and index. No tenant key is added inside that already scoped runtime storage.
+`AgentRuntime.storage('agent')/codebase-memory/cache` on host runtimes and
+`AgentRuntime.storage('session')/codebase-memory/cache` on Docker and Daytona.
+The session-scoped cloud location is visible to the workspace process while
+remaining isolated between root sessions. Root sessions and subagents using
+the same root-session storage coordinate through one frontend and index.
 
 Daemon coordination remains keyed by that agent-storage root. POSIX runtimes
 use an owner-private `/tmp/felan-cbm-<key>` rendezvous so CBM's Unix socket path
@@ -75,6 +77,12 @@ the canonical sticky `/tmp` parent. Windows keeps the rendezvous under
 Set `extensionConfig.codebaseMemory.maxCacheBytes` to a positive integer to
 override the runtime cache limit. The persisted default `0` means “use the
 runtime-specific limit”; it is not a zero-byte cache.
+
+Set `extensionConfig.codebaseMemory.autoIndexPath` to an absolute directory to
+index that directory at session startup instead of resolving the Git root or
+runtime cwd. Cloud hosts can use the workspace's nested repository aggregate
+directory, such as `/work/repos`; the reviewed binary's filesystem-root and
+shallow-root protections remain in force.
 
 ## Public API
 

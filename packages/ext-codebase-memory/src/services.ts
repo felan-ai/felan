@@ -20,10 +20,11 @@ export class ProjectService {
     private readonly client: CbmClient,
     maxCacheBytes: number | undefined,
     private readonly telemetry: CodebaseMemoryTelemetry,
+    private readonly configuredRoot?: string,
   ) {
     this.#cache = new CacheManager(runtime, maxCacheBytes, telemetry, async (project) => {
       await client.call('delete_project', { project }).catch(() => {});
-    });
+    }, () => client.measureCacheBytes(), runtime.kind === 'host' ? 'agent' : 'session');
   }
 
   async gitRoot(signal?: AbortSignal, timeout = 10_000): Promise<string | undefined> {
@@ -39,7 +40,7 @@ export class ProjectService {
 
   async index(signal?: AbortSignal, repoPath?: string): Promise<IndexResult> {
     const targetPath = typeof repoPath === 'string' && repoPath.trim() ? repoPath.trim() : undefined;
-    const root = targetPath ?? (await this.gitRoot(signal)) ?? this.runtime.cwd;
+    const root = targetPath ?? this.configuredRoot ?? (await this.gitRoot(signal)) ?? this.runtime.cwd;
     if (targetPath === undefined) {
       const validation = validateAutoIndexPath(root);
       if (!validation.ok) {
@@ -101,7 +102,7 @@ export class ProjectService {
   async autoIndexRejectionReason(signal?: AbortSignal, timeoutMs?: number): Promise<string | undefined> {
     if (this.#project) return undefined;
     if (this.#skipReason) return this.#skipReason;
-    const root = (await this.gitRoot(signal, timeoutMs)) ?? this.runtime.cwd;
+    const root = this.configuredRoot ?? (await this.gitRoot(signal, timeoutMs)) ?? this.runtime.cwd;
     const clientIndexes = activeIndexes.get(this.client);
     const inFlight = clientIndexes?.get(root);
     if (inFlight) {
@@ -125,7 +126,7 @@ export class ProjectService {
 
   async project(signal?: AbortSignal, timeoutMs?: number): Promise<string> {
     if (this.#project) return this.#project;
-    const root = (await this.gitRoot(signal, timeoutMs)) ?? this.runtime.cwd;
+    const root = this.configuredRoot ?? (await this.gitRoot(signal, timeoutMs)) ?? this.runtime.cwd;
     const listed = await this.client.call('list_projects', {}, {
       ...(signal === undefined ? {} : { signal }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),

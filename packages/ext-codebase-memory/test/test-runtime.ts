@@ -12,6 +12,7 @@ export class MemoryRuntime implements AgentRuntime {
   readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly shellCalls: Array<{ command: string; options?: Record<string, unknown> }> = [];
   readonly #storage: AgentRuntimeStorage;
+  readonly #sessionStorage: AgentRuntimeStorage;
   readonly privateRuntime = {
     ensureDirectory: async (_namespace: string) => codebaseMemoryRuntimeDirectory(this.storageRoot).root,
   };
@@ -23,30 +24,17 @@ export class MemoryRuntime implements AgentRuntime {
     readonly available = true,
     readonly shellHandler: (command: string, options?: Record<string, unknown>) => Promise<ExecResult> = async () => result(),
     storageRoot = '/agent-storage',
+    sessionStorageRoot = storageRoot,
   ) {
-    this.#storage = {
-      root: storageRoot,
-      readFile: async (path) => {
-        const bytes = this.files.get(path);
-        if (!bytes) throw Object.assign(new Error(`Missing ${path}`), { code: 'ENOENT' });
-        return bytes.slice();
-      },
-      writeFile: async (path, content) => { this.files.set(path, content.slice()); },
-      listFiles: async (path) => [...this.files.keys()]
-        .filter((entry) => entry.startsWith(`${path}/`))
-        .map((entry) => entry.slice(path.length + 1)),
-      mkdir: async () => {},
-      remove: async (path, options) => {
-        for (const key of [...this.files.keys()]) {
-          if (key === path || (options?.recursive && key.startsWith(`${path}/`))) this.files.delete(key);
-        }
-      },
-    };
+    this.#storage = createStorage(storageRoot, this.files);
+    this.#sessionStorage = createStorage(sessionStorageRoot, this.files);
   }
 
   get storageRoot(): string { return this.#storage.root; }
 
-  storage(): AgentRuntimeStorage { return this.#storage; }
+  storage(scope: 'session' | 'agent' = 'session'): AgentRuntimeStorage {
+    return scope === 'agent' ? this.#storage : this.#sessionStorage;
+  }
 
   async exec(command: string, args: readonly string[], options?: ExecOptions): Promise<ExecResult> {
     this.execCalls.push({ command, args, ...(options === undefined ? {} : { options }) });
@@ -70,6 +58,27 @@ export class MemoryRuntime implements AgentRuntime {
   async listFiles(): Promise<string[]> { throw new Error('unused'); }
   async mkdir(): Promise<void> { throw new Error('unused'); }
   async remove(): Promise<void> { throw new Error('unused'); }
+}
+
+function createStorage(root: string, files: Map<string, Uint8Array>): AgentRuntimeStorage {
+  return {
+      root,
+      readFile: async (path) => {
+        const bytes = files.get(path);
+        if (!bytes) throw Object.assign(new Error(`Missing ${path}`), { code: 'ENOENT' });
+        return bytes.slice();
+      },
+      writeFile: async (path, content) => { files.set(path, content.slice()); },
+      listFiles: async (path) => [...files.keys()]
+        .filter((entry) => entry.startsWith(`${path}/`))
+        .map((entry) => entry.slice(path.length + 1)),
+      mkdir: async () => {},
+      remove: async (path, options) => {
+        for (const key of [...files.keys()]) {
+          if (key === path || (options?.recursive && key.startsWith(`${path}/`))) files.delete(key);
+        }
+      },
+    };
 }
 
 export function result(stdout = '', code = 0, stderr = ''): ExecResult {

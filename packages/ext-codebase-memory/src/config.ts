@@ -1,4 +1,5 @@
 import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
+import { validateConfiguredAutoIndexPath } from './auto-index-paths.js';
 
 export const CODEBASE_MEMORY_CONFIG = defineExtensionConfig({
   id: 'codebaseMemory',
@@ -7,6 +8,11 @@ export const CODEBASE_MEMORY_CONFIG = defineExtensionConfig({
     mode: configField.enum(['curated', 'direct', 'proxy'], {
       default: 'curated',
       description: 'Model-facing Codebase Memory tool surface',
+    }),
+    autoIndexPath: configField.string({
+      default: '',
+      description: 'Absolute directory to index at session startup; empty uses the Git root or runtime cwd',
+      validate: validateConfiguredAutoIndexPath,
     }),
     maxCacheBytes: configField.number({
       default: 0,
