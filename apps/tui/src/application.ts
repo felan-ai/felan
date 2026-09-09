@@ -18,6 +18,7 @@ import { createToolActivityRuntimeView } from './tool-activity/runtime-view.js';
 import { checkForFelanUpdate } from './update.js';
 import { showFelanUpdateNotification } from './update-notification.js';
 import { CwdChangeRequested, installFelanCwdCommand } from './cwd-command.js';
+import { RestartRequested, installFelanRestartCommand } from './restart-command.js';
 import { installFelanSettingsCommand } from './extension-settings.js';
 import { installFelanTuiCompatibility } from './tui-compatibility.js';
 import {
@@ -25,11 +26,14 @@ import {
   promptHistoryExtensionPackage,
 } from './extensions.js';
 import { installPromptHistoryKeybindingOverride } from './prompt-history.js';
+import { restartFelanProcess, type RestartProcess } from './process-restart.js';
 
 export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly initialMessage?: string;
   readonly startupDiagnostics?: readonly AgentSessionRuntimeDiagnostic[];
   readonly verbose?: boolean;
+  readonly restartProcess?: RestartProcess;
+  readonly restartArgs?: readonly string[];
 }
 
 export interface RunLocalFelanHeadlessOptions extends Omit<CreateLocalFelanRuntimeOptions, 'model'> {
@@ -185,6 +189,7 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
     return previousStdoutWrite.call(process.stdout, chunk, ...args as never[]);
   }) as typeof process.stdout.write;
 
+  let restartRequested = false;
   try {
     const startupDiagnostics = [
       ...(options.startupDiagnostics ?? []),
@@ -215,6 +220,9 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
       isIdle: () => runtime.session.isIdle,
       ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
     });
+    installFelanRestartCommand(mode, {
+      isIdle: () => runtime.session.isIdle,
+    });
     installFelanStartupHeader(mode, {
       expanded: options.verbose === true,
       memorySummaryPath: () => join(
@@ -243,7 +251,11 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
         await mode.run();
       } catch (error) {
         if (error instanceof CwdChangeRequested) return error.cwd;
-        throw error;
+        if (error instanceof RestartRequested) {
+          restartRequested = true;
+        } else {
+          throw error;
+        }
       }
     } finally {
       modeActive = false;
@@ -272,5 +284,12 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
       }
       process.stdout.write = previousStdoutWrite;
     }
+  }
+  if (restartRequested) {
+    await (options.restartProcess ?? restartFelanProcess)({
+      sessionManager: runtime.session.sessionManager,
+      verbose: options.verbose === true,
+      ...(options.restartArgs === undefined ? {} : { restartArgs: options.restartArgs }),
+    });
   }
 }

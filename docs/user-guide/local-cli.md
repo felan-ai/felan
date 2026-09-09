@@ -117,6 +117,22 @@ extension failures return a non-zero status. `--resume` and UI-only commands are
 interactive-only. Headless startup does not open the TUI, run the update check,
 or wait for dependency onboarding.
 
+### Restart Felan
+
+Use `/restart` to replace the Felan process and resume the current session in
+the same directory. The session ID and history are preserved, while Felan,
+Agent Core, and extension modules are loaded again. This is useful when
+developing Felan itself:
+
+```text
+pnpm build
+/restart
+```
+
+`/restart` is idle-only and interactive-only. Pi's `/reload` remains available
+for reloading resources within the current process; it does not replace the
+Node process.
+
 ### Herdr integration
 
 When Felan runs inside Herdr, the local TUI automatically reports its Felan

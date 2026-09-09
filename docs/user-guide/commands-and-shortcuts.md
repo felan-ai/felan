@@ -9,6 +9,7 @@ and first-party extensions.
 | Command | Purpose |
 | --- | --- |
 | `/cwd [directory]` | Start a fresh session in another directory |
+| `/restart` | Restart Felan and resume the current session |
 | `/dependencies` | Inspect, install, enable, or disable external runtime dependencies |
 | `/memory` | Show project-memory status and inspect retained runs |
 | `/memory run` | Process pending memory evidence now, recovering backoff when needed |
@@ -25,6 +26,11 @@ command disposes the current root runtime and starts a fresh session in the
 target directory, rebuilding cwd-bound settings, instructions, skills, tools,
 memory, and subagents. The parent shell's directory is unchanged; use `/cwd .`
 to start a new session for the current directory.
+
+Use `/restart` after rebuilding Felan from source to load fresh Felan, Agent
+Core, and extension modules without losing the active session history. Unlike
+Pi's `/reload`, this replaces the Node process; it is available only in the
+interactive TUI and requires the agent to be idle.
 
 ## Extension commands
 

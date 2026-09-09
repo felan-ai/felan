@@ -58,6 +58,11 @@ savings            Show persisted estimated API-equivalent savings
 --verbose          Show verbose startup details
 ```
 
+After rebuilding Felan from this repository, use `/restart` in the interactive
+TUI to reload Felan, Agent Core, and extension modules while preserving the
+current session. It replaces the Node process and resumes the same session;
+unlike Pi's `/reload`, it is not an in-process resource reload.
+
 Run `felan update` to check the stable npm release. It updates only a verified
 global npm installation, reports when the installation is current, and tells
 you to restart after a successful update. `npx`, local/source, and other

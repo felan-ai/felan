@@ -216,6 +216,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     writeError('--provider, --model, and --thinking require --mode text or --mode json');
     return 1;
   }
+  const restartArgs = buildRestartArgs(args, configByName);
 
   let sessionManager: SessionManager | undefined;
   let missingSessionWarning: string | undefined;
@@ -265,6 +266,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   await launch({
     continueRecent,
     verbose,
+    ...(restartArgs.length === 0 ? {} : { restartArgs }),
     ...(sessionManager === undefined ? {} : { sessionManager }),
     ...(sessionManager !== undefined || sessionDir === undefined ? {} : { sessionDir }),
     ...(missingSessionWarning === undefined ? {} : {
@@ -280,6 +282,39 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     }),
   });
   return 0;
+}
+
+function buildRestartArgs(
+  args: readonly string[],
+  configByName: ReadonlyMap<string, ReturnType<typeof getExtensionConfigCliOptions>[number]>,
+): readonly string[] {
+  const restartArgs: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === '--') break;
+    if (argument === '-c' || argument === '--continue' || argument === '-r' || argument === '--resume') continue;
+    if (argument === '--session' || argument === '--session-dir') {
+      index += 1;
+      continue;
+    }
+    if (argument === '--verbose') {
+      restartArgs.push(argument);
+      continue;
+    }
+    if (!argument.startsWith('--')) continue;
+    const equals = argument.indexOf('=');
+    const name = argument.slice(2, equals === -1 ? undefined : equals);
+    const option = configByName.get(name) ?? (argument.startsWith('--no-')
+      ? configByName.get(argument.slice('--no-'.length))
+      : undefined);
+    if (!option) continue;
+    restartArgs.push(argument);
+    if (equals === -1 && option.configField.type !== 'boolean' && args[index + 1] !== undefined) {
+      restartArgs.push(args[index + 1]!);
+      index += 1;
+    }
+  }
+  return restartArgs;
 }
 
 async function runSavingsCommand(

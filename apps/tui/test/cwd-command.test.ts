@@ -10,6 +10,7 @@ import {
   installFelanCwdCommand,
   resolveCwdCommandTarget,
 } from '../src/cwd-command.js';
+import { RestartRequested, installFelanRestartCommand } from '../src/restart-command.js';
 
 const temporaryPaths: string[] = [];
 
@@ -120,6 +121,52 @@ describe('Felan /cwd command', () => {
     idle = true;
     internals.modeInternals.defaultEditor.onSubmit!('/cwd /does-not-exist');
     expect(internals.error).toContain('Directory does not exist');
+  });
+});
+
+describe('Felan /restart command', () => {
+  it('adds /restart to command completion and raises only after an idle submission', async () => {
+    const internals = fakeMode({
+      triggerCharacters: [],
+      getSuggestions: async () => null,
+      applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
+    });
+    installFelanRestartCommand(internals.mode, { isIdle: () => true });
+    internals.setupEditorSubmitHandler();
+
+    const provider = (internals.mode as unknown as {
+      createBaseAutocompleteProvider(): AutocompleteProvider;
+    }).createBaseAutocompleteProvider();
+    await expect(provider.getSuggestions(['/res'], 0, 4, { signal: new AbortController().signal }))
+      .resolves.toEqual({
+        prefix: '/res',
+        items: [{ value: 'restart', label: 'restart', description: 'Restart Felan and resume this session' }],
+      });
+
+    internals.modeInternals.defaultEditor.onSubmit!(' /restart ');
+    await expect((internals.mode as unknown as { getUserInput(): Promise<string> }).getUserInput())
+      .rejects.toEqual(new RestartRequested());
+  });
+
+  it('keeps invalid and busy restart commands in the editor', () => {
+    const internals = fakeMode({
+      triggerCharacters: [],
+      getSuggestions: async () => null,
+      applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
+    });
+    let idle = false;
+    installFelanRestartCommand(internals.mode, { isIdle: () => idle });
+    internals.setupEditorSubmitHandler();
+
+    internals.modeInternals.defaultEditor.onSubmit!('/restart now');
+    expect(internals.error).toBe('Usage: /restart');
+    expect(internals.modeInternals.editor.setText).toHaveBeenCalledWith('/restart now');
+
+    internals.modeInternals.defaultEditor.onSubmit!('/restart');
+    expect(internals.warning).toContain('Wait for the current response');
+    expect(internals.modeInternals.editor.setText).toHaveBeenCalledWith('/restart');
+    idle = true;
+    expect(() => internals.modeInternals.defaultEditor.onSubmit!('/restart')).not.toThrow();
   });
 });
 

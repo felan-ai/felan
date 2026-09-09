@@ -21,6 +21,7 @@ const interactive = vi.hoisted(() => ({
   constructorDisposals: [] as number[],
   constructorStops: [] as number[],
   restartCwd: undefined as string | undefined,
+  restartSession: false,
   runError: undefined as Error | undefined,
   runs: 0,
   runCwds: [] as string[],
@@ -97,6 +98,9 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
         );
         interactive.toolRenderShells.push(this.runtime.session.getToolDefinition('read')?.renderShell);
         interactive.toolNames = this.runtime.session.agent.state.tools.map((tool) => tool.name);
+        if (interactive.restartSession && interactive.runs === 1) {
+          throw new RestartRequested();
+        }
         if (interactive.restartCwd && interactive.runs === 1) {
           throw new CwdChangeRequested(interactive.restartCwd);
         }
@@ -145,6 +149,8 @@ vi.mock('../src/update.js', async (importOriginal) => {
 import { brandResumeHint, runLocalFelan } from '../src/application.js';
 import { installFelanTuiCompatibility, normalizeFullscreenTerminalModes } from '../src/tui-compatibility.js';
 import { CwdChangeRequested } from '../src/cwd-command.js';
+import { RestartRequested } from '../src/restart-command.js';
+import type { RestartProcessOptions } from '../src/process-restart.js';
 
 const temporaryPaths: string[] = [];
 
@@ -163,6 +169,7 @@ afterEach(async () => {
   interactive.constructorDisposals = [];
   interactive.constructorStops = [];
   interactive.restartCwd = undefined;
+  interactive.restartSession = false;
   interactive.runError = undefined;
   interactive.runs = 0;
   interactive.runCwds = [];
@@ -419,6 +426,34 @@ describe('interactive application', () => {
       { initialMessage: 'only the first session', tuiMode: 'fullscreen', initialThemeSetting: 'felan-light/felan-dark' },
       { tuiMode: 'fullscreen', initialThemeSetting: 'felan-light/felan-dark' },
     ]);
+  });
+
+  it('restarts the same session through the process restart adapter after cleanup', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+    interactive.restartSession = true;
+    const restarts: RestartProcessOptions[] = [];
+
+    await expect(runLocalFelan({
+      cwd,
+      agentDir,
+      verbose: true,
+      restartProcess: async (options) => {
+        restarts.push(options);
+        throw new Error('test restart boundary');
+      },
+    })).rejects.toThrow('test restart boundary');
+
+    expect(restarts).toHaveLength(1);
+    expect(restarts[0]?.sessionManager.getCwd()).toBe(cwd);
+    expect(restarts[0]?.sessionManager.getSessionId()).toBeDefined();
+    expect(restarts[0]?.verbose).toBe(true);
+    expect(interactive.stops).toBe(1);
+    expect(interactive.disposals).toBe(1);
+    expect(interactive.constructorStops).toEqual([0]);
+    expect(interactive.constructorDisposals).toEqual([0]);
   });
 
   it('starts new installs in fullscreen mode while preserving saved TUI mode', async () => {

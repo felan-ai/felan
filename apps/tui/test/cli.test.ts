@@ -128,8 +128,25 @@ describe('felan CLI', () => {
     expect(launches).toEqual([{
       continueRecent: true,
       verbose: true,
+      restartArgs: ['--verbose'],
       initialMessage: 'inspect this project',
     }]);
+  });
+
+  it('keeps restart-safe interactive flags but never replays the initial prompt', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+
+    const exitCode = await runCli([
+      '--continue',
+      '--verbose',
+      '--prewalk-entry-approval', 'allow',
+      'do', 'not', 'replay', 'this',
+    ], { launch: async (options) => launches.push(options) });
+
+    expect(exitCode).toBe(0);
+    expect(launches[0]?.restartArgs).toEqual([
+      '--verbose', '--prewalk-entry-approval', 'allow',
+    ]);
   });
 
   it('opens the session picker for both resume aliases', async () => {
