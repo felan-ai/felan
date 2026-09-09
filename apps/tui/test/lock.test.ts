@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, rename, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -58,7 +58,8 @@ describe('local file locks', () => {
     });
     const firstMtime = (await lstat(lockPath)).mtime;
 
-    await rm(lockPath, { recursive: true, force: true });
+    // Keep the old inode allocated so rapid replacement cannot reuse its filesystem identity.
+    await rename(lockPath, join(root, 'previous.lock'));
     const replacement = await acquireLocalFileLock(target, {
       realpath: false,
       stale: 2_000,

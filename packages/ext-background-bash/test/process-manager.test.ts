@@ -12,6 +12,10 @@ const temporaryPaths: string[] = [];
 const startedJobs: Array<{ manager: BackgroundBashManager; id: string }> = [];
 const INTEGRATION_TEST_TIMEOUT_MS = 30_000;
 const INTEGRATION_WAIT_TIMEOUT_SECONDS = 20;
+const SIGNAL_TEST_SHELLS = [
+  { label: 'default shell', executable: undefined },
+  ...(existsSync('/bin/dash') ? [{ label: 'dash', executable: '/bin/dash' }] : []),
+];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -263,8 +267,8 @@ describe('BackgroundBashManager', () => {
     }
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
-  it('does not publish a terminal outcome while a stopped detached runner is still exiting', async () => {
-    const { manager, runtime } = await createManager();
+  it.each(SIGNAL_TEST_SHELLS)('does not publish a terminal outcome while a stopped detached runner is still exiting ($label)', async ({ executable }) => {
+    const { manager, runtime } = await createManager(executable);
     const job = await manager.start('trap \'trap "" TERM; sleep 7; exit 0\' TERM; printf ready; while :; do sleep 0.1; done');
     trackJob(manager, job.meta.id);
     for (let attempt = 0; !(await manager.tail(job.meta.id)).includes('ready'); attempt += 1) {
@@ -274,9 +278,32 @@ describe('BackgroundBashManager', () => {
     try {
       await expect(manager.stop(job.meta.id, 'SIGTERM')).rejects.toThrow('did not exit after 5 seconds');
       expect((await manager.get(job.meta.id)).status.status).toBe('running');
+      expect((await runtime.shell(`ps -p ${job.meta.pid}`, { shellFlavor: 'posix' })).code).toBe(0);
+      await expect(runtime.readFile(job.meta.completionPath)).rejects.toThrow();
       const finished = await manager.wait(job.meta.id, 5);
       expect(finished.job.status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
       expect((await manager.get(job.meta.id)).status).toEqual(finished.job.status);
+    } finally {
+      await runtime.shell(`kill -KILL -${job.meta.pid} 2>/dev/null || true`, { shellFlavor: 'posix' });
+    }
+  }, INTEGRATION_TEST_TIMEOUT_MS);
+
+  it.each(SIGNAL_TEST_SHELLS)('falls back to a positive PID signal when group signaling fails ($label)', async ({ executable }) => {
+    const { manager, runtime, observedRuntime } = await createManager(executable);
+    const job = await manager.start('exec sleep 30');
+    trackJob(manager, job.meta.id);
+    const shell = observedRuntime.shell.bind(observedRuntime);
+    const probe = vi.spyOn(observedRuntime, 'shell').mockImplementation((command, options) => {
+      if (command === `kill -TERM -${job.meta.pid}`) {
+        return Promise.resolve({ code: 1, stdout: '', stderr: 'Group signaling unavailable', killed: false });
+      }
+      return shell(command, options);
+    });
+    try {
+      const stopped = await manager.stop(job.meta.id, 'SIGTERM');
+      expect(stopped.status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
+      expect(probe).toHaveBeenCalledWith(`kill -TERM -${job.meta.pid}`, expect.anything());
+      await waitForProcessExit(runtime, job.meta.pid!);
     } finally {
       await runtime.shell(`kill -KILL -${job.meta.pid} 2>/dev/null || true`, { shellFlavor: 'posix' });
     }
@@ -350,9 +377,10 @@ function trackJob(manager: BackgroundBashManager, id: string): void {
   startedJobs.push({ manager, id });
 }
 
-async function createManager(): Promise<{
+async function createManager(signalShell?: string): Promise<{
   manager: BackgroundBashManager;
   runtime: HostAgentRuntime;
+  observedRuntime: AgentRuntime;
   storageScopes: AgentRuntimeStorageScope[];
 }> {
   const root = await mkdtemp(join(tmpdir(), 'felan background bash spaces-'));
@@ -372,14 +400,18 @@ async function createManager(): Promise<{
       return runtime.storage(scope);
     },
     exec: runtime.exec.bind(runtime),
-    shell: runtime.shell.bind(runtime),
+    shell: signalShell
+      ? (command, options) => command.startsWith('kill ')
+        ? runtime.exec(signalShell, ['-c', command], options)
+        : runtime.shell(command, options)
+      : runtime.shell.bind(runtime),
     readFile: runtime.readFile.bind(runtime),
     writeFile: runtime.writeFile.bind(runtime),
     listFiles: runtime.listFiles.bind(runtime),
     mkdir: runtime.mkdir.bind(runtime),
     remove: runtime.remove.bind(runtime),
   };
-  return { manager: new BackgroundBashManager(observedRuntime), runtime, storageScopes };
+  return { manager: new BackgroundBashManager(observedRuntime), runtime, observedRuntime, storageScopes };
 }
 
 async function readPid(runtime: HostAgentRuntime, path: string): Promise<number> {
@@ -396,7 +428,7 @@ async function readPid(runtime: HostAgentRuntime, path: string): Promise<number>
 async function waitForProcessExit(runtime: HostAgentRuntime, pid: number): Promise<void> {
   let processInfo = '';
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const result = await runtime.shell(`kill -0 -- ${String(pid)} 2>/dev/null`, {
+    const result = await runtime.shell(`ps -p ${String(pid)}`, {
       shellFlavor: 'posix',
     });
     processInfo = result.stdout.trim();

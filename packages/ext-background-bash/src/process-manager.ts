@@ -350,7 +350,7 @@ export class BackgroundBashManager {
   }
 
   async #isProcessAlive(pid: number): Promise<boolean> {
-    const result = await this.runtime.shell(`kill -0 -- ${shellQuote(String(pid))} 2>/dev/null`, {
+    const result = await this.runtime.shell(`kill -0 ${shellQuote(String(pid))} 2>/dev/null`, {
       cwd: this.runtime.cwd,
       shellFlavor: 'posix',
     });
@@ -411,7 +411,7 @@ export class BackgroundBashManager {
   }
 
   #sendSignal(pid: number, signal: NodeJS.Signals) {
-    const target = pid < 0 ? String(pid) : `-- ${shellQuote(String(pid))}`;
+    const target = pid < 0 ? String(pid) : shellQuote(String(pid));
     return this.runtime.shell(`kill -${signal.slice(3)} ${target}`, {
       cwd: this.runtime.cwd,
       shellFlavor: 'posix',
