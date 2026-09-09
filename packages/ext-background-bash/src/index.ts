@@ -1,10 +1,11 @@
 import {
   StringEnum,
+  associateExtensionConfig,
+  configField,
   createRuntimeCodingTools,
-  type Api,
+  defineExtensionConfig,
   type ExtensionContext,
   type FelanExtension,
-  type Model,
 } from '@felan-ai/agent-core';
 import { Key, Text } from '@earendil-works/pi-tui';
 import { Type, type Static } from 'typebox';
@@ -15,6 +16,7 @@ import {
   type BackgroundBashStatusFilter,
 } from './job-store.js';
 import { BackgroundBashManager } from './process-manager.js';
+import { BackgroundBashCoordinator } from './coordinator.js';
 import { inspectBackgroundBashRuntime } from './runtime-support.js';
 import { BackgroundBashView } from './ui/background-bash-view.js';
 import {
@@ -24,21 +26,26 @@ import {
 
 const STATUS_VALUES = ['running', 'completed', 'failed', 'killed', 'unknown', 'all'] as const;
 const SIGNAL_VALUES = ['SIGTERM', 'SIGKILL'] as const;
-const OPENAI_PROVIDER_IDS: ReadonlySet<string> = new Set(['openai', 'openai-codex']);
 const COMPLETION_POLL_MS = 500;
 const BACKGROUND_TOOL_NAMES = [
   'list_background_bash',
   'read_background_bash',
   'wait_background_bash',
   'stop_background_bash',
+  'write_background_bash',
 ] as const;
+
+export function supportsBackgroundBashModel(model: unknown): boolean {
+  return model !== undefined;
+}
 
 const BashParams = Type.Object({
   command: Type.String({ description: 'Bash command to execute' }),
-  timeout: Type.Optional(Type.Number({ description: 'Timeout in seconds for foreground commands' })),
+  timeout: Type.Optional(Type.Number({ minimum: 0, description: 'Seconds to wait before promoting the same process to the background. Defaults to 120; 0 backgrounds immediately.' })),
   background: Type.Optional(Type.Boolean({
-    description: 'Start a detached background Bash process and return immediately',
+    description: 'Start a background process and return immediately',
   })),
+  tty: Type.Optional(Type.Boolean({ description: 'Start with a PTY so write_background_bash can send stdin and control bytes' })),
 }, { additionalProperties: false });
 
 const ListBackgroundBashParams = Type.Object({
@@ -46,7 +53,7 @@ const ListBackgroundBashParams = Type.Object({
 }, { additionalProperties: false });
 
 const ReadBackgroundBashParams = Type.Object({
-  id: Type.String({ description: 'Background Bash process id returned by bash(background: true)' }),
+  id: Type.String({ description: 'Background process id returned by bash' }),
   lines: Type.Optional(Type.Integer({
     minimum: 1,
     maximum: 1_000,
@@ -55,13 +62,18 @@ const ReadBackgroundBashParams = Type.Object({
 }, { additionalProperties: false });
 
 const WaitBackgroundBashParams = Type.Object({
-  id: Type.String({ description: 'Background Bash process id returned by bash(background: true)' }),
+  id: Type.String({ description: 'Background process id returned by bash' }),
   timeout: Type.Optional(Type.Number({ description: 'Maximum seconds to wait before returning current status' })),
 }, { additionalProperties: false });
 
 const StopBackgroundBashParams = Type.Object({
-  id: Type.String({ description: 'Background Bash process id returned by bash(background: true)' }),
+  id: Type.String({ description: 'Background process id returned by bash' }),
   signal: Type.Optional(StringEnum(SIGNAL_VALUES, { description: 'Signal to send. Default: SIGTERM.' })),
+}, { additionalProperties: false });
+
+const WriteBackgroundBashParams = Type.Object({
+  id: Type.String({ description: 'Background process id returned by bash' }),
+  chars: Type.String({ description: 'Exact text or control bytes to write to a PTY process' }),
 }, { additionalProperties: false });
 
 type BashParams = Static<typeof BashParams>;
@@ -69,6 +81,7 @@ type ListBackgroundBashParams = Static<typeof ListBackgroundBashParams>;
 type ReadBackgroundBashParams = Static<typeof ReadBackgroundBashParams>;
 type WaitBackgroundBashParams = Static<typeof WaitBackgroundBashParams>;
 type StopBackgroundBashParams = Static<typeof StopBackgroundBashParams>;
+type WriteBackgroundBashParams = Static<typeof WriteBackgroundBashParams>;
 type ExtensionUI = ExtensionContext['ui'];
 
 interface BackgroundBashDetails {
@@ -91,13 +104,30 @@ interface StatusTarget {
   generation: number;
 }
 
-export function supportsBackgroundBashModel(model: Model<Api> | undefined): boolean {
-  return model !== undefined && !OPENAI_PROVIDER_IDS.has(model.provider);
-}
+export const BACKGROUND_BASH_CONFIG = defineExtensionConfig({
+  id: 'backgroundBash',
+  title: 'Background processes',
+  fields: {
+    foregroundTimeoutSeconds: configField.number({
+      default: 120,
+      description: 'Seconds before a foreground Bash command is promoted to the background',
+      validate: (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? undefined
+        : 'must be a finite non-negative number',
+    }),
+  },
+});
 
-const backgroundBashExtension: FelanExtension = (pi) => {
+export function createBackgroundBashExtension(
+  coordinator?: BackgroundBashCoordinator,
+  ownsCoordinator = coordinator === undefined,
+): FelanExtension {
+  const extension: FelanExtension = (pi) => {
+  const config = {
+    foregroundTimeoutSeconds: Number(pi.config?.foregroundTimeoutSeconds ?? 120),
+  };
   registerBackgroundBashCompletionRenderer(pi);
-  const manager = new BackgroundBashManager(pi.runtime);
+  const manager = new BackgroundBashManager(pi.runtime, coordinator);
   const foregroundBash = createRuntimeCodingTools(pi.runtime, { shellFlavor: 'posix' })
     .find((tool) => tool.name === 'bash')!;
   let helperToolsRegistered = false;
@@ -249,12 +279,8 @@ const backgroundBashExtension: FelanExtension = (pi) => {
   };
 
   const openProcessView = async (ctx: ExtensionContext) => {
-    if (!supportsBackgroundBashModel(ctx.model)) {
-      if (ctx.mode === 'tui') ctx.ui.notify('Background Bash is unavailable for this model.', 'info');
-      return;
-    }
     if (!backgroundBashActive) {
-      if (ctx.mode === 'tui') ctx.ui.notify('Background Bash is unavailable in this runtime.', 'info');
+      if (ctx.mode === 'tui') ctx.ui.notify('Background processes are unavailable in this runtime.', 'info');
       return;
     }
     const target = createStatusTarget(ctx);
@@ -270,45 +296,77 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     await updateStatus(target);
   };
 
-  const assertSupportedModel = (ctx: ExtensionContext) => {
-    if (!supportsBackgroundBashModel(ctx.model)) {
-      throw new Error('Background Bash is unavailable for this model.');
-    }
-  };
-
   const registerBackgroundBash = () => {
     if (backgroundBashActive) return;
     pi.registerTool({
       name: 'bash',
       label: 'bash',
       description: 'Execute a Bash command in the current working directory. Set background: true for long-running commands and inspect output with read_background_bash.',
-      promptSnippet: 'Execute Bash commands, optionally as detached processes with background: true',
+      promptSnippet: 'Execute Bash commands, optionally as background processes with background: true',
       promptGuidelines: [
         'Use bash with background: true for long-running commands such as dev servers, watchers, and scripts the agent should not block on.',
-        'Background Bash completion messages arrive automatically; continue useful work instead of polling when the current task does not need to block.',
-        'After starting Background Bash, inspect output with read_background_bash; do not use wait_background_bash just to read output.',
+        'Use tty: true when a command needs interactive stdin or control bytes; write_background_bash sends exact input to it.',
+        'Foreground commands are promoted to the background after their timeout without restarting; timeout: 0 promotes immediately.',
+        'Background process completion messages arrive automatically; continue useful work instead of polling when the current task does not need to block.',
+        'After starting a background process, inspect output with read_background_bash; do not use wait_background_bash just to read output.',
         'Use wait_background_bash only when you need to wait for the process to finish or check whether it has finished.',
-        'Use list_background_bash to discover detached Bash processes started in this root session and workspace, including its subagents.',
+        'Use list_background_bash to discover processes started in this root session and workspace, including its subagents.',
       ],
       parameters: BashParams,
-      async execute(toolCallId, params: BashParams, signal, onUpdate, ctx) {
-        if (!params.background) {
-          return foregroundBash.execute(
-            toolCallId,
-            {
-              command: params.command,
-              ...(params.timeout === undefined ? {} : { timeout: params.timeout }),
-            },
-            signal,
-            onUpdate,
-            ctx,
-          );
-        }
-
-        assertSupportedModel(ctx);
-        const normalized = normalizeBackgroundCommand(params.command);
+      async execute(_toolCallId, params: BashParams, signal, _onUpdate, ctx) {
+        if (signal?.aborted) throw new Error('Command cancelled');
+        const timeoutSeconds = params.timeout ?? config.foregroundTimeoutSeconds;
+        const interactive = params.tty === true;
+        const normalized = interactive
+          ? { command: params.command, rtkRewriteRemoved: false }
+          : normalizeBackgroundCommand(params.command);
         const target = createStatusTarget(ctx);
-        const job = await manager.start(normalized.command);
+        const started = interactive
+          ? await manager.startInteractive(normalized.command)
+          : { job: await manager.start(normalized.command) };
+        const job = started.job;
+        if (signal?.aborted) {
+          if (interactive) await manager.stopInteractive(job.meta.id).catch(() => {});
+          else await manager.stop(job.meta.id).catch(() => {});
+          throw new Error('Command cancelled');
+        }
+        if (!params.background && timeoutSeconds > 0) {
+          try {
+            if (interactive) {
+              const deadline = Date.now() + timeoutSeconds * 1_000;
+              let result = await manager.readInteractive(job.meta.id, Math.max(0, deadline - Date.now()), signal);
+              if (signal?.aborted) throw new Error('Command cancelled');
+              while (result.running && Date.now() < deadline) {
+                result = await manager.readInteractive(job.meta.id, Math.max(0, deadline - Date.now()), signal);
+                if (signal?.aborted) throw new Error('Command cancelled');
+              }
+              if (!result.running) {
+                const completed = await manager.get(job.meta.id);
+                return {
+                  content: [{ type: 'text', text: formatForegroundOutput(completed, result.output) }],
+                  details: { background: false, id: job.meta.id, status: completed.status.status, output: result.output },
+                };
+              }
+            } else {
+              const result = await manager.wait(job.meta.id, timeoutSeconds, signal);
+              if (!result.timedOut) {
+                const output = await manager.tail(job.meta.id);
+                return {
+                  content: [{ type: 'text', text: formatForegroundOutput(result.job, output) }],
+                  details: { background: false, id: job.meta.id, status: result.job.status.status, output },
+                };
+              }
+            }
+          } catch (error) {
+            if (signal?.aborted) {
+              if (interactive) await manager.stopInteractive(job.meta.id, 'SIGTERM').catch(() => {});
+              else await manager.stop(job.meta.id, 'SIGTERM').catch(() => {});
+              throw new Error('Command cancelled', { cause: error });
+            }
+            throw error;
+          }
+        }
+        if (!params.background) await manager.markPromoted(job.meta.id, interactive ? 'pty' : 'detached');
         watchCompletion(job.meta.id);
         await updateStatus(target);
         const notice = normalized.rtkRewriteRemoved
@@ -331,6 +389,7 @@ const backgroundBashExtension: FelanExtension = (pi) => {
             ? {}
             : { originalCommand: normalized.originalCommand }),
           ...(normalized.rtkRewriteRemoved ? { rtkRewriteRemoved: true } : {}),
+          ...(interactive ? { tty: true } : {}),
         };
         return {
           content: [{ type: 'text', text: `${formatStarted(job)}${notice}` }],
@@ -338,7 +397,7 @@ const backgroundBashExtension: FelanExtension = (pi) => {
         };
       },
       renderCall(args, theme) {
-        const suffix = args.background ? theme.fg('muted', ' (background)') : '';
+        const suffix = args.background || args.tty ? theme.fg('muted', args.tty ? ' (pty)' : ' (background)') : '';
         return new Text(theme.fg('toolTitle', theme.bold(`$ ${args.command}`)) + suffix, 0, 0);
       },
     });
@@ -350,12 +409,11 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     helperToolsRegistered = true;
     pi.registerTool({
       name: 'list_background_bash',
-      label: 'List Background Bash',
-      description: 'List detached Bash processes started in this root session and workspace, including processes started by its subagents.',
-      promptSnippet: 'List workspace Background Bash processes and their status',
+      label: 'List background processes',
+      description: 'List processes started in this root session and workspace, including processes started by its subagents.',
+      promptSnippet: 'List workspace background processes and their status',
       parameters: ListBackgroundBashParams,
       async execute(_toolCallId, params: ListBackgroundBashParams, _signal, _onUpdate, ctx) {
-        assertSupportedModel(ctx);
         const target = createStatusTarget(ctx);
         const jobs = await manager.list((params.status ?? 'all') as BackgroundBashStatusFilter);
         for (const job of jobs) {
@@ -371,12 +429,11 @@ const backgroundBashExtension: FelanExtension = (pi) => {
 
     pi.registerTool({
       name: 'read_background_bash',
-      label: 'Read Background Bash',
-      description: 'Read the trailing output of a detached Bash process by id.',
-      promptSnippet: 'Read output from a Background Bash process by id',
+      label: 'Read background process',
+      description: 'Read the trailing output of a background process by id.',
+      promptSnippet: 'Read output from a background process by id',
       parameters: ReadBackgroundBashParams,
       async execute(_toolCallId, params: ReadBackgroundBashParams, _signal, _onUpdate, ctx) {
-        assertSupportedModel(ctx);
         const output = await manager.tail(params.id, params.lines ?? 80);
         const job = await manager.get(params.id);
         if (isTerminalStatus(job.status.status)) suppressCompletion(job.meta.id);
@@ -389,12 +446,11 @@ const backgroundBashExtension: FelanExtension = (pi) => {
 
     pi.registerTool({
       name: 'wait_background_bash',
-      label: 'Wait Background Bash',
-      description: 'Wait for a detached Bash process to finish, or return current status after a timeout. Use read_background_bash for output.',
-      promptSnippet: 'Wait for a Background Bash process and return its status',
+      label: 'Wait for background process',
+      description: 'Wait for a background process to finish, or return current status after a timeout. Use read_background_bash for output.',
+      promptSnippet: 'Wait for a background process and return its status',
       parameters: WaitBackgroundBashParams,
       async execute(_toolCallId, params: WaitBackgroundBashParams, signal, _onUpdate, ctx) {
-        assertSupportedModel(ctx);
         const target = createStatusTarget(ctx);
         const wasWatched = suppressCompletion(params.id);
         let result: Awaited<ReturnType<BackgroundBashManager['wait']>>;
@@ -415,12 +471,11 @@ const backgroundBashExtension: FelanExtension = (pi) => {
 
     pi.registerTool({
       name: 'stop_background_bash',
-      label: 'Stop Background Bash',
-      description: 'Stop a running Background Bash process by id and mark it as killed.',
-      promptSnippet: 'Stop a running Background Bash process by id',
+      label: 'Stop background process',
+      description: 'Stop a running background process by id and mark it as killed.',
+      promptSnippet: 'Stop a running background process by id',
       parameters: StopBackgroundBashParams,
       async execute(_toolCallId, params: StopBackgroundBashParams, _signal, _onUpdate, ctx) {
-        assertSupportedModel(ctx);
         const target = createStatusTarget(ctx);
         const wasWatched = suppressCompletion(params.id);
         let job: BackgroundBashJob;
@@ -432,8 +487,26 @@ const backgroundBashExtension: FelanExtension = (pi) => {
         }
         await updateStatus(target);
         return {
-          content: [{ type: 'text', text: `Background Bash stop result.\n\n${formatJobDetails(job)}` }],
+          content: [{ type: 'text', text: `Background process stop result.\n\n${formatJobDetails(job)}` }],
           details: { job },
+        };
+      },
+    });
+
+    pi.registerTool({
+      name: 'write_background_bash',
+      label: 'Write to background process',
+      description: 'Write exact text or control bytes to a running background process with a PTY.',
+      promptSnippet: 'Send stdin or control bytes to a background process with a PTY',
+      parameters: WriteBackgroundBashParams,
+      async execute(_toolCallId, params: WriteBackgroundBashParams, _signal, _onUpdate, ctx) {
+        const result = await manager.writeInteractive(params.id, params.chars);
+        const job = await manager.get(params.id);
+        if (!result.running) suppressCompletion(job.meta.id);
+        await updateStatus(createStatusTarget(ctx));
+        return {
+          content: [{ type: 'text', text: result.output || '(no output)' }],
+          details: { id: params.id, status: job.status.status, tty: true },
         };
       },
     });
@@ -442,12 +515,12 @@ const backgroundBashExtension: FelanExtension = (pi) => {
   const registerControls = () => {
     if (controlsRegistered) return;
     controlsRegistered = true;
-    pi.registerCommand('background-bash', {
-      description: 'View Background Bash processes and logs',
+    pi.registerCommand('processes', {
+      description: 'View processes and logs',
       handler: async (_args, ctx) => openProcessView(ctx),
     });
     pi.registerShortcut(Key.ctrlShift('j'), {
-      description: 'View Background Bash processes and logs',
+      description: 'View processes and logs',
       handler: openProcessView,
     });
   };
@@ -471,11 +544,6 @@ const backgroundBashExtension: FelanExtension = (pi) => {
   };
 
   const enableExtension = async (ctx: ExtensionContext) => {
-    if (!supportsBackgroundBashModel(ctx.model)) {
-      stopStatusPolling();
-      pauseCompletionPolling();
-      return;
-    }
     if (!await ensureRuntimeAvailable()) {
       disableExtension();
       return;
@@ -506,15 +574,20 @@ const backgroundBashExtension: FelanExtension = (pi) => {
     if (ctx.mode === 'tui') registerControls();
     await enableExtension(ctx);
   });
-  pi.on('model_select', async (event, ctx) => {
-    if (supportsBackgroundBashModel(event.model)) await enableExtension(ctx);
-    else disableExtension();
+  pi.on('model_select', async (_event, ctx) => {
+    await enableExtension(ctx);
   });
-  pi.on('session_shutdown', () => {
+  pi.on('session_shutdown', (event) => {
     stopStatusPolling();
     clearCompletionWatches();
+    return ownsCoordinator && event.reason !== 'reload' ? manager.shutdownInteractive() : undefined;
   });
-};
+  };
+  associateExtensionConfig(extension, BACKGROUND_BASH_CONFIG);
+  return extension;
+}
+
+const backgroundBashExtension = createBackgroundBashExtension();
 
 export { inspectBackgroundBashRuntime } from './runtime-support.js';
 export type { BackgroundBashRuntimeStatus } from './runtime-support.js';
@@ -555,11 +628,11 @@ function formatJobDetails(job: BackgroundBashJob): string {
 }
 
 function formatStarted(job: BackgroundBashJob): string {
-  return `Started Background Bash process.\n\n${formatJobDetails(job)}\n\nCompletion will be delivered automatically. Use list_background_bash to see processes, read_background_bash with id "${job.meta.id}" to inspect output, wait_background_bash when the current task must block, or stop_background_bash to stop it.`;
+  return `Started background process.\n\n${formatJobDetails(job)}\n\nCompletion will be delivered automatically. Use list_background_bash to see processes, read_background_bash with id "${job.meta.id}" to inspect output, wait_background_bash when the current task must block, or stop_background_bash to stop it.`;
 }
 
 function formatCompletionNotice(job: BackgroundBashJob): string {
-  return `Background Bash process reached terminal status: ${job.status.status}.\n\n${formatJobDetails(job)}\n\nUse read_background_bash with id "${job.meta.id}" if its output is needed.`;
+  return `Background process reached terminal status: ${job.status.status}.\n\n${formatJobDetails(job)}\n\nUse read_background_bash with id "${job.meta.id}" if its output is needed.`;
 }
 
 function completionDetails(job: BackgroundBashJob) {
@@ -579,7 +652,7 @@ function completionDetails(job: BackgroundBashJob) {
 }
 
 function formatJobList(jobs: BackgroundBashJob[]): string {
-  if (jobs.length === 0) return 'No Background Bash processes found for this workspace.';
+  if (jobs.length === 0) return 'No background processes found for this workspace.';
   return jobs.map((job) => {
     const pid = String(job.status.pid ?? job.meta.pid ?? '-');
     const exit = job.status.exitCode ?? job.status.signal ?? '-';
@@ -593,13 +666,20 @@ function formatJobList(jobs: BackgroundBashJob[]): string {
 
 function formatWaitResult(job: BackgroundBashJob, timedOut: boolean): string {
   const heading = timedOut
-    ? 'Background Bash process is still running.'
-    : 'Background Bash process finished.';
+    ? 'Background process is still running.'
+    : 'Background process finished.';
   return `${heading}\n\n${formatJobDetails(job)}\n\nUse read_background_bash with id "${job.meta.id}" to inspect output.`;
+}
+
+function formatForegroundOutput(job: BackgroundBashJob, output: string): string {
+  const exit = job.status.exitCode ?? job.status.signal ?? '-';
+  return `Exit: ${exit}\n\n${output || '(no output)'}`;
 }
 
 export type { BackgroundBashDetails };
 export { BackgroundBashManager } from './process-manager.js';
+export { BackgroundBashCoordinator } from './coordinator.js';
+export type { InteractiveBashProcess } from './coordinator.js';
 export type {
   BackgroundBashInfo,
   BackgroundBashJob,
@@ -609,3 +689,4 @@ export type {
   BackgroundBashStatusFilter,
 } from './job-store.js';
 export default backgroundBashExtension;
+associateExtensionConfig(backgroundBashExtension, BACKGROUND_BASH_CONFIG);

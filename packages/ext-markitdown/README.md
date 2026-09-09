@@ -65,25 +65,15 @@ much faster.
   diagnostic appended to every converted result instruct the model not to
   follow embedded requests or treat them as configuration.
 
-Outside active Codex mode, the extension adds no second read tool: supported
-documents are converted automatically through ordinary `read`. When Codex mode
-replaces `read`, its lifecycle signal makes this extension lazily register and
-activate `read_document` for Office formats (`.docx`, `.pptx`, `.ppt`,
-`.xlsx`, `.xls`, `.rtf`, `.epub`, `.msg`). Switching to another model hides
-`read_document` and restores ordinary `read`; without the Codex extension,
-`read_document` is never registered. It accepts a document `path` with optional
-1-indexed `offset` and `limit`
-(default and maximum 2,000 lines), converts through the same bounded
-MarkItDown pipeline and content-hash cache, and returns converted Markdown
-with the same source/cache diagnostic and untrusted-data warning. Oversized
-Markdown lines are split into stable pagination segments so every continuation
-advances, and the complete tool response is limited to 50 KiB. PDF reads remain
-with the ordinary `read` interception and the PDF-bytes event owner.
+Supported documents are always converted through ordinary `read`, regardless
+of the selected model or other extensions. Images remain with their existing
+image handlers, and PDF reads remain with the ordinary `read` interception and
+the PDF-bytes event owner.
 
 ## Savings measurement
 
 When Felan supplies its savings reporter and an active model, each successful
-converted `read` or `read_document` result contributes an
+converted `read` result contributes an
 `output-optimization` measurement. The actual input estimate is the returned
 text's UTF-8 byte length divided by four and rounded up. Its estimated baseline
 is:

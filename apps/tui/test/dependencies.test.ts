@@ -31,7 +31,13 @@ describe('local runtime dependency onboarding', () => {
       'markitdown',
       'rtk',
     ]);
-    expect(localRuntimeDependencies.find(({ id }) => id === 'background-bash')?.install).toBeUndefined();
+    const processes = localRuntimeDependencies.find(({ id }) => id === 'background-bash');
+    expect(processes?.install).toBeUndefined();
+    expect(processes).toMatchObject({
+      label: 'Background processes',
+      extension: 'backgroundBash',
+      unavailableChoice: 'Disable background processes',
+    });
   });
 
   it('installs only after confirmation and remembers the RTK compaction-only choice', async () => {

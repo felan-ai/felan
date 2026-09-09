@@ -4,10 +4,9 @@ import type {
   ExtensionContext,
   FelanExtensionAPI,
   Model,
-  Skill,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import codexExtension, { CODEX_TOOL_MODE_EVENT } from '../src/index.js';
+import codexExtension from '../src/index.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 
@@ -19,22 +18,12 @@ describe('Codex extension activation', () => {
     await harness.emit('session_start', {}, context('openai-codex', 'gpt-5.3-codex'));
 
     expect(harness.activeTools).toEqual([
-      'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate',
-      'exec_command', 'write_stdin', 'apply_patch', 'view_image',
+      'read', 'bash', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate',
+      'apply_patch',
     ]);
     expect(harness.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
-      'exec_command', 'write_stdin', 'apply_patch', 'view_image',
+      'apply_patch',
     ]);
-  });
-
-  it('announces active Codex tool mode for eligible models', async () => {
-    const harness = createHarness();
-    await codexExtension(harness.pi);
-
-    await harness.emit('session_start', {}, context('openai-codex', 'gpt-5.3-codex'));
-
-    expect(harness.activeTools).not.toContain('read');
-    expect(harness.toolModeEvents).toEqual([{ version: 1, active: true }]);
   });
 
   it('activates the structured tool surface for GPT-6 Astra', async () => {
@@ -45,9 +34,9 @@ describe('Codex extension activation', () => {
     await harness.emit('session_start', {}, ctx);
 
     expect(harness.activeTools).toEqual(expect.arrayContaining([
-      'exec_command', 'write_stdin', 'apply_patch', 'view_image',
+      'apply_patch',
     ]));
-    expect(harness.activeTools).not.toContain('read');
+    expect(harness.activeTools).toContain('read');
   });
 
   it('normalizes Codex function-tool strictness through the provider hook', async () => {
@@ -80,18 +69,12 @@ describe('Codex extension activation', () => {
 
     await harness.emit('model_select', { model: model('anthropic', 'claude-opus') }, context('anthropic', 'claude-opus'));
     expect(harness.activeTools).toEqual([
-      'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate',
-      'read', 'bash', 'edit', 'write',
+      'read', 'bash', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate', 'edit', 'write',
     ]);
 
     await harness.emit('model_select', { model: model('openai', 'gpt-5.4') }, context('openai', 'gpt-5.4'));
-    expect(harness.activeTools).toContain('exec_command');
-    expect(harness.activeTools).not.toContain('bash');
-    expect(harness.toolModeEvents).toEqual([
-      { version: 1, active: true },
-      { version: 1, active: false },
-      { version: 1, active: true },
-    ]);
+    expect(harness.activeTools).toContain('apply_patch');
+    expect(harness.activeTools).toContain('bash');
   });
 
   it('keeps ordinary tools for non-GPT OpenAI models', async () => {
@@ -102,78 +85,6 @@ describe('Codex extension activation', () => {
     expect(harness.activeTools).toEqual([
       'read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate',
     ]);
-    expect(harness.toolModeEvents).toEqual([{ version: 1, active: false }]);
-  });
-
-  it('keeps ordinary tools when the runtime lacks persistent-process support', async () => {
-    const harness = createHarness(false);
-    await codexExtension(harness.pi);
-    await harness.emit('session_start', {}, context('openai-codex', 'gpt-5.3-codex'));
-
-    expect(harness.activeTools).toEqual([
-      'read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate',
-    ]);
-    expect(harness.toolModeEvents).toEqual([{ version: 1, active: false }]);
-  });
-
-  it('activates view_image only for models with image input', async () => {
-    const harness = createHarness();
-    await codexExtension(harness.pi);
-    await harness.emit('session_start', {}, {
-      mode: 'print',
-      model: { ...model('openai', 'gpt-5.4'), input: ['text'] },
-    } as ExtensionContext);
-
-    expect(harness.activeTools).not.toContain('view_image');
-    expect(harness.activeTools).toEqual(expect.arrayContaining([
-      'exec_command', 'write_stdin', 'apply_patch',
-    ]));
-  });
-
-  it('preserves structured skills in the Codex prompt after replacing read', async () => {
-    const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-5.3-codex');
-    await codexExtension(harness.pi);
-    await harness.emit('session_start', {}, ctx);
-
-    const [result] = await harness.emit('before_agent_start', {
-      systemPrompt: 'Felan base prompt\nCurrent working directory: /workspace',
-      systemPromptOptions: {
-        cwd: '/workspace',
-        skills: [
-          skill('linear', 'Manage <Linear> issues', '/home/user/.agents/skills/linear/SKILL.md'),
-          { ...skill('manual', 'Manual only', '/skills/manual/SKILL.md'), disableModelInvocation: true },
-        ],
-      },
-    }, ctx);
-
-    const systemPrompt = (result as { systemPrompt: string }).systemPrompt;
-    expect(systemPrompt).toContain('<skills_instructions>');
-    expect(systemPrompt).toContain('<name>linear</name>');
-    expect(systemPrompt).toContain('<description>Manage &lt;Linear&gt; issues</description>');
-    expect(systemPrompt).toContain('<location>/home/user/.agents/skills/linear/SKILL.md</location>');
-    expect(systemPrompt).not.toContain('<name>manual</name>');
-    expect(systemPrompt.indexOf('<skills_instructions>')).toBeLessThan(
-      systemPrompt.indexOf('Current working directory:'),
-    );
-  });
-
-  it('does not duplicate Pi skill guidance when ordinary tools remain active', async () => {
-    const harness = createHarness(false);
-    const ctx = context('openai-codex', 'gpt-5.3-codex');
-    await codexExtension(harness.pi);
-    await harness.emit('session_start', {}, ctx);
-    const prompt = 'The following skills are available.\n<available_skills>...</available_skills>';
-
-    const results = await harness.emit('before_agent_start', {
-      systemPrompt: prompt,
-      systemPromptOptions: {
-        cwd: '/workspace',
-        skills: [skill('linear', 'Manage Linear issues', '/skills/linear/SKILL.md')],
-      },
-    }, ctx);
-
-    expect(results).toEqual([undefined]);
   });
 
   it('does not register or unregister shared providers', async () => {
@@ -509,7 +420,6 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
   const registerTool = vi.fn();
   const registerProvider = vi.fn();
   const unregisterProvider = vi.fn();
-  const toolModeEvents: Array<{ version: number; active: boolean }> = [];
   const pi = {
     runtime: unusedRuntime(processSupport),
     agentDir: '/agent',
@@ -519,11 +429,7 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
     registerProvider,
     unregisterProvider,
     events: {
-      emit: (channel: string, data: unknown) => {
-        if (channel === CODEX_TOOL_MODE_EVENT) {
-          toolModeEvents.push(data as { version: number; active: boolean });
-        }
-      },
+      emit: () => {},
     },
     getActiveTools: () => [...activeTools],
     setActiveTools: (names: string[]) => activeTools.splice(0, activeTools.length, ...names),
@@ -539,7 +445,6 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
     registerTool,
     registerProvider,
     unregisterProvider,
-    toolModeEvents,
     async emit(name: string, event: unknown, ctx: ExtensionContext) {
       const results: unknown[] = [];
       for (const handler of handlers.get(name) ?? []) results.push(await handler(event, ctx));
@@ -571,22 +476,6 @@ function persistCompaction(ctx: ExtensionContext, id: string, parentId?: string)
 
 function model(provider: string, id: string): Model<Api> {
   return { provider, id, api: 'openai-responses', input: ['text', 'image'] } as Model<Api>;
-}
-
-function skill(name: string, description: string, filePath: string): Skill {
-  return {
-    name,
-    description,
-    filePath,
-    baseDir: filePath.replace(/\/SKILL\.md$/u, ''),
-    sourceInfo: {
-      path: filePath,
-      source: 'local',
-      scope: 'user',
-      origin: 'top-level',
-    },
-    disableModelInvocation: false,
-  };
 }
 
 function unusedRuntime(processSupport: boolean): AgentRuntime {

@@ -1,7 +1,8 @@
 # @felan-ai/ext-background-bash
 
-Detached project-local Bash execution for Felan sessions. The extension augments
-`bash` with `background: true` and adds tools to list, wait for, and stop processes.
+Provider-neutral project-local Bash execution for Felan sessions. The extension augments
+`bash` with explicit backgrounding, bounded foreground waiting, optional PTY input,
+and adds tools to list, read, wait for, write to, and stop processes.
 Output and process metadata live under
 `<session-storage>/background-bash/<workspace-key>/jobs`. Local Felan maps
 `<session-storage>` to
@@ -24,29 +25,39 @@ the host runtime. Git Bash's process tools use its `ps -l` format when GNU
 through dependency onboarding; Felan does not install operating-system
 utilities.
 
-The extension activates for selected models outside the OpenAI provider family.
-OpenAI and OpenAI Codex sessions use the separate Codex-specific process
-surface instead. Keeping eligibility here gives cloud and local consumers
-identical behavior without duplicating model filters in their composition
-roots.
+The same process surface is available to every selected model. Model-specific
+policy belongs to the model-facing prompt/tool composition, not to process
+ownership or runtime capability checks.
 
-This release requires `@felan-ai/agent-core` `^0.6.0` because it uses the
+This release requires `@felan-ai/agent-core` `^0.6.1` because it uses the
 runtime's explicit POSIX shell flavor.
 
 ## Tools and controls
 
 - `bash({ command, background: true })` starts a detached process.
+- `bash({ command, timeout: 120 })` waits in the tool, then promotes the same process without restarting it.
+- `bash({ command, timeout: 0, tty: true })` starts an interactive PTY immediately.
+- `write_background_bash({ id, chars })` sends exact stdin/control bytes to a PTY job.
 - `list_background_bash` lists workspace processes and statuses.
-- `read_background_bash` reads trailing process output.
+- `read_background_bash` reads trailing process output, capped at 128 KiB of log content. Larger files use POSIX `tail` without loading the whole log.
 - `wait_background_bash` waits for terminal status without returning log output.
 - `stop_background_bash` sends `SIGTERM` or `SIGKILL`.
-- `/background-bash` and `Ctrl+Shift+J` open the interactive process/log view inline in the TUI.
+- `/processes` and `Ctrl+Shift+J` open the interactive process/log view inline in the TUI.
 
 The process/log view uses an inline frame. Automatic completion messages use a
 compact one-line summary; `Alt+A` reveals bounded details.
 
-The footer status shows the number of running processes. Foreground `bash` continues
-to use the active `AgentRuntime`. Processes started by the active session deliver a
+The default foreground promotion window is 120 seconds and can be changed with
+`extensionConfig.backgroundBash.foregroundTimeoutSeconds`. Cancelling a foreground
+wait terminates its process tree; cancelling a wait for an already-backgrounded job
+does not terminate that job. Detached jobs remain discoverable after restart when
+their runtime storage persists. PTY handles are root-session-scoped and are not
+reattachable after shutdown. The footer status shows the number of running processes.
+Live PTY status comes from its root-session handle, not detached-runner PID probes.
+Status reads and input remain available while another caller waits in the foreground.
+Terminal outcomes and completion timestamps are recorded once. An orphaned PTY is
+reported as `unknown`; its stored PID is not used to reattach or signal a process.
+Processes started by the active session deliver a
 completion message automatically. The message steers an active run at its next
 model-call boundary or triggers a turn when the agent is idle. A terminal result
 returned directly by `list_background_bash`, `read_background_bash`,
@@ -85,8 +96,8 @@ the POSIX shell/process facilities listed in
 does not install operating-system utilities, and the feature remains inactive
 when they are unavailable.
 
-The extension owns detached job records, logs, lifecycle, model eligibility,
-and the five model-facing process controls. It does not provide a sandbox.
+The extension owns detached job records, logs, lifecycle, PTY controls, and the
+six model-facing process controls. It does not provide a sandbox.
 
 ## Related documentation
 

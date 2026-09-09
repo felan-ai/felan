@@ -16,6 +16,13 @@ const PREVIEW_LINES = 3;
 const MAX_PREVIEW_WIDTH = 120;
 const INLINE_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/gu;
 const MULTILINE_CONTROL_CHARACTERS = /[\u0000-\u0009\u000B-\u000C\u000E-\u001F\u007F-\u009F]/gu;
+const PROCESS_ACTION_LABELS = new Map<string, readonly [string, string, string]>([
+  ['list_background_bash', ['Listing processes', 'Listed processes', 'Failed to list processes']],
+  ['read_background_bash', ['Reading process output', 'Read process output', 'Failed to read process output']],
+  ['wait_background_bash', ['Waiting for process', 'Waited for process', 'Failed to wait for process']],
+  ['stop_background_bash', ['Stopping process', 'Stopped process', 'Failed to stop process']],
+  ['write_background_bash', ['Sending input to process', 'Sent input to process', 'Failed to send input to process']],
+]);
 const SESSION_MEMORY_PATH_PATTERN = /(?:^|[\\/\s"'=])\.memory(?:[\\/]|$)/u;
 const CANONICAL_MEMORY_PATH_PATTERN = /(?:^|[\\/])memory[\\/]v1[\\/]projects[\\/][a-f0-9]{64}[\\/]current(?:[\\/]|$)/iu;
 const MEMORY_READ_COMMANDS = new Set([
@@ -198,7 +205,8 @@ function resultPreview(call: ToolActivityCall): string[] {
 
   const allLines = text.split('\n').map((line) => truncate(line.trimEnd(), MAX_PREVIEW_WIDTH));
   let lines = allLines.slice(0, PREVIEW_LINES);
-  if (toolCategory(call.name) === 'command' && allLines.length > PREVIEW_LINES) {
+  const category = toolCategory(call.name);
+  if ((category === 'command' || category === 'process') && allLines.length > PREVIEW_LINES) {
     lines = [...allLines.slice(0, PREVIEW_LINES - 1), allLines.at(-1)!];
   }
   if (allLines.length > PREVIEW_LINES) lines.push(`… ${allLines.length - PREVIEW_LINES} more lines`);
@@ -211,6 +219,7 @@ type ToolCategory =
   | 'search'
   | 'edit'
   | 'command'
+  | 'process'
   | 'wait'
   | 'interact'
   | 'task'
@@ -232,6 +241,7 @@ function toolCategory(name: string): ToolCategory {
   if (normalized === 'read' || normalized === 'read_file') return 'read';
   if (['web_search', 'fetch_content'].includes(normalized)) return 'web';
   if (['grep', 'find', 'ls'].includes(normalized) || normalized.includes('search')) return 'search';
+  if (PROCESS_ACTION_LABELS.has(normalized)) return 'process';
   if (
     normalized === 'bash'
     || normalized.includes('exec_command')
@@ -256,6 +266,7 @@ function categorySummary(category: ToolCategory, count: number, running: boolean
       : `${running ? 'running' : 'ran'} ${count} searches`;
     case 'edit': return `${running ? 'editing' : 'edited'} ${count} file${plural}`;
     case 'command': return `${running ? 'running' : 'ran'} ${count} command${plural}`;
+    case 'process': return `${running ? 'running' : 'completed'} ${count} process action${plural}`;
     case 'wait': return `${running ? 'waiting' : 'waited'} for ${count} command${plural}`;
     case 'interact': return `${running ? 'interacting' : 'interacted'} with ${count} command${plural}`;
     case 'task': return `${running ? 'updating' : 'updated'} ${count} task action${plural}`;
@@ -276,6 +287,15 @@ function callLabel(call: ToolActivityCall): string {
   if (normalized === 'grep') return running ? 'Searching' : 'Searched';
   if (normalized === 'find') return running ? 'Finding files' : 'Found files';
   if (normalized === 'ls') return running ? 'Listing files' : 'Listed files';
+  const processLabels = PROCESS_ACTION_LABELS.get(normalized);
+  if (processLabels) return processLabels[call.isError ? 2 : running ? 0 : 1];
+  if (normalized === 'bash') {
+    const args = asRecord(call.args);
+    if (args.background === true || args.timeout === 0 || asRecord(call.result?.details).background === true) {
+      if (call.isError) return 'Failed to start background process';
+      return running ? 'Starting background process' : 'Started background process';
+    }
+  }
   if (normalized.includes('write_stdin')) {
     const chars = asRecord(call.args).chars;
     const interacted = typeof chars === 'string' && chars.length > 0;
@@ -379,6 +399,10 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
     value = firstString(args, ['pattern', 'path']);
   } else if (normalized === 'ls') {
     value = firstString(args, ['path']);
+  } else if (PROCESS_ACTION_LABELS.has(normalized)) {
+    value = normalized === 'list_background_bash'
+      ? firstString(args, ['status']) ?? 'all'
+      : call.relatedCommand ?? firstString(args, ['id']);
   } else if (normalized.includes('write_stdin')) {
     value = call.relatedCommand ?? firstString(args, ['cmd', 'command']);
   } else if (toolCategory(call.name) === 'command') {

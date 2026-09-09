@@ -1,10 +1,13 @@
 import { join } from 'node:path';
 import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
+import { BackgroundBashCoordinator, type InteractiveBashProcess } from './coordinator.js';
+import { shellQuote } from './runtime-support.js';
 import { createOutputLog, readLogTail } from './logs.js';
 import {
   BackgroundBashJobStore,
   type BackgroundBashJob,
   type BackgroundBashStatusFilter,
+  isBackgroundBashJobId,
   isTerminalStatus,
 } from './job-store.js';
 
@@ -19,23 +22,89 @@ const STOP_PROCESS_WAIT_MS = 5_000;
 const RUNNER_MARKER_MAX_AGE_SECONDS = 3;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const pendingLaunches = new Map<string, Promise<void>>();
 
 export class BackgroundBashManager {
   readonly #store: BackgroundBashJobStore;
   readonly #storage: AgentRuntimeStorage;
 
-  constructor(private readonly runtime: AgentRuntime) {
+  readonly #coordinator: BackgroundBashCoordinator;
+
+  constructor(private readonly runtime: AgentRuntime, coordinator?: BackgroundBashCoordinator) {
     this.#storage = runtime.storage('session');
     this.#store = new BackgroundBashJobStore(runtime, this.#storage);
+    this.#coordinator = coordinator ?? new BackgroundBashCoordinator(runtime);
+  }
+
+  get coordinator(): BackgroundBashCoordinator {
+    return this.#coordinator;
+  }
+
+  async startInteractive(command: string): Promise<{ job: BackgroundBashJob; process: InteractiveBashProcess }> {
+    const job = await this.#store.createJob(command, 'pty');
+    const finishLaunch = trackLaunch(job.meta.jobDir);
+    try {
+      await createOutputLog(this.#storage, job.meta.logPath);
+      await this.#storage.writeFile(job.meta.commandPath, encoder.encode(`${command}\n`));
+      const process = await this.#coordinator.start(
+        job.meta.id,
+        command,
+        this.runtime.cwd,
+        (snapshot) => this.#persistInteractiveSnapshot(job.meta.id, snapshot),
+      );
+      const updated = await this.#store.updatePid(job.meta.id, process.process.pid ?? 0, undefined, {
+        executionMode: 'pty',
+      });
+      if (!updated) throw new Error(`Background process disappeared during startup: ${job.meta.id}`);
+      return { job: updated, process };
+    } catch (error) {
+      if (this.#coordinator.has(job.meta.id)) {
+        try {
+          await this.#coordinator.stop(job.meta.id, 'SIGKILL');
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], `Failed to clean up interactive startup ${job.meta.id}`);
+        }
+      }
+      await this.#store.markStatus(job.meta.id, {
+        status: 'failed',
+        exitCode: null,
+        signal: null,
+        error: errorMessage(error),
+      });
+      throw error;
+    } finally {
+      finishLaunch();
+    }
+  }
+
+  async readInteractive(id: string, waitMs = 0, signal?: AbortSignal): Promise<InteractiveBashProcess> {
+    return this.#coordinator.read(id, waitMs, signal);
+  }
+
+  async writeInteractive(id: string, chars: string): Promise<InteractiveBashProcess> {
+    return this.#coordinator.write(id, chars);
+  }
+
+  async stopInteractive(id: string, signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'): Promise<InteractiveBashProcess> {
+    return this.#coordinator.stop(id, signal);
+  }
+
+  async shutdownInteractive(): Promise<void> {
+    await this.#coordinator.shutdown();
+  }
+
+  async markPromoted(id: string, executionMode: 'detached' | 'pty' = 'detached'): Promise<BackgroundBashJob | undefined> {
+    return this.#store.markRunning(id, executionMode, Date.now());
   }
 
   async start(command: string): Promise<BackgroundBashJob> {
-    let job = await this.#store.createJob(command);
-    await createOutputLog(this.#storage, job.meta.logPath);
-    await this.#storage.writeFile(job.meta.commandPath, encoder.encode(`${command}\n`));
-    await this.#storage.writeFile(job.meta.runnerPath, encoder.encode(createRunnerScript(job)));
-
+    const job = await this.#store.createJob(command);
+    const finishLaunch = trackLaunch(job.meta.jobDir);
+    let launchedProcess: ReturnType<typeof parseLaunchResult>;
     try {
+      await createOutputLog(this.#storage, job.meta.logPath);
+      await this.#storage.writeFile(job.meta.commandPath, encoder.encode(`${command}\n`));
+      await this.#storage.writeFile(job.meta.runnerPath, encoder.encode(createRunnerScript(job)));
       const launch = await this.runtime.shell(createLaunchCommand(
         job.meta.runnerPath,
         job.meta.processToken!,
@@ -47,37 +116,63 @@ export class BackgroundBashManager {
       if (launch.killed || launch.code !== 0) {
         throw new Error(launch.stderr || launch.stdout || 'Background runner failed to launch');
       }
-      const launchedProcess = parseLaunchResult(launch.stdout);
+      launchedProcess = parseLaunchResult(launch.stdout);
       if (!launchedProcess) throw new Error('Background runner did not report a process id');
-      job = await this.#store.updatePid(
+      const updated = await this.#store.updatePid(
         job.meta.id,
         launchedProcess.pid,
         launchedProcess.processGroupId,
-      ) ?? job;
-      return job;
+      );
+      if (!updated) throw new Error(`Background process disappeared during startup: ${job.meta.id}`);
+      return updated;
     } catch (error) {
+      if (launchedProcess) {
+        try {
+          await this.#stopUnregisteredProcess(job, launchedProcess.pid);
+        } catch (cleanupError) {
+          const errors: unknown[] = [error, cleanupError];
+          try {
+            await this.#store.updatePid(job.meta.id, launchedProcess.pid, launchedProcess.processGroupId);
+          } catch (persistenceError) {
+            errors.push(persistenceError);
+          }
+          throw new AggregateError(errors, `Failed to clean up background startup ${job.meta.id} (PID ${launchedProcess.pid})`);
+        }
+      }
       await this.#store.markStatus(job.meta.id, {
         status: 'failed',
+        ...(launchedProcess === undefined ? {} : { pid: launchedProcess.pid }),
         exitCode: null,
         signal: null,
         error: errorMessage(error),
       });
       throw new Error(`Failed to start background bash process: ${errorMessage(error)}`, { cause: error });
+    } finally {
+      finishLaunch();
     }
   }
 
   async list(status: BackgroundBashStatusFilter = 'all'): Promise<BackgroundBashJob[]> {
     const jobs = await this.#store.listJobs('all');
     const normalized: BackgroundBashJob[] = [];
-    for (const job of jobs) normalized.push(await this.#normalizeJob(job));
+    for (const job of jobs) {
+      normalized.push(await this.get(job.meta.id));
+    }
     return status === 'all'
       ? normalized
       : normalized.filter((job) => job.status.status === status);
   }
 
   async get(id: string): Promise<BackgroundBashJob> {
+    const wasStarting = pendingLaunches.has(join(this.#store.jobsDir, id));
     const job = await this.#store.readJob(id);
-    if (!job) throw new Error(`Background Bash process not found: ${id}`);
+    if (!job) throw new Error(`Background process not found: ${id}`);
+    if (wasStarting || pendingLaunches.has(job.meta.jobDir) || this.#coordinator.isStarting(id)) return job;
+    if (this.#coordinator.has(id)) {
+      await this.readInteractive(id);
+      const refreshed = await this.#store.readJob(id);
+      if (refreshed) return refreshed;
+    }
     return this.#normalizeJob(job);
   }
 
@@ -91,6 +186,7 @@ export class BackgroundBashManager {
       : Date.now() + Math.max(0, timeoutSeconds) * 1_000;
 
     while (true) {
+      signal?.throwIfAborted();
       const job = await this.get(id);
       if (isTerminalStatus(job.status.status)) return { job, timedOut: false };
       if (deadline !== undefined && Date.now() >= deadline) return { job, timedOut: true };
@@ -103,6 +199,13 @@ export class BackgroundBashManager {
   }
 
   async stop(id: string, signal: NodeJS.Signals = 'SIGTERM'): Promise<BackgroundBashJob> {
+    if (!isBackgroundBashJobId(id)) throw new Error(`Background process not found: ${id}`);
+    await pendingLaunches.get(join(this.#store.jobsDir, id));
+    if (this.#coordinator.has(id)) {
+      await this.stopInteractive(id, signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM');
+      const interactive = await this.#store.readJob(id);
+      if (interactive) return interactive;
+    }
     let job = await this.get(id);
     if (isTerminalStatus(job.status.status)) return job;
 
@@ -123,7 +226,7 @@ export class BackgroundBashManager {
         signal: null,
         error: pid ? 'Process is no longer alive.' : 'No process id was recorded.',
       });
-      if (!unknown) throw new Error(`Background Bash process not found: ${id}`);
+      if (!unknown) throw new Error(`Background process not found: ${id}`);
       return unknown;
     }
 
@@ -134,17 +237,11 @@ export class BackgroundBashManager {
       result = await this.#sendSignal(pid, signal);
     }
     if (result.code !== 0) {
-      throw new Error(result.stderr || `Unable to send ${signal} to Background Bash process ${id}`);
+      throw new Error(result.stderr || `Unable to send ${signal} to background process ${id}`);
     }
 
     if (!await this.#waitForProcessExit(pid)) {
-      return await this.#store.markStatus(id, {
-        status: 'unknown',
-        pid,
-        exitCode: null,
-        signal: null,
-        error: `Process did not exit after ${STOP_PROCESS_WAIT_MS / 1_000} seconds.`,
-      }) ?? job;
+      throw new Error(`Background process ${id} did not exit after ${STOP_PROCESS_WAIT_MS / 1_000} seconds; it is still running.`);
     }
 
     const completed = await this.#store.readJob(id);
@@ -155,13 +252,43 @@ export class BackgroundBashManager {
       exitCode: null,
       signal,
     });
-    if (!killed) throw new Error(`Background Bash process not found: ${id}`);
+    if (!killed) throw new Error(`Background process not found: ${id}`);
     return killed;
   }
 
   async tail(id: string, lines = 80): Promise<string> {
     const job = await this.get(id);
-    return readLogTail(this.#storage, job.meta.logPath, lines);
+    return readLogTail(this.runtime, this.#storage, job.meta.logPath, lines);
+  }
+
+  async #persistInteractiveSnapshot(id: string, snapshot: InteractiveBashProcess): Promise<void> {
+    const job = await this.#store.readJob(id);
+    if (!job) throw new Error(`Background process not found: ${id}`);
+    await this.#storage.writeFile(job.meta.logPath, encoder.encode(snapshot.output));
+    if (snapshot.running) return;
+    await this.#store.markStatus(id, snapshot.signal
+      ? { status: 'killed', exitCode: null, signal: snapshot.signal }
+      : snapshot.exitCode === undefined
+        ? { status: 'unknown', exitCode: null, error: 'Interactive process exited without reporting an exit code.' }
+        : { status: snapshot.exitCode === 0 ? 'completed' : 'failed', exitCode: snapshot.exitCode });
+  }
+
+  async #stopUnregisteredProcess(job: BackgroundBashJob, pid: number): Promise<void> {
+    const deadline = Date.now() + PROCESS_STATUS_GRACE_MS;
+    let inspected = await this.#inspectJobProcess(job, pid);
+    while (!inspected) {
+      if (!await this.#isProcessAlive(pid)) return;
+      if (Date.now() >= deadline) throw new Error(`Unable to verify background startup ${job.meta.id} (PID ${pid})`);
+      await sleep(50);
+      inspected = await this.#inspectJobProcess(job, pid);
+    }
+    const result = await this.#sendSignal(inspected.processGroupId === pid ? -pid : pid, 'SIGKILL');
+    if (result.code !== 0 && await this.#isProcessAlive(pid)) {
+      throw new Error(result.stderr || `Unable to stop background startup ${job.meta.id}`);
+    }
+    if (!await this.#waitForProcessExit(pid)) {
+      throw new Error(`Background startup process ${job.meta.id} (PID ${pid}) did not exit`);
+    }
   }
 
   async #normalizeJob(job: BackgroundBashJob): Promise<BackgroundBashJob> {
@@ -170,6 +297,14 @@ export class BackgroundBashManager {
     const pid = job.status.pid ?? job.meta.pid;
     const now = Date.now();
     if (now - job.status.startedAt <= PROCESS_STATUS_GRACE_MS) return job;
+    if (job.meta.executionMode === 'pty') {
+      return await this.#store.markStatus(job.meta.id, {
+        status: 'unknown',
+        exitCode: null,
+        signal: null,
+        error: 'Interactive process is not attached to this root session; its exit status is unavailable.',
+      }) ?? job;
+    }
     if (pid && await this.#isJobProcessAlive(job, pid)) return job;
 
     const latest = await this.#store.readJob(job.meta.id);
@@ -456,11 +591,6 @@ function parseLaunchResult(output: string): { pid: number; processGroupId?: numb
   return { pid, ...(processGroupId === undefined ? {} : { processGroupId }) };
 }
 
-function shellQuote(value: string): string {
-  const normalized = process.platform === 'win32' ? value.replaceAll('\\', '/') : value;
-  return `'${normalized.replaceAll("'", `'\\''`)}'`;
-}
-
 function containsPosixPath(command: string, path: string): boolean {
   const normalizedPath = path.replaceAll('\\', '/');
   const variants = [normalizedPath];
@@ -490,4 +620,14 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function trackLaunch(path: string): () => void {
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => { finish = resolve; });
+  pendingLaunches.set(path, pending);
+  return () => {
+    if (pendingLaunches.get(path) === pending) pendingLaunches.delete(path);
+    finish();
+  };
 }

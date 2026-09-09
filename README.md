@@ -132,7 +132,7 @@ versus host-managed memory lifecycle.
 | **Remember locally** | An account-free, project-scoped Markdown wiki with bounded evidence ingestion, validation, citations, and retryable host-owned publication. |
 | **Retrieve web evidence** | Provider-backed URL discovery, bounded matching text/PDF passages, and explicit SSRF-untrusted remote content boundaries. |
 | **Connect external tools carefully** | A lazy OAuth-only remote MCP gateway, explicit credential ownership, and bounded untrusted remote results. |
-| **Use the right model tools** | GPT-specific structured command/patch/image tools, detached Background Bash for other providers, and RTK-backed command/output optimization. |
+| **Use the right model tools** | Shared `read`/`bash` tools with background processes, GPT-specific `apply_patch`, and RTK-backed command/output optimization. |
 | **Inspect efficiency** | Session, project, and retained local estimates through `/savings`, `felan savings`, and the default Powerline footer. |
 | **Keep the TUI readable** | Grouped tool activity, full-call inspection, agent/task/process overlays, and an ANSI-aware Powerline footer. |
 
@@ -213,7 +213,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 | [`@felan-ai/ext-felan-api`](packages/ext-felan-api/README.md) | Single authenticated Felan API gateway | [Configuration](docs/user-guide/configuration.md#felan-api) |
 | [`@felan-ai/ext-browser`](packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration | [Browser](docs/user-guide/web-mcp-and-browser.md) |
 | [`@felan-ai/ext-markitdown`](packages/ext-markitdown/README.md) | Bounded office-document conversion | [Documents](docs/user-guide/web-mcp-and-browser.md) |
-| [`@felan-ai/ext-background-bash`](packages/ext-background-bash/README.md) | Detached Bash processes and logs | [Commands](docs/user-guide/commands-and-shortcuts.md) |
+| [`@felan-ai/ext-background-bash`](packages/ext-background-bash/README.md) | Background processes, PTY input, and logs | [Commands](docs/user-guide/commands-and-shortcuts.md) |
 | [`@felan-ai/ext-codex`](packages/ext-codex/README.md) | GPT-specific structured tools and request controls | [Configuration](docs/user-guide/configuration.md) |
 | [`@felan-ai/ext-rtk-optimizer`](packages/ext-rtk-optimizer/README.md) | RTK command rewriting and output compaction | [Runtime dependencies](docs/reference/runtime-dependencies.md) |
 | [`@felan-ai/ext-codebase-memory`](packages/ext-codebase-memory/README.md) | Structural code search, symbol reads, and bounded grep augmentation | [Runtime dependencies](docs/reference/runtime-dependencies.md) |

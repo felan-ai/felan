@@ -4,8 +4,8 @@ import { supportsBackgroundBashModel } from '../src/index.js';
 
 describe('background bash model policy', () => {
   it.each([
-    ['openai', false],
-    ['openai-codex', false],
+    ['openai', true],
+    ['openai-codex', true],
     ['anthropic', true],
     ['google', true],
     ['custom-provider', true],

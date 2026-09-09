@@ -26,7 +26,6 @@ type Handler = (event: any, ctx: ExtensionContext) => unknown;
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void> | void;
 
 const temporaryPaths: string[] = [];
-const CODEX_TOOL_MODE_EVENT = 'felan:codex:tool-mode:v1';
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -299,7 +298,7 @@ describe('MarkItDown extension', () => {
     markitdownExtension(harness.pi);
     const pdf = Buffer.from('%PDF-1.7\nremote report');
 
-    expect(harness.eventChannels()).toEqual([CODEX_TOOL_MODE_EVENT, MARKITDOWN_PDF_EVENT]);
+    expect(harness.eventChannels()).toEqual([MARKITDOWN_PDF_EVENT]);
     await expect(harness.convertPdf(pdf)).resolves.toEqual({
       markdown: 'converted markdown',
       converter: 'MarkItDown',
@@ -437,8 +436,8 @@ describe('MarkItDown extension', () => {
     markitdownExtension(first.pi);
     markitdownExtension(reloaded.pi);
 
-    expect(first.eventChannels()).toEqual([CODEX_TOOL_MODE_EVENT, MARKITDOWN_PDF_EVENT]);
-    expect(reloaded.eventChannels()).toEqual([CODEX_TOOL_MODE_EVENT, MARKITDOWN_PDF_EVENT]);
+    expect(first.eventChannels()).toEqual([MARKITDOWN_PDF_EVENT]);
+    expect(reloaded.eventChannels()).toEqual([MARKITDOWN_PDF_EVENT]);
   });
 
   it('lets only one listener claim and start a PDF conversion', async () => {
@@ -472,194 +471,6 @@ describe('MarkItDown extension', () => {
       },
     })).not.toThrow();
     await vi.waitFor(() => expect(fixture.conversions).toHaveLength(1));
-  });
-
-  it('registers read_document only while Codex tool mode is active', async () => {
-    const fixture = await createFixture();
-    const sourcePath = join(fixture.workspace, 'report.docx');
-    await writeFile(sourcePath, 'office document');
-    const savings: unknown[] = [];
-    const harness = createHarness(fixture.runtime, {
-      model: { provider: 'test', id: 'document-model' },
-      savings: { report: async (measurement) => { savings.push(measurement); } },
-    });
-    markitdownExtension(harness.pi);
-
-    expect(harness.toolNames()).toEqual([]);
-    expect(harness.activeTools).toEqual(['read']);
-    harness.pi.events.emit(CODEX_TOOL_MODE_EVENT, { version: 2, active: true });
-    expect(harness.toolNames()).toEqual([]);
-    harness.setCodexToolMode(false);
-    expect(harness.toolNames()).toEqual([]);
-    expect(harness.activeTools).toEqual(['read']);
-
-    harness.setCodexToolMode(true);
-    expect(harness.toolNames()).toEqual(['read_document']);
-    expect(harness.toolRegistrations).toEqual(['read_document']);
-    expect(harness.activeTools).toEqual(['exec_command', 'read_document']);
-    const result = await harness.readDocument({ path: sourcePath }) as {
-      content: Array<{ type: string; text: string }>;
-      details: { cacheHit: boolean; totalLines: number; startLine: number; endLine: number };
-    };
-    expect(result.content[0]!.text).toContain('converted markdown');
-    expect(result.content[0]!.text).toContain('markitdown_conversion_diagnostic');
-    expect(result.content[0]!.text).toContain('untrusted data');
-    expect(result.details).toMatchObject({ cacheHit: false, startLine: 1 });
-    expect(fixture.conversions).toHaveLength(1);
-
-    const cached = await harness.readDocument({ path: sourcePath }) as { details: { cacheHit: boolean } };
-    expect(cached.details.cacheHit).toBe(true);
-    expect(fixture.conversions).toHaveLength(1);
-    expect(savings).toHaveLength(2);
-    expect(savings[0]).toMatchObject({ dimensions: { tool: 'read_document' } });
-
-    harness.setCodexToolMode(false);
-    expect(harness.activeTools).toEqual(['read']);
-    await expect(harness.readDocument({ path: sourcePath }))
-      .rejects.toThrow('only while MarkItDown and Codex tool mode are active');
-
-    harness.setCodexToolMode(true);
-    expect(harness.toolNames()).toEqual(['read_document']);
-    expect(harness.activeTools).toEqual(['exec_command', 'read_document']);
-    setActiveMarkitdownEnabled(fixture.runtime, false);
-    expect(harness.activeTools).toEqual(['exec_command']);
-    setActiveMarkitdownEnabled(fixture.runtime, true);
-    expect(harness.activeTools).toEqual(['exec_command', 'read_document']);
-    expect(harness.toolRegistrations).toEqual(['read_document']);
-  });
-
-  it('paginates read_document output and rejects unsupported formats', async () => {
-    const fixture = await createFixture({ conversionOutput: 'first line\nsecond line\nthird line' });
-    const sourcePath = join(fixture.workspace, 'slides.pptx');
-    await writeFile(sourcePath, 'slides');
-    const harness = createHarness(fixture.runtime);
-    markitdownExtension(harness.pi);
-    harness.setCodexToolMode(true);
-
-    const page = await harness.readDocument({ path: sourcePath, offset: 1, limit: 2 }) as {
-      content: Array<{ text: string }>;
-      details: { startLine: number; endLine: number; outputTruncated: boolean };
-    };
-    expect(page.content[0]!.text).toContain('first line\nsecond line');
-    expect(page.content[0]!.text).toContain('Use offset=3 to continue');
-    expect(page.details).toMatchObject({ startLine: 1, endLine: 2, outputTruncated: true });
-    const finalPage = await harness.readDocument({ path: sourcePath, offset: 3, limit: 2 }) as {
-      content: Array<{ text: string }>;
-      details: { startLine: number; endLine: number; outputTruncated: boolean };
-    };
-    expect(finalPage.content[0]!.text).toContain('third line');
-    expect(finalPage.content[0]!.text).not.toContain('more lines in document');
-    expect(finalPage.details).toMatchObject({ startLine: 3, endLine: 3, outputTruncated: false });
-    await expect(harness.readDocument({ path: join(fixture.workspace, 'notes.txt') }))
-      .rejects.toThrow('supports only');
-    await expect(harness.readDocument({ path: join(fixture.workspace, 'image.png') }))
-      .rejects.toThrow('supports only');
-    await expect(harness.readDocument({ path: join(fixture.workspace, 'legacy.doc') }))
-      .rejects.toThrow('received ".doc"');
-    await expect(harness.readDocument({ path: sourcePath, offset: 0 }))
-      .rejects.toThrow('offset');
-    await expect(harness.readDocument({ path: sourcePath, offset: 4 }))
-      .rejects.toThrow('exceeds the 3-line converted document');
-  });
-
-  it('segments oversized Markdown lines, advances pagination, and bounds the complete response', async () => {
-    const fixture = await createFixture({ conversionOutput: 'x'.repeat(60 * 1_024) });
-    const sourcePath = join(fixture.workspace, 'wide.xlsx');
-    await writeFile(sourcePath, 'spreadsheet');
-    const harness = createHarness(fixture.runtime);
-    markitdownExtension(harness.pi);
-    harness.setCodexToolMode(true);
-
-    const first = await harness.readDocument({ path: sourcePath, limit: 1 }) as {
-      content: Array<{ text: string }>;
-      details: { endLine: number; outputBytes: number; oversizedLinesSegmented: boolean };
-    };
-    expect(first.content[0]!.text).toContain('Use offset=2 to continue');
-    expect(first.details).toMatchObject({ endLine: 1, oversizedLinesSegmented: true });
-    expect(first.details.outputBytes).toBe(Buffer.byteLength(first.content[0]!.text, 'utf8'));
-    expect(first.details.outputBytes).toBeLessThanOrEqual(50 * 1_024);
-
-    const second = await harness.readDocument({ path: sourcePath, offset: 2, limit: 1 }) as {
-      content: Array<{ text: string }>;
-      details: { startLine: number; endLine: number; outputBytes: number };
-    };
-    expect(second.details).toMatchObject({ startLine: 2, endLine: 2 });
-    expect(second.content[0]!.text).toContain('Use offset=3 to continue');
-    expect(second.details.outputBytes).toBeLessThanOrEqual(50 * 1_024);
-  });
-
-  it('cancels read_document promptly while shared converter detection continues', async () => {
-    let releaseDetection!: () => void;
-    const detectionGate = new Promise<void>((resolve) => { releaseDetection = resolve; });
-    const fixture = await createFixture({ detectionGate });
-    const sourcePath = join(fixture.workspace, 'cancel-detection.docx');
-    await writeFile(sourcePath, 'document');
-    const harness = createHarness(fixture.runtime);
-    markitdownExtension(harness.pi);
-    harness.setCodexToolMode(true);
-    const controller = new AbortController();
-
-    const cancelled = harness.readDocument({ path: sourcePath }, controller.signal);
-    await vi.waitFor(() => expect(fixture.exec).toHaveBeenCalled());
-    controller.abort();
-    await expect(cancelled).rejects.toThrow('MarkItDown conversion was cancelled');
-
-    releaseDetection();
-    await expect(harness.readDocument({ path: sourcePath })).resolves.toMatchObject({
-      details: { cacheHit: false },
-    });
-  });
-
-  it('cancels an active read_document conversion with a format-neutral error', async () => {
-    const fixture = await createFixture({ conversionMode: 'cancellable' });
-    const sourcePath = join(fixture.workspace, 'cancel-conversion.pptx');
-    await writeFile(sourcePath, 'document');
-    const harness = createHarness(fixture.runtime);
-    markitdownExtension(harness.pi);
-    harness.setCodexToolMode(true);
-    const controller = new AbortController();
-
-    const cancelled = harness.readDocument({ path: sourcePath }, controller.signal);
-    await vi.waitFor(() => expect(fixture.conversions).toHaveLength(1));
-    controller.abort();
-
-    await expect(cancelled).rejects.toThrow('MarkItDown conversion was cancelled');
-    await expect(readdir(join(fixture.session, 'markitdown', 'staging'))).resolves.toEqual([]);
-  });
-
-  it('cancels a queued read_document conversion with a format-neutral error', async () => {
-    const fixture = await createFixture({ conversionMode: 'cancellable' });
-    const firstPath = join(fixture.workspace, 'active.docx');
-    const queuedPath = join(fixture.workspace, 'queued.xlsx');
-    await Promise.all([
-      writeFile(firstPath, 'active document'),
-      writeFile(queuedPath, 'queued document'),
-    ]);
-    const harness = createHarness(fixture.runtime);
-    markitdownExtension(harness.pi);
-    harness.setCodexToolMode(true);
-    const firstController = new AbortController();
-    const queuedController = new AbortController();
-
-    const active = harness.readDocument({ path: firstPath }, firstController.signal);
-    await vi.waitFor(() => expect(fixture.conversions).toHaveLength(1));
-    const queued = harness.readDocument({ path: queuedPath }, queuedController.signal);
-    queuedController.abort();
-
-    await expect(queued).rejects.toThrow('MarkItDown conversion was cancelled');
-    expect(fixture.conversions).toHaveLength(1);
-    firstController.abort();
-    await expect(active).rejects.toThrow('MarkItDown conversion was cancelled');
-  });
-
-  it('fails read_document closed when the converter is unavailable', async () => {
-    const fixture = await createFixture({ markitdownAvailable: false });
-    const harness = createHarness(fixture.runtime);
-    markitdownExtension(harness.pi);
-    harness.setCodexToolMode(true);
-    await expect(harness.readDocument({ path: join(fixture.workspace, 'report.docx') }))
-      .rejects.toThrow('/markitdown install');
-    expect(fixture.conversions).toHaveLength(0);
   });
 
   it('reports only explicit installation and supported-format status through /markitdown', async () => {
@@ -816,24 +627,6 @@ function createHarness(runtime: AgentRuntime, options: {
     toolRegistrations,
     activeTools,
     toolNames: () => [...tools.keys()],
-    setCodexToolMode: (active: boolean) => {
-      const unrelated = pi.getActiveTools().filter((name) => (
-        name !== 'read' && name !== 'read_document' && name !== 'exec_command'
-      ));
-      pi.setActiveTools([...unrelated, active ? 'exec_command' : 'read']);
-      pi.events.emit(CODEX_TOOL_MODE_EVENT, { version: 1, active });
-    },
-    readDocument: (params: Record<string, unknown>, signal?: AbortSignal) => {
-      const tool = tools.get('read_document');
-      if (!tool) throw new Error('read_document tool was not registered');
-      return tool.execute(
-        'read-document-test',
-        params,
-        signal,
-        undefined,
-        context(notifications, statuses, options.model),
-      );
-    },
     eventChannels: () => [...eventHandlers.keys()],
     convertPdf(bytes: Uint8Array, signal?: AbortSignal) {
       let claimed = false;

@@ -11,7 +11,3 @@ export function supportsCodexResponsesRequest(model: Model<Api> | undefined): bo
   return supportsCodexModel(model)
     && (model!.api === 'openai-responses' || model!.api === 'openai-codex-responses');
 }
-
-export function supportsImageInput(model: Model<Api> | undefined): boolean {
-  return supportsCodexModel(model) && Array.isArray(model!.input) && model!.input.includes('image');
-}

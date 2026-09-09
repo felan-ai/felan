@@ -40,6 +40,8 @@ describe('background bash extension activation', () => {
     );
     await Promise.resolve();
     const lines = view.render(50);
+    expect(lines.join('\n')).toContain('Background processes');
+    expect(lines.join('\n')).toContain('No background processes');
     expect(lines[0]).toBe('─'.repeat(50));
     expect(lines.at(-1)).toBe('─'.repeat(50));
     expect(lines.slice(1, -1).every((line) => !line.startsWith('│') && !line.endsWith('│'))).toBe(true);
@@ -116,7 +118,7 @@ describe('background bash extension activation', () => {
 
     try {
       const command = harness.registerCommand.mock.calls
-        .find(([name]) => name === 'background-bash')?.[1] as {
+        .find(([name]) => name === 'processes')?.[1] as {
           handler: (args: string, context: ExtensionContext) => Promise<void>;
         };
       await command.handler('', ctx);
@@ -128,7 +130,7 @@ describe('background bash extension activation', () => {
     }
   });
 
-  it('registers TUI controls before switching away from an OpenAI model', async () => {
+  it('registers TUI controls before switching models', async () => {
     vi.spyOn(BackgroundBashManager.prototype, 'list').mockResolvedValue([]);
     const harness = createHarness();
     const openaiContext = tuiContext('openai');
@@ -136,12 +138,13 @@ describe('background bash extension activation', () => {
     await backgroundBashExtension(harness.pi);
     await harness.emit('session_start', {}, openaiContext);
 
-    expect(harness.registerTool).not.toHaveBeenCalled();
+    expect(harness.registerTool).toHaveBeenCalledTimes(6);
     expect(harness.registerCommand).toHaveBeenCalledWith(
-      'background-bash',
+      'processes',
       expect.any(Object),
     );
     expect(harness.registerShortcut).toHaveBeenCalledOnce();
+    expect(harness.registerCommand.mock.calls.map(([name]) => name)).toEqual(['processes']);
 
     try {
       await harness.emit(
@@ -150,19 +153,19 @@ describe('background bash extension activation', () => {
         anthropicContext,
       );
       const command = harness.registerCommand.mock.calls
-        .find(([name]) => name === 'background-bash')?.[1] as {
+        .find(([name]) => name === 'processes')?.[1] as {
           handler: (args: string, context: ExtensionContext) => Promise<void>;
         };
       await command.handler('', anthropicContext);
 
-      expect(harness.registerTool).toHaveBeenCalledTimes(5);
+      expect(harness.registerTool).toHaveBeenCalledTimes(6);
       expect(anthropicContext.ui.custom).toHaveBeenCalledOnce();
     } finally {
       await harness.emit('session_shutdown', {}, anthropicContext);
     }
   });
 
-  it('renders completion messages as a bounded summary with optional details', async () => {
+  it('renders existing completion messages with current process labels and optional details', async () => {
     const harness = createHarness();
     await backgroundBashExtension(harness.pi);
     const renderer = harness.messageRenderers.get('felan-background-bash-completion')!;
@@ -185,7 +188,7 @@ describe('background bash extension activation', () => {
 
     const collapsed = renderer(message, { expanded: false, outputPad: 1 }, theme)!.render(60);
     expect(collapsed).toHaveLength(1);
-    expect(collapsed[0]).toContain('Background Bash killed');
+    expect(collapsed[0]).toContain('Background process killed');
     expect(collapsed[0]).toContain('fbba66');
     expect(collapsed.join('\n')).not.toContain('[felan-background-bash-completion]');
     expect(collapsed.join('\n')).not.toContain('PID: 50568');
@@ -203,16 +206,17 @@ describe('background bash extension activation', () => {
       { expanded: true, outputPad: 1 },
       theme,
     )!.render(60);
+    expect(fallback.join('\n')).toContain('Background process finished');
     expect(fallback.join('\n')).toContain('2 more lines');
   });
 
-  it('does not register tools for OpenAI models', async () => {
+  it('registers tools for OpenAI models', async () => {
     const harness = createHarness();
     await backgroundBashExtension(harness.pi);
 
     await harness.emit('session_start', {}, context('openai'));
 
-    expect(harness.registerTool).not.toHaveBeenCalled();
+    expect(harness.registerTool).toHaveBeenCalledTimes(6);
     expect(harness.registerCommand).not.toHaveBeenCalled();
     expect(harness.registerShortcut).not.toHaveBeenCalled();
   });
@@ -229,6 +233,7 @@ describe('background bash extension activation', () => {
       'read_background_bash',
       'wait_background_bash',
       'stop_background_bash',
+      'write_background_bash',
     ]);
     expect(harness.activeTools).toEqual([
       'bash',
@@ -236,6 +241,15 @@ describe('background bash extension activation', () => {
       'read_background_bash',
       'wait_background_bash',
       'stop_background_bash',
+      'write_background_bash',
+    ]);
+    expect(harness.registerTool.mock.calls.map(([tool]) => tool.label)).toEqual([
+      'bash',
+      'List background processes',
+      'Read background process',
+      'Wait for background process',
+      'Stop background process',
+      'Write to background process',
     ]);
   });
 
@@ -253,52 +267,58 @@ describe('background bash extension activation', () => {
     expect(harness.registerTool).not.toHaveBeenCalled();
     expect(runtime.shell).toHaveBeenCalledOnce();
     expect(runtime.shell).toHaveBeenCalledWith(
-      expect.any(String),
+      expect.stringMatching(/for name in .*\btail\b/u),
       expect.objectContaining({ shellFlavor: 'posix' }),
     );
     const command = harness.registerCommand.mock.calls
-      .find(([name]) => name === 'background-bash')?.[1] as {
+      .find(([name]) => name === 'processes')?.[1] as {
         handler: (args: string, context: ExtensionContext) => Promise<void>;
       };
     await command.handler('', ctx);
     expect(ctx.ui.custom).not.toHaveBeenCalled();
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      'Background Bash is unavailable in this runtime.',
+      'Background processes are unavailable in this runtime.',
       'info',
     );
   });
 
-  it('activates when the selected model changes from OpenAI to another provider', async () => {
+  it('keeps the same tools when the selected model changes', async () => {
     const harness = createHarness();
     await backgroundBashExtension(harness.pi);
     await harness.emit('session_start', {}, context('openai-codex'));
 
     await harness.emit('model_select', { model: model('google') }, context('google'));
 
-    expect(harness.registerTool).toHaveBeenCalledTimes(5);
+    expect(harness.registerTool).toHaveBeenCalledTimes(6);
   });
 
-  it('restores foreground-only bash when the model changes to OpenAI', async () => {
+  it('keeps the shared coordinator alive across extension reloads', async () => {
+    const shutdown = vi.spyOn(BackgroundBashManager.prototype, 'shutdownInteractive').mockResolvedValue();
+    const harness = createHarness();
+    await backgroundBashExtension(harness.pi);
+    await harness.emit('session_start', {}, context('anthropic'));
+
+    await harness.emit('session_shutdown', { reason: 'reload' }, context('anthropic'));
+    expect(shutdown).not.toHaveBeenCalled();
+    await harness.emit('session_shutdown', { reason: 'shutdown' }, context('anthropic'));
+    expect(shutdown).toHaveBeenCalledOnce();
+  });
+
+  it('keeps background tools when the model changes to OpenAI', async () => {
     const harness = createHarness();
     await backgroundBashExtension(harness.pi);
     await harness.emit('session_start', {}, context('anthropic'));
 
     await harness.emit('model_select', { model: model('openai-codex') }, context('openai-codex'));
 
-    expect(harness.activeTools).toEqual(['bash']);
-    const restoredBash = harness.registerTool.mock.calls.at(-1)?.[0] as {
-      name: string;
-      parameters: { properties: Record<string, unknown> };
-    };
-    expect(restoredBash.name).toBe('bash');
-    expect(restoredBash.parameters.properties).not.toHaveProperty('background');
+    expect(harness.activeTools).toContain('write_background_bash');
   });
 
-  it('converts foreground timeout seconds to runtime milliseconds', async () => {
-    const shell = vi.fn(async (command: string) => command.includes('missing=')
-      ? { stdout: '', stderr: '', code: 0, killed: false }
-      : { stdout: '', stderr: '', code: 143, killed: true });
-    const harness = createHarness({ ...unusedRuntime(), shell });
+  it('promotes a foreground command after its timeout without killing it', async () => {
+    const running = backgroundJob('running');
+    vi.spyOn(BackgroundBashManager.prototype, 'start').mockResolvedValue(running);
+    vi.spyOn(BackgroundBashManager.prototype, 'wait').mockResolvedValue({ job: running, timedOut: true });
+    const harness = createHarness();
     await backgroundBashExtension(harness.pi);
     await harness.emit('session_start', {}, context('anthropic'));
     const bash = harness.registerTool.mock.calls[0]?.[0] as {
@@ -311,12 +331,39 @@ describe('background bash extension activation', () => {
       ) => Promise<unknown>;
     };
 
-    await expect(bash.execute('call', { command: 'sleep 5', timeout: 2 }, undefined, undefined, context('anthropic')))
-      .rejects.toThrow('Command timed out after 2 seconds');
-    expect(shell).toHaveBeenCalledWith(
-      'sleep 5',
-      expect.objectContaining({ shellFlavor: 'posix', timeout: 2_000 }),
-    );
+    const result = await bash.execute('call', { command: 'sleep 5', timeout: 2 }, undefined, undefined, context('anthropic'));
+    expect(result).toMatchObject({
+      content: [{ type: 'text', text: expect.stringContaining('Started background process.') }],
+      details: { background: true, id: running.meta.id },
+    });
+  });
+
+  it('waits through PTY output until the command actually exits', async () => {
+    const running = backgroundJob('running');
+    const completed = backgroundJob('failed');
+    vi.spyOn(BackgroundBashManager.prototype, 'startInteractive').mockResolvedValue({
+      job: running,
+      process: {} as never,
+    });
+    const read = vi.spyOn(BackgroundBashManager.prototype, 'readInteractive')
+      .mockResolvedValueOnce({ id: running.meta.id, process: {} as never, output: 'chunk\n', running: true, nextOffset: 1 })
+      .mockResolvedValueOnce({ id: running.meta.id, process: {} as never, output: 'chunk\nfinal\n', running: false, exitCode: 7, nextOffset: 2 });
+    vi.spyOn(BackgroundBashManager.prototype, 'get').mockResolvedValue(completed);
+    const harness = createHarness();
+    await backgroundBashExtension(harness.pi);
+    await harness.emit('session_start', {}, context('anthropic'));
+    const bash = registeredTool(harness, 'bash');
+
+    const result = await bash.execute(
+      'pty-foreground',
+      { command: 'interactive-command', tty: true, timeout: 1 },
+      undefined,
+      undefined,
+      context('anthropic'),
+    ) as { details: { background: boolean; status: string; output: string } };
+
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(result.details).toMatchObject({ background: false, status: 'failed', output: 'chunk\nfinal\n' });
   });
 
   it('steers terminal process completion into the parent session automatically', async () => {
@@ -348,7 +395,8 @@ describe('background bash extension activation', () => {
         }),
         { triggerTurn: true, deliverAs: 'steer' },
       );
-      const message = harness.sendMessage.mock.calls[0]?.[0] as { details: unknown };
+      const message = harness.sendMessage.mock.calls[0]?.[0] as { content: string; details: unknown };
+      expect(message.content).toContain('Background process reached terminal status: completed.');
       expect(JSON.stringify(message.details)).not.toContain('processToken');
     } finally {
       await harness.emit('session_shutdown', {}, ctx);

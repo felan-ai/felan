@@ -165,11 +165,9 @@ conversion time, and output are bounded; extracted text is labelled as
 untrusted. Use `/markitdown` for status and `/markitdown install` for an
 explicit managed installation.
 
-Outside active Codex mode, conversion uses ordinary `read` only. While Codex
-replaces `read`, MarkItDown exposes `read_document` for the listed non-PDF
-document formats; switching away hides it again. If the converter is
-unavailable, Office reads can bypass interception, while PDF reads and
-`read_document` fail closed with installation guidance.
+Conversion always uses ordinary `read`, regardless of the selected model. If
+the converter is unavailable, Office reads can bypass interception while PDF
+reads fail closed with installation guidance.
 
 ## Dependency management
 

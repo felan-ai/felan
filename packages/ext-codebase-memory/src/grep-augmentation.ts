@@ -15,6 +15,8 @@ export function registerGrepAugmentation(
   const patterns = new Map<string, { pattern: string; tool: string }>();
   pi.on('tool_call', (event) => {
     if (!COMMAND_TOOLS.includes(event.toolName as typeof COMMAND_TOOLS[number])) return;
+    const input = event.input as Record<string, unknown>;
+    if (event.toolName === 'bash' && (input.background === true || input.tty === true)) return;
     const command = readCommand(event.toolName, event.input);
     const pattern = command ? grepPattern(command) : undefined;
     if (pattern) patterns.set(event.toolCallId, { pattern, tool: event.toolName });

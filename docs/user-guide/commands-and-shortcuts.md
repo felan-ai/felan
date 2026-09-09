@@ -40,7 +40,7 @@ interactive TUI and requires the agent to be idle.
 | `/prewalk [task]` | Arm Prewalk, optionally starting the task immediately |
 | `/prewalk status` | Show phase, target model, and restoration setting |
 | `/prewalk exit` | Exit Prewalk; `off` and `cancel` are aliases |
-| `/background-bash` | Inspect detached processes and logs |
+| `/processes` | Inspect processes and logs |
 | `/mcp [status\|tools\|reconnect\|auth\|logout] [server]` | Inspect and manage configured remote MCP servers |
 | `/markitdown` | Show document-converter status |
 | `/markitdown install` | Explicitly install the managed converter |
@@ -76,7 +76,7 @@ list provided by the pinned Pi version.
 | `Alt+A` | Open the subagent navigator |
 | `Alt+T` | Open the complete tool-call inspector |
 | `Ctrl+Shift+T` | Open task views |
-| `Ctrl+Shift+J` | Open Background Bash process/log views |
+| `Ctrl+Shift+J` | Open process/log views |
 | `Ctrl+O` | Toggle bounded tool and completion previews |
 | `Ctrl+R` / `Cmd+R` | Open prompt history; cycle scope while the picker is open |
 

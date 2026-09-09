@@ -19,6 +19,7 @@ import { sanitizeStreamingCommandResult } from './tool-execution-sanitizer.js';
 import {
   codexResultHasExited,
   isCommandToolName,
+  isInteractiveOrBackgroundCommand,
   isStreamingCommandToolName,
   readCodexSessionId,
   readRunningCodexSessionId,
@@ -146,6 +147,7 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
       toolCallModels.set(event.toolCallId, { provider: ctx.model.provider, id: ctx.model.id });
     }
     if (!config.enabled || !isCommandToolName(event.toolName)) return undefined;
+    if (isInteractiveOrBackgroundCommand(event.toolName, event.input)) return undefined;
     const command = readToolCommand(event.toolName, event.input);
     if (!command) return undefined;
 

@@ -113,7 +113,7 @@ during startup checks, non-interactive runs, or model tool calls. Managed
 installers use reviewed versions, verify download/binary integrity, avoid
 package lifecycle scripts, and stage candidates in agent storage.
 
-POSIX utilities required for detached Background Bash are probed but not
+POSIX utilities required for detached background processes are probed but not
 installed by Felan. Binary-backed extensions may use the optional runtime
 process capabilities; these preserve literal argv and separate protocol output
 from diagnostics. See [Runtime dependencies](../reference/runtime-dependencies.md).

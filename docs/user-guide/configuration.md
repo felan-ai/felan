@@ -295,6 +295,19 @@ timing. Set it to `false` to use Pi's standard timing. Manual and
 overflow-recovery compaction are unchanged. Pi continues to generate the
 compaction summary; this is not OpenAI native Responses compaction.
 
+GPT models keep Felan's ordinary `read` and `bash` tools. Codex mode replaces
+only `edit` and `write` with `apply_patch`; process sessions and image reading
+are not provider-specific.
+
+### Background processes
+
+`extensionConfig.backgroundBash.foregroundTimeoutSeconds` controls how long a
+foreground `bash` call waits before promoting the same process to a Background
+process. It defaults to `120`; `0` promotes immediately. `tty: true` starts a PTY,
+and `write_background_bash` sends exact input/control bytes. Detached jobs remain
+restart-discoverable when session storage persists; live PTYs end with the root
+session.
+
 ### Web access
 
 `extensionConfig.webAccess` exposes provider selection, OpenAI/Exa/Brave

@@ -33,6 +33,16 @@ describe('local extension importer', () => {
     })]);
   });
 
+  it('discovers Background Bash foreground timeout configuration from factory extensions', async () => {
+    const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-background-bash']);
+    expect(definitions).toEqual([expect.objectContaining({
+      id: 'backgroundBash',
+      fields: expect.objectContaining({
+        foregroundTimeoutSeconds: expect.objectContaining({ default: 120 }),
+      }),
+    })]);
+  });
+
   it('discovers prompt-history display configuration', async () => {
     const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-prompt-history']);
     expect(definitions).toEqual([expect.objectContaining({

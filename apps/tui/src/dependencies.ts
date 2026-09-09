@@ -66,15 +66,15 @@ export interface CreateLocalDependencyExtensionOptions {
 export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
   {
     id: 'background-bash',
-    label: 'Background Bash',
+    label: 'Background processes',
     extension: 'backgroundBash',
     purpose: 'detached process execution, which requires standard POSIX shell and process utilities',
     unavailableMessage: (status) => formatUnavailableMessage(
-      'Background Bash is built into Felan, but this runtime is missing required POSIX shell/process utilities.',
+      'Background processes are built into Felan, but this runtime is missing required POSIX shell/process utilities.',
       'Detached background jobs remain inactive until the runtime provides them.',
       status,
     ),
-    unavailableChoice: 'Disable the Background Bash extension',
+    unavailableChoice: 'Disable background processes',
     unavailableOutcome: 'disable-extension',
     check: async (runtime) => {
       const status = await inspectBackgroundBashRuntime(runtime);

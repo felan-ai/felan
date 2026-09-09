@@ -201,7 +201,7 @@ execution. The method identifier is `planner-two-thirds-usage-v1`.
 ### MarkItDown document-result producer
 
 MarkItDown reports one `output-optimization` measurement for each successful
-converted `read` or `read_document` result with an active model. Both outcomes
+converted `read` result with an active model. The outcome
 use UTF-8-bytes/4 estimates as model input. Actual is the returned converted
 text; baseline is `ceil(actual * 21569 / 18603)`, using the pooled prompt-token
 ratio from the current repeated benchmark (21,569 baseline tokens versus 18,603

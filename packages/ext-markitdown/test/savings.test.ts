@@ -42,15 +42,10 @@ describe('MarkItDown savings', () => {
   it('ignores missing attribution data and keeps reporter failures fail-open', async () => {
     const report = vi.fn(async () => { throw new Error('unavailable'); });
 
-    expect(() => reportMarkitdownSavings(
-      { report },
-      { provider: 'test', id: 'model' },
-      'read_document',
-      [{ type: 'text', text: 'converted' }],
-    )).not.toThrow();
     reportMarkitdownSavings(undefined, { provider: 'test', id: 'model' }, 'read', [{ type: 'text', text: 'x' }]);
     reportMarkitdownSavings({ report }, undefined, 'read', [{ type: 'text', text: 'x' }]);
     reportMarkitdownSavings({ report }, { provider: 'test', id: 'model' }, 'read', []);
+    reportMarkitdownSavings({ report }, { provider: 'test', id: 'model' }, 'read', [{ type: 'text', text: 'converted' }]);
     await new Promise<void>((resolve) => queueMicrotask(resolve));
 
     expect(report).toHaveBeenCalledOnce();

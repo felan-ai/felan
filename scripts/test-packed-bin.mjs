@@ -470,6 +470,26 @@ try {
         cwd: process.env.PACKED_SMOKE_WORKSPACE,
         agentDir: process.env.FELAN_AGENT_DIR,
       });
+      const imageRuntime = new core.HostAgentRuntime(process.env.PACKED_SMOKE_WORKSPACE, {
+        sessionStorageRoot: ptySessionStorage,
+        agentStorageRoot: ptyAgentStorage,
+      });
+      await imageRuntime.writeFile(
+        'packed-image.png',
+        Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgWOUGAAGeAPFZzf6KAAAAAElFTkSuQmCC', 'base64'),
+      );
+      const readTool = core.createRuntimeCodingTools(imageRuntime).find((tool) => tool.name === 'read');
+      const imageResult = await readTool.execute(
+        'packed-image-read',
+        { path: 'packed-image.png' },
+        undefined,
+        undefined,
+        { cwd: process.env.PACKED_SMOKE_WORKSPACE, model: { input: ['text', 'image'] } },
+      );
+      if (!imageResult.content.some((item) => item.type === 'image' && item.mimeType === 'image/png')) {
+        throw new Error('Packed runtime read tool did not return native image content');
+      }
+      await imageRuntime.remove('packed-image.png');
       const prompt = runtime.session.systemPrompt;
       if (!prompt.startsWith('You are Felan, an AI software development lifecycle (SDLC) and coding agent.')) {
         throw new Error('Packed runtime did not use the Agent Core base prompt');
@@ -486,7 +506,12 @@ try {
         || capabilityPositions.some((position, index) => index > 0 && position <= capabilityPositions[index - 1])) {
         throw new Error('Packed runtime capability order is incorrect');
       }
-      await runtime.dispose();
+      try {
+        const { testBackgroundBashTools } = await import(${JSON.stringify(new URL('./test-background-bash-tools.mjs', import.meta.url).href)});
+        await testBackgroundBashTools(runtime, process.env.PACKED_SMOKE_WORKSPACE);
+      } finally {
+        await runtime.dispose();
+      }
       process.exit(0);
     `,
   ], cleanEnvironment);

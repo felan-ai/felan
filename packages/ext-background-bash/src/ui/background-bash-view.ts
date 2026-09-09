@@ -153,7 +153,7 @@ export class BackgroundBashView {
     const runningLabel = runningCount === 1 ? '1 running' : `${runningCount} running`;
 
     lines.push(
-      this.theme.fg('accent', this.theme.bold('Background Bash'))
+      this.theme.fg('accent', this.theme.bold('Background processes'))
       + '  '
       + (runningCount > 0
         ? this.theme.fg('accent', runningLabel)
@@ -165,7 +165,7 @@ export class BackgroundBashView {
     lines.push('');
 
     if (this.jobs.length === 0) {
-      lines.push(this.theme.fg('dim', 'No Background Bash processes found for this workspace.'));
+      lines.push(this.theme.fg('dim', 'No background processes found for this workspace.'));
       return lines;
     }
 

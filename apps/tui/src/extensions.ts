@@ -21,6 +21,7 @@ import {
 import { createPowerlineExtension, POWERLINE_CONFIG } from '@felan-ai/ext-powerline';
 import { createSessionTitleExtension, type SessionTitleHost, type SessionTitleSkip } from '@felan-ai/ext-session-title';
 import { createInsightsExtension } from '@felan-ai/ext-insights';
+import { createBackgroundBashExtension, type BackgroundBashCoordinator } from '@felan-ai/ext-background-bash';
 import {
   createSubagentsExtension,
   type SubagentHost,
@@ -137,6 +138,8 @@ export function createLocalExtensionImporter(
   outputStyle: OutputStyle = DEFAULT_OUTPUT_STYLE,
   savings?: SavingsService,
   sessionDirectory?: string,
+  backgroundBashCoordinator?: BackgroundBashCoordinator,
+  backgroundBashCoordinatorOwner = true,
 ): ExtensionPackageImporter {
   let powerlineLoaded = false;
   let agentRailRenderer: AgentRailRenderer | undefined;
@@ -166,6 +169,9 @@ export function createLocalExtensionImporter(
         (await import('./prompt-history.js')).localPromptHistoryHost,
       );
       return { default: extension };
+    }
+    if (packageName === builtinExtensionPackages.backgroundBash) {
+      return { default: createBackgroundBashExtension(backgroundBashCoordinator, backgroundBashCoordinatorOwner) };
     }
     if (packageName === mcpExtensionPackage) {
       return { default: createLocalMcpExtension() };

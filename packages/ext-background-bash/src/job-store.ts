@@ -20,6 +20,9 @@ export interface BackgroundBashInfo {
   startedAt: number;
   updatedAt: number;
   status: BackgroundBashStatus;
+  executionMode?: 'detached' | 'pty';
+  promotedAt?: number;
+  outputTruncated?: boolean;
   pid?: number;
   processGroupId?: number;
   processToken?: string;
@@ -47,6 +50,9 @@ export interface BackgroundBashMeta {
   processGroupId?: number;
   processToken?: string;
   creatorPid: number;
+  executionMode?: 'detached' | 'pty';
+  promotedAt?: number;
+  outputTruncated?: boolean;
 }
 
 export interface BackgroundBashStatusFile {
@@ -59,6 +65,9 @@ export interface BackgroundBashStatusFile {
   signal?: string | null;
   completedAt?: number;
   error?: string;
+  executionMode?: 'detached' | 'pty';
+  promotedAt?: number;
+  outputTruncated?: boolean;
 }
 
 export interface BackgroundBashJob {
@@ -83,6 +92,7 @@ const TERMINAL_STATUSES: ReadonlySet<BackgroundBashStatus> = new Set([
 const JOB_ID_PATTERN = /^bash-\d{14}-[a-f0-9]{6}$/u;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const jobOperations = new Map<string, Promise<void>>();
 
 export function getBackgroundBashWorkspaceKey(cwd: string): string {
   const resolvedCwd = resolve(cwd);
@@ -130,7 +140,7 @@ export class BackgroundBashJobStore {
     this.jobsDir = getBackgroundBashJobsDir(this.#storage.root, runtime.cwd);
   }
 
-  async createJob(command: string): Promise<BackgroundBashJob> {
+  async createJob(command: string, executionMode: 'detached' | 'pty' = 'detached'): Promise<BackgroundBashJob> {
     await this.#storage.mkdir(this.jobsDir, { recursive: true });
 
     let id = generateJobId();
@@ -162,32 +172,19 @@ export class BackgroundBashJobStore {
       startedAt: now,
       updatedAt: now,
       status: 'running',
+      executionMode,
       creatorPid: process.pid,
       processToken: randomBytes(16).toString('hex'),
     };
 
-    await this.writeInfo(info);
-    return jobFromInfo(info);
+    return this.withJob(id, async () => {
+      await this.writeInfo(info);
+      return jobFromInfo(info);
+    });
   }
 
   async readJob(id: string): Promise<BackgroundBashJob | undefined> {
-    if (!isBackgroundBashJobId(id)) return undefined;
-    const jobDir = join(this.jobsDir, id);
-    const info = normalizeInfo(await readJson(this.#storage, join(jobDir, 'info.json')), id, jobDir);
-    if (info) {
-      const completion = normalizeStatus(
-        await readJson(this.#storage, info.completionPath),
-        info,
-      );
-      if (completion && isTerminalStatus(completion.status)) {
-        const completedInfo = mergeStatus(info, completion);
-        if (info.status === 'running') await this.writeInfo(completedInfo);
-        return jobFromInfo(completedInfo);
-      }
-      return jobFromInfo(info);
-    }
-
-    return this.readLegacyJob(id, jobDir);
+    return this.withJob(id, () => this.readStoredJob(id));
   }
 
   async listJobs(status: BackgroundBashStatusFilter = 'all'): Promise<BackgroundBashJob[]> {
@@ -216,43 +213,101 @@ export class BackgroundBashJobStore {
     id: string,
     pid: number,
     processGroupId?: number,
+    options?: { executionMode?: 'detached' | 'pty'; promotedAt?: number },
   ): Promise<BackgroundBashJob | undefined> {
-    const job = await this.readJob(id);
-    if (!job) return undefined;
-    const info: BackgroundBashInfo = {
-      ...job.info,
-      pid,
-      ...(processGroupId === undefined ? {} : { processGroupId }),
-      status: isTerminalStatus(job.status.status) ? job.status.status : 'running',
-      updatedAt: Date.now(),
-    };
-    await this.writeInfo(info);
-    return jobFromInfo(info);
+    return this.withJob(id, async () => {
+      const job = await this.readStoredJob(id);
+      if (!job) return undefined;
+      const info: BackgroundBashInfo = {
+        ...job.info,
+        pid,
+        ...(processGroupId === undefined ? {} : { processGroupId }),
+        ...(options?.executionMode === undefined ? {} : { executionMode: options.executionMode }),
+        ...(options?.promotedAt === undefined ? {} : { promotedAt: options.promotedAt }),
+        updatedAt: isTerminalStatus(job.status.status) ? job.status.updatedAt : Date.now(),
+      };
+      await this.writeInfo(info);
+      return jobFromInfo(info);
+    });
   }
 
   async markStatus(
     id: string,
     patch: Partial<BackgroundBashStatusFile> & { status: BackgroundBashStatus },
   ): Promise<BackgroundBashJob | undefined> {
-    const job = await this.readJob(id);
-    if (!job) return undefined;
-    if (isTerminalStatus(job.status.status) && job.status.status !== patch.status) return job;
-    const now = Date.now();
-    const status: BackgroundBashStatusFile = {
-      ...job.status,
-      ...patch,
-      id,
-      status: patch.status,
-      startedAt: job.status.startedAt,
-      updatedAt: now,
-      ...(patch.completedAt === undefined && isTerminalStatus(patch.status)
-        ? { completedAt: now }
-        : {}),
-    };
-    const info = mergeStatus(job.info, status);
-    await this.writeStatus(info.completionPath, status);
-    await this.writeInfo(info);
-    return jobFromInfo(info);
+    return this.withJob(id, async () => {
+      const job = await this.readStoredJob(id);
+      if (!job) return undefined;
+      if (isTerminalStatus(job.status.status)) return job;
+      const now = Date.now();
+      const status: BackgroundBashStatusFile = {
+        ...job.status,
+        ...patch,
+        id,
+        status: patch.status,
+        startedAt: job.status.startedAt,
+        updatedAt: now,
+        ...(patch.completedAt === undefined && isTerminalStatus(patch.status)
+          ? { completedAt: now }
+          : {}),
+      };
+      const info = mergeStatus(job.info, status);
+      await this.writeStatus(info.completionPath, status);
+      await this.writeInfo(info);
+      return jobFromInfo(info);
+    });
+  }
+
+  async markRunning(
+    id: string,
+    executionMode: 'detached' | 'pty',
+    promotedAt: number,
+  ): Promise<BackgroundBashJob | undefined> {
+    return this.withJob(id, async () => {
+      const job = await this.readStoredJob(id);
+      if (!job || isTerminalStatus(job.status.status)) return job;
+      const info: BackgroundBashInfo = {
+        ...job.info,
+        status: 'running',
+        executionMode,
+        promotedAt,
+        updatedAt: Date.now(),
+      };
+      await this.writeInfo(info);
+      return jobFromInfo(info);
+    });
+  }
+
+  private async withJob<T>(id: string, operation: () => Promise<T>): Promise<T> {
+    const key = resolve(this.jobsDir, id);
+    const pending = (jobOperations.get(key) ?? Promise.resolve()).then(operation);
+    const settled = pending.then(() => {}, () => {});
+    jobOperations.set(key, settled);
+    try {
+      return await pending;
+    } finally {
+      if (jobOperations.get(key) === settled) jobOperations.delete(key);
+    }
+  }
+
+  private async readStoredJob(id: string): Promise<BackgroundBashJob | undefined> {
+    if (!isBackgroundBashJobId(id)) return undefined;
+    const jobDir = join(this.jobsDir, id);
+    const info = normalizeInfo(await readJson(this.#storage, join(jobDir, 'info.json')), id, jobDir);
+    if (info) {
+      const completion = normalizeStatus(
+        await readJson(this.#storage, info.completionPath),
+        info,
+      );
+      if (completion && isTerminalStatus(completion.status)) {
+        const completedInfo = mergeStatus(info, completion);
+        if (info.status === 'running') await this.writeInfo(completedInfo);
+        return jobFromInfo(completedInfo);
+      }
+      return jobFromInfo(info);
+    }
+
+    return this.readLegacyJob(id, jobDir);
   }
 
   private async readLegacyJob(id: string, jobDir: string): Promise<BackgroundBashJob | undefined> {
@@ -275,6 +330,9 @@ export class BackgroundBashJobStore {
       startedAt,
       updatedAt: startedAt,
       status: 'unknown',
+      executionMode: executionMode(meta.executionMode),
+      ...(numberValue(meta.promotedAt) === undefined ? {} : { promotedAt: numberValue(meta.promotedAt)! }),
+      ...(typeof meta.outputTruncated !== 'boolean' ? {} : { outputTruncated: meta.outputTruncated }),
       creatorPid: numberValue(meta.creatorPid) ?? 0,
       ...(numberValue(meta.pid) === undefined ? {} : { pid: numberValue(meta.pid)! }),
     };
@@ -318,6 +376,9 @@ function jobFromInfo(info: BackgroundBashInfo): BackgroundBashJob {
     shellArgs: info.shellArgs,
     startedAt: info.startedAt,
     creatorPid: info.creatorPid,
+    ...(info.executionMode === undefined ? {} : { executionMode: info.executionMode }),
+    ...(info.promotedAt === undefined ? {} : { promotedAt: info.promotedAt }),
+    ...(info.outputTruncated === undefined ? {} : { outputTruncated: info.outputTruncated }),
     ...(info.pid === undefined ? {} : { pid: info.pid }),
     ...(info.processGroupId === undefined ? {} : { processGroupId: info.processGroupId }),
     ...(info.processToken === undefined ? {} : { processToken: info.processToken }),
@@ -332,6 +393,9 @@ function jobFromInfo(info: BackgroundBashInfo): BackgroundBashJob {
     ...(info.signal === undefined ? {} : { signal: info.signal }),
     ...(info.completedAt === undefined ? {} : { completedAt: info.completedAt }),
     ...(info.error === undefined ? {} : { error: info.error }),
+    ...(info.executionMode === undefined ? {} : { executionMode: info.executionMode }),
+    ...(info.promotedAt === undefined ? {} : { promotedAt: info.promotedAt }),
+    ...(info.outputTruncated === undefined ? {} : { outputTruncated: info.outputTruncated }),
   };
   return { info, meta, status };
 }
@@ -346,6 +410,9 @@ function mergeStatus(info: BackgroundBashInfo, status: BackgroundBashStatusFile)
     ...(status.signal === undefined ? {} : { signal: status.signal }),
     ...(status.completedAt === undefined ? {} : { completedAt: status.completedAt }),
     ...(status.error === undefined ? {} : { error: status.error }),
+    ...(status.executionMode === undefined ? {} : { executionMode: status.executionMode }),
+    ...(status.promotedAt === undefined ? {} : { promotedAt: status.promotedAt }),
+    ...(status.outputTruncated === undefined ? {} : { outputTruncated: status.outputTruncated }),
   };
 }
 
@@ -378,6 +445,9 @@ function normalizeInfo(value: unknown, id: string, jobDir: string): BackgroundBa
     ...(nullableString(value.signal) === undefined ? {} : { signal: nullableString(value.signal)! }),
     ...(numberValue(value.completedAt) === undefined ? {} : { completedAt: numberValue(value.completedAt)! }),
     ...(typeof value.error !== 'string' ? {} : { error: value.error }),
+    executionMode: executionMode(value.executionMode),
+    ...(numberValue(value.promotedAt) === undefined ? {} : { promotedAt: numberValue(value.promotedAt)! }),
+    ...(typeof value.outputTruncated !== 'boolean' ? {} : { outputTruncated: value.outputTruncated }),
   };
 }
 
@@ -398,6 +468,9 @@ function normalizeStatus(
     ...(nullableString(value.signal) === undefined ? {} : { signal: nullableString(value.signal)! }),
     ...(numberValue(value.completedAt) === undefined ? {} : { completedAt: numberValue(value.completedAt)! }),
     ...(typeof value.error !== 'string' ? {} : { error: value.error }),
+    ...(value.executionMode === undefined ? {} : { executionMode: executionMode(value.executionMode) }),
+    ...(numberValue(value.promotedAt) === undefined ? {} : { promotedAt: numberValue(value.promotedAt)! }),
+    ...(typeof value.outputTruncated !== 'boolean' ? {} : { outputTruncated: value.outputTruncated }),
   };
 }
 
@@ -417,6 +490,10 @@ function statusValue(value: unknown): BackgroundBashStatus | undefined {
   return typeof value === 'string' && STATUS_VALUES.has(value)
     ? value as BackgroundBashStatus
     : undefined;
+}
+
+function executionMode(value: unknown): 'detached' | 'pty' {
+  return value === 'pty' ? 'pty' : 'detached';
 }
 
 function numberValue(value: unknown): number | undefined {

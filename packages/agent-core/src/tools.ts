@@ -29,6 +29,7 @@ export function createRuntimeCodingTools(
         await runtime.readFile(path);
       },
       readFile: async (path) => Buffer.from(await runtime.readFile(path)),
+      detectImageMimeType: async (path) => detectImageMimeType(await runtime.readFile(path)),
     },
   });
 
@@ -186,6 +187,36 @@ export function createRuntimeCodingTools(
   };
 
   return [read, bash, edit, write, grep, find, ls];
+}
+
+function detectImageMimeType(buffer: Uint8Array): string | undefined {
+  if (startsWith(buffer, [0xff, 0xd8, 0xff]) && buffer[3] !== 0xf7) return 'image/jpeg';
+  if (startsWith(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    && buffer.length >= 16
+    && readUint32Be(buffer, 8) === 13
+    && startsWithAscii(buffer, 12, 'IHDR')) {
+    return 'image/png';
+  }
+  if (startsWithAscii(buffer, 0, 'GIF')) return 'image/gif';
+  if (startsWithAscii(buffer, 0, 'RIFF') && startsWithAscii(buffer, 8, 'WEBP')) return 'image/webp';
+  if (startsWithAscii(buffer, 0, 'BM') && buffer.length >= 26) return 'image/bmp';
+  return undefined;
+}
+
+function startsWith(buffer: Uint8Array, bytes: readonly number[]): boolean {
+  return buffer.length >= bytes.length && bytes.every((byte, index) => buffer[index] === byte);
+}
+
+function startsWithAscii(buffer: Uint8Array, offset: number, text: string): boolean {
+  return buffer.length >= offset + text.length
+    && [...text].every((character, index) => buffer[offset + index] === character.charCodeAt(0));
+}
+
+function readUint32Be(buffer: Uint8Array, offset: number): number {
+  return ((buffer[offset] ?? 0) * 0x1000000)
+    + ((buffer[offset + 1] ?? 0) << 16)
+    + ((buffer[offset + 2] ?? 0) << 8)
+    + (buffer[offset + 3] ?? 0);
 }
 
 async function validateGrepPath(runtime: AgentRuntime, path: string): Promise<void> {

@@ -1,6 +1,6 @@
 import type { AgentRuntime } from '@felan-ai/agent-core';
 
-const REQUIRED_POSIX_COMMANDS = ['sh', 'nohup', 'ps', 'tr', 'kill', 'date', 'cat', 'mv', 'sleep'] as const;
+const REQUIRED_POSIX_COMMANDS = ['sh', 'nohup', 'ps', 'tr', 'kill', 'date', 'cat', 'mv', 'sleep', 'tail'] as const;
 const PROBE_TIMEOUT_MS = 5_000;
 
 export type BackgroundBashRuntimeStatus = {
@@ -50,4 +50,9 @@ function sanitize(value: string): string {
     .replace(/\s+/gu, ' ')
     .trim()
     .slice(0, 500) || 'POSIX runtime probe failed';
+}
+
+export function shellQuote(value: string): string {
+  const normalized = process.platform === 'win32' ? value.replaceAll('\\', '/') : value;
+  return `'${normalized.replaceAll("'", `'\\''`)}'`;
 }

@@ -33,6 +33,7 @@ import {
   type AgentSession,
 } from '@earendil-works/pi-coding-agent';
 import { createLocalExtensionImporter } from '../extensions.js';
+import type { BackgroundBashCoordinator } from '@felan-ai/ext-background-bash';
 import { createLocalCodexStreamFunctionWrapper } from '../codex.js';
 import {
   createLocalAgentRuntimeFactoryRequest,
@@ -86,6 +87,8 @@ export interface CreateLocalSubagentHostOptions {
   readonly settings?: LocalSubagentSettings;
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly savings?: SavingsReporterProvider;
+  readonly backgroundBashCoordinator?: BackgroundBashCoordinator;
+  readonly backgroundBashCoordinatorOwner?: boolean;
   readonly runChild?: LocalSubagentRunner;
 }
 
@@ -120,7 +123,7 @@ export type LocalSubagentRunner = (
 ) => Promise<LocalSubagentRunOutcome>;
 
 export function createLocalSubagentExtensionImporter(
-  options: Pick<CreateLocalSubagentHostOptions, 'modelRuntime' | 'importExtension' | 'outputStyle'>,
+  options: Pick<CreateLocalSubagentHostOptions, 'modelRuntime' | 'importExtension' | 'outputStyle' | 'backgroundBashCoordinator' | 'backgroundBashCoordinatorOwner'>,
   subagents: LocalSubagentHost,
   memoryHost?: MemoryHost,
 ): ExtensionPackageImporter {
@@ -131,6 +134,10 @@ export function createLocalSubagentExtensionImporter(
     undefined,
     memoryHost === undefined ? undefined : { role: 'reader', host: memoryHost },
     options.outputStyle,
+    undefined,
+    undefined,
+    options.backgroundBashCoordinator,
+    options.backgroundBashCoordinatorOwner,
   );
 }
 
@@ -1332,6 +1339,8 @@ export function inspectionToolNames(activeToolNames: readonly string[]): string[
     'write',
     'exec_command',
     'write_stdin',
+    'write_background_bash',
+    'stop_background_bash',
     'apply_patch',
     'enter_prewalk',
   ]);

@@ -179,9 +179,138 @@ describe('ToolActivityState', () => {
     expect(harness.state.call('poll-1')?.relatedCommand).toBe('first command');
     expect(harness.state.call('poll-2')?.relatedCommand).toBe('second command');
   });
+
+  it('links live background process controls to their originating Bash command', () => {
+    const harness = activityHarness([]);
+    const id = 'bash-20260909062731-45ad69';
+    harness.emit({
+      type: 'message_start',
+      message: assistant([toolCall('start', 'bash', { command: 'pnpm verify', background: true })], 10),
+    });
+    harness.emit({
+      type: 'tool_execution_end',
+      toolCallId: 'start',
+      toolName: 'bash',
+      result: { content: [], details: { background: true, id, command: 'pnpm verify' } },
+      isError: false,
+    });
+    harness.emit({
+      type: 'message_start',
+      message: assistant([
+        { type: 'text', text: 'Inspect output.' },
+        toolCall('output', 'read_background_bash', { id }),
+      ], 20),
+    });
+
+    expect(harness.state.call('output')?.relatedCommand).toBe('pnpm verify');
+    const output = renderToolActivityGroup(harness.state, 'output', theme, false);
+    expect(output).toContain('Reading process output · pnpm verify');
+    expect(output).not.toContain(id);
+  });
+
+  it('restores background command links when the launch is outside retained context', () => {
+    const id = 'bash-20260909062731-45ad69';
+    const harness = activityHarness([
+      assistant([toolCall('start', 'bash', { command: 'pnpm verify', timeout: 0 })], 10),
+      toolResult('start', 'bash', 'started', false, 20, { background: true, id }),
+      assistant([toolCall('output', 'read_background_bash', { id })], 30),
+      toolResult('output', 'read_background_bash', 'passed', false, 40, { id }),
+    ]);
+    const retained = harness.session.sessionManager.buildContextEntries().slice(2);
+    vi.spyOn(harness.session.sessionManager, 'buildContextEntries').mockReturnValue(retained);
+    harness.state.rebuild();
+
+    expect(harness.state.call('start')).toBeUndefined();
+    expect(harness.state.call('output')?.relatedCommand).toBe('pnpm verify');
+    expect(renderToolActivityGroup(harness.state, 'output', theme, false))
+      .toContain('Read process output · pnpm verify');
+  });
+
+  it('learns commands from process lists and structured control results', () => {
+    const id = 'bash-20260909062731-45ad69';
+    const otherId = 'bash-20260909062732-45ad70';
+    const harness = activityHarness([
+      assistant([toolCall('list', 'list_background_bash', {})], 10),
+      toolResult('list', 'list_background_bash', 'jobs', false, 20, {
+        jobs: [{ meta: { id, command: 'pnpm dev' }, status: { status: 'running' } }],
+      }),
+      assistant([toolCall('output', 'read_background_bash', { id })], 30),
+      toolResult('output', 'read_background_bash', 'ready', false, 40, { id }),
+      assistant([toolCall('wait', 'wait_background_bash', { id: otherId })], 50),
+      toolResult('wait', 'wait_background_bash', 'done', false, 60, {
+        job: { meta: { id: otherId, command: 'pnpm test' }, status: { status: 'completed' } },
+      }),
+    ]);
+
+    expect(harness.state.call('output')?.relatedCommand).toBe('pnpm dev');
+    expect(harness.state.call('wait')?.relatedCommand).toBe('pnpm test');
+  });
+
+  it('ignores malformed process metadata instead of rendering raw result fields', () => {
+    const id = 'bash-20260909062731-45ad69';
+    const harness = activityHarness([
+      assistant([toolCall('list', 'list_background_bash', {})], 10),
+      toolResult('list', 'list_background_bash', 'jobs', false, 20, {
+        jobs: [null, 42, { meta: null }, { meta: { id, command: { private: 'hidden' } } }],
+      }),
+      assistant([toolCall('output', 'read_background_bash', { id })], 30),
+      toolResult('output', 'read_background_bash', 'output', false, 40),
+    ]);
+
+    expect(harness.state.call('output')?.relatedCommand).toBeUndefined();
+    const output = renderToolActivityGroup(harness.state, 'list', theme, false);
+    expect(output).toContain(`Read process output · ${id}`);
+    expect(output).not.toContain('hidden');
+  });
 });
 
 describe('tool activity rendering', () => {
+  it('describes process actions without claiming to run new commands or exposing input', () => {
+    const id = 'bash-20260909062731-45ad69';
+    const harness = activityHarness([
+      assistant([toolCall('start', 'bash', { command: 'pnpm verify\u001b]0;hidden\u0007', background: true })], 10),
+      toolResult('start', 'bash', 'started', false, 20, { background: true, id }),
+      assistant([
+        { type: 'text', text: 'Manage the process.' },
+        toolCall('list', 'list_background_bash', { status: 'running' }),
+        toolCall('read', 'read_background_bash', { id }),
+        toolCall('wait', 'wait_background_bash', { id }),
+        toolCall('write', 'write_background_bash', { id, chars: 'private input\n' }),
+        toolCall('stop', 'stop_background_bash', { id }),
+      ], 30),
+      ...['list', 'read', 'wait', 'write', 'stop'].map((action, index) => (
+        toolResult(action, `${action}_background_bash`, 'private output', false, 40 + index)
+      )),
+    ]);
+    const output = renderToolActivityGroup(harness.state, 'list', theme, false);
+
+    expect(output).toContain('Completed 5 process actions');
+    expect(output).toContain('Listed processes · running');
+    expect(output).toContain('Read process output · pnpm verify');
+    expect(output).toContain('Waited for process · pnpm verify');
+    expect(output).toContain('Sent input to process · pnpm verify');
+    expect(output).toContain('Stopped process · pnpm verify');
+    expect(output).not.toMatch(/Ran command|hidden|private|\u001b|\u0007/u);
+    expect(output).not.toContain(id);
+    expect(renderToolActivityGroup(harness.state, 'start', theme, false))
+      .toContain('Started background process · pnpm verify');
+    const definition = createToolActivityDisplayDefinition(harness.state, 'list_background_bash', toolDefinition('list_background_bash'));
+    const narrow = definition.renderCall!({ status: 'running' }, theme, renderContext('list', false)).render(36);
+    expect(narrow.every((line) => visibleWidth(line) <= 36)).toBe(true);
+  });
+
+  it('falls back to the process ID and labels failed controls honestly', () => {
+    const id = 'bash-20260909062731-45ad69';
+    const harness = activityHarness([
+      assistant([toolCall('stop', 'stop_background_bash', { id })], 10),
+      toolResult('stop', 'stop_background_bash', 'still running', true, 20),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'stop', theme, false);
+    expect(output).toContain(`✗ Failed to stop process · ${id}`);
+    expect(output).not.toContain('Stopped process');
+  });
+
   it('renders the current Web Access tools as web activity', () => {
     const harness = activityHarness([
       assistant([
@@ -683,6 +812,7 @@ function activityHarness(messages: ReturnType<typeof assistant | typeof toolResu
   state.attach(session);
   return {
     state,
+    session,
     emit(event: AgentSessionEvent) {
       listener?.(event);
     },

@@ -31,6 +31,7 @@ import type {
   AgentRuntimeStdioProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
+  AgentRuntimeTerminationSignal,
   AgentRuntimeTerminals,
   ExecResult,
 } from './runtime.js';
@@ -210,7 +211,9 @@ export class HostAgentRuntime implements AgentRuntime {
     options?: AgentRuntimeShellProcessOptions,
   ): Promise<AgentRuntimeProcess> {
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
-    const shell = options?.shell ?? defaultShell();
+    const shell = options?.shellFlavor === 'posix'
+      ? await this.#resolvePosixShell(cwd)
+      : options?.shell ?? defaultShell();
     const useShellOption = process.platform === 'win32' && isCmdShell(shell);
     const args = shellArguments(shell, command, options?.login ?? true);
     const child = spawn(useShellOption ? command : shell, useShellOption ? [] : args, {
@@ -268,7 +271,9 @@ export class HostAgentRuntime implements AgentRuntime {
     options?: AgentRuntimeShellProcessOptions,
   ): Promise<AgentRuntimeProcess> {
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
-    const shell = options?.shell ?? defaultShell();
+    const shell = options?.shellFlavor === 'posix'
+      ? await this.#resolvePosixShell(cwd)
+      : options?.shell ?? defaultShell();
     const args = shellArguments(shell, command, options?.login ?? true);
     const env = terminalEnvironment(options?.env);
     const pty = await loadPty();
@@ -401,8 +406,8 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
     await this.sendSignal('SIGINT');
   }
 
-  terminate(): Promise<void> {
-    this.#termination ??= this.#terminate();
+  terminate(signal: AgentRuntimeTerminationSignal = 'SIGTERM'): Promise<void> {
+    this.#termination ??= this.#terminate(signal);
     return this.#termination;
   }
 
@@ -433,12 +438,20 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
 
   protected onDispose(): void {}
 
-  async #terminate(): Promise<void> {
+  async #terminate(signal: AgentRuntimeTerminationSignal): Promise<void> {
     if (!this.output.running) return;
     try {
-      await this.sendSignal('SIGTERM');
+      await this.sendSignal(signal);
     } catch (error) {
       if (this.output.running) throw error;
+    }
+    if (signal === 'SIGKILL') {
+      const forceDeadline = Date.now() + 1_000;
+      while (this.output.running && Date.now() < forceDeadline) {
+        await this.output.wait(Math.min(50, forceDeadline - Date.now()));
+      }
+      if (this.output.running) throw new Error('Process remained running after SIGKILL');
+      return;
     }
     const deadline = Date.now() + 1_000;
     while (this.output.running && Date.now() < deadline) {
@@ -454,6 +467,7 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
     while (this.output.running && Date.now() < forceDeadline) {
       await this.output.wait(Math.min(50, forceDeadline - Date.now()));
     }
+    if (this.output.running) throw new Error('Process remained running after SIGKILL');
   }
 }
 
@@ -561,6 +575,7 @@ class HostRuntimeTerminal extends HostBufferedProcess {
   readonly #dataSubscription: IDisposable;
   readonly #exitSubscription: IDisposable;
   #startupOutput = process.platform === 'win32';
+  readonly #decoder = new TextDecoder();
 
   constructor(terminal: IPty) {
     super();
@@ -569,7 +584,7 @@ class HostRuntimeTerminal extends HostBufferedProcess {
       const raw = data as unknown;
       const text = typeof raw === 'string'
         ? raw
-        : new TextDecoder().decode(new Uint8Array(raw as Buffer));
+        : this.#decoder.decode(new Uint8Array(raw as Buffer), { stream: true });
       const output = this.#startupOutput ? stripWindowsPtyStartup(text) : text;
       if (this.#startupOutput && output !== undefined) this.#startupOutput = false;
       if (output) this.appendOutput(Buffer.from(output));

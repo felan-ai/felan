@@ -24,9 +24,9 @@ Pi extensions or arbitrary npm packages.
 | [`@felan-ai/ext-mcp`](../../packages/ext-mcp/README.md) | OAuth-only remote MCP gateway | `/mcp` | Local host supplies OAuth credentials/callbacks |
 | [`@felan-ai/ext-felan-api`](../../packages/ext-felan-api/README.md) | Single authenticated Felan REST API gateway | `felan_api` | `FELAN_API_KEY` or explicit factory `apiKey`; local built-in is disabled when no key is present |
 | [`@felan-ai/ext-browser`](../../packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration | Model-facing `browser` tool | Reviewed CLI; Chrome is separate |
-| [`@felan-ai/ext-markitdown`](../../packages/ext-markitdown/README.md) | Bounded office-document conversion through `read`, or `read_document` only while Codex replaces `read` | `/markitdown` | Managed `markitdown` executable |
-| [`@felan-ai/ext-background-bash`](../../packages/ext-background-bash/README.md) | Detached process registry and logs | `/background-bash`, `Ctrl+Shift+J` | POSIX process utilities; non-OpenAI-family models |
-| [`@felan-ai/ext-codex`](../../packages/ext-codex/README.md) | GPT-specific exec, patch, PTY, and image tools | Model-selected tool replacement | GPT model on exact `openai`/`openai-codex` provider |
+| [`@felan-ai/ext-markitdown`](../../packages/ext-markitdown/README.md) | Bounded document conversion through ordinary `read` | `/markitdown` | Managed `markitdown` executable |
+| [`@felan-ai/ext-background-bash`](../../packages/ext-background-bash/README.md) | Provider-neutral foreground/background Bash, PTY input, process registry and logs | `/processes`, `Ctrl+Shift+J` | POSIX process utilities; PTY only when requested |
+| [`@felan-ai/ext-codex`](../../packages/ext-codex/README.md) | GPT-specific `apply_patch` replacement and OpenAI request controls | Model-selected editing replacement | GPT model on exact `openai`/`openai-codex` provider |
 | [`@felan-ai/ext-rtk-optimizer`](../../packages/ext-rtk-optimizer/README.md) | Command rewriting and output compaction | `/rtk` | Compaction ships; rewriting needs `rtk` |
 | [`@felan-ai/ext-codebase-memory`](../../packages/ext-codebase-memory/README.md) | Structural code index, symbol reads, and bounded grep augmentation | `/codebase-memory` and four model tools | Exact reviewed `codebase-memory-mcp` 0.10.8 binary |
 | [`@felan-ai/ext-powerline`](../../packages/ext-powerline/README.md) | ANSI-aware local status footer | TUI footer | TUI sessions only; enabled by default locally |

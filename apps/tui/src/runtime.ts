@@ -18,6 +18,7 @@ import {
   type ExtensionConfigOverride,
 } from '@felan-ai/agent-core';
 import { bindSubagentSession } from '@felan-ai/ext-subagents';
+import { BackgroundBashCoordinator } from '@felan-ai/ext-background-bash';
 import {
   resolveModelScopeWithDiagnostics,
   type AgentSessionRuntime,
@@ -197,6 +198,7 @@ export function createLocalSessionRuntimeFactory(
     const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
     const runtime = options.runtimeFactory?.(runtimeRequest)
       ?? new HostAgentRuntime(cwd, runtimeRequest);
+    const backgroundBashCoordinator = new BackgroundBashCoordinator(runtime);
     const savings = new SavingsService({
       runtime,
       rootSessionId: runtimeRequest.rootSessionId,
@@ -268,6 +270,8 @@ export function createLocalSessionRuntimeFactory(
       skillPaths,
       ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
       ...(subagentSettings === undefined ? {} : { settings: subagentSettings }),
+      backgroundBashCoordinator,
+      backgroundBashCoordinatorOwner: false,
       ...(!memoryEnabled || options.memoryCoordinator === undefined ? {} : {
         memoryHostFactory: ({ cwd: childCwd, sessionStorageRoot }: {
           readonly cwd: string;
@@ -312,6 +316,7 @@ export function createLocalSessionRuntimeFactory(
         outputStyle,
         savings,
         sessionManager.getSessionDir(),
+        backgroundBashCoordinator,
       ),
       modelRuntime: options.modelRuntime,
       settingsManager,

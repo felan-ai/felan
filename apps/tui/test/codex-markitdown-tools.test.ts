@@ -7,7 +7,7 @@ import type {
   Model,
 } from '@felan-ai/agent-core';
 import codexExtension from '@felan-ai/ext-codex';
-import markitdownExtension, { setActiveMarkitdownEnabled } from '@felan-ai/ext-markitdown';
+import markitdownExtension from '@felan-ai/ext-markitdown';
 import { describe, expect, it, vi } from 'vitest';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
@@ -16,16 +16,19 @@ describe('Codex and MarkItDown tool composition', () => {
   it.each([
     ['Codex before MarkItDown', [codexExtension, markitdownExtension]],
     ['MarkItDown before Codex', [markitdownExtension, codexExtension]],
-  ] as const)('%s keeps exactly one document reader through model and dependency changes', async (_name, extensions) => {
+  ] as const)('%s keeps ordinary read/bash and only swaps editing for GPT', async (_name, extensions) => {
     const harness = createHarness(true);
     for (const extension of extensions) await extension(harness.pi);
 
-    expect(harness.registeredTools).not.toContain('read_document');
     expect(harness.activeTools).toContain('read');
 
     await harness.emit('session_start', {}, context('openai-codex', 'gpt-5.3-codex'));
-    expect(harness.activeTools).not.toContain('read');
-    expect(harness.activeTools).toContain('read_document');
+    expect(harness.activeTools).toContain('read');
+    expect(harness.activeTools).toContain('bash');
+    expect(harness.activeTools).toContain('apply_patch');
+    expect(harness.activeTools).not.toContain('edit');
+    expect(harness.activeTools).not.toContain('write');
+    expect(harness.registeredTools).not.toContain('read_document');
 
     await harness.emit(
       'model_select',
@@ -34,23 +37,21 @@ describe('Codex and MarkItDown tool composition', () => {
     );
     expect(harness.activeTools).toContain('read');
     expect(harness.activeTools).not.toContain('read_document');
+    expect(harness.activeTools).toContain('edit');
+    expect(harness.activeTools).toContain('write');
+    expect(harness.activeTools).not.toContain('apply_patch');
 
     await harness.emit(
       'model_select',
       { model: model('openai', 'gpt-5.4') },
       context('openai', 'gpt-5.4'),
     );
-    expect(harness.activeTools).not.toContain('read');
-    expect(harness.activeTools).toContain('read_document');
-    expect(harness.registeredTools.filter((name) => name === 'read_document')).toHaveLength(1);
-
-    setActiveMarkitdownEnabled(harness.runtime, false);
+    expect(harness.activeTools).toContain('read');
+    expect(harness.activeTools).toContain('apply_patch');
     expect(harness.activeTools).not.toContain('read_document');
-    setActiveMarkitdownEnabled(harness.runtime, true);
-    expect(harness.activeTools).toContain('read_document');
   });
 
-  it('does not register read_document when Codex cannot replace ordinary tools', async () => {
+  it('keeps patch mode without process support', async () => {
     const harness = createHarness(false);
     await codexExtension(harness.pi);
     await markitdownExtension(harness.pi);
@@ -58,7 +59,7 @@ describe('Codex and MarkItDown tool composition', () => {
     await harness.emit('session_start', {}, context('openai-codex', 'gpt-5.3-codex'));
 
     expect(harness.activeTools).toContain('read');
-    expect(harness.activeTools).not.toContain('read_document');
+    expect(harness.activeTools).toContain('apply_patch');
     expect(harness.registeredTools).not.toContain('read_document');
   });
 

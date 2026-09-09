@@ -11,14 +11,14 @@ describe('@felan-ai/ext-rtk-optimizer package boundary', () => {
 
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-rtk-optimizer',
-      version: '0.5.0',
+      version: '0.5.1',
       license: 'MIT',
       repository: {
         type: 'git',
         url: 'git+https://github.com/felan-ai/felan.git',
         directory: 'packages/ext-rtk-optimizer',
       },
-      peerDependencies: { '@felan-ai/agent-core': '^0.6.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.6.1' },
       publishConfig: { access: 'public', provenance: true },
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
     });

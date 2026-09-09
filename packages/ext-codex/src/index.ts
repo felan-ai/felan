@@ -6,37 +6,27 @@ import {
 } from '@felan-ai/agent-core';
 import { CODEX_CONFIG, DEFAULT_CODEX_CONFIG } from './config.js';
 import { registerPostAgentRunCompaction } from './compaction.js';
-import { ExecSessionManager } from './exec-session-manager.js';
-import { supportsCodexModel, supportsImageInput } from './model-policy.js';
-import { injectCodexSkills } from './prompt.js';
+import { supportsCodexModel } from './model-policy.js';
 import { applyCodexRequestOptions } from './request-options.js';
 import { CODEX_TOOL_NAMES, createCodexTools, registerPatchResultEvent } from './tools.js';
 
-const REPLACED_TOOL_NAMES: ReadonlySet<string> = new Set(['read', 'bash', 'edit', 'write']);
+const REPLACED_TOOL_NAMES: ReadonlySet<string> = new Set(['edit', 'write']);
 const CODEX_TOOL_NAME_SET: ReadonlySet<string> = new Set(CODEX_TOOL_NAMES);
-export const CODEX_TOOL_MODE_EVENT = 'felan:codex:tool-mode:v1';
-
-export interface CodexToolModeEvent {
-  readonly version: 1;
-  readonly active: boolean;
-}
-
 const codexExtension: FelanExtension = async (pi) => {
   const config = { ...DEFAULT_CODEX_CONFIG, ...pi.config } as import('./config.js').CodexConfig;
-  const sessions = new ExecSessionManager(pi.runtime);
   registerPostAgentRunCompaction(pi, config);
-  for (const tool of createCodexTools(pi.runtime, sessions)) pi.registerTool(tool);
+  for (const tool of createCodexTools(pi.runtime)) pi.registerTool(tool);
   registerPatchResultEvent(pi);
 
   let ordinaryTools: string[] | undefined;
   const synchronizeTools = (model: Model<Api> | undefined) => {
     const current = pi.getActiveTools();
     ordinaryTools ??= current.filter((name) => !CODEX_TOOL_NAME_SET.has(name));
-    const active = supportsCodexModel(model) && pi.runtime.processes !== undefined;
+    const active = supportsCodexModel(model);
     if (active) {
       pi.setActiveTools([
         ...current.filter((name) => !REPLACED_TOOL_NAMES.has(name) && !CODEX_TOOL_NAME_SET.has(name)),
-        ...CODEX_TOOL_NAMES.filter((name) => name !== 'view_image' || supportsImageInput(model)),
+        ...CODEX_TOOL_NAMES,
       ]);
     } else {
       const restored = current.filter((name) => !CODEX_TOOL_NAME_SET.has(name));
@@ -45,32 +35,21 @@ const codexExtension: FelanExtension = async (pi) => {
       }
       pi.setActiveTools(restored);
     }
-    pi.events.emit(CODEX_TOOL_MODE_EVENT, { version: 1, active } satisfies CodexToolModeEvent);
   };
 
   pi.on('session_start', (_event, ctx) => synchronizeTools(ctx.model));
   pi.on('model_select', (event) => synchronizeTools(event.model));
-  pi.on('before_agent_start', (event, ctx) => {
-    if (!supportsCodexModel(ctx.model) || !pi.runtime.processes) return undefined;
-    const systemPrompt = injectCodexSkills(event.systemPrompt, event.systemPromptOptions.skills);
-    return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
-  });
   pi.on('before_provider_request', (event, ctx) => (
     applyCodexRequestOptions(event.payload, ctx, config)
   ));
-  pi.on('session_shutdown', async () => {
-    await sessions.shutdown();
-  });
 };
 
 export { CODEX_CONFIG, DEFAULT_CODEX_CONFIG, validateCodexConfig } from './config.js';
 export type { CodexConfig, CodexVerbosity } from './config.js';
-export { ExecSessionManager, MAX_OUTPUT_TOKENS, formatExecResult } from './exec-session-manager.js';
-export type { ExecCommandInput, UnifiedExecResult, WriteStdinInput } from './exec-session-manager.js';
 export { supportsCodexModel, supportsCodexResponsesRequest } from './model-policy.js';
 export { registerPostAgentRunCompaction } from './compaction.js';
 export { applyCodexRequestOptions } from './request-options.js';
-export { CODEX_TOOL_NAMES, MAX_VIEW_IMAGE_INPUT_BYTES, createCodexTools } from './tools.js';
+export { CODEX_TOOL_NAMES, createCodexTools } from './tools.js';
 export {
   createCodexStreamFunctionWrapper,
   resolveCodexStreamOptions,

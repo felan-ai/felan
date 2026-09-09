@@ -378,6 +378,29 @@ describe('HostAgentRuntime', () => {
     expect(result).toMatchObject({ stdout: 'posix works', code: 0, killed: false });
   });
 
+  it('applies the explicit POSIX shell flavor to persistent pipe processes', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    let processHandle;
+    try {
+      processHandle = await runtime.processes.startShell(
+        'printf "%s" "$FELAN_POSIX_PROCESS_TEST"',
+        { shellFlavor: 'posix', env: { FELAN_POSIX_PROCESS_TEST: 'process works' } },
+      );
+    } catch (error) {
+      if (process.platform === 'win32' && error instanceof Error && error.message.includes('POSIX shell')) return;
+      throw error;
+    }
+    let result = await processHandle.read(0, { waitMs: 1_000 });
+    let output = new TextDecoder().decode(result.output);
+    for (let attempt = 0; result.running && attempt < 5; attempt += 1) {
+      result = await processHandle.read(result.nextOffset, { waitMs: 1_000 });
+      output += new TextDecoder().decode(result.output);
+    }
+    expect(output).toBe('process works');
+    expect(result.running).toBe(false);
+    await processHandle.dispose();
+  });
+
   it('rejects an explicitly unavailable POSIX shell', async () => {
     const workspace = await createTemporaryDirectory('workspace');
     const storage = await createTemporaryDirectory('storage');
@@ -484,6 +507,16 @@ describe('HostAgentRuntime', () => {
     await terminal.dispose();
   });
 
+  it('preserves unicode output from a PTY process', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const terminal = await runtime.terminals!.startShell(
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('snowman:☃\\n')")}`,
+    );
+    const result = await terminal.read(0, { waitMs: 1_000 });
+    expect(new TextDecoder().decode(result.output)).toContain('snowman:☃');
+    await terminal.dispose();
+  });
+
   it.skipIf(process.platform === 'win32')('interrupts a pipe-backed process group with SIGINT', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const script = [
@@ -506,6 +539,17 @@ describe('HostAgentRuntime', () => {
     expect(new TextDecoder().decode(interrupted.output)).toContain('interrupted');
     expect(completed.running).toBe(false);
     expect([0, 130]).toContain(completed.exitCode);
+    await processHandle.dispose();
+  });
+
+  it('supports explicit forced termination for persistent processes', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const processHandle = await runtime.processes.startShell(
+      `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`,
+    );
+    await processHandle.terminate('SIGKILL');
+    const completed = await processHandle.read(0);
+    expect(completed.running).toBe(false);
     await processHandle.dispose();
   });
 

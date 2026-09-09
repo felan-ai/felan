@@ -18,6 +18,7 @@ export interface AgentRuntimeExecResult extends PiExecResult {
 export type ExecResult = AgentRuntimeExecResult;
 
 export type AgentRuntimeShellFlavor = 'default' | 'posix';
+export type AgentRuntimeTerminationSignal = 'SIGTERM' | 'SIGKILL';
 
 export interface AgentRuntimeShellOptions extends AgentRuntimeExecOptions {
   readonly env?: Readonly<Record<string, string>>;
@@ -47,7 +48,7 @@ export interface AgentRuntimeProcess {
   read(afterOffset: number, options?: AgentRuntimeProcessReadOptions): Promise<AgentRuntimeProcessSnapshot>;
   write(content: Uint8Array): Promise<void>;
   interrupt?(): Promise<void>;
-  terminate(): Promise<void>;
+  terminate(signal?: AgentRuntimeTerminationSignal): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -72,6 +73,7 @@ export interface AgentRuntimeShellProcessOptions {
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string>>;
   readonly shell?: string;
+  readonly shellFlavor?: AgentRuntimeShellFlavor;
   readonly login?: boolean;
   readonly stdin?: boolean;
 }

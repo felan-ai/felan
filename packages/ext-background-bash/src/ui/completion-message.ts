@@ -83,7 +83,7 @@ export class BackgroundBashCompletionComponent implements Component {
   #header(): string {
     if (!this.job) {
       const summary = this.#detailLines[0];
-      return `${this.theme.fg('warning', '?')} ${this.theme.bold('Background Bash finished')}`
+      return `${this.theme.fg('warning', '?')} ${this.theme.bold('Background process finished')}`
         + (summary ? this.theme.fg('muted', ` · ${summary}`) : '')
         + this.theme.fg('muted', ' · Alt+A details');
     }
@@ -132,7 +132,7 @@ function statusIcon(status: TerminalStatus, theme: Theme): string {
 }
 
 function statusTitle(status: TerminalStatus): string {
-  return status === 'unknown' ? 'Background Bash status unknown' : `Background Bash ${status}`;
+  return status === 'unknown' ? 'Background process status unknown' : `Background process ${status}`;
 }
 
 function shortJobId(id: string): string {

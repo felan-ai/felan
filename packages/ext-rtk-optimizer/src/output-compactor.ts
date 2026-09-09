@@ -11,7 +11,7 @@ import {
 } from './techniques/index.js';
 import { isTextContentBlock, mapTextContentBlocks, toRecord } from './record-utils.js';
 import { isRuntimePathUnderRoot, joinRuntimePath, normalizeRuntimePath } from './runtime-path.js';
-import { isCommandToolName, readToolCommand } from './tool-shapes.js';
+import { isCommandToolName, isInteractiveOrBackgroundCommand, readToolCommand } from './tool-shapes.js';
 import { truncateHeadTail } from './techniques/truncate.js';
 import type { RtkOptimizerConfig } from './types.js';
 
@@ -653,6 +653,9 @@ export function compactToolResult(
   }
 
   const input = toRecord(event.input);
+  if (isInteractiveOrBackgroundCommand(event.toolName, input)) {
+    return { changed: false, techniques: [] };
+  }
   const sourceContent = toArray(event.content);
   if (sourceContent.length === 0) {
     return { changed: false, techniques: [] };

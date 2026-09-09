@@ -69,6 +69,13 @@ const STANDALONE_TOOLS = new Set([
   'ask_user',
   'view_image',
 ]);
+const BACKGROUND_PROCESS_TOOLS = new Set([
+  'list_background_bash',
+  'read_background_bash',
+  'wait_background_bash',
+  'stop_background_bash',
+  'write_background_bash',
+]);
 const RUNNING_SESSION_PATTERN = /^Process running with session ID (\d+)\s*$/mu;
 const ABORTED_SESSION_PATTERN = /\bexec_command aborted; process continues as session (\d+)\b/iu;
 
@@ -461,36 +468,38 @@ export class ToolActivityState {
         if (message.role === 'assistant') {
           for (const content of message.content) {
             if (content.type !== 'toolCall') continue;
-            if (isExecCommand(content.name)) {
+            if (isCommandStart(content.name)) {
               const command = commandFromArgs(content.arguments);
               if (command) this.#execCommands.set(content.id, command);
               continue;
             }
-            if (!isWriteStdin(content.name)) continue;
-            const sessionId = sessionKeyFromArgs(content.arguments);
+            if (!isWriteStdin(content.name) && !isBackgroundProcessTool(content.name)) continue;
+            const sessionId = sessionKeyFromArgs(content.arguments, content.name);
             const command = sessionId ? this.#sessionCommands.get(sessionId) : undefined;
             if (command) this.#relatedCommands.set(content.id, command);
           }
           continue;
         }
-        if (message.role !== 'toolResult' || !isExecCommand(message.toolName)) continue;
-        const command = this.#execCommands.get(message.toolCallId);
-        const sessionId = sessionKeyFromResult(message);
+        if (message.role !== 'toolResult') continue;
+        this.#rememberBackgroundProcessMetadata(message.toolName, message);
+        if (!isCommandStart(message.toolName)) continue;
+        const command = this.#execCommands.get(message.toolCallId) ?? commandFromArgs(message.details);
+        const sessionId = sessionKeyFromResult(message, message.toolName);
         if (command && sessionId) this.#sessionCommands.set(sessionId, command);
       }
     }
   }
 
   #linkCommand(call: ToolActivityCall): void {
-    if (isExecCommand(call.name)) {
+    if (isCommandStart(call.name)) {
       const command = commandFromArgs(call.args);
       if (command) this.#execCommands.set(call.id, command);
       this.#rememberSessionCommand(call);
       return;
     }
-    if (!isWriteStdin(call.name)) return;
+    if (!isWriteStdin(call.name) && !isBackgroundProcessTool(call.name)) return;
 
-    const sessionId = sessionKeyFromArgs(call.args);
+    const sessionId = sessionKeyFromArgs(call.args, call.name);
     const command = this.#relatedCommands.get(call.id)
       ?? (sessionId ? this.#sessionCommands.get(sessionId) : undefined);
     if (!command) {
@@ -502,10 +511,33 @@ export class ToolActivityState {
   }
 
   #rememberSessionCommand(call: ToolActivityCall): void {
-    if (!isExecCommand(call.name) || !call.result) return;
-    const command = commandFromArgs(call.args) ?? this.#execCommands.get(call.id);
-    const sessionId = sessionKeyFromResult(call.result);
+    if (!call.result) return;
+    if (isBackgroundProcessTool(call.name)) {
+      this.#rememberBackgroundProcessMetadata(call.name, call.result);
+      this.#linkCommand(call);
+      return;
+    }
+    if (!isCommandStart(call.name)) return;
+    const command = commandFromArgs(call.args)
+      ?? this.#execCommands.get(call.id)
+      ?? commandFromArgs(call.result.details);
+    const sessionId = sessionKeyFromResult(call.result, call.name);
     if (command && sessionId) this.#sessionCommands.set(sessionId, command);
+  }
+
+  #rememberBackgroundProcessMetadata(toolName: string, result: ToolActivityResult): void {
+    if (!isBackgroundProcessTool(toolName)) return;
+    const details = toRecord(result.details);
+    const jobs = toolName.toLowerCase() === 'list_background_bash' && Array.isArray(details.jobs)
+      ? details.jobs
+      : [details.job];
+    for (const job of jobs) {
+      const meta = toRecord(toRecord(job).meta);
+      const key = backgroundProcessKey(meta.id);
+      if (key && typeof meta.command === 'string' && meta.command.trim()) {
+        this.#sessionCommands.set(key, meta.command.trim());
+      }
+    }
   }
 
   #ensureCall(
@@ -615,12 +647,16 @@ function normalizeResult(result: {
   };
 }
 
-function isExecCommand(toolName: string): boolean {
-  return toolName.toLowerCase().includes('exec_command');
+function isCommandStart(toolName: string): boolean {
+  return toolName.toLowerCase() === 'bash' || toolName.toLowerCase().includes('exec_command');
 }
 
 function isWriteStdin(toolName: string): boolean {
   return toolName.toLowerCase().includes('write_stdin');
+}
+
+function isBackgroundProcessTool(toolName: string): boolean {
+  return BACKGROUND_PROCESS_TOOLS.has(toolName.toLowerCase());
 }
 
 function commandFromArgs(args: unknown): string | undefined {
@@ -632,14 +668,21 @@ function commandFromArgs(args: unknown): string | undefined {
   return undefined;
 }
 
-function sessionKeyFromArgs(args: unknown): string | undefined {
-  return sessionKey(toRecord(args).session_id);
+function sessionKeyFromArgs(args: unknown, toolName: string): string | undefined {
+  return isBackgroundProcessTool(toolName)
+    ? backgroundProcessKey(toRecord(args).id)
+    : sessionKey(toRecord(args).session_id);
+}
+
+function backgroundProcessKey(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? `background:${value.trim()}` : undefined;
 }
 
 function sessionKeyFromResult(result: {
   readonly details?: unknown;
   readonly content?: readonly ToolActivityContent[];
-}): string | undefined {
+}, toolName: string): string | undefined {
+  if (toolName.toLowerCase() === 'bash') return backgroundProcessKey(toRecord(result.details).id);
   const structured = sessionKey(toRecord(result.details).session_id);
   if (structured) return structured;
   for (const content of result.content ?? []) {

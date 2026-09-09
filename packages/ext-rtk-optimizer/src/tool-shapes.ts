@@ -23,6 +23,12 @@ export function readToolCommand(toolName: unknown, input: unknown): string | und
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
+export function isInteractiveOrBackgroundCommand(toolName: unknown, input: unknown): boolean {
+  if (toolName !== 'bash') return false;
+  const record = toRecord(input);
+  return record.background === true || record.tty === true;
+}
+
 export function writeToolCommand(toolName: unknown, input: unknown, command: string): boolean {
   if (!isCommandToolName(toolName)) return false;
   const record = toRecord(input);

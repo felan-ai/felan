@@ -12,7 +12,7 @@ export const MARKITDOWN_SAVINGS_METHOD = 'markitdown-prompt-token-ratio-202609-v
 export function reportMarkitdownSavings(
   reporter: SavingsReporter | undefined,
   model: SavingsModelReference | undefined,
-  tool: 'read' | 'read_document',
+  tool: 'read',
   content: readonly unknown[],
 ): void {
   if (!reporter || !model) return;

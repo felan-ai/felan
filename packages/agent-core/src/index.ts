@@ -12,6 +12,7 @@ export type {
   AgentRuntimeProcessSnapshot,
   AgentRuntimePrivateRuntime,
   AgentRuntimeShellFlavor,
+  AgentRuntimeTerminationSignal,
   AgentRuntimeShellOptions,
   AgentRuntimeShellProcessOptions,
   AgentRuntimeStdioProcess,

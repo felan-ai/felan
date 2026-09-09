@@ -41,6 +41,29 @@ describe('runtime-backed coding tools', () => {
     }
   });
 
+  it('returns native image content for an image stored only in AgentRuntime', async () => {
+    const runtime = new TestAgentRuntime('/virtual-felan-workspace');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgWOUGAAGeAPFZzf6KAAAAAElFTkSuQmCC',
+      'base64',
+    );
+    await runtime.writeFile('image.png', png);
+    const tools = toolsByName(createRuntimeCodingTools(runtime));
+
+    const result = await tools.read!.execute(
+      'read-image',
+      { path: 'image.png' },
+      undefined,
+      undefined,
+      context,
+    );
+
+    expect(result.content).toEqual(expect.arrayContaining([
+      { type: 'text', text: expect.stringContaining('Read image file [image/png]') },
+      { type: 'image', mimeType: 'image/png', data: expect.any(String) },
+    ]));
+  });
+
   it('can route the Bash coding tool through an explicit POSIX shell', async () => {
     const runtime = new TestAgentRuntime('/virtual-felan-workspace');
     const tools = toolsByName(createRuntimeCodingTools(runtime, { shellFlavor: 'posix' }));
