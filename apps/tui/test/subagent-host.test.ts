@@ -824,6 +824,43 @@ describe('LocalSubagentHost', () => {
     expect(started.at(-1)).toContain('queued guidance');
   });
 
+  it('keeps pending work while an active descendant outlives its parent', async () => {
+    const descendantStarted = deferred();
+    const releaseDescendant = deferred();
+    let descendantHost: SubagentHost | undefined;
+    let descendantId: string | undefined;
+    const runner: LocalSubagentRunner = async (input) => {
+      await input.onReady({ steer: async () => {}, cancel: async () => {} });
+      if (input.request.description === 'parent') {
+        descendantHost = input.subagents;
+        const descendant = await input.subagents.spawn(request({ description: 'descendant' }));
+        if (descendant.ok) descendantId = descendant.value.agentId;
+        await descendantStarted.promise;
+        return { result: 'parent done' };
+      }
+      descendantStarted.resolve();
+      await releaseDescendant.promise;
+      return { result: 'descendant done' };
+    };
+    const { host } = await harness({ runner, concurrency: 2 });
+    host.attachParent(parentPort([]));
+
+    const parent = await host.spawn(request({ type: 'general', description: 'parent' }));
+    if (!parent.ok) return;
+    await expect(waitForResult(host, parent.value.agentId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed' },
+    });
+    expect(host.hasPendingWork()).toBe(true);
+
+    releaseDescendant.resolve();
+    await expect(waitForResult(descendantHost!, descendantId!)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'completed' },
+    });
+    await vi.waitFor(() => expect(host.hasPendingWork()).toBe(false));
+  });
+
   it('shares one nested manager, preserves the root session, and cancels a real descendant', async () => {
     const root = await temporaryDirectory();
     const sessionDirectory = join(root, 'child-sessions');
@@ -855,6 +892,7 @@ describe('LocalSubagentHost', () => {
     };
     const fixture = await harness({ runner, concurrency: 2, root });
     const host = fixture.host;
+    host.attachParent(parentPort([]));
     const parent = await host.spawn(request({ type: 'general', description: 'parent' }));
     if (!parent.ok) return;
     await started;
@@ -870,6 +908,7 @@ describe('LocalSubagentHost', () => {
     expect(rootSessionIds).toEqual(['root', 'root']);
     expect(host.getUsage()).toMatchObject({ input: 3, output: 3 });
     expect(host.getUsage().cost).toBeCloseTo(0.3);
+    await vi.waitFor(() => expect(host.hasPendingWork()).toBe(false));
   });
 
   it('enforces configured nesting depth without exposing it through host policy', async () => {

@@ -623,10 +623,11 @@ export class LocalSubagentManager {
   hasPendingWork(sessionId: string): boolean {
     const context = this.#sessionContext(sessionId);
     if (!context) return false;
-    return this.#latestChildren().some((child) => (
-      child.record.rootSessionId === context.rootSessionId
-      && (!isTerminal(child.record.status) || child.completionPending)
-    ));
+    return this.#latestChildren().some((child) => {
+      if (child.record.rootSessionId !== context.rootSessionId) return false;
+      if (!isTerminal(child.record.status)) return true;
+      return child.record.parentSessionId === sessionId && child.completionPending;
+    });
   }
 
   getUsage(): LocalSubagentUsage {
