@@ -125,11 +125,21 @@ describe('Felan /cwd command', () => {
 });
 
 describe('Felan /restart command', () => {
-  it('adds /restart to command completion and raises only after an idle submission', async () => {
+  it('keeps Felan commands before skills and raises restart only after an idle submission', async () => {
     const internals = fakeMode({
       triggerCharacters: [],
-      getSuggestions: async () => null,
+      getSuggestions: async () => ({
+        prefix: '/',
+        items: [
+          { value: 'quit', label: 'quit' },
+          { value: 'skill:run-tests', label: 'skill:run-tests' },
+        ],
+      }),
       applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
+    });
+    installFelanCwdCommand(internals.mode, {
+      getCwd: () => '/workspace',
+      isIdle: () => true,
     });
     installFelanRestartCommand(internals.mode, { isIdle: () => true });
     internals.setupEditorSubmitHandler();
@@ -137,10 +147,15 @@ describe('Felan /restart command', () => {
     const provider = (internals.mode as unknown as {
       createBaseAutocompleteProvider(): AutocompleteProvider;
     }).createBaseAutocompleteProvider();
-    await expect(provider.getSuggestions(['/res'], 0, 4, { signal: new AbortController().signal }))
+    await expect(provider.getSuggestions(['/'], 0, 1, { signal: new AbortController().signal }))
       .resolves.toEqual({
-        prefix: '/res',
-        items: [{ value: 'restart', label: 'restart', description: 'Restart Felan and resume this session' }],
+        prefix: '/',
+        items: [
+          { value: 'quit', label: 'quit' },
+          { value: 'cwd', label: 'cwd', description: 'Start a new session in another directory' },
+          { value: 'restart', label: 'restart', description: 'Restart Felan and resume this session' },
+          { value: 'skill:run-tests', label: 'skill:run-tests' },
+        ],
       });
 
     internals.modeInternals.defaultEditor.onSubmit!(' /restart ');

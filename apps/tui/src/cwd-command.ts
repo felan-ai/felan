@@ -7,6 +7,7 @@ import type {
   AutocompleteSuggestions,
   Editor,
 } from '@earendil-works/pi-tui';
+import { insertBeforeSkillCommands } from './command-autocomplete.js';
 
 const CWD_COMMAND = '/cwd';
 const CWD_DESCRIPTION = 'Start a new session in another directory';
@@ -208,10 +209,10 @@ class CwdAutocompleteProvider implements AutocompleteProvider {
     if (suggestions?.items.some(({ value }) => value === 'cwd')) return suggestions;
 
     return {
-      items: [
-        ...(suggestions?.items ?? []),
+      items: insertBeforeSkillCommands(
+        suggestions?.items ?? [],
         { value: 'cwd', label: 'cwd', description: CWD_DESCRIPTION },
-      ],
+      ),
       prefix: suggestions?.prefix ?? textBeforeCursor,
     };
   }

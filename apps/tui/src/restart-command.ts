@@ -4,6 +4,7 @@ import type {
   AutocompleteSuggestions,
   Editor,
 } from '@earendil-works/pi-tui';
+import { insertBeforeSkillCommands } from './command-autocomplete.js';
 
 const RESTART_COMMAND = '/restart';
 const RESTART_DESCRIPTION = 'Restart Felan and resume this session';
@@ -117,10 +118,10 @@ class RestartAutocompleteProvider implements AutocompleteProvider {
     if (suggestions?.items.some(({ value }) => value === 'restart')) return suggestions;
 
     return {
-      items: [
-        ...(suggestions?.items ?? []),
+      items: insertBeforeSkillCommands(
+        suggestions?.items ?? [],
         { value: 'restart', label: 'restart', description: RESTART_DESCRIPTION },
-      ],
+      ),
       prefix: suggestions?.prefix ?? textBeforeCursor,
     };
   }
