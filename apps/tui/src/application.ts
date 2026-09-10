@@ -14,6 +14,8 @@ import {
   type CreateLocalFelanRuntimeOptions,
 } from './runtime.js';
 import { installFelanStartupHeader } from './startup-header.js';
+import { getFelanSettings } from './settings.js';
+import { getLocalExtensionStartupState } from './dependencies.js';
 import { createToolActivityRuntimeView } from './tool-activity/runtime-view.js';
 import { checkForFelanUpdate } from './update.js';
 import { showFelanUpdateNotification } from './update-notification.js';
@@ -225,6 +227,9 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
     });
     installFelanStartupHeader(mode, {
       expanded: options.verbose === true,
+      extensionState: () => getLocalExtensionStartupState(
+        getFelanSettings(runtime.services.settingsManager),
+      ),
       memorySummaryPath: () => join(
         runtime.services.agentDir,
         'storage',

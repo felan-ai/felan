@@ -160,7 +160,11 @@ async function refresh(projects: ProjectService, ctx: ExtensionContext, session?
       return;
     }
     if (failed && ctx.hasUI) {
-      ctx.ui.notify(`Codebase Memory index failed: ${failure instanceof Error ? failure.message : String(failure)}`, 'warning');
+      ctx.ui.notify(
+        `Codebase Memory index failed: ${failure instanceof Error ? failure.message : String(failure)}. `
+          + 'Automatic recovery is attempted for known daemon-coordination failures; if this persists, close other Felan sessions and retry.',
+        'warning',
+      );
     }
   } catch (error) {
     if (!isStaleExtensionContextError(error)) throw error;

@@ -94,8 +94,11 @@ terminals send wheel events to the transcript instead of treating them as
 prompt-editor arrow keys. If a terminal or PTY does not pass mouse reports
 through, use `PageUp`/`PageDown` or switch to `regular` mode.
 
-The dependency manager also stores onboarding decisions under `felanTui`.
-Prefer `/dependencies` over editing that internal state directly.
+The dependency manager stores its revisioned onboarding manifest under
+`felanTui.onboarding`. It is internal state; prefer `/dependencies` over editing
+it directly. A complete manifest prevents the onboarding manager from probing
+external dependencies during normal startup. The full resource view reports
+extensions as enabled, disabled, or setup required without probing them.
 
 ## Application prompt append
 
@@ -419,6 +422,9 @@ Daemon coordination is derived from the agent-storage root and uses a bounded
 owner-private temporary path on POSIX so Unix socket paths remain portable. The
 exact reviewed 0.10.8 executable is required. Use `/dependencies` or
 `/codebase-memory install` for an explicit local install.
+Known fatal daemon-coordination failures are recovered by participating current
+sessions through a bounded graceful daemon stop and one index retry. Restart
+Felan once after upgrading so existing sessions load this recovery behavior.
 
 ## Secrets
 

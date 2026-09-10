@@ -13,11 +13,20 @@ portable detection, optional installation, and safe unavailable behavior;
    not trigger installation, repeatedly execute a missing command, or break
    unrelated extension behavior.
 3. The local TUI's source-controlled registry in
-   `apps/tui/src/dependencies.ts` checks enabled binary-backed extensions during
-   interactive startup. Unresolved dependencies open a first-run
-   install-or-disable dialog.
-4. Install actions require explicit confirmation. Decisions are stored in
-   `$FELAN_AGENT_DIR/settings.json` and can be revisited with `/dependencies`.
+   `apps/tui/src/dependencies.ts` performs synchronous onboarding only for
+   dependency-backed extensions without a current onboarding record. The
+   record is keyed by the stable built-in extension name and its explicit
+   onboarding revision.
+4. A completed enable, disable, install, or supported degraded-mode choice is
+   stored atomically with the corresponding `builtinExtensions` intent in
+   `$FELAN_AGENT_DIR/settings.json`. Cancellation, deferral, declined
+   confirmation, and failed installation remain pending.
+5. Once all current records exist, normal startup does not run the TUI
+   dependency manager's probes. The startup resource view reports enabled,
+   disabled, and setup-required Felan extensions from settings only. Use
+   `/dependencies` for an explicit fresh recheck and reconfiguration.
+   Enablement changes take effect in the next composed Felan session; the
+   manager tells the user when a restart is required.
 5. Installers use `AgentRuntime`, pin reviewed versions and installer content,
    stage temporary files in runtime storage, verify downloads, and return clear
    diagnostics. They never run during startup checks or model tool calls.

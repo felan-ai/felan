@@ -25,7 +25,9 @@ The Codebase Memory extension uses Agent Core's optional literal-argv stdio
 process capability for a root-session-scoped warm MCP frontend shared by the
 root agent and its subagents. This keeps protocol stdout separate from
 diagnostics and leaves daemon coordination to the exact upstream binary; see
-the [transport decision](../maintainers/codebase-memory-stdio.md).
+the [transport decision](../maintainers/codebase-memory-stdio.md). Its bounded
+recovery wave coordinates only Felan-owned frontends and uses the upstream
+daemon's graceful stop command; it does not mutate upstream coordination state.
 
 ## Ownership layers
 

@@ -36,3 +36,19 @@ rejects malformed or unknown responses, cancels timed-out requests, rejects all
 pending requests on frontend failure, and allows a later lazy restart. Cache-size
 accounting runs after indexing so it cannot extend the transient `cbm: idx`
 status.
+
+## Recovery
+
+The extension also detects the reviewed binary's known fatal coordination
+failure from its bounded worker log. Current Felan sessions publish an
+expiring, Felan-owned recovery wave, fence new frontend admission, and close
+only frontends they own. A contender invokes the binary with literal argv
+`['daemon', 'stop']` and the same cache and runtime roots, retrying that
+upstream control operation only within a bounded deadline while other committed
+clients drain. A successful immutable completion record permits one index retry.
+
+Recovery records are coordination hints, not authority over Codebase Memory's
+state. Felan does not remove upstream locks, cache files, or sockets and does
+not signal other PIDs. Sessions running an older extension cannot cooperate and
+must be restarted once after upgrading. This recovery poll is separate from
+source-tree watching and does not add periodic indexing.

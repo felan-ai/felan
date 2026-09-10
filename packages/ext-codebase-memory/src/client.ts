@@ -4,6 +4,7 @@ import {
   joinRuntimePath,
   shellQuote,
 } from './runtime-path.js';
+import { RecoveryCoordinator, runStdioCommand } from './recovery.js';
 
 export const CODEBASE_MEMORY_VERSION = '0.10.8';
 export const QUERY_TIMEOUT_MS = 60_000;
@@ -102,6 +103,7 @@ export class CbmClient {
   #session: CbmMcpSession | undefined;
   #sessionStart: Promise<CbmMcpSession> | undefined;
   #closed = false;
+  readonly #recovery: RecoveryCoordinator | undefined;
   readonly #cacheStorageScope: 'agent' | 'session';
 
   constructor(
@@ -114,23 +116,46 @@ export class CbmClient {
     this.cacheRoot = joinRuntimePath(runtime.storage(this.#cacheStorageScope).root, 'codebase-memory/cache');
     this.runtimeRoot = runtimeDirectory.root;
     this.#runtimeStoragePath = runtimeDirectory.storagePath;
+    if (runtime.processes?.startStdio) {
+      this.#recovery = new RecoveryCoordinator(
+        runtime,
+        this.cacheRoot,
+        () => this.#closeSession(),
+        (signal) => this.#stopDaemon(signal),
+      );
+      this.#recovery.start();
+    }
   }
 
   async call(command: string, args: Record<string, unknown>, options: CbmCallOptions = {}): Promise<CbmCallResult> {
+    return this.#callWithRecovery(command, args, options, true);
+  }
+
+  async #callWithRecovery(command: string, args: Record<string, unknown>, options: CbmCallOptions, allowRecovery: boolean): Promise<CbmCallResult> {
     const timeout = options.timeoutMs ?? (command === 'index_repository' ? INDEX_TIMEOUT_MS : QUERY_TIMEOUT_MS);
     if (this.#closed) throw new Error('Codebase Memory client is closed');
     if (!this.runtime.processes?.startStdio) return this.#callOneShot(command, args, options, timeout);
-    const session = await this.#getSession();
+    const startedAt = Date.now();
+    await this.#recovery?.waitForRecovery(options.signal);
+    const session = await this.#getSession(options.signal);
     try {
       return await session.call(command, args, timeout, options.signal);
     } catch (error) {
       if (!session.isUsable && this.#session === session) this.#session = undefined;
+      if (allowRecovery && command === 'index_repository' && !this.#closed && !options.signal?.aborted) {
+        const recovered = await this.#recovery?.hasSuccessfulRecoverySince(startedAt)
+          || (isRecoveryInterruption(error)
+            ? await this.#recovery?.waitForSuccessfulRecoverySince(startedAt, options.signal)
+            : await this.#recovery?.recover(error, options.signal));
+        if (recovered) return this.#callWithRecovery(command, args, options, false);
+      }
       throw error;
     }
   }
 
   async close(): Promise<void> {
     this.#closed = true;
+    await this.#recovery?.stop();
     await this.#closeSession();
   }
 
@@ -155,21 +180,28 @@ export class CbmClient {
     if (started && started !== session) await started.close();
   }
 
-  async #getSession(): Promise<CbmMcpSession> {
+  async #getSession(signal?: AbortSignal): Promise<CbmMcpSession> {
     const startStdio = this.runtime.processes?.startStdio;
     if (!startStdio) throw new Error('Codebase Memory stdio transport is unavailable');
+    await this.#recovery?.waitForRecovery(signal);
+    if (this.#closed) throw new Error('Codebase Memory client is closed');
     if (this.#sessionStart) return this.#sessionStart;
     if (this.#session) return this.#session;
-    const starting = this.#startSession(startStdio);
+    const starting = this.#startSession(startStdio, signal);
     this.#sessionStart = starting;
     const session = await starting.finally(() => {
       if (this.#sessionStart === starting) this.#sessionStart = undefined;
     });
-    if (!this.#closed) this.#session = session;
+    if (this.#closed) {
+      await session.close();
+      throw new Error('Codebase Memory client is closed');
+    }
+    this.#session = session;
+    if (!session.isUsable || this.#session !== session) return this.#getSession(signal);
     return session;
   }
 
-  async #startSession(startStdio: NonNullable<NonNullable<AgentRuntime['processes']>['startStdio']>): Promise<CbmMcpSession> {
+  async #startSession(startStdio: NonNullable<NonNullable<AgentRuntime['processes']>['startStdio']>, signal?: AbortSignal): Promise<CbmMcpSession> {
     const runtimeDirectory = this.#runtimeStoragePath
       ? await this.runtime.storage('agent').mkdir(this.#runtimeStoragePath, { recursive: true }).then(() => this.runtimeRoot)
       : this.runtime.privateRuntime
@@ -183,12 +215,33 @@ export class CbmClient {
     if (!this.#closed) this.#session = session;
     try {
       await session.start();
+      await this.#recovery?.waitForRecovery(signal);
       return session;
     } catch (error) {
       if (this.#session === session) this.#session = undefined;
       await session.close().catch(() => {});
       throw error;
     }
+  }
+
+  async #stopDaemon(signal?: AbortSignal): Promise<boolean> {
+    const deadline = Date.now() + 60_000;
+    const env = { CBM_CACHE_DIR: this.cacheRoot, CBM_RUNTIME_DIR: this.runtimeRoot };
+    while (Date.now() < deadline && !signal?.aborted) {
+      try {
+        const code = await runStdioCommand(this.runtime, this.invocation.command, ['daemon', 'stop'], {
+          cwd: this.runtime.cwd,
+          env,
+          timeoutMs: Math.min(15_000, Math.max(1, deadline - Date.now())),
+          ...(signal === undefined ? {} : { signal }),
+        });
+        if (code === 0) return true;
+      } catch {
+        return false;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+    }
+    return false;
   }
 
   async #callOneShot(command: string, args: Record<string, unknown>, options: CbmCallOptions, timeout: number): Promise<CbmCallResult> {
@@ -423,4 +476,11 @@ function parseResult(command: string, result: ExecResult): CbmCallResult {
 
 function sanitize(value: string): string {
   return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, '').replace(/[\u0000-\u001f\u007f]/gu, ' ').trim().slice(0, 1_000);
+}
+
+function isRecoveryInterruption(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message === 'Codebase Memory session closed'
+    || message === 'Codebase Memory frontend exited'
+    || message === 'Codebase Memory session is unavailable';
 }

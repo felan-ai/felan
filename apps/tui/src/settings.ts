@@ -101,11 +101,23 @@ export async function setExtensionConfigValue(
 
 export interface FelanTuiSettings {
   readonly toolDisplay?: LocalToolDisplayMode;
-  readonly dependencyOnboarding?: Readonly<Record<string, LocalDependencyOnboardingChoice>>;
+  readonly onboarding?: FelanOnboardingSettings;
 }
 
 export type LocalToolDisplayMode = 'grouped' | 'full';
-export type LocalDependencyOnboardingChoice = 'continue';
+
+export const FELAN_ONBOARDING_SCHEMA_VERSION = 1;
+
+export interface FelanOnboardingSettings {
+  readonly schemaVersion: number;
+  readonly extensions: Readonly<Record<string, number>>;
+}
+
+export interface DependencyOnboardingDecision {
+  readonly extension: BuiltinExtensionName;
+  readonly revision: number;
+  readonly enabled: boolean;
+}
 
 export function getLocalOutputStyle(
   settingsManager: SettingsManager,
@@ -192,24 +204,33 @@ export async function setBuiltinExtensionEnabled(
   });
 }
 
-export async function setDependencyOnboardingChoice(
+export async function setDependencyOnboardingDecision(
   agentDir: string,
-  dependencyId: string,
-  choice: LocalDependencyOnboardingChoice | undefined,
+  decision: DependencyOnboardingDecision,
 ): Promise<void> {
+  if (!Number.isSafeInteger(decision.revision) || decision.revision < 1) {
+    throw new Error('Dependency onboarding revision must be a positive safe integer');
+  }
   await updateGlobalFelanSettings(agentDir, (settings) => {
+    const rawBuiltins = settings.builtinExtensions;
+    if (rawBuiltins !== undefined && !isRecord(rawBuiltins)) {
+      throw new Error('builtinExtensions must be an object');
+    }
     const rawTui = settings.felanTui;
     if (rawTui !== undefined && !isRecord(rawTui)) throw new Error('felanTui must be an object');
     const tui = { ...(rawTui ?? {}) };
-    const rawChoices = tui.dependencyOnboarding;
-    if (rawChoices !== undefined && !isRecord(rawChoices)) {
-      throw new Error('felanTui.dependencyOnboarding must be an object');
-    }
-    const choices = { ...(rawChoices ?? {}) };
-    if (choice === undefined) delete choices[dependencyId];
-    else choices[dependencyId] = choice;
-    if (Object.keys(choices).length === 0) delete tui.dependencyOnboarding;
-    else tui.dependencyOnboarding = choices;
+    const extensions = currentOnboardingExtensions(tui.onboarding);
+    extensions[decision.extension] = decision.revision;
+
+    settings.builtinExtensions = {
+      ...(rawBuiltins ?? {}),
+      [decision.extension]: decision.enabled,
+    };
+    tui.onboarding = {
+      schemaVersion: FELAN_ONBOARDING_SCHEMA_VERSION,
+      extensions,
+    };
+    delete tui.dependencyOnboarding;
     settings.felanTui = tui;
   });
 }
@@ -218,12 +239,16 @@ export function isBuiltinExtensionEnabled(settings: FelanSettings, name: Builtin
   return settings.builtinExtensions?.[name] !== false;
 }
 
-export function getDependencyOnboardingChoice(
+export function isDependencyOnboardingComplete(
   settings: FelanSettings,
-  dependencyId: string,
-): LocalDependencyOnboardingChoice | undefined {
-  const value = settings.felanTui?.dependencyOnboarding?.[dependencyId];
-  return value === 'continue' ? value : undefined;
+  extension: BuiltinExtensionName,
+  revision: number,
+): boolean {
+  const rawTui: unknown = settings.felanTui;
+  if (!isRecord(rawTui)) return false;
+  const onboarding = rawTui.onboarding;
+  if (!isCurrentOnboardingSettings(onboarding)) return false;
+  return onboarding.extensions[extension] === revision;
 }
 
 type MutableSettings = Record<string, unknown> & {
@@ -281,6 +306,19 @@ function validateBuiltinExtensionKeys(settings: Record<string, unknown> | undefi
     if (!Object.hasOwn(builtinExtensionPackages, name)) throw new Error(`Unknown built-in extension: ${name}`);
     if (typeof enabled !== 'boolean') throw new Error(`Built-in extension ${name} must be a boolean`);
   }
+}
+
+function currentOnboardingExtensions(value: unknown): Record<string, unknown> {
+  return isCurrentOnboardingSettings(value) ? { ...value.extensions } : {};
+}
+
+function isCurrentOnboardingSettings(value: unknown): value is {
+  readonly schemaVersion: typeof FELAN_ONBOARDING_SCHEMA_VERSION;
+  readonly extensions: Readonly<Record<string, unknown>>;
+} {
+  return isRecord(value)
+    && value.schemaVersion === FELAN_ONBOARDING_SCHEMA_VERSION
+    && isRecord(value.extensions);
 }
 
 function isMissingFile(error: unknown): boolean {

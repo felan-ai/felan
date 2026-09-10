@@ -30,6 +30,15 @@ that status. It has no file watcher or periodic refresh. After edits, the model 
 `/codebase-memory refresh`. Direct file reads, grep, compiler output, and tests
 remain authoritative because an index can be stale.
 
+When a known Codebase Memory coordination failure makes an index worker fail,
+current Felan sessions coordinate a bounded recovery wave through agent
+storage. They close only their own frontends, ask the reviewed binary to stop
+its daemon gracefully, and retry the index once after successful recovery.
+Older Felan processes cannot participate until restarted. Felan never deletes
+Codebase Memory runtime locks or cache data and never signals foreign PIDs; if
+another session does not cooperate, the attempt ends with an actionable
+warning rather than retrying indefinitely.
+
 Grep and ripgrep calls made through `bash` or Codex `exec_command` receive a
 best-effort Codebase Memory appendix when the original result is empty or
 likely truncated and a simple search pattern can be identified. Focused

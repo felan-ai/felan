@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -66,6 +66,30 @@ describe('Codebase Memory real binary', () => {
         ['codebase-memory', undefined],
       ]);
     }, { timeout: 120_000 });
+
+    const secondRuntime = new HostAgentRuntime(workspace, {
+      sessionStorageRoot: join(root, 'second-session'),
+      agentStorageRoot,
+    });
+    const secondHarness = await createHarness(secondRuntime, { autoIndexPath: repositories });
+    await secondHarness.emit('session_start', { reason: 'startup' });
+    await vi.waitFor(() => {
+      expect(secondHarness.statuses).toEqual([
+        ['codebase-memory', 'cbm: idx'],
+        ['codebase-memory', undefined],
+      ]);
+    }, { timeout: 120_000 });
+
+    const runtimeEntries = await readdir(runtimeDirectory.root);
+    const daemonDirectoryName = runtimeEntries.find((entry) => entry.startsWith('cbm-daemon-'));
+    expect(daemonDirectoryName).toBeDefined();
+    const daemonDirectory = join(runtimeDirectory.root, daemonDirectoryName!);
+    const daemonMarker = join(daemonDirectory, 'cbm-version-cohort-daemon-v1.lock');
+    await rm(daemonMarker, { force: true });
+    const recovered = await executeTool(harness.tools[0]!, { command: 'index_repository' });
+    expect(textOf(recovered)).toContain('nodes');
+    await secondHarness.emit('session_shutdown', { reason: 'quit' });
+
     const byNameAndFile = await readSymbolPayload(harness.tools[1]!, { name: 'answer', file_path: 'answer.ts' });
     expect(byNameAndFile.snippet.source).toContain('return 42');
     const byQualifiedName = await readSymbolPayload(harness.tools[1]!, { qualified_name: byNameAndFile.symbol.qualified_name });
@@ -151,6 +175,11 @@ async function readSymbolPayload(tool: ToolDefinition, params: Record<string, un
 
 function executeTool(tool: ToolDefinition, params: Record<string, unknown>) {
   return tool.execute('e2e', params as never, new AbortController().signal, () => {}, {} as never);
+}
+
+function textOf(response: { content: Array<{ type: string; text?: string }> }): string {
+  const content = response.content[0];
+  return content?.type === 'text' && typeof content.text === 'string' ? content.text : '';
 }
 
 class MissingBinaryRuntime extends HostAgentRuntime {

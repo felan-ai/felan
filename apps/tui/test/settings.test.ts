@@ -13,13 +13,13 @@ import { initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agen
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createLocalSettingsManager,
-  getDependencyOnboardingChoice,
   getFelanSettings,
   getLocalOutputStyle,
   getLocalToolDisplayMode,
+  isDependencyOnboardingComplete,
   isBuiltinExtensionEnabled,
   setBuiltinExtensionEnabled,
-  setDependencyOnboardingChoice,
+  setDependencyOnboardingDecision,
   resolveExtensionConfigSettings,
   setExtensionConfigValue,
 } from '../src/settings.js';
@@ -157,7 +157,11 @@ describe('local settings', () => {
 
     await Promise.all([
       setBuiltinExtensionEnabled(agentDir, 'markitdown', false),
-      setDependencyOnboardingChoice(agentDir, 'rtk', 'continue'),
+      setDependencyOnboardingDecision(agentDir, {
+        extension: 'rtkOptimizer',
+        revision: 1,
+        enabled: true,
+      }),
     ]);
 
     const settings = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8'));
@@ -166,16 +170,32 @@ describe('local settings', () => {
       builtinExtensions: { markitdown: false },
       felanTui: {
         toolDisplay: 'full',
-        dependencyOnboarding: { rtk: 'continue' },
+        onboarding: { schemaVersion: 1, extensions: { rtkOptimizer: 1 } },
       },
     });
     expect(isBuiltinExtensionEnabled(settings, 'markitdown')).toBe(false);
-    expect(getDependencyOnboardingChoice(settings, 'rtk')).toBe('continue');
+    expect(isDependencyOnboardingComplete(settings, 'rtkOptimizer', 1)).toBe(true);
+    expect(isDependencyOnboardingComplete(settings, 'rtkOptimizer', 2)).toBe(false);
     const manager = createLocalSettingsManager(root, agentDir);
-    expect(getDependencyOnboardingChoice(getFelanSettings(manager), 'rtk')).toBe('continue');
-    await setDependencyOnboardingChoice(agentDir, 'rtk', undefined);
+    expect(isDependencyOnboardingComplete(getFelanSettings(manager), 'rtkOptimizer', 1)).toBe(true);
+    await setDependencyOnboardingDecision(agentDir, {
+      extension: 'rtkOptimizer',
+      revision: 2,
+      enabled: false,
+    });
     const cleared = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8'));
-    expect(cleared.felanTui).toEqual({ toolDisplay: 'full' });
+    expect(cleared.felanTui).toEqual({
+      toolDisplay: 'full',
+      onboarding: { schemaVersion: 1, extensions: { rtkOptimizer: 2 } },
+    });
+    expect(cleared.builtinExtensions.rtkOptimizer).toBe(false);
+  });
+
+  it('treats legacy, malformed, and mismatched onboarding records as incomplete', () => {
+    expect(isDependencyOnboardingComplete({ felanTui: { dependencyOnboarding: { rtk: 'continue' } } }, 'rtkOptimizer', 1)).toBe(false);
+    expect(isDependencyOnboardingComplete({ felanTui: { onboarding: { schemaVersion: 2, extensions: { rtkOptimizer: 1 } } } }, 'rtkOptimizer', 1)).toBe(false);
+    expect(isDependencyOnboardingComplete({ felanTui: { onboarding: { schemaVersion: 1, extensions: { rtkOptimizer: '1' } } } }, 'rtkOptimizer', 1)).toBe(false);
+    expect(isDependencyOnboardingComplete({ felanTui: { onboarding: { schemaVersion: 1, extensions: { rtkOptimizer: 2 } } } }, 'rtkOptimizer', 1)).toBe(false);
   });
 
   it('persists namespaced extension configuration without replacing unrelated settings', async () => {

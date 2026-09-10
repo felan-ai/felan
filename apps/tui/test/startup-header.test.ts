@@ -73,6 +73,40 @@ describe('Felan startup header', () => {
     expect(displayed).toEqual([['AGENTS.md']]);
   });
 
+  it('renders probe-free Felan extension state instead of Pi extension paths', () => {
+    const rendered: string[] = [];
+    let receivedOptions: any;
+    const mode = {
+      builtInHeader: undefined,
+      options: { verbose: true },
+      loadedResourcesContainer: {
+        addChild(component: Component) {
+          rendered.push(component.render().join('\n'));
+        },
+      },
+      showLoadedResources(options?: unknown) {
+        receivedOptions = options;
+      },
+    };
+    installFelanStartupHeader(mode as unknown as InteractiveMode, {
+      extensionState: () => ({
+        enabled: ['browser', 'tasks'],
+        disabled: ['rtkOptimizer'],
+        setupRequired: ['markitdown'],
+      }),
+    });
+
+    mode.showLoadedResources({ force: true });
+
+    expect(receivedOptions).toMatchObject({ force: true, extensions: [] });
+    expect(rendered).toEqual([[
+      '[Felan extensions]',
+      '  Enabled: browser, tasks',
+      '  Disabled: rtkOptimizer',
+      '  Setup required: markitdown',
+    ].join('\n')]);
+  });
+
   it('preserves Pi verbose startup expansion when installing the adapter', () => {
     const mode = testMode();
     installFelanStartupHeader(mode, { expanded: true });

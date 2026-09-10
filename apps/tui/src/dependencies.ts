@@ -7,6 +7,7 @@ import type {
 import { inspectBackgroundBashRuntime } from '@felan-ai/ext-background-bash';
 import {
   inspectAgentBrowserRuntime,
+  invalidateAgentBrowserRuntimeCache,
   installManagedAgentBrowser,
   MANAGED_AGENT_BROWSER_VERSION,
 } from '@felan-ai/ext-browser';
@@ -26,13 +27,12 @@ import {
   MANAGED_RTK_VERSION,
   refreshActiveRtkRuntime,
 } from '@felan-ai/ext-rtk-optimizer';
-import type { BuiltinExtensionName } from './extensions.js';
+import { builtinExtensionPackages, type BuiltinExtensionName } from './extensions.js';
 import {
-  getDependencyOnboardingChoice,
   getFelanSettings,
+  isDependencyOnboardingComplete,
   isBuiltinExtensionEnabled,
-  setBuiltinExtensionEnabled,
-  setDependencyOnboardingChoice,
+  setDependencyOnboardingDecision,
 } from './settings.js';
 
 export const localDependencyExtensionName = '@felan-ai/felan/runtime-dependencies';
@@ -43,8 +43,15 @@ export interface RuntimeDependencyStatus {
   readonly reason?: string;
 }
 
+export interface LocalExtensionStartupState {
+  readonly enabled: readonly string[];
+  readonly disabled: readonly string[];
+  readonly setupRequired: readonly string[];
+}
+
 export interface LocalRuntimeDependency {
   readonly id: string;
+  readonly revision: number;
   readonly label: string;
   readonly extension: BuiltinExtensionName;
   readonly purpose: string;
@@ -66,6 +73,7 @@ export interface CreateLocalDependencyExtensionOptions {
 export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
   {
     id: 'background-bash',
+    revision: 1,
     label: 'Background processes',
     extension: 'backgroundBash',
     purpose: 'detached process execution, which requires standard POSIX shell and process utilities',
@@ -83,6 +91,7 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
   },
   {
     id: 'agent-browser',
+    revision: 1,
     label: 'agent-browser',
     extension: 'browser',
     purpose: 'browser automation, authenticated web-app workflows, and screenshots',
@@ -109,6 +118,7 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
   },
   {
     id: 'codebase-memory',
+    revision: 1,
     label: 'Codebase Memory',
     extension: 'codebaseMemory',
     purpose: 'structural code indexing, symbol reads, and bounded grep augmentation',
@@ -135,6 +145,7 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
   },
   {
     id: 'markitdown',
+    revision: 1,
     label: 'MarkItDown',
     extension: 'markitdown',
     purpose: 'document conversion for DOCX, PPT/PPTX, XLS/XLSX, RTF, EPUB, and MSG reads',
@@ -161,6 +172,7 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
   },
   {
     id: 'rtk',
+    revision: 1,
     label: 'RTK',
     extension: 'rtkOptimizer',
     purpose: 'command rewriting; RTK output compaction remains available without the executable',
@@ -189,6 +201,28 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     },
   },
 ];
+
+export function getLocalExtensionStartupState(
+  settings: ReturnType<typeof getFelanSettings>,
+  dependencies: readonly LocalRuntimeDependency[] = localRuntimeDependencies,
+): LocalExtensionStartupState {
+  const dependencyByExtension = new Map(dependencies.map((dependency) => [dependency.extension, dependency]));
+  const enabled: string[] = [];
+  const disabled: string[] = [];
+  const setupRequired: string[] = [];
+  for (const extension of Object.keys(builtinExtensionPackages) as BuiltinExtensionName[]) {
+    const name = extension;
+    const dependency = dependencyByExtension.get(extension);
+    if (dependency && !isDependencyOnboardingComplete(settings, dependency.extension, dependency.revision)) {
+      setupRequired.push(name);
+    } else if (isBuiltinExtensionEnabled(settings, extension as BuiltinExtensionName)) {
+      enabled.push(name);
+    } else {
+      disabled.push(name);
+    }
+  }
+  return { enabled, disabled, setupRequired };
+}
 
 export function createLocalDependencyExtension(
   options: CreateLocalDependencyExtensionOptions,
@@ -248,25 +282,33 @@ async function onboardMissingDependencies(
   for (const dependency of dependencies) {
     await options.settingsManager.reload();
     const settings = getFelanSettings(options.settingsManager);
-    if (!isBuiltinExtensionEnabled(settings, dependency.extension)) continue;
-    if (getDependencyOnboardingChoice(settings, dependency.id) === 'continue') continue;
+    if (isDependencyOnboardingComplete(settings, dependency.extension, dependency.revision)) continue;
 
     const status = await checkDependency(dependency, runtime);
-    if (status.available) continue;
 
     const installChoice = `Install ${dependency.label}`;
+    const enableChoice = `Enable ${dependency.label}`;
+    const disableChoice = dependency.unavailableChoice;
     const laterChoice = 'Decide later';
     const selected = await ctx.ui.select(
-      dependency.unavailableMessage?.(status) ?? formatUnavailableMessage(
+      status.available
+        ? `${dependency.label} is available (${status.version ?? 'detected'}). Choose how to enable it.`
+        : dependency.unavailableMessage?.(status) ?? formatUnavailableMessage(
         `${dependency.label} is unavailable — ${dependency.purpose}.`,
         undefined,
         status,
       ),
-      [...(dependency.install ? [installChoice] : []), dependency.unavailableChoice, laterChoice],
+      status.available
+        ? [enableChoice, disableChoice, laterChoice]
+        : [...(dependency.install ? [installChoice] : []), disableChoice, laterChoice],
     );
     if (!selected || selected === laterChoice) continue;
     if (selected === installChoice) {
-      await installDependency(dependency, runtime, ctx, options, false);
+      await installDependency(dependency, runtime, ctx, options, true);
+      continue;
+    }
+    if (selected === enableChoice) {
+      await recordDependencyDecision(dependency, options, true);
       continue;
     }
     await applyUnavailableChoice(dependency, runtime, ctx, options);
@@ -283,9 +325,7 @@ async function manageDependencies(
   const settings = getFelanSettings(options.settingsManager);
   const entries = await Promise.all(dependencies.map(async (dependency) => {
     const enabled = isBuiltinExtensionEnabled(settings, dependency.extension);
-    const status = enabled
-      ? await checkDependency(dependency, runtime)
-      : { available: false, reason: 'extension disabled' };
+    const status = await checkDependency(dependency, runtime, true);
     const summary = enabled
       ? status.available
         ? `available${status.version ? ` (${status.version})` : ''}`
@@ -309,8 +349,7 @@ async function manageDependencies(
     if (action === installAndEnable) {
       await installDependency(entry.dependency, runtime, ctx, options, true);
     } else if (action === enable) {
-      await setBuiltinExtensionEnabled(options.agentDir, entry.dependency.extension, true);
-      await setDependencyOnboardingChoice(options.agentDir, entry.dependency.id, undefined);
+      await recordDependencyDecision(entry.dependency, options, true);
       if (entry.dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, true);
       ctx.ui.notify(`${entry.dependency.label} enabled. Restart Felan to load the extension.`, 'info');
     }
@@ -318,10 +357,15 @@ async function manageDependencies(
   }
 
   if (entry.status.available) {
-    ctx.ui.notify(
+    const action = await ctx.ui.select(
       `${entry.dependency.label} is available${entry.status.version ? ` (${entry.status.version})` : ''}.`,
-      'info',
+      [`Disable ${entry.dependency.label}`, close],
     );
+    if (action === `Disable ${entry.dependency.label}`) {
+      await recordDependencyDecision(entry.dependency, options, false);
+      if (entry.dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, false);
+      ctx.ui.notify(`${entry.dependency.label} disabled. Restart Felan to unload the extension completely.`, 'info');
+    }
     return;
   }
 
@@ -331,7 +375,7 @@ async function manageDependencies(
     [...(entry.dependency.install ? [installChoice] : []), entry.dependency.unavailableChoice, close],
   );
   if (action === installChoice) {
-    await installDependency(entry.dependency, runtime, ctx, options, false);
+    await installDependency(entry.dependency, runtime, ctx, options, true);
   } else if (action === entry.dependency.unavailableChoice) {
     await applyUnavailableChoice(entry.dependency, runtime, ctx, options);
   }
@@ -360,9 +404,8 @@ async function installDependency(
       return;
     }
     await dependency.afterInstall?.(runtime);
-    await setDependencyOnboardingChoice(options.agentDir, dependency.id, undefined);
+    await recordDependencyDecision(dependency, options, enableAfterInstall);
     if (enableAfterInstall) {
-      await setBuiltinExtensionEnabled(options.agentDir, dependency.extension, true);
       if (dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, true);
     }
     ctx.ui.notify(
@@ -383,12 +426,14 @@ async function applyUnavailableChoice(
   options: CreateLocalDependencyExtensionOptions,
 ): Promise<void> {
   if (dependency.unavailableOutcome === 'disable-extension') {
-    await setBuiltinExtensionEnabled(options.agentDir, dependency.extension, false);
+    await recordDependencyDecision(dependency, options, false);
     if (dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, false);
     ctx.ui.notify(`${dependency.label} disabled. Restart Felan to unload the extension completely.`, 'info');
     return;
   }
-  await setDependencyOnboardingChoice(options.agentDir, dependency.id, 'continue');
+  await options.settingsManager.reload();
+  const enabled = isBuiltinExtensionEnabled(getFelanSettings(options.settingsManager), dependency.extension);
+  await recordDependencyDecision(dependency, options, enabled);
   ctx.ui.notify(
     dependency.id === 'rtk'
       ? 'RTK rewriting will stay bypassed while output compaction remains active.'
@@ -397,11 +442,26 @@ async function applyUnavailableChoice(
   );
 }
 
+async function recordDependencyDecision(
+  dependency: LocalRuntimeDependency,
+  options: CreateLocalDependencyExtensionOptions,
+  enabled: boolean,
+): Promise<void> {
+  await setDependencyOnboardingDecision(options.agentDir, {
+    extension: dependency.extension,
+    revision: dependency.revision,
+    enabled,
+  });
+  await options.settingsManager.reload();
+}
+
 async function checkDependency(
   dependency: LocalRuntimeDependency,
   runtime: AgentRuntime,
+  force = false,
 ): Promise<RuntimeDependencyStatus> {
   try {
+    if (force && dependency.id === 'agent-browser') invalidateAgentBrowserRuntimeCache(runtime);
     return await dependency.check(runtime);
   } catch (error) {
     return { available: false, reason: errorMessage(error) };

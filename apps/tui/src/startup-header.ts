@@ -5,6 +5,7 @@ import {
 import { isMemoryContextEntry } from '@felan-ai/ext-memory';
 import type { Component } from '@earendil-works/pi-tui';
 import { FELAN_VERSION } from './version.js';
+import type { LocalExtensionStartupState } from './dependencies.js';
 
 const PI_ONBOARDING = 'Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.';
 const PI_RESOURCE_HINT = 'to show full startup help and loaded resources.';
@@ -42,6 +43,7 @@ interface InteractiveModeResourceInternals {
     };
   };
   showLoadedResources?(options?: unknown): void;
+  readonly loadedResourcesContainer?: { addChild(component: Component): void };
 }
 
 export function installFelanStartupHeader(
@@ -49,6 +51,7 @@ export function installFelanStartupHeader(
   options: {
     readonly expanded?: boolean;
     readonly memorySummaryPath?: () => string;
+    readonly extensionState?: () => LocalExtensionStartupState;
   } = {},
 ): void {
   // Pi 0.85.0 has no pre-render header hook. Intercepting this assignment keeps
@@ -77,7 +80,7 @@ export function installFelanStartupHeader(
     header.setExpanded(options.expanded === true);
   }
 
-  installMemoryContextIndicator(mode, options.memorySummaryPath);
+  installMemoryContextIndicator(mode, options.memorySummaryPath, options.extensionState);
 }
 
 export function rewritePiStartupHeader(text: string): string {
@@ -114,6 +117,7 @@ function rewriteExpandableStartupHeader(header: ExpandableStartupHeader): void {
 function installMemoryContextIndicator(
   mode: InteractiveMode,
   memorySummaryPath?: () => string,
+  extensionState?: () => LocalExtensionStartupState,
 ): void {
   const internals = mode as unknown as InteractiveModeResourceInternals;
   const showLoadedResources = internals.showLoadedResources;
@@ -122,8 +126,14 @@ function installMemoryContextIndicator(
   internals.showLoadedResources = function showFelanLoadedResources(options?: unknown): void {
     withNormalResourceListingSuppressed(internals, options, () => {
       const session = internals.session;
+      const resourceOptions = extensionState
+        ? { ...(typeof options === 'object' && options !== null ? options : {}), extensions: [] }
+        : options;
       if (!session?.sessionManager.buildContextEntries().some(isMemoryContextEntry)) {
-        showLoadedResources.call(mode, options);
+        showLoadedResources.call(mode, resourceOptions);
+        if (extensionState && shouldShowResourceListing(internals, options)) {
+          renderExtensionState(internals, extensionState());
+        }
         return;
       }
 
@@ -142,13 +152,36 @@ function installMemoryContextIndicator(
         };
       };
       try {
-        showLoadedResources.call(mode, options);
+        showLoadedResources.call(mode, resourceOptions);
+        if (extensionState && shouldShowResourceListing(internals, options)) {
+          renderExtensionState(internals, extensionState());
+        }
       } finally {
         if (ownGetAgentsFiles) Object.defineProperty(loader, 'getAgentsFiles', ownGetAgentsFiles);
         else Reflect.deleteProperty(loader, 'getAgentsFiles');
       }
     });
   };
+}
+
+function shouldShowResourceListing(internals: InteractiveModeResourceInternals, options: unknown): boolean {
+  const forced = typeof options === 'object' && options !== null && Reflect.get(options, 'force') === true;
+  return forced || internals.options?.verbose === true || !internals.settingsManager || !internals.settingsManager.getQuietStartup();
+}
+
+function renderExtensionState(
+  internals: InteractiveModeResourceInternals,
+  state: LocalExtensionStartupState,
+): void {
+  const container = internals.loadedResourcesContainer;
+  if (!container) return;
+  const lines = [
+    '[Felan extensions]',
+    `  Enabled: ${state.enabled.join(', ') || 'none'}`,
+    `  Disabled: ${state.disabled.join(', ') || 'none'}`,
+    `  Setup required: ${state.setupRequired.join(', ') || 'none'}`,
+  ].join('\n');
+  container.addChild({ render: () => [lines], invalidate: () => {} });
 }
 
 function withNormalResourceListingSuppressed(
