@@ -71,7 +71,7 @@ interface MemoryCheckpointCursor {
 
 const MEMORY_INPUT_BLOCKED_MESSAGE = 'Some memory checkpoints could not be materialized; evidence remains pending';
 const MEMORY_AUTOMATIC_UPDATE_THRESHOLD = 5;
-const MEMORY_AUTOMATIC_INTERVAL_MS = 60 * 60 * 1_000;
+const MEMORY_AUTOMATIC_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 
 export interface LocalMemoryCoordinatorOptions {
   readonly agentDir: string;
@@ -85,6 +85,7 @@ export interface LocalMemoryCoordinatorOptions {
   readonly recover?: boolean;
   readonly dreamRunner?: LocalMemoryDreamRunner;
   readonly selectedModel?: Model<Api>;
+  readonly scopedModels?: readonly Model<Api>[];
   readonly leaseOptions?: LocalMemoryLeaseOptions;
   readonly retryDelaysMs?: readonly [number, number];
   readonly monitorIntervalMs?: number;
@@ -111,6 +112,7 @@ export class LocalMemoryCoordinator {
   readonly #dreamRunner: LocalMemoryDreamRunner;
   #enabled: boolean;
   #selectedModel: Model<Api> | undefined;
+  #scopedModels: readonly Model<Api>[] | undefined;
   #disposed = false;
   #monitor: ReturnType<typeof setInterval> | undefined;
   #monitoring: Promise<void> | undefined;
@@ -120,6 +122,7 @@ export class LocalMemoryCoordinator {
     this.#options = options;
     this.#enabled = options.enabled !== false;
     this.#selectedModel = options.selectedModel;
+    this.#scopedModels = options.scopedModels === undefined ? undefined : [...options.scopedModels];
     this.#dreamRunner = options.dreamRunner ?? createDefaultLocalMemoryDreamRunner();
     if (this.#enabled) this.#startMonitor();
   }
@@ -136,6 +139,11 @@ export class LocalMemoryCoordinator {
     if (this.#disposed) return () => {};
     this.#statusListeners.add(listener);
     return () => this.#statusListeners.delete(listener);
+  }
+
+  setModelSelection(model: Model<Api> | undefined, scopedModels: readonly Model<Api>[] | undefined): void {
+    this.#scopedModels = scopedModels === undefined ? undefined : [...scopedModels];
+    this.setSelectedModel(model);
   }
 
   setSelectedModel(model: Model<Api> | undefined): void {
@@ -659,6 +667,7 @@ export class LocalMemoryCoordinator {
         manifest,
         modelRuntime: this.#options.modelRuntime,
         ...(this.#selectedModel === undefined ? {} : { selectedModel: this.#selectedModel }),
+        ...(this.#scopedModels === undefined ? {} : { scopedModels: this.#scopedModels }),
         sessionDirectory: join(
           this.#options.sessionDir ?? join(this.#options.agentDir, 'sessions'),
           'memory',
@@ -864,8 +873,8 @@ interface LocalMemoryProcessingSnapshotLike {
 }
 
 function safeProcessingMessage(error: unknown): string {
-  if (error instanceof Error && error.message.includes('No authenticated local memory model')) {
-    return 'Memory model is unavailable; evidence remains pending';
+  if (error instanceof MemoryModelUnavailableError) {
+    return 'Low-tier memory model is unavailable; evidence remains pending';
   }
   if (error instanceof Error && error.message.includes('cancel')) return 'Memory processing was cancelled';
   if (error instanceof Error && error.message.includes('writer lease')) return 'Memory writer lease was lost; evidence remains pending';

@@ -283,14 +283,21 @@ describe('local Agent Core lifecycle', () => {
     const agentDir = join(root, 'agent');
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
     await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
-      enabledModels: ['missing-model'],
+      enabledModels: ['openai/gpt-5-nano'],
     }));
+    await writeFile(join(agentDir, 'auth.json'), JSON.stringify({
+      openai: { type: 'api_key', key: 'test-key' },
+    }));
+    let observedScopedModels: string[] = [];
 
     const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
       agentDir,
       homeDir: root,
       modelRuntime: await createLocalModelRuntime(agentDir),
       extensionPackages: [],
+      onSessionModel: (_model, scopedModels) => {
+        observedScopedModels = scopedModels?.map(({ provider, id }) => `${provider}/${id}`) ?? [];
+      },
       importExtension: async () => {
         throw new Error('No extensions should be imported');
       },
@@ -301,7 +308,44 @@ describe('local Agent Core lifecycle', () => {
     });
 
     expect(modelScope.resolutions).toBe(1);
+    expect(observedScopedModels).toEqual(['openai/gpt-5-nano']);
 
+    await runtime.dispose();
+  });
+
+  it.each([
+    ['no configured model scope', {}, undefined, 0],
+    ['an unmatched configured model scope', { enabledModels: ['missing-model'] }, [], 1],
+  ] as const)('passes %s to host policy', async (_label, settings, expectedScope, expectedResolutions) => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify(settings));
+    let callbackCalled = false;
+    let observedScope: string[] | undefined;
+
+    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
+      agentDir,
+      homeDir: root,
+      modelRuntime: await createLocalModelRuntime(agentDir),
+      extensionPackages: [],
+      onSessionModel: (_model, scopedModels) => {
+        callbackCalled = true;
+        observedScope = scopedModels?.map(({ provider, id }) => `${provider}/${id}`);
+      },
+      importExtension: async () => {
+        throw new Error('No extensions should be imported');
+      },
+    }), {
+      cwd,
+      agentDir,
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+
+    expect(callbackCalled).toBe(true);
+    expect(observedScope).toEqual(expectedScope);
+    expect(modelScope.resolutions).toBe(expectedResolutions);
     await runtime.dispose();
   });
 

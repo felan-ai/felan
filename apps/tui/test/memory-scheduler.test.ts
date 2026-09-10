@@ -119,6 +119,25 @@ describe('memory retry scheduling', () => {
     expect(await second.status(f.cwd)).toMatchObject({ state: 'scheduled', pendingCheckpoints: 1 });
   });
 
+  it('defaults the automatic publication interval to 24 hours', async () => {
+    const f = await fixture();
+    let now = Date.now();
+    const intervalMs = 24 * 60 * 60 * 1_000;
+    const first = f.create({ debounceMs: undefined, now: () => now });
+    await recordAcceptedUpdates(f, 5);
+    await first.runNow(f.cwd);
+    now = Date.parse(Object.values((await f.store.status()).processed)[0]!.processedAt);
+    await first.dispose();
+
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    await recordAcceptedUpdates(f, 6);
+    const restarted = f.create({ debounceMs: undefined, now: () => now });
+
+    await restarted.status(f.cwd);
+    await expect.poll(() => setTimeoutSpy.mock.calls.some(([, delay]) => delay === intervalMs)).toBe(true);
+    expect(await restarted.status(f.cwd)).toMatchObject({ state: 'scheduled', pendingCheckpoints: 1 });
+  });
+
   it('waits for the monitor before retrying writer lease contention', async () => {
     const f = await fixture();
     await f.store.initialize();

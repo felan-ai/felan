@@ -58,15 +58,24 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     ]));
   });
 
-  it('persists a safe failed outcome when no model is available', async () => {
+  it('persists a safe failed outcome when no low-tier model is available', async () => {
     const stagingDirectory = await temporaryDirectory();
     const sessionDirectory = join(stagingDirectory, 'sessions');
     const runner = createDefaultLocalMemoryDreamRunner();
+    const highTierModel = {
+      provider: 'openai-codex', id: 'gpt-5.6-sol', input: ['text'],
+    } as Model<Api>;
+    const excludedLowTierModel = {
+      provider: 'openai-codex', id: 'gpt-5.6-luna', input: ['text'],
+    } as Model<Api>;
 
     await expect(runner(inputFor(stagingDirectory, {
       sessionDirectory,
-      modelRuntime: { getAvailableSnapshot: () => [] } as unknown as ModelRuntime,
-    }))).rejects.toThrow('No authenticated local memory model is configured');
+      modelRuntime: {
+        getAvailableSnapshot: () => [excludedLowTierModel, highTierModel],
+      } as unknown as ModelRuntime,
+      scopedModels: [highTierModel],
+    }))).rejects.toThrow('No authenticated low-tier local memory model is configured');
 
     const files = await readdir(sessionDirectory);
     const entries = (await readFile(join(sessionDirectory, files[0]!), 'utf8'))
@@ -74,9 +83,22 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     expect(entries).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'custom', customType: 'felan-memory-run',
-        data: expect.objectContaining({ status: 'failed', error: 'No authenticated local memory model is configured' }),
+        data: expect.objectContaining({ status: 'failed', error: 'No authenticated low-tier local memory model is configured' }),
       }),
     ]));
+  });
+
+  it('treats an empty configured model scope as having no eligible models', async () => {
+    const stagingDirectory = await temporaryDirectory();
+    const lowTierModel = {
+      provider: 'openai-codex', id: 'gpt-5.6-luna', input: ['text'],
+    } as Model<Api>;
+    const runner = createDefaultLocalMemoryDreamRunner();
+
+    await expect(runner(inputFor(stagingDirectory, {
+      modelRuntime: { getAvailableSnapshot: () => [lowTierModel] } as unknown as ModelRuntime,
+      scopedModels: [],
+    }))).rejects.toThrow('No authenticated low-tier local memory model is configured');
   });
 
   it('redacts provider error fields before persisting the standard JSONL transcript', async () => {
@@ -117,9 +139,14 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     expect(manifest).not.toContain(secret);
   });
 
-  it('uses the selected authenticated model instead of the first available model', async () => {
+  it('prefers a low-tier model from the selected model provider and family', async () => {
     const stagingDirectory = await temporaryDirectory();
-    const firstAvailable = { provider: 'google', id: 'fast-first-model' } as Model<Api>;
+    const firstAvailable = {
+      provider: 'google', id: 'gemini-4-flash-lite', input: ['text'],
+    } as Model<Api>;
+    const preferredLowTier = {
+      provider: 'openai-codex', id: 'gpt-5.6-luna', input: ['text'],
+    } as Model<Api>;
     const selectedModel = { provider: 'openai-codex', id: 'gpt-5.6-sol' } as Model<Api>;
     const session = fakeSession();
     let captured: Parameters<LocalMemoryDreamSessionFactory>[0] | undefined;
@@ -131,18 +158,20 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
 
     await runner(inputFor(stagingDirectory, {
       modelRuntime: {
-        getAvailableSnapshot: () => [firstAvailable],
-        hasConfiguredAuth: (provider: string) => provider === selectedModel.provider,
+        getAvailableSnapshot: () => [firstAvailable, preferredLowTier],
       } as unknown as ModelRuntime,
       selectedModel,
     }));
 
-    expect(captured?.model).toBe(selectedModel);
+    expect(captured?.model).toBe(preferredLowTier);
+    expect(captured?.thinkingLevel).toBe('medium');
   });
 
-  it('falls back to an available model when the selected model is no longer authenticated', async () => {
+  it('uses an available low-tier model when the selected provider has none', async () => {
     const stagingDirectory = await temporaryDirectory();
-    const firstAvailable = { provider: 'google', id: 'fast-first-model' } as Model<Api>;
+    const firstAvailable = {
+      provider: 'google', id: 'gemini-4-flash-lite', input: ['text'],
+    } as Model<Api>;
     const selectedModel = { provider: 'openai-codex', id: 'expired-model' } as Model<Api>;
     const session = fakeSession();
     let captured: Parameters<LocalMemoryDreamSessionFactory>[0] | undefined;
@@ -155,7 +184,6 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     await runner(inputFor(stagingDirectory, {
       modelRuntime: {
         getAvailableSnapshot: () => [firstAvailable],
-        hasConfiguredAuth: () => false,
       } as unknown as ModelRuntime,
       selectedModel,
     }));
@@ -469,6 +497,7 @@ function inputFor(
   options: {
     readonly modelRuntime?: ModelRuntime;
     readonly selectedModel?: Model<Api>;
+    readonly scopedModels?: readonly Model<Api>[];
     readonly signal?: AbortSignal;
     readonly sessionDirectory?: string;
   } = {},
@@ -487,9 +516,12 @@ function inputFor(
     baseSnapshot: createMemorySnapshot(artifact, '.memory'),
     manifest,
     modelRuntime: options.modelRuntime ?? {
-      getAvailableSnapshot: () => [{}],
+      getAvailableSnapshot: () => [{
+        provider: 'test', id: 'test-mini', input: ['text'],
+      } as Model<Api>],
     } as unknown as ModelRuntime,
     ...(options.selectedModel === undefined ? {} : { selectedModel: options.selectedModel }),
+    ...(options.scopedModels === undefined ? {} : { scopedModels: options.scopedModels }),
     signal: options.signal ?? new AbortController().signal,
     ...(options.sessionDirectory === undefined ? {} : { sessionDirectory: options.sessionDirectory }),
   };

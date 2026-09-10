@@ -24,20 +24,24 @@ afterEach(async () => {
 });
 
 describe('LocalMemoryCoordinator', () => {
-  it('passes the selected root-session model to the dream runner', async () => {
+  it('passes the selected root-session model and model scope to the dream runner', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
     const selectedModel = { provider: 'openai-codex', id: 'gpt-5.6-sol' } as Model<Api>;
+    const lowTierModel = { provider: 'openai-codex', id: 'gpt-5.6-luna' } as Model<Api>;
     let observedModel: Model<Api> | undefined;
+    let observedScope: readonly Model<Api>[] | undefined;
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'),
       modelRuntime: {} as ModelRuntime,
       recover: false,
       selectedModel,
+      scopedModels: [selectedModel, lowTierModel],
       dreamRunner: async (input) => {
         observedModel = input.selectedModel;
+        observedScope = input.scopedModels;
         return updatedArtifact();
       },
     });
@@ -46,6 +50,7 @@ describe('LocalMemoryCoordinator', () => {
 
     await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
     expect(observedModel).toBe(selectedModel);
+    expect(observedScope).toEqual([selectedModel, lowTierModel]);
     await coordinator.dispose();
   });
 
@@ -102,7 +107,7 @@ describe('LocalMemoryCoordinator', () => {
     await coordinator.dispose();
   });
 
-  it('waits for five accepted checkpoints and one hour after publication', async () => {
+  it('waits for five accepted checkpoints and 24 hours after publication', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
@@ -113,7 +118,6 @@ describe('LocalMemoryCoordinator', () => {
       agentDir: join(root, 'agent'),
       modelRuntime: {} as ModelRuntime,
       recover: false,
-      debounceMs: 60 * 60 * 1_000,
       now: () => now,
       monitorIntervalMs: 60 * 60 * 1_000,
       dreamRunner: async () => {
@@ -122,7 +126,7 @@ describe('LocalMemoryCoordinator', () => {
       },
     });
     const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
-    const intervalMs = 60 * 60 * 1_000;
+    const intervalMs = 24 * 60 * 60 * 1_000;
 
     let entries = sessionEntries();
     const recordUpdates = async (count: number): Promise<void> => {
@@ -541,7 +545,7 @@ describe('LocalMemoryCoordinator', () => {
     await expect(coordinator.runNow(cwd)).resolves.toMatchObject({
       state: 'blocked',
       pendingCheckpoints: 1,
-      message: 'Memory model is unavailable; evidence remains pending',
+      message: 'Low-tier memory model is unavailable; evidence remains pending',
     });
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(getAvailableSnapshot).toHaveBeenCalledTimes(1);

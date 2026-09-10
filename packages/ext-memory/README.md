@@ -57,8 +57,10 @@ individual non-index Markdown pages under staged `.memory/pages`. It has no
 normal extensions, skills, repository access, or process execution, and returns
 a summary only after editing the staged Markdown artifact. The host validates
 and publishes that filesystem output; failed or cancelled work remains pending.
-The local worker uses the host-selected authenticated session model and may fall
-back to another authenticated available model when that selection is unavailable.
+The local worker uses medium thinking with an authenticated low-tier model from
+the root session's configured model scope, preferring its provider and model
+family. It does not silently escalate to a more expensive tier; evidence remains
+pending when no eligible model is available.
 It does not impose separate turn, tool-call, or per-file I/O budgets; its only
 execution failsafe is a one-hour wall-clock timeout. The host-side evidence
 materializer is a separate boundary: it streams the checkpoint's visible

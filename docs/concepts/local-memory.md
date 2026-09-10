@@ -56,7 +56,7 @@ or publish files.
 The local TUI owns the coordinator, automatic evidence/time gates, startup
 recovery, retries, shutdown cancellation, model selection, retained sessions,
 history UI, staging, validation, and publication. Automatic processing requires
-five accepted checkpoint updates and one hour since the latest successful
+five accepted checkpoint updates and 24 hours since the latest successful
 publication; repeated updates from one root session count. The absolute
 publication deadline is reconstructed by later processes, so closing Felan does
 not discard pending work. No portable memory-session-kind contract is added. A
@@ -116,9 +116,12 @@ non-index Markdown pages under the staged `.memory/pages` directory. Its only
 execution failsafe is a one-hour wall-clock timeout. It returns a concise summary
 only after editing the staged filesystem.
 
-The active authenticated root-session model is preferred; another authenticated
-available model may be used when the selected model is unavailable. With no
-authenticated model, processing remains pending.
+The worker uses medium thinking with an authenticated, text-capable low-tier
+model from the active root session's configured model scope, preferring its
+provider and model family. An unrestricted root scope uses the authenticated
+available catalog. The worker does not silently escalate automatic memory work
+to a more expensive tier. With no eligible low-tier model, processing remains
+pending.
 
 ### 4. Validation and publication
 

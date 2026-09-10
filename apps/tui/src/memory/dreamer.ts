@@ -8,6 +8,7 @@ import {
   createAgentCoreSession,
   defineTool,
   HostAgentRuntime,
+  selectModelForTier,
   SessionManager,
   SettingsManager,
   type AgentRuntime,
@@ -45,6 +46,7 @@ export interface LocalMemoryDreamInput {
   readonly manifest: MemoryInputManifest;
   readonly modelRuntime: ModelRuntime;
   readonly selectedModel?: Model<Api>;
+  readonly scopedModels?: readonly Model<Api>[];
   readonly signal: AbortSignal;
   readonly sessionDirectory?: string;
   readonly run?: LocalMemoryRun;
@@ -74,6 +76,8 @@ export interface LocalMemoryDreamRunnerOptions {
 
 const REMOVE_MEMORY_PAGE_TOOL_NAME = 'remove_memory_page';
 const MEMORY_DREAM_TOOLS = ['read', 'ls', 'edit', 'write', REMOVE_MEMORY_PAGE_TOOL_NAME] as const;
+const MEMORY_DREAM_MODEL_TIER = 'low';
+const MEMORY_DREAM_THINKING_LEVEL = 'medium';
 const DEFAULT_MEMORY_DREAM_TIMEOUT_MS = 60 * 60 * 1_000;
 const RemoveMemoryPageParameters = Type.Object({
   path: Type.String({
@@ -85,7 +89,7 @@ const RemoveMemoryPageParameters = Type.Object({
 
 export class MemoryModelUnavailableError extends Error {
   constructor() {
-    super('No authenticated local memory model is configured');
+    super('No authenticated low-tier local memory model is configured');
     this.name = 'MemoryModelUnavailableError';
   }
 }
@@ -215,7 +219,7 @@ export function createDefaultLocalMemoryDreamRunner(
       await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
       throwIfAborted(input.signal);
       await run?.record({ phase: 'model' });
-      const model = selectMemoryDreamModel(input.modelRuntime, input.selectedModel);
+      const model = selectMemoryDreamModel(input.modelRuntime, input.selectedModel, input.scopedModels);
       if (!model) throw new MemoryModelUnavailableError();
       await run?.model(model);
       const settingsManager = SettingsManager.inMemory({
@@ -232,6 +236,7 @@ export function createDefaultLocalMemoryDreamRunner(
         },
         modelRuntime: input.modelRuntime,
         model,
+        thinkingLevel: MEMORY_DREAM_THINKING_LEVEL,
         settingsManager,
         sessionManager,
         customTools: [createRemoveMemoryPageTool(runtime)],
@@ -312,11 +317,16 @@ function sanitizePersistedDreamErrors(sessionManager: SessionManager): void {
 function selectMemoryDreamModel(
   modelRuntime: ModelRuntime,
   selectedModel: Model<Api> | undefined,
+  scopedModels: readonly Model<Api>[] | undefined,
 ): Model<Api> | undefined {
-  if (selectedModel && modelRuntime.hasConfiguredAuth(selectedModel.provider)) {
-    return selectedModel;
-  }
-  return modelRuntime.getAvailableSnapshot()[0];
+  const candidates = modelRuntime.getAvailableSnapshot().filter((model) => (
+    model.input.includes('text') && (scopedModels === undefined || scopedModels.some((scoped) => (
+      scoped.provider === model.provider && scoped.id === model.id
+    )))
+  ));
+  return selectModelForTier(MEMORY_DREAM_MODEL_TIER, candidates, {
+    ...(selectedModel === undefined ? {} : { preferredModel: selectedModel }),
+  })?.model;
 }
 
 interface MaterializeCheckpointEvidenceOptions {

@@ -121,10 +121,14 @@ available.
 
 ### Processing memory
 
-The local host owns scheduling and model work. A missing authenticated model
-leaves evidence pending rather than blocking startup. Automatic processing waits
-for five accepted checkpoint updates and one hour since the latest successful
-publication. Updates from the same root session count; identical cursors do not.
+The local host owns scheduling and model work. It uses medium thinking with an
+authenticated low-tier model from the active session's configured model scope,
+preferring that session's provider and model family. It does not silently
+escalate to a more expensive tier. If no eligible model is available, evidence
+remains pending rather than blocking startup.
+Automatic processing waits for five accepted checkpoint updates and 24 hours
+since the latest successful publication. Updates from the same root session
+count; identical cursors do not.
 The deadline is persisted through canonical state, so a later Felan launch can
 catch up if the earlier process closes. `/memory run` remains an explicit
 immediate request.

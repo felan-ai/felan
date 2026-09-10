@@ -12,10 +12,12 @@ import {
   createAgentCoreSessionRuntimeFactory,
   createAgentSessionRuntime,
   type AgentSessionServices,
+  type Api,
   type CreateAgentSessionOptions,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionPackageImporter,
   type ExtensionConfigOverride,
+  type Model,
 } from '@felan-ai/agent-core';
 import { bindSubagentSession } from '@felan-ai/ext-subagents';
 import { BackgroundBashCoordinator } from '@felan-ai/ext-background-bash';
@@ -101,7 +103,10 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly skillPaths?: readonly string[];
   readonly subagentSettings?: LocalSubagentSettings;
   readonly memoryCoordinator?: LocalMemoryCoordinator;
-  readonly onSessionModel?: (model: AgentSession['model']) => void;
+  readonly onSessionModel?: (
+    model: AgentSession['model'],
+    scopedModels: readonly Model<Api>[] | undefined,
+  ) => void;
   readonly onMemoryEnabled?: (enabled: boolean) => void;
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly model?: CreateAgentSessionOptions['model'];
@@ -148,6 +153,7 @@ export function createLocalSessionRuntimeFactory(
     toolActivityState: ToolActivityState;
     extensionConfigWarnings: readonly string[];
     memoryEnabled: boolean;
+    modelScopeConfigured: boolean;
   }>();
   const createCoreRuntime = createAgentCoreSessionRuntimeFactory(async ({ cwd, sessionManager }) => {
     const runtimeRequest = createLocalAgentRuntimeFactoryRequest(
@@ -184,7 +190,8 @@ export function createLocalSessionRuntimeFactory(
       toolActivityState.setMode(getLocalToolDisplayMode(settingsManager));
     };
     const modelPatterns = settingsManager.getEnabledModels();
-    const modelScope = modelPatterns && modelPatterns.length > 0
+    const modelScopeConfigured = modelPatterns !== undefined && modelPatterns.length > 0;
+    const modelScope = modelScopeConfigured
       ? await resolveModelScopeWithDiagnostics(modelPatterns, options.modelRuntime)
       : { scopedModels: [], diagnostics: [] };
     const memoryHost = memoryEnabled
@@ -299,6 +306,7 @@ export function createLocalSessionRuntimeFactory(
       toolActivityState,
       extensionConfigWarnings: extensionConfigSettings.warnings,
       memoryEnabled,
+      modelScopeConfigured,
     });
 
     return {
@@ -351,8 +359,12 @@ export function createLocalSessionRuntimeFactory(
       toolActivityState,
       extensionConfigWarnings,
       memoryEnabled,
+      modelScopeConfigured,
     } = sessions.get(request.sessionManager)!;
-    options.onSessionModel?.(result.session.model);
+    options.onSessionModel?.(
+      result.session.model,
+      modelScopeConfigured ? modelScope.scopedModels.map(({ model }) => model) : undefined,
+    );
     options.onMemoryEnabled?.(memoryEnabled);
     toolActivityState.attach(result.session);
     registerToolActivitySession(result.session, toolActivityState);
@@ -419,7 +431,7 @@ export async function createLocalFelanRuntime(
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
     memoryCoordinator,
-    onSessionModel: (model: AgentSession['model']) => memoryCoordinator.setSelectedModel(model),
+    onSessionModel: (model, scopedModels) => memoryCoordinator.setModelSelection(model, scopedModels),
     ...(ownsMemoryCoordinator ? {
       onMemoryEnabled: (enabled: boolean) => {
         if (memoryCoordinator.isEnabled() !== enabled) memoryCoordinator.setEnabled(enabled);
