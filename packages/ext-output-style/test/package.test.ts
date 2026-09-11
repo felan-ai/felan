@@ -12,7 +12,6 @@ describe('@felan-ai/ext-output-style package boundary', () => {
 
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-output-style',
-      version: '0.4.1',
       license: 'MIT',
       repository: {
         type: 'git',

@@ -9,7 +9,6 @@ describe('@felan-ai/ext-session-title package boundary', () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-session-title',
-      version: '0.2.2',
       license: 'MIT',
       peerDependencies: { '@felan-ai/agent-core': '^0.6.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },

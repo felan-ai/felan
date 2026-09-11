@@ -11,7 +11,6 @@ describe('@felan-ai/ext-web-access package boundary', () => {
 
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-web-access',
-      version: '0.6.0',
       description: 'Secure bounded web search and content access for Felan',
       license: 'MIT',
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },

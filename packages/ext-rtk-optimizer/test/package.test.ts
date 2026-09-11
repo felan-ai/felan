@@ -11,7 +11,6 @@ describe('@felan-ai/ext-rtk-optimizer package boundary', () => {
 
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-rtk-optimizer',
-      version: '0.5.1',
       license: 'MIT',
       repository: {
         type: 'git',

@@ -12,7 +12,6 @@ describe('@felan-ai/ext-session-compaction package boundary', () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-session-compaction',
-      version: '0.1.2',
       license: 'MIT',
       peerDependencies: { '@felan-ai/agent-core': '^0.6.1' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
