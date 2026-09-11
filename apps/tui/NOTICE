@@ -23,6 +23,10 @@ Copyright (c) 2025 Mario Zechner.
 It also uses @earendil-works/pi-server 0.85.1 from the same project under the
 MIT License.
 
+This package uses @agentclientprotocol/sdk 1.4.0 from
+https://github.com/agentclientprotocol/typescript-sdk, licensed under the
+Apache License 2.0. Copyright 2025 Zed Industries, Inc. and contributors.
+
 The local powerline subscription host adapts provider request behavior from
 packages/pi-powerline in https://github.com/mslavov/pi-extensions at commit
 7e72e509fe45a5a87c4c2e176cb711de994a8c1d. Copyright (c) 2026 Milko Slavov.

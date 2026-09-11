@@ -10,7 +10,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { packagePaths } from './package-paths.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -80,6 +81,7 @@ try {
   for (const sourcePackage of sourcePackages) validateInstalledPackage(sourcePackage);
   assertPackedFelanThemes();
   assertPackedFelanOutputStyleDependency();
+  assertPackedFelanAcpPackage();
   assertSingleAgentCoreInstallation();
   assertPackedToolBoundary();
 
@@ -543,6 +545,7 @@ try {
   if (headless.status === 0 || headless.stdout.trim() !== '' || !headless.stderr.includes('Unknown provider')) {
     throw new Error('Packed headless Felan invocation did not fail cleanly without credentials');
   }
+  await assertPackedAcpWire();
   const update = runFelanAllowFailure(['update'], cleanEnvironment);
   if (update.status === 0 || !update.stderr.includes('only supports a verified global npm installation')) {
     throw new Error('Packed felan update did not reject the isolated non-global installation');
@@ -712,6 +715,31 @@ function assertPackedFelanOutputStyleDependency() {
   }
 }
 
+function assertPackedFelanAcpPackage() {
+  const packageRoot = join(installDir, 'node_modules', '@felan-ai', 'felan');
+  const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
+  if (manifest.dependencies?.['@agentclientprotocol/sdk'] !== '1.4.0') {
+    throw new Error(
+      `Packed TUI ACP SDK dependency is ${manifest.dependencies?.['@agentclientprotocol/sdk']}, expected 1.4.0`,
+    );
+  }
+  for (const file of [
+    'dist/acp/interactions.js',
+    'dist/acp/login.js',
+    'dist/acp/server.js',
+    'dist/acp/session-registry.js',
+    'dist/acp/session-updates.js',
+    'dist/acp/stdio.js',
+  ]) {
+    if (!existsSync(join(packageRoot, file))) {
+      throw new Error(`Packed TUI is missing compiled ACP module ${file}`);
+    }
+  }
+  if (existsSync(join(packageRoot, 'dist/acp/session-mcp.js'))) {
+    throw new Error('Packed TUI contains the removed ACP session MCP implementation');
+  }
+}
+
 function run(command, args, env = process.env) {
   const result = spawnSync(command, args, {
     cwd: installDir,
@@ -746,4 +774,297 @@ function runAllowFailure(command, args, env = process.env) {
 
 function runNpm(args, env = process.env) {
   return run(npm, [...npmArguments, ...args], env);
+}
+
+async function assertPackedAcpWire() {
+  const registryInitialize = {
+    protocolVersion: 1,
+    clientInfo: { name: 'ACP Registry Validator', version: '1.0.0' },
+    clientCapabilities: {
+      terminal: true,
+      fs: {
+        readTextFile: true,
+        writeTextFile: true,
+      },
+      _meta: {
+        terminal_output: true,
+        'terminal-auth': true,
+      },
+    },
+  };
+  const stableInitialize = {
+    protocolVersion: 1,
+    clientCapabilities: {
+      auth: { terminal: true },
+      elicitation: { form: {} },
+    },
+    clientInfo: { name: 'packed-smoke', version: '1.0.0' },
+  };
+
+  const unauthenticated = createPackedAcpClient();
+  try {
+    const initialized = await unauthenticated.request(1, 'initialize', registryInitialize);
+    if (
+      initialized.result?.protocolVersion !== 1
+      || initialized.result?.agentCapabilities?.loadSession !== true
+      || initialized.result?.agentInfo?.name !== 'felan'
+      || initialized.result?.agentInfo?.title !== 'Felan Code'
+      || initialized.result?.authMethods?.length !== 1
+      || initialized.result?.authMethods?.[0]?.id !== 'felan-terminal-login'
+      || initialized.result?.authMethods?.[0]?.name !== 'Log in to Felan Code'
+      || initialized.result?.authMethods?.[0]?.type !== 'terminal'
+      || JSON.stringify(initialized.result?.authMethods?.[0]?.args) !== JSON.stringify(['login'])
+    ) {
+      throw new Error(`Packed ACP initialize response is invalid: ${JSON.stringify(initialized)}`);
+    }
+    const rejectedSession = await unauthenticated.request(2, 'session/new', {
+      cwd: workspace,
+      mcpServers: [],
+    });
+    if (rejectedSession.error?.code !== -32000) {
+      throw new Error(`Packed ACP did not require authentication: ${JSON.stringify(rejectedSession)}`);
+    }
+    await unauthenticated.end();
+  } finally {
+    await unauthenticated.stop();
+  }
+
+  const modelRequest = Promise.withResolvers();
+  const modelServer = createServer((_request, _response) => modelRequest.resolve());
+  await new Promise((resolveListen, rejectListen) => {
+    modelServer.once('error', rejectListen);
+    modelServer.listen(0, '127.0.0.1', resolveListen);
+  });
+  let authenticated;
+  try {
+    const address = modelServer.address();
+    if (!address || typeof address === 'string') throw new Error('Packed model test server has no TCP address');
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, 'auth.json'), JSON.stringify({
+      anthropic: { type: 'api_key', key: 'packed-placeholder-key' },
+    }), { mode: 0o600 });
+    writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
+      providers: {
+        anthropic: { baseUrl: `http://127.0.0.1:${address.port}` },
+      },
+    }));
+    authenticated = createPackedAcpClient();
+    const secondInitialize = await authenticated.request(1, 'initialize', stableInitialize);
+    if (
+      secondInitialize.result?.protocolVersion !== 1
+      || secondInitialize.result?.agentInfo?.title !== 'Felan Code'
+      || secondInitialize.result?.authMethods?.[0]?.type !== 'terminal'
+    ) {
+      throw new Error(`Packed authenticated ACP initialize failed: ${JSON.stringify(secondInitialize)}`);
+    }
+    const created = await authenticated.request(2, 'session/new', {
+      cwd: workspace,
+      mcpServers: [
+        {
+          name: 'ignored-local',
+          command: join(installDir, 'missing-mcp-executable'),
+          args: [],
+          env: [],
+        },
+        {
+          type: 'http',
+          name: 'ignored-remote',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: [],
+        },
+      ],
+    });
+    const sessionId = created.result?.sessionId;
+    if (typeof sessionId !== 'string' || !sessionId) {
+      throw new Error(`Packed authenticated ACP session creation failed: ${JSON.stringify(created)}`);
+    }
+    const prompt = authenticated.request(3, 'session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: 'Wait until this request is cancelled.' }],
+    });
+    await authenticated.waitForNotification((message) => (
+      message.method === 'session/update'
+      && message.params?.sessionId === sessionId
+      && message.params?.update?.sessionUpdate === 'user_message_chunk'
+    ));
+    await withTimeout(
+      modelRequest.promise,
+      20_000,
+      'Packed ACP model request did not reach the local test server',
+    );
+    authenticated.notify('session/cancel', { sessionId });
+    const promptResponse = await prompt;
+    if (promptResponse.result?.stopReason !== 'cancelled') {
+      throw new Error(`Packed ACP prompt cancellation failed: ${JSON.stringify(promptResponse)}`);
+    }
+    const closed = await authenticated.request(4, 'session/close', { sessionId });
+    if (closed.error !== undefined || JSON.stringify(closed.result) !== '{}') {
+      throw new Error(`Packed ACP session close failed: ${JSON.stringify(closed)}`);
+    }
+    await authenticated.end();
+  } finally {
+    try {
+      await authenticated?.stop();
+    } finally {
+      modelServer.closeAllConnections();
+      await new Promise((resolveClose) => modelServer.close(resolveClose));
+      if (existsSync(agentDir)) writeFileSync(join(agentDir, 'auth.json'), '{}\n', { mode: 0o600 });
+    }
+  }
+  console.log('Validated packed Felan ACP wire framing, cancellation, close, and process cleanup');
+}
+
+function createPackedAcpClient() {
+  const child = spawn(felan, [...felanArguments, 'acp'], {
+    cwd: workspace,
+    env: cleanEnvironment,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const responses = new Map();
+  const notifications = [];
+  const waiters = new Set();
+  let stdoutBuffer = '';
+  const stdoutDecoder = new TextDecoder();
+  let stderr = '';
+  let failure;
+  let exit;
+  let resolveExited;
+  const exited = new Promise((resolveExit) => { resolveExited = resolveExit; });
+
+  const wake = () => {
+    for (const waiter of [...waiters]) waiter();
+  };
+  const fail = (error) => {
+    failure ??= error instanceof Error ? error : new Error(String(error));
+    wake();
+  };
+  child.once('error', fail);
+  child.stderr.on('data', (chunk) => {
+    stderr = `${stderr}${chunk.toString('utf8')}`.slice(-64 * 1024);
+  });
+  child.stdout.on('data', (chunk) => {
+    stdoutBuffer += stdoutDecoder.decode(chunk, { stream: true });
+    if (Buffer.byteLength(stdoutBuffer) > 8 * 1024 * 1024) {
+      fail(new Error('Packed ACP stdout line exceeded the test limit'));
+      return;
+    }
+    let newline = stdoutBuffer.indexOf('\n');
+    while (newline >= 0) {
+      const line = stdoutBuffer.slice(0, newline).replace(/\r$/u, '');
+      stdoutBuffer = stdoutBuffer.slice(newline + 1);
+      try {
+        const message = JSON.parse(line);
+        if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0') {
+          throw new Error(`Invalid ACP frame: ${line.slice(0, 200)}`);
+        }
+        if ('id' in message) responses.set(message.id, message);
+        else notifications.push(message);
+      } catch (error) {
+        fail(new Error(`Packed ACP stdout contained non-JSON-RPC output: ${error instanceof Error ? error.message : String(error)}`));
+      }
+      newline = stdoutBuffer.indexOf('\n');
+    }
+    wake();
+  });
+  child.once('close', (code, signal) => {
+    stdoutBuffer += stdoutDecoder.decode();
+    if (stdoutBuffer.length > 0) fail(new Error('Packed ACP stdout ended with an unterminated frame'));
+    exit = { code, signal };
+    resolveExited(exit);
+    wake();
+  });
+
+  const waitFor = async (read, label, timeoutMs = 20_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      if (failure) throw failure;
+      const value = read();
+      if (value !== undefined) return value;
+      if (exit) throw new Error(`Packed ACP exited before ${label}: ${JSON.stringify(exit)}\n${stderr}`);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`Timed out waiting for packed ACP ${label}\n${stderr}`);
+      await new Promise((resolveWait) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          waiters.delete(finish);
+          resolveWait();
+        };
+        const timeout = setTimeout(finish, remaining);
+        waiters.add(finish);
+      });
+    }
+  };
+  const send = (message) => {
+    if (!child.stdin.write(`${JSON.stringify(message)}\n`)) {
+      return new Promise((resolveWrite, rejectWrite) => {
+        child.stdin.once('drain', resolveWrite);
+        child.stdin.once('error', rejectWrite);
+      });
+    }
+    return Promise.resolve();
+  };
+
+  return {
+    async request(id, method, params) {
+      await send({ jsonrpc: '2.0', id, method, params });
+      return waitFor(() => responses.get(id), `response ${id}`);
+    },
+    notify(method, params) {
+      void send({ jsonrpc: '2.0', method, params }).catch(fail);
+    },
+    waitForNotification(predicate) {
+      return waitFor(() => notifications.find(predicate), 'notification');
+    },
+    async end() {
+      child.stdin.end();
+      const result = await waitFor(() => exit, 'clean exit');
+      if (result.code !== 0 || result.signal !== null) {
+        throw new Error(`Packed ACP did not exit cleanly: ${JSON.stringify(result)}\n${stderr}`);
+      }
+      assertProcessExited(child.pid);
+    },
+    async stop() {
+      if (!exit) child.kill('SIGTERM');
+      if (!exit) await Promise.race([exited, delay(2_000)]);
+      if (!exit) child.kill('SIGKILL');
+      if (!exit) await Promise.race([exited, delay(5_000)]);
+      if (!exit) throw new Error(`Packed ACP process did not terminate\n${stderr}`);
+      assertProcessExited(child.pid);
+    },
+  };
+}
+
+function delay(milliseconds) {
+  return new Promise((resolveDelay) => {
+    const timeout = setTimeout(resolveDelay, milliseconds);
+    timeout.unref?.();
+  });
+}
+
+async function withTimeout(operation, milliseconds, message) {
+  let timeout;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function assertProcessExited(pid) {
+  if (pid === undefined) return;
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if (error?.code === 'ESRCH') return;
+    throw error;
+  }
+  throw new Error(`Packed ACP process ${pid} is still running`);
 }

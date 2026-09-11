@@ -90,7 +90,13 @@ export interface CreateLocalSubagentHostOptions {
   readonly backgroundBashCoordinator?: BackgroundBashCoordinator;
   readonly backgroundBashCoordinatorOwner?: boolean;
   readonly runChild?: LocalSubagentRunner;
+  readonly inlineExtensions?: CreateAgentCoreSessionOptions['inlineExtensions'];
+  readonly extensionUiContext?: LocalSubagentUiContext;
 }
+
+type LocalSubagentUiContext = NonNullable<
+  NonNullable<Parameters<AgentSession['bindExtensions']>[0]>['uiContext']
+>;
 
 export interface LocalSubagentRunInput {
   readonly sessionId: string;
@@ -936,12 +942,17 @@ export class LocalSubagentManager {
         ? {}
         : { extensionConfigOverrides: this.#options.extensionConfigOverrides }),
       ...(this.#options.savings === undefined ? {} : { savings: this.#options.savings }),
+      ...(this.#options.inlineExtensions === undefined
+        ? {}
+        : { inlineExtensions: this.#options.inlineExtensions }),
     });
     try {
       await onSession(created.session, sessionFile);
       bindSubagentSession({ host: input.subagents, session: created.session });
       if (input.signal.aborted) return sessionFileOutcome(created.session.sessionFile);
-      await created.session.bindExtensions({ mode: 'print' });
+      await created.session.bindExtensions(this.#options.extensionUiContext === undefined
+        ? { mode: 'print' }
+        : { mode: 'rpc', uiContext: this.#options.extensionUiContext });
       if (input.definition.toolProfile === 'inspection') {
         created.session.setActiveToolsByName(inspectionToolNames(created.session.getActiveToolNames()));
       }

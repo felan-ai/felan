@@ -28,6 +28,100 @@ describe('felan CLI', () => {
     expect(launched).toBe(false);
   });
 
+  it('runs ACP without starting the interactive or one-shot application', async () => {
+    let acpLaunches = 0;
+    let launched = false;
+
+    const exitCode = await runCli(['acp'], {
+      launchAcp: async () => {
+        acpLaunches += 1;
+        return 7;
+      },
+      launch: async () => { launched = true; },
+      launchHeadless: async () => { launched = true; return 1; },
+    });
+
+    expect(exitCode).toBe(7);
+    expect(acpLaunches).toBe(1);
+    expect(launched).toBe(false);
+  });
+
+  it('runs finite ACP login without starting the ACP server or agent application', async () => {
+    let loginLaunches = 0;
+    let launched = false;
+
+    const exitCode = await runCli(['acp', 'login'], {
+      launchAcpLogin: async () => {
+        loginLaunches += 1;
+        return 7;
+      },
+      launchAcp: async () => { launched = true; return 1; },
+      launch: async () => { launched = true; },
+      launchHeadless: async () => { launched = true; return 1; },
+    });
+
+    expect(exitCode).toBe(7);
+    expect(loginLaunches).toBe(1);
+    expect(launched).toBe(false);
+  });
+
+  it('keeps ACP after -- as a prompt and rejects it as a headless output mode', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+    const errors: string[] = [];
+
+    expect(await runCli(['--', 'acp'], {
+      launch: async (options) => launches.push(options),
+    })).toBe(0);
+    expect(await runCli(['--mode', 'acp', 'prompt'], {
+      writeError: (line) => errors.push(line),
+    })).toBe(1);
+
+    expect(launches).toEqual([{
+      continueRecent: false,
+      verbose: false,
+      initialMessage: 'acp',
+    }]);
+    expect(errors).toEqual(['--mode requires text or json']);
+  });
+
+  it('shows ACP help and rejects ACP arguments before launch', async () => {
+    const output: string[] = [];
+    const errors: string[] = [];
+    let launched = false;
+
+    expect(await runCli(['acp', '--help'], {
+      writeOutput: (line) => output.push(line),
+      launchAcp: async () => { launched = true; return 0; },
+    })).toBe(0);
+    expect(await runCli(['acp', '--unknown'], {
+      writeError: (line) => errors.push(line),
+      launchAcp: async () => { launched = true; return 0; },
+    })).toBe(1);
+
+    expect(output).toEqual(['Usage: felan acp [login]']);
+    expect(errors).toEqual(['Usage: felan acp [login]']);
+    expect(launched).toBe(false);
+  });
+
+  it('shows finite ACP login help and rejects extra login arguments', async () => {
+    const output: string[] = [];
+    const errors: string[] = [];
+    let launched = false;
+
+    expect(await runCli(['acp', 'login', '--help'], {
+      writeOutput: (line) => output.push(line),
+      launchAcpLogin: async () => { launched = true; return 0; },
+    })).toBe(0);
+    expect(await runCli(['acp', 'login', '--unknown'], {
+      writeError: (line) => errors.push(line),
+      launchAcpLogin: async () => { launched = true; return 0; },
+    })).toBe(1);
+
+    expect(output).toEqual(['Usage: felan acp login']);
+    expect(errors).toEqual(['Usage: felan acp login']);
+    expect(launched).toBe(false);
+  });
+
   it('runs savings without starting a model session', async () => {
     const output: string[] = [];
     let launched = false;

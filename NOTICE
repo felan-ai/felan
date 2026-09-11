@@ -32,6 +32,10 @@ licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 It also uses @earendil-works/pi-server 0.85.1 from the same project under the
 MIT License.
 
+The local application uses @agentclientprotocol/sdk 1.4.0 from
+https://github.com/agentclientprotocol/typescript-sdk, licensed under the
+Apache License 2.0. Copyright 2025 Zed Industries, Inc. and contributors.
+
 @felan-ai/ext-subagents, @felan-ai/ext-ask-user, @felan-ai/ext-tasks,
 @felan-ai/ext-background-bash, @felan-ai/ext-browser, @felan-ai/ext-web-access,
 @felan-ai/ext-mcp, @felan-ai/ext-codex, and @felan-ai/ext-codebase-memory use TypeBox 1.1.38 from

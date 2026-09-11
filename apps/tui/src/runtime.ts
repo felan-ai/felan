@@ -14,6 +14,7 @@ import {
   type AgentSessionServices,
   type Api,
   type CreateAgentSessionOptions,
+  type CreateAgentCoreSessionOptions,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionPackageImporter,
   type ExtensionConfigOverride,
@@ -112,6 +113,8 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly model?: CreateAgentSessionOptions['model'];
   readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
   readonly themePaths?: readonly string[];
+  readonly inlineExtensions?: CreateAgentCoreSessionOptions['inlineExtensions'];
+  readonly subagentUiContext?: LocalExtensionUiContext;
 }
 
 export interface CreateLocalFelanRuntimeOptions {
@@ -130,7 +133,13 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly model?: CreateAgentSessionOptions['model'];
   readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
   readonly themePaths?: readonly string[];
+  readonly inlineExtensions?: CreateAgentCoreSessionOptions['inlineExtensions'];
+  readonly subagentUiContext?: LocalExtensionUiContext;
 }
+
+type LocalExtensionUiContext = NonNullable<
+  NonNullable<Parameters<AgentSession['bindExtensions']>[0]>['uiContext']
+>;
 
 export function getLocalAgentDir(): string {
   return resolve(process.env.FELAN_AGENT_DIR ?? join(homedir(), '.felan'));
@@ -279,6 +288,12 @@ export function createLocalSessionRuntimeFactory(
       ...(subagentSettings === undefined ? {} : { settings: subagentSettings }),
       backgroundBashCoordinator,
       backgroundBashCoordinatorOwner: false,
+      ...(options.inlineExtensions === undefined
+        ? {}
+        : { inlineExtensions: options.inlineExtensions }),
+      ...(options.subagentUiContext === undefined
+        ? {}
+        : { extensionUiContext: options.subagentUiContext }),
       ...(!memoryEnabled || options.memoryCoordinator === undefined ? {} : {
         memoryHostFactory: ({ cwd: childCwd, sessionStorageRoot }: {
           readonly cwd: string;
@@ -344,6 +359,7 @@ export function createLocalSessionRuntimeFactory(
         createThinkingGroupExtension(),
         createToolActivityExtension(toolActivityState),
         ...(memoryControlExtension === undefined ? [] : [memoryControlExtension]),
+        ...(options.inlineExtensions ?? []),
       ],
       ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt: [appendSystemPrompt] }),
       ...(modelScope.scopedModels.length === 0 ? {} : { scopedModels: modelScope.scopedModels }),
@@ -392,10 +408,14 @@ export function createLocalSessionRuntimeFactory(
   };
 }
 
-export async function createLocalModelRuntime(agentDir: string): Promise<ModelRuntime> {
+export async function createLocalModelRuntime(
+  agentDir: string,
+  signal?: AbortSignal,
+): Promise<ModelRuntime> {
   return ModelRuntime.create({
     authPath: join(agentDir, 'auth.json'),
     modelsPath: join(agentDir, 'models.json'),
+    ...(signal === undefined ? {} : { signal }),
   });
 }
 
@@ -426,6 +446,12 @@ export async function createLocalFelanRuntime(
     ...(options.runtimeFactory === undefined ? {} : { runtimeFactory: options.runtimeFactory }),
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.themePaths === undefined ? {} : { themePaths: options.themePaths }),
+    ...(options.inlineExtensions === undefined
+      ? {}
+      : { inlineExtensions: options.inlineExtensions }),
+    ...(options.subagentUiContext === undefined
+      ? {}
+      : { subagentUiContext: options.subagentUiContext }),
     ...(options.subagentSettings === undefined ? {} : { subagentSettings: options.subagentSettings }),
     ...(options.extensionConfigOverrides === undefined ? {} : { extensionConfigOverrides: options.extensionConfigOverrides }),
     ...(options.model === undefined ? {} : { model: options.model }),

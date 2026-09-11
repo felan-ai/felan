@@ -19,6 +19,8 @@ export interface CliDependencies {
   readonly writeError?: (line: string) => void;
   readonly launch?: (options: RunLocalFelanOptions) => Promise<void>;
   readonly launchHeadless?: (options: RunLocalFelanHeadlessOptions) => Promise<number>;
+  readonly launchAcp?: () => Promise<number>;
+  readonly launchAcpLogin?: () => Promise<number>;
   readonly pickSession?: () => Promise<SessionManager | undefined>;
   readonly openSession?: (sessionId: string, sessionDir?: string) => Promise<SessionManager>;
   readonly update?: () => Promise<number>;
@@ -38,6 +40,7 @@ Options:
   --diagnostics      Print local runtime versions and configuration mode
   update             Update a global npm installation of Felan
   savings            Show persisted estimated API-equivalent savings
+  acp [login]        Serve Agent Client Protocol v1 or authenticate in a terminal
   -h, --help         Show this help
   -v, --version      Print the Felan version
   --verbose          Show verbose startup details
@@ -55,6 +58,37 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   }
   if (args[0] === 'savings') {
     return runSavingsCommand(args.slice(1), writeOutput, writeError);
+  }
+
+  if (args[0] === 'acp') {
+    if (args[1] === 'login') {
+      if (args.length === 3 && (args[2] === '-h' || args[2] === '--help')) {
+        writeOutput('Usage: felan acp login');
+        return 0;
+      }
+      if (args.length !== 2) {
+        writeError('Usage: felan acp login');
+        return 1;
+      }
+      const launchAcpLogin = dependencies.launchAcpLogin ?? (async () => {
+        const { runLocalFelanAcpLogin } = await import('./acp/login.js');
+        return runLocalFelanAcpLogin();
+      });
+      return launchAcpLogin();
+    }
+    if (args.length === 2 && (args[1] === '-h' || args[1] === '--help')) {
+      writeOutput('Usage: felan acp [login]');
+      return 0;
+    }
+    if (args.length !== 1) {
+      writeError('Usage: felan acp [login]');
+      return 1;
+    }
+    const launchAcp = dependencies.launchAcp ?? (async () => {
+      const { runLocalFelanAcp } = await import('./acp/server.js');
+      return runLocalFelanAcp();
+    });
+    return launchAcp();
   }
 
   let continueRecent = false;

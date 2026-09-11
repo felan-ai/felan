@@ -56,7 +56,15 @@ for (const [license, entries] of Object.entries(inventory)) {
   }
 }
 
+const apachePackages = new Set((inventory['Apache-2.0'] ?? []).flatMap((entry) => (
+  (entry.versions ?? []).map((version) => `${entry.name}@${version}`)
+)));
+if (!apachePackages.has('@agentclientprotocol/sdk@1.4.0')) {
+  errors.push('@agentclientprotocol/sdk@1.4.0 must be reported under Apache-2.0');
+}
+
 for (const required of [
+  '@agentclientprotocol/sdk@1.4.0',
   '@earendil-works/pi-agent-core@0.85.1',
   '@earendil-works/pi-ai@0.85.1',
   '@earendil-works/pi-coding-agent@0.85.1',
@@ -74,6 +82,10 @@ for (const required of [
 
 const notice = readFileSync(resolve(root, 'NOTICE'), 'utf8');
 for (const requiredNotice of [
+  '@agentclientprotocol/sdk 1.4.0',
+  'https://github.com/agentclientprotocol/typescript-sdk',
+  'Apache License 2.0',
+  'Copyright 2025 Zed Industries, Inc. and contributors',
   'Pi 0.85.1',
   '@earendil-works/pi-server 0.85.1',
   '@lydell/node-pty 1.2.0-beta.14',
@@ -247,6 +259,10 @@ if (!felanApiNotice.includes('TypeBox 1.1.38')) {
 }
 const tuiNotice = readFileSync(resolve(root, 'apps/tui/NOTICE'), 'utf8');
 for (const requiredNotice of [
+  '@agentclientprotocol/sdk 1.4.0',
+  'https://github.com/agentclientprotocol/typescript-sdk',
+  'Apache License 2.0',
+  'Copyright 2025 Zed Industries, Inc. and contributors',
   '@napi-rs/keyring 1.3.0',
   'open 11.0.0',
   '@felan-ai/ext-codebase-memory',

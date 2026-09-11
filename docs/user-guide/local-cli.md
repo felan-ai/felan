@@ -20,6 +20,8 @@ felan [options] [message]
 --diagnostics      Print runtime versions and configuration mode
 update             Update a global npm installation of Felan
 savings            Show persisted estimated API-equivalent savings without starting a model session
+acp                 Serve Agent Client Protocol v1 over stdio
+acp login           Configure model-provider credentials in a finite terminal flow
 -h, --help         Show help
 -v, --version      Print the Felan version
 --verbose          Show verbose startup details
@@ -27,6 +29,139 @@ savings            Show persisted estimated API-equivalent savings without start
 
 Use `--` before an initial message that begins with a dash. Unknown options are
 rejected before the TUI starts.
+
+### Native ACP v1
+
+Start Felan's stable Agent Client Protocol v1 server with:
+
+```sh
+felan acp
+```
+
+Or run the published package without a global install:
+
+```sh
+npx --yes @felan-ai/felan acp
+```
+
+The server uses newline-delimited JSON over stdin/stdout. Stdout is guarded and
+contains ACP frames only; diagnostics and startup failures use stderr. Do not
+wrap the command with anything that prints banners or logs to stdout.
+ACP clients receive the machine name `felan` and display title `Felan Code`.
+
+The implemented agent surface is:
+
+- `initialize`;
+- `session/new` and `session/load`;
+- `session/prompt`, with `session/cancel` notifications;
+- `session/close`; and
+- client-bound `session/update`, `session/request_permission`, and
+  `elicitation/create` calls when needed.
+
+Each ACP session owns a separate `LocalFelanRuntime`; only the process-level
+model runtime is shared. Loading uses Felan's existing local session files and
+replays the complete current branch before the load request succeeds. Prompt
+turns accept ACP's baseline `text` and `resource_link` blocks. Felan streams
+ordered user, assistant, thought, and tool lifecycle updates with aggregate,
+per-item, and output limits. Unsupported prompt block types fail before
+the model runs.
+
+If the client advertises form elicitation, Pi extension `select`, `confirm`,
+`input`, and `editor` requests are mapped to bounded ACP forms. This enables
+`ask_user` and Prewalk plan review. Without that capability, dialog UI is
+reported as unavailable rather than silently accepted.
+
+Known mutating, process, network, and other external-action tools request ACP
+permission before execution. Unknown tool names are gated conservatively;
+known read-only and internal tools can proceed. Felan offers only `allow once`
+and `reject once` because it does not own a durable ACP permission-policy
+store. Rejection, malformed responses, cancellation, or client failure blocks
+the call. The same owning-session channel gates local subagent actions.
+
+#### Authentication
+
+When a client advertises ACP terminal-auth support, initialization includes a
+terminal method that appends `login` to the configured `felan acp` command.
+The client launches that separate interactive process and reconnects after it
+exits successfully. The same flow can be started manually:
+
+```sh
+felan acp login
+```
+
+When the client launches Felan through `npx`, the equivalent command is:
+
+```sh
+npx --yes @felan-ai/felan acp login
+```
+
+Choose one of the configurable provider/authentication methods. The command
+supports API-key prompts, OAuth URLs, device codes, provider choices, and
+manual authorization codes. Secret and manual-code input is not echoed or
+included in diagnostics. Exit status `0` means `ModelRuntime.login` persisted
+the credential in `$FELAN_AGENT_DIR/auth.json` (`~/.felan/auth.json` by
+default) and synchronized local model state. Treat that file as sensitive; do
+not commit or share it. Cancellation, signals, storage/synchronization
+failures, and provider failures are non-zero.
+Unauthenticated session creation returns ACP's typed `Authentication required`
+error (`-32000`). Zed or another ACP client should reconnect and retry after a
+successful terminal login.
+
+#### Zed custom-agent configuration
+
+Install `felan` on the environment `PATH` visible to Zed, then add a custom
+external agent to Zed's `settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "Felan Code": {
+      "type": "custom",
+      "command": "felan",
+      "args": ["acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+For an on-demand package launch, configure `"command": "npx"` with
+`"args": ["--yes", "@felan-ai/felan", "acp"]`. ACP clients append the
+advertised `["login"]` arguments for the separate terminal-auth process, so
+the resulting command is `npx --yes @felan-ai/felan acp login`.
+
+You can use an absolute `command` path instead when Zed does not inherit the
+same `PATH`. Zed's own model credentials are not Felan credentials. Complete
+Felan's terminal login when prompted, then open a new external-agent
+connection.
+
+#### MCP behavior
+
+Felan accepts and ignores MCP definitions in ACP `session/new` and
+`session/load`. This keeps clients such as Zed compatible when they attach
+project MCP configuration, without launching client-provided executables or
+using client-provided URLs, headers, or credentials.
+
+Felan's configured MCP extension remains separate. Configure it through
+`$FELAN_AGENT_DIR/mcp.json`; it supports explicit OAuth-only Streamable HTTP
+with SSE fallback and its own credential store.
+
+#### Security boundary and non-goals
+
+ACP runs in the local host with the current user's filesystem, process, and
+network permissions. It is not an OS sandbox.
+
+The native server intentionally does not provide:
+
+- a remote HTTP/WebSocket ACP listener;
+- `authenticate` for the advertised terminal method, logout, session
+  list/delete/fork/resume, session modes, or config-option methods;
+- additional workspace roots;
+- image, audio, or embedded-resource prompt blocks;
+- session-provided MCP servers or tools;
+- direct injection of remote MCP tools, resources, prompts, sampling, Apps, or
+  scripting; or
+- a durable permission policy or sandbox.
 
 ### Resume a session
 
