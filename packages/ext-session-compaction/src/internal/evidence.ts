@@ -27,7 +27,6 @@ interface ExtractionState {
   readonly omitted: MutableOmission;
   readonly calls: Map<string, { name: string; arguments: Record<string, unknown> }>;
   work: number;
-  bytes: number;
 }
 
 export function extractEvidence(
@@ -39,7 +38,6 @@ export function extractEvidence(
     omitted: { ...span.omitted, reasons: [...span.omitted.reasons] },
     calls: new Map(),
     work: 0,
-    bytes: 0,
   };
   for (const source of span.sources) {
     if (state.work >= bounds.maxWorkUnits) {
@@ -49,14 +47,12 @@ export function extractEvidence(
     state.work += 1;
     extractSource(source, state, bounds);
   }
-  return { schemaVersion: 1, items: state.items, omitted: freezeOmission(state.omitted) };
+  const selected = selectEvidence(state.items, span, bounds, state.omitted);
+  return { schemaVersion: 1, items: selected, omitted: freezeOmission(state.omitted) };
 }
 
 function extractSource(source: PreparedSource, state: ExtractionState, bounds: ExtractionBounds): void {
   if (source.section === 'previous_summary') {
-    add(state, source, {
-      provenance: 'agent-reported', kind: 'report', status: 'observed', text: source.text,
-    }, bounds);
     return;
   }
   const rawMessage: unknown = source.message;
@@ -84,6 +80,10 @@ function extractSource(source: PreparedSource, state: ExtractionState, bounds: E
         add(state, source, {
           provenance: 'agent-reported', kind: 'report', status: 'observed', text: block.text,
         }, bounds);
+      } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
+        add(state, source, {
+          provenance: 'agent-reported', kind: 'report', status: 'observed', text: `Reasoning: ${block.thinking}`,
+        }, bounds);
       } else if (block.type === 'toolCall' && typeof block.id === 'string' && typeof block.name === 'string') {
         const args = isRecord(block.arguments) ? block.arguments : {};
         state.calls.set(block.id, { name: block.name, arguments: args });
@@ -91,7 +91,7 @@ function extractSource(source: PreparedSource, state: ExtractionState, bounds: E
           provenance: 'requested',
           kind: 'tool-call',
           status: 'requested',
-          text: `${block.name} ${stableJson(args)}`,
+          text: renderToolCall(block.name, args, bounds),
           toolCallId: stableIdentifier(block.id, 'call'),
           toolName: stableIdentifier(block.name, 'tool'),
         }, bounds);
@@ -140,13 +140,29 @@ function extractToolResult(
   const details = isRecord(message.details) ? message.details : undefined;
   let handled = false;
 
+  if (isError) {
+    const partBytes = diagnosticPartBytes(bounds);
+    const error = compactDiagnosticText(textContent(message.content).join('\n'), partBytes);
+    const callDescription = sanitizeText(
+      call ? renderToolCall(call.name, call.arguments, bounds) : toolName,
+      partBytes,
+    ).text;
+    add(state, source, {
+      provenance: 'recorded-result', kind: 'error', status: 'failed',
+      text: `${callDescription} failed${error ? `: ${error}` : ''}`,
+      ...common, key: `failure:${toolCallId}`,
+    }, bounds);
+    extractRtk(source, details, common, state, bounds);
+    return;
+  }
+
   if (toolName === 'apply_patch' && details) {
     handled = extractPatch(source, details, common, state, bounds);
   } else if (toolName === 'read' || toolName === 'write' || toolName === 'edit') {
     const path = cleanPath(call?.arguments.path, bounds);
     const action = toolName === 'read' ? 'Read' : toolName === 'write' ? 'Wrote' : 'Edited';
     add(state, source, {
-      provenance: 'recorded-result', kind: 'file', status: isError ? 'failed' : 'succeeded',
+      provenance: 'recorded-result', kind: 'file', status: 'succeeded',
       text: path ? `${action} ${path}` : `${action} file (path unavailable)`,
       ...common, ...(path ? { key: `file:${path}`, paths: [path] } : {}),
     }, bounds);
@@ -156,24 +172,20 @@ function extractToolResult(
   } else if (isBackgroundTool(toolName) && details) {
     handled = extractBackground(source, details, common, state, bounds);
   } else if (toolName === 'bash' || toolName === 'exec_command' || toolName === 'write_stdin') {
-    const command = stringValue(call?.arguments.command) ?? stringValue(call?.arguments.cmd) ?? toolName;
-    const text = textContent(message.content).join('\n');
-    const test = looksLikeTestCommand(command);
+    const rawCommand = stringValue(call?.arguments.command) ?? stringValue(call?.arguments.cmd) ?? toolName;
+    const partBytes = diagnosticPartBytes(bounds);
+    const command = compactDiagnosticText(rawCommand, partBytes);
+    const text = compactDiagnosticText(textContent(message.content).join('\n'), partBytes);
+    const test = looksLikeTestCommand(rawCommand);
     add(state, source, {
-      provenance: 'recorded-result', kind: test ? 'test' : 'command', status: isError ? 'failed' : 'succeeded',
-      text: `${isError ? 'Failed' : 'Completed'}: ${command}${text ? `\n${text}` : ''}`,
+      provenance: 'recorded-result', kind: test ? 'test' : 'command', status: 'succeeded',
+      text: `Completed: ${command}${text ? `\n${text}` : ''}`,
       ...common, key: `${test ? 'test' : 'command'}:${command}`,
     }, bounds);
     handled = true;
   }
 
-  if (isError && !handled) {
-    add(state, source, {
-      provenance: 'recorded-result', kind: 'error', status: 'failed',
-      text: textContent(message.content).join('\n') || `${toolName} failed`, ...common,
-      key: `failure:${toolCallId}`,
-    }, bounds);
-  } else if (!handled) {
+  if (!handled) {
     const text = textContent(message.content).join('\n');
     if (text) add(state, source, {
       provenance: 'observed', kind: 'observation', status: 'observed', text, ...common,
@@ -288,13 +300,18 @@ function add(
   candidate: Candidate,
   bounds: ExtractionBounds,
 ): void {
-  if (state.items.length >= bounds.maxEvidenceItems) {
-    omit(state.omitted, 'evidence-item-limit');
+  if (state.items.length >= bounds.maxEvidenceItems * 8) {
+    omit(state.omitted, isRequiredPrefixCandidate(source, candidate)
+      ? 'required-prefix-evidence-limit'
+      : 'evidence-item-limit');
     return;
   }
   const sanitized = sanitizeText(candidate.text, bounds.maxTextBytes);
   if (!sanitized.text) return;
-  if (sanitized.omittedBytes > 0) omit(state.omitted, 'text-byte-limit', 0, sanitized.omittedBytes);
+  if (sanitized.omittedBytes > 0) {
+    omit(state.omitted, 'text-byte-limit', 0, sanitized.omittedBytes);
+    if (isRequiredPrefixCandidate(source, candidate)) omit(state.omitted, 'required-prefix-evidence-limit', 0);
+  }
   const ordinal = state.items.length;
   const item: EvidenceItem = {
     ...candidate,
@@ -302,13 +319,84 @@ function add(
     sourceId: source.sourceId,
     text: sanitized.text,
   };
-  const bytes = utf8Bytes(JSON.stringify(item));
-  if (state.bytes + bytes > bounds.maxEvidenceBytes) {
-    omit(state.omitted, 'evidence-byte-limit', 1, bytes);
-    return;
-  }
   state.items.push(item);
-  state.bytes += bytes;
+}
+
+function selectEvidence(
+  items: readonly EvidenceItem[],
+  span: PreparedSpan,
+  bounds: ExtractionBounds,
+  omitted: MutableOmission,
+): EvidenceItem[] {
+  const sections = new Map(span.sources.map((source) => [source.sourceId, source.section]));
+  const sourceOrder = new Map(span.sources.map((source, index) => [source.sourceId, index]));
+  const unique = new Map<string, EvidenceItem>();
+  for (const item of items) {
+    const key = isRequiredPrefixEvidence(item, sections) ? item.id : item.key ?? item.id;
+    const existing = unique.get(key);
+    if (!existing || evidenceRank(item, sections, sourceOrder) >= evidenceRank(existing, sections, sourceOrder)) unique.set(key, item);
+  }
+  const required = [...unique.values()].filter((item) => isRequiredPrefixEvidence(item, sections));
+  const ranked = [...unique.values()].filter((item) => !isRequiredPrefixEvidence(item, sections)).sort((left, right) => (
+    evidenceRank(right, sections, sourceOrder) - evidenceRank(left, sections, sourceOrder)
+    || (sourceOrder.get(right.sourceId) ?? 0) - (sourceOrder.get(left.sourceId) ?? 0)
+  ));
+  const selected: EvidenceItem[] = [];
+  let bytes = 0;
+  const admit = (item: EvidenceItem, requiredPrefix: boolean): void => {
+    if (selected.length >= bounds.maxEvidenceItems) {
+      omit(omitted, requiredPrefix ? 'required-prefix-evidence-limit' : 'evidence-item-limit');
+      return;
+    }
+    const size = utf8Bytes(JSON.stringify(item));
+    if (bytes + size > bounds.maxEvidenceBytes) {
+      omit(omitted, requiredPrefix ? 'required-prefix-evidence-limit' : 'evidence-byte-limit', 1, size);
+      return;
+    }
+    selected.push(item);
+    bytes += size;
+  };
+  for (const item of required) admit(item, true);
+  for (const item of ranked) {
+    admit(item, false);
+  }
+  selected.sort((left, right) => (
+    (sourceOrder.get(left.sourceId) ?? 0) - (sourceOrder.get(right.sourceId) ?? 0)
+    || evidenceOrdinal(left) - evidenceOrdinal(right)
+  ));
+  return selected;
+}
+
+function isRequiredPrefixCandidate(source: PreparedSource, candidate: Candidate): boolean {
+  return source.section === 'turn_prefix'
+    && (candidate.status === 'failed' || candidate.kind === 'error' || candidate.kind === 'test');
+}
+
+function isRequiredPrefixEvidence(item: EvidenceItem, sections: ReadonlyMap<string, string>): boolean {
+  return sections.get(item.sourceId) === 'turn_prefix'
+    && (item.status === 'failed' || item.kind === 'error' || item.kind === 'test');
+}
+
+function evidenceOrdinal(item: EvidenceItem): number {
+  const separator = item.id.lastIndexOf(':');
+  const ordinal = Number(item.id.slice(separator + 1));
+  return Number.isSafeInteger(ordinal) && ordinal >= 0 ? ordinal : Number.MAX_SAFE_INTEGER;
+}
+
+function evidenceRank(
+  item: EvidenceItem,
+  sections: ReadonlyMap<string, string>,
+  sourceOrder: ReadonlyMap<string, number>,
+): number {
+  const section = sections.get(item.sourceId);
+  const sectionWeight = section === 'turn_prefix' ? 10_000 : section === 'previous_summary' ? 2_000 : 0;
+  const kindWeight = item.kind === 'request' || item.kind === 'constraint' || item.kind === 'decision' || item.kind === 'open-loop'
+    ? 900
+    : item.kind === 'error' || item.kind === 'test' || item.kind === 'task' || item.kind === 'file'
+      ? 700
+      : item.kind === 'report' ? 500 : item.kind === 'observation' ? 100 : 300;
+  const recency = sourceOrder.get(item.sourceId) ?? 0;
+  return sectionWeight + kindWeight + recency;
 }
 
 function boundedPaths(value: unknown, bounds: ExtractionBounds, omitted: MutableOmission): string[] {
@@ -323,6 +411,97 @@ function boundedPaths(value: unknown, bounds: ExtractionBounds, omitted: Mutable
 function cleanPath(value: unknown, bounds: ExtractionBounds): string | undefined {
   const text = sanitizeText(value, Math.min(bounds.maxTextBytes, 512)).text;
   return text || undefined;
+}
+
+function renderToolCall(name: string, args: Record<string, unknown>, bounds: ExtractionBounds): string {
+  if (name === 'apply_patch') {
+    const patch = stringValue(args.input);
+    const paths = patchPaths(patch, bounds);
+    return `${name} ${stableJson({
+      ...(paths.length > 0 ? { paths } : {}),
+      ...(patch === undefined ? {} : { payloadBytes: utf8Bytes(patch) }),
+    })}`;
+  }
+  if (name === 'write') {
+    const content = stringValue(args.content);
+    const path = cleanPath(args.path, bounds);
+    return `${name} ${stableJson({
+      ...(path ? { path } : {}),
+      ...(content === undefined ? {} : { contentBytes: utf8Bytes(content) }),
+    })}`;
+  }
+  if (name === 'edit') {
+    const oldText = stringValue(args.oldText);
+    const newText = stringValue(args.newText);
+    const path = cleanPath(args.path, bounds);
+    return `${name} ${stableJson({
+      ...(path ? { path } : {}),
+      ...(oldText === undefined ? {} : { oldTextBytes: utf8Bytes(oldText) }),
+      ...(newText === undefined ? {} : { newTextBytes: utf8Bytes(newText) }),
+    })}`;
+  }
+  return `${name} ${stableJson(compactToolArguments(args, bounds))}`;
+}
+
+function compactToolArguments(
+  value: Record<string, unknown>,
+  bounds: ExtractionBounds,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.keys(value).sort().slice(0, 32).map((key) => {
+    if (isSensitiveKey(key)) return [key, '[redacted]'];
+    return [key, compactToolArgument(value[key], bounds, 0)];
+  }));
+}
+
+function compactToolArgument(value: unknown, bounds: ExtractionBounds, depth: number): unknown {
+  if (depth > 3) return '[depth omitted]';
+  if (typeof value === 'string') {
+    const sanitized = sanitizeText(value, Math.min(bounds.maxTextBytes, 512));
+    return sanitized.omittedBytes > 0
+      ? `${sanitized.text} [... ${sanitized.omittedBytes} bytes omitted]`
+      : sanitized.text;
+  }
+  if (Array.isArray(value)) return value.slice(0, 16).map((item) => compactToolArgument(item, bounds, depth + 1));
+  if (isRecord(value)) return Object.fromEntries(Object.keys(value).sort().slice(0, 16)
+    .map((key) => [key, isSensitiveKey(key) ? '[redacted]' : compactToolArgument(value[key], bounds, depth + 1)]));
+  return typeof value === 'number' || typeof value === 'boolean' || value === null ? value : String(value);
+}
+
+function isSensitiveKey(key: string): boolean {
+  return /^(?:token|access[_-]?token|id[_-]?token|refresh[_-]?token|secret|password|authorization|cookie|api[_-]?key)$/iu.test(key);
+}
+
+function patchPaths(value: string | undefined, bounds: ExtractionBounds): string[] {
+  if (!value) return [];
+  const paths: string[] = [];
+  for (const match of value.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gmu)) {
+    const path = cleanPath(match[1], bounds);
+    if (path) paths.push(path);
+    if (paths.length >= bounds.maxPathsPerItem) break;
+  }
+  return [...new Set(paths)];
+}
+
+function compactDiagnosticText(value: string, maxBytes: number): string {
+  if (!value || maxBytes <= 0) return '';
+  const clean = sanitizeText(value, utf8Bytes(value)).text;
+  if (utf8Bytes(clean) <= maxBytes) return clean;
+  const marker = '\n[... output omitted ...]\n';
+  const contentBytes = Math.max(0, maxBytes - utf8Bytes(marker));
+  const head = sanitizeText(clean, Math.ceil(contentBytes * 2 / 3)).text;
+  const tail = utf8Suffix(clean, Math.floor(contentBytes / 3));
+  return `${head}${marker}${tail}`;
+}
+
+function diagnosticPartBytes(bounds: ExtractionBounds): number {
+  return Math.max(0, Math.floor((bounds.maxTextBytes - 64) / 2));
+}
+
+function utf8Suffix(value: string, maxBytes: number): string {
+  let start = Math.max(0, value.length - maxBytes);
+  while (start < value.length && utf8Bytes(value.slice(start)) > maxBytes) start += 1;
+  if (/^[\uDC00-\uDFFF]/u.test(value.slice(start))) start += 1;
+  return value.slice(start);
 }
 
 function stableJson(value: unknown): string {

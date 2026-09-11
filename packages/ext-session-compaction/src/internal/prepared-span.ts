@@ -49,12 +49,14 @@ export function prepareEvidenceSpan(
     });
   }
 
-  const messages = [
-    ...tagMessages(input.preparation.messagesToSummarize, 'messages_to_summarize'),
-    ...tagMessages(input.preparation.turnPrefixMessages, 'turn_prefix'),
-  ];
-  const selected = messages.slice(0, bounds.maxMessages);
-  if (selected.length < messages.length) omit(omitted, 'message-limit', messages.length - selected.length);
+  const history = tagMessages(input.preparation.messagesToSummarize, 'messages_to_summarize');
+  const prefix = tagMessages(input.preparation.turnPrefixMessages, 'turn_prefix');
+  const selectedPrefix = prefix.slice(0, bounds.maxMessages);
+  const selectedHistory = history.slice(0, Math.max(0, bounds.maxMessages - selectedPrefix.length));
+  const selected = [...selectedHistory, ...selectedPrefix];
+  if (selected.length < history.length + prefix.length) {
+    omit(omitted, 'message-limit', history.length + prefix.length - selected.length);
+  }
 
   const fingerprintOffsets = new Map<string, number>();
   for (const item of selected) {

@@ -128,4 +128,92 @@ describe('bounded session compaction evidence', () => {
     expect(result.items[0]?.text).not.toContain('\u001b');
     expect(result.items[0]?.text.length).toBeLessThanOrEqual(20);
   });
+
+  it('keeps reasoning while reducing large mutation arguments to metadata', () => {
+    const result = extractEvidence(span([{
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'Keep the provider-neutral boundary because storage may change.' },
+        {
+          type: 'toolCall', id: 'patch-1', name: 'apply_patch',
+          arguments: {
+            input: `*** Begin Patch\n*** Update File: src/store.ts\n${'RAW_PATCH_BODY\n'.repeat(500)}*** End Patch`,
+          },
+        },
+        {
+          type: 'toolCall', id: 'write-1', name: 'write',
+          arguments: { path: 'src/archive.ts', content: 'RAW_FILE_CONTENT'.repeat(500) },
+        },
+      ],
+    }]));
+
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'report', text: expect.stringContaining('provider-neutral boundary') }),
+      expect.objectContaining({ kind: 'tool-call', text: expect.stringContaining('src/store.ts') }),
+      expect.objectContaining({ kind: 'tool-call', text: expect.stringContaining('contentBytes') }),
+    ]));
+    expect(result.items.map(({ text }) => text).join('\n')).not.toContain('RAW_PATCH_BODY');
+    expect(result.items.map(({ text }) => text).join('\n')).not.toContain('RAW_FILE_CONTENT');
+  });
+
+  it('keeps a concise file operation and the exact failure instead of successful read bodies', () => {
+    const result = extractEvidence(span([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'read-ok', name: 'read', arguments: { path: 'src/large.ts' } },
+          { type: 'toolCall', id: 'read-failed', name: 'read', arguments: { path: 'src/missing.ts' } },
+        ],
+      },
+      {
+        role: 'toolResult', toolCallId: 'read-ok', toolName: 'read', isError: false,
+        content: [{ type: 'text', text: 'SUCCESSFUL_FILE_BODY_SHOULD_NOT_SURVIVE' }],
+      },
+      {
+        role: 'toolResult', toolCallId: 'read-failed', toolName: 'read', isError: true,
+        content: [{ type: 'text', text: 'ENOENT: no such file or directory' }],
+      },
+    ]));
+    const text = result.items.map((item) => item.text).join('\n');
+
+    expect(text).toContain('Read src/large.ts');
+    expect(text).not.toContain('SUCCESSFUL_FILE_BODY_SHOULD_NOT_SURVIVE');
+    expect(text).toContain('read {"path":"src/missing.ts"} failed: ENOENT: no such file or directory');
+  });
+
+  it('keeps tool calls from one assistant message in numeric extraction order', () => {
+    const result = extractEvidence(span([{
+      role: 'assistant',
+      content: Array.from({ length: 12 }, (_, index) => ({
+        type: 'toolCall', id: `call-${index}`, name: `tool-${index}`, arguments: { index },
+      })),
+    }]));
+
+    expect(result.items.filter(({ kind }) => kind === 'tool-call').map(({ toolName }) => toolName)).toEqual(
+      Array.from({ length: 12 }, (_, index) => `tool-${index}`),
+    );
+  });
+
+  it('treats isError as authoritative over contradictory structured success details', () => {
+    const result = extractEvidence(span([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'patch-1', name: 'apply_patch', arguments: {
+          input: '*** Begin Patch\n*** Update File: src/store.ts\n*** End Patch',
+        } }],
+      },
+      {
+        role: 'toolResult', toolCallId: 'patch-1', toolName: 'apply_patch', isError: true,
+        content: [{ type: 'text', text: 'permission denied' }],
+        details: { status: 'success', result: { changedFiles: ['src/store.ts'] } },
+      },
+    ]));
+
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'error', status: 'failed', text: expect.stringContaining('permission denied') }),
+    ]));
+    expect(result.items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'file', status: 'succeeded' }),
+    ]));
+  });
 });

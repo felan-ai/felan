@@ -12,6 +12,34 @@ export type PreparedMessageValue = unknown;
 export const DETAILS_NAMESPACE = 'felan.session-compaction' as const;
 export const DETAILS_SCHEMA_VERSION = 1 as const;
 
+export const FALLBACK_DIAGNOSTIC_CUSTOM_TYPE = 'felan-session-compaction-fallback' as const;
+export const FALLBACK_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
+
+export type NativeFallbackReason =
+  | 'model-unavailable'
+  | 'prompt-preparation-failed'
+  | 'prompt-budget-exceeded'
+  | 'model-request-failed'
+  | 'model-timeout'
+  | 'model-response-invalid'
+  | 'model-response-unsupported'
+  | 'summary-budget-exceeded';
+
+export interface SessionCompactionFallbackDiagnosticV1 {
+  readonly customType: typeof FALLBACK_DIAGNOSTIC_CUSTOM_TYPE;
+  readonly schemaVersion: typeof FALLBACK_DIAGNOSTIC_SCHEMA_VERSION;
+  readonly reason: NativeFallbackReason;
+  readonly sessionId: string;
+  readonly attemptId?: string;
+  readonly trigger: 'manual' | 'threshold' | 'overflow';
+  readonly willRetry: boolean;
+  readonly requestedModel: string;
+  readonly selectedModel?: string;
+  readonly errorMessage?: string;
+  readonly stopReason?: string;
+  readonly detail?: string;
+}
+
 export type SpanSection = 'previous_summary' | 'messages_to_summarize' | 'turn_prefix';
 
 export interface PreparedSource {

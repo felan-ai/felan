@@ -66,11 +66,15 @@ export function mergeContinuity(
     if (fact) merged.set(fact.key, fact);
   }
 
-  const facts: ContinuityFact[] = [];
+  const evidenceOrder = new Map(evidence.items.map((item, index) => [item.sourceId, index]));
+  const facts: ContinuityFact[] = [...merged.values()].sort((left, right) => (
+    continuityRank(right, evidenceOrder) - continuityRank(left, evidenceOrder)
+  ));
+  const boundedFacts: ContinuityFact[] = [];
   let bytes = 0;
-  for (const fact of merged.values()) {
+  for (const fact of facts) {
     const size = utf8Bytes(JSON.stringify(fact));
-    if (facts.length >= bounds.maxContinuityItems) {
+    if (boundedFacts.length >= bounds.maxContinuityItems) {
       omit(omitted, 'continuity-item-limit');
       continue;
     }
@@ -78,10 +82,10 @@ export function mergeContinuity(
       omit(omitted, 'continuity-byte-limit', 1, size);
       continue;
     }
-    facts.push(fact);
+    boundedFacts.push(fact);
     bytes += size;
   }
-  return { schemaVersion: 1, facts, omitted: freezeOmission(omitted) };
+  return { schemaVersion: 1, facts: boundedFacts, omitted: freezeOmission(omitted) };
 }
 
 export function createCompactionDetails(continuity: ContinuityStateV1): SessionCompactionDetailsV1 {
@@ -121,6 +125,15 @@ function factFromEvidence(item: EvidenceItem, bounds: ExtractionBounds): Continu
 
 function fact(key: string, kind: ContinuityFact['kind'], text: string, sourceId: string): ContinuityFact {
   return { key, kind, text, sourceIds: [sourceId] };
+}
+
+function continuityRank(fact: ContinuityFact, evidenceOrder: ReadonlyMap<string, number>): number {
+  const latest = Math.max(...fact.sourceIds.map((sourceId) => evidenceOrder.get(sourceId) ?? -1));
+  const kindWeight = fact.kind === 'request' || fact.kind === 'constraint' || fact.kind === 'decision' || fact.kind === 'open-loop'
+    ? 1_000
+    : fact.kind === 'failure' || fact.kind === 'task-state' || fact.kind === 'file-state' || fact.kind === 'background-job'
+      ? 800 : 500;
+  return kindWeight + latest;
 }
 
 function isPositive(item: EvidenceItem): boolean {

@@ -33,11 +33,19 @@ through `extensionConfig.sessionCompaction.model`, defaulting to `inherit`; this
 does not create a separate strategy or mode. When the package is present it attempts verified summarization;
 when absent, Pi uses its native summarizer.
 
-The extension handles `session_before_compact` and may return only a replacement
+The extension handles `session_before_compact` and may return a replacement
 `CompactionResult`. Pi remains authoritative for preparation, the
 `firstKeptEntryId`, recent-tail retention, manual and automatic triggers,
 overflow continuation, tree semantics, persistence, and context rebuilding.
 The extension must not append or rewrite compaction entries itself.
+
+When the extension declines a prepared compaction before acceptance, it may
+append one versioned, bounded diagnostic custom entry through Pi's public
+extension API. This entry records why control returned to Pi; it does not claim
+that native compaction completed. It is metadata only, has no renderer, does
+not participate in model context, and is excluded from `session_recall`.
+The extension also emits a concise warning through Pi's portable notification
+API. Neither diagnostic nor notification failure may prevent native fallback.
 
 For each prepared eviction span, the extension:
 
@@ -71,7 +79,9 @@ falls through to native Pi compaction. User cancellation remains cancellation.
 After Pi accepts a custom result, a later persistence failure cannot
 automatically rerun native summarization and must not be reported as though it
 did. A native fallback may make another model request after the extension's
-failed attempt.
+failed attempt. Persisted fallback diagnostics contain bounded reason, trigger,
+model-selection, and sanitized error metadata rather than raw prompts, model
+responses, credentials, or stacks.
 
 The same package exposes `session_recall`, a bounded read-only tool over
 `SessionManager.getBranch()`. It searches only the current active lineage,

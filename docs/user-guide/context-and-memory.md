@@ -51,10 +51,25 @@ The default session-compaction extension asks the configured summary model once
 for a bounded continuation checkpoint after deterministic extraction of the prepared
 eviction span. `inherit` is the default; tier values select an exact
 text-capable model from the allowed catalog, preferring the active
-provider/family. An unavailable tier falls back to inherit. It preserves user requests, explicit constraints and decisions,
-open loops, recorded command/test outcomes, patch outcomes, task snapshots, and
-RTK truncation pointers with source IDs. Pi still owns cut points, retained
-tails, overflow retry, session trees, and persistence.
+provider/family. An unavailable tier falls back to inherit. Evidence is
+priority-packed while preserving chronological order. For a split turn, user
+input plus assistant text and reasoning are mandatory. Tool interactions are
+reduced to attributable outcomes: file reads keep paths instead of file bodies,
+writes and patches keep affected paths and status instead of payloads, commands
+keep bounded output, and failure text remains high priority. It preserves
+explicit constraints and decisions, open loops, recorded command/test outcomes,
+task snapshots, and RTK truncation pointers with source IDs. If mandatory
+content cannot fit the bounded prompt, it falls through to native Pi before
+making an extension request. Pi still owns cut points, retained tails, overflow
+retry, session trees, and persistence. This improves recoverability but does not
+prove semantic completeness.
+
+If the extension cannot safely prepare a prompt, the configured model request
+fails or times out, or the response is rejected, it warns that Pi native
+compaction will take over. It also persists one bounded metadata-only fallback
+diagnostic in the session. That custom entry is not shown, sent to the model,
+or returned by `session_recall`; it records why control was delegated, not that
+native compaction succeeded. User cancellation is not a fallback.
 
 `session_recall` searches only the active `SessionManager.getBranch()` lineage.
 It returns bounded, untrusted historical evidence with stable session and entry

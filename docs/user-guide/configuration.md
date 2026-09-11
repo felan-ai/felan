@@ -99,7 +99,11 @@ setting is also available in `/settings` and as
 `--session-compaction-model <inherit|xhigh|high|medium|low>`, and applies to a
 newly constructed runtime. Generation or validation failures before Pi
 accepts a replacement fall through to native compaction; a failure after Pi
-accepts a replacement cannot automatically rerun native compaction.
+accepts a replacement cannot automatically rerun native compaction. Every
+recoverable fallback warns that Pi native compaction will take over and writes
+one bounded metadata-only diagnostic custom entry. The diagnostic is not shown,
+sent to the model, or returned by `session_recall`; it records delegation rather
+than native success. User cancellation is not reported as fallback.
 
 New installations use Pi's `fullscreen` TUI mode and editor padding `1`.
 Existing `tuiMode` and `editorPaddingX` values in `settings.json` remain

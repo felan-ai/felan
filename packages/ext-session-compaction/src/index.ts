@@ -13,6 +13,7 @@ export {
   type SessionCompactionModel,
 } from './config.js';
 export * from './internal/contracts.js';
+export { createFallbackDiagnostic, fallbackDiagnosticBytes, fallbackDiagnosticText } from './internal/fallback-diagnostic.js';
 
 const sessionCompactionExtension: FelanExtension = (pi) => {
   createSessionCompactionExtension()(pi);
