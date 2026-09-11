@@ -154,6 +154,16 @@ describe('local extension importer', () => {
     });
   });
 
+  it('creates the host-bound browser extension without invoking the generic importer', async () => {
+    const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => {
+      throw new Error('The generic importer must not load the browser extension');
+    });
+
+    await expect(importer('@felan-ai/ext-browser')).resolves.toMatchObject({
+      default: expect.any(Function),
+    });
+  });
+
   it('creates powerline with the Felan subscription host without invoking the generic importer', async () => {
     const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => {
       throw new Error('The generic importer must not load the powerline extension');

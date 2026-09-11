@@ -1,13 +1,23 @@
 # @felan-ai/ext-browser
 
-Portable Felan browser automation backed by the reviewed `agent-browser 0.31.1`
+Portable Felan browser automation backed by the reviewed `agent-browser 0.37.1`
 CLI. The package does not vendor the upstream Rust daemon or Chrome. It probes
 the exact reviewed CLI on Felan's `AgentRuntime` and otherwise remains safely
 unavailable.
 
 ## Tool
 
-The extension registers one `browser` tool with two operations:
+The extension registers the ordinary `browser` tool and, when its host supplies
+authorization, a separate `browser_authorize` control-plane tool.
+
+`browser_authorize` supports `authorize`, `status`, and `revoke`. Authorization
+is interactive, held only for the current session, and opens a fresh strict
+pinned tab in the existing Chrome session. The host supplies a transient
+validated loopback CDP endpoint; it never returns cookies, profile paths, CDP
+endpoints, or unrelated tab data. Direct `connect`, `--cdp`, and
+`--auto-connect` arguments are rejected by `browser`.
+
+The `browser` tool has two operations:
 
 - `skill` runs the installed CLI's `skills get <name>` command. Start with
   `core`, use `full: true` for the complete command reference, and request a
@@ -40,8 +50,13 @@ returns native image content. Text-only models or unreadable/invalid staged
 images receive a bounded text fallback instead. Model-selected screenshot
 paths remain text-only and are never opened automatically.
 
-The owned browser session is closed during session shutdown. A managed CLI
-install sets a one-hour daemon idle timeout; it does not install Chrome. Run
+The owned browser session is closed during session shutdown. Revocation and
+shutdown disconnect an attached session without closing the user's Chrome.
+CDP attachment remains browser-level authority; pinned-tab and origin checks
+are defense in depth, not a network sandbox. Felan makes one connection attempt
+per approval and retries setup only after an explicit user action.
+
+A managed CLI install sets a one-hour daemon idle timeout; it does not install Chrome. Run
 the explicit `agent-browser install` action when a local Chrome for Testing
 binary is needed.
 
@@ -79,8 +94,8 @@ The extension owns literal-argv validation, session namespacing, bounded output,
 version-matched skill retrieval, screenshot validation, and safe text/image
 fallbacks. Hosts own credentials, attachment authorization, dependency
 installation, and browser policy. Page content, CLI output, and bundled skill
-text are untrusted. Existing browser/profile/auth-state attachment requires
-explicit authorization unless the current request already grants that action.
+text are untrusted. Existing-browser attachment requires `browser_authorize`;
+noninteractive hosts fail closed.
 
 ## Related documentation
 
@@ -90,6 +105,6 @@ explicit authorization unless the current request already grants that action.
 
 ## Attribution
 
-The integration is reviewed against `agent-browser` 0.31.1. The package does
+The integration is reviewed against `agent-browser` 0.37.1. The package does
 not vendor its daemon or Chrome. See [NOTICE](NOTICE) and [LICENSE](LICENSE) for
 the immutable upstream release, digests, and TypeBox attribution.

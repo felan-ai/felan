@@ -35,8 +35,8 @@ import {
   resolveReviewedAgentBrowserAsset,
 } from '../src/installer.js';
 
-const REVIEWED_ARCHIVE_SHA512 = 'RjgfT0EsHe1oZQbwzUqJTPb7w3sU8DGbbAjMxLNI5dW1y0cc81TbVsqgjqQJmsy3GEbEcKe/ryARwmWGqJAXXQ==';
-const REVIEWED_DARWIN_ARM64_SHA256 = 'fd7acd17b3071ff7f75a03c1ecd30501959d9c2d063bdaa05adb6f77abf2a7bf';
+const REVIEWED_ARCHIVE_SHA512 = 'NDojTSXrIq7zS090T0VwI1uzBryZWvewgxXvS0swj8/5GGnziBZLmyhEkfETO8n4n3DsJpZbZkq9F/MV2rIQKw==';
+const REVIEWED_DARWIN_ARM64_SHA256 = 'e52f06476ea0f1d14357c1924ce1d7f1bf08279f2642d74ccfa7ee935c46aea1';
 const SEEDED_INSTALLATION_ID = '00000000-0000-4000-8000-000000000000';
 
 afterEach(() => {

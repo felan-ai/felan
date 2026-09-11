@@ -90,11 +90,11 @@ commit 7e72e509fe45a5a87c4c2e176cb711de994a8c1d.
 Copyright (c) 2026 Milko Slavov. Package-level attribution and license terms
 are included in packages/ext-background-bash/NOTICE and LICENSE.
 
-@felan-ai/ext-browser integrates with agent-browser 0.31.1 from
+@felan-ai/ext-browser integrates with agent-browser 0.37.1 from
 https://github.com/vercel-labs/agent-browser at reviewed tag commit
-ed2e10598c9064aecfaeb7cf21b540684db4be2c, distributed under the Apache
+72007a6788d863611b23bed0b59d0d659c638d8e, distributed under the Apache
 License 2.0. The reviewed npm archive has SHA-512 integrity
-RjgfT0EsHe1oZQbwzUqJTPb7w3sU8DGbbAjMxLNI5dW1y0cc81TbVsqgjqQJmsy3GEbEcKe/ryARwmWGqJAXXQ==.
+NDojTSXrIq7zS090T0VwI1uzBryZWvewgxXvS0swj8/5GGnziBZLmyhEkfETO8n4n3DsJpZbZkq9F/MV2rIQKw==.
 The managed CLI and bundled skills are downloaded only after explicit
 confirmation; Chrome installation remains a separate agent-browser action.
 Package-level attribution and license terms are included in

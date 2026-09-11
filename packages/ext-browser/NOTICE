@@ -1,12 +1,12 @@
 @felan-ai/ext-browser
 Copyright (c) 2026 Felan contributors
 
-This package integrates with, but does not include, agent-browser 0.31.1 from
+This package integrates with, but does not include, agent-browser 0.37.1 from
 https://github.com/vercel-labs/agent-browser, distributed under the Apache License 2.0.
-The reviewed upstream release is v0.31.1 at tag commit
-ed2e10598c9064aecfaeb7cf21b540684db4be2c and its npm archive is identified by
+The reviewed upstream release is v0.37.1 at tag commit
+72007a6788d863611b23bed0b59d0d659c638d8e and its npm archive is identified by
 SHA-512 integrity
-RjgfT0EsHe1oZQbwzUqJTPb7w3sU8DGbbAjMxLNI5dW1y0cc81TbVsqgjqQJmsy3GEbEcKe/ryARwmWGqJAXXQ==.
+NDojTSXrIq7zS090T0VwI1uzBryZWvewgxXvS0swj8/5GGnziBZLmyhEkfETO8n4n3DsJpZbZkq9F/MV2rIQKw==.
 
 The optional managed installer downloads agent-browser only after explicit
 host-owned confirmation. It verifies the immutable npm archive and selected

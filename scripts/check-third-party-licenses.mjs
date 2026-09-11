@@ -143,9 +143,9 @@ if (!backgroundBashNotice.includes('TypeBox 1.1.38')) {
 }
 const browserNotice = readFileSync(resolve(root, 'packages/ext-browser/NOTICE'), 'utf8');
 for (const requiredNotice of [
-  'agent-browser 0.31.1',
+  'agent-browser 0.37.1',
   'Apache License 2.0',
-  'RjgfT0EsHe1oZQbwzUqJTPb7w3sU8DGbbAjMxLNI5dW1y0cc81TbVsqgjqQJmsy3GEbEcKe/ryARwmWGqJAXXQ==',
+  'NDojTSXrIq7zS090T0VwI1uzBryZWvewgxXvS0swj8/5GGnziBZLmyhEkfETO8n4n3DsJpZbZkq9F/MV2rIQKw==',
   'TypeBox 1.1.38',
 ]) {
   if (!browserNotice.includes(requiredNotice)) {

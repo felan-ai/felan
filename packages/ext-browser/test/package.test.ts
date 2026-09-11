@@ -12,7 +12,7 @@ describe('@felan-ai/ext-browser package boundary', () => {
 
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-browser',
-      version: '0.3.0',
+      version: '0.4.1',
       license: 'MIT',
       repository: {
         type: 'git',
@@ -23,7 +23,7 @@ describe('@felan-ai/ext-browser package boundary', () => {
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
     });
     expect(license).toContain('MIT License');
-    expect(notice).toContain('agent-browser 0.31.1');
+    expect(notice).toContain('agent-browser 0.37.1');
     expect(notice).toContain('TypeBox 1.1.38');
   });
 
@@ -32,6 +32,8 @@ describe('@felan-ai/ext-browser package boundary', () => {
     const content = (await Promise.all(sources.map((path) => readFile(path, 'utf8')))).join('\n');
 
     expect(content).not.toMatch(/node:(?:child_process|fs)/u);
+    expect(content).not.toMatch(/\bprocess\s*(?:\.\s*env|\[\s*['"]env['"]\s*\])/u);
+    expect(content).not.toMatch(/(?:from\s*|import\s*\()['"](?:node:)?process['"]/u);
     expect(content).toContain('runtime.exec');
     expect(content).toContain('runtime.readFile');
     expect(content).toContain("storage('session')");

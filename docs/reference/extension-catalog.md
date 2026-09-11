@@ -23,7 +23,7 @@ Pi extensions or arbitrary npm packages.
 | [`@felan-ai/ext-web-access`](../../packages/ext-web-access/README.md) | Bounded URL discovery and matching text/PDF passages | `web_search`, `fetch_content` | Provider credentials/endpoints, PDF limits, domain policy, and SSRF ranges |
 | [`@felan-ai/ext-mcp`](../../packages/ext-mcp/README.md) | OAuth-only remote MCP gateway | `/mcp` | Local host supplies OAuth credentials/callbacks |
 | [`@felan-ai/ext-felan-api`](../../packages/ext-felan-api/README.md) | Single authenticated Felan REST API gateway | `felan_api` | `FELAN_API_KEY` or explicit factory `apiKey`; local built-in is disabled when no key is present |
-| [`@felan-ai/ext-browser`](../../packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration | Model-facing `browser` tool | Reviewed CLI; Chrome is separate |
+| [`@felan-ai/ext-browser`](../../packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration with explicit existing-browser authorization | Model-facing `browser` and local `browser_authorize` tools | Reviewed CLI; Chrome and interactive authorization are host-owned |
 | [`@felan-ai/ext-markitdown`](../../packages/ext-markitdown/README.md) | Bounded document conversion through ordinary `read` | `/markitdown` | Managed `markitdown` executable |
 | [`@felan-ai/ext-background-bash`](../../packages/ext-background-bash/README.md) | Provider-neutral foreground/background Bash, PTY input, process registry and logs | `/processes`, `Ctrl+Shift+J` | POSIX process utilities; PTY only when requested |
 | [`@felan-ai/ext-codex`](../../packages/ext-codex/README.md) | GPT-specific `apply_patch` replacement and OpenAI request controls | Model-selected editing replacement | GPT model on exact `openai`/`openai-codex` provider |

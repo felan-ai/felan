@@ -2,10 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AgentRuntime, ExecResult } from '@felan-ai/agent-core';
 import { isWindowsRuntimePath, joinRuntimePath } from './runtime-path.js';
 
-export const MANAGED_AGENT_BROWSER_VERSION = '0.31.1';
+export const MANAGED_AGENT_BROWSER_VERSION = '0.37.1';
 
 const ARCHIVE_URL = `https://registry.npmjs.org/agent-browser/-/agent-browser-${MANAGED_AGENT_BROWSER_VERSION}.tgz`;
-const ARCHIVE_SHA512_BASE64 = 'RjgfT0EsHe1oZQbwzUqJTPb7w3sU8DGbbAjMxLNI5dW1y0cc81TbVsqgjqQJmsy3GEbEcKe/ryARwmWGqJAXXQ==';
+const ARCHIVE_SHA512_BASE64 = 'NDojTSXrIq7zS090T0VwI1uzBryZWvewgxXvS0swj8/5GGnziBZLmyhEkfETO8n4n3DsJpZbZkq9F/MV2rIQKw==';
 const MAX_ARCHIVE_BYTES = 96 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 const EXTRACT_TIMEOUT_MS = 120_000;
@@ -19,13 +19,13 @@ const unavailableDetectionCache = new WeakMap<AgentRuntime, {
 }>();
 
 const REVIEWED_ASSETS = {
-  'agent-browser-darwin-arm64': 'fd7acd17b3071ff7f75a03c1ecd30501959d9c2d063bdaa05adb6f77abf2a7bf',
-  'agent-browser-darwin-x64': '05aa3e2ed3550e06fb3eb7423a1cef0d9d6031c4d6a8835b9dbe033baf83ef6d',
-  'agent-browser-linux-arm64': '5f80bff26b25e9a9f712be64dda1f8ea2b22213a1a07c0f97ea8f9f226c2894b',
-  'agent-browser-linux-musl-arm64': '1ca397f714820ca954c6b575e816c08acc937ffacea2b901f5cf6524fc4a6853',
-  'agent-browser-linux-musl-x64': 'b7492a3e00e52790bffbd2900c399265e6a80598276f89fb8b2fbfa314cc8d22',
-  'agent-browser-linux-x64': '72c13bcfd2fd6b188325bdd23c646d06ca69a1a964a9cdaab37e4ff8f47aa5c6',
-  'agent-browser-win32-x64.exe': '0a355020b0ff2f9199fbb7385a0b8b7e16b548bb0d6df64498b456b76898adfa',
+  'agent-browser-darwin-arm64': 'e52f06476ea0f1d14357c1924ce1d7f1bf08279f2642d74ccfa7ee935c46aea1',
+  'agent-browser-darwin-x64': 'c79d1e0525c0bf79df9eec355269ae40bcda9c4a3fce3f242c24faecaaaeef84',
+  'agent-browser-linux-arm64': 'd54d3e1262dc1aa0906e0677adc6d0cbb40d1274631f4cf77136bf23a0bc20e9',
+  'agent-browser-linux-musl-arm64': 'ab7afc4e74d1218d32bd12519474dbd6ed9bf32b3a905d7648e9d9400f50083d',
+  'agent-browser-linux-musl-x64': '5318f2ed03a9fae04a9e1f8d274d1a0fd6bf7fd427f32a44224be11f2dc3a37d',
+  'agent-browser-linux-x64': 'f8e5f9294bd0da70dda61854f12004fd61c668cd682bfb600cdf6d0df73dea69',
+  'agent-browser-win32-x64.exe': '29a003139ff4eb96fa4d1ed341830b26eb3e082843bf776b4e88ad3443bb8fde',
 } as const;
 
 export interface AgentBrowserInvocation {

@@ -91,7 +91,7 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
   },
   {
     id: 'agent-browser',
-    revision: 1,
+    revision: 2,
     label: 'agent-browser',
     extension: 'browser',
     purpose: 'browser automation, authenticated web-app workflows, and screenshots',

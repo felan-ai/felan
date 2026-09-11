@@ -71,7 +71,7 @@ describe('local runtime dependency onboarding', () => {
 
   it('installs the browser CLI only after confirmation', async () => {
     const fixture = await createFixture();
-    const install = vi.fn(async () => ({ available: true as const, version: '0.31.1' }));
+    const install = vi.fn(async () => ({ available: true as const, version: '0.37.1' }));
     const browser = dependency({
       id: 'agent-browser',
       extension: 'browser',
@@ -87,7 +87,7 @@ describe('local runtime dependency onboarding', () => {
 
     expect(harness.confirm).toHaveBeenCalledWith('Install agent-browser', 'Install agent-browser?');
     expect(install).toHaveBeenCalledOnce();
-    expect(harness.notifications).toContainEqual(['agent-browser installed (0.31.1). Restart Felan Code to load the extension.', 'info']);
+    expect(harness.notifications).toContainEqual(['agent-browser installed (0.37.1). Restart Felan Code to load the extension.', 'info']);
   });
 
   it('persists browser extension disablement', async () => {

@@ -37,7 +37,7 @@ portable detection, optional installation, and safe unavailable behavior;
 | --- | --- | --- | --- |
 | MarkItDown document conversion | `markitdown` 0.1.7 | Read interception is bypassed; the extension can be disabled globally | Managed Python virtual environment |
 | RTK command rewriting | compatible `rtk` | Rewriting is bypassed; binary-independent output compaction remains active | Digest-verified official installer pinned to RTK 0.45.0 on Linux/macOS |
-| Browser automation and screenshots | `agent-browser` 0.31.1 | The browser tool is unavailable; the extension can be disabled | Integrity-verified native CLI package in agent storage; Chrome is installed separately by an explicit agent-browser action |
+| Browser automation and screenshots | `agent-browser` 0.37.1 | The browser tools are unavailable; the extension can be disabled | Integrity-verified native CLI package in agent storage; Chrome is installed separately by an explicit agent-browser action; existing-browser authorization is local-TUI-only |
 | Codebase Memory structural exploration | exact `codebase-memory-mcp` 0.10.8 | No Codebase Memory tools, capability, prompt, or grep augmentation; cloud logs a nonfatal hard error | Commit-pinned, digest-verified official installer into agent storage with upstream configuration disabled |
 | Background processes | POSIX shell plus `sh`, `nohup`, `ps`, `tr`, `kill`, `date`, `cat`, `mv`, `sleep`, and `tail`; PTY support is optional and requested per command | Detached Bash remains available; PTY requests fail clearly when unsupported | No managed installer; use a compatible runtime |
 

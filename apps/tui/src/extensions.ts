@@ -28,6 +28,8 @@ import {
 } from '@felan-ai/ext-subagents';
 import { createPromptHistoryExtension, PROMPT_HISTORY_CONFIG } from '@felan-ai/ext-prompt-history';
 import { createLocalMcpExtension } from './mcp/index.js';
+import { createLocalBrowserAuthorizationHost } from './browser/authorization-host.js';
+import { HERDR_BLOCKED_EVENT } from './herdr.js';
 import { createLocalSavingsUsageHost, createLocalSubscriptionUsageHost } from './powerline.js';
 import type { SavingsService } from './savings.js';
 import { createLocalInsightsHost } from './insights.js';
@@ -177,6 +179,17 @@ export function createLocalExtensionImporter(
     }
     if (packageName === mcpExtensionPackage) {
       return { default: createLocalMcpExtension() };
+    }
+    if (packageName === builtinExtensionPackages.browser) {
+      const { createBrowserExtension } = await import('@felan-ai/ext-browser');
+      return {
+        default: (pi: FelanExtensionAPI) => createBrowserExtension({
+          authorizationHost: createLocalBrowserAuthorizationHost({
+            runtime: pi.runtime,
+            onAttention: (active, label) => pi.events.emit(HERDR_BLOCKED_EVENT, { active, label }),
+          }),
+        })(pi),
+      };
     }
     if (packageName === subagentsExtensionPackage) {
       const subagents = createSubagentsExtension(host);

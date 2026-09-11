@@ -2,55 +2,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AgentRuntime, ExecResult } from '@felan-ai/agent-core';
 import { joinRuntimePath } from './runtime-path.js';
 import type { AgentBrowserInvocation } from './installer.js';
+import { inspectScreenshotArguments, validateAttachedBrowserCommand, validateBrowserCommand } from './command-policy.js';
+
+export { findBrowserCommand } from './command-policy.js';
 
 export const MAX_BROWSER_OUTPUT_CHARACTERS = 44_000;
 export const MAX_BROWSER_SKILL_OUTPUT_CHARACTERS = 100_000;
 export const DEFAULT_BROWSER_TIMEOUT_MS = 60_000;
 export const MAX_BROWSER_TIMEOUT_MS = 300_000;
 export const BROWSER_IDLE_TIMEOUT = '1h';
-
-const BLOCKED_MODEL_COMMANDS = new Set([
-  'install',
-  'upgrade',
-  'doctor',
-  'mcp',
-  'chat',
-  'dashboard',
-  'stream',
-  'plugin',
-  'plugins',
-  'batch',
-  'confirm',
-  'deny',
-]);
-
-const RESERVED_POLICY_OPTIONS = new Set([
-  '--session',
-  '--namespace',
-  '--idle-timeout',
-  '--json',
-  '--content-boundaries',
-  '--max-output',
-  '--config',
-  '--allowed-domains',
-  '--action-policy',
-  '--confirm-actions',
-  '--confirm-interactive',
-  '--allow-file-access',
-]);
-
-const CLOSE_COMMANDS = new Set(['close', 'quit', 'exit']);
-
-const OPTIONS_WITH_VALUES = new Set([
-  '--session', '--namespace', '--executable-path', '--extension', '--init-script',
-  '--enable', '--args', '--user-agent', '--proxy', '--proxy-bypass', '--hide-scrollbars',
-  '--provider', '-p', '--device', '--screenshot-dir', '--screenshot-quality',
-  '--screenshot-format', '--cdp', '--color-scheme', '--download-path', '--max-output',
-  '--allowed-domains', '--action-policy', '--confirm-actions', '--engine', '--model',
-  '--config', '--idle-timeout', '--headers', '--profile', '--restore', '--restore-save',
-  '--restore-check-url', '--restore-check-text', '--restore-check-fn', '--session-name',
-  '--state', '--timeout',
-]);
 
 export interface BrowserSessionScope {
   readonly session: string;
@@ -89,41 +49,35 @@ export function createBrowserSessionScope(
   };
 }
 
+export function createBrowserAttachmentScope(
+  runtime: AgentRuntime,
+  sessionId: string,
+): BrowserSessionScope {
+  const base = createBrowserSessionScope(runtime, sessionId);
+  return {
+    namespace: base.namespace,
+    session: `f-${randomUUID().replaceAll('-', '').slice(0, 16)}`,
+  };
+}
+
 export function prepareBrowserCommand(
   runtime: AgentRuntime,
   args: readonly string[],
 ): PreparedBrowserCommand {
-  const command = findBrowserCommand(args);
-  if (!command) {
-    throw new Error('browser run args must start with an agent-browser command; place global options after the command.');
-  }
-  if (BLOCKED_MODEL_COMMANDS.has(command)) {
-    throw new Error(`The browser tool does not run ${command}; use Felan's explicit dependency onboarding or host controls.`);
-  }
-  if (command === 'skills') {
-    throw new Error('Use browser operation "skill" to retrieve version-matched agent-browser instructions.');
-  }
-  if (CLOSE_COMMANDS.has(command) && args.some((arg) => arg.split('=', 1)[0] === '--all')) {
-    throw new Error('The browser tool closes only its own Felan session; omit --all.');
-  }
-  for (const arg of args.slice(1)) {
-    if (arg === '--') {
-      throw new Error('The browser tool does not accept the -- option terminator because Felan enforces trailing session and output policy.');
-    }
-    const option = arg.split('=', 1)[0];
-    if (option && RESERVED_POLICY_OPTIONS.has(option)) {
-      throw new Error(`The browser tool owns ${option}; omit it from args.`);
-    }
-  }
+  return preparePublicBrowserCommand(runtime, args, true);
+}
+
+function preparePublicBrowserCommand(runtime: AgentRuntime, args: readonly string[], stageScreenshot: boolean): PreparedBrowserCommand {
+  const command = validateBrowserCommand(args);
   const normalized = [...args];
   if (command !== 'screenshot') return { args: normalized };
-
-  if (hasPositionalArgument(normalized.slice(1))) return { args: normalized };
+  const screenshot = inspectScreenshotArguments(args);
+  if (!stageScreenshot || screenshot.path !== undefined) return { args: normalized };
 
   const screenshotPath = joinRuntimePath(
     runtime.storage('session').root,
     'browser/screenshots',
-    `screenshot-${randomUUID()}.png`,
+    `screenshot-${randomUUID()}.${screenshot.format}`,
   );
   normalized.push(screenshotPath);
   return { args: normalized, generatedScreenshotPath: screenshotPath };
@@ -139,14 +93,33 @@ export async function runBrowserCli(
     readonly timeoutMs?: number;
     readonly json?: boolean;
     readonly prepareScreenshot?: boolean;
+    readonly attached?: boolean;
+    readonly attachmentEndpoint?: string;
+    readonly internalAttachment?: boolean;
   } = {},
 ): Promise<BrowserCliResult> {
   const sessionStorage = runtime.storage('session');
-  const prepared = options.prepareScreenshot === false
+  if (!options.internalAttachment && options.attached) validateAttachedBrowserCommand(args);
+  const prepared = options.internalAttachment
     ? { args: [...args] }
-    : prepareBrowserCommand(runtime, args);
+    : preparePublicBrowserCommand(runtime, args, options.prepareScreenshot !== false);
+  const attached = options.attached === true || options.internalAttachment === true;
+  const endpoint = options.attachmentEndpoint;
+  const localOnly = ['close', 'quit', 'exit'].includes(args[0] ?? '') || (args[0] === 'session' && args[1] === 'info');
+  if (attached && !localOnly && !args.includes('--cdp') && !endpoint) throw new Error('Attached commands require their leased endpoint.');
+  if (endpoint !== undefined) {
+    let parsed: URL;
+    try { parsed = new URL(endpoint); } catch { throw new Error('Invalid leased endpoint.'); }
+    if (!attached || parsed.protocol !== 'ws:' || parsed.hostname !== '127.0.0.1' || Number(parsed.port) < 1
+      || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.href !== endpoint
+      || !/^\/(?:devtools\/browser(?:\/[A-Za-z0-9._-]+)?|felan-browser\/[A-Za-z0-9._-]+)$/u.test(parsed.pathname)
+      || args.includes('--cdp')) {
+      throw new Error('Invalid leased endpoint or command.');
+    }
+  }
+  options.signal?.throwIfAborted();
   if (prepared.generatedScreenshotPath) await sessionStorage.mkdir('browser/screenshots', { recursive: true });
-  const configPath = await writeIsolatedBrowserConfig(runtime);
+  const configPath = await writeBrowserConfig(runtime, attached ? 'attached' : 'isolated', scope);
 
   const timeoutMs = normalizeTimeout(options.timeoutMs);
   const trustedArgs = [
@@ -162,22 +135,27 @@ export async function runBrowserCli(
     String(MAX_BROWSER_OUTPUT_CHARACTERS),
     '--config',
     configPath,
+    ...(endpoint === undefined || localOnly ? [] : ['--cdp', endpoint]),
+    ...(!attached || (endpoint !== undefined && !localOnly) ? ['--no-webmcp'] : []),
   ];
   let result: ExecResult;
   try {
+    options.signal?.throwIfAborted();
     result = await runtime.exec(invocation.command, trustedArgs, {
       cwd: runtime.cwd,
       timeout: timeoutMs,
+      maxOutputBytes: MAX_BROWSER_OUTPUT_CHARACTERS * 4,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   } catch (error) {
+    const message = errorMessage(error);
     return {
       stdout: '',
-      stderr: boundOutput(errorMessage(error)),
+      stderr: boundOutput(message),
       code: 1,
-      killed: false,
+      killed: options.signal?.aborted ?? false,
       ...(prepared.generatedScreenshotPath === undefined ? {} : { generatedScreenshotPath: prepared.generatedScreenshotPath }),
-      outputTruncated: false,
+      outputTruncated: message.length > MAX_BROWSER_OUTPUT_CHARACTERS,
     };
   }
 
@@ -185,9 +163,9 @@ export async function runBrowserCli(
     stdout: boundOutput(result.stdout),
     stderr: boundOutput(result.stderr),
     code: result.code,
-    killed: result.killed,
+    killed: result.killed || options.signal?.aborted === true,
     ...(prepared.generatedScreenshotPath === undefined ? {} : { generatedScreenshotPath: prepared.generatedScreenshotPath }),
-    outputTruncated: result.stdout.length > MAX_BROWSER_OUTPUT_CHARACTERS
+    outputTruncated: result.truncated === true || result.stdout.length > MAX_BROWSER_OUTPUT_CHARACTERS
       || result.stderr.length > MAX_BROWSER_OUTPUT_CHARACTERS,
   };
 }
@@ -200,10 +178,13 @@ export async function runBrowserSkill(
   signal?: AbortSignal,
   timeoutMs?: number,
 ): Promise<BrowserCliResult> {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/u.test(skill)) throw new Error('Invalid browser skill name.');
+  signal?.throwIfAborted();
   const args = ['skills', 'get', skill, ...(full ? ['--full'] : [])];
   let result: ExecResult;
   try {
-    const configPath = await writeIsolatedBrowserConfig(runtime);
+    const configPath = await writeBrowserConfig(runtime, 'skills');
+    signal?.throwIfAborted();
     result = await runtime.exec(invocation.command, [
       ...args,
       '--max-output',
@@ -213,51 +194,51 @@ export async function runBrowserSkill(
     ], {
       cwd: runtime.cwd,
       timeout: normalizeTimeout(timeoutMs),
+      maxOutputBytes: MAX_BROWSER_SKILL_OUTPUT_CHARACTERS * 4,
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (error) {
+    const message = errorMessage(error);
     return {
       stdout: '',
-      stderr: errorMessage(error),
+      stderr: boundOutput(message, MAX_BROWSER_SKILL_OUTPUT_CHARACTERS),
       code: 1,
-      killed: false,
-      outputTruncated: false,
+      killed: signal?.aborted ?? false,
+      outputTruncated: message.length > MAX_BROWSER_SKILL_OUTPUT_CHARACTERS,
     };
   }
   return {
     stdout: boundOutput(result.stdout, MAX_BROWSER_SKILL_OUTPUT_CHARACTERS),
     stderr: boundOutput(result.stderr, MAX_BROWSER_SKILL_OUTPUT_CHARACTERS),
     code: result.code,
-    killed: result.killed,
-    outputTruncated: result.stdout.length > MAX_BROWSER_SKILL_OUTPUT_CHARACTERS
+    killed: result.killed || signal?.aborted === true,
+    outputTruncated: result.truncated === true || result.stdout.length > MAX_BROWSER_SKILL_OUTPUT_CHARACTERS
       || result.stderr.length > MAX_BROWSER_SKILL_OUTPUT_CHARACTERS,
   };
 }
 
-export function findBrowserCommand(args: readonly string[]): string | undefined {
-  const first = args[0]?.trim();
-  return !first || first.startsWith('-') ? undefined : first.toLowerCase();
-}
-
-function hasPositionalArgument(args: readonly string[]): boolean {
-  let consumeValue = false;
-  for (const arg of args) {
-    if (consumeValue) {
-      consumeValue = false;
-      continue;
-    }
-    if (arg === '--') return true;
-    if (!arg.startsWith('-')) return true;
-    if (!arg.includes('=') && OPTIONS_WITH_VALUES.has(arg)) consumeValue = true;
-  }
-  return false;
-}
-
-async function writeIsolatedBrowserConfig(runtime: AgentRuntime): Promise<string> {
+async function writeBrowserConfig(runtime: AgentRuntime, mode: 'isolated' | 'attached' | 'skills', scope?: BrowserSessionScope): Promise<string> {
   const storage = runtime.storage('session');
-  const relativePath = 'browser/agent-browser.json';
-  await storage.mkdir('browser', { recursive: true });
-  await storage.writeFile(relativePath, new TextEncoder().encode('{"plugins":[]}\n'));
+  const scopeHash = scope && createHash('sha256').update(JSON.stringify([scope.namespace, scope.session])).digest('hex').slice(0, 32);
+  const directory = `browser/controls/${mode}${scopeHash ? `/${scopeHash}` : ''}`;
+  const relativePath = `${directory}/agent-browser.json`;
+  const attached = mode === 'attached';
+  const config = {
+    plugins: [], extensions: [], initScripts: [], enable: [],
+    autoConnect: false, profile: null, state: null, restore: null, sessionName: null,
+    restoreSave: 'never', restoreCheckUrl: null, restoreCheckText: null, restoreCheckFn: null,
+    cdp: null, executablePath: null, provider: null, engine: null, args: null,
+    proxy: null, proxyBypass: null, userAgent: null, device: null, headers: null,
+    caCert: null, clearCaCert: false, ignoreHttpsErrors: false, allowFileAccess: false,
+    headed: false, webgpu: false, debug: false, colorScheme: null, downloadPath: null,
+    actionPolicy: null, confirmActions: null, confirmInteractive: false, allowedDomains: null,
+    pinTab: attached, noAutoDialog: attached,
+    // Cleanup must not request a local launch through noWebmcp without --cdp.
+    noWebmcp: !attached,
+    screenshotDir: joinRuntimePath(storage.root, 'browser/screenshots'), screenshotFormat: 'png',
+  };
+  await storage.mkdir(directory, { recursive: true });
+  await storage.writeFile(relativePath, new TextEncoder().encode(`${JSON.stringify(config)}\n`));
   return joinRuntimePath(storage.root, relativePath);
 }
 

@@ -124,7 +124,8 @@ bounded untrusted content.
 ## Browser automation
 
 The Browser extension wraps the exact reviewed `agent-browser` CLI. It exposes
-one model tool with two operations:
+the `browser` tool with two operations and a separate local-TUI
+`browser_authorize` tool for high-trust existing-browser access:
 
 - `skill` retrieves version-matched workflow instructions from the installed
   CLI; and
@@ -136,9 +137,20 @@ limits, policy options, and a fresh configuration that excludes ambient
 `agent-browser` plugins and settings.
 
 Before its first action, the agent retrieves the `core` skill or an appropriate
-specialized skill. Attaching to an existing browser, profile, or saved
-authentication state requires your confirmation unless the current request
-already authorizes that exact attachment.
+specialized skill. Attaching to an existing browser requires
+`browser_authorize`. The local TUI asks for consent, discovers Chrome's bounded
+local `DevToolsActivePort` file, and makes one direct-CDP connection attempt.
+If the file is unavailable, it opens `chrome://inspect/#remote-debugging` in
+Chrome and rediscovers only after you confirm setup is complete. It then binds
+a fresh strict pinned tab. The grant is session-scoped and
+can be inspected or revoked through `browser_authorize`. Direct `connect`,
+`--cdp`, and `--auto-connect` arguments are rejected by `browser`; failed
+authorization never silently falls back to an isolated logged-out browser.
+
+CDP attachment is browser-level authority. Pinned-tab and origin checks reduce
+accidental cross-tab or cross-origin actions but are not a network sandbox.
+Print, ACP/RPC, cloud, and subagent contexts fail closed because they cannot
+present the local consent flow.
 
 Bare screenshots can be returned as native model images after signature, size,
 containment, and model-capability checks. Model-selected arbitrary screenshot
