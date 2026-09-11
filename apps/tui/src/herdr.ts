@@ -43,6 +43,7 @@ export interface CreateHerdrExtensionOptions {
   readonly platform?: NodeJS.Platform;
   readonly sendRequest?: (request: HerdrRequest) => Promise<void>;
   readonly activity?: HerdrActivity;
+  readonly isInteractive?: boolean;
 }
 
 export interface HerdrActivity {
@@ -56,7 +57,12 @@ export function createHerdrExtension(
   const environment = options.environment ?? process.env;
   const paneId = environment.HERDR_PANE_ID;
   const socketPath = environment.HERDR_SOCKET_PATH;
-  const enabled = environment.HERDR_ENV === '1' && Boolean(paneId) && Boolean(socketPath);
+  const isInteractive = options.isInteractive
+    ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
+  const enabled = isInteractive
+    && environment.HERDR_ENV === '1'
+    && Boolean(paneId)
+    && Boolean(socketPath);
   const endpoint = enabled
     ? herdrSocketEndpoint(socketPath!, options.platform ?? process.platform)
     : undefined;

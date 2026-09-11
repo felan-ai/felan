@@ -25,6 +25,7 @@ describe('Herdr integration', () => {
   it('is hidden and inactive without the complete Herdr environment', () => {
     const extension = createHerdrExtension({
       environment: { HERDR_ENV: '1', HERDR_PANE_ID: 'w1:p1' },
+      isInteractive: true,
     });
     const handlers = createHarness(extension);
 
@@ -32,10 +33,36 @@ describe('Herdr integration', () => {
     expect(handlers).toEqual({ handlers: new Map(), eventHandlers: new Map() });
   });
 
+  it('does not let a non-interactive descendant claim the Herdr pane', () => {
+    const extension = createHerdrExtension({
+      environment: herdrEnvironment(),
+      isInteractive: false,
+    });
+
+    expect(createHarness(extension)).toEqual({ handlers: new Map(), eventHandlers: new Map() });
+  });
+
+  it.each([
+    [false, false, false],
+    [false, true, false],
+    [true, false, false],
+    [true, true, true],
+  ])('requires stdin=%s and stdout=%s TTYs by default', (stdinIsTTY, stdoutIsTTY, enabled) => {
+    withTerminalState(stdinIsTTY, stdoutIsTTY, () => {
+      const extension = createHerdrExtension({
+        environment: herdrEnvironment(),
+        sendRequest: async () => {},
+      });
+
+      expect(createHarness(extension).handlers.has('session_start')).toBe(enabled);
+    });
+  });
+
   it('reports session identity before initial state and ignores non-TUI sessions', async () => {
     const requests: RequestRecord[] = [];
     const extension = createHerdrExtension({
       environment: herdrEnvironment(),
+      isInteractive: true,
       sendRequest: async (request) => { requests.push(request); },
     });
     const harness = createHarness(extension);
@@ -64,6 +91,7 @@ describe('Herdr integration', () => {
     const requests: RequestRecord[] = [];
     const extension = createHerdrExtension({
       environment: herdrEnvironment(),
+      isInteractive: true,
       sendRequest: async (request) => { requests.push(request); },
     });
     const harness = createHarness(extension);
@@ -90,6 +118,7 @@ describe('Herdr integration', () => {
     const requests: RequestRecord[] = [];
     const extension = createHerdrExtension({
       environment: herdrEnvironment(),
+      isInteractive: true,
       sendRequest: async (request) => { requests.push(request); },
     });
     const harness = createHarness(extension);
@@ -113,6 +142,7 @@ describe('Herdr integration', () => {
     const requests: RequestRecord[] = [];
     const extension = createHerdrExtension({
       environment: herdrEnvironment(),
+      isInteractive: true,
       sendRequest: async (request) => { requests.push(request); },
     });
     const harness = createHarness(extension);
@@ -150,6 +180,7 @@ describe('Herdr integration', () => {
     const listeners = new Set<() => void>();
     const extension = createHerdrExtension({
       environment: herdrEnvironment(),
+      isInteractive: true,
       activity: {
         hasPendingWork: () => pending,
         subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
@@ -264,4 +295,26 @@ async function listen(server: Server, path: string): Promise<void> {
 
 async function close(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
+function withTerminalState(stdinIsTTY: boolean, stdoutIsTTY: boolean, run: () => void): void {
+  const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+  const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+  try {
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: stdinIsTTY });
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: stdoutIsTTY });
+    run();
+  } finally {
+    restoreProperty(process.stdin, 'isTTY', stdinDescriptor);
+    restoreProperty(process.stdout, 'isTTY', stdoutDescriptor);
+  }
+}
+
+function restoreProperty(
+  target: NodeJS.ReadStream | NodeJS.WriteStream,
+  property: 'isTTY',
+  descriptor: PropertyDescriptor | undefined,
+): void {
+  if (descriptor) Object.defineProperty(target, property, descriptor);
+  else Reflect.deleteProperty(target, property);
 }
