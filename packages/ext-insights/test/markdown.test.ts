@@ -32,7 +32,7 @@ function makeAnalytics(overrides: Partial<Analytics> = {}): Analytics {
       generatedAt: "2025-03-16T00:00:00.000Z",
       outputFormats: ["html", "markdown"],
       htmlPath: "/reports/felan-insights.html",
-      markdownPath: "/reports/pi-insights.md",
+      markdownPath: "/reports/felan-insights.md",
     },
     temporal: {
       generatedAt: "2025-03-16T00:00:00.000Z",
@@ -74,7 +74,7 @@ describe("generateMarkdown", () => {
     const markdown = generateMarkdown(makeAnalytics());
 
     expect(markdown).toMatchInlineSnapshot(`
-      "# Pi Insights Report
+      "# Felan Code Insights Report
 
       Generated: 2025-03-16T00:00:00.000Z
 

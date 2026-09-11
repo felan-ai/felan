@@ -241,7 +241,7 @@ export function createModelPriceSource(
 
 export function formatSavingsReport(report: SavingsReport, detailed = false): string {
   const lines = [
-    `Felan estimated savings — ${report.scope}`,
+    `Felan Code estimated savings — ${report.scope}`,
     `Estimated API-equivalent cost avoided: ${formatUsd(report.savedCostUsd)}`,
     `Measured optimization decisions: ${report.calls}`,
   ];

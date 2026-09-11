@@ -1,6 +1,6 @@
 # Runtime and security
 
-Felan has explicit boundaries around remote content, credentials, external
+Felan Code has explicit boundaries around remote content, credentials, external
 executables, and ambient resources. Those boundaries reduce accidental access
 and injection risk; they do not turn the local terminal application into a
 general-purpose sandbox.
@@ -8,7 +8,7 @@ general-purpose sandbox.
 ## The most important boundary
 
 > [!IMPORTANT]
-> The local Felan process runs with the current user's filesystem and process
+> The local Felan Code process runs with the current user's filesystem and process
 > permissions. Host mode is not an OS sandbox.
 
 `AgentRuntime` storage scopes protect extension-owned paths from lexical and
@@ -24,7 +24,7 @@ and the selected cwd instruction file. It filters ambient Pi packages,
 extensions, prompts, themes, project settings, and package resources.
 
 This prevents an arbitrary project configuration from silently adding an
-executable extension or prompt resource to a Felan session. It does not prevent
+executable extension or prompt resource to a Felan Code session. It does not prevent
 the model from using the ordinary coding tools against files and processes that
 the current user can access.
 
@@ -46,7 +46,7 @@ store, not in a project repository or model-visible tool result.
 
 ## Untrusted content boundaries
 
-Treat all model-facing external text as data, not instructions. Felan marks or
+Treat all model-facing external text as data, not instructions. Felan Code marks or
 contains:
 
 | Surface | Boundary |
@@ -114,13 +114,13 @@ installers use reviewed versions, verify download/binary integrity, avoid
 package lifecycle scripts, and stage candidates in agent storage.
 
 POSIX utilities required for detached background processes are probed but not
-installed by Felan. Binary-backed extensions may use the optional runtime
+installed by Felan Code. Binary-backed extensions may use the optional runtime
 process capabilities; these preserve literal argv and separate protocol output
 from diagnostics. See [Runtime dependencies](../reference/runtime-dependencies.md).
 
 ## Safe operating checklist
 
-Before using Felan with a sensitive or untrusted project:
+Before using Felan Code with a sensitive or untrusted project:
 
 1. run it in an isolated host if shell execution is not trusted;
 2. review the cwd-level `AGENTS.md`/`CLAUDE.md` and explicit skills;

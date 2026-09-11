@@ -1,6 +1,6 @@
 # Agents, tasks, and Prewalk
 
-Felan separates three concerns that are often represented by one generic
+Felan Code separates three concerns that are often represented by one generic
 “agent” feature:
 
 - **subagents** execute independent work asynchronously;
@@ -12,7 +12,7 @@ They work together, but each remains usable on its own.
 ## Asynchronous subagents
 
 The `Agent` tool queues a child and returns immediately. The root can continue
-working, then list, inspect, steer, continue, or cancel direct children. Felan
+working, then list, inspect, steer, continue, or cancel direct children. Felan Code
 delivers a completion notice when a child finishes. Cancelling a running child
 records and persists the cancellation before returning; session cleanup may
 continue in the background, so the acknowledgement does not claim that every
@@ -55,7 +55,7 @@ full result or error for one child is needed. Result reads do not consume a
 completion notice by default; pass `acknowledge_completion: true` after
 handling a terminal result to suppress its still-pending notice.
 
-Felan persists child session paths before the first model request. Completion
+Felan Code persists child session paths before the first model request. Completion
 notices arriving before the next parent boundary are coalesced into one parent
 turn, and a child continuation supersedes its prior undelivered notice. If the host
 or process exits unexpectedly, a retained JSONL session can be continued
@@ -157,7 +157,7 @@ default. This model tier is separate from the `xhigh` thinking level.
 
 The `extensionConfig.prewalk.entryApproval` setting accepts `ask`, `allow`, or
 `deny`. `ask` is the default; cloud or other unattended hosts can choose
-`allow`. Felan also exposes it as the generated
+`allow`. Felan Code also exposes it as the generated
 `--prewalk-entry-approval` option and in `/settings`. This policy gates only
 model-called `enter_prewalk`, not explicit `/prewalk`.
 
@@ -193,11 +193,11 @@ host's select dialog.
    `exit_plan_mode`. The user can approve it, return feedback for another
    planning iteration, or cancel Prewalk.
 4. It makes one focused successful `edit`, `write`, or Codex `apply_patch`.
-5. At the turn boundary, Felan switches the next model request to the configured
+5. At the turn boundary, Felan Code switches the next model request to the configured
    target and applies the configured implementation thinking level.
 6. The target sees the useful conversation and tool history, completes the
    task graph, and verifies the work.
-7. Felan restores the planner selection after the run settles. Prewalk's
+7. Felan Code restores the planner selection after the run settles. Prewalk's
    temporary model and thinking changes are scoped to the active session and do
    not change the user's or project's default selection, so a new session keeps
    using the configured default model.

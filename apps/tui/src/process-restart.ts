@@ -120,7 +120,7 @@ function createRestartHandoff(options: RestartProcessOptions): RestartHandoff {
 
 function nodeArguments(handoff: RestartHandoff): string[] {
   const entrypoint = process.argv[1];
-  if (!entrypoint) throw new Error('Cannot restart Felan without a CLI entrypoint');
+  if (!entrypoint) throw new Error('Cannot restart Felan Code without a CLI entrypoint');
   return [
     entrypoint,
     ...handoff.restartArgs,

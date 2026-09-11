@@ -127,7 +127,7 @@ describe('explicit local Felan agent discovery', () => {
     ].join('\n'));
 
     await expect(discoverLocalSubagents(cwd, agentDir)).rejects.toThrow(
-      'Felan agent worker.md has invalid thinking',
+      'Felan Code agent worker.md has invalid thinking',
     );
   });
 });

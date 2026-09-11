@@ -25,7 +25,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe('Felan update availability check', () => {
+describe('Felan Code update availability check', () => {
   it('checks npm once with a bounded request and returns a newer stable release', async () => {
     let requestedUrl: string | undefined;
     let requestInit: RequestInit | undefined;
@@ -121,7 +121,7 @@ describe('Felan update availability check', () => {
   );
 });
 
-describe('Felan update', () => {
+describe('Felan Code update', () => {
   it('reports an already-current global npm installation without installing', async () => {
     const fixture = await packageFixture('0.12.11');
     const calls: string[][] = [];
@@ -139,7 +139,7 @@ describe('Felan update', () => {
       ['root', '--global'],
       ['view', '@felan-ai/felan@latest', 'version'],
     ]);
-    expect(output).toEqual(['Felan 0.12.11 is already up to date.']);
+    expect(output).toEqual(['Felan Code 0.12.11 is already up to date.']);
   });
 
   it('installs the exact newer stable version and verifies the package afterward', async () => {
@@ -167,7 +167,7 @@ describe('Felan update', () => {
       fixture.globalRoot,
     ]);
     expect(output).toEqual([
-      'Updated Felan from 0.12.11 to 0.12.12. Restart Felan to use the new version.',
+      'Updated Felan Code from 0.12.11 to 0.12.12. Restart Felan Code to use the new version.',
     ]);
   });
 
@@ -185,7 +185,7 @@ describe('Felan update', () => {
 
     expect(exitCode).toBe(0);
     expect(calls).toHaveLength(2);
-    expect(output).toEqual(['Felan 0.12.11 is already up to date.']);
+    expect(output).toEqual(['Felan Code 0.12.11 is already up to date.']);
   });
 
   it('rejects an installation that is not the global npm package before checking the registry', async () => {
@@ -220,7 +220,7 @@ describe('Felan update', () => {
 
     expect(exitCode).toBe(1);
     expect(calls).toHaveLength(2);
-    expect(errors).toEqual(['npm returned an invalid stable Felan version. Update Felan manually.']);
+    expect(errors).toEqual(['npm returned an invalid stable Felan Code version. Update Felan Code manually.']);
   });
 
   it('returns a failure when npm cannot resolve its global root or latest release', async () => {
@@ -243,7 +243,7 @@ describe('Felan update', () => {
         : npmFailure('registry unavailable'),
       writeError: (line) => errors.push(line),
     })).resolves.toBe(1);
-    expect(errors).toEqual(['Could not check for a newer Felan release: registry unavailable']);
+    expect(errors).toEqual(['Could not check for a newer Felan Code release: registry unavailable']);
   });
 
   it('returns a failure when installation or post-install verification fails', async () => {
@@ -260,7 +260,7 @@ describe('Felan update', () => {
           : npmFailure('install failed'),
       writeError: (line) => errors.push(line),
     })).resolves.toBe(1);
-    expect(errors).toEqual(['Felan update failed: install failed']);
+    expect(errors).toEqual(['Felan Code update failed: install failed']);
 
     errors.length = 0;
     await expect(runFelanUpdate({
@@ -271,7 +271,7 @@ describe('Felan update', () => {
         : npmSuccess(args[0] === 'view' ? '0.12.12' : ''),
       writeError: (line) => errors.push(line),
     })).resolves.toBe(1);
-    expect(errors).toEqual(['Felan update could not verify version 0.12.12. Update Felan manually.']);
+    expect(errors).toEqual(['Felan Code update could not verify version 0.12.12. Update Felan Code manually.']);
   });
 
   it('adds recovery guidance when Windows cannot rename the installed package', async () => {
@@ -290,7 +290,7 @@ describe('Felan update', () => {
     })).resolves.toBe(1);
 
     expect(errors).toEqual([
-      'Felan update failed: EBUSY: resource busy or locked '
+      'Felan Code update failed: EBUSY: resource busy or locked '
         + 'Exit all Felan processes and retry from another directory, such as `%TEMP%`.',
     ]);
   });

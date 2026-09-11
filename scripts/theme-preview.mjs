@@ -84,7 +84,7 @@ const html = String.raw`<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Felan Pi themes preview</title>
+  <title>Felan Code Pi themes preview</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; background: #111; color: #eee; }
@@ -195,7 +195,7 @@ const html = String.raw`<!doctype html>
 <body>
   <div class="app">
     <aside>
-      <h1>Felan Pi themes</h1>
+      <h1>Felan Code Pi themes</h1>
       <input id="search" placeholder="Search themes..." autofocus />
       <div class="hint"><span id="count"></span> themes. Use ↑/↓ to switch, Enter to copy the selected theme path.</div>
       <div id="list" class="theme-list"></div>
@@ -300,15 +300,15 @@ function renderPreview() {
     '<div class="term-line"><span class="term-dim">   get the job done · waste less</span></div>',
     '<div class="term-line"><span class="term-dim">escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more</span></div>',
     '<div class="term-blank"></div>',
-    '<div class="term-line">Felan can inspect, plan, implement, review, test, and document software.</div>',
+    '<div class="term-line">Felan Code can inspect, plan, implement, review, test, and document software.</div>',
     '<div class="term-blank"></div>',
     '<div class="term-line"><span class="term-dim">Press ctrl+o for full startup help and loaded resources.</span></div>',
     '<div class="term-rule"></div>',
     '<div class="term-line"><span class="term-bold">Theme preview</span></div>',
-    '<div class="term-line"><span class="term-dim">The browser fixture mirrors Felan transcript, editor, and Powerline structure.</span></div>',
+    '<div class="term-line"><span class="term-dim">The browser fixture mirrors Felan Code transcript, editor, and Powerline structure.</span></div>',
     '<div class="term-line"><span class="term-dim">The terminal emulator still owns the unpainted canvas.</span></div>',
     '<div class="term-rule"></div>',
-    '<div class="term-input">Review the Felan themes against the design system and actual TUI.</div>',
+    '<div class="term-input">Review the Felan Code themes against the design system and actual TUI.</div>',
     '<div class="term-line"><span class="term-dim">Thinking</span></div>',
     '<div class="term-line"><span class="term-dim">  · Inspecting semantic roles and terminal contrast.</span></div>',
     '<div class="term-line"><span class="term-dim">  · Comparing the browser fixture with grouped transcript output.</span></div>',

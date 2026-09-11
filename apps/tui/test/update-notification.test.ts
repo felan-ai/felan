@@ -29,7 +29,7 @@ describe('Felan update notification', () => {
       '',
       '─'.repeat(100),
       ' Update Available',
-      ' New version 0.14.5 is available. Exit all Felan sessions, then run felan update',
+      ' New version 0.14.5 is available. Exit all Felan Code sessions, then run felan update',
       '─'.repeat(100),
     ]);
 
@@ -53,7 +53,7 @@ describe('Felan update notification', () => {
     showFelanUpdateNotification(mode, '0.14.5');
 
     expect(warnings).toEqual([
-      'Felan 0.14.5 is available. Exit all Felan sessions, then run felan update.',
+      'Felan Code 0.14.5 is available. Exit all Felan Code sessions, then run felan update.',
     ]);
   });
 });

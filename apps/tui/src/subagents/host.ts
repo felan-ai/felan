@@ -301,7 +301,7 @@ export class LocalSubagentManager {
       if (child.record.status === 'queued' || child.record.status === 'running') {
         child.record = terminalRecord(child.record, 'cancelled', {
           code: 'host_shutdown',
-          message: 'Local subagent was interrupted when the previous Felan process exited',
+          message: 'Local subagent was interrupted when the previous Felan Code process exited',
         });
         child.completionPending = child.deliveryId !== undefined;
         interrupted.add(child.record.agentId);

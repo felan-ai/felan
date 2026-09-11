@@ -53,7 +53,7 @@ describe('SavingsService', () => {
     expect(report.buckets[0]).toMatchObject({ producerId: 'prewalk', calls: 1 });
     expect(report.buckets[0]?.actual.tokens).toMatchObject({ input: 20, output: 20 });
     const output = formatSavingsReport(report, true);
-    expect(output).toContain('Felan estimated savings — session');
+    expect(output).toContain('Felan Code estimated savings — session');
     expect(output).toContain('Estimated API-equivalent cost avoided: $1.00');
     expect(output).toContain('Measured optimization decisions: 1');
     expect(output).toContain('prewalk');

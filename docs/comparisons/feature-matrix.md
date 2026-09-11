@@ -1,11 +1,11 @@
 # Local coding agents: feature comparison
 
-> Last updated: 2026-09-10. Felan rows reflect local release candidate `0.24.4`
+> Last updated: 2026-09-10. Felan Code rows reflect local release candidate `0.24.4`
 > in the current repository state; competitor source snapshots remain dated in
 > the [comparison methodology](methodology.md).
 
 This document compares behavior reachable from the **local terminal agents**
-provided by Felan, OpenAI Codex, OpenCode, Claude Code, Pi, and Oh My Pi (OMP).
+provided by Felan Code, OpenAI Codex, OpenCode, Claude Code, Pi, and Oh My Pi (OMP).
 It excludes separate web, desktop, and IDE product surfaces, team
 administration, pricing, and model quality.
 
@@ -23,7 +23,7 @@ dependency-specific availability is stated in the cell.
 ## How to read the matrices
 
 - **Ships** means the implementation is included in the reviewed local agent.
-  Felan's source-controlled extensions count as shipping features because the
+  Felan Code's source-controlled extensions count as shipping features because the
   `felan` application includes and enables them by default.
 - **Conditional** means the implementation ships but depends on a model,
   provider, feature flag, configuration choice, or external executable.
@@ -41,7 +41,7 @@ first-class subsystem, not necessarily equivalent internal implementations.
 
 ### Planning, tasks, and agent coordination
 
-Sources: Felan [tasks][felan-tasks], [subagents][felan-subagents], and
+Sources: Felan Code [tasks][felan-tasks], [subagents][felan-subagents], and
 [Prewalk][felan-prewalk]; Codex [Plan][codex-plan] and
 [subagents][codex-subagents]; OpenCode [todo][opencode-todo],
 [agents][opencode-agent-source], and [task][opencode-task]; Claude Code
@@ -49,10 +49,10 @@ Sources: Felan [tasks][felan-tasks], [subagents][felan-subagents], and
 [teams][claude-teams]; OMP [todo][omp-todo], [task][omp-task], and
 [Agent Hub][omp-agent-hub].
 
-| Feature | Felan | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
+| Feature | Felan Code | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
 | --- | --- | --- | --- | --- | --- | --- |
 | Progress/task state | **Ships:** persistent root-session task objects with stable IDs, title, description, acceptance criteria, priority, lifecycle, notes, and required completion result | **Ships:** `update_plan` checklist of short steps with `pending`, `in_progress`, and `completed` status | **Ships:** per-session `todowrite` list with content, priority, and four statuses; the whole list is replaced on update | **Conditional:** ships, but model-gated; `TaskCreate/Get/List/Update` objects have IDs, details, dependencies, owner, and metadata; legacy `TodoWrite` is disabled by default | **No core feature** | **Ships:** phase-oriented `todo` list with pending, active, completed, abandoned, and blocked states; separate from subagent execution |
-| Hard dependency graph | **Ships:** `blocked_by` edges, cycle rejection, ready/blocked frontier views, and only completed prerequisites satisfy an edge | No | No | Dependency fields (`blocks` and `blockedBy`) exist; the public docs do not describe Felan's cycle and frontier invariants | No | Todo items can be blocked with a reason, but the todo list is not a dependency graph |
+| Hard dependency graph | **Ships:** `blocked_by` edges, cycle rejection, ready/blocked frontier views, and only completed prerequisites satisfy an edge | No | No | Dependency fields (`blocks` and `blockedBy`) exist; the public docs do not describe Felan Code's cycle and frontier invariants | No | Todo items can be blocked with a reason, but the todo list is not a dependency graph |
 | Worker ownership and claims | **Ships:** a ready task is atomically claimed by a session; one active task per worker; stale claims require explicit forced recovery | No task ownership | No owner; one list item is active at a time | Optional owner and agent-team claim workflow when Task tools are available | No | Todo items have no owner; spawned agents instead have registry identities and assignments |
 | State shared with child agents | **Ships:** one graph for the root and every nested child | Parent checklist is not documented as shared subagent execution state | Built-in subagents are denied `todowrite` by default and use child sessions | Agent teams can share the task list; ordinary subagents primarily report results to their caller | No core task state | Parent/child agents share session artifacts, registry, messaging, and job state; todo and task fan-out remain separate mechanisms |
 | Task presentation | `/tasks` list, detail, ready-state, and dependency-graph views | Plan/checklist rendering in the conversation | Todo rendering in the TUI | Toggleable task checklist plus task tools | No core task state | Phase/task tree plus Agent Hub and job views |
@@ -71,14 +71,14 @@ Sources: Felan [tasks][felan-tasks], [subagents][felan-subagents], and
 
 ### Context, memory, and sessions
 
-Sources: Felan [progressive context][felan-context] and [local TUI][felan-tui];
+Sources: Felan Code [progressive context][felan-context] and [local TUI][felan-tui];
 Codex [AGENTS.md][codex-agents] and [feature defaults][codex-features]; OpenCode
 [instruction loader][opencode-context] and [TUI commands][opencode-tui]; Claude
 Code [memory/instructions][claude-memory] and
 [checkpointing][claude-checkpoints]; Pi [usage][pi-overview]; OMP
 [context discovery][omp-context] and [feature inventory][omp-overview].
 
-| Feature | Felan | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
+| Feature | Felan Code | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
 | --- | --- | --- | --- | --- | --- | --- |
 | Startup project instructions | At most one file in the session cwd: `AGENTS.md`, then `CLAUDE.md` | Global instructions plus one `AGENTS.override.md`, `AGENTS.md`, or fallback file per directory from repo root to cwd | Global file plus ancestor project files; `AGENTS.md` wins as a filename family over `CLAUDE.md` | Managed, user, project, and local `CLAUDE.md` files; does not read `AGENTS.md` unless imported | Global and ancestor-to-cwd `AGENTS.override.md`, `AGENTS.md`, or `CLAUDE.md` | Discovers native and foreign instruction formats from OMP, Claude, Codex, Gemini, OpenCode, Copilot, and other locations |
 | Progressive nested instructions below cwd | **Ships:** after a structured `read` or decoded `@file`, loads one `AGENTS.md`/`CLAUDE.md` per traversed nested directory for subsequent turns | **No core feature:** instruction chain stops at launch cwd and is rebuilt on a new run | **Ships:** a successful `read` attaches nested `AGENTS.md`, `CLAUDE.md`, or legacy `CONTEXT.md` files on the path to the file | **Ships:** nested `CLAUDE.md` and `CLAUDE.local.md` files load when Claude reads in those directories | No core progressive loader | Reviewed context files are discovered before session start; no on-read loader is documented |
@@ -86,7 +86,7 @@ Code [memory/instructions][claude-memory] and
 | Path-scoped rule system | Nested instruction files only; no independent glob-scoped rules | Directory-scoped `AGENTS.md`; hooks can add dynamic policy | Explicit instruction globs/URLs; nested instruction files | `.claude/rules/*.md` can use path scopes; `CLAUDE.md` supports recursive imports | **Integration:** implementation-defined | Imported rule formats, sticky `RULES.md`, rulebook entries, and time-traveling stream rules |
 | Automatic durable memory | No built-in auto-memory | **Conditional:** reviewed source marks `memories` stable but disabled by default | No built-in auto-memory | **Ships:** project-scoped auto memory plus per-subagent memory options | No core memory | **Conditional:** configurable local/Hindsight/Mnemopi memory tools ship but are setting-gated |
 | Agent Skills | Explicit global/workspace `.agents/skills` supplied to root and children | Built-in skill discovery and configuration | On-demand skill tool; OpenCode, Claude, and `.agents` locations; permission patterns | Built-in skills with user/project/plugin scopes | Built-in on-demand Agent Skills | Built-in managed/imported skills plus `learn` and `manage_skill` |
-| Custom prompts/commands | One Felan application prompt append; no ambient Pi prompt templates | Skills, plugins, agent files, and hooks | Markdown custom commands, agents, instructions, and plugins | Skills, plugins, hooks, custom agents, and commands | Prompt templates, system prompt replacement/append, extensions | Prompt templates, magic keywords, modes, extensions, and imported command formats |
+| Custom prompts/commands | One Felan Code application prompt append; no ambient Pi prompt templates | Skills, plugins, agent files, and hooks | Markdown custom commands, agents, instructions, and plugins | Skills, plugins, hooks, custom agents, and commands | Prompt templates, system prompt replacement/append, extensions | Prompt templates, magic keywords, modes, extensions, and imported command formats |
 | Local session persistence | Ships | Ships | Ships | Ships | Ships | Ships |
 | Resume and session picker | Continue most recent; Pi session commands remain available in TUI | Resume by ID/name/recent; archive/unarchive/delete | `/sessions`, `/resume`, `/continue` | Continue/resume and session picker | Picker and direct ID/path selection | Picker plus persisted subagent artifacts |
 | Conversation branching | Pi tree, fork, and clone behavior is inherited | `codex fork` creates a new local chat | No general conversation tree; parent/child agent sessions are navigable | Session fork plus worktree workflows | In-place session tree, fork, and clone | Pi-derived session tree/fork/clone plus additional operations |
@@ -97,22 +97,22 @@ Code [memory/instructions][claude-memory] and
 
 ### Local tools, execution, and code intelligence
 
-Sources: Felan [Codex tools][felan-codex], [Background processes][felan-background],
+Sources: Felan Code [Codex tools][felan-codex], [Background processes][felan-background],
 and [RTK optimizer][felan-rtk]; Codex [shell schema][codex-shell]; OpenCode
 [shell][opencode-shell], [truncation][opencode-truncation], and
 [LSP][opencode-lsp]; Claude Code [tools][claude-tools] and
 [interactive mode][claude-interactive]; Pi [usage][pi-overview]; OMP
 [tool inventory][omp-overview].
 
-| Feature | Felan | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
+| Feature | Felan Code | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
 | --- | --- | --- | --- | --- | --- | --- |
 | Core filesystem/search tools | Ordinary models get `read`, `write`, `edit`, and `bash`; search is normally performed through shell commands | Structured shell plus `apply_patch`; repository search/read normally use shell commands | `read`, `glob`, `grep`, and shell, plus either `edit`/`write` or `apply_patch` depending on model | `Read`, `Write`, `Edit`, `Glob`, and `Grep` | `read`, `write`, `edit`, and `bash` | Unified `read`/`write`, hashline `edit`, `grep`, `glob`, AST search/edit, archives, databases, and internal URL schemes |
 | Model-adapted editing/tool surface | GPT models on OpenAI providers switch only `edit`/`write` to Codex-style `apply_patch`; read/bash remain shared | Native structured Codex tool surface | GPT-family models other than GPT-4/OSS receive `apply_patch` instead of `edit`/`write`; agents can further restrict tools | Same Claude tool contracts; plugins can add deferred tools | Extensions can replace any tool | Model-specific prompts and hashline editing; broad fixed built-in surface |
 | Foreground shell | Ships | Ships | Ships; shell commands are parsed for permission patterns | Ships; Bash and native PowerShell where supported | Ships | Persistent embedded shell with in-process utilities |
-| First-class background shell jobs | **Ships:** provider-neutral detached jobs with list/read/wait/stop/write, persisted logs, TUI overlay, completion notices, bounded foreground promotion, and optional PTY | Long processes yield a session ID and remain interactive during the session; no detached job registry comparable to Felan's | No first-class background shell tool in the reviewed snapshot | **Ships:** background Bash tasks, task IDs/output files, `/tasks`, and the `Monitor` tool for reactive streams/WebSockets | No core feature | **Ships:** persistent shell sessions, PTY, background dispatch, job manager, and `/jobs`/Hub control |
+| First-class background shell jobs | **Ships:** provider-neutral detached jobs with list/read/wait/stop/write, persisted logs, TUI overlay, completion notices, bounded foreground promotion, and optional PTY | Long processes yield a session ID and remain interactive during the session; no detached job registry comparable to Felan Code's | No first-class background shell tool in the reviewed snapshot | **Ships:** background Bash tasks, task IDs/output files, `/tasks`, and the `Monitor` tool for reactive streams/WebSockets | No core feature | **Ships:** persistent shell sessions, PTY, background dispatch, job manager, and `/jobs`/Hub control |
 | PTY and stdin | Shared Bash can request a real PTY and use `write_background_bash`; ordinary foreground Bash remains non-interactive | `exec_command` supports PTY, yield timeout, polling, and stdin | Shell stdin is ignored; no general PTY interaction tool | Background and foreground Bash are first-class; no general model-facing PTY contract is documented | Core Bash is non-interactive | Native PTY supports interactive prompts, SSH, and sudo |
-| Generic output bounds | Final Felan cap defaults to 12,000 characters with a recoverable head-and-tail preview; explicit short/ranged reads remain exact | Per-call output token budget defaults to 10,000 tokens | Generic 2,000-line/50 KiB cap by default; full output is saved for targeted read/search | Bash streams to a file, returns roughly 30,000 characters inline by default, and exposes the saved path for larger output | Built-in tool truncation plus context compaction | Tool-specific limits, summarized reads, saved artifacts, and internal URL retrieval |
-| Command-aware token optimization | **Conditional:** compaction ships; RTK rewrites supported commands only when `rtk` is installed; compacts build, test, Git, lint, search, Bash, read, and Codex output; Felan reports isolated RTK command-output and post-tool savings through `/savings` | No equivalent command rewriter; output has a token budget and context compaction | Generic truncation only; not command-aware semantic compaction | Generic output/file limits, subagents, ToolSearch, and compaction; no RTK-style command rewrite documented | **Integration:** required | Built-in shell minimizer, summarized reads/search, hashline edits, prompt tuning, and tool-specific compaction |
+| Generic output bounds | Final Felan Code cap defaults to 12,000 characters with a recoverable head-and-tail preview; explicit short/ranged reads remain exact | Per-call output token budget defaults to 10,000 tokens | Generic 2,000-line/50 KiB cap by default; full output is saved for targeted read/search | Bash streams to a file, returns roughly 30,000 characters inline by default, and exposes the saved path for larger output | Built-in tool truncation plus context compaction | Tool-specific limits, summarized reads, saved artifacts, and internal URL retrieval |
+| Command-aware token optimization | **Conditional:** compaction ships; RTK rewrites supported commands only when `rtk` is installed; compacts build, test, Git, lint, search, Bash, read, and Codex output; Felan Code reports isolated RTK command-output and post-tool savings through `/savings` | No equivalent command rewriter; output has a token budget and context compaction | Generic truncation only; not command-aware semantic compaction | Generic output/file limits, subagents, ToolSearch, and compaction; no RTK-style command rewrite documented | **Integration:** required | Built-in shell minimizer, summarized reads/search, hashline edits, prompt tuning, and tool-specific compaction |
 | LSP code intelligence | No | No built-in LSP tool | **Conditional:** many server definitions ship but LSP is disabled by default; diagnostics plus navigation/symbol/call-hierarchy tool | **Integration:** LSP tool activates after installing a code-intelligence plugin and server | **Integration:** required | **Ships:** diagnostics, navigation, symbols, rename, code actions, and raw requests |
 | Automatic formatting after edits | No | No built-in formatter manager | **Conditional:** language-specific formatter manager ships disabled by default | Hooks or plugins | **Integration:** required | LSP/code-action and tool workflows; no separate generic formatter manager is claimed here |
 | Debugger/DAP | No | No | No | No built-in debugger tool | **Integration:** required | **Ships:** DAP breakpoints, stepping, stack, variables, threads, and evaluation |
@@ -126,12 +126,12 @@ and [RTK optimizer][felan-rtk]; Codex [shell schema][codex-shell]; OpenCode
 
 ### Web research
 
-Sources: Felan [web access][felan-web]; Codex [web search][codex-web] and
+Sources: Felan Code [web access][felan-web]; Codex [web search][codex-web] and
 [security/network policy][codex-security]; OpenCode [web tool source][opencode-web];
 Claude Code [tools][claude-tools] and [permissions][claude-permissions]; Pi
 [usage][pi-overview]; OMP [web/tool inventory][omp-overview].
 
-| Feature | Felan | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
+| Feature | Felan Code | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
 | --- | --- | --- | --- | --- | --- | --- |
 | Search backends | SearXNG, OpenAI, Exa API or public MCP, and Brave; results are discovery metadata only | Remote-backed OpenAI web search | Remote-backed Exa or Parallel | Remote-backed Anthropic web search | No core web search | 23 remote backends including APIs, self-hosted SearXNG, and keyless sources |
 | Provider selection/fan-out | `auto` fallback, one strict provider, `all`, or an explicit provider array; credentials/endpoints are user configuration and requests may consume quotas or incur provider charges | Cached by default; indexed, live, or disabled modes | One provider is selected per session or by environment override | Remote backend can refine one call into multiple searches | No core web search | `auto` walks a ranked fallback chain or one provider can be pinned |
@@ -139,13 +139,13 @@ Claude Code [tools][claude-tools] and [permissions][claude-permissions]; Pi
 | Fetch/reader | One call fetches up to five selected URLs and returns only case-insensitive matching text/PDF snippets under a shared 4,000-byte maximum | Search tool can expose results; no separate general local URL reader is documented | One HTTP(S) URL as Markdown, text, HTML, or image; 5 MiB limit | `WebFetch` takes a URL and extraction prompt, converts HTML, then normally returns a small model's answer rather than raw page content | No core fetcher | URLs use the same multi-format `read` surface as files |
 | PDFs, images, and repositories | Remote PDFs use SSRF controls and filtered passage bounds; no dedicated native image fetch and no repository-specific reader | Search result pages, not a dedicated Git/PDF fetch pipeline | No web PDF/Git clone pipeline; scout agent can research dependency source | WebFetch is page-oriented; local `Read` handles PDFs | **Integration:** required | PDF, GitHub/GitLab, registries, arXiv, Stack Overflow, docs, archives, and internal schemes |
 | Full-result retrieval | No full-result storage or paging; only matching passages are returned | Provider-managed transcript results | Generic truncation saves local output; no search-result paging API | Large tool outputs can be saved to files; WebFetch is intentionally lossy | **Integration:** required | Internal URL schemes and file-like reads retain structured source access |
-| Remote-content boundary | Search metadata and returned passages are explicitly wrapped as untrusted | Official docs instruct treating web results as untrusted; cached mode reduces exposure | Permission-gated tools, but no equivalent explicit untrusted-content envelope is documented | Permission prompts and domain rules; fetched content is external model input | **Integration:** implementation-defined | Broad remote readers; reviewed docs do not describe Felan's explicit envelope contract |
+| Remote-content boundary | Search metadata and returned passages are explicitly wrapped as untrusted | Official docs instruct treating web results as untrusted; cached mode reduces exposure | Permission-gated tools, but no equivalent explicit untrusted-content envelope is documented | Permission prompts and domain rules; fetched content is external model input | **Integration:** implementation-defined | Broad remote readers; reviewed docs do not describe Felan Code's explicit envelope contract |
 | SSRF/private-network controls | Private, loopback, link-local, reserved, and internal destinations blocked by default; DNS pinned and redirects revalidated | Remote search is outside local command networking; optional command-network proxy blocks private destinations | `webfetch` validates HTTP(S), timeout, and size; no private-network/DNS-rebinding control is documented | Sandbox network allow/deny rules apply separately; WebFetch has domain permissions | **Integration:** implementation-defined | Broad URL/browser surface; no equivalent default private-network policy is claimed here |
 | JavaScript/cookie-authenticated pages | Web access is HTTP/content extraction; the separate browser CLI does not import ambient browser cookies | No core browser in CLI | Plugin/custom tool | **Integration:** Claude-in-Chrome is separate from WebFetch | **Integration:** required | Browser automation ships; existing-tab control uses a browser relay integration |
 
 ### Extensibility, MCP, safety, and models
 
-Sources: Felan [MCP][felan-mcp] and [local policy][felan-tui]; Codex
+Sources: Felan Code [MCP][felan-mcp] and [local policy][felan-tui]; Codex
 [hooks][codex-hooks], [MCP][codex-mcp], and [security][codex-security]; OpenCode
 [plugins][opencode-plugins], [MCP][opencode-mcp], and
 [permissions][opencode-permissions]; Claude Code [hooks][claude-hooks],
@@ -153,40 +153,40 @@ Sources: Felan [MCP][felan-mcp] and [local policy][felan-tui]; Codex
 [extensions][pi-extensions]; OMP [MCP][omp-mcp] and
 [feature inventory][omp-overview].
 
-| Feature | Felan | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
+| Feature | Felan Code | Codex | OpenCode | Claude Code | Pi | Oh My Pi |
 | --- | --- | --- | --- | --- | --- | --- |
-| Executable extension policy | Only Felan's source-controlled extensions; no ambient Pi extensions/packages. Native ACP ignores client-supplied MCP definitions | Plugins plus trusted local hooks | JS/TS plugins, hooks, and custom tools | Plugins, hooks, skills, agents, and MCP | Deep TypeScript extension API and installable Pi packages | TypeScript extensions/marketplaces plus a large built-in surface |
+| Executable extension policy | Only Felan Code's source-controlled extensions; no ambient Pi extensions/packages. Native ACP ignores client-supplied MCP definitions | Plugins plus trusted local hooks | JS/TS plugins, hooks, and custom tools | Plugins, hooks, skills, agents, and MCP | Deep TypeScript extension API and installable Pi packages | TypeScript extensions/marketplaces plus a large built-in surface |
 | Lifecycle hooks | No user-configurable general hook system | Stable command hooks across tool, session, compaction, prompt, and subagent events; hash-based trust | Plugin hooks across chat, tool, permission, session, file, and other events | Extensive command, HTTP, prompt, and agent hook events | Extension API exposes lifecycle events | Extension events, rules, advisors, and imported hook formats |
 | Custom tools/UI | Skills and agent definitions only; application does not load user executable tools or themes | Plugins, MCP, hooks, and agents; CLI UI itself is not generally replaceable | Plugins can add tools and hooks; custom commands/agents; configurable TUI | Plugins/skills/agents/MCP/hooks; status line and integrations | Extensions can replace tools, editor, footer, widgets, dialogs, and themes with hot reload | Same Pi-style extension primitives plus built-in UI/tool APIs |
-| MCP transports | Explicit Felan config supports OAuth Streamable HTTP with SSE fallback; native ACP ignores session-provided MCP definitions | Local stdio and remote Streamable HTTP | Local process and remote HTTP | Local stdio, HTTP, SSE, and SDK/in-process servers | No core MCP client | stdio, HTTP, and SSE |
-| MCP authentication/config | Felan-configured HTTP is OAuth-only with an OS credential store and no bearer/custom headers; ACP does not consume client-provided MCP configuration | OAuth, bearer tokens, environment, and configured headers/options | OAuth or headers/bearer; local environment and cwd | OAuth, headers/environment, managed configuration | **Integration:** required | OAuth, headers, environment/command credentials, profiles, and imported configs from many agents |
+| MCP transports | Explicit Felan Code config supports OAuth Streamable HTTP with SSE fallback; native ACP ignores session-provided MCP definitions | Local stdio and remote Streamable HTTP | Local process and remote HTTP | Local stdio, HTTP, SSE, and SDK/in-process servers | No core MCP client | stdio, HTTP, and SSE |
+| MCP authentication/config | Felan Code-configured HTTP is OAuth-only with an OS credential store and no bearer/custom headers; ACP does not consume client-provided MCP configuration | OAuth, bearer tokens, environment, and configured headers/options | OAuth or headers/bearer; local environment and cwd | OAuth, headers/environment, managed configuration | **Integration:** required | OAuth, headers, environment/command credentials, profiles, and imported configs from many agents |
 | MCP exposure to model | One bounded lazy `mcp` gateway for configured OAuth HTTP servers; remote tools are addressed by server/name rather than injected directly, and output is labeled untrusted | Deferred tool search and namespaces can reduce initial tool context | MCP tools are directly available and can consume substantial context | ToolSearch can defer MCP tool schemas; resources and prompts supported | **Integration:** implementation-defined | Broad discovery/import and model-facing tools/resources |
-| MCP features Felan rejects | Felan config rejects stdio, sockets, bearer/custom headers, direct tools, resources/prompts, Apps, sampling, and scripting; ACP session-provided MCP definitions are ignored | Supports substantially more of this surface | Supports local and remote tools with flexible auth | Supports tools, resources, prompts, Apps/connectors depending configuration | **Integration:** implementation-defined | Supports local/remote transports and imported server definitions |
+| MCP features Felan Code rejects | Felan Code config rejects stdio, sockets, bearer/custom headers, direct tools, resources/prompts, Apps, sampling, and scripting; ACP session-provided MCP definitions are ignored | Supports substantially more of this surface | Supports local and remote tools with flexible auth | Supports tools, resources, prompts, Apps/connectors depending configuration | **Integration:** implementation-defined | Supports local/remote transports and imported server definitions |
 | OS-enforced local sandbox | **No** | **Yes:** platform sandbox with writable-root and network controls | No documented whole-agent OS sandbox | **Optional:** sandbox for Bash and subprocesses on supported platforms | No; optional container/extension approaches | No Codex-style default whole-agent sandbox documented |
 | General action permissions | **ACP only:** mutation, process, external-action, and unknown tools request allow-once/reject-once; known read-only/internal tools proceed. The TUI has no equivalent durable general policy, and neither mode has an OS sandbox | Approval policy plus sandbox; read-only and workspace-write modes | Granular allow/ask/deny by operation and pattern; reviewed defaults are permissive except selected risks | Manual/auto/accept-edits/plan/bypass modes plus allow/ask/deny rules | Project trust protects loading project executable resources, not model actions | Tool prompts/proposals and ACP permission requests exist, but not a uniform default gate equivalent to Codex/Claude |
 | Command network policy | Unrestricted host network for shell commands; web-access tool has its own SSRF boundary | Network off by default in workspace sandbox; opt-in allowlist proxy and private-address controls | Permission rules can gate commands; no OS-level egress policy | Sandbox network rules and WebFetch domain permissions | Host network unless externally isolated | Broad local/browser/network tools; user configuration controls them |
 | Project executable-code trust | Ambient executable extensions/settings are filtered, so no project trust prompt is needed. ACP session-provided MCP definitions are ignored | Project config/hooks require trust/review | Project plugins/config can execute under normal OpenCode policy | Project hooks/plugins/settings have trust and permission rules | Explicit project trust before loading project extensions/packages/settings | Broad imported discovery means repository configuration must be reviewed |
 | Provider/model breadth | Pi provider catalog; exact authenticated model selection and deterministic high/medium/low tiers | OpenAI models by default; custom OpenAI-compatible provider endpoints | 75+ providers and local models | Claude models through configured Anthropic, Bedrock, Google, and Microsoft routes | Broad provider catalog, subscriptions, custom providers, and local llama.cpp | 60+ providers, local servers, custom APIs, credential rotation, and fallback chains |
 | Cross-model role routing | Subagent tiers and exact models; Prewalk target; provider-family preference | Per-agent model and reasoning configuration | Per-agent model; primary/subagent inheritance | Per-subagent model; agent teams use configured agents | User/extension controlled | Ten model roles, path-scoped models, task/advisor/plan routing, and fallbacks |
-| Local models | Through Pi's supported custom/local provider layer, but Felan does not expose Pi project model configuration | OSS mode/custom endpoints are supported by CLI configuration | Ollama, llama.cpp, LM Studio, and other local/OpenAI-compatible providers | No general local-model support | Built-in llama.cpp router and custom providers | Ollama, LM Studio, llama.cpp, vLLM, LiteLLM, and custom endpoints |
+| Local models | Through Pi's supported custom/local provider layer, but Felan Code does not expose Pi project model configuration | OSS mode/custom endpoints are supported by CLI configuration | Ollama, llama.cpp, LM Studio, and other local/OpenAI-compatible providers | No general local-model support | Built-in llama.cpp router and custom providers | Ollama, LM Studio, llama.cpp, vLLM, LiteLLM, and custom endpoints |
 | Local TUI observability | Grouped tool activity; full call inspector; task graph; child rail/navigator; background-job overlay; Git/model/token/cost/context/subscription powerline | Tool/diff display, plan/status, agent threads, permission/sandbox status | Tool details, todo, child-session navigation, undo/redo, themes, mouse, notifications | Transcript viewer, task/background views, permissions, rewind, agents, status line | Session tree, tool/thinking collapse, footer usage/cost/context, extension UI | Agent Hub, jobs, todo phases, advisor, usage/cost, patches, collaboration, rendered tool cards |
 
 ## Important differences in feature depth
 
-### Felan tasks are an execution graph, not a todo list
+### Felan Code tasks are an execution graph, not a todo list
 
 The task row needs more than a checkmark:
 
 | System | Actual state model |
 | --- | --- |
-| **Felan** | Stable task objects with priority, acceptance criteria, hard prerequisite edges, cycle validation, ready/blocked queries, per-worker ownership, atomic claims, forced stale-claim recovery, handoff notes, and verified results. One graph is shared by the root and every nested child. |
+| **Felan Code** | Stable task objects with priority, acceptance criteria, hard prerequisite edges, cycle validation, ready/blocked queries, per-worker ownership, atomic claims, forced stale-claim recovery, handoff notes, and verified results. One graph is shared by the root and every nested child. |
 | **Codex** | `update_plan` is an ordered progress checklist. Its own Plan-mode prompt explicitly says this is separate from Plan mode. It has no dependency or ownership model. |
 | **OpenCode** | `todowrite` replaces a session list of `{content, status, priority}` items. It enforces one active item through prompting, but has no edges, claims, results, or cross-agent graph. Built-in subagents are denied the todo tool unless configured otherwise. |
-| **Claude Code** | Current Claude Code is no longer accurately described as only a simple `TodoWrite` list. Its Task tools support IDs, details, dependencies, owners, and metadata. However, availability is model/version dependent, and the public contract does not include Felan's priorities, acceptance criteria, atomic one-task-per-worker claims, explicit ready frontier, forced stale recovery, or required verified result. |
+| **Claude Code** | Current Claude Code is no longer accurately described as only a simple `TodoWrite` list. Its Task tools support IDs, details, dependencies, owners, and metadata. However, availability is model/version dependent, and the public contract does not include Felan Code's priorities, acceptance criteria, atomic one-task-per-worker claims, explicit ready frontier, forced stale recovery, or required verified result. |
 | **Pi** | No task state in core. An extension can define any model. |
-| **OMP** | `todo` is a phased checklist with blocker states and transactional operations. The separate `task` tool runs subagents with batching, concurrency, typed output, artifacts, isolation, and registry state. It does not combine those two mechanisms into Felan's shared prerequisite graph. |
+| **OMP** | `todo` is a phased checklist with blocker states and transactional operations. The separate `task` tool runs subagents with batching, concurrency, typed output, artifacts, isolation, and registry state. It does not combine those two mechanisms into Felan Code's shared prerequisite graph. |
 
-Felan's graph is **Beads-like in its dependency-oriented execution shape**, but
+Felan Code's graph is **Beads-like in its dependency-oriented execution shape**, but
 it is not Beads or a project issue tracker. It is scoped to one root session and
 has no durable project backlog, remote synchronization, labels, estimates,
 comments, or due dates.
@@ -217,7 +217,7 @@ level (exact `medium` by default) with
 the useful transcript and tool history; successful entry controls and stale
 phase guidance are filtered from model context, while the current transient
 guidance stays at a stable position within its phase. The target finishes and
-verifies the work, after which Felan normally restores the planner
+verifies the work, after which Felan Code normally restores the planner
 model and thinking level. `/prewalk exit` cancels a pending handoff or defers
 restoration until active target inference settles.
 
@@ -237,9 +237,9 @@ permission policy, and Claude Code/OMP expose their own plan guards and approval
 flows. Pi leaves both workflows to extensions. OMP also implements a separate
 Prewalk workflow.
 
-### Felan web access separates discovery from bounded retrieval
+### Felan Code web access separates discovery from bounded retrieval
 
-Felan's `web_search` discovers bounded result metadata through SearXNG,
+Felan Code's `web_search` discovers bounded result metadata through SearXNG,
 OpenAI, Exa, or Brave. It does not fetch result pages. `fetch_content` accepts
 selected public URLs and required match terms, reduces HTML to readable
 Markdown, extracts bounded PDF text, and returns only matching passages.
@@ -252,11 +252,11 @@ full-page/raw mode, or nested answer generation. Its specific depth is
 **discovery followed by bounded multi-URL passage filtering, explicit trust
 marking, and SSRF controls**.
 
-### Progressive context is shared by Felan, OpenCode, and Claude Code
+### Progressive context is shared by Felan Code, OpenCode, and Claude Code
 
-Felan is not unique in progressively loading nested instruction files:
+Felan Code is not unique in progressively loading nested instruction files:
 
-- **Felan** starts with one cwd-level `AGENTS.md` or `CLAUDE.md`, then discovers
+- **Felan Code** starts with one cwd-level `AGENTS.md` or `CLAUDE.md`, then discovers
   nested files after structured reads or decoded `@file` attachments. Discovered
   instructions are deduplicated and re-injected after compaction.
 - **OpenCode** loads global/ancestor instructions and appends nearby nested
@@ -268,7 +268,7 @@ Felan is not unique in progressively loading nested instruction files:
 - **Codex**, **Pi**, and the reviewed **OMP** context loader discover applicable
   files at session start but do not document the same on-read nested behavior.
 
-Felan's current trigger also has limits: shell reads do not count, image inputs
+Felan Code's current trigger also has limits: shell reads do not count, image inputs
 do not expose a path, and the new instruction affects the model call after the
 qualifying read.
 
@@ -276,7 +276,7 @@ qualifying read.
 
 The RTK optimizer has two layers:
 
-- output compaction ships in Felan and performs command-aware aggregation for
+- output compaction ships in Felan Code and performs command-aware aggregation for
   tests, builds, Git, linters, and searches, strips ANSI, protects context with
   a final cap, and records estimated savings;
 - command rewriting delegates to a managed or `PATH` `rtk` executable. If it is
@@ -290,7 +290,7 @@ but they are generic truncation rather than RTK's command-aware rewriting and
 semantic aggregation. OMP has its own extensive read/search/shell minimization
 and editing optimizations.
 
-Felan's detached background Bash jobs are also different from merely adding
+Felan Code's detached background Bash jobs are also different from merely adding
 `&` to a shell command. They have IDs, statuses, logs, wait/stop tools, process
 groups, completion messages, and a TUI overlay. This extension is active for
 models outside the exact OpenAI provider family and requires POSIX facilities
@@ -299,7 +299,7 @@ leave the extension inactive. GPT/OpenAI sessions
 instead get Codex-style in-memory process sessions with PTY/stdin and polling;
 those are not restart-durable detached jobs.
 
-## Features other local agents provide beyond Felan's reviewed surface
+## Features other local agents provide beyond Felan Code's reviewed surface
 
 This list is intentionally explicit.
 
@@ -311,22 +311,22 @@ This list is intentionally explicit.
 - **Claude Code:** general permission rules/modes and an optional Bash sandbox.
 - **OpenCode:** per-tool and pattern-level allow/ask/deny rules, although its
   reviewed defaults are much more permissive than Codex's sandbox.
-- **Felan:** native ACP has a per-call allow-once/reject-once action gate, but
+- **Felan Code:** native ACP has a per-call allow-once/reject-once action gate, but
   the TUI has no equivalent durable general policy and neither mode has an OS
   sandbox. Its web-fetch SSRF boundary does not restrict shell commands.
 
 ### Planning and recovery
 
 - Dedicated read-only or edit-restricted planning modes in Codex, OpenCode,
-  Claude Code, and OMP. Felan's Prewalk review boundary remains model guidance.
+  Claude Code, and OMP. Felan Code's Prewalk review boundary remains model guidance.
 - Git-backed message/file undo and redo in OpenCode.
 - Automatic code checkpoints and rewind in Claude Code.
 - Checkpoint/rewind and context-pruning tools in OMP.
-- Felan's Pi conversation tree can branch history, but it does not restore files.
+- Felan Code's Pi conversation tree can branch history, but it does not restore files.
 
 ### Code intelligence and additional local tools
 
-- Structured `glob`/`grep` tools in OpenCode, Claude Code, and OMP. Felan usually
+- Structured `glob`/`grep` tools in OpenCode, Claude Code, and OMP. Felan Code usually
   performs these operations through shell commands.
 - LSP navigation/diagnostics in OpenCode, plugin-backed Claude Code, and OMP.
 - Formatter management in OpenCode.
@@ -341,7 +341,7 @@ This list is intentionally explicit.
 - Browser automation through Claude-in-Chrome and OMP's browser/relay.
 - General host desktop automation in OMP.
 - Browser-backed fetching of JavaScript-heavy or cookie-authenticated pages;
-  Felan's web fetcher is HTTP/content extraction, while its separate
+  Felan Code's web fetcher is HTTP/content extraction, while its separate
   `agent-browser` integration does not import ambient browser cookies or provide
   OMP's existing-tab relay.
 - Image generation, text-to-speech, model-based image inspection, and terminal
@@ -355,7 +355,7 @@ This list is intentionally explicit.
 - A second-model advisor in Claude Code and a continuous turn-watching advisor
   in OMP.
 - Relay-backed read/write or read-only live-session collaboration in OMP.
-- Felan can steer children and share dependency state, but it has no sibling bus,
+- Felan Code can steer children and share dependency state, but it has no sibling bus,
   typed output schema, worktree isolation, or multi-user live session.
 
 ### Extensibility and integrations
@@ -366,8 +366,8 @@ This list is intentionally explicit.
   Claude Code, and OMP.
 - Bearer tokens/custom headers and broader MCP resources/prompts/tool surfaces in
   those clients.
-- Felan configuration exposes remote OAuth MCP; native ACP ignores
-  session-provided MCP definitions. Felan still does not load arbitrary Pi
+- Felan Code configuration exposes remote OAuth MCP; native ACP ignores
+  session-provided MCP definitions. Felan Code still does not load arbitrary Pi
   extensions or packages.
 
 ### Memory, rules, and automation
@@ -376,7 +376,7 @@ This list is intentionally explicit.
 - OMP's full memory bank, sticky/stream rules, and learned-skill promotion.
 - Opt-in local memories in the reviewed Codex source.
 - Scheduled session prompts and reactive `Monitor` streams in Claude Code.
-- Felan has session task state and progressive instructions, but no durable
+- Felan Code has session task state and progressive instructions, but no durable
   learned-memory subsystem or scheduled prompt engine.
 
 ### Local invocation surfaces
@@ -385,7 +385,7 @@ This list is intentionally explicit.
   OMP.
 - RPC/SDK protocols in Pi and OMP, local server/SDK/OpenAPI in OpenCode, and
   agent SDKs in Claude Code.
-- Felan ships one-shot text/JSON modes and a native stable ACP v1 stdio server
+- Felan Code ships one-shot text/JSON modes and a native stable ACP v1 stdio server
   in addition to its interactive TUI.
 
 ## Sources and method
@@ -394,7 +394,7 @@ This is a source review of observable local-agent behavior, not a hands-on model
 quality benchmark. Marketing claims were used only when the linked source or
 official reference described the corresponding implementation.
 
-- **Felan:** local release candidate `0.24.4` in the current repository state.
+- **Felan Code:** local release candidate `0.24.4` in the current repository state.
   Sources:
   [local TUI][felan-tui], [tasks][felan-tasks],
   [subagents][felan-subagents], [Prewalk][felan-prewalk],
@@ -426,7 +426,7 @@ official reference described the corresponding implementation.
   [interactive/background tasks][claude-interactive],
   [checkpointing][claude-checkpoints], [hooks][claude-hooks],
   [MCP][claude-mcp], and [Chrome][claude-chrome].
-- **Pi:** Felan pins `@earendil-works/pi-*` `0.85.1`. Sources:
+- **Pi:** Felan Code pins `@earendil-works/pi-*` `0.85.1`. Sources:
   [Pi usage and core feature inventory][pi-overview],
   [extensions][pi-extensions], [providers][pi-providers], and
   [containerization][pi-containers].

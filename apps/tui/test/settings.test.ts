@@ -392,11 +392,11 @@ describe('local settings', () => {
     navigation.current().handleInput?.('\r');
     expect(navigation.current().render(100).join('\n')).toContain('Native Pi settings');
     navigation.current().handleInput?.('\x1b');
-    expect(navigation.current().render(100).join('\n')).toContain('Pi settings');
+    expect(navigation.current().render(100).join('\n')).toContain('General settings');
 
     const extensionSearch = openExtensionSettings(definitions);
     const rootItems = extensionSearch.render(100).join('\n');
-    expect(rootItems).toContain('Pi settings');
+    expect(rootItems).toContain('General settings');
     expect(rootItems).toContain('Web Access');
     expect(rootItems).toContain('RTK Optimizer');
     expect(rootItems).not.toContain('OpenAI API key');

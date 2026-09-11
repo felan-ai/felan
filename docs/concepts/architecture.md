@@ -6,7 +6,7 @@ behavior; Agent Core owns the runtime-neutral composition boundary; and pinned
 Pi packages provide the underlying model, session, and TUI machinery.
 
 ```text
-  local Felan TUI                         Felan cloud platform
+  Felan Code TUI                         Felan cloud platform
   credentials · storage · policy          tenant state · integrations · policy
              \                             /
               \                           /
@@ -48,7 +48,7 @@ For every root session the local host:
 
 1. chooses the working directory and agent directory;
 2. creates a host-path `AgentRuntime` and scoped session/agent storage;
-3. loads filtered Felan settings and the allowed built-in packages;
+3. loads filtered Felan Code settings and the allowed built-in packages;
 4. selects explicit Agent Skills and the cwd-level `AGENTS.md`/`CLAUDE.md` file;
 5. binds local adapters such as OAuth storage, dependency onboarding, memory
    coordination, and TUI presentation; and

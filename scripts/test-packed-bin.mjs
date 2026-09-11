@@ -520,7 +520,7 @@ try {
 
   const diagnostics = runFelan(['--diagnostics'], cleanEnvironment);
   for (const expected of [
-    `Felan version: ${felanVersion}`,
+    `Felan Code version: ${felanVersion}`,
     `Agent Core version: ${agentCoreVersion}`,
     'Pi version: 0.85.1',
     'Runtime: host',

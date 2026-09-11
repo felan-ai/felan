@@ -61,7 +61,7 @@ describe('local runtime dependency onboarding', () => {
 
     expect(harness.confirm).toHaveBeenCalledWith('Install markitdown', 'Install markitdown?');
     expect(install).toHaveBeenCalledOnce();
-    expect(harness.notifications).toContainEqual(['markitdown installed (1.2.3). Restart Felan to load the extension.', 'info']);
+    expect(harness.notifications).toContainEqual(['markitdown installed (1.2.3). Restart Felan Code to load the extension.', 'info']);
     const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
     expect(settings.felanTui.onboarding).toEqual({
       schemaVersion: 1,
@@ -87,7 +87,7 @@ describe('local runtime dependency onboarding', () => {
 
     expect(harness.confirm).toHaveBeenCalledWith('Install agent-browser', 'Install agent-browser?');
     expect(install).toHaveBeenCalledOnce();
-    expect(harness.notifications).toContainEqual(['agent-browser installed (0.31.1). Restart Felan to load the extension.', 'info']);
+    expect(harness.notifications).toContainEqual(['agent-browser installed (0.31.1). Restart Felan Code to load the extension.', 'info']);
   });
 
   it('persists browser extension disablement', async () => {

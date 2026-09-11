@@ -1,7 +1,7 @@
 # Commands and shortcuts
 
 Type `/` in the TUI to discover commands registered for the current session.
-Some commands are provided by Pi; the table below focuses on Felan's local host
+Some commands are provided by Pi; the table below focuses on Felan Code's local host
 and first-party extensions.
 
 ## Local host commands
@@ -9,7 +9,7 @@ and first-party extensions.
 | Command | Purpose |
 | --- | --- |
 | `/cwd [directory]` | Start a fresh session in another directory |
-| `/restart` | Restart Felan and resume the current session |
+| `/restart` | Restart Felan Code and resume the current session |
 | `/dependencies` | Inspect, install, enable, or disable external runtime dependencies |
 | `/memory` | Show project-memory status and inspect retained runs |
 | `/memory run` | Process pending memory evidence now, recovering backoff when needed |
@@ -27,7 +27,7 @@ target directory, rebuilding cwd-bound settings, instructions, skills, tools,
 memory, and subagents. The parent shell's directory is unchanged; use `/cwd .`
 to start a new session for the current directory.
 
-Use `/restart` after rebuilding Felan from source to load fresh Felan, Agent
+Use `/restart` after rebuilding Felan Code from source to load fresh Felan Code, Agent
 Core, and extension modules without losing the active session history. Unlike
 Pi's `/reload`, this replaces the Node process; it is available only in the
 interactive TUI and requires the agent to be idle.
@@ -46,7 +46,7 @@ interactive TUI and requires the agent to be idle.
 | `/markitdown install` | Explicitly install the managed converter |
 | `/progressive-context` | Show progressively loaded nested instructions |
 | `/context` | Show estimated current context-window usage inline (or in the configured overlay) |
-| `/insights` | Generate a local Felan session analytics snapshot with date/session filters, charts, calendar, and optional Savings breakdowns |
+| `/insights` | Generate a local Felan Code session analytics snapshot with date/session filters, charts, calendar, and optional Savings breakdowns |
 | `/rtk` | Open interactive RTK settings |
 | `/rtk show` | Show RTK configuration and runtime status |
 | `/rtk verify` | Recheck the active runtime for RTK |
@@ -85,7 +85,7 @@ Prompt history starts with the current session. Press `Ctrl+R`, `Cmd+R`, or
 projects. Search is fuzzy, incremental, and bounded to the newest 50 unique
 prompts. `Enter` replaces the editor text; `Esc` cancels. This is interactive
 TUI functionality and is unavailable in headless modes. While the built-in is
-enabled, Felan unbinds Pi's `app.session.rename` default from `Ctrl+R`; an
+enabled, Felan Code unbinds Pi's `app.session.rename` default from `Ctrl+R`; an
 explicit alternative rename binding in `$FELAN_AGENT_DIR/keybindings.json` is
 preserved.
 

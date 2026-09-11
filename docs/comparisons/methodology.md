@@ -1,6 +1,6 @@
 # Comparison sources and methodology
 
-> The feature matrix is a dated source review of observable local terminal behavior. Felan's baseline was refreshed to the current local repository on 2026-08-21; competitor snapshots remain pinned or dated below. Recheck volatile claims before publishing a new release.
+> The feature matrix is a dated source review of observable local terminal behavior. Felan Code's baseline was refreshed to the current local repository on 2026-08-21; competitor snapshots remain pinned or dated below. Recheck volatile claims before publishing a new release.
 
 ## Sources and method
 
@@ -8,7 +8,7 @@ This is a source review of observable local-agent behavior, not a hands-on model
 quality benchmark. Marketing claims were used only when the linked source or
 official reference described the corresponding implementation.
 
-- **Felan:** local version `0.12.10`, commit
+- **Felan Code:** local version `0.12.10`, commit
 [`abd4ee34ab2bc2289802af4d2a317b56239f44c5`][felan-snapshot]. Sources:
   [local TUI][felan-tui], [tasks][felan-tasks],
   [subagents][felan-subagents], [Prewalk][felan-prewalk],
@@ -40,7 +40,7 @@ official reference described the corresponding implementation.
   [interactive/background tasks][claude-interactive],
   [checkpointing][claude-checkpoints], [hooks][claude-hooks],
   [MCP][claude-mcp], and [Chrome][claude-chrome].
-- **Pi:** Felan pins `@earendil-works/pi-*` `0.85.1`. Sources:
+- **Pi:** Felan Code pins `@earendil-works/pi-*` `0.85.1`. Sources:
   [Pi usage and core feature inventory][pi-overview],
   [extensions][pi-extensions], [providers][pi-providers], and
   [containerization][pi-containers].

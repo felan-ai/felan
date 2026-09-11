@@ -25,7 +25,7 @@ portable detection, optional installation, and safe unavailable behavior;
    dependency manager's probes. The startup resource view reports enabled,
    disabled, and setup-required Felan extensions from settings only. Use
    `/dependencies` for an explicit fresh recheck and reconfiguration.
-   Enablement changes take effect in the next composed Felan session; the
+   Enablement changes take effect in the next composed Felan Code session; the
    manager tells the user when a restart is required.
 5. Installers use `AgentRuntime`, pin reviewed versions and installer content,
    stage temporary files in runtime storage, verify downloads, and return clear
@@ -37,8 +37,8 @@ portable detection, optional installation, and safe unavailable behavior;
 | --- | --- | --- | --- |
 | MarkItDown document conversion | `markitdown` 0.1.7 | Read interception is bypassed; the extension can be disabled globally | Managed Python virtual environment |
 | RTK command rewriting | compatible `rtk` | Rewriting is bypassed; binary-independent output compaction remains active | Digest-verified official installer pinned to RTK 0.45.0 on Linux/macOS |
-| Browser automation and screenshots | `agent-browser` 0.31.1 | The browser tool is unavailable; the extension can be disabled | Integrity-verified native CLI package in Felan agent storage; Chrome is installed separately by an explicit agent-browser action |
-| Codebase Memory structural exploration | exact `codebase-memory-mcp` 0.10.8 | No Codebase Memory tools, capability, prompt, or grep augmentation; cloud logs a nonfatal hard error | Commit-pinned, digest-verified official installer into Felan agent storage with upstream configuration disabled |
+| Browser automation and screenshots | `agent-browser` 0.31.1 | The browser tool is unavailable; the extension can be disabled | Integrity-verified native CLI package in agent storage; Chrome is installed separately by an explicit agent-browser action |
+| Codebase Memory structural exploration | exact `codebase-memory-mcp` 0.10.8 | No Codebase Memory tools, capability, prompt, or grep augmentation; cloud logs a nonfatal hard error | Commit-pinned, digest-verified official installer into agent storage with upstream configuration disabled |
 | Background processes | POSIX shell plus `sh`, `nohup`, `ps`, `tr`, `kill`, `date`, `cat`, `mv`, `sleep`, and `tail`; PTY support is optional and requested per command | Detached Bash remains available; PTY requests fail clearly when unsupported | No managed installer; use a compatible runtime |
 
 On native Windows, the ordinary `cmd.exe` shell is not a POSIX runtime. The
@@ -47,7 +47,7 @@ but can select a same-host Git Bash executable for POSIX calls. It checks
 `FELAN_POSIX_SHELL`, executable `PATH` entries, and standard Git-for-Windows
 install locations. WSL is not selected automatically because its process and
 path namespace is separate from the native host. If no compatible Git Bash
-installation is available, background process support stays inactive and Felan
+installation is available, background process support stays inactive and Felan Code
 does not attempt to install operating-system utilities. Git Bash process inspection
 uses its `ps -l` output when the GNU `ps -o` form is unavailable.
 

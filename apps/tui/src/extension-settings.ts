@@ -46,8 +46,8 @@ export function installFelanSettingsCommand(
       const items: SettingItem[] = [
         {
           id: 'native-settings',
-          label: 'Pi settings',
-          description: 'Open the standard Felan runtime settings selector',
+          label: 'General settings',
+          description: 'Open the standard Felan Code runtime settings selector',
           currentValue: 'open',
           submenu: () => showNativeSettings(internals, mode, nativeSettings),
         },

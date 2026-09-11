@@ -573,7 +573,7 @@ export class LocalMemoryCoordinator {
     if (!lease) {
       context.writerBlocked = true;
       context.state = 'blocked';
-      context.message = 'Another Felan process owns the memory writer';
+      context.message = 'Another Felan Code process owns the memory writer';
       return;
     }
     context.writerBlocked = false;

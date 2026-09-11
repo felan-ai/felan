@@ -1,12 +1,12 @@
 # Felan documentation
 
-Felan is an open-source, model-portable coding agent built for cost-efficient,
+Felan Code is an open-source, model-portable coding agent built for cost-efficient,
 verifiable software work. Start with the path that matches what you are trying
 to do.
 
-## Use Felan locally
+## Use Felan Code locally
 
-- [Getting started](getting-started.md) — install Felan, connect a model, and
+- [Getting started](getting-started.md) — install Felan Code, connect a model, and
   run the first session.
 - [Local CLI](user-guide/local-cli.md) — invocation, sessions, storage, and the
   local resource policy.
@@ -75,18 +75,18 @@ The package READMEs are the canonical npm-facing API and development references:
 - [`@felan-ai/ext-tasks`](../packages/ext-tasks/README.md)
 - [`@felan-ai/ext-web-access`](../packages/ext-web-access/README.md)
 
-Felan's local application loads only source-controlled built-ins. Public
+Felan Code's local application loads only source-controlled built-ins. Public
 extension packages are composition building blocks for Felan hosts; they are
 not ambient plugins automatically discovered by the local CLI.
 
 ## Compare local coding agents
 
 - [Comparison guide](comparisons/README.md) — choose a focused comparison.
-- [Felan vs Codex](comparisons/codex.md)
-- [Felan vs OpenCode](comparisons/opencode.md)
-- [Felan vs Claude Code](comparisons/claude-code.md)
-- [Felan vs Pi](comparisons/pi.md)
-- [Felan vs Oh My Pi](comparisons/oh-my-pi.md)
+- [Felan Code vs Codex](comparisons/codex.md)
+- [Felan Code vs OpenCode](comparisons/opencode.md)
+- [Felan Code vs Claude Code](comparisons/claude-code.md)
+- [Felan Code vs Pi](comparisons/pi.md)
+- [Felan Code vs Oh My Pi](comparisons/oh-my-pi.md)
 - [Technical feature matrix](comparisons/feature-matrix.md)
 - [Sources and methodology](comparisons/methodology.md)
 

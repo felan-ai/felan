@@ -153,7 +153,7 @@ describe('Felan /restart command', () => {
         items: [
           { value: 'quit', label: 'quit' },
           { value: 'cwd', label: 'cwd', description: 'Start a new session in another directory' },
-          { value: 'restart', label: 'restart', description: 'Restart Felan and resume this session' },
+          { value: 'restart', label: 'restart', description: 'Restart Felan Code and resume this session' },
           { value: 'skill:run-tests', label: 'skill:run-tests' },
         ],
       });

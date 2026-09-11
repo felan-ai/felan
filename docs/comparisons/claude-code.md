@@ -1,12 +1,12 @@
-# Felan vs Claude Code
+# Felan Code vs Claude Code
 
-> Last verified: 2026-08-21. Felan baseline `0.12.10` at
+> Last verified: 2026-08-21. Felan Code baseline `0.12.10` at
 > `abd4ee34ab2bc2289802af4d2a317b56239f44c5`; Claude Code documentation was
 > last reviewed on 2026-08-17 without a pinned CLI version.
 
 ## Short answer
 
-Felan is a good fit when you want a model-portable local host, a structured
+Felan Code is a good fit when you want a model-portable local host, a structured
 dependency-aware task graph, same-session Prewalk model routing, bounded
 web discovery and passage filtering, and source-controlled built-ins with explicit
 host ownership.
@@ -14,15 +14,15 @@ host ownership.
 Claude Code is a good fit when you want Anthropic's mature permission modes,
 automatic memory and project conventions, worktree-capable subagents, hooks,
 plugins, broad MCP workflows, Chrome integration, or non-interactive/SDK
-surfaces. This is a different tradeoff between Felan's portable, narrower host
+surfaces. This is a different tradeoff between Felan Code's portable, narrower host
 policy and Claude Code's broader first-party ecosystem.
 
 ## At a glance
 
-| Dimension | Felan | Claude Code |
+| Dimension | Felan Code | Claude Code |
 | --- | --- | --- |
 | Primary surface | Local interactive TUI and `felan` binary | Terminal CLI plus documented SDK, background, team, and browser integrations |
-| Providers | Host-supplied authenticated model scope; Felan adapts tools for eligible GPT models and keeps other models on ordinary tools | Anthropic-centered model and account surface, with provider/API deployment options documented by Anthropic |
+| Providers | Host-supplied authenticated model scope; Felan Code adapts tools for eligible GPT models and keeps other models on ordinary tools | Anthropic-centered model and account surface, with provider/API deployment options documented by Anthropic |
 | Task state | Shared graph with prerequisites, claims, acceptance criteria, ownership, ready/blocked views, and verified results | Task tools with IDs, dependencies, owners, and metadata when available; availability is model/version dependent |
 | Planning | Prewalk routes the same session after a focused mutation; model-requested entry asks by default, but there is no plan-review gate | Plan permission mode and explicit plan transition; additional plan/review workflows |
 | Memory and context | One cwd instruction file plus progressive nested context and local Markdown memory outside the repository | `CLAUDE.md` hierarchy, memory features, path-scoped rules, and checkpointing workflows |
@@ -36,9 +36,9 @@ See the detailed [planning matrix](feature-matrix.md#planning-tasks-and-agent-co
 
 ## How the workflows differ
 
-### Felan's graph is an execution contract
+### Felan Code's graph is an execution contract
 
-Felan's task graph combines hard prerequisites, ready/blocked queries, atomic
+Felan Code's task graph combines hard prerequisites, ready/blocked queries, atomic
 worker claims, acceptance criteria, handoff notes, and verified results. The
 root and nested children see the same graph, which makes bounded multi-agent
 work explicit.
@@ -46,59 +46,59 @@ work explicit.
 Claude Code's current task tools are more capable than a simple todo list: the
 reviewed documentation describes IDs, dependencies, owners, and metadata.
 Their availability is model/version dependent, and the public contract does
-not document Felan's exact claim, stale-recovery, priority, acceptance-result,
+not document Felan Code's exact claim, stale-recovery, priority, acceptance-result,
 or ready-frontier invariants. Claude Code teams add peer coordination and
-worktree options that Felan does not currently provide.
+worktree options that Felan Code does not currently provide.
 
 ### Prewalk is not Claude Code Plan mode
 
 Claude Code's Plan permission mode is intended to keep work read-only or
-edit-restricted until the user approves a plan transition. Felan Prewalk is a
+edit-restricted until the user approves a plan transition. Felan Code Prewalk is a
 same-session model handoff: the planner explores, creates a prompted graph,
 makes a focused mutation, and the next request runs on a configured target
 model with useful history. Model-requested entry asks by default, but there is
 no separate plan artifact or approval checkpoint before edits.
 
-Choose Claude Code when approval before edits is central. Choose Felan when
+Choose Claude Code when approval before edits is central. Choose Felan Code when
 preserving the planner's grounded trajectory while switching model strength is
 central.
 
 ### Memory ownership is different
 
-Felan's local memory is an inspectable Markdown wiki outside the repository.
+Felan Code's local memory is an inspectable Markdown wiki outside the repository.
 Settled root-session evidence is staged, redacted, bounded, validated, and
 published by a host-owned coordinator. Existing memory remains readable without
 credentials, and child sessions do not publish evidence.
 
 Claude Code's `CLAUDE.md`, memory, rules, and checkpointing workflows are a
 first-party ecosystem for users who want the incumbent's conventions and
-session controls. Felan can read a cwd-level `CLAUDE.md`, but it does not import
+session controls. Felan Code can read a cwd-level `CLAUDE.md`, but it does not import
 the rest of Claude Code's ambient commands, agents, rules, or MCP configuration.
 
-### Felan's web surface is evidence-oriented; Claude's is broader elsewhere
+### Felan Code's web surface is evidence-oriented; Claude's is broader elsewhere
 
-Felan separates provider-backed URL discovery from retrieval. `web_search`
+Felan Code separates provider-backed URL discovery from retrieval. `web_search`
 returns bounded metadata through SearXNG, OpenAI, Exa, or Brave;
 `fetch_content` returns matching passages from selected HTML, text, JSON, or PDF
 URLs. Remote material is untrusted and private-network targets
-are blocked by default. Felan does not retain full pages, page stored results,
+are blocked by default. Felan Code does not retain full pages, page stored results,
 create GitHub checkouts, or use browser cookies.
 
 Claude Code has its own web tools and a separate Claude-in-Chrome integration
 for browser-backed workflows. That is a better fit when logged-in browser
 state, browser interaction, or Anthropic's integrated experience matters. It is
-not the same security or ownership model as Felan's explicit browser CLI and
+not the same security or ownership model as Felan Code's explicit browser CLI and
 host confirmation boundary.
 
-### Extensibility is deliberately narrower in Felan
+### Extensibility is deliberately narrower in Felan Code
 
 Claude Code supports hooks, custom agents, skills, MCP, teams, and other
 first-party or project-configured extensions. Felan packages portable feature
 contracts and the local application loads only source-controlled built-ins.
 That reduces ambient extension drift and preserves a clear host boundary, but
-it means Claude Code configurations are not drop-in Felan plugins.
+it means Claude Code configurations are not drop-in Felan Code plugins.
 
-## Choose Felan when...
+## Choose Felan Code when...
 
 - provider and model portability are core requirements;
 - your workflow benefits from a hard dependency graph shared with child agents;
@@ -119,20 +119,20 @@ it means Claude Code configurations are not drop-in Felan plugins.
 
 ## Migration and interoperability
 
-Felan reads one cwd-level `AGENTS.md` or `CLAUDE.md`, then progressively loads
+Felan Code reads one cwd-level `AGENTS.md` or `CLAUDE.md`, then progressively loads
 nested files after structured reads. It does not load `.claude/agents`,
 `.claude/commands`, `.claude/rules`, Claude Code hooks, ambient skills, or
 Claude Code MCP configuration automatically.
 
 Existing repository instructions can therefore be shared selectively, but
 commands, agents, permissions, memory, and MCP entries need an explicit port.
-Felan's project `.mcp.json` supports the remote HTTP OAuth subset and skips
+Felan Code's project `.mcp.json` supports the remote HTTP OAuth subset and skips
 stdio, sockets, bearer credentials, custom headers, direct tool injection, and
 MCP Apps.
 
 ## Trust and data boundaries
 
-Felan's local process is not a sandbox. It runs with current-user filesystem and
+Felan Code's local process is not a sandbox. It runs with current-user filesystem and
 process permissions and applies narrower controls to web requests, remote MCP,
 browser sessions, document conversion, memory, dependencies, and ambient
 resources. Claude Code provides permission modes and optional sandboxing that
@@ -140,7 +140,7 @@ may be a better fit for untrusted command execution. Compare the exact host
 configuration rather than treating either product name as a complete security
 boundary.
 
-See [Felan runtime and security](../concepts/runtime-and-security.md) and
+See [Felan Code runtime and security](../concepts/runtime-and-security.md) and
 Claude Code's [permission modes](https://code.claude.com/docs/en/permission-modes),
 [subagents](https://code.claude.com/docs/en/sub-agents),
 [memory](https://code.claude.com/docs/en/memory),
@@ -151,22 +151,22 @@ Claude Code's [permission modes](https://code.claude.com/docs/en/permission-mode
 
 ### Will my `.claude/` setup work unchanged?
 
-No. Felan can read a cwd-level `CLAUDE.md`, but its local resource policy does
+No. Felan Code can read a cwd-level `CLAUDE.md`, but its local resource policy does
 not import the full `.claude` extension/configuration ecosystem. Translate
 agents, commands, hooks, rules, and MCP entries deliberately.
 
-### Can I use Felan only with Anthropic models?
+### Can I use Felan Code only with Anthropic models?
 
-Felan's host supplies the authenticated model scope and its extensions are
-model-portable. If Anthropic is the only model family you want, Felan still
+Felan Code's host supplies the authenticated model scope and its extensions are
+model-portable. If Anthropic is the only model family you want, Felan Code still
 offers its task graph, Prewalk, web evidence, and host policy; Claude Code may
 remain the better fit for Anthropic-specific integrations.
 
-### Does Felan have automatic memory?
+### Does Felan Code have automatic memory?
 
 Yes, locally. It is an account-free Markdown wiki with host-owned evidence/time
 gates and validation. The TUI automatically processes after five accepted
-checkpoint updates and 24 hours since the latest successful publication; Felan
+checkpoint updates and 24 hours since the latest successful publication; Felan Code
 Platform uses its separate cron-driven mechanism. It is not Claude Code's
 memory/rules implementation and does not silently synchronize with a team
 memory service.
@@ -187,7 +187,7 @@ This page uses the dated [feature matrix](feature-matrix.md) and
 [MCP](https://code.claude.com/docs/en/mcp), and
 [Chrome](https://code.claude.com/docs/en/chrome).
 
-## Try Felan
+## Try Felan Code
 
 ```sh
 npx @felan-ai/felan

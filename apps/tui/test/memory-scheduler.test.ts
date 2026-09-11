@@ -153,7 +153,7 @@ describe('memory retry scheduling', () => {
       await recordAcceptedUpdates(f, 5);
       await expect.poll(() => coordinator.status(f.cwd)).toMatchObject({
         state: 'blocked',
-        message: 'Another Felan process owns the memory writer',
+        message: 'Another Felan Code process owns the memory writer',
       });
       const attempts = zeroDelayTimers();
 

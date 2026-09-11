@@ -18,12 +18,12 @@ felan [options] [message]
 --session <id>     Resume a specific session
 --session-dir <dir> Session directory for --session
 --diagnostics      Print runtime versions and configuration mode
-update             Update a global npm installation of Felan
+update             Update a global npm installation of Felan Code
 savings            Show persisted estimated API-equivalent savings without starting a model session
 acp                 Serve Agent Client Protocol v1 over stdio
 acp login           Configure model-provider credentials in a finite terminal flow
 -h, --help         Show help
--v, --version      Print the Felan version
+-v, --version      Print the Felan Code version
 --verbose          Show verbose startup details
 ```
 
@@ -32,7 +32,7 @@ rejected before the TUI starts.
 
 ### Native ACP v1
 
-Start Felan's stable Agent Client Protocol v1 server with:
+Start Felan Code's stable Agent Client Protocol v1 server with:
 
 ```sh
 felan acp
@@ -59,9 +59,9 @@ The implemented agent surface is:
   `elicitation/create` calls when needed.
 
 Each ACP session owns a separate `LocalFelanRuntime`; only the process-level
-model runtime is shared. Loading uses Felan's existing local session files and
+model runtime is shared. Loading uses Felan Code's existing local session files and
 replays the complete current branch before the load request succeeds. Prompt
-turns accept ACP's baseline `text` and `resource_link` blocks. Felan streams
+turns accept ACP's baseline `text` and `resource_link` blocks. Felan Code streams
 ordered user, assistant, thought, and tool lifecycle updates with aggregate,
 per-item, and output limits. Unsupported prompt block types fail before
 the model runs.
@@ -73,7 +73,7 @@ reported as unavailable rather than silently accepted.
 
 Known mutating, process, network, and other external-action tools request ACP
 permission before execution. Unknown tool names are gated conservatively;
-known read-only and internal tools can proceed. Felan offers only `allow once`
+known read-only and internal tools can proceed. Felan Code offers only `allow once`
 and `reject once` because it does not own a durable ACP permission-policy
 store. Rejection, malformed responses, cancellation, or client failure blocks
 the call. The same owning-session channel gates local subagent actions.
@@ -89,7 +89,7 @@ exits successfully. The same flow can be started manually:
 felan acp login
 ```
 
-When the client launches Felan through `npx`, the equivalent command is:
+When the client launches Felan Code through `npx`, the equivalent command is:
 
 ```sh
 npx --yes @felan-ai/felan acp login
@@ -131,18 +131,18 @@ advertised `["login"]` arguments for the separate terminal-auth process, so
 the resulting command is `npx --yes @felan-ai/felan acp login`.
 
 You can use an absolute `command` path instead when Zed does not inherit the
-same `PATH`. Zed's own model credentials are not Felan credentials. Complete
-Felan's terminal login when prompted, then open a new external-agent
+same `PATH`. Zed's own model credentials are not Felan Code credentials. Complete
+Felan Code's terminal login when prompted, then open a new external-agent
 connection.
 
 #### MCP behavior
 
-Felan accepts and ignores MCP definitions in ACP `session/new` and
+Felan Code accepts and ignores MCP definitions in ACP `session/new` and
 `session/load`. This keeps clients such as Zed compatible when they attach
 project MCP configuration, without launching client-provided executables or
 using client-provided URLs, headers, or credentials.
 
-Felan's configured MCP extension remains separate. Configure it through
+Felan Code's configured MCP extension remains separate. Configure it through
 `$FELAN_AGENT_DIR/mcp.json`; it supports explicit OAuth-only Streamable HTTP
 with SSE fallback and its own credential store.
 
@@ -171,15 +171,15 @@ only named sessions, and Ctrl+P to toggle session-file paths. Escape cancels
 without creating or launching a session. `felan --continue` remains the quick
 path for the most recent session in the current directory.
 
-For a new interactive root session, Felan asynchronously creates a concise
+For a new interactive root session, Felan Code asynchronously creates a concise
 session name from the first prompt. The name is persisted in the local session
 file and appears in the resume picker. Existing names, resumed sessions,
 subagents, and headless runs are not renamed. If generation fails, the picker
 continues to use the first prompt as its fallback.
 
-### Update Felan
+### Update Felan Code
 
-Update a globally installed Felan CLI with:
+Update a globally installed Felan Code CLI with:
 
 ```sh
 felan update
@@ -188,13 +188,13 @@ felan update
 The command checks npm's stable `latest` release without starting the TUI. If
 the global installation is current, it reports that no update is needed. If a
 newer release is available, it installs that exact `@felan-ai/felan` version
-and tells you to restart Felan. Registry, installation, and verification
+and tells you to restart Felan Code. Registry, installation, and verification
 failures return a non-zero exit status and do not claim success.
 
-Interactive Felan checks npm once per launch, asynchronously, with a ten-second
+Interactive Felan Code checks npm once per launch, asynchronously, with a ten-second
 timeout and no retries. A newer stable release produces a notification to exit
-all Felan sessions and run `felan update` for global npm, or use the package
-manager that launched Felan. Offline, failed, and malformed responses stay
+all Felan Code sessions and run `felan update` for global npm, or use the package
+manager that launched Felan Code. Offline, failed, and malformed responses stay
 silent. Startup checks never install updates. Set
 `FELAN_SKIP_VERSION_CHECK=1` to disable the request.
 
@@ -222,8 +222,8 @@ optimizations, not provider billing or guaranteed subscription savings. See
 [Efficient execution and savings](../concepts/efficient-execution.md) for the
 measurement basis and claim boundaries.
 
-On Windows, exit every running Felan process before updating. npm replaces the
-installed package directory, and another Felan process, antivirus scanner, or
+On Windows, exit every running Felan Code process before updating. npm replaces the
+installed package directory, and another Felan Code process, antivirus scanner, or
 file indexer holding a file or the directory can cause an `EBUSY` rename error.
 The updater runs npm from outside that directory; if the error persists, retry
 manually from another directory:
@@ -252,12 +252,12 @@ extension failures return a non-zero status. `--resume` and UI-only commands are
 interactive-only. Headless startup does not open the TUI, run the update check,
 or wait for dependency onboarding.
 
-### Restart Felan
+### Restart Felan Code
 
-Use `/restart` to replace the Felan process and resume the current session in
-the same directory. The session ID and history are preserved, while Felan,
+Use `/restart` to replace the Felan Code process and resume the current session in
+the same directory. The session ID and history are preserved, while Felan Code,
 Agent Core, and extension modules are loaded again. This is useful when
-developing Felan itself:
+developing Felan Code itself:
 
 ```text
 pnpm build
@@ -270,7 +270,7 @@ Node process.
 
 ### Herdr integration
 
-When Felan runs inside Herdr, the local TUI automatically reports its Felan
+When Felan Code runs inside Herdr, the local TUI automatically reports its Felan Code
 session and lifecycle state to Herdr. The integration is active only when Herdr
 provides `HERDR_ENV=1`, `HERDR_PANE_ID`, and `HERDR_SOCKET_PATH`; it reports
 `working`, `idle`, and supported blocking prompts over Herdr's local socket.
@@ -281,11 +281,11 @@ through intermediate completion delivery, so the overall workflow produces
 one completion notification rather than one per child.
 Headless text and JSON sessions do not report terminal-agent state.
 
-This is a local terminal integration and is separate from ACP support. Felan
+This is a local terminal integration and is separate from ACP support. Felan Code
 reports the `felan` agent identity and its session ID. Herdr versions without a
-native Felan agent kind still accept its lifecycle reports as a custom agent;
-native managed launch and session restoration require Felan support in Herdr.
-Restoration resolves the ID from Felan's configured or default session
+native Felan Code agent kind still accept its lifecycle reports as a custom agent;
+native managed launch and session restoration require Felan Code support in Herdr.
+Restoration resolves the ID from Felan Code's configured or default session
 directory, so a one-off `--session-dir` outside that directory cannot be
 restored automatically.
 
@@ -295,7 +295,7 @@ restored automatically.
 felan --diagnostics
 ```
 
-Diagnostics report the Felan, Agent Core, Pi, and Node.js versions plus the
+Diagnostics report the Felan Code, Agent Core, Pi, and Node.js versions plus the
 runtime and credential modes. The local application reports `host` runtime and
 `local` credentials.
 
@@ -324,7 +324,7 @@ directory. Longer-retention extension state uses `storage/agent`.
 
 ## Sessions
 
-Felan recreates its runtime, filtered settings, resources, and presentation for
+Felan Code recreates its runtime, filtered settings, resources, and presentation for
 new, resumed, forked, cloned, and imported root sessions. Each runtime uses the
 active session working directory and maps relative paths from there.
 
@@ -343,7 +343,7 @@ session and start a fresh session in another directory:
 
 Paths are resolved relative to the active agent cwd; absolute and `~/...`
 paths are also supported. Press Tab after `/cwd ` for directory completion.
-The parent shell is not changed. Felan rebuilds all cwd-bound resources for the
+The parent shell is not changed. Felan Code rebuilds all cwd-bound resources for the
 new session, including settings, instructions, skills, tools, memory, and
 subagents.
 
@@ -351,25 +351,25 @@ subagents.
 
 The local host loads only:
 
-- Felan's source-controlled built-in extensions;
+- Felan Code's source-controlled built-in extensions;
 - `$FELAN_AGENT_DIR/APPEND_SYSTEM.md`;
 - one cwd-level `AGENTS.md`, falling back to `CLAUDE.md`;
 - nested `AGENTS.md` or `CLAUDE.md` discovered by progressive context;
-- explicit user/workspace Felan agent definitions; and
+- explicit user/workspace Felan Code agent definitions; and
 - Agent Skills from `~/.agents/skills` and `<workspace>/.agents/skills`.
 
 Ambient Pi extensions, packages, prompts, project settings, themes, and package
-resources are filtered. Felan also does not import Claude, Cursor, Codex, or
+resources are filtered. Felan Code also does not import Claude, Cursor, Codex, or
 other tools' ambient extension configuration.
 
-Felan supplies two host-owned Pi themes, `felan-light` and `felan-dark`, and
+Felan Code supplies two host-owned Pi themes, `felan-light` and `felan-dark`, and
 uses `felan-light/felan-dark` by default when no saved theme setting exists.
-The active Pi theme is shared by built-in UI, Felan overlays, and the Powerline
-footer. Felan keeps these namespaced rather than replacing Pi's `dark` and
+The active Pi theme is shared by built-in UI, Felan Code overlays, and the Powerline
+footer. Felan Code keeps these namespaced rather than replacing Pi's `dark` and
 `light` IDs: Pi 0.85.1 resolves those built-in names first when exporting HTML,
 which would make runtime and exported sessions disagree.
 
-Startup is intentionally compact: it shows a Felan welcome and key hints
+Startup is intentionally compact: it shows a Felan Code welcome and key hints
 instead of listing every Context, Skill, Extension, and Theme. Press `Ctrl+O`
 for the full help and loaded-resource view; startup diagnostics remain visible.
 

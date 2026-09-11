@@ -1,7 +1,7 @@
 import type { AiInsights, Analytics, InsightFlag, InsightRecommendation } from "./types.js";
 
 export function generateMarkdown(analytics: Analytics): string {
-  const lines: string[] = ["# Pi Insights Report", ""];
+  const lines: string[] = ["# Felan Code Insights Report", ""];
 
   if (analytics.export?.generatedAt) {
     lines.push(`Generated: ${analytics.export.generatedAt}`, "");

@@ -32,7 +32,7 @@ import {
 } from './oauth-store.js';
 
 const DEFAULT_REDIRECT_URI = 'http://127.0.0.1:3118/callback';
-const DEFAULT_CLIENT_NAME = 'Felan';
+const DEFAULT_CLIENT_NAME = 'Felan Code';
 const DEFAULT_CLIENT_URI = 'https://github.com/felan-ai/felan';
 const DEFAULT_OAUTH_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -121,7 +121,7 @@ class LocalMcpOAuthSession implements McpOAuthSession {
     if (!context.extensionContext.hasUI || context.extensionContext.mode !== 'tui') {
       return {
         status: 'unavailable',
-        message: `OAuth authentication for ${server.name} requires the local Felan TUI. Authenticate from a root TUI session and retry.`,
+        message: `OAuth authentication for ${server.name} requires the local Felan Code TUI. Authenticate from a root TUI session and retry.`,
       };
     }
     const existing = this.#authentications.get(server.name);

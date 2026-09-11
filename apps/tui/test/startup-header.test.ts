@@ -18,7 +18,7 @@ describe('Felan startup header', () => {
     modeInternals(mode).builtInHeader = header;
 
     expect(header.renderedText).toBe([
-      `◉  felan v${FELAN_VERSION}`,
+      `◉  Felan Code v${FELAN_VERSION}`,
       '   get the job done · waste less',
       '',
       'escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',
@@ -29,7 +29,7 @@ describe('Felan startup header', () => {
     header.setExpanded(true);
 
     expect(header.renderedText).toBe([
-      `◉  felan v${FELAN_VERSION}`,
+      `◉  Felan Code v${FELAN_VERSION}`,
       '   get the job done · waste less',
       '',
       'escape to interrupt',
@@ -129,7 +129,7 @@ describe('Felan startup header', () => {
     ].join('\n');
 
     expect(rewritePiStartupHeader(source)).toBe([
-      `◉  felan v${FELAN_VERSION}`,
+      `◉  Felan Code v${FELAN_VERSION}`,
       '   get the job done · waste less',
       '',
       'escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',

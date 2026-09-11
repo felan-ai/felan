@@ -79,7 +79,7 @@ export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promi
   const expectedPackageDirectory = join(globalRoot, ...PACKAGE_DIRECTORY);
   if (!globalRoot || !samePath(packageDirectory, expectedPackageDirectory) || isSymbolicLink(expectedPackageDirectory)) {
     writeError(
-      'Felan update only supports a verified global npm installation. '
+      'Felan Code update only supports a verified global npm installation. '
         + 'Run `npm install --global @felan-ai/felan` to update this installation manually.',
     );
     return 1;
@@ -87,25 +87,25 @@ export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promi
 
   const packageManifest = readPackageManifest(packageDirectory);
   if (!packageManifest || packageManifest.name !== PACKAGE_NAME || packageManifest.version !== currentVersion) {
-    writeError('The running Felan package could not be verified. Update it manually with npm.');
+    writeError('The running Felan Code package could not be verified. Update it manually with npm.');
     return 1;
   }
 
   const latestResult = await runNpm(['view', `${PACKAGE_NAME}@latest`, 'version'], globalRoot);
   if (latestResult.status !== 0) {
-    writeError(`Could not check for a newer Felan release: ${commandError(latestResult)}`);
+    writeError(`Could not check for a newer Felan Code release: ${commandError(latestResult)}`);
     return 1;
   }
 
   const latestVersion = latestResult.stdout.trim();
   if (!isStableVersion(latestVersion) || !isStableVersion(currentVersion)) {
-    writeError('npm returned an invalid stable Felan version. Update Felan manually.');
+    writeError('npm returned an invalid stable Felan Code version. Update Felan Code manually.');
     return 1;
   }
 
   const comparison = compareVersions(latestVersion, currentVersion);
   if (comparison <= 0) {
-    writeOutput(`Felan ${currentVersion} is already up to date.`);
+    writeOutput(`Felan Code ${currentVersion} is already up to date.`);
     return 0;
   }
 
@@ -116,7 +116,7 @@ export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promi
   if (installResult.status !== 0) {
     const details = commandError(installResult);
     writeError(
-      `Felan update failed: ${details}`
+      `Felan Code update failed: ${details}`
         + (isBusyRenameFailure(installResult)
           ? ' Exit all Felan processes and retry from another directory, such as `%TEMP%`.'
           : ''),
@@ -126,11 +126,11 @@ export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promi
 
   const installedManifest = readPackageManifest(packageDirectory);
   if (installedManifest?.name !== PACKAGE_NAME || installedManifest.version !== latestVersion) {
-    writeError(`Felan update could not verify version ${latestVersion}. Update Felan manually.`);
+    writeError(`Felan Code update could not verify version ${latestVersion}. Update Felan Code manually.`);
     return 1;
   }
 
-  writeOutput(`Updated Felan from ${currentVersion} to ${latestVersion}. Restart Felan to use the new version.`);
+  writeOutput(`Updated Felan Code from ${currentVersion} to ${latestVersion}. Restart Felan Code to use the new version.`);
   return 0;
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "felan",
   "private": true,
-  "description": "Felan coding agent, portable core, and efficiency-focused extensions",
+  "description": "Felan Code, portable Agent Core, and efficiency-focused extensions",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@9.15.5",

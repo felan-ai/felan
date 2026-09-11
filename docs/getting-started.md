@@ -1,13 +1,13 @@
 # Getting started
 
-This guide gets Felan's local, model-portable coding agent running in an
-existing project. No Felan account is required.
+This guide gets Felan Code, the local model-portable coding agent, running in
+an existing project. No Felan account is required.
 
 ## Requirements
 
 - Node.js 22.19.0 or newer
 - a supported model-provider account or API credential
-- macOS, Linux, or another environment supported by Felan's Node.js and Pi
+- macOS, Linux, or another environment supported by Felan Code's Node.js and Pi
   dependencies
 
 Repository development and CI use Node.js 22.20.0 and pnpm 9.15.5. The pinned
@@ -28,13 +28,13 @@ npm install --global @felan-ai/felan
 felan
 ```
 
-Felan stores local credentials, settings, sessions, and agent state under
-`~/.felan`. Set `FELAN_AGENT_DIR` before launching Felan to use another
+Felan Code stores local credentials, settings, sessions, and agent state under
+`~/.felan`. Set `FELAN_AGENT_DIR` before launching Felan Code to use another
 directory.
 
 ## Connect a model
 
-Start Felan in the project you want it to inspect:
+Start Felan Code in the project you want it to inspect:
 
 ```sh
 cd path/to/project
@@ -74,7 +74,7 @@ on stdout and keeps diagnostics on stderr. Both modes require a prompt and can
 continue the most recent session with `--continue`; `--resume` remains an
 interactive picker.
 
-For implementation work, Felan can split work among asynchronous subagents,
+For implementation work, Felan Code can split work among asynchronous subagents,
 track it in a shared dependency graph, and use Prewalk to hand the same session
 from a planner model to a configured implementation model. The agent asks
 structured questions when a decision requires you.
@@ -87,18 +87,18 @@ Continue the most recent session for the current directory:
 felan --continue
 ```
 
-Sessions are selected relative to the launch directory. Run Felan from the
+Sessions are selected relative to the launch directory. Run Felan Code from the
 same project when continuing project work.
 
 ## First-start dependency choices
 
-Some built-ins need an external executable. In interactive startup Felan may
+Some built-ins need an external executable. In interactive startup Felan Code may
 offer to install a reviewed dependency or disable the affected extension:
 
 - MarkItDown for office-document conversion;
 - RTK for command rewriting (output compaction still works without it);
 - `agent-browser` for browser automation; and
-- POSIX process utilities for detached background Bash, which Felan does not
+- POSIX process utilities for detached background Bash, which Felan Code does not
   install.
 
 Installation is never started by a model tool call. Revisit these choices with
@@ -111,12 +111,12 @@ for the exact versions and unavailable behavior.
 > The local agent runs with your user's filesystem and process permissions. It
 > is a host application, not a sandbox.
 
-Felan narrows ambient configuration and applies explicit boundaries around web,
+Felan Code narrows ambient configuration and applies explicit boundaries around web,
 MCP, browser, document, and credential workflows, but those controls do not
 sandbox ordinary shell commands. Use an isolated environment when the project
 or commands are untrusted.
 
-Read [Runtime and security](concepts/runtime-and-security.md) before using Felan
+Read [Runtime and security](concepts/runtime-and-security.md) before using Felan Code
 with sensitive repositories or external systems.
 
 ## Next steps

@@ -1,4 +1,4 @@
-<h1 align="center"><img src="docs/assets/felan-logo.svg" alt="" width="38" height="39" align="absbottom"> Felan</h1>
+<h1 align="center"><img src="docs/assets/felan-logo.svg" alt="" width="38" height="39" align="absbottom"> Felan Code</h1>
 
 <p align="center">
   <strong>Get the job done. Waste less.</strong><br>
@@ -14,7 +14,7 @@
   <a href="https://discord.gg/skNd4GSzZ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white&labelColor=222222" alt="Join Felan on Discord"></a>
 </p>
 
-Felan is built around one rule: an optimization only counts when the task still
+Felan Code is built around one rule: an optimization only counts when the task still
 succeeds. It combines model routing, progressive context, compact tool output,
 explicit task state, and estimated API-equivalent savings for supported
 optimizations.
@@ -48,7 +48,7 @@ its configured quality gate.
 
 ## Install and run
 
-Felan supports Node.js 22.19.0 or newer. Run the published package without a
+Felan Code supports Node.js 22.19.0 or newer. Run the published package without a
 global installation:
 
 ```sh
@@ -82,11 +82,11 @@ commands, flags, and local state.
 
 ## Efficient by design
 
-Felan treats correctness as the constraint and cost as the optimization target.
+Felan Code treats correctness as the constraint and cost as the optimization target.
 Fewer tokens can support that goal, but they are not the outcome: a cheaper run
 that fails is not an efficiency win.
 
-| Boundary | What Felan does |
+| Boundary | What Felan Code does |
 | --- | --- |
 | **Model routing** | Prewalk can start a task with a stronger planner and continue the same conversation trajectory on a configured implementation model. |
 | **Context control** | Progressive nested instructions, scoped subagents, lazy MCP discovery, and bounded research keep context focused on the current work. |
@@ -94,7 +94,7 @@ that fails is not an efficiency win.
 | **Explicit state** | Dependency-aware tasks, structured questions, retained subagent records, and local project memory keep decisions and progress inspectable. |
 | **Measurement** | `/savings`, `felan savings`, and the Powerline footer report estimated API-equivalent cost avoided by supported optimizations. |
 
-Felan is developed against **cost per verified task**, not token count alone.
+Felan Code is developed against **cost per verified task**, not token count alone.
 The public [harness-bench](https://github.com/felan-ai/harness-bench) project
 holds the task, starting repository, verifier, timeout, and environment
 equivalent when comparing configurations. Correctness is primary; cost, token
@@ -104,13 +104,14 @@ measurement boundaries and claim limits.
 
 ## Local agent, portable core
 
-`@felan-ai/felan` is the account-free local terminal agent. The Felan cloud
+`@felan-ai/felan` is the package for Felan Code, the account-free local terminal
+agent. The Felan cloud
 platform at [felan.ai](https://felan.ai) and
 [app.felan.ai](https://app.felan.ai) composes the same portable core and
 extensions as a managed host. Each host owns the boundaries that cannot be
 portable:
 
-| Local Felan | Felan cloud platform |
+| Felan Code | Felan cloud platform |
 | --- | --- |
 | Runs on your machine from `@felan-ai/felan` | Runs as managed background agents |
 | Uses provider-owned local credentials; no Felan account required | Adds tenant/team workflows, integrations, visibility, and guardrails |
@@ -123,7 +124,7 @@ versus host-managed memory lifecycle.
 
 ## Built for software work
 
-| Workflow | What Felan adds |
+| Workflow | What Felan Code adds |
 | --- | --- |
 | **Delegate and inspect** | Tracked asynchronous subagents with bounded nesting, live transcripts, steering, continuation, cancellation, and completion notices. |
 | **Plan and hand off** | A shared task graph with prerequisites, ownership, acceptance criteria, ready/blocked views, verified results, and same-session Prewalk model routing. |
@@ -141,7 +142,7 @@ to its package, host boundary, commands, and runtime conditions.
 
 ## Explicit host boundaries
 
-Felan keeps the local host narrow in some places on purpose:
+Felan Code keeps the local host narrow in some places on purpose:
 
 - only source-controlled built-in extensions are loaded;
 - ambient Pi packages, extensions, prompts, themes, project settings, and
@@ -154,7 +155,7 @@ Felan keeps the local host narrow in some places on purpose:
 
 These controls do not sandbox ordinary shell or filesystem operations. Read the
 [runtime and security guide](docs/concepts/runtime-and-security.md) before
-using Felan with sensitive repositories.
+using Felan Code with sensitive repositories.
 
 ## Architecture
 
@@ -162,7 +163,7 @@ using Felan with sensitive repositories.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/felan-runtime-architecture-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/diagrams/felan-runtime-architecture-light.svg">
-  <img alt="Felan runtime architecture: the local product and Felan cloud platform compose portable extensions over Agent Core and pinned Pi packages." src="docs/diagrams/felan-runtime-architecture-light.svg">
+  <img alt="Felan runtime architecture: Felan Code and the Felan cloud platform compose portable extensions over Agent Core and pinned Pi packages." src="docs/diagrams/felan-runtime-architecture-light.svg">
 </picture>
 
 **Felan wraps [Pi](https://github.com/earendil-works/pi); it does not fork Pi.**
@@ -196,7 +197,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 
 | Package | Purpose | Documentation |
 | --- | --- | --- |
-| [`@felan-ai/felan`](apps/tui/README.md) | Cost-efficient, model-portable local coding agent and `felan` binary | [Local CLI](docs/user-guide/local-cli.md) |
+| [`@felan-ai/felan`](apps/tui/README.md) | Felan Code and the `felan` binary | [Local CLI](docs/user-guide/local-cli.md) |
 | [`@felan-ai/agent-core`](packages/agent-core/README.md) | Portable runtime contracts, prompt, tools, model tiers, and Pi composition | [Architecture](docs/concepts/architecture.md) |
 | [`@felan-ai/ext-subagents`](packages/ext-subagents/README.md) | Tracked asynchronous subagent protocol | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
 | [`@felan-ai/ext-tasks`](packages/ext-tasks/README.md) | Dependency-aware root-session task graph | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
@@ -240,7 +241,7 @@ installation suite with:
 pnpm verify
 ```
 
-To review the Felan Pi themes in a browser, run `pnpm theme:preview` and open
+To review the Felan Code Pi themes in a browser, run `pnpm theme:preview` and open
 `http://127.0.0.1:4173`. Use `pnpm theme:preview:check` for a no-write
 validation or `pnpm theme:preview:build` to generate the ignored local artifact
 at `.artifacts/theme-preview/index.html`. The preview is a visual review aid;

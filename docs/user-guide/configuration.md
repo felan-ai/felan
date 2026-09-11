@@ -1,6 +1,6 @@
 # Configuration
 
-Felan keeps local configuration under one agent directory. Unless noted
+Felan Code keeps local configuration under one agent directory. Unless noted
 otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 `~/.felan`.
 
@@ -74,7 +74,7 @@ Defaults:
 
 - every built-in is enabled;
 - memory processing follows `builtinExtensions.memory` and changes apply when
-  Felan next constructs a root session;
+  Felan Code next constructs a root session;
 - response output style is `concise`;
 - subagent concurrency is `4` and maximum nesting depth is `3`;
 - editor horizontal padding is `1`;
@@ -87,7 +87,7 @@ sessions. Disable it to keep the first prompt as the session-picker fallback.
 New installations use Pi's `fullscreen` TUI mode and editor padding `1`.
 Existing `tuiMode` and `editorPaddingX` values in `settings.json` remain
 authoritative, so `regular` mode and zero padding continue to work. Change
-either value from `/settings`; the choice is saved for future sessions. Felan
+either value from `/settings`; the choice is saved for future sessions. Felan Code
 uses Pi's native prompt editor frame rather than adding a second box around it.
 On Windows, fullscreen mode also normalizes terminal mouse modes so supported
 terminals send wheel events to the transcript instead of treating them as
@@ -117,7 +117,7 @@ At startup Agent Core reads at most one instruction file in the session cwd:
 2. `CLAUDE.md`
 
 The progressive-context extension discovers the same filenames below the cwd
-when Felan reads files in nested directories. See [Context and memory](context-and-memory.md).
+when Felan Code reads files in nested directories. See [Context and memory](context-and-memory.md).
 
 Agent Skills are loaded only from:
 
@@ -165,10 +165,10 @@ The precedence is defaults, then `settings.json`, then CLI invocation values.
 Agent Core consumers can supply a final programmatic override with
 `configureExtension()` and `extensionConfigOverrides`.
 
-Invalid persisted extension fields do not block local startup. Felan reports a
+Invalid persisted extension fields do not block local startup. Felan Code reports a
 warning, ignores each invalid field, and uses that field's declared default;
 other valid fields in the same extension remain active. Invalid CLI and
-programmatic overrides remain errors. Felan does not rewrite invalid persisted
+programmatic overrides remain errors. Felan Code does not rewrite invalid persisted
 values automatically.
 
 ### Tasks
@@ -259,7 +259,7 @@ extension source:
 }
 ```
 
-`instructions` must be a non-empty string when `style` is `custom`. Felan does
+`instructions` must be a non-empty string when `style` is `custom`. Felan Code does
 not load instruction files or ambient prompt resources; callers must pass the
 text explicitly.
 
@@ -271,10 +271,10 @@ The former `caveman` value has been replaced by `concise`. Existing
 configurations should change either legacy `"outputStyle": "caveman"` or
 `extensionConfig.outputStyle.style: caveman` to `concise`. Invalid persisted
 namespaced values produce a warning and use the concise default; invalid CLI
-or programmatic values are errors. Felan does not retain `caveman` as an alias.
+or programmatic values are errors. Felan Code does not retain `caveman` as an alias.
 
 The local host captures the selection when it creates a session runtime, so
-restart Felan after changing it. Set `builtinExtensions.outputStyle` to `false`
+restart Felan Code after changing it. Set `builtinExtensions.outputStyle` to `false`
 to disable the extension.
 
 ### Codex tools
@@ -298,7 +298,7 @@ timing. Set it to `false` to use Pi's standard timing. Manual and
 overflow-recovery compaction are unchanged. Pi continues to generate the
 compaction summary; this is not OpenAI native Responses compaction.
 
-GPT models keep Felan's ordinary `read` and `bash` tools. Codex mode replaces
+GPT models keep Felan Code's ordinary `read` and `bash` tools. Codex mode replaces
 only `edit` and `write` with `apply_patch`; process sessions and image reading
 are not provider-specific.
 
@@ -371,19 +371,19 @@ retained local measurements for seven inclusive UTC calendar days as
 pricing coverage.
 Powerline inherits the active Pi theme and maps its semantic segment roles to
 Pi foreground/background tokens. There is no second Powerline palette or
-color mode. Felan supplies `felan-light` and `felan-dark` and defaults to
+color mode. Felan Code supplies `felan-light` and `felan-dark` and defaults to
 following the terminal appearance when no Pi theme is saved. Changes take
 effect in a newly constructed process/session. The built-in is enabled by default; set
 `builtinExtensions.powerline` to `false` to remove it.
 
-Felan keeps its theme IDs namespaced instead of replacing Pi's `dark` and
+Felan Code keeps its theme IDs namespaced instead of replacing Pi's `dark` and
 `light`: Pi 0.85.1 gives its built-in IDs precedence during HTML export. The
 interactive startup view is compact by default; press `Ctrl+O` to show full
 startup help and loaded resources.
 
 ### Extension configuration
 
-Every enabled configurable extension declares typed settings. Felan exposes the
+Every enabled configurable extension declares typed settings. Felan Code exposes the
 same declarations through `settings.json`, generated CLI options, `/settings`,
 and the Agent Core programmatic API. Values are validated before activation;
 unknown extension or field names are errors. `/settings` first lists Pi settings
@@ -394,12 +394,12 @@ fuzzy-search either list; activating a field with declared options cycles them.
 
 Use `/settings` to edit `extensionConfig.rtkOptimizer`. `/rtk` shows operational
 status, verifies availability, and installs the reviewed executable. `/savings`
-reports Felan's estimated API-equivalent savings. Command rewriting needs the
+reports Felan Code's estimated API-equivalent savings. Command rewriting needs the
 reviewed `rtk` executable;
-binary-independent output compaction does not. Felan's post-tool metrics include
+binary-independent output compaction does not. Felan Code's post-tool metrics include
 command, read, grep, and Codex result compaction (including non-RTK compaction),
-and RTK command-output savings are reported separately from Felan's post-tool
-compaction. Felan uses one isolated temporary RTK tracker per root session and
+and RTK command-output savings are reported separately from Felan Code's post-tool
+compaction. Felan Code uses one isolated temporary RTK tracker per root session and
 model, queries each tracker during session shutdown, and never imports RTK's
 global history or exposes `rtk gain`. Active-session `/savings` may not yet include
 unflushed RTK command-output savings. These are API-equivalent estimates, not
@@ -424,7 +424,7 @@ exact reviewed 0.10.8 executable is required. Use `/dependencies` or
 `/codebase-memory install` for an explicit local install.
 Known fatal daemon-coordination failures are recovered by participating current
 sessions through a bounded graceful daemon stop and one index retry. Restart
-Felan once after upgrading so existing sessions load this recovery behavior.
+Felan Code once after upgrading so existing sessions load this recovery behavior.
 
 ## Secrets
 

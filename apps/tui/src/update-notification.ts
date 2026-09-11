@@ -18,7 +18,7 @@ export function showFelanUpdateNotification(mode: InteractiveMode, version: stri
   const container = internals.chatContainer;
   if (!container) {
     mode.showWarning(
-      `Felan ${version} is available. Exit all Felan sessions, then run felan update.`,
+      `Felan Code ${version} is available. Exit all Felan Code sessions, then run felan update.`,
     );
     return;
   }
@@ -42,7 +42,7 @@ export function showFelanUpdateNotification(mode: InteractiveMode, version: stri
           '$1felan update',
         );
         const instruction = text.slice(0, instructionStart)
-          + `New version ${version} is available. Exit all Felan sessions, then run `
+          + `New version ${version} is available. Exit all Felan Code sessions, then run `
           + styledAction;
         setText.call(component as TextComponent, instruction);
       }

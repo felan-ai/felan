@@ -7,7 +7,7 @@ import type {
 import { insertBeforeSkillCommands } from './command-autocomplete.js';
 
 const RESTART_COMMAND = '/restart';
-const RESTART_DESCRIPTION = 'Restart Felan and resume this session';
+const RESTART_DESCRIPTION = 'Restart Felan Code and resume this session';
 
 interface RestartCommandEditor extends Pick<Editor, 'addToHistory' | 'setText'> {
   onSubmit?: (text: string) => void;
@@ -27,7 +27,7 @@ export interface InstallFelanRestartCommandOptions {
 
 export class RestartRequested extends Error {
   constructor() {
-    super('Restart Felan and resume this session');
+    super('Restart Felan Code and resume this session');
     this.name = 'RestartRequested';
   }
 }
@@ -79,7 +79,7 @@ export function installFelanRestartCommand(
         return;
       }
       if (!options.isIdle()) {
-        mode.showWarning('Wait for the current response to finish before restarting Felan');
+      mode.showWarning('Wait for the current response to finish before restarting Felan Code');
         internals.editor.setText(text);
         return;
       }

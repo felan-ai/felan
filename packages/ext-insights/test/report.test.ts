@@ -6,7 +6,7 @@ import type { Analytics, InsightsSavingsReport } from '../src/types.js';
 describe('renderReport', () => {
   it('renders a branded, offline-safe report shell with escaped values', () => {
     const html = renderReport(computeAnalytics([]));
-    expect(html).toContain('Felan Insights');
+    expect(html).toContain('Felan Code Insights');
     expect(html).toContain('Activity Calendar');
     expect(html).toContain('Filter by project or date');
     expect(html).toContain('recharts');

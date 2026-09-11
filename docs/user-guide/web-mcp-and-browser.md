@@ -1,6 +1,6 @@
 # Web, MCP, browser, and documents
 
-Felan separates external HTTP research, remote MCP, browser automation, and
+Felan Code separates external HTTP research, remote MCP, browser automation, and
 local document conversion. Each surface has its own trust and installation
 boundary.
 
@@ -108,7 +108,7 @@ A minimal Felan-owned entry is:
 }
 ```
 
-Felan supports remote HTTP MCP servers with OAuth. It does not execute stdio or
+Felan Code supports remote HTTP MCP servers with OAuth. It does not execute stdio or
 socket servers, bearer tokens, arbitrary headers, direct injected MCP tools, or
 MCP Apps. Unsupported project entries are skipped with a warning.
 
@@ -131,7 +131,7 @@ one model tool with two operations:
 - `run` passes literal CLI argument tokens for navigation, snapshots,
   interaction, and screenshots.
 
-The tool never accepts shell syntax. Felan owns session namespacing, output
+The tool never accepts shell syntax. Felan Code owns session namespacing, output
 limits, policy options, and a fresh configuration that excludes ambient
 `agent-browser` plugins and settings.
 

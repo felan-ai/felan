@@ -1,11 +1,11 @@
 # @felan-ai/ext-insights
 
-Portable session analytics for Felan. The package owns parsing and analytics;
-the host owns session discovery, bounded reads, report storage, and opening a
-report through `InsightsHost`.
+Local session analytics for Felan Code. The package owns parsing and analytics;
+the local host owns session discovery, bounded reads, report storage, and
+opening a report through `InsightsHost`.
 
 The package does not access the filesystem or ambient Pi directories directly.
-Hosts must keep session visibility, transcript size, cache retention, and
+The local host must keep session visibility, transcript size, cache retention, and
 optional model facet submission explicit.
 
 The generated report is a self-contained `file://` snapshot dashboard. Every
@@ -15,7 +15,7 @@ parser-versioned metadata. Opening the generated HTML later does not reread live
 files. `--refresh` is only a force-reparse option for unchanged files.
 
 It includes the
-Felan-branded activity calendar, daily/hourly/model/project/rage charts,
+Felan Code-branded activity calendar, daily/hourly/model/project/rage charts,
 date presets and custom ranges, session search, sortable project breakdowns,
 and light/dark theme switching. When the local host has Savings measurements,
 the report also includes filterable avoided-cost, producer, category, project,

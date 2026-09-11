@@ -186,7 +186,7 @@ export class AcpSessionRegistry {
           runtime,
           RequestError.internalError(
             { sessionId: params.sessionId },
-            'Felan runtime opened a different session',
+            'Felan Code runtime opened a different session',
           ),
           'Failed to discard a mismatched ACP session',
         );
@@ -356,7 +356,7 @@ export class AcpSessionRegistry {
       if (errors.length > 0) {
         throw RequestError.internalError(
           { diagnostics: errors.map(({ message }) => sanitizeAcpErrorMessage(message)) },
-          'Felan runtime could not start',
+          'Felan Code runtime could not start',
         );
       }
       interactions.bindSession(runtime.session.sessionManager.getSessionId());
@@ -368,7 +368,7 @@ export class AcpSessionRegistry {
     } catch (error) {
       interactions.close();
       if (runtime === undefined) throw error;
-      return disposeRuntimeAfterFailure(runtime, error, 'Felan runtime startup cleanup failed');
+      return disposeRuntimeAfterFailure(runtime, error, 'Felan Code runtime startup cleanup failed');
     }
   }
 

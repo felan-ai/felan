@@ -78,7 +78,7 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     extension: 'backgroundBash',
     purpose: 'detached process execution, which requires standard POSIX shell and process utilities',
     unavailableMessage: (status) => formatUnavailableMessage(
-      'Background processes are built into Felan, but this runtime is missing required POSIX shell/process utilities.',
+      'Background processes are built into Felan Code, but this runtime is missing required POSIX shell/process utilities.',
       'Detached background jobs remain inactive until the runtime provides them.',
       status,
     ),
@@ -96,11 +96,11 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     extension: 'browser',
     purpose: 'browser automation, authenticated web-app workflows, and screenshots',
     unavailableMessage: (status) => formatUnavailableMessage(
-      'Browser automation is built into Felan, but the reviewed agent-browser CLI is not installed or unavailable.',
+      'Browser automation is built into Felan Code, but the reviewed agent-browser CLI is not installed or unavailable.',
       'The browser tool remains unavailable until you install it.',
       status,
     ),
-    installConfirmation: `Download the reviewed agent-browser ${MANAGED_AGENT_BROWSER_VERSION} package, verify its integrity, and install its native CLI into Felan agent storage?`,
+    installConfirmation: `Download the reviewed agent-browser ${MANAGED_AGENT_BROWSER_VERSION} package, verify its integrity, and install its native CLI into agent storage?`,
     unavailableChoice: 'Disable the Browser extension',
     unavailableOutcome: 'disable-extension',
     check: async (runtime) => {
@@ -123,11 +123,11 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     extension: 'codebaseMemory',
     purpose: 'structural code indexing, symbol reads, and bounded grep augmentation',
     unavailableMessage: (status) => formatUnavailableMessage(
-      'Codebase Memory is built into Felan, but its reviewed native executable is not installed or unavailable.',
-      'Felan can continue normally; structural code tools remain inactive until you install it.',
+      'Codebase Memory is built into Felan Code, but its reviewed native executable is not installed or unavailable.',
+      'Felan Code can continue normally; structural code tools remain inactive until you install it.',
       status,
     ),
-    installConfirmation: `Download the reviewed official installer, verify its pinned digest, and install Codebase Memory ${MANAGED_CODEBASE_MEMORY_VERSION} in Felan agent storage without changing agent configuration?`,
+    installConfirmation: `Download the reviewed official installer, verify its pinned digest, and install Codebase Memory ${MANAGED_CODEBASE_MEMORY_VERSION} in agent storage without changing agent configuration?`,
     unavailableChoice: 'Continue without Codebase Memory',
     unavailableOutcome: 'continue',
     check: async (runtime) => {
@@ -150,11 +150,11 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     extension: 'markitdown',
     purpose: 'document conversion for DOCX, PPT/PPTX, XLS/XLSX, RTF, EPUB, and MSG reads',
     unavailableMessage: (status) => formatUnavailableMessage(
-      'MarkItDown support is built into Felan, but the external markitdown converter is not installed or unavailable.',
-      'Felan can continue normally; Office document reads remain inactive until you install it.',
+      'MarkItDown support is built into Felan Code, but the external markitdown converter is not installed or unavailable.',
+      'Felan Code can continue normally; Office document reads remain inactive until you install it.',
       status,
     ),
-    installConfirmation: 'Create a Python virtual environment in Felan agent storage and install the pinned markitdown 0.1.7 document extras?',
+    installConfirmation: 'Create a Python virtual environment in agent storage and install the pinned markitdown 0.1.7 document extras?',
     unavailableChoice: 'Disable the MarkItDown extension',
     unavailableOutcome: 'disable-extension',
     check: async (runtime) => {
@@ -177,11 +177,11 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
     extension: 'rtkOptimizer',
     purpose: 'command rewriting; RTK output compaction remains available without the executable',
     unavailableMessage: (status) => formatUnavailableMessage(
-      'RTK optimization is built into Felan, but the external rtk executable is not installed or unavailable.',
-      'Felan can continue normally; output compaction still works, but command rewriting is inactive until RTK is installed.',
+      'RTK optimization is built into Felan Code, but the external rtk executable is not installed or unavailable.',
+      'Felan Code can continue normally; output compaction still works, but command rewriting is inactive until RTK is installed.',
       status,
     ),
-    installConfirmation: `Download the reviewed official installer, verify its pinned digest, and run it to install RTK ${MANAGED_RTK_VERSION} in Felan agent storage?`,
+    installConfirmation: `Download the reviewed official installer, verify its pinned digest, and run it to install RTK ${MANAGED_RTK_VERSION} in agent storage?`,
     unavailableChoice: 'Continue with output compaction only',
     unavailableOutcome: 'continue',
     check: async (runtime) => {
@@ -334,7 +334,7 @@ async function manageDependencies(
     return { dependency, enabled, status, label: `${dependency.label} — ${summary}` };
   }));
   const close = 'Close dependency manager';
-  const selected = await ctx.ui.select('Felan runtime dependencies', [...entries.map((entry) => entry.label), close]);
+  const selected = await ctx.ui.select('Felan Code runtime dependencies', [...entries.map((entry) => entry.label), close]);
   if (!selected || selected === close) return;
   const entry = entries.find((candidate) => candidate.label === selected);
   if (!entry) return;
@@ -351,7 +351,7 @@ async function manageDependencies(
     } else if (action === enable) {
       await recordDependencyDecision(entry.dependency, options, true);
       if (entry.dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, true);
-      ctx.ui.notify(`${entry.dependency.label} enabled. Restart Felan to load the extension.`, 'info');
+      ctx.ui.notify(`${entry.dependency.label} enabled. Restart Felan Code to load the extension.`, 'info');
     }
     return;
   }
@@ -364,7 +364,7 @@ async function manageDependencies(
     if (action === `Disable ${entry.dependency.label}`) {
       await recordDependencyDecision(entry.dependency, options, false);
       if (entry.dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, false);
-      ctx.ui.notify(`${entry.dependency.label} disabled. Restart Felan to unload the extension completely.`, 'info');
+      ctx.ui.notify(`${entry.dependency.label} disabled. Restart Felan Code to unload the extension completely.`, 'info');
     }
     return;
   }
@@ -409,7 +409,7 @@ async function installDependency(
       if (dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, true);
     }
     ctx.ui.notify(
-      `${dependency.label} installed${status.version ? ` (${status.version})` : ''}.${enableAfterInstall ? ' Restart Felan to load the extension.' : ''}`,
+      `${dependency.label} installed${status.version ? ` (${status.version})` : ''}.${enableAfterInstall ? ' Restart Felan Code to load the extension.' : ''}`,
       'info',
     );
   } catch (error) {
@@ -428,7 +428,7 @@ async function applyUnavailableChoice(
   if (dependency.unavailableOutcome === 'disable-extension') {
     await recordDependencyDecision(dependency, options, false);
     if (dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, false);
-    ctx.ui.notify(`${dependency.label} disabled. Restart Felan to unload the extension completely.`, 'info');
+    ctx.ui.notify(`${dependency.label} disabled. Restart Felan Code to unload the extension completely.`, 'info');
     return;
   }
   await options.settingsManager.reload();

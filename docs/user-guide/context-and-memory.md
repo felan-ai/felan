@@ -1,6 +1,6 @@
 # Context and memory
 
-Felan treats repository instructions, Agent Skills, and durable project memory
+Felan Code treats repository instructions, Agent Skills, and durable project memory
 as separate context sources with different ownership and lifecycles.
 
 ## Startup project instructions
@@ -99,7 +99,7 @@ and can be inspected without resuming them. Their linked run directories keep
 bounded input, output, manifest, and diagnostic evidence.
 
 The project key derives from the canonical Git root, or the canonical cwd when
-outside a repository. Felan does not create a canonical `.memory` directory in
+outside a repository. Felan Code does not create a canonical `.memory` directory in
 the customer repository.
 
 Each root session receives a non-authoritative projection at:
@@ -129,7 +129,7 @@ remains pending rather than blocking startup.
 Automatic processing waits for five accepted checkpoint updates and 24 hours
 since the latest successful publication. Updates from the same root session
 count; identical cursors do not.
-The deadline is persisted through canonical state, so a later Felan launch can
+The deadline is persisted through canonical state, so a later Felan Code launch can
 catch up if the earlier process closes. `/memory run` remains an explicit
 immediate request.
 
@@ -158,7 +158,7 @@ Use `/memory` to view status and browse retained runs in one pane. Selecting a
 run is read-only and never starts a model. Existing explicit session resume,
 import, fork, and switch behavior is unchanged.
 
-Felan retains the newest 50 completed run records. Each retained record keeps
+Felan Code retains the newest 50 completed run records. Each retained record keeps
 its standard JSONL and manifest; its disposable processing workspace is removed
 after completion. Active runs and the latest disable-causing evidence are
 protected. Unverifiable records are preserved and ignored rather than deleted.
@@ -167,12 +167,12 @@ does not consume the failure budget; only durably acknowledged canonical state
 counts as a successful publication.
 
 Retained workers contribute their recorded model usage once to `/insights`, as
-standalone sessions. Missing usage remains unknown; Felan does not convert
+standalone sessions. Missing usage remains unknown; Felan Code does not convert
 subscription quota percentages into token usage.
 
 ### Direct remember or forget requests
 
-When you explicitly ask Felan to remember, forget, or change durable memory,
+When you explicitly ask Felan Code to remember, forget, or change durable memory,
 the active session records that request as evidence for a later processing
 run. It must not claim that canonical memory changed immediately.
 

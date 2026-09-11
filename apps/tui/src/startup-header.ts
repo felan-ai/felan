@@ -86,7 +86,7 @@ export function installFelanStartupHeader(
 export function rewritePiStartupHeader(text: string): string {
   const lines = text.split('\n');
   const logo = (lines[0] ?? '')
-    .replace('pi', '◉  felan')
+    .replace('pi', '◉  Felan Code')
     .replace(`v${PI_VERSION}`, `v${FELAN_VERSION}`);
   const upstreamOnboarding = lines.find((line) => line.includes(PI_ONBOARDING));
   const tagline = upstreamOnboarding?.replace(PI_ONBOARDING, FELAN_TAGLINE) ?? FELAN_TAGLINE;

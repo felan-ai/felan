@@ -1,12 +1,12 @@
 # Efficient execution and savings
 
-Felan's local coding agent is built to complete software work without treating
+Felan Code is built to complete software work without treating
 the largest model, the most context, or the fewest tokens as goals by
 themselves.
 
 ## Correctness first
 
-An optimization only counts when the task still succeeds. Felan's development
+An optimization only counts when the task still succeeds. Felan Code's development
 target is **cost per verified task**:
 
 1. hold the task, starting repository, verifier, timeout, and environment
@@ -20,9 +20,9 @@ contains the reproducible evaluation definitions. Published product claims need
 representative repeated results; a single passing comparison is case evidence,
 not a universal savings claim.
 
-## Where Felan reduces waste
+## Where Felan Code reduces waste
 
-Felan has several independent efficiency boundaries:
+Felan Code has several independent efficiency boundaries:
 
 - **Model routing:** Prewalk can hand the same conversation trajectory from a
   planner model to a configured implementation model instead of starting a new
@@ -32,7 +32,7 @@ Felan has several independent efficiency boundaries:
 - **Context control:** nested project instructions load where they apply;
   subagents receive bounded tasks; MCP tools are discovered lazily; web and
   document results are bounded and pageable.
-- **Tool-output optimization:** RTK-backed command rewriting and Felan's
+- **Tool-output optimization:** RTK-backed command rewriting and Felan Code's
   post-tool compaction reduce noisy model input while protecting failures,
   complete JSON, and recoverable source output. Successful MarkItDown document
   results report a benchmark-calibrated input estimate, while concise output
@@ -87,7 +87,7 @@ Its basis is either:
 - `estimated-baseline` — the producer supplies a documented counterfactual and
   method identifier.
 
-Felan resolves model usage through its active model catalog when pricing is
+Felan Code resolves model usage through its active model catalog when pricing is
 available. Unpriced measurements are excluded from the USD total and make the
 report incomplete. The JSON format retains each measurement's basis, method,
 models, token usage, price source, and producer.
@@ -98,7 +98,7 @@ The report is not:
 
 - a provider invoice or account balance;
 - a guarantee of lower subscription charges;
-- a claim that every Felan feature saves money;
+- a claim that every Felan Code feature saves money;
 - proof that the current task passed its acceptance criteria; or
 - evidence that one configuration is universally faster or cheaper.
 

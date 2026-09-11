@@ -1,6 +1,6 @@
 # Local memory architecture
 
-Felan's local memory is an account-free, project-keyed Markdown wiki outside
+Felan Code's local memory is an account-free, project-keyed Markdown wiki outside
 the customer repository. The design separates **reading existing memory** from
 **recording evidence** and from **publishing a new canonical snapshot**.
 
@@ -22,7 +22,7 @@ $FELAN_AGENT_DIR/memory/v1/projects/<sha256-project-key>/
 
 The `builtinExtensions.memory` setting in `settings.json` controls whether the
 memory extension is loaded. Like other built-ins, changes take effect when
-Felan next constructs a root session. Project `control.json` owns
+Felan Code next constructs a root session. Project `control.json` owns
 retry deadlines, attempt ownership, and automatic disablement without changing
 the checkpoint-compatible `state.json` format.
 
@@ -33,7 +33,7 @@ evidence; filesystem ownership checks, bounded reads, and publication leases
 remain the execution safety boundary.
 
 The project key is derived from the canonical Git root, or the canonical cwd
-when no repository exists. Felan does not create `<repository>/.memory`.
+when no repository exists. Felan Code does not create `<repository>/.memory`.
 
 Each root session receives a non-authoritative projection at:
 
@@ -58,7 +58,7 @@ recovery, retries, shutdown cancellation, model selection, retained sessions,
 history UI, staging, validation, and publication. Automatic processing requires
 five accepted checkpoint updates and 24 hours since the latest successful
 publication; repeated updates from one root session count. The absolute
-publication deadline is reconstructed by later processes, so closing Felan does
+publication deadline is reconstructed by later processes, so closing Felan Code does
 not discard pending work. No portable memory-session-kind contract is added. A
 managed host can implement an
 equivalent coordinator without changing the portable package.
@@ -201,7 +201,7 @@ The projection is copied from canonical files when loaded; canonical memory is
 the authority. Resolvable summary and root-index paths are rebased only in the
 session projection so they remain directly openable from that session.
 
-After installing an updated Felan build, restart existing TUI processes so
+After installing an updated Felan Code build, restart existing TUI processes so
 workers use the new lifecycle code loaded at process startup.
 
 See [Context and memory](../user-guide/context-and-memory.md) for user commands

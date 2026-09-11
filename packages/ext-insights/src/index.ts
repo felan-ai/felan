@@ -27,7 +27,7 @@ export { renderReport } from './report.js';
 export function createInsightsExtension(host: InsightsHost): FelanExtension {
   return (pi) => {
     pi.registerCommand('insights', {
-      description: 'Generate a Felan session insights report',
+      description: 'Generate a Felan Code session insights report',
       getArgumentCompletions: getInsightsArgumentCompletions,
       handler: async (args, ctx) => {
         const parsed = parseInsightsArgs(args ?? '');
@@ -76,7 +76,7 @@ export function createInsightsExtension(host: InsightsHost): FelanExtension {
         if (host.savings) analytics.savings = await host.savings(pi.runtime, analytics);
         analytics.ai = await buildAiInsights({ sessions, transcriptById: transcripts, modelClient: host.modelClient?.(pi.runtime) });
         const reportPath = await host.writeReport(pi.runtime, 'felan-insights.html', renderReport(analytics));
-        if (options.markdown && host.writeMarkdown) await host.writeMarkdown(pi.runtime, 'pi-insights.md', generateMarkdown(analytics));
+        if (options.markdown && host.writeMarkdown) await host.writeMarkdown(pi.runtime, 'felan-insights.md', generateMarkdown(analytics));
         ctx.ui.notify(`Insights report ready: ${reportPath}`, 'info');
         if (options.openReport && host.openReport) await host.openReport(pi.runtime, reportPath);
       },
@@ -99,7 +99,7 @@ function addGrouped(groups: Map<string, ParsedSession[]>, reference: InsightsSes
 
 export default function insightsExtension(pi: Parameters<FelanExtension>[0]): void {
   pi.registerCommand('insights', {
-    description: 'Generate a Felan session insights report',
+    description: 'Generate a Felan Code session insights report',
     handler: async (_args, ctx) => ctx.ui.notify('Insights requires a host integration.', 'warning'),
   });
 }

@@ -38,11 +38,11 @@ Options:
   --session <id>     Resume a specific session
   --session-dir <dir> Session directory for --session
   --diagnostics      Print local runtime versions and configuration mode
-  update             Update a global npm installation of Felan
+  update             Update a global npm installation of Felan Code
   savings            Show persisted estimated API-equivalent savings
   acp [login]        Serve Agent Client Protocol v1 or authenticate in a terminal
   -h, --help         Show this help
-  -v, --version      Print the Felan version
+  -v, --version      Print the Felan Code version
   --verbose          Show verbose startup details
 ${configOptions.map((option) => `  --${option.name}${option.configField.type === 'boolean' ? '' : ` <${option.configField.values?.join('|') ?? option.configField.type}>`}  ${option.configField.description}`).join('\n')}`;
 
@@ -168,7 +168,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
         import('@felan-ai/agent-core'),
         import('@earendil-works/pi-coding-agent'),
       ]);
-      writeOutput(`Felan version: ${FELAN_VERSION}`);
+      writeOutput(`Felan Code version: ${FELAN_VERSION}`);
       writeOutput(`Agent Core version: ${AGENT_CORE_VERSION}`);
       writeOutput(`Pi version: ${PI_VERSION}`);
       writeOutput(`Node version: ${process.versions.node}`);
