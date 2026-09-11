@@ -7,6 +7,8 @@ describe('active-lineage session recall', () => {
     let tool: any;
     const pi = { registerTool: (value: unknown) => { tool = value; } } as unknown as FelanExtensionAPI;
     registerSessionRecall(pi);
+    expect(tool.description).toContain('Do not use this tool to search recent, prior, or other sessions');
+    expect(tool.promptSnippet).toContain('never use it for prior or other sessions');
     const branch = [
       { type: 'message', id: 'root', parentId: null, timestamp: '1', message: { role: 'user', content: 'Choose the auth approach' } },
       { type: 'message', id: 'active', parentId: 'root', timestamp: '2', message: { role: 'assistant', content: [{ type: 'text', text: 'We chose tokens.' }] } },
