@@ -101,6 +101,12 @@ describe('ACP extension interactions', () => {
       toolName: 'read',
       input: { path: '/tmp/file' },
     }, readContext.context)).toBeUndefined();
+    expect(await handler({
+      type: 'tool_call',
+      toolCallId: 'recall-id',
+      toolName: 'session_recall',
+      input: { query: 'earlier decision' },
+    }, readContext.context)).toBeUndefined();
     expect(request).not.toHaveBeenCalled();
 
     const writeContext = toolContext();

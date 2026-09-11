@@ -470,6 +470,19 @@ describe('felan CLI', () => {
     })]);
   });
 
+  it('parses session-compaction model configuration options', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+    const exitCode = await runCli([
+      '--session-compaction-model', 'low',
+      'inspect',
+    ], { launch: async (options) => launches.push(options) });
+
+    expect(exitCode).toBe(0);
+    expect(launches[0]?.extensionConfigOverrides).toEqual([expect.objectContaining({
+      extensionId: 'sessionCompaction', values: { model: 'low' },
+    })]);
+  });
+
   it('parses structured declarative extension options as JSON', async () => {
     const launches: RunLocalFelanOptions[] = [];
     const lines = '[{"segments":{"status":{"enabled":true}}}]';

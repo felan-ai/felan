@@ -43,6 +43,7 @@ const SAFE_TOOL_NAMES = new Set([
   'read_symbol',
   'search_and_read_symbols',
   'search_code',
+  'session_recall',
   'wait_background_bash',
 ]);
 

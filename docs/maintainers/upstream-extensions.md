@@ -34,6 +34,7 @@ use the reviewed path revision.
 | `@felan-ai/ext-powerline` | Adapted source; subscription logic references `marckrenn/pi-sub` | [`pi-powerline` 0.1.0 at `7e72e509`][powerline-baseline] | Same primary revision; secondary [`@marckrenn/pi-sub-core` 1.5.0 at `65deb568`][pi-sub-reviewed] | No primary update; secondary changes are already represented by Felan's model-window prioritization or belong to the host/provider layer. |
 | `@felan-ai/ext-prewalk` | Adapted source | [`pi-prewalk` 0.1.0 at `7e72e509`][prewalk-baseline] | Same release and revision | No upstream change. |
 | `@felan-ai/ext-rtk-optimizer` | Adapted code and behavior | [`pi-rtk-optimizer` 0.9.0 at `d155d253`][rtk-baseline] | Same release and revision | No upstream change; Felan additionally supports managed runtime discovery and an explicit digest-verified official installer pinned to RTK 0.45.0. |
+| `@felan-ai/ext-session-compaction` | Design-informed original code; no upstream source copied | [`pi-smart-compact` 9.6.2 at `687f72c4`][session-compaction-smart] and [`@sting8k/pi-vcc` 0.7.2 at `b1b8b3ad`][session-compaction-vcc] | Same releases and revisions | Adopted bounded evidence, continuity, and active-lineage recall concepts while retaining Pi lifecycle/persistence ownership; excluded wholesale replacement and cross-session storage. |
 | `@felan-ai/ext-subagents` | Design reference only; no source copied | [`pi-subagents` 0.5.2-patched.1 at `7e72e509`][subagents-baseline] | Same release and revision | No upstream change. |
 | `@felan-ai/ext-tasks` | Design reference only; no source copied | [`pi-todo-write` 0.1.0 at `9571293d`][tasks-baseline] | [`0.1.0` at monorepo `7e72e509`][tasks-reviewed] | No path changes since the design review. |
 | `@felan-ai/ext-web-access` | Adapted source and behavior | [`pi-web-access` 0.18.0 at `d2aab00d`][web-access-baseline] | Release [`0.23.0` at `c77b2822`][web-access-reviewed], plus main through [`81e18785`][web-access-main-reviewed] | Retained provider search and bounded extraction concepts, then replaced cached research artifacts with discovery-only search, filtered text/PDF passages, and a stricter SSRF boundary. |
@@ -103,6 +104,8 @@ outcome even when the decision is "do not port."
 [pi-sub-reviewed]: https://github.com/marckrenn/pi-sub/tree/65deb56853b924fbbcee1b77e09c71f5f08fc9a2/packages/sub-core
 [prewalk-baseline]: https://github.com/mslavov/pi-extensions/tree/7e72e509fe45a5a87c4c2e176cb711de994a8c1d/packages/pi-prewalk
 [rtk-baseline]: https://github.com/MasuRii/pi-rtk-optimizer/tree/d155d253cb2f1358e34e717d47a82ebccb08cb8e
+[session-compaction-smart]: https://github.com/alpertarhan/pi-smart-compact/tree/687f72c45d27f98ca36d7d1ca9b3941817b0e223
+[session-compaction-vcc]: https://github.com/sting8k/pi-vcc/tree/b1b8b3ad748e2c77e8a1da26dc384e58a5bb771f
 [subagents-baseline]: https://github.com/mslavov/pi-extensions/tree/7e72e509fe45a5a87c4c2e176cb711de994a8c1d/packages/pi-subagents
 [tasks-baseline]: https://github.com/mslavov/pi-extensions/tree/9571293d422db11de893fa80ed0fc3e39945c657/packages/pi-todo-write
 [tasks-reviewed]: https://github.com/mslavov/pi-extensions/tree/7e72e509fe45a5a87c4c2e176cb711de994a8c1d/packages/pi-todo-write

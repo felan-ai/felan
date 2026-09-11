@@ -63,6 +63,16 @@ describe('local extension importer', () => {
     })]);
   });
 
+  it('discovers session-compaction model configuration', async () => {
+    const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-session-compaction']);
+    expect(definitions).toEqual([expect.objectContaining({
+      id: 'sessionCompaction',
+      fields: expect.objectContaining({
+        model: expect.objectContaining({ default: 'inherit', values: ['inherit', 'xhigh', 'high', 'medium', 'low'] }),
+      }),
+    })]);
+  });
+
   it('imports only the source-controlled package list', async () => {
     expect(localExtensionPackages).toEqual([
       '@felan-ai/ext-subagents',
@@ -75,6 +85,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-browser',
       '@felan-ai/ext-background-bash',
       '@felan-ai/ext-codex',
+      '@felan-ai/ext-session-compaction',
       '@felan-ai/ext-rtk-optimizer',
       '@felan-ai/ext-codebase-memory',
       '@felan-ai/ext-markitdown',
@@ -100,6 +111,8 @@ describe('local extension importer', () => {
         expect(imported).toMatchObject({ createMemoryExtension: expect.any(Function) });
       } else if (packageName === '@felan-ai/ext-session-title') {
         expect(imported).toMatchObject({ createSessionTitleExtension: expect.any(Function) });
+      } else if (packageName === '@felan-ai/ext-session-compaction') {
+        expect(imported).toMatchObject({ default: expect.any(Function), registerSessionRecall: expect.any(Function) });
       } else {
         expect(imported).toMatchObject({ default: expect.any(Function) });
       }
@@ -285,6 +298,7 @@ describe('local extension importer', () => {
       promptHistory: false,
       insights: false,
       sessionTitle: false,
+      sessionCompaction: false,
     })).toEqual([
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',

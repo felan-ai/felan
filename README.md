@@ -220,6 +220,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 | [`@felan-ai/ext-codebase-memory`](packages/ext-codebase-memory/README.md) | Structural code search, symbol reads, and bounded grep augmentation | [Runtime dependencies](docs/reference/runtime-dependencies.md) |
 | [`@felan-ai/ext-powerline`](packages/ext-powerline/README.md) | ANSI-aware local TUI footer | [Local CLI](docs/user-guide/local-cli.md) |
 | [`@felan-ai/ext-session-title`](packages/ext-session-title/README.md) | Automatic first-prompt session names | [Local CLI](docs/user-guide/local-cli.md) |
+| [`@felan-ai/ext-session-compaction`](packages/ext-session-compaction/README.md) | Bounded verified session compaction and active-lineage recall | [Context and memory](docs/user-guide/context-and-memory.md) |
 
 ## Develop from source
 

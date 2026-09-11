@@ -1,0 +1,12 @@
+@felan-ai/ext-session-compaction
+
+This package is original Felan MIT-licensed code. Its design was informed by
+the MIT-licensed pi-smart-compact 9.6.2 review at
+https://github.com/alpertarhan/pi-smart-compact/tree/687f72c45d27f98ca36d7d1ca9b3941817b0e223
+and the active-lineage recall design in @sting8k/pi-vcc 0.7.2, reviewed at
+https://github.com/sting8k/pi-vcc/tree/b1b8b3ad748e2c77e8a1da26dc384e58a5bb771f.
+No source code from either package is copied into this package.
+
+This package uses TypeBox 1.1.38 from
+https://github.com/sinclairzx81/typebox, licensed under the MIT License.
+Copyright (c) 2017-2026 Haydn Paterson.

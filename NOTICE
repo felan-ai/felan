@@ -27,6 +27,12 @@ providing bounded automatic names for local interactive root sessions. Its
 package-level license and notice are included in
 packages/ext-session-title/LICENSE and NOTICE.
 
+@felan-ai/ext-session-compaction is original Felan MIT-licensed extension code
+providing bounded verified session summaries and active-lineage recall. Its
+design references pi-smart-compact 9.6.2 and @sting8k/pi-vcc 0.7.2 without
+copying their source. Its package-level license and notice are included in
+packages/ext-session-compaction/LICENSE and NOTICE.
+
 This product uses Pi 0.85.1 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 It also uses @earendil-works/pi-server 0.85.1 from the same project under the

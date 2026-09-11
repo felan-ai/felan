@@ -16,6 +16,11 @@ The local-first memory integration is original MIT-licensed Felan code from
 @felan-ai/ext-memory. Its package-level LICENSE and NOTICE contain the
 applicable attribution.
 
+The session compaction integration uses original Felan code from
+@felan-ai/ext-session-compaction. Its design references reviewed releases of
+pi-smart-compact and pi-vcc; no upstream source is bundled. Its package-level
+LICENSE and NOTICE contain the applicable attribution.
+
 The terminal application uses @earendil-works/pi-coding-agent and
 @earendil-works/pi-tui 0.85.1 from https://github.com/earendil-works/pi,
 licensed under the MIT License.

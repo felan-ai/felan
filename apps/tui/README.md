@@ -206,6 +206,15 @@ All built-ins are enabled by default, including the Powerline footer in TUI
 sessions. Binary-backed features can remain inactive until their dependency is
 installed or the feature is disabled through `/dependencies`.
 
+Session compaction is also enabled by default. It makes one bounded summary
+attempt through Pi's compaction hook, using the active model by default or the
+configured `inherit`, `xhigh`, `high`, `medium`, or `low` policy. Tier selection
+prefers the active provider/family and falls back to inherit when unavailable.
+It preserves structured continuity,
+and exposes `session_recall` for the current active lineage. The extension is
+safe to disable with `builtinExtensions.sessionCompaction: false`; Pi's native
+compactor then remains in control.
+
 Codebase Memory is a default built-in. It provides structural code
 search, symbol reads, and bounded grep augmentation, backed by the
 `codebase-memory-mcp` binary.

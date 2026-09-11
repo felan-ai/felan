@@ -45,6 +45,24 @@ The Memory row includes the injected `summary.md`, `index.md`, and schema, plus
 identifiable reads from the session memory projection. Other conversation
 messages are counted under Messages.
 
+## Session compaction and recall
+
+The default session-compaction extension asks the configured summary model once
+for a bounded continuation checkpoint after deterministic extraction of the prepared
+eviction span. `inherit` is the default; tier values select an exact
+text-capable model from the allowed catalog, preferring the active
+provider/family. An unavailable tier falls back to inherit. It preserves user requests, explicit constraints and decisions,
+open loops, recorded command/test outcomes, patch outcomes, task snapshots, and
+RTK truncation pointers with source IDs. Pi still owns cut points, retained
+tails, overflow retry, session trees, and persistence.
+
+`session_recall` searches only the active `SessionManager.getBranch()` lineage.
+It returns bounded, untrusted historical evidence with stable session and entry
+IDs. It does not read sibling branches, prior sessions, or RTK recovery files;
+an RTK recovery pointer does not promise access to the original output. Disable
+the feature with `builtinExtensions.sessionCompaction: false` to restore Pi's
+native summarization and remove the tool.
+
 Memory is intentionally selective. It prioritizes durable user-authored
 preferences, decisions, corrections, important facts, and rationale not recorded
 elsewhere, followed by non-obvious agent discoveries, incidents, and runtime or

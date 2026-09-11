@@ -31,6 +31,7 @@ Pi extensions or arbitrary npm packages.
 | [`@felan-ai/ext-codebase-memory`](../../packages/ext-codebase-memory/README.md) | Structural code index, symbol reads, and bounded grep augmentation | `/codebase-memory` and four model tools | Exact reviewed `codebase-memory-mcp` 0.10.8 binary |
 | [`@felan-ai/ext-powerline`](../../packages/ext-powerline/README.md) | ANSI-aware local status footer | TUI footer | TUI sessions only; enabled by default locally |
 | [`@felan-ai/ext-session-title`](../../packages/ext-session-title/README.md) | Automatic first-prompt session names | Persisted Pi session name | Host-controlled root-session modes; enabled by default locally |
+| [`@felan-ai/ext-session-compaction`](../../packages/ext-session-compaction/README.md) | Bounded verified compaction and active-lineage recall | `session_recall` | Pi 0.85.1 session lifecycle; enabled by default locally |
 
 ## Host ownership rules
 

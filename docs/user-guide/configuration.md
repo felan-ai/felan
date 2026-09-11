@@ -45,6 +45,7 @@ browser and Powerline extensions:
     "insights": true,
     "promptHistory": true,
     "memory": true,
+    "sessionCompaction": true,
     "outputStyle": true,
     "powerline": false,
     "sessionTitle": true
@@ -56,7 +57,8 @@ browser and Powerline extensions:
     "contextView": { "displayMode": "inline" },
     "codebaseMemory": { "maxCacheBytes": 0 },
     "promptHistory": { "displayMode": "inline" },
-    "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true }
+    "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
+    "sessionCompaction": { "model": "inherit" }
   },
   "felanSubagents": {
     "concurrency": 4,
@@ -83,6 +85,21 @@ Defaults:
 
 `builtinExtensions.sessionTitle` controls automatic names for interactive root
 sessions. Disable it to keep the first prompt as the session-picker fallback.
+
+`builtinExtensions.sessionCompaction` controls verified session compaction and
+active-lineage `session_recall`. It is enabled by default. Disable it to use
+Pi's native compactor and remove the recall tool; there is intentionally no
+separate strategy setting. The extension makes one additional active-model
+request when compaction runs. `extensionConfig.sessionCompaction.model` defaults
+to `inherit`, which uses the active session model. It also accepts `xhigh`,
+`high`, `medium`, and `low`; each selects an exact tier from the allowed session
+catalog, preferring the active provider/family before crossing providers. If no
+model exists in the requested tier, compaction falls back to `inherit`. The
+setting is also available in `/settings` and as
+`--session-compaction-model <inherit|xhigh|high|medium|low>`, and applies to a
+newly constructed runtime. Generation or validation failures before Pi
+accepts a replacement fall through to native compaction; a failure after Pi
+accepts a replacement cannot automatically rerun native compaction.
 
 New installations use Pi's `fullscreen` TUI mode and editor padding `1`.
 Existing `tuiMode` and `editorPaddingX` values in `settings.json` remain

@@ -69,6 +69,7 @@ The package READMEs are the canonical npm-facing API and development references:
 - [`@felan-ai/ext-output-style`](../packages/ext-output-style/README.md)
 - [`@felan-ai/ext-powerline`](../packages/ext-powerline/README.md)
 - [`@felan-ai/ext-session-title`](../packages/ext-session-title/README.md)
+- [`@felan-ai/ext-session-compaction`](../packages/ext-session-compaction/README.md)
 - [`@felan-ai/ext-prewalk`](../packages/ext-prewalk/README.md)
 - [`@felan-ai/ext-rtk-optimizer`](../packages/ext-rtk-optimizer/README.md)
 - [`@felan-ai/ext-subagents`](../packages/ext-subagents/README.md)

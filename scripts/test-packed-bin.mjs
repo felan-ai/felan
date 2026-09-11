@@ -104,6 +104,11 @@ try {
           if (typeof extension.createMemoryExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (packageName === '@felan-ai/ext-session-title') {
           if (typeof extension.createSessionTitleExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
+        } else if (packageName === '@felan-ai/ext-session-compaction') {
+          if (typeof extension.registerSessionRecall !== 'function' || typeof extension.default !== 'function') throw new Error(packageName + ' has no session compaction extension factory');
+          const { SESSION_COMPACTION_CONFIG } = extension;
+          if (SESSION_COMPACTION_CONFIG?.fields?.model?.default !== 'inherit') throw new Error(packageName + ' has no inherit model configuration default');
+          if (JSON.stringify(SESSION_COMPACTION_CONFIG.fields.model.values) !== JSON.stringify(['inherit', 'xhigh', 'high', 'medium', 'low'])) throw new Error(packageName + ' has unexpected model configuration values');
         } else if (typeof extension.default !== 'function') {
           throw new Error(packageName + ' has no extension factory');
         }

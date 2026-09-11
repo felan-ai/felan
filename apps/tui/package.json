@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.24.5",
+  "version": "0.24.6",
   "description": "Felan Code: an open-source, model-portable coding agent built for cost-efficient, verifiable software work",
   "keywords": [
     "ai",
@@ -67,6 +67,7 @@
     "@felan-ai/ext-prompt-history": "workspace:*",
     "@felan-ai/ext-rtk-optimizer": "workspace:*",
     "@felan-ai/ext-session-title": "workspace:*",
+    "@felan-ai/ext-session-compaction": "workspace:*",
     "@felan-ai/ext-subagents": "workspace:*",
     "@felan-ai/ext-tasks": "workspace:*",
     "@felan-ai/ext-web-access": "workspace:*",

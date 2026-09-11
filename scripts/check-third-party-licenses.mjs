@@ -224,6 +224,18 @@ const tasksNotice = readFileSync(resolve(root, 'packages/ext-tasks/NOTICE'), 'ut
 if (!tasksNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-tasks/NOTICE is missing TypeBox 1.1.38');
 }
+const sessionCompactionNotice = readFileSync(resolve(root, 'packages/ext-session-compaction/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'pi-smart-compact 9.6.2',
+  '687f72c45d27f98ca36d7d1ca9b3941817b0e223',
+  '@sting8k/pi-vcc 0.7.2',
+  'b1b8b3ad748e2c77e8a1da26dc384e58a5bb771f',
+  'TypeBox 1.1.38',
+]) {
+  if (!sessionCompactionNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-session-compaction/NOTICE is missing ${requiredNotice}`);
+  }
+}
 const webAccessNotice = readFileSync(resolve(root, 'packages/ext-web-access/NOTICE'), 'utf8');
 for (const requiredNotice of [
   'pi-web-access 0.18.0',
@@ -267,6 +279,7 @@ for (const requiredNotice of [
   'open 11.0.0',
   '@felan-ai/ext-codebase-memory',
   'codebase-memory-mcp 0.10.8',
+  '@felan-ai/ext-session-compaction',
 ]) {
   if (!tuiNotice.includes(requiredNotice)) {
     errors.push(`apps/tui/NOTICE is missing ${requiredNotice}`);
