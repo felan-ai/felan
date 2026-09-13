@@ -26,11 +26,11 @@ optimizations.
 > is a host application, not a sandbox. Use an isolated host for untrusted
 > projects or commands.
 
-## 41.8% lower aggregate AI model cost in controlled benchmarks
+## 41.9% lower aggregate AI model cost in controlled benchmarks
 
-Across six controlled, extension-specific comparisons, candidate
-configurations used `$12.8480` versus `$22.0819` for their baselines when
-summing median-reduced case costs—a **41.8% reduction**. Individual results
+Across seven controlled, extension-specific comparisons, candidate
+configurations used `$13.1193` versus `$22.5774` for their baselines when
+summing median-reduced case costs—a **41.9% reduction**. Individual results
 ranged from 14.5% to 66.0%. Each extension was measured separately against its
 disabled baseline, not as one all-enabled configuration. Every candidate met
 its configured quality gate.
@@ -43,6 +43,7 @@ its configured quality gate.
 | [Prewalk](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/prewalk/results.html) | 100% | **66.0% lower** | — |
 | [RTK](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/rtk/results.html) | 83.3% | **26.6% lower** | 40.6% fewer prompt tokens |
 | [Codebase Memory](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/codebase-memory/results.html) | 100% | **27.8% lower** | 7.8% shorter agent-step duration |
+| [Session Compaction](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/benchmarks/session-compaction/results.html) | 100% | **45.2% lower** | 52.1% fewer prompt tokens |
 
 **[View the methodology, cases, and full benchmark results](https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/)**
 
