@@ -3,6 +3,7 @@ import type {
   InlineExtension,
 } from '@earendil-works/pi-coding-agent';
 import type { AgentRuntime } from './runtime.js';
+import type { FelanToolInvoker } from './tool-invocation.js';
 import type { ModelSelectionPersistenceScope } from './model-selection.js';
 import type { SavingsReporter, SavingsReporterProvider } from './savings.js';
 import {
@@ -27,6 +28,8 @@ export interface FelanExtensionAPI extends Omit<ExtensionAPI, 'getFlag' | 'regis
   readonly runtime: AgentRuntime;
   readonly config: Readonly<Record<string, ExtensionConfigValue>>;
   readonly savings?: SavingsReporter;
+  /** Session-scoped nested tool execution for host-owned composition features. */
+  readonly toolInvoker?: FelanToolInvoker;
   registerCapability(capability: FelanCapability): void;
   setModel(
     model: Parameters<ExtensionAPI['setModel']>[0],
@@ -57,6 +60,7 @@ export function bindFelanExtension(
   agentDir: string = runtime.cwd,
   config: Readonly<Record<string, ExtensionConfigValue>> = {},
   savings?: SavingsReporterProvider,
+  toolInvoker?: FelanToolInvoker,
 ): InlineExtension {
   return bindFelanExtensionWithCapabilities(
     packageName,
@@ -68,6 +72,7 @@ export function bindFelanExtension(
     undefined,
     config,
     savings,
+    toolInvoker,
   );
 }
 
@@ -81,6 +86,7 @@ function bindFelanExtensionWithCapabilities(
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
   config: Readonly<Record<string, ExtensionConfigValue>>,
   savings: SavingsReporterProvider | undefined,
+  toolInvoker: FelanToolInvoker | undefined,
 ): InlineExtension {
   const inline: InlineExtension = {
     name: packageName,
@@ -102,6 +108,7 @@ function bindFelanExtensionWithCapabilities(
           modelSelectionScope,
           config,
           savings?.createReporter(packageName),
+          toolInvoker,
         ));
       } finally {
         initializing = false;
@@ -119,6 +126,7 @@ export async function loadFelanExtensions(
   agentDir: string = runtime.cwd,
   configOverrides: readonly ExtensionConfigOverride[] = [],
   savings?: SavingsReporterProvider,
+  toolInvoker?: FelanToolInvoker,
 ): Promise<InlineExtension[]> {
   return loadFelanExtensionsWithScope(
     packageNames,
@@ -128,6 +136,7 @@ export async function loadFelanExtensions(
     undefined,
     configOverrides,
     savings,
+    toolInvoker,
   );
 }
 
@@ -139,6 +148,7 @@ export async function loadFelanSessionExtensions(
   modelSelectionScope: ModelSelectionPersistenceScope,
   configOverrides: readonly ExtensionConfigOverride[] = [],
   savings?: SavingsReporterProvider,
+  toolInvoker?: FelanToolInvoker,
 ): Promise<InlineExtension[]> {
   return loadFelanExtensionsWithScope(
     packageNames,
@@ -148,6 +158,7 @@ export async function loadFelanSessionExtensions(
     modelSelectionScope,
     configOverrides,
     savings,
+    toolInvoker,
   );
 }
 
@@ -159,6 +170,7 @@ async function loadFelanExtensionsWithScope(
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
   configOverrides: readonly ExtensionConfigOverride[],
   savings: SavingsReporterProvider | undefined,
+  toolInvoker: FelanToolInvoker | undefined,
 ): Promise<InlineExtension[]> {
   const seen = new Set<string>();
   const extensions: InlineExtension[] = [];
@@ -206,6 +218,7 @@ async function loadFelanExtensionsWithScope(
       modelSelectionScope,
       config,
       savings,
+      toolInvoker,
     ));
   }
 
@@ -220,6 +233,7 @@ function createFelanExtensionAPI(
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
   config: Readonly<Record<string, ExtensionConfigValue>>,
   savings: SavingsReporter | undefined,
+  toolInvoker: FelanToolInvoker | undefined,
 ): FelanExtensionAPI {
   const boundMethods = new Map<PropertyKey, unknown>();
 
@@ -229,6 +243,7 @@ function createFelanExtensionAPI(
       if (property === 'runtime') return runtime;
       if (property === 'config') return config;
       if (property === 'savings') return savings;
+      if (property === 'toolInvoker') return toolInvoker;
       if (property === 'registerCapability') {
         return registerCapability;
       }
@@ -296,6 +311,7 @@ function createFelanExtensionAPI(
         || property === 'runtime'
         || property === 'config'
         || property === 'savings'
+        || property === 'toolInvoker'
         || property === 'registerCapability'
       ) return false;
       return Reflect.set(target, property, value, target);

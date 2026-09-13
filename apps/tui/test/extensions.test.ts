@@ -86,6 +86,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-background-bash',
       '@felan-ai/ext-codex',
       '@felan-ai/ext-session-compaction',
+      '@felan-ai/ext-run',
       '@felan-ai/ext-rtk-optimizer',
       '@felan-ai/ext-codebase-memory',
       '@felan-ai/ext-markitdown',
@@ -309,6 +310,7 @@ describe('local extension importer', () => {
       insights: false,
       sessionTitle: false,
       sessionCompaction: false,
+      run: false,
     })).toEqual([
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-context',

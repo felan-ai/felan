@@ -93,6 +93,9 @@ importers:
       '@felan-ai/ext-rtk-optimizer':
         specifier: workspace:*
         version: link:../../packages/ext-rtk-optimizer
+      '@felan-ai/ext-run':
+        specifier: workspace:*
+        version: link:../../packages/ext-run
       '@felan-ai/ext-session-compaction':
         specifier: workspace:*
         version: link:../../packages/ext-session-compaction
@@ -322,6 +325,22 @@ importers:
         version: link:../agent-core
 
   packages/ext-rtk-optimizer:
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-run:
+    dependencies:
+      '@earendil-works/pi-tui':
+        specifier: 0.85.1
+        version: 0.85.1
+      run:
+        specifier: 2.1.4
+        version: 2.1.4(typescript@5.9.3)
+      typebox:
+        specifier: 1.1.38
+        version: 1.1.38
     devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*
@@ -1919,6 +1938,15 @@ packages:
   run-applescript@7.1.0:
     resolution: {integrity: sha512-DPe5pVFaAsinSaV6QjQ6gdiedWDcRCbUuiQfQa2wmWV7+xC9bGulGI8+TdRmoFkAPaBXk8CrAbnlY2ISniJ47Q==}
     engines: {node: '>=18'}
+
+  run@2.1.4:
+    resolution: {integrity: sha512-Rd8W2wO0LWdwlNbqKJm/o0WpQ/VQ42KRR6MUgnaujjjVOdS0o3bTMZ9dCjWCQAeuIj6jhG58WkqkeGz0cvOIrA==}
+    engines: {node: '>=20.19.0'}
+    peerDependencies:
+      typescript: '>=5.1.6 <7'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
   safe-buffer@5.2.1:
     resolution: {integrity: sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==}
@@ -3606,6 +3634,10 @@ snapshots:
       '@rolldown/binding-win32-x64-msvc': 1.2.1
 
   run-applescript@7.1.0: {}
+
+  run@2.1.4(typescript@5.9.3):
+    optionalDependencies:
+      typescript: 5.9.3
 
   safe-buffer@5.2.1: {}
 

@@ -83,6 +83,12 @@ active session without changing the user's default model or thinking
 preference. Session-only model switches carry the active thinking level instead
 of applying persisted global or per-model defaults. Ordinary selections retain
 Pi's default-updating behavior.
+
+Agent Core also exposes an optional session-scoped `toolInvoker` through
+`FelanExtensionAPI`. It resolves only active tools and preserves validation,
+tool hooks, cancellation, and nested result metadata for portable composition
+features such as `@felan-ai/ext-run`; nested calls do not become transcript
+entries.
 Applications may also pass adapter-neutral `inlineExtensions` directly into
 session composition for host-owned integration such as presentation controls;
 these remain opt-in and are not discovered from ambient configuration.

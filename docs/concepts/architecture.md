@@ -29,6 +29,12 @@ the [transport decision](../maintainers/codebase-memory-stdio.md). Its bounded
 recovery wave coordinates only Felan-owned frontends and uses the upstream
 daemon's graceful stop command; it does not mutate upstream coordination state.
 
+Agent Core also exposes a session-scoped nested-tool dispatcher for portable
+composition features. It resolves active tools and preserves Pi validation and
+tool policy hooks without adding synthetic transcript entries. The portable
+`ext-run` package uses that contract for a QuickJS guest; the local host still
+owns the active-tool policy.
+
 ## Ownership layers
 
 | Layer | Owns | Does not own |

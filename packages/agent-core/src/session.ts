@@ -24,6 +24,7 @@ import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
 import type { ExtensionConfigOverride } from './extension-config.js';
 import type { SavingsReporterProvider } from './savings.js';
+import { SessionToolInvoker } from './tool-invocation.js';
 
 export type StreamFunction = AgentSession['agent']['streamFunction'];
 const PROJECT_INSTRUCTION_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const;
@@ -103,6 +104,7 @@ async function composeAgentCoreSession(
   options: CreateAgentCoreSessionOptions,
 ): Promise<AgentCoreSessionComposition> {
   const agentDir = options.agentDir ?? options.runtime.cwd;
+  const toolInvoker = new SessionToolInvoker();
   const modelSelectionScope = installModelSelectionPersistenceScope(options.settingsManager);
   const featureExtensions = await loadFelanSessionExtensions(
     options.extensionPackages,
@@ -112,6 +114,7 @@ async function composeAgentCoreSession(
     modelSelectionScope,
     options.extensionConfigOverrides,
     options.savings,
+    toolInvoker,
   );
   const extensionFactories = [
     ...featureExtensions,
@@ -147,6 +150,7 @@ async function composeAgentCoreSession(
       ? {}
       : { sessionStartEvent: options.sessionStartEvent }),
   });
+  toolInvoker.bind(result.session);
 
   try {
     if (options.wrapStreamFunction) {

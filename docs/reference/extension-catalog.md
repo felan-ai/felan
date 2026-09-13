@@ -32,6 +32,7 @@ Pi extensions or arbitrary npm packages.
 | [`@felan-ai/ext-powerline`](../../packages/ext-powerline/README.md) | ANSI-aware local status footer | TUI footer | TUI sessions only; enabled by default locally |
 | [`@felan-ai/ext-session-title`](../../packages/ext-session-title/README.md) | Automatic first-prompt session names | Persisted Pi session name | Host-controlled root-session modes; enabled by default locally |
 | [`@felan-ai/ext-session-compaction`](../../packages/ext-session-compaction/README.md) | Bounded verified compaction and active-lineage recall | `session_recall` | Pi 0.85.1 session lifecycle; enabled by default locally |
+| [`@felan-ai/ext-run`](../../packages/ext-run/README.md) | Bounded QuickJS code mode for composing active tools | `run_code` | Read-only/bounded tools by default; exact opt-in for other active tools |
 
 ## Host ownership rules
 

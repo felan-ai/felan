@@ -65,6 +65,7 @@ if (!apachePackages.has('@agentclientprotocol/sdk@1.4.0')) {
 
 for (const required of [
   '@agentclientprotocol/sdk@1.4.0',
+  'run@2.1.4',
   '@earendil-works/pi-agent-core@0.85.1',
   '@earendil-works/pi-ai@0.85.1',
   '@earendil-works/pi-coding-agent@0.85.1',
@@ -249,6 +250,12 @@ for (const requiredNotice of [
 ]) {
   if (!webAccessNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-web-access/NOTICE is missing ${requiredNotice}`);
+  }
+}
+const runNotice = readFileSync(resolve(root, 'packages/ext-run/NOTICE'), 'utf8');
+for (const requiredNotice of ['run 2.1.4', 'Apache License 2.0', 'TypeBox 1.1.38']) {
+  if (!runNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-run/NOTICE is missing ${requiredNotice}`);
   }
 }
 const mcpNotice = readFileSync(resolve(root, 'packages/ext-mcp/NOTICE'), 'utf8');

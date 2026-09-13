@@ -22,5 +22,6 @@ export const packagePaths = [
   'packages/ext-powerline',
   'packages/ext-session-title',
   'packages/ext-session-compaction',
+  'packages/ext-run',
   'apps/tui',
 ];

@@ -57,6 +57,14 @@ export {
   loadFelanExtensions,
 } from './extensions.js';
 export {
+  SessionToolInvoker,
+} from './tool-invocation.js';
+export type {
+  FelanToolInvocationOptions,
+  FelanToolInvocationResult,
+  FelanToolInvoker,
+} from './tool-invocation.js';
+export {
   associateExtensionConfig,
   configField,
   configureExtension,
@@ -127,6 +135,8 @@ export {
   withFileMutationQueue,
 } from '@earendil-works/pi-coding-agent';
 export type {
+  AgentToolResult,
+  AgentToolUpdateCallback,
   AgentSessionEvent,
   AgentSessionEventListener,
   AgentSessionRuntimeDiagnostic,
