@@ -5,54 +5,46 @@ const BLOCKED_COMMANDS = new Set([
   'removeinitscript',
 ]);
 
-const CONNECTION_OPTIONS = new Set(['--auto-connect', '--autoconnect', '--cdp']);
-const OWNED_OPTIONS = new Set([
-  '--session', '--namespace', '--idle-timeout', '--json', '--content-boundaries',
-  '--max-output', '--config', '--allowed-domains', '--action-policy',
-  '--confirm-actions', '--confirm-interactive', '--allow-file-access',
-  '--profile', '--state', '--session-name', '--pin-tab', '--no-pin-tab',
-  '--no-auto-dialog', '--no-webmcp', '--executable-path', '--extension',
-  '--init-script', '--enable', '--args', '--provider', '-p', '--engine',
-  '--plugins', '--plugin',
-]);
+type OptionKind = 'switch' | 'boolean' | 'value';
+type OptionRules = Readonly<Record<string, OptionKind>>;
+
+const CONNECTION_OPTIONS: OptionRules = {
+  '--auto-connect': 'boolean', '--autoconnect': 'boolean', '--cdp': 'value',
+};
+const OWNED_OPTIONS: OptionRules = {
+  '--session': 'value', '--namespace': 'value', '--idle-timeout': 'value',
+  '--json': 'switch', '--content-boundaries': 'switch', '--max-output': 'value',
+  '--config': 'value', '--allowed-domains': 'value', '--action-policy': 'value',
+  '--confirm-actions': 'value', '--confirm-interactive': 'boolean',
+  '--allow-file-access': 'boolean', '--profile': 'value', '--state': 'value',
+  '--session-name': 'value', '--pin-tab': 'boolean', '--no-pin-tab': 'boolean',
+  '--no-auto-dialog': 'boolean', '--no-webmcp': 'boolean',
+  '--executable-path': 'value', '--extension': 'value', '--init-script': 'value',
+  '--enable': 'value', '--args': 'value', '--provider': 'value', '-p': 'value',
+  '--engine': 'value', '--plugins': 'value', '--plugin': 'value',
+};
 const GLOBAL_VALUE_OPTIONS = new Set([
   '--headers', '--proxy', '--proxy-bypass', '--user-agent', '--device',
   '--color-scheme', '--download-path', '--screenshot-dir', '--screenshot-quality',
   '--screenshot-format', '--ca-cert', '--model',
 ]);
 
-type OptionKind = 'switch' | 'boolean' | 'value';
-type OptionRules = Readonly<Record<string, OptionKind>>;
-
 const SCREENSHOT_OPTIONS: OptionRules = {
   '--full': 'switch', '-f': 'switch', '--annotate': 'boolean',
   '--screenshot-format': 'value', '--screenshot-quality': 'value',
 };
-const SELECTOR_OPTIONS: OptionRules = { '--selector': 'value', '-s': 'value' };
-const ATTACHED_OPTIONS: Readonly<Record<string, OptionRules>> = {
-  screenshot: SCREENSHOT_OPTIONS,
-  snapshot: {
-    '-i': 'switch', '--interactive': 'switch', '-c': 'switch', '--compact': 'switch',
-    '-C': 'switch', '--cursor': 'switch', '-u': 'switch', '--urls': 'switch',
-    '-d': 'value', '--depth': 'value', ...SELECTOR_OPTIONS,
-  },
-  scroll: SELECTOR_OPTIONS,
-  type: { '--clear': 'switch', '--delay': 'value' },
-  wait: {
-    '--url': 'value', '-u': 'value', '--load': 'value', '-l': 'value',
-    '--text': 'value', '-t': 'value', '--timeout': 'value',
-  },
-  read: { '--raw': 'switch', '--outline': 'switch', '--filter': 'value', '--timeout': 'value' },
-  a11y: { '--tags': 'value', ...SELECTOR_OPTIONS },
-};
-const ONE_ARGUMENT_COMMANDS = new Set([
-  'click', 'dblclick', 'hover', 'focus', 'check', 'uncheck', 'press', 'key',
-  'keydown', 'keyup', 'scrollintoview', 'scrollinto', 'highlight',
+const KNOWN_BROWSER_COMMANDS = new Set([
+  'a11y', 'auth', 'back', 'batch', 'chat', 'check', 'click', 'clipboard', 'close',
+  'confirm', 'connect', 'console', 'cookies', 'dashboard', 'deny', 'diff',
+  'download', 'drag', 'errors', 'eval', 'fill', 'find', 'focus', 'forward', 'get',
+  'goto', 'highlight', 'hover', 'inspect', 'is', 'key', 'keyboard', 'keydown',
+  'keyup', 'mcp', 'mouse', 'navigate', 'network', 'open', 'pdf', 'plugin',
+  'plugins', 'press', 'profile', 'profiles', 'profiler', 'pushstate', 'react',
+  'read', 'record', 'reload', 'removeinitscript', 'restore', 'screenshot', 'scroll',
+  'scrollinto', 'scrollintoview', 'select', 'session', 'set', 'skills', 'snapshot',
+  'state', 'storage', 'stream', 'trace', 'type', 'uncheck', 'upload', 'vitals',
+  'wait', 'webmcp', 'window',
 ]);
-const NO_ARGUMENT_COMMANDS = new Set(['back', 'forward', 'reload', 'close', 'quit', 'exit']);
-const FIND_LOCATORS = new Set(['role', 'text', 'label', 'placeholder', 'alt', 'title', 'testid', 'first', 'last', 'nth']);
-const FIND_ACTIONS = new Set(['click', 'fill', 'check', 'hover', 'text']);
-const EXACT_LOCATORS = new Set(['role', 'text', 'label', 'placeholder', 'alt', 'title']);
 
 export function findBrowserCommand(args: readonly string[]): string | undefined {
   const first = args[0];
@@ -81,10 +73,10 @@ export function validateBrowserCommand(args: readonly string[]): string {
     if (option === '--') {
       throw new Error('The browser tool does not accept the -- option terminator because Felan enforces trailing session and output policy.');
     }
-    if (CONNECTION_OPTIONS.has(option)) {
+    if (Object.hasOwn(CONNECTION_OPTIONS, option)) {
       throw new Error('Existing-browser attachment requires browser_authorize; do not pass CDP or auto-connect options to browser.');
     }
-    if (OWNED_OPTIONS.has(option) || option === '--restore' || option.startsWith('--restore-')) {
+    if (Object.hasOwn(OWNED_OPTIONS, option) || option === '--restore' || option.startsWith('--restore-')) {
       throw new Error(`The browser tool owns ${option}; omit it from args.`);
     }
     if (['close', 'quit', 'exit'].includes(command) && ['--all', '-a'].includes(option)) {
@@ -102,113 +94,61 @@ export function validateBrowserCommand(args: readonly string[]): string {
   return command;
 }
 
-export function validateAttachedBrowserCommand(args: readonly string[], origin?: string): void {
-  const command = validateBrowserCommand(args);
-  let rules = ATTACHED_OPTIONS[command] ?? {};
-  if (command === 'find') {
-    rules = {
-      ...(args[1] === 'role' ? { '--name': 'value' as const } : {}),
-      ...(EXACT_LOCATORS.has(args[1] ?? '') ? { '--exact': 'switch' as const } : {}),
-    };
-  }
-  const { positional, options, firstOption } = parseOptions(args.slice(1), rules);
-  const count = (minimum: number, maximum = minimum) => requireCount(command, positional, minimum, maximum);
+export function normalizeAttachedBrowserCommand(args: readonly string[]): readonly string[] {
+  if (args.some(arg => arg.includes('\0'))) throw new Error('browser args cannot contain NUL bytes');
+  const normalized: string[] = [];
+  let commandSeen = false;
 
-  if (ONE_ARGUMENT_COMMANDS.has(command)) { count(1); return; }
-  if (NO_ARGUMENT_COMMANDS.has(command)) { count(0); return; }
-  switch (command) {
-    case 'open': case 'goto': case 'navigate':
-      count(1);
-      validateNavigation(positional[0]!, origin);
-      return;
-    case 'fill': case 'type':
-      count(2, Infinity);
-      if (firstOption === 0) throw new Error('Place type options after the selector.');
-      validateIntegerOptions(options, ['--delay'], 0, 300_000);
-      return;
-    case 'select': count(2, Infinity); return;
-    case 'drag': count(2); return;
-    case 'keyboard':
-      count(2, Infinity);
-      if (!['type', 'inserttext', 'insertText'].includes(positional[0]!)) unsupported(command);
-      return;
-    case 'scroll':
-      count(0, 2);
-      if (positional[0] !== undefined && !['up', 'down', 'left', 'right'].includes(positional[0])) unsupported(command);
-      if (positional[1] !== undefined) requireInteger(positional[1], 0, 2_147_483_647);
-      return;
-    case 'snapshot':
-      count(0);
-      validateIntegerOptions(options, ['--depth', '-d'], 0, 2_147_483_647);
-      return;
-    case 'screenshot':
-      count(0, 1);
-      validateScreenshotOptions(options);
-      if (positional[0] !== undefined && isScreenshotPath(positional[0])) {
-        throw new Error('Authorized browser screenshots use Felan-generated paths; omit the output path.');
+  for (let index = 0; index < args.length; index++) {
+    const token = args[index]!;
+    const option = token.split('=', 1)[0]!;
+    const kind = CONNECTION_OPTIONS[option] ?? OWNED_OPTIONS[option]
+      ?? (option.startsWith('--restore-') ? 'value' : undefined);
+
+    if (option === '--restore') {
+      if (!token.includes('=')) {
+        const next = args[index + 1];
+        const following = args[index + 2];
+        if (next && !next.startsWith('-') && ((commandSeen && !KNOWN_BROWSER_COMMANDS.has(next))
+          || (!commandSeen && following && KNOWN_BROWSER_COMMANDS.has(following)))) index++;
       }
-      return;
-    case 'get': {
-      const subcommand = positional[0];
-      if (subcommand === 'title' || subcommand === 'url') count(1);
-      else if (subcommand === 'attr') count(3);
-      else if (['text', 'html', 'value', 'count', 'box', 'styles'].includes(subcommand ?? '')) count(2);
-      else unsupported(command);
-      return;
+      continue;
     }
-    case 'is':
-      count(2);
-      if (!['visible', 'enabled', 'checked'].includes(positional[0]!)) unsupported(command);
-      return;
-    case 'find': {
-      const locator = positional[0] ?? '';
-      if (!FIND_LOCATORS.has(locator)) unsupported(command);
-      const actionIndex = locator === 'nth' ? 3 : 2;
-      count(actionIndex, Infinity);
-      if (locator === 'nth') requireInteger(positional[1]!, -2_147_483_648, 2_147_483_647);
-      const action = positional[actionIndex] ?? 'click';
-      if (!FIND_ACTIONS.has(action)) unsupported('find action');
-      count(action === 'fill' ? actionIndex + 2 : actionIndex, action === 'fill' ? Infinity : actionIndex + 1);
-      if (firstOption !== undefined && firstOption <= actionIndex) {
-        throw new Error('Place find options after an explicit supported action.');
-      }
-      return;
+    if (kind) {
+      if (token.includes('=')) continue;
+      const next = args[index + 1];
+      if (kind === 'value') {
+        if (!next || next.startsWith('-') || (!commandSeen && KNOWN_BROWSER_COMMANDS.has(next))) {
+          throw new Error(`Browser option ${option} requires a non-option value.`);
+        }
+        index++;
+      } else if (kind === 'boolean' && (next === 'true' || next === 'false')) index++;
+      continue;
     }
-    case 'mouse': {
-      const action = positional[0];
-      if (action === 'move') count(3);
-      else if (action === 'wheel') count(1, 3);
-      else if (action === 'down' || action === 'up') {
-        count(1, 2);
-        if (positional[1] !== undefined && !['left', 'right', 'middle'].includes(positional[1])) unsupported(command);
-        return;
-      } else unsupported(command);
-      for (const value of positional.slice(1)) requireInteger(value, -2_147_483_648, 2_147_483_647);
-      return;
-    }
-    case 'dialog':
-      if (positional[0] === 'status') count(1);
-      else if (positional[0] === 'accept' || positional[0] === 'dismiss') count(1, 2);
-      else unsupported(command);
-      return;
-    case 'wait': {
-      const modes = [...options.keys()].filter(option => option !== '--timeout');
-      count(modes.length === 0 ? 1 : 0);
-      if (modes.length > 1) throw new Error('Use one supported wait condition at a time.');
-      for (const option of ['--load', '-l']) {
-        const state = options.get(option);
-        if (state !== undefined && !['load', 'domcontentloaded', 'networkidle'].includes(state)) unsupported('wait load state');
-      }
-      validateIntegerOptions(options, ['--timeout'], 1, 300_000);
-      return;
-    }
-    case 'read':
-      count(0);
-      validateIntegerOptions(options, ['--timeout'], 1, 300_000);
-      return;
-    case 'a11y': count(0); return;
-    default: unsupported(command);
+
+    normalized.push(token);
+    if (!commandSeen && /^[a-z][a-z0-9-]*$/u.test(token)) commandSeen = true;
   }
+
+  const commandIndex = findAttachedCommandIndex(normalized);
+  const reordered = commandIndex > 0
+    ? [...normalized.slice(commandIndex), ...normalized.slice(0, commandIndex)]
+    : normalized;
+  const command = validateBrowserCommand(reordered);
+  if (command === 'get' && reordered[1] === 'cdp-url') {
+    throw new Error('The authorized browser connection endpoint is not exposed to browser commands.');
+  }
+  return reordered;
+}
+
+function findAttachedCommandIndex(args: readonly string[]): number {
+  for (let index = 0; index < args.length; index++) {
+    const token = args[index]!;
+    if (!token.startsWith('-') || /^-\d+$/u.test(token)) return index;
+    const option = token.split('=', 1)[0]!;
+    if (GLOBAL_VALUE_OPTIONS.has(option) && !token.includes('=')) index++;
+  }
+  return 0;
 }
 
 export function inspectScreenshotArguments(args: readonly string[]): { path?: string; format: string } {
@@ -256,14 +196,6 @@ function parseOptions(args: readonly string[], rules: OptionRules): {
   return { positional, options, ...(firstOption === undefined ? {} : { firstOption }) };
 }
 
-function validateNavigation(target: string, _origin?: string): void {
-  let url: URL;
-  try { url = new URL(target); } catch { throw new Error('Authorized browser navigation requires an absolute HTTP(S) URL.'); }
-  if (!/^https?:\/\//iu.test(target) || /[\s\\]/u.test(target) || url.username || url.password) {
-    throw new Error('Authorized browser navigation requires an unambiguous HTTP(S) URL without credentials.');
-  }
-}
-
 function isScreenshotPath(value: string): boolean {
   const relative = value.startsWith('./') || value.startsWith('../');
   const selector = !relative && /^[.#@]/u.test(value);
@@ -291,8 +223,4 @@ function requireInteger(value: string, minimum: number, maximum: number): void {
 
 function requireCount(command: string, args: readonly string[], minimum: number, maximum: number): void {
   if (args.length < minimum || args.length > maximum) throw new Error(`Unsupported arguments for browser ${command}.`);
-}
-
-function unsupported(command: string): never {
-  throw new Error(`The ${command} command or subcommand is unavailable on an authorized existing browser session.`);
 }

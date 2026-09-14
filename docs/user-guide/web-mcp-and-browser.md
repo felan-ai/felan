@@ -142,15 +142,17 @@ specialized skill. Attaching to an existing browser requires
 local `DevToolsActivePort` file, and makes one direct-CDP connection attempt.
 If the file is unavailable, it opens `chrome://inspect/#remote-debugging` in
 Chrome and rediscovers only after you confirm setup is complete. It then binds
-a fresh strict pinned tab. The grant is session-scoped and
-can be inspected or revoked through `browser_authorize`. Direct `connect`,
-`--cdp`, and `--auto-connect` arguments are rejected by `browser`; failed
-authorization never silently falls back to an isolated logged-out browser.
+a fresh pinned tab. The grant is session-scoped and can be inspected or revoked
+through `browser_authorize`. After authorization, normal agent-browser
+commands are available; Felan replaces session, configuration, output, and
+connection options. Direct `connect`, `--cdp`, and `--auto-connect` arguments
+cannot replace the leased connection; failed authorization never silently
+falls back to an isolated logged-out browser.
 
-CDP attachment is browser-level authority. The requested origin is only the
-initial tab destination; attached navigation may cross HTTP(S) origins. Pinned
-target, safe-URL, and command checks reduce accidental misuse but are not a
-network sandbox. Set `extensionConfig.browser.authorizationPolicy` to
+CDP attachment is browser-level authority. Authorized commands can access
+authenticated browser data and advanced browser capabilities. The requested
+origin is only the initial tab destination; attached navigation may cross
+HTTP(S) origins. Set `extensionConfig.browser.authorizationPolicy` to
 `always-allow` to skip Felan's repeated consent prompt, or restore `ask` in
 `/settings`; Chrome's own approval is still required.
 Print, ACP/RPC, cloud, and subagent contexts fail closed because they cannot

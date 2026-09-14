@@ -11,7 +11,7 @@ import {
   runBrowserCli,
   runBrowserSkill,
 } from '../src/cli.js';
-import { validateAttachedBrowserCommand } from '../src/command-policy.js';
+import { normalizeAttachedBrowserCommand } from '../src/command-policy.js';
 import { BrowserTestRuntime, result } from './test-runtime.js';
 
 const invocation: AgentBrowserInvocation = {
@@ -296,129 +296,44 @@ describe('public browser command policy', () => {
   });
 });
 
-describe('attached browser command policy', () => {
-  const allowed = [
-    ['open', 'https://example.com/path'], ['goto', 'https://example.com:443/path?q=1'],
-    ['navigate', 'https://example.com/#section'], ['back'], ['forward'], ['reload'],
-    ['close'], ['quit'], ['exit'], ['click', '@e1'], ['dblclick', '@e1'],
-    ['hover', '@e1'], ['focus', '@e1'], ['check', '@e1'], ['uncheck', '@e1'],
-    ['fill', '@e1', ''], ['fill', '@e1', 'STATE --fn is literal text'],
-    ['type', '@e1', '-123', '--clear', '--delay', '20'],
-    ['type', '@e1', '--delay', '0', 'Hello'], ['select', '@e1', 'a', 'b'], ['drag', '@e1', '@e2'],
-    ['press', 'Control+a'], ['key', 'Enter'], ['keydown', 'Shift'], ['keyup', 'Shift'],
-    ['keyboard', 'type', 'Hello world'], ['keyboard', 'inserttext', 'VALUE'], ['keyboard', 'insertText', 'text'],
-    ['scroll'], ['scroll', 'down', '300'], ['scroll', '--selector', '#list', 'up', '300'],
-    ['scrollintoview', '@e1'], ['scrollinto', '@e1'], ['highlight', '@e1'],
-    ['snapshot', '-i', '-c', '-C', '-u', '-d', '3', '-s', '#main'],
-    ['snapshot', '--interactive', '--compact', '--cursor', '--urls', '--depth', '0', '--selector', 'input[name="--cdp"]'],
-    ['screenshot'], ['screenshot', '@e1', '--full', '--annotate', 'false'],
-    ['screenshot', '-f', '--screenshot-format', 'jpeg', '--screenshot-quality', '80'],
-    ['get', 'title'], ['get', 'url'], ['get', 'text', '@e1'], ['get', 'html', '@e1'],
-    ['get', 'value', '@e1'], ['get', 'attr', '@e1', 'data-label'], ['get', 'count', 'input'],
-    ['get', 'box', '@e1'], ['get', 'styles', '@e1'],
-    ['is', 'visible', '@e1'], ['is', 'enabled', '@e1'], ['is', 'checked', '@e1'],
-    ['find', 'role', 'button'], ['find', 'role', 'button', 'click', '--name', 'Save', '--exact'],
-    ['find', 'text', 'Save', 'hover', '--exact'], ['find', 'label', 'Email', 'fill', 'a@b.com'],
-    ['find', 'placeholder', 'Email', 'text'], ['find', 'alt', 'Logo', 'click'],
-    ['find', 'title', 'Ready', 'check'], ['find', 'testid', 'submit', 'click'],
-    ['find', 'first', 'button', 'click'], ['find', 'last', 'button', 'text'], ['find', 'nth', '-1', 'input', 'fill', 'hello'],
-    ['mouse', 'move', '100', '200'], ['mouse', 'down'], ['mouse', 'up', 'left'], ['mouse', 'wheel', '-100', '5'],
-    ['dialog', 'accept', 'hello'], ['dialog', 'dismiss'], ['dialog', 'status'],
-    ['wait', '@e1'], ['wait', '100'], ['wait', '--url', '**/dashboard', '--timeout', '1000'],
-    ['wait', '-u', '**/dashboard'], ['wait', '--load', 'networkidle'], ['wait', '-l', 'domcontentloaded'],
-    ['wait', '--text', 'Ready'], ['wait', '-t', 'Ready'],
-    ['read', '--raw', '--outline', '--filter', 'Heading', '--timeout', '1000'],
-    ['a11y', '--tags', 'wcag2a', '-s', '#main'],
-  ];
-
-  it.each(allowed.map(args => ({ args })))('allows supported page arguments $args', async ({ args }) => {
+describe('trusted attached browser command policy', () => {
+  it('accepts normal attached commands that the native CLI supports', async () => {
     const runtime = new BrowserTestRuntime();
-    validateAttachedBrowserCommand(args, 'https://example.com');
-    const output = await runBrowserCli(runtime, invocation, args, createBrowserAttachmentScope(runtime, 'test'), { attached: true, attachmentEndpoint });
+    for (const args of [['eval', '1'], ['cookies'], ['network', 'requests'], ['console'], ['errors'], ['tab', 'list']]) {
+      expect(normalizeAttachedBrowserCommand(args)).toEqual(args);
+      await expect(runBrowserCli(runtime, invocation, args, createBrowserAttachmentScope(runtime, 'test'), {
+        attached: true, attachmentEndpoint,
+      })).resolves.toMatchObject({ code: 0 });
+    }
+  });
+
+  it('replaces Felan-owned options and preserves literal command payloads', () => {
+    expect(normalizeAttachedBrowserCommand([
+      '--session', 'other', '--cdp=ws://127.0.0.1:1/devtools/browser/other',
+      'fill', '@e1', 'literal --profile', '--json', '--namespace=other',
+    ])).toEqual(['fill', '@e1', 'literal --profile']);
+    expect(normalizeAttachedBrowserCommand(['eval', 'document.title --session literal'])).toEqual(['eval', 'document.title --session literal']);
+  });
+
+  it('normalizes the full attached invocation before Felan appends its routing policy', async () => {
+    const runtime = new BrowserTestRuntime();
+    const output = await runBrowserCli(runtime, invocation, [
+      '--session', 'other', '--auto-connect', 'snapshot', '--json', '--pin-tab', '-i',
+    ], createBrowserAttachmentScope(runtime, 'test'), { attached: true, attachmentEndpoint });
     expect(output.code).toBe(0);
-    expect(runtime.calls[0]?.args.slice(0, args.length)).toEqual(args);
-    if (['close', 'quit', 'exit'].includes(args[0]!)) {
-      expect(runtime.calls[0]?.args).not.toContain('--cdp');
-      expect(runtime.calls[0]?.args).not.toContain('--no-webmcp');
-    } else expect(runtime.calls[0]?.args).toEqual(expect.arrayContaining(['--cdp', attachmentEndpoint, '--no-webmcp']));
+    const dispatched = runtime.calls[0]?.args ?? [];
+    expect(dispatched.slice(0, 2)).toEqual(['snapshot', '-i']);
+    expect(dispatched).toContain('--cdp');
+    expect(dispatched).toContain(attachmentEndpoint);
+    expect(dispatched.filter(arg => arg === '--session')).toHaveLength(1);
+    expect(dispatched.filter(arg => arg === '--namespace')).toHaveLength(1);
+    expect(dispatched).not.toContain('other');
   });
 
-  const blocked = [
-    ['eval', '1'], ['wait', '--fn', 'fetch("https://other.test")'], ['wait', '-f', 'true'],
-    ['wait', '--fn=true'], ['wait', '-f=true'], ['wait', '--download', '/workspace/file'],
-    ['wait', '-d'], ['wait', '--text', 'Ready', '--url', '**/done'],
-    ['wait', '@e1', '--text', 'Ready'], ['wait', '--load', 'unknown'],
-    ['wait', '--timeout', 'NaN', '@e1'], ['wait', '--text', '--fn', 'true'],
-    ['cookies'], ['storage', 'local'], ['network', 'route', '*'], ['network', 'request', '1'],
-    ['network', 'requests'], ['network', 'har', 'start'], ['console'], ['errors'],
-    ['trace', 'start'], ['profiler', 'start'], ['record', 'start', '/tmp/capture.webm'],
-    ['tab', 'list'], ['tab', 'new'], ['window', 'new'], ['frame', 'main'],
-    ['clipboard', 'read'], ['inspect'], ['set', 'viewport', '1200', '800'],
-    ['set', 'credentials', 'user', 'password'], ['get', 'cdp-url'],
-    ['session', 'info'], ['auth', 'list'], ['state', 'save', '/tmp/state.json'],
-    ['batch', 'snapshot'], ['webmcp', 'list'], ['plugin', 'run', 'test', 'command.run'],
-    ['download', '@e1', '/tmp/out'], ['upload', '@e1', '/tmp/in'], ['pdf', '/tmp/out.pdf'],
-    ['read', 'https://example.com'], ['read', '--llms', 'full'], ['read', '--require-md'],
-    ['a11y', 'https://other.test'], ['vitals', 'https://other.test'], ['diff', 'url', 'a', 'b'],
-    ['pushstate', '/other'], ['removeinitscript', '1'], ['future-command'],
-    ['get', 'URL'], ['get', ' url'], ['get', 'unknown'], ['get', 'url', 'extra'],
-    ['keyboard', 'InsertText', 'value'], ['keyboard', 'eval', '1'],
-    ['find', 'role', 'button', 'eval', '1'], ['find', 'role', 'button', 'type', 'text'],
-    ['find', 'ROLE', 'button', 'click'], ['find', 'role', 'button', '--name', 'Save'],
-    ['find', 'role', 'button', '--exact', 'click'], ['find', 'nth', '1', 'button', 'click', '--exact'],
-    ['find', 'label', 'Email', 'fill'], ['find', 'text', 'Go', 'click', 'unexpected'],
-    ['type', '--delay', '10', '@e1', 'hello'], ['mouse', 'unknown'], ['mouse', 'move', 'NaN', '1'],
-    ['dialog', 'unknown'], ['scroll', 'sideways'], ['scroll', 'down', 'NaN'],
-    ['snapshot', 'eval'], ['snapshot', '--unknown'], ['snapshot', '-x'], ['snapshot', '--DEPTH', '1'],
-    ['snapshot', '--depth=1'], ['snapshot', '--depth'], ['snapshot', '-d', '-1'],
-    ['snapshot', '--selector', '--cdp', '9222'], ['snapshot', '--selector', '--unknown'],
-    ['snapshot', '--interactive', '--interactive'], ['snapshot', '--', '--unknown'],
-    ['click', '@e1', '--new-tab'], ['click', '@e1', '--new-tab=true'],
-    ['close', '--all'], ['exit', '--all=true'], ['quit', '-a'],
-    ['screenshot', '/workspace/custom.png'], ['screenshot', './custom.png'],
-    ['screenshot', '@e1', '/workspace/custom.png'], ['screenshot', '--screenshot-dir', '/tmp'],
-    ['screenshot', '--screenshot-format=jpeg'], ['screenshot', '--screenshot-format', 'webp'],
-    ['screenshot', '--screenshot-quality', '101'], ['screenshot', '--quality', '80'],
-    ['open'], ['goto', 'example.com'], ['navigate', '/path'], ['open', 'javascript:alert(1)'],
-    ['open', 'https://example.com', '--headed'], ['open', 'https://example.com', '--headers', '{}'],
-  ];
-
-  it.each(blocked.map(args => ({ args })))('rejects attached escape or ambiguous arguments $args before I/O', async ({ args }) => {
-    const runtime = new BrowserTestRuntime();
-    const scope = createBrowserAttachmentScope(runtime, 'test');
-    expect(() => validateAttachedBrowserCommand(args, 'https://example.com')).toThrow();
-    for (const prepareScreenshot of [true, false]) {
-      await expect(runBrowserCli(runtime, invocation, args, scope, { attached: true, prepareScreenshot })).rejects.toThrow();
+  it('retains setup and endpoint controls as unavailable', () => {
+    for (const args of [['install'], ['plugin', 'list'], ['batch', 'snapshot'], ['connect', '9222'], ['get', 'cdp-url']]) {
+      expect(() => normalizeAttachedBrowserCommand(args)).toThrow();
     }
-    expect(runtime.calls).toHaveLength(0);
-    expect(runtime.sessionStorage.files.size).toBe(0);
-  });
-
-  it.each([
-    '--headed', '--proxy', '--proxy-bypass', '--engine', '--provider', '-p', '--user-agent',
-    '--device', '--model', '--headers', '--color-scheme', '--download-path', '--debug',
-    '--screenshot-dir', '--init-script', '--enable', '--args', '--executable-path',
-    '--pin-tab', '--no-pin-tab', '--config', '--ca-cert', '--no-ca-cert', '--webgpu',
-    '--ignore-https-errors', '--hide-scrollbars', '--help', '-h', '--version', '-V',
-  ])('rejects attached global override %s in split and equals forms', (option) => {
-    for (const tail of [[option, 'value'], [`${option}=value`]]) {
-      expect(() => validateAttachedBrowserCommand(['snapshot', ...tail])).toThrow();
-    }
-  });
-
-  it.each([
-    'http://example.com@other.test', 'https://example.com@other.test',
-    'https://user:password@example.com', ' https://example.com', 'https://example.com\n',
-    'https://example.com\\@other.test', 'data:text/html,test', 'file:///tmp/page.html',
-    '//example.com',
-  ])('rejects unsafe or ambiguous navigation URL %j', (target) => {
-    for (const command of ['open', 'goto', 'navigate']) {
-      expect(() => validateAttachedBrowserCommand([command, target], 'https://example.com')).toThrow();
-    }
-  });
-
-  it.each(['http://other.test', 'https://other.test/path'])('allows navigation to another HTTP(S) origin %j', (target) => {
-    expect(() => validateAttachedBrowserCommand(['open', target], 'https://example.com')).not.toThrow();
   });
 
   it('retains the explicit trusted path for private observations and close', async () => {

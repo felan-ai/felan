@@ -9,7 +9,7 @@ import {
 } from './cli.js';
 import type { BrowserCliResult, BrowserSessionScope } from './cli.js';
 import { BrowserAttachments, successData } from './attachment.js';
-import { validateAttachedBrowserCommand } from './command-policy.js';
+import { normalizeAttachedBrowserCommand } from './command-policy.js';
 import {
   BROWSER_CAPABILITY_INSTRUCTION,
   formatBrowserFailure,
@@ -95,6 +95,7 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
         'For operation "run", pass literal args such as ["open", "https://example.com"] or ["snapshot", "-i"], never a shell command string.',
         'Start run args with the agent-browser command and place permitted options after it; Felan supplies session isolation and output-policy options.',
         'Use browser_authorize before reusing an existing authenticated Chrome session; direct CDP and auto-connect arguments are rejected by browser.',
+        'After browser_authorize succeeds, ordinary agent-browser commands are available for the trusted attached session; Felan-owned routing and output options are replaced automatically.',
         'browser_authorize owns the local consent prompt; after declined or failed authorization, report the result and wait for the user before requesting another browser connection.',
         'Run commands one at a time; nested agent-browser batch commands are unavailable through this tool.',
         'Re-run snapshot after navigation or interaction because agent-browser refs are invalidated by page changes.',
@@ -119,6 +120,9 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
           );
           if (signal?.aborted) throw new Error('browser tool aborted');
           const failed = result.killed || result.code !== 0;
+          if (failed) {
+            throw new Error(formatBrowserFailure(result.stderr || result.stdout || `agent-browser exited with code ${result.code}`));
+          }
           return {
             content: [{
               type: 'text' as const,
@@ -140,15 +144,14 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
               killed: result.killed,
               outputTruncated: result.outputTruncated,
             } satisfies BrowserToolDetails,
-            ...(failed ? { isError: true as const } : {}),
           };
         }
 
         const attachment = attachments.current(requestedScope);
+        const args = attachment ? normalizeAttachedBrowserCommand(normalized.args) : normalized.args;
         const scope = attachment?.scope ?? requestedScope;
         if (attachment) {
-          validateAttachedBrowserCommand(normalized.args, attachment.origin);
-          if (['close', 'quit', 'exit'].includes(normalized.args[0] ?? '')) {
+          if (['close', 'quit', 'exit'].includes(args[0] ?? '')) {
             const outcome = await attachments.revoke(requestedScope);
             return {
               content: [{ type: 'text' as const, text: outcome.message ?? 'Existing-browser authorization revoked.' }],
@@ -156,7 +159,6 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
               ...(outcome.state === 'unavailable' ? { isError: true as const } : {}),
             };
           }
-          await attachments.verify(attachment, signal);
         } else {
           isolatedScopes.set(`${scope.namespace}/${scope.session}`, scope);
         }
@@ -165,21 +167,18 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
           : signal;
         let result: BrowserCliResult;
         try {
-          result = await runBrowserCli(pi.runtime, currentInvocation, normalized.args, scope, {
+            result = await runBrowserCli(pi.runtime, currentInvocation, args, scope, {
             attached: attachment !== undefined,
             ...(attachment?.endpoint === undefined ? {} : { attachmentEndpoint: attachment.endpoint }),
             ...(commandSignal === undefined ? {} : { signal: commandSignal }),
             ...(normalized.timeoutMs === undefined ? {} : { timeoutMs: normalized.timeoutMs }),
           });
           if (commandSignal?.aborted) throw new Error('browser tool aborted');
-          if (attachment) {
-            if (result.killed || result.outputTruncated) throw new Error('Authorized browser command was interrupted.');
-            await attachments.verify(attachment, signal);
-            if (result.code === 0) successData(result);
-            else result = { ...result, stdout: '', stderr: 'The command failed in the authorized browser tab.' };
+          if (result.killed || result.outputTruncated || result.code !== 0) {
+            throw new Error(formatBrowserFailure(redactBrowserError(result.stderr || result.stdout || `agent-browser exited with code ${result.code}`, attachment?.endpoint)));
           }
         } catch (error) {
-          if (attachment) {
+          if (attachment && !signal?.aborted && (attachment.controller.signal.aborted || attachment.lease?.signal.aborted)) {
             await attachments.invalidate(attachment);
             throw new Error('Existing-browser authorization is inactive or its target changed. No browser result was returned.');
           }
@@ -204,7 +203,6 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
             result.generatedScreenshotPath,
             supportsImageInput(ctx.model),
           );
-          if (attachment) await attachments.verify(attachment, signal);
           screenshotDetails = {
             path: image.details.path,
             delivered: image.details.delivered,
@@ -237,7 +235,6 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
             outputTruncated: result.outputTruncated,
             ...(screenshotDetails === undefined ? {} : { screenshot: screenshotDetails }),
           } satisfies BrowserToolDetails,
-          ...(result.killed || result.code !== 0 ? { isError: true as const } : {}),
         };
       },
     });
@@ -345,6 +342,10 @@ function validateBrowserParams(params: BrowserParams): BrowserParams & { operati
 
 function supportsImageInput(model: Model<any> | undefined): boolean {
   return Array.isArray(model?.input) && model.input.includes('image');
+}
+
+function redactBrowserError(value: string, endpoint: string | undefined): string {
+  return endpoint === undefined ? value : value.split(endpoint).join('[redacted browser endpoint]');
 }
 
 export default browserExtension;

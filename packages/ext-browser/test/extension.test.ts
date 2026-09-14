@@ -152,7 +152,7 @@ describe('browser extension', () => {
     await expect(browser.execute('cross-origin-open', { operation: 'run', args: ['open', 'https://example.org/private'] }, undefined, undefined, harness.context))
       .resolves.toBeDefined();
     await expect(browser.execute('cookies', { operation: 'run', args: ['cookies'] }, undefined, undefined, harness.context))
-      .rejects.toThrow('unavailable on an authorized existing browser session');
+      .resolves.toBeDefined();
     await expect(authorize.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'revoked' } });
     expect(authorizationHost.authorize).toHaveBeenCalledOnce();
@@ -198,6 +198,27 @@ describe('browser extension', () => {
     for (const privateValue of ['backgroundPid', 'browserLaunched', 'cdpUrl', 'ws://127.0.0.1:9222', 'test-target']) {
       expect(modelOutput).not.toContain(privateValue);
     }
+    expect(observations.map((call) => commandKey(call.args))).toEqual([
+      'session info', 'get cdp-url', 'tab list', 'get url',
+    ]);
+  });
+
+  it('keeps an authorized attachment usable after an ordinary native command failure', async () => {
+    let attempts = 0;
+    const lease = createLease();
+    const harness = await createHarness({
+      authorizationHost: createAuthorizationHost(lease),
+      commands: { snapshot: () => (++attempts === 1 ? result('', 1, 'page command failed') : jsonSuccess({ ok: true })) },
+    });
+    const authorize = harness.tools.get('browser_authorize');
+    const browser = harness.tools.get('browser');
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+      .resolves.toMatchObject({ details: { state: 'authorized' } });
+    await expect(browser.execute('failed', { operation: 'run', args: ['snapshot'] }, undefined, undefined, harness.context))
+      .rejects.toThrow('page command failed');
+    await expect(browser.execute('recovered', { operation: 'run', args: ['snapshot'] }, undefined, undefined, harness.context))
+      .resolves.toBeDefined();
+    expect(lease.close).not.toHaveBeenCalled();
   });
 
   it('waits for native shutdown after close acknowledges before the daemon exits', async () => {
@@ -518,10 +539,10 @@ describe('browser extension', () => {
     releaseHost.resolve();
 
     expect(attachment).toMatchObject({ ready: true });
-    await expect(pending).resolves.toMatchObject({ details: { state: 'unavailable' } });
-    expect(lease.close).toHaveBeenCalledOnce();
+    await expect(pending).resolves.toMatchObject({ details: { state: 'authorized' } });
+    expect(lease.close).not.toHaveBeenCalled();
     await expect(harness.tools.get('browser').execute('snapshot', { operation: 'run', args: ['snapshot', '-i'] }, undefined, undefined, harness.context))
-      .rejects.toThrow(/authorization|quarantined/u);
+      .resolves.toBeDefined();
   });
 
   it('forwards cancellation to an in-flight native attachment and rejects its late success', async () => {
@@ -917,7 +938,7 @@ describe('browser extension', () => {
     expect(lease.close).toHaveBeenCalledOnce();
   });
 
-  it.each(['scheme', 'target'] as const)('withholds output and screenshot reads after a postflight %s change', async (change) => {
+  it.each(['scheme', 'target'] as const)('continues after a native %s change', async (change) => {
     const harness = await createHarness({
       authorizationHost: createAuthorizationHost(createLease()),
       commands: {
@@ -938,15 +959,14 @@ describe('browser extension', () => {
     resizeImageMock.mockClear();
 
     const screenshot = browser.execute('screenshot', { operation: 'run', args: ['screenshot'] }, undefined, undefined, harness.context);
-    await expect(screenshot).rejects.toThrow(/HTTP|target|authorization|quarantined/u);
-    await expect(screenshot).rejects.not.toThrow('PRIVATE_BROWSER_RESPONSE');
+    await expect(screenshot).resolves.toMatchObject({ details: { screenshot: { delivered: true } } });
     expect(harness.runtime.calls.filter((call) => call.args[0] === 'screenshot')).toHaveLength(1);
-    expect(readFile).not.toHaveBeenCalled();
-    expect(resizeImageMock).not.toHaveBeenCalled();
+    expect(readFile).toHaveBeenCalledOnce();
+    expect(resizeImageMock).toHaveBeenCalledOnce();
     const status = await authorize.execute('status', { operation: 'status' }, undefined, undefined, harness.context);
-    expect(status.details.state).not.toBe('authorized');
+    expect(status.details.state).toBe('authorized');
     await expect(browser.execute('snapshot', { operation: 'run', args: ['snapshot', '-i'] }, undefined, undefined, harness.context))
-      .rejects.toThrow(/authorization|quarantined/u);
+      .resolves.toBeDefined();
   });
 
   it('does not report or use authorization after the host lease aborts', async () => {

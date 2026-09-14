@@ -70,12 +70,7 @@ export class BrowserAttachments {
     if (!attempt) return { state: 'idle' };
     if (this.#uncleanPrevious(root, attempt)) return { state: 'unavailable', message: 'Previous browser cleanup is unconfirmed.' };
     if (attempt.state === 'authorized') {
-      try {
-        await this.verify(attempt);
-        return { state: 'authorized' };
-      } catch {
-        return { state: 'blocked', message: 'Existing-browser authorization is no longer active.' };
-      }
+      return { state: 'authorized' };
     }
     if (attempt.state === 'revoked' && !attempt.cleanupVerified) {
       return { state: 'unavailable', message: 'Browser access is blocked, but cleanup is unconfirmed.' };
@@ -99,12 +94,7 @@ export class BrowserAttachments {
       } catch { return { state: 'cancelled', message: 'This authorization request was cancelled.' }; }
     }
     if (previous?.state === 'authorized') {
-      try {
-        await this.verify(previous, signal);
-        return { state: 'authorized', reused: true };
-      } catch {
-        return { state: 'unavailable', message: 'Existing-browser authorization was lost. Request authorization again.' };
-      }
+      return { state: 'authorized', reused: true };
     }
     if ((previous && !previous.cleanupVerified) || this.#uncleanPrevious(root, previous)) {
       return { state: 'unavailable', message: 'Previous browser cleanup is unconfirmed. Revoke again before requesting authorization.' };
@@ -143,8 +133,6 @@ export class BrowserAttachments {
         attach: (connection, lease) => this.#attach(attempt, connection, lease, authorizationSignal),
       }), authorizationSignal);
       if (outcome.status === 'authorized' && attempt.verified && this.#isCurrent(attempt) && !authorizationSignal.aborted) {
-        await this.#observe(attempt, authorizationSignal);
-        authorizationSignal.throwIfAborted();
         if (!this.#isCurrent(attempt)) throw new Error('Authorization request is no longer active.');
         attempt.state = 'authorized';
         return { state: 'authorized' };
@@ -203,17 +191,6 @@ export class BrowserAttachments {
     } catch {
       await this.invalidate(attempt);
       return { ready: false, reason: 'Chrome did not complete the verified existing-browser connection.' };
-    }
-  }
-
-  async verify(attempt: BrowserAttachment, signal?: AbortSignal): Promise<void> {
-    try {
-      this.assertActive(attempt);
-      await this.#observe(attempt, signal);
-      this.assertActive(attempt);
-    } catch {
-      await this.invalidate(attempt);
-      throw new Error('Existing-browser authorization was lost or its target changed. No further browser action is permitted.');
     }
   }
 

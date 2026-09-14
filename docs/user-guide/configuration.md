@@ -168,9 +168,9 @@ format and model-selection behavior.
 `extensionConfig.browser.authorizationPolicy` controls Felan's local consent
 prompt when reusing an existing authenticated Chrome session. It defaults to
 `ask`, whose prompt offers Allow once, Always allow, or Deny. Set it to
-`always-allow` to skip only Felan's repeated prompt; Chrome's own approval,
-HTTP(S)-only navigation, pinned-target checks, command restrictions, and leased
-attachment lifecycle remain active. Set it back to `ask` in `/settings` or with
+`always-allow` to skip Felan's repeated prompt. Authorization grants the native
+browser command surface, while Felan still owns routing, output bounds, lease
+lifecycles, and host setup commands. Set it back to `ask` in `/settings` or with
 `--browser-authorization-policy ask` to restore the default behavior. The
 preference is global to `$FELAN_AGENT_DIR`; live grants and CDP connection
 material are never persisted. Explicit CLI and programmatic overrides take

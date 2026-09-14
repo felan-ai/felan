@@ -3,7 +3,7 @@
 > Status: Accepted
 > Date: 2026-09-14
 > Deciders: Felan maintainers
-> Related: [ADR 0006](0006-authorize-existing-browser-control.md), [Browser extension](../../packages/ext-browser/README.md)
+> Related: [ADR 0006](0006-authorize-existing-browser-control.md), [ADR 0011](0011-trust-authorized-existing-browser-commands.md), [Browser extension](../../packages/ext-browser/README.md)
 
 ## Context
 
@@ -17,10 +17,11 @@ the Felan prompt, while retaining the ability to restore the default prompt.
 
 The requested URL remains the initial destination for a fresh attached tab, but
 it is not an authorization boundary. An authorized pinned tab may navigate
-between HTTP(S) origins. Felan continues to restrict attached commands, reject
-unsafe URLs and schemes, pin the target, verify daemon and endpoint identity,
-and revoke leased authority on loss, cancellation, cleanup failure, or
-shutdown. Chrome's own remote-debugging approval remains independent.
+between HTTP(S) origins. Felan continues to pin the initial target and revoke
+leased authority on loss, cancellation, cleanup failure, or shutdown. The
+later [ADR 0011](0011-trust-authorized-existing-browser-commands.md) supersedes
+the per-command attached allowlist and continuous identity probes. Chrome's own
+remote-debugging approval remains independent.
 
 The local TUI offers `ask` (the default) and `always-allow`. The first prompt
 offers Allow once, Always allow, and Deny. Always allow is persisted as a
@@ -43,5 +44,6 @@ state remain in memory only. Revoke remains the control for an active grant.
   without reauthorization.
 - The persisted preference reduces repeated Felan prompts but increases trust;
   the default remains ask and Chrome still presents its own approval.
-- CDP is still browser-wide authority. Pinned targets, command restrictions,
-  safe URL checks, and leases are defense in depth, not network isolation.
+- CDP is still browser-wide authority. Pinned targets and leases remain
+  connection controls, not network isolation; authorized commands can access
+  authenticated browser data and advanced native capabilities.

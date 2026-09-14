@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AgentRuntime, ExecResult } from '@felan-ai/agent-core';
 import { joinRuntimePath } from './runtime-path.js';
 import type { AgentBrowserInvocation } from './installer.js';
-import { inspectScreenshotArguments, validateAttachedBrowserCommand, validateBrowserCommand } from './command-policy.js';
+import { inspectScreenshotArguments, normalizeAttachedBrowserCommand, validateBrowserCommand } from './command-policy.js';
 
 export { findBrowserCommand } from './command-policy.js';
 
@@ -99,21 +99,24 @@ export async function runBrowserCli(
   } = {},
 ): Promise<BrowserCliResult> {
   const sessionStorage = runtime.storage('session');
-  if (!options.internalAttachment && options.attached) validateAttachedBrowserCommand(args);
+  const normalizedArgs = options.internalAttachment || !options.attached
+    ? args
+    : normalizeAttachedBrowserCommand(args);
   const prepared = options.internalAttachment
-    ? { args: [...args] }
-    : preparePublicBrowserCommand(runtime, args, options.prepareScreenshot !== false);
+    ? { args: [...normalizedArgs] }
+    : preparePublicBrowserCommand(runtime, normalizedArgs, options.prepareScreenshot !== false);
   const attached = options.attached === true || options.internalAttachment === true;
   const endpoint = options.attachmentEndpoint;
-  const localOnly = ['close', 'quit', 'exit'].includes(args[0] ?? '') || (args[0] === 'session' && args[1] === 'info');
-  if (attached && !localOnly && !args.includes('--cdp') && !endpoint) throw new Error('Attached commands require their leased endpoint.');
+  const localOnly = ['close', 'quit', 'exit'].includes(normalizedArgs[0] ?? '')
+    || (normalizedArgs[0] === 'session' && normalizedArgs[1] === 'info');
+  if (attached && !localOnly && !normalizedArgs.includes('--cdp') && !endpoint) throw new Error('Attached commands require their leased endpoint.');
   if (endpoint !== undefined) {
     let parsed: URL;
     try { parsed = new URL(endpoint); } catch { throw new Error('Invalid leased endpoint.'); }
     if (!attached || parsed.protocol !== 'ws:' || parsed.hostname !== '127.0.0.1' || Number(parsed.port) < 1
       || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.href !== endpoint
       || !/^\/(?:devtools\/browser(?:\/[A-Za-z0-9._-]+)?|felan-browser\/[A-Za-z0-9._-]+)$/u.test(parsed.pathname)
-      || args.includes('--cdp')) {
+      || normalizedArgs.includes('--cdp')) {
       throw new Error('Invalid leased endpoint or command.');
     }
   }

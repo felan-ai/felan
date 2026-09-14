@@ -1,6 +1,6 @@
 # ADR 0006: Authorize existing-browser control separately
 
-> Status: Superseded by [ADR 0008](0008-browser-authorization-policy.md)
+> Status: Superseded by [ADR 0008](0008-browser-authorization-policy.md) and [ADR 0011](0011-trust-authorized-existing-browser-commands.md)
 > Date: 2026-09-11
 > Deciders: Felan maintainers
 > Related: [Browser extension](../../packages/ext-browser/README.md), [Runtime and security](../concepts/runtime-and-security.md)

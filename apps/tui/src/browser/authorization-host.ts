@@ -56,7 +56,7 @@ async function authorize(
         )
         : (await context.ui.confirm(
           'Authorize existing Chrome?',
-          `Allow Felan to use HTTP(S) pages in your current Chrome? Chrome grants browser-wide debugging authority; Felan restricts its tools to one fresh tab. Approve the single Chrome prompt when it appears.`,
+          `Allow Felan to control your current Chrome? Chrome grants browser-wide debugging authority, including authenticated browser data and advanced browser commands. Approve the single Chrome prompt when it appears.`,
           { signal: request.signal },
         ) ? 'Allow once' : 'Deny');
       if (selected === 'Deny' || !selected || request.signal.aborted) {

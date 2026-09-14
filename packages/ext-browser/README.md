@@ -14,10 +14,12 @@ authorization, a separate `browser_authorize` control-plane tool.
 defaults to an interactive local consent choice and opens a fresh strict pinned
 tab in the existing Chrome session. The local TUI can persist `always-allow`
 through browser settings; changing it back to `ask` restores the prompt for
-later authorizations. The host supplies a transient
-validated loopback CDP endpoint; it never returns cookies, profile paths, CDP
-endpoints, or unrelated tab data. Direct `connect`, `--cdp`, and
-`--auto-connect` arguments are rejected by `browser`.
+later authorizations. The host supplies a transient validated loopback CDP
+endpoint. After authorization, the attached browser accepts the native CLI
+command surface, including authenticated browser state and advanced
+diagnostics. Felan replaces its session, namespace, configuration, output, and
+connection options before dispatch. Direct `connect`, `--cdp`, and
+`--auto-connect` arguments cannot replace the leased connection.
 
 The `browser` tool has two operations:
 
@@ -29,8 +31,7 @@ The `browser` tool has two operations:
   into Felan's prompt.
 - `run` accepts literal CLI argument tokens, for example
   `['open', 'https://example.com']`, `['snapshot', '-i']`, or
-  `['fill', '@e3', 'value']`. The command must be the first token, permitted
-  options follow it, and the operation never accepts shell syntax. Felan owns
+  `['fill', '@e3', 'value']`. The operation never accepts shell syntax. Felan owns
   the session, namespace, idle-timeout, JSON, content-boundary, and output-limit
   options, plus domain/action policy and local-file-access controls. Each tool
   operation also uses a freshly written Felan-owned config,
@@ -39,10 +40,11 @@ The `browser` tool has two operations:
   environment. Sessions are namespaced to the Felan session, CLI JSON output
   is bounded, and page/CLI output is marked as untrusted data.
 
-Install, upgrade, repair, plugin, nested batch, MCP/stream/dashboard server,
-chat, action-confirmation, raw skill, and cross-session close commands are not
-available through the model tool. Use sequential browser calls instead of
-`batch`. Installation and policy confirmation are host-owned and explicit.
+Install, upgrade, repair, plugin, MCP/stream/dashboard server, chat,
+action-confirmation, raw skill, and cross-session close commands are not
+available through the model tool. `batch` remains unavailable so each browser
+call is visible to the agent runtime. Installation and policy confirmation are
+host-owned and explicit.
 
 Use a bare `['screenshot']` (optionally with flags) when the selected model
 accepts image input. Felan stages that screenshot at a random path in session
@@ -54,11 +56,14 @@ paths remain text-only and are never opened automatically.
 
 The owned browser session is closed during session shutdown. Revocation and
 shutdown disconnect an attached session without closing the user's Chrome.
-CDP attachment remains browser-level authority; pinned-target, safe-URL, and
-command checks are defense in depth, not a network sandbox. The requested
-origin is only the initial destination, and attached navigation may cross
-HTTP(S) origins. Felan makes one connection attempt per approval and retries
-setup only after an explicit user action.
+CDP attachment remains browser-level authority. The initial authorization
+observation and lease protect the connection, but Felan does not probe the
+daemon or target before and after every command. A live authorized attachment
+may read sensitive browser data or execute page JavaScript, so authorize it
+only when that access is intended. The requested origin is only the initial
+destination, and attached navigation may cross HTTP(S) origins. Felan makes
+one connection attempt per approval and retries setup only after an explicit
+user action.
 
 A managed CLI install sets a one-hour daemon idle timeout; it does not install Chrome. Run
 the explicit `agent-browser install` action when a local Chrome for Testing
