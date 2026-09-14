@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "markitdown-v1",
+  "source": "authored-in-repository",
+  "generatedWith": {
+    "python": "3.13.5",
+    "python-docx": "1.2.0",
+    "openpyxl": "3.1.5",
+    "pptx": "minimal authored OOXML"
+  },
+  "files": [
+    {
+      "path": "docs/northstar-launch.pptx",
+      "sha256": "e7961e678948ec50a6814ba2188d146789f3dcceaa9fcb84f1705538baac2eba"
+    },
+    {
+      "path": "docs/orion-service-brief.docx",
+      "sha256": "b378389bd891ea069a1263ce6d0a31d5ead4a99f25cc1393bdd221a4ec2aa18e"
+    },
+    {
+      "path": "docs/service-capacity.xlsx",
+      "sha256": "4517375ff3ee1819d0fceda5120f3100ed94779a5b5363fd5569aa591e4e1c91"
+    },
+    {
+      "path": "README.md",
+      "sha256": "bc784da72f811053d3cb8152434064719a627a8c56cf66564046a30eb5bbc559"
+    }
+  ],
+  "excluded": [
+    "answer keys",
+    "dependencies",
+    "conversion caches",
+    "generated run output"
+  ]
+}

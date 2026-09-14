@@ -1,0 +1,10 @@
+node_modules/
+.harness-evals/
+.env
+.env.*
+!.env.example
+tmp/
+dist/
+*.log
+source-image.json
+

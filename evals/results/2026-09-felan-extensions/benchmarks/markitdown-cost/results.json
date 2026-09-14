@@ -1,0 +1,4647 @@
+{
+  "id": "markitdown-cost",
+  "definition": {
+    "revision": 5,
+    "label": "MarkItDown conversion",
+    "description": "Compare automatic ordinary-read conversion with the same converter installed but the extension disabled.",
+    "select": {
+      "suites": [
+        "markitdown-cost"
+      ]
+    },
+    "arms": {
+      "baseline": "felan-no-markitdown",
+      "candidate": "felan-markitdown"
+    },
+    "trials": 3,
+    "qualityGates": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8
+      }
+    ],
+    "objective": [
+      {
+        "metric": "cost.total",
+        "goal": "minimize"
+      },
+      {
+        "metric": "usage.promptTokens",
+        "goal": "minimize"
+      }
+    ],
+    "aggregation": {
+      "trials": "median",
+      "cases": "ratioOfReducedSums"
+    }
+  },
+  "cases": [
+    "markitdown-document-configuration",
+    "markitdown-docx-extraction",
+    "markitdown-pptx-extraction",
+    "markitdown-xlsx-extraction"
+  ],
+  "expectedTrials": 3,
+  "baseline": {
+    "agentName": "felan-no-markitdown",
+    "comparisonId": "felan-no-markitdown",
+    "state": "eligible",
+    "expectedRuns": 12,
+    "actualRuns": 12,
+    "missingRuns": 0,
+    "cases": [
+      {
+        "caseId": "markitdown-document-configuration",
+        "observations": {
+          "cost.total": [
+            0.020751199999999997,
+            0.08033639999999999,
+            0.0200684
+          ],
+          "usage.promptTokens": [
+            9256,
+            116775,
+            8965
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            48702,
+            37134,
+            35196
+          ],
+          "usage.uncachedInputTokens": [
+            7720,
+            26663,
+            5893
+          ],
+          "usage.cacheReadInputTokens": [
+            1536,
+            90112,
+            3072
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            417,
+            749,
+            639
+          ],
+          "usage.requests": [
+            4,
+            6,
+            5
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.020751199999999997,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.08033639999999999,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.0200684,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 9256,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 116775,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 8965,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 48702,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 37134,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 35196,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 7720,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 26663,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 5893,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1536,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 90112,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3072,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 417,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 749,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 639,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 6,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 5,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 48702,
+            "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 37134,
+            "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 35196,
+            "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+          }
+        ],
+        "values": {
+          "cost.total": 0.020751199999999997,
+          "usage.promptTokens": 9256,
+          "quality.passRate": 1,
+          "duration.ms": 37134,
+          "usage.uncachedInputTokens": 7720,
+          "usage.cacheReadInputTokens": 3072,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 639,
+          "usage.requests": 5
+        }
+      },
+      {
+        "caseId": "markitdown-docx-extraction",
+        "observations": {
+          "cost.total": [
+            0.008504,
+            0.01174,
+            0.008628
+          ],
+          "usage.promptTokens": [
+            2986,
+            4490,
+            3000
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            13624,
+            18192,
+            13981
+          ],
+          "usage.uncachedInputTokens": [
+            2986,
+            4490,
+            3000
+          ],
+          "usage.cacheReadInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            211,
+            230,
+            219
+          ],
+          "usage.requests": [
+            2,
+            3,
+            2
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.008504,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.01174,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.008628,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 2986,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4490,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3000,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 13624,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 18192,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 13981,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 2986,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4490,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3000,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 211,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 230,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 219,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 13624,
+            "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 18192,
+            "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 13981,
+            "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+          }
+        ],
+        "values": {
+          "cost.total": 0.008628,
+          "usage.promptTokens": 3000,
+          "quality.passRate": 1,
+          "duration.ms": 13981,
+          "usage.uncachedInputTokens": 3000,
+          "usage.cacheReadInputTokens": 0,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 219,
+          "usage.requests": 2
+        }
+      },
+      {
+        "caseId": "markitdown-pptx-extraction",
+        "observations": {
+          "cost.total": [
+            0.012922,
+            0.014724,
+            0.013751999999999999
+          ],
+          "usage.promptTokens": [
+            4613,
+            4824,
+            4710
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            20094,
+            21037,
+            19361
+          ],
+          "usage.uncachedInputTokens": [
+            4613,
+            4824,
+            4710
+          ],
+          "usage.cacheReadInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            308,
+            423,
+            361
+          ],
+          "usage.requests": [
+            3,
+            3,
+            3
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.012922,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.014724,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.013751999999999999,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 4613,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4824,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4710,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 20094,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 21037,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 19361,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 4613,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4824,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4710,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 308,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 423,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 361,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 3,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 20094,
+            "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 21037,
+            "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 19361,
+            "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+          }
+        ],
+        "values": {
+          "cost.total": 0.013751999999999999,
+          "usage.promptTokens": 4710,
+          "quality.passRate": 1,
+          "duration.ms": 20094,
+          "usage.uncachedInputTokens": 4710,
+          "usage.cacheReadInputTokens": 0,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 361,
+          "usage.requests": 3
+        }
+      },
+      {
+        "caseId": "markitdown-xlsx-extraction",
+        "observations": {
+          "cost.total": [
+            0.008624,
+            0.014355999999999999,
+            0.012362
+          ],
+          "usage.promptTokens": [
+            3004,
+            4820,
+            4603
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            13566,
+            21725,
+            19973
+          ],
+          "usage.uncachedInputTokens": [
+            3004,
+            4820,
+            4603
+          ],
+          "usage.cacheReadInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            218,
+            393,
+            263
+          ],
+          "usage.requests": [
+            2,
+            3,
+            3
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.008624,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.014355999999999999,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.012362,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 3004,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4820,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4603,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 13566,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 21725,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 19973,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 3004,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4820,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4603,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 218,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 393,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 263,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 13566,
+            "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 21725,
+            "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 19973,
+            "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+          }
+        ],
+        "values": {
+          "cost.total": 0.012362,
+          "usage.promptTokens": 4603,
+          "quality.passRate": 1,
+          "duration.ms": 19973,
+          "usage.uncachedInputTokens": 4603,
+          "usage.cacheReadInputTokens": 0,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 263,
+          "usage.requests": 3
+        }
+      }
+    ],
+    "values": {
+      "cost.total": 0.013873299999999998,
+      "usage.promptTokens": 5392.25,
+      "quality.passRate": 1,
+      "duration.ms": 22795.5,
+      "usage.uncachedInputTokens": 5008.25,
+      "usage.cacheReadInputTokens": 768,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.outputTokens": 370.5,
+      "usage.requests": 3.25
+    },
+    "deltas": {},
+    "gateResults": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8,
+        "value": 1,
+        "pass": true
+      }
+    ]
+  },
+  "candidate": {
+    "agentName": "felan-markitdown",
+    "comparisonId": "felan-markitdown",
+    "state": "eligible",
+    "expectedRuns": 12,
+    "actualRuns": 12,
+    "missingRuns": 0,
+    "cases": [
+      {
+        "caseId": "markitdown-document-configuration",
+        "observations": {
+          "cost.total": [
+            0.0169152,
+            0.023368399999999998,
+            0.014801600000000002
+          ],
+          "usage.promptTokens": [
+            7398,
+            11455,
+            9070
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            24319,
+            37687,
+            32078
+          ],
+          "usage.uncachedInputTokens": [
+            5862,
+            8383,
+            4462
+          ],
+          "usage.cacheReadInputTokens": [
+            1536,
+            3072,
+            4608
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            407,
+            499,
+            413
+          ],
+          "usage.requests": [
+            4,
+            6,
+            5
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.0169152,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.023368399999999998,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.014801600000000002,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 7398,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 11455,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 9070,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 24319,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 37687,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 32078,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 5862,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 8383,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4462,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1536,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3072,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4608,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 407,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 499,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 413,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 6,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 5,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 24319,
+            "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 37687,
+            "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 32078,
+            "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+          }
+        ],
+        "values": {
+          "cost.total": 0.0169152,
+          "usage.promptTokens": 9070,
+          "quality.passRate": 1,
+          "duration.ms": 32078,
+          "usage.uncachedInputTokens": 5862,
+          "usage.cacheReadInputTokens": 3072,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 413,
+          "usage.requests": 5
+        }
+      },
+      {
+        "caseId": "markitdown-docx-extraction",
+        "observations": {
+          "cost.total": [
+            0.0070079999999999995,
+            0.0070079999999999995,
+            0.0070079999999999995
+          ],
+          "usage.promptTokens": [
+            3192,
+            3192,
+            3192
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            11471,
+            9953,
+            10201
+          ],
+          "usage.uncachedInputTokens": [
+            3192,
+            3192,
+            3192
+          ],
+          "usage.cacheReadInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            52,
+            52,
+            52
+          ],
+          "usage.requests": [
+            2,
+            2,
+            2
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.0070079999999999995,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.0070079999999999995,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.0070079999999999995,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 3192,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3192,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3192,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 11471,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 9953,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 10201,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 3192,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3192,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3192,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 52,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 52,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 52,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 11471,
+            "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 9953,
+            "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 10201,
+            "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+          }
+        ],
+        "values": {
+          "cost.total": 0.0070079999999999995,
+          "usage.promptTokens": 3192,
+          "quality.passRate": 1,
+          "duration.ms": 10201,
+          "usage.uncachedInputTokens": 3192,
+          "usage.cacheReadInputTokens": 0,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 52,
+          "usage.requests": 2
+        }
+      },
+      {
+        "caseId": "markitdown-pptx-extraction",
+        "observations": {
+          "cost.total": [
+            0.007482,
+            0.007183999999999999,
+            0.007183999999999999
+          ],
+          "usage.promptTokens": [
+            3195,
+            3172,
+            3172
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            12244,
+            11408,
+            10514
+          ],
+          "usage.uncachedInputTokens": [
+            3195,
+            3172,
+            3172
+          ],
+          "usage.cacheReadInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            91,
+            70,
+            70
+          ],
+          "usage.requests": [
+            2,
+            2,
+            2
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.007482,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.007183999999999999,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.007183999999999999,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 3195,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3172,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3172,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 12244,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 11408,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 10514,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 3195,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3172,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3172,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 91,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 70,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 70,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 12244,
+            "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 11408,
+            "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 10514,
+            "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+          }
+        ],
+        "values": {
+          "cost.total": 0.007183999999999999,
+          "usage.promptTokens": 3172,
+          "quality.passRate": 1,
+          "duration.ms": 11408,
+          "usage.uncachedInputTokens": 3172,
+          "usage.cacheReadInputTokens": 0,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 70,
+          "usage.requests": 2
+        }
+      },
+      {
+        "caseId": "markitdown-xlsx-extraction",
+        "observations": {
+          "cost.total": [
+            0.007183999999999999,
+            0.0071660000000000005,
+            0.007162
+          ],
+          "usage.promptTokens": [
+            3172,
+            3169,
+            3167
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            10447,
+            13771,
+            10741
+          ],
+          "usage.uncachedInputTokens": [
+            3172,
+            3169,
+            3167
+          ],
+          "usage.cacheReadInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            70,
+            69,
+            69
+          ],
+          "usage.requests": [
+            2,
+            2,
+            2
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.007183999999999999,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.0071660000000000005,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.007162,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 3172,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3169,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3167,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 10447,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 13771,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 10741,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 3172,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3169,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3167,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 70,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 69,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 69,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 2,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 10447,
+            "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 13771,
+            "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 10741,
+            "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+          }
+        ],
+        "values": {
+          "cost.total": 0.0071660000000000005,
+          "usage.promptTokens": 3169,
+          "quality.passRate": 1,
+          "duration.ms": 10741,
+          "usage.uncachedInputTokens": 3169,
+          "usage.cacheReadInputTokens": 0,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 69,
+          "usage.requests": 2
+        }
+      }
+    ],
+    "values": {
+      "cost.total": 0.0095683,
+      "usage.promptTokens": 4650.75,
+      "quality.passRate": 1,
+      "duration.ms": 16107,
+      "usage.uncachedInputTokens": 3848.75,
+      "usage.cacheReadInputTokens": 768,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.outputTokens": 151,
+      "usage.requests": 2.75
+    },
+    "deltas": {
+      "cost.total": -0.004304999999999998,
+      "usage.promptTokens": -741.5,
+      "quality.passRate": 0,
+      "duration.ms": -6688.5,
+      "usage.uncachedInputTokens": -1159.5,
+      "usage.cacheReadInputTokens": 0,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.outputTokens": -219.5,
+      "usage.requests": -0.5
+    },
+    "gateResults": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8,
+        "value": 1,
+        "pass": true
+      }
+    ]
+  },
+  "comparison": {
+    "averageChangePercent": -31.763528811240008,
+    "minChangePercent": -47.760325770796975,
+    "maxChangePercent": -18.485677936697634,
+    "averageGainPercent": 31.763528811240008,
+    "minGainPercent": 18.485677936697634,
+    "maxGainPercent": 47.760325770796975,
+    "comparedCases": 4,
+    "expectedCases": 4,
+    "cases": [
+      {
+        "caseId": "markitdown-document-configuration",
+        "baselineValue": 0.020751199999999997,
+        "candidateValue": 0.0169152,
+        "changePercent": -18.485677936697634,
+        "gainPercent": 18.485677936697634,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 0.020751199999999997,
+            "candidateValue": 0.0169152,
+            "changePercent": -18.485677936697634,
+            "gainPercent": 18.485677936697634,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 48702,
+              "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 24319,
+              "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 0.08033639999999999,
+            "candidateValue": 0.023368399999999998,
+            "changePercent": -70.91181581450002,
+            "gainPercent": 70.91181581450002,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 37134,
+              "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 37687,
+              "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 0.0200684,
+            "candidateValue": 0.014801600000000002,
+            "changePercent": -26.244244683183503,
+            "gainPercent": 26.244244683183503,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 35196,
+              "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 32078,
+              "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+            }
+          }
+        ]
+      },
+      {
+        "caseId": "markitdown-docx-extraction",
+        "baselineValue": 0.008628,
+        "candidateValue": 0.0070079999999999995,
+        "changePercent": -18.77607788595272,
+        "gainPercent": 18.77607788595272,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 0.008504,
+            "candidateValue": 0.0070079999999999995,
+            "changePercent": -17.591721542803388,
+            "gainPercent": 17.591721542803388,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 13624,
+              "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 11471,
+              "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 0.01174,
+            "candidateValue": 0.0070079999999999995,
+            "changePercent": -40.30664395229984,
+            "gainPercent": 40.30664395229984,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 18192,
+              "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 9953,
+              "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 0.008628,
+            "candidateValue": 0.0070079999999999995,
+            "changePercent": -18.77607788595272,
+            "gainPercent": 18.77607788595272,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 13981,
+              "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 10201,
+              "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+            }
+          }
+        ]
+      },
+      {
+        "caseId": "markitdown-pptx-extraction",
+        "baselineValue": 0.013751999999999999,
+        "candidateValue": 0.007183999999999999,
+        "changePercent": -47.760325770796975,
+        "gainPercent": 47.760325770796975,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 0.012922,
+            "candidateValue": 0.007482,
+            "changePercent": -42.098746324098435,
+            "gainPercent": 42.098746324098435,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 20094,
+              "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 12244,
+              "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 0.014724,
+            "candidateValue": 0.007183999999999999,
+            "changePercent": -51.20891062211356,
+            "gainPercent": 51.20891062211356,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 21037,
+              "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 11408,
+              "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 0.013751999999999999,
+            "candidateValue": 0.007183999999999999,
+            "changePercent": -47.760325770796975,
+            "gainPercent": 47.760325770796975,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 19361,
+              "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 10514,
+              "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+            }
+          }
+        ]
+      },
+      {
+        "caseId": "markitdown-xlsx-extraction",
+        "baselineValue": 0.012362,
+        "candidateValue": 0.0071660000000000005,
+        "changePercent": -42.0320336515127,
+        "gainPercent": 42.0320336515127,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 0.008624,
+            "candidateValue": 0.007183999999999999,
+            "changePercent": -16.69758812615956,
+            "gainPercent": 16.69758812615956,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 13566,
+              "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 10447,
+              "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 0.014355999999999999,
+            "candidateValue": 0.0071660000000000005,
+            "changePercent": -50.08358874338255,
+            "gainPercent": 50.08358874338255,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 21725,
+              "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 13771,
+              "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 0.012362,
+            "candidateValue": 0.007162,
+            "changePercent": -42.0643908752629,
+            "gainPercent": 42.0643908752629,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 19973,
+              "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 10741,
+              "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+            }
+          }
+        ]
+      }
+    ],
+    "metric": "cost.total",
+    "goal": "minimize",
+    "role": "primary",
+    "baselineReducedSum": 0.05549319999999999,
+    "candidateReducedSum": 0.0382732,
+    "aggregateChangePercent": -31.030829002472366,
+    "aggregateGainPercent": 31.030829002472366
+  },
+  "objectiveComparisons": [
+    {
+      "averageChangePercent": -31.763528811240008,
+      "minChangePercent": -47.760325770796975,
+      "maxChangePercent": -18.485677936697634,
+      "averageGainPercent": 31.763528811240008,
+      "minGainPercent": 18.485677936697634,
+      "maxGainPercent": 47.760325770796975,
+      "comparedCases": 4,
+      "expectedCases": 4,
+      "cases": [
+        {
+          "caseId": "markitdown-document-configuration",
+          "baselineValue": 0.020751199999999997,
+          "candidateValue": 0.0169152,
+          "changePercent": -18.485677936697634,
+          "gainPercent": 18.485677936697634,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 0.020751199999999997,
+              "candidateValue": 0.0169152,
+              "changePercent": -18.485677936697634,
+              "gainPercent": 18.485677936697634,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 0.08033639999999999,
+              "candidateValue": 0.023368399999999998,
+              "changePercent": -70.91181581450002,
+              "gainPercent": 70.91181581450002,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 0.0200684,
+              "candidateValue": 0.014801600000000002,
+              "changePercent": -26.244244683183503,
+              "gainPercent": 26.244244683183503,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "markitdown-docx-extraction",
+          "baselineValue": 0.008628,
+          "candidateValue": 0.0070079999999999995,
+          "changePercent": -18.77607788595272,
+          "gainPercent": 18.77607788595272,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 0.008504,
+              "candidateValue": 0.0070079999999999995,
+              "changePercent": -17.591721542803388,
+              "gainPercent": 17.591721542803388,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 0.01174,
+              "candidateValue": 0.0070079999999999995,
+              "changePercent": -40.30664395229984,
+              "gainPercent": 40.30664395229984,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 0.008628,
+              "candidateValue": 0.0070079999999999995,
+              "changePercent": -18.77607788595272,
+              "gainPercent": 18.77607788595272,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "markitdown-pptx-extraction",
+          "baselineValue": 0.013751999999999999,
+          "candidateValue": 0.007183999999999999,
+          "changePercent": -47.760325770796975,
+          "gainPercent": 47.760325770796975,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 0.012922,
+              "candidateValue": 0.007482,
+              "changePercent": -42.098746324098435,
+              "gainPercent": 42.098746324098435,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 0.014724,
+              "candidateValue": 0.007183999999999999,
+              "changePercent": -51.20891062211356,
+              "gainPercent": 51.20891062211356,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 0.013751999999999999,
+              "candidateValue": 0.007183999999999999,
+              "changePercent": -47.760325770796975,
+              "gainPercent": 47.760325770796975,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "markitdown-xlsx-extraction",
+          "baselineValue": 0.012362,
+          "candidateValue": 0.0071660000000000005,
+          "changePercent": -42.0320336515127,
+          "gainPercent": 42.0320336515127,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 0.008624,
+              "candidateValue": 0.007183999999999999,
+              "changePercent": -16.69758812615956,
+              "gainPercent": 16.69758812615956,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 0.014355999999999999,
+              "candidateValue": 0.0071660000000000005,
+              "changePercent": -50.08358874338255,
+              "gainPercent": 50.08358874338255,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 0.012362,
+              "candidateValue": 0.007162,
+              "changePercent": -42.0643908752629,
+              "gainPercent": 42.0643908752629,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ]
+        }
+      ],
+      "metric": "cost.total",
+      "goal": "minimize",
+      "role": "primary",
+      "baselineReducedSum": 0.05549319999999999,
+      "candidateReducedSum": 0.0382732,
+      "aggregateChangePercent": -31.030829002472366,
+      "aggregateGainPercent": 31.030829002472366
+    },
+    {
+      "averageChangePercent": -14.854257660239346,
+      "minChangePercent": -32.65392781316348,
+      "maxChangePercent": 6.4,
+      "averageGainPercent": 14.854257660239346,
+      "minGainPercent": -6.4,
+      "maxGainPercent": 32.65392781316348,
+      "comparedCases": 4,
+      "expectedCases": 4,
+      "cases": [
+        {
+          "caseId": "markitdown-document-configuration",
+          "baselineValue": 9256,
+          "candidateValue": 9070,
+          "changePercent": -2.0095073465859983,
+          "gainPercent": 2.0095073465859983,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 9256,
+              "candidateValue": 7398,
+              "changePercent": -20.073465859982715,
+              "gainPercent": 20.073465859982715,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 48702,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 24319,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 116775,
+              "candidateValue": 11455,
+              "changePercent": -90.1905373581674,
+              "gainPercent": 90.1905373581674,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37134,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 37687,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 8965,
+              "candidateValue": 9070,
+              "changePercent": 1.1712214166201895,
+              "gainPercent": -1.1712214166201895,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 35196,
+                "runId": "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 32078,
+                "runId": "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "markitdown-docx-extraction",
+          "baselineValue": 3000,
+          "candidateValue": 3192,
+          "changePercent": 6.4,
+          "gainPercent": -6.4,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 2986,
+              "candidateValue": 3192,
+              "changePercent": 6.898861352980576,
+              "gainPercent": -6.898861352980576,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13624,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11471,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 4490,
+              "candidateValue": 3192,
+              "changePercent": -28.908685968819597,
+              "gainPercent": 28.908685968819597,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 18192,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 9953,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 3000,
+              "candidateValue": 3192,
+              "changePercent": 6.4,
+              "gainPercent": -6.4,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13981,
+                "runId": "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10201,
+                "runId": "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "markitdown-pptx-extraction",
+          "baselineValue": 4710,
+          "candidateValue": 3172,
+          "changePercent": -32.65392781316348,
+          "gainPercent": 32.65392781316348,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 4613,
+              "candidateValue": 3195,
+              "changePercent": -30.739215261218295,
+              "gainPercent": 30.739215261218295,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 20094,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 12244,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 4824,
+              "candidateValue": 3172,
+              "changePercent": -34.24543946932007,
+              "gainPercent": 34.24543946932007,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21037,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 11408,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 4710,
+              "candidateValue": 3172,
+              "changePercent": -32.65392781316348,
+              "gainPercent": 32.65392781316348,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19361,
+                "runId": "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10514,
+                "runId": "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "markitdown-xlsx-extraction",
+          "baselineValue": 4603,
+          "candidateValue": 3169,
+          "changePercent": -31.15359548120791,
+          "gainPercent": 31.15359548120791,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 3004,
+              "candidateValue": 3172,
+              "changePercent": 5.59254327563249,
+              "gainPercent": -5.59254327563249,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13566,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10447,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 4820,
+              "candidateValue": 3169,
+              "changePercent": -34.25311203319502,
+              "gainPercent": 34.25311203319502,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 21725,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 13771,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 4603,
+              "candidateValue": 3167,
+              "changePercent": -31.19704540517054,
+              "gainPercent": 31.19704540517054,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 19973,
+                "runId": "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 10741,
+                "runId": "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+              }
+            }
+          ]
+        }
+      ],
+      "metric": "usage.promptTokens",
+      "goal": "minimize",
+      "role": "secondary",
+      "baselineReducedSum": 21569,
+      "candidateReducedSum": 18603,
+      "aggregateChangePercent": -13.751217024433215,
+      "aggregateGainPercent": 13.751217024433215
+    }
+  ],
+  "warnings": [
+    "Primary and secondary resource outcomes were recalculated with ratioOfReducedSums for this publication."
+  ],
+  "runCount": 24,
+  "derivedRunCount": 24,
+  "publicationAggregation": {
+    "mode": "ratioOfReducedSums",
+    "source": "offline recalculation from retained report observations",
+    "sourceSha256Before": "8199b9d2855f6145fd348189cbc849110ee52c45d92076ca51611fed52e24aac",
+    "legacyDiagnostics": "average* and min/max* fields remain macro-mean case diagnostics"
+  }
+}

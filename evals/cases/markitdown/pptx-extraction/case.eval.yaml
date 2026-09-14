@@ -1,0 +1,33 @@
+id: markitdown-pptx-extraction
+suite: markitdown-cost
+description: Compare cold extraction of facts spread across a PPTX deck.
+workspace:
+  fixture: fixtures/markitdown/v1/source
+  setup:
+    - command: markitdown
+      args: [docs/northstar-launch.pptx]
+      timeoutMs: 60000
+      network:
+        mode: none
+agents:
+  include: [felan-no-markitdown, felan-markitdown]
+prompt: |
+  Read `docs/northstar-launch.pptx` and report the launch date, launch region,
+  approved budget, risk owner, and rollback code. Write numeric values without
+  thousands separators. Do not change any files.
+assert:
+  - { type: contains, value: "14 November 2026" }
+  - { type: contains, value: "Halifax" }
+  - { type: contains, value: "275000" }
+  - { type: contains, value: "Rafael Singh" }
+  - { type: contains, value: "LIME-42" }
+  - id: converted-pptx-read
+    type: toolCalled
+    name: read
+    min: 1
+    argsContain: [docs/northstar-launch.pptx]
+    resultContains: ["<markitdown_conversion_diagnostic", docs/northstar-launch.pptx]
+    isError: false
+    when:
+      agent: felan-markitdown
+  - { type: workspaceDiff, changedFiles: [] }

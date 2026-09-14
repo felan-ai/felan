@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260902-112808-33e8",
+    "startedAt": "2026-09-02T11:28:08.378Z",
+    "label": "felan-no-markitdown,felan-markitdown · 4 cases",
+    "argv": [
+      "run",
+      "--config",
+      "harness-evals.yaml",
+      "--benchmark",
+      "markitdown-cost",
+      "--concurrency",
+      "1",
+      "--refresh-managed-image"
+    ],
+    "agents": [
+      "felan-no-markitdown",
+      "felan-markitdown"
+    ],
+    "caseCount": 4,
+    "runCount": 24
+  },
+  "status": "completed",
+  "expectedRunCount": 24,
+  "runIds": [
+    "markitdown-document-configuration-felan-no-markitdown-2026-09-02T11-28-08-380Z-0",
+    "markitdown-document-configuration-felan-no-markitdown-2026-09-02T11-28-56-999Z-1",
+    "markitdown-document-configuration-felan-no-markitdown-2026-09-02T11-29-34-063Z-2",
+    "markitdown-document-configuration-felan-markitdown-2026-09-02T11-30-09-258Z-3",
+    "markitdown-document-configuration-felan-markitdown-2026-09-02T11-30-33-493Z-4",
+    "markitdown-document-configuration-felan-markitdown-2026-09-02T11-31-11-050Z-5",
+    "markitdown-docx-extraction-felan-no-markitdown-2026-09-02T11-31-43-013Z-6",
+    "markitdown-docx-extraction-felan-no-markitdown-2026-09-02T11-31-56-641Z-7",
+    "markitdown-docx-extraction-felan-no-markitdown-2026-09-02T11-32-14-838Z-8",
+    "markitdown-docx-extraction-felan-markitdown-2026-09-02T11-32-28-823Z-9",
+    "markitdown-docx-extraction-felan-markitdown-2026-09-02T11-32-40-298Z-10",
+    "markitdown-docx-extraction-felan-markitdown-2026-09-02T11-32-50-255Z-11",
+    "markitdown-pptx-extraction-felan-no-markitdown-2026-09-02T11-33-00-459Z-12",
+    "markitdown-pptx-extraction-felan-no-markitdown-2026-09-02T11-33-20-559Z-13",
+    "markitdown-pptx-extraction-felan-no-markitdown-2026-09-02T11-33-41-600Z-14",
+    "markitdown-pptx-extraction-felan-markitdown-2026-09-02T11-34-00-965Z-15",
+    "markitdown-pptx-extraction-felan-markitdown-2026-09-02T11-34-13-213Z-16",
+    "markitdown-pptx-extraction-felan-markitdown-2026-09-02T11-34-24-625Z-17",
+    "markitdown-xlsx-extraction-felan-no-markitdown-2026-09-02T11-34-35-143Z-18",
+    "markitdown-xlsx-extraction-felan-no-markitdown-2026-09-02T11-34-48-713Z-19",
+    "markitdown-xlsx-extraction-felan-no-markitdown-2026-09-02T11-35-10-443Z-20",
+    "markitdown-xlsx-extraction-felan-markitdown-2026-09-02T11-35-30-420Z-21",
+    "markitdown-xlsx-extraction-felan-markitdown-2026-09-02T11-35-40-871Z-22",
+    "markitdown-xlsx-extraction-felan-markitdown-2026-09-02T11-35-54-646Z-23"
+  ],
+  "completedAt": "2026-09-02T11:36:05.390Z"
+}

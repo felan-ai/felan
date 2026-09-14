@@ -1,0 +1,812 @@
+{
+  "schemaVersion": 1,
+  "kind": "selected-benchmark-evidence",
+  "selection": {
+    "description": "Selected retained evidence for the September 2026 Felan extension study; Session Compaction uses qualified local pre-release provenance and passed its candidate quality gate.",
+    "dashboardSourceRelativePath": ".harness-evals/output/benchmarks/index.html",
+    "dashboardSha256": "18104bbc1e5e64a7ec8a4e909713dff86d257a5a4c57c3172c948ea068b1a0f6",
+    "dashboardObservedMtime": "2026-09-03T05:38:08.844948+00:00"
+  },
+  "repository": {
+    "commit": "f7530cac88fb0d86e95bb713040d66df6abcadd3",
+    "cleanBeforeFreeze": true,
+    "configSha256": "7a847181e54b618d92aa672bf7a5a6c29eceecacda0af7c4600ddbdfd600c170",
+    "configFrozenRelativePath": "sources/provenance/project/felan-extension-evals.yaml",
+    "activeConfigRelativePath": "felan-extension-evals.yaml",
+    "configRelativePathAtFreeze": "harness-evals.yaml"
+  },
+  "frameworkAtFreeze": {
+    "dependencySpec": "^0.2.15",
+    "localLinkActive": true,
+    "linkedPackageVersion": "0.2.13",
+    "linkedGitCommit": "d5aaab2afc5f9536a86bbf8ffefd67def1c5c002"
+  },
+  "benchmarks": [
+    {
+      "id": "subagents",
+      "label": "Subagents organic exploration",
+      "evidenceType": "direct",
+      "selectedBatchId": "20260903-052334-7809",
+      "sourceBatchId": "20260903-052334-7809",
+      "reverificationId": null,
+      "publicationEligible": true,
+      "sourceBenchmark": null,
+      "targetBenchmark": {
+        "id": "subagents",
+        "revision": 3,
+        "digest": "ac7cd5fb9b1544cdfafd4185f6f03ec793db04896ba8c120748fcd40d27b42e8"
+      },
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "max"
+      ],
+      "felanVersion": [
+        "0.21.1"
+      ],
+      "selectedRunIds": [
+        "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-25-54-972Z-3",
+        "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-26-28-856Z-4",
+        "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-27-02-089Z-5",
+        "subagents-codebase-exploration-felan-no-subagents-2026-09-03T05-23-34-148Z-0",
+        "subagents-codebase-exploration-felan-no-subagents-2026-09-03T05-23-34-148Z-1",
+        "subagents-codebase-exploration-felan-no-subagents-2026-09-03T05-23-34-148Z-2"
+      ],
+      "sourceRunIds": [
+        "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-25-54-972Z-3",
+        "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-26-28-856Z-4",
+        "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-27-02-089Z-5",
+        "subagents-codebase-exploration-felan-no-subagents-2026-09-03T05-23-34-148Z-0",
+        "subagents-codebase-exploration-felan-no-subagents-2026-09-03T05-23-34-148Z-1",
+        "subagents-codebase-exploration-felan-no-subagents-2026-09-03T05-23-34-148Z-2"
+      ],
+      "quality": {
+        "baseline": {
+          "runs": 3,
+          "validRuns": 3,
+          "passed": 3,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 3,
+          "validRuns": 3,
+          "passed": 3,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "report": {
+        "sourceRelativePath": ".harness-evals/output/benchmarks/subagents/results.json",
+        "runCount": 6,
+        "derivedRunCount": 0,
+        "publishedRelativePath": "benchmarks/subagents/results.html",
+        "sourceSha256": "bf1f273a0374bb165e144ac107d00f9a04bd43e0593ea54d9c395661050f58e2"
+      },
+      "batch": {
+        "status": "completed",
+        "expectedRunCount": 6,
+        "actualRunCount": 6,
+        "startedAt": "2026-09-03T05:23:34.146Z",
+        "completedAt": "2026-09-03T05:29:44.502Z"
+      },
+      "publishedOutcomes": {
+        "quality": "available",
+        "cost": "recalculated",
+        "costEvidence": "sources/provenance/subagents-cost-recalculation.json"
+      }
+    },
+    {
+      "id": "markitdown-cost",
+      "label": "MarkItDown conversion",
+      "evidenceType": "offline-reverification",
+      "selectedBatchId": "20260903-045947-5857",
+      "sourceBatchId": "20260902-112808-33e8",
+      "reverificationId": "20260903-045947-56b5",
+      "publicationEligible": false,
+      "sourceBenchmark": {
+        "id": "markitdown-cost",
+        "revision": 3,
+        "digest": "24baf6e406c462f210d4d4e4dd5de9b1b5615fa7d401e903ad4eb745eb1e50c6"
+      },
+      "targetBenchmark": {
+        "id": "markitdown-cost",
+        "revision": 5,
+        "digest": "38d6a7e91b01544bf707f67d95e7e2a2bd03ffa90b3bc7989591fe17e8328918"
+      },
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-terra"
+      ],
+      "thinking": [
+        "low"
+      ],
+      "felanVersion": [
+        "0.19.0"
+      ],
+      "selectedRunIds": [
+        "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3",
+        "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4",
+        "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5",
+        "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0",
+        "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1",
+        "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2",
+        "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9",
+        "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10",
+        "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11",
+        "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6",
+        "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7",
+        "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8",
+        "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15",
+        "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16",
+        "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17",
+        "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12",
+        "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13",
+        "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14",
+        "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21",
+        "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22",
+        "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23",
+        "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18",
+        "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19",
+        "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20"
+      ],
+      "sourceRunIds": [
+        "markitdown-document-configuration-felan-markitdown-2026-09-02T11-30-09-258Z-3",
+        "markitdown-document-configuration-felan-markitdown-2026-09-02T11-30-33-493Z-4",
+        "markitdown-document-configuration-felan-markitdown-2026-09-02T11-31-11-050Z-5",
+        "markitdown-document-configuration-felan-no-markitdown-2026-09-02T11-28-08-380Z-0",
+        "markitdown-document-configuration-felan-no-markitdown-2026-09-02T11-28-56-999Z-1",
+        "markitdown-document-configuration-felan-no-markitdown-2026-09-02T11-29-34-063Z-2",
+        "markitdown-docx-extraction-felan-markitdown-2026-09-02T11-32-28-823Z-9",
+        "markitdown-docx-extraction-felan-markitdown-2026-09-02T11-32-40-298Z-10",
+        "markitdown-docx-extraction-felan-markitdown-2026-09-02T11-32-50-255Z-11",
+        "markitdown-docx-extraction-felan-no-markitdown-2026-09-02T11-31-43-013Z-6",
+        "markitdown-docx-extraction-felan-no-markitdown-2026-09-02T11-31-56-641Z-7",
+        "markitdown-docx-extraction-felan-no-markitdown-2026-09-02T11-32-14-838Z-8",
+        "markitdown-pptx-extraction-felan-markitdown-2026-09-02T11-34-00-965Z-15",
+        "markitdown-pptx-extraction-felan-markitdown-2026-09-02T11-34-13-213Z-16",
+        "markitdown-pptx-extraction-felan-markitdown-2026-09-02T11-34-24-625Z-17",
+        "markitdown-pptx-extraction-felan-no-markitdown-2026-09-02T11-33-00-459Z-12",
+        "markitdown-pptx-extraction-felan-no-markitdown-2026-09-02T11-33-20-559Z-13",
+        "markitdown-pptx-extraction-felan-no-markitdown-2026-09-02T11-33-41-600Z-14",
+        "markitdown-xlsx-extraction-felan-markitdown-2026-09-02T11-35-30-420Z-21",
+        "markitdown-xlsx-extraction-felan-markitdown-2026-09-02T11-35-40-871Z-22",
+        "markitdown-xlsx-extraction-felan-markitdown-2026-09-02T11-35-54-646Z-23",
+        "markitdown-xlsx-extraction-felan-no-markitdown-2026-09-02T11-34-35-143Z-18",
+        "markitdown-xlsx-extraction-felan-no-markitdown-2026-09-02T11-34-48-713Z-19",
+        "markitdown-xlsx-extraction-felan-no-markitdown-2026-09-02T11-35-10-443Z-20"
+      ],
+      "quality": {
+        "baseline": {
+          "runs": 12,
+          "validRuns": 12,
+          "passed": 12,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 12,
+          "validRuns": 12,
+          "passed": 12,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "report": {
+        "sourceRelativePath": ".harness-evals/output/benchmarks/markitdown-cost/results.json",
+        "runCount": 24,
+        "derivedRunCount": 24,
+        "publishedRelativePath": "benchmarks/markitdown-cost/results.html",
+        "sourceSha256": "8199b9d2855f6145fd348189cbc849110ee52c45d92076ca51611fed52e24aac"
+      },
+      "batch": {
+        "status": "completed",
+        "expectedRunCount": 24,
+        "actualRunCount": 24,
+        "startedAt": "2026-09-03T04:59:47.194Z",
+        "completedAt": "2026-09-03T05:02:11.143Z"
+      }
+    },
+    {
+      "id": "output-style-concise",
+      "label": "Concise output style",
+      "evidenceType": "offline-reverification",
+      "selectedBatchId": "20260903-045947-ba0e",
+      "sourceBatchId": "20260902-121757-89d1",
+      "reverificationId": "20260903-045947-56b5",
+      "publicationEligible": false,
+      "sourceBenchmark": {
+        "id": "output-style-concise",
+        "revision": 5,
+        "digest": "39fe4e739e8091b72c526b48632543b95f21b6c34bf4245dbd04105124282276"
+      },
+      "targetBenchmark": {
+        "id": "output-style-concise",
+        "revision": 7,
+        "digest": "9c9de4dd49defa1827b491dfdbddadf1121b470186c28235a4c94aaf4e490b63"
+      },
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "max"
+      ],
+      "felanVersion": [
+        "0.20.2"
+      ],
+      "selectedRunIds": [
+        "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27",
+        "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28",
+        "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29",
+        "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24",
+        "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25",
+        "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26",
+        "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33",
+        "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34",
+        "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35",
+        "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30",
+        "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31",
+        "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32",
+        "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39",
+        "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40",
+        "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41",
+        "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36",
+        "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37",
+        "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+      ],
+      "sourceRunIds": [
+        "output-style-planning-felan-concise-2026-09-02T12-19-18-639Z-3",
+        "output-style-planning-felan-concise-2026-09-02T12-19-26-027Z-4",
+        "output-style-planning-felan-concise-2026-09-02T12-19-43-263Z-5",
+        "output-style-planning-felan-no-output-style-2026-09-02T12-17-57-883Z-0",
+        "output-style-planning-felan-no-output-style-2026-09-02T12-17-57-883Z-1",
+        "output-style-planning-felan-no-output-style-2026-09-02T12-17-57-883Z-2",
+        "output-style-review-felan-concise-2026-09-02T12-21-01-439Z-9",
+        "output-style-review-felan-concise-2026-09-02T12-21-22-481Z-10",
+        "output-style-review-felan-concise-2026-09-02T12-21-31-889Z-11",
+        "output-style-review-felan-no-output-style-2026-09-02T12-20-20-004Z-6",
+        "output-style-review-felan-no-output-style-2026-09-02T12-20-30-703Z-7",
+        "output-style-review-felan-no-output-style-2026-09-02T12-20-35-842Z-8",
+        "output-style-support-felan-concise-2026-09-02T12-22-53-474Z-15",
+        "output-style-support-felan-concise-2026-09-02T12-23-06-416Z-16",
+        "output-style-support-felan-concise-2026-09-02T12-23-18-096Z-17",
+        "output-style-support-felan-no-output-style-2026-09-02T12-21-38-366Z-12",
+        "output-style-support-felan-no-output-style-2026-09-02T12-22-05-724Z-13",
+        "output-style-support-felan-no-output-style-2026-09-02T12-22-24-613Z-14"
+      ],
+      "quality": {
+        "baseline": {
+          "runs": 9,
+          "validRuns": 9,
+          "passed": 9,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 9,
+          "validRuns": 9,
+          "passed": 9,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "report": {
+        "sourceRelativePath": ".harness-evals/output/benchmarks/output-style-concise/results.json",
+        "runCount": 18,
+        "derivedRunCount": 18,
+        "publishedRelativePath": "benchmarks/output-style-concise/results.html",
+        "sourceSha256": "0f44fb5f500ede4a5cc92abd4bfae0a130b123be4e3ba839399ce7ce3a1aaad3"
+      },
+      "batch": {
+        "status": "completed",
+        "expectedRunCount": 18,
+        "actualRunCount": 18,
+        "startedAt": "2026-09-03T04:59:47.195Z",
+        "completedAt": "2026-09-03T05:02:11.143Z"
+      }
+    },
+    {
+      "id": "prewalk",
+      "label": "Prewalk organic routing cost",
+      "evidenceType": "offline-reverification",
+      "selectedBatchId": "20260903-044517-8452",
+      "sourceBatchId": "20260902-121757-b16d",
+      "reverificationId": "20260903-044517-d1f1",
+      "publicationEligible": false,
+      "sourceBenchmark": {
+        "id": "prewalk",
+        "revision": 9,
+        "digest": "fbcde5d0d0c0fd5c20a128afd3cbd1dbc298664422c4d9d38b9524a7b76f39c3"
+      },
+      "targetBenchmark": {
+        "id": "prewalk",
+        "revision": 11,
+        "digest": "83b9b774beb6956fcdba49e44f9625b06099bf02cb137715bbb1f721a6e16240"
+      },
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "max"
+      ],
+      "felanVersion": [
+        "0.20.2"
+      ],
+      "selectedRunIds": [
+        "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54",
+        "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55",
+        "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56",
+        "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57",
+        "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58",
+        "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59",
+        "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48",
+        "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49",
+        "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50",
+        "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51",
+        "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52",
+        "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+      ],
+      "sourceRunIds": [
+        "memory-summary-links-felan-no-prewalk-2026-09-02T12-34-03-859Z-6",
+        "memory-summary-links-felan-no-prewalk-2026-09-02T12-34-37-108Z-7",
+        "memory-summary-links-felan-no-prewalk-2026-09-02T12-43-13-555Z-8",
+        "memory-summary-links-felan-prewalk-2026-09-02T12-50-35-974Z-9",
+        "memory-summary-links-felan-prewalk-2026-09-02T12-56-11-415Z-10",
+        "memory-summary-links-felan-prewalk-2026-09-02T13-03-52-772Z-11",
+        "prewalk-checkout-felan-no-prewalk-2026-09-02T12-17-57-883Z-0",
+        "prewalk-checkout-felan-no-prewalk-2026-09-02T12-17-57-883Z-1",
+        "prewalk-checkout-felan-no-prewalk-2026-09-02T12-17-57-883Z-2",
+        "prewalk-checkout-felan-prewalk-2026-09-02T12-27-08-484Z-3",
+        "prewalk-checkout-felan-prewalk-2026-09-02T12-27-19-843Z-4",
+        "prewalk-checkout-felan-prewalk-2026-09-02T12-27-31-377Z-5"
+      ],
+      "quality": {
+        "baseline": {
+          "runs": 6,
+          "validRuns": 6,
+          "passed": 6,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 6,
+          "validRuns": 6,
+          "passed": 6,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "report": {
+        "sourceRelativePath": ".harness-evals/output/benchmarks/prewalk/results.json",
+        "runCount": 12,
+        "derivedRunCount": 12,
+        "publishedRelativePath": "benchmarks/prewalk/results.html",
+        "sourceSha256": "c5abca0c68fa3071d0205df8f8af9860b12087a3ff81401b4a6ce5470c26d99c"
+      },
+      "batch": {
+        "status": "completed",
+        "expectedRunCount": 12,
+        "actualRunCount": 12,
+        "startedAt": "2026-09-03T04:45:17.623Z",
+        "completedAt": "2026-09-03T04:50:44.879Z"
+      }
+    },
+    {
+      "id": "rtk",
+      "label": "RTK context reduction",
+      "evidenceType": "offline-reverification",
+      "selectedBatchId": "20260903-045947-e11d",
+      "sourceBatchId": "20260902-121847-5fa4",
+      "reverificationId": "20260903-045947-56b5",
+      "publicationEligible": false,
+      "sourceBenchmark": {
+        "id": "rtk",
+        "revision": 8,
+        "digest": "6ca6ac56b69f369541814c85531b2fbd29637d4c466c055cdbd6a16ef457ddc3"
+      },
+      "targetBenchmark": {
+        "id": "rtk",
+        "revision": 12,
+        "digest": "01ddd6b237f1b7870fca84834fb935d430ab3e712ea62c9bdadf03aeefd2172d"
+      },
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "max"
+      ],
+      "felanVersion": [
+        "0.20.0"
+      ],
+      "selectedRunIds": [
+        "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42",
+        "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43",
+        "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44",
+        "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45",
+        "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46",
+        "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47",
+        "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48",
+        "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49",
+        "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50",
+        "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51",
+        "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52",
+        "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+      ],
+      "sourceRunIds": [
+        "prewalk-checkout-felan-no-rtk-optimizer-2026-09-02T12-18-47-701Z-0",
+        "prewalk-checkout-felan-no-rtk-optimizer-2026-09-02T12-18-47-701Z-1",
+        "prewalk-checkout-felan-no-rtk-optimizer-2026-09-02T12-18-47-701Z-2",
+        "prewalk-checkout-felan-rtk-optimizer-2026-09-02T12-28-08-415Z-3",
+        "prewalk-checkout-felan-rtk-optimizer-2026-09-02T12-28-51-175Z-4",
+        "prewalk-checkout-felan-rtk-optimizer-2026-09-02T12-29-56-890Z-5",
+        "rtk-felan-project-instructions-felan-no-rtk-optimizer-2026-09-02T12-37-06-366Z-6",
+        "rtk-felan-project-instructions-felan-no-rtk-optimizer-2026-09-02T12-37-56-347Z-7",
+        "rtk-felan-project-instructions-felan-no-rtk-optimizer-2026-09-02T12-45-55-257Z-8",
+        "rtk-felan-project-instructions-felan-rtk-optimizer-2026-09-02T12-46-22-379Z-9",
+        "rtk-felan-project-instructions-felan-rtk-optimizer-2026-09-02T12-55-39-877Z-10",
+        "rtk-felan-project-instructions-felan-rtk-optimizer-2026-09-02T12-56-27-158Z-11"
+      ],
+      "quality": {
+        "baseline": {
+          "runs": 6,
+          "validRuns": 6,
+          "passed": 6,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 6,
+          "validRuns": 6,
+          "passed": 5,
+          "failed": 1,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 0.8333333333333334,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "report": {
+        "sourceRelativePath": ".harness-evals/output/benchmarks/rtk/results.json",
+        "runCount": 12,
+        "derivedRunCount": 12,
+        "publishedRelativePath": "benchmarks/rtk/results.html",
+        "sourceSha256": "122e154fbe4a6ce6da7af1ee8e9fbcf3e6b54cba052b70086f77cb37a39b98de"
+      },
+      "batch": {
+        "status": "completed",
+        "expectedRunCount": 12,
+        "actualRunCount": 12,
+        "startedAt": "2026-09-03T04:59:47.196Z",
+        "completedAt": "2026-09-03T05:02:11.143Z"
+      }
+    },
+    {
+      "id": "codebase-memory",
+      "label": "Codebase Memory retrieval cost",
+      "evidenceType": "derived-local-case-batches",
+      "selectedBatchId": "20260908-090907-5a66,20260908-114759-951e,20260909-123711-ff11",
+      "sourceBatchId": "20260908-090907-5a66,20260908-114759-951e,20260909-123711-ff11",
+      "reverificationId": null,
+      "publicationEligible": true,
+      "sourceBenchmark": null,
+      "targetBenchmark": {
+        "id": "codebase-memory",
+        "revision": 4,
+        "digest": "06b431978ea0ecdd3bcebc97715fb073aa7c727a39b3026c0c9bf9859be8a3d6"
+      },
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "medium"
+      ],
+      "felanVersion": [
+        "0.23.2"
+      ],
+      "selectedRunIds": [
+        "cbm-extension-architecture-felan-cbm-off-2026-09-08T09-09-07-267Z-0",
+        "cbm-extension-architecture-felan-cbm-off-2026-09-08T09-14-21-067Z-1",
+        "cbm-extension-architecture-felan-cbm-off-2026-09-08T09-18-22-240Z-2",
+        "cbm-extension-architecture-felan-cbm-curated-2026-09-08T09-22-14-881Z-3",
+        "cbm-extension-architecture-felan-cbm-curated-2026-09-08T09-26-08-463Z-4",
+        "cbm-extension-architecture-felan-cbm-curated-2026-09-08T09-30-16-278Z-5",
+        "cbm-extension-config-scope-felan-cbm-off-2026-09-08T11-47-59-658Z-0",
+        "cbm-extension-config-scope-felan-cbm-off-2026-09-08T12-00-52-571Z-1",
+        "cbm-extension-config-scope-felan-cbm-off-2026-09-08T12-16-18-598Z-2",
+        "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-29-48-122Z-3",
+        "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-42-47-889Z-4",
+        "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-53-07-165Z-5",
+        "cbm-project-instructions-felan-cbm-off-2026-09-09T12-37-11-946Z-0",
+        "cbm-project-instructions-felan-cbm-off-2026-09-09T12-42-06-679Z-1",
+        "cbm-project-instructions-felan-cbm-off-2026-09-09T12-47-32-028Z-2",
+        "cbm-project-instructions-felan-cbm-curated-2026-09-09T12-50-32-243Z-3",
+        "cbm-project-instructions-felan-cbm-curated-2026-09-09T12-54-42-619Z-4",
+        "cbm-project-instructions-felan-cbm-curated-2026-09-09T12-58-49-961Z-5"
+      ],
+      "sourceRunIds": [
+        "cbm-extension-architecture-felan-cbm-off-2026-09-08T09-09-07-267Z-0",
+        "cbm-extension-architecture-felan-cbm-off-2026-09-08T09-14-21-067Z-1",
+        "cbm-extension-architecture-felan-cbm-off-2026-09-08T09-18-22-240Z-2",
+        "cbm-extension-architecture-felan-cbm-curated-2026-09-08T09-22-14-881Z-3",
+        "cbm-extension-architecture-felan-cbm-curated-2026-09-08T09-26-08-463Z-4",
+        "cbm-extension-architecture-felan-cbm-curated-2026-09-08T09-30-16-278Z-5",
+        "cbm-extension-config-scope-felan-cbm-off-2026-09-08T11-47-59-658Z-0",
+        "cbm-extension-config-scope-felan-cbm-off-2026-09-08T12-00-52-571Z-1",
+        "cbm-extension-config-scope-felan-cbm-off-2026-09-08T12-16-18-598Z-2",
+        "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-29-48-122Z-3",
+        "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-42-47-889Z-4",
+        "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-53-07-165Z-5",
+        "cbm-project-instructions-felan-cbm-off-2026-09-09T12-37-11-946Z-0",
+        "cbm-project-instructions-felan-cbm-off-2026-09-09T12-42-06-679Z-1",
+        "cbm-project-instructions-felan-cbm-off-2026-09-09T12-47-32-028Z-2",
+        "cbm-project-instructions-felan-cbm-curated-2026-09-09T12-50-32-243Z-3",
+        "cbm-project-instructions-felan-cbm-curated-2026-09-09T12-54-42-619Z-4",
+        "cbm-project-instructions-felan-cbm-curated-2026-09-09T12-58-49-961Z-5"
+      ],
+      "quality": {
+        "baseline": {
+          "runs": 9,
+          "validRuns": 9,
+          "passed": 9,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 9,
+          "validRuns": 9,
+          "passed": 9,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "report": {
+        "sourceRelativePath": "sources/provenance/codebase-memory.json",
+        "runCount": 18,
+        "derivedRunCount": 18,
+        "publishedRelativePath": "benchmarks/codebase-memory/results.html",
+        "sourceSha256": "d712f29701196491246c803766c8f3a482e64236b4e3798caf0d235cceb1ac11"
+      },
+      "batch": {
+        "status": "completed",
+        "expectedRunCount": 18,
+        "actualRunCount": 18,
+        "sourceManifestDeclaredRunCount": 36,
+        "sourceManifestNote": "Each case batch declared 12 runs across four arms; the 18 off and on runs are selected.",
+        "startedAt": "2026-09-08T09:09:07.259Z",
+        "completedAt": "2026-09-09T13:27:41.333Z"
+      },
+      "publicationScope": {
+        "status": "final",
+        "caseCount": 3,
+        "runCount": 18,
+        "trialsPerArmPerCase": 3,
+        "caseIds": [
+          "cbm-extension-architecture",
+          "cbm-extension-config-scope",
+          "cbm-project-instructions"
+        ]
+      },
+      "sourceBenchmarkNote": "The three case batches were launched with --case and carry no benchmark stamp.",
+      "candidateSourceAgent": "felan-cbm-curated"
+    },
+    {
+      "id": "session-compaction",
+      "label": "Inherited-model session compaction",
+      "evidenceType": "direct-local-pre-release",
+      "selectedBatchId": "20260911-154148-3bc0",
+      "sourceBatchId": "20260911-154148-3bc0",
+      "reverificationId": null,
+      "publicationEligible": false,
+      "sourceBenchmark": null,
+      "targetBenchmark": {
+        "id": "session-compaction",
+        "revision": 4,
+        "digest": "32aea55491eb12e63ed01cf2a6fab513c7ae7b36191e073443e3dfa7390f783a"
+      },
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "low"
+      ],
+      "felanVersion": [
+        "0.24.7"
+      ],
+      "selectedRunIds": [
+        "session-compaction-continuation-felan-no-session-compaction-2026-09-11T15-41-48-065Z-0",
+        "session-compaction-continuation-felan-no-session-compaction-2026-09-11T15-42-50-178Z-1",
+        "session-compaction-continuation-felan-no-session-compaction-2026-09-11T15-43-51-907Z-2",
+        "session-compaction-continuation-felan-inherit-compaction-2026-09-11T15-45-08-651Z-3",
+        "session-compaction-continuation-felan-inherit-compaction-2026-09-11T15-46-08-378Z-4",
+        "session-compaction-continuation-felan-inherit-compaction-2026-09-11T15-47-01-735Z-5"
+      ],
+      "sourceRunIds": [
+        "session-compaction-continuation-felan-no-session-compaction-2026-09-11T15-41-48-065Z-0",
+        "session-compaction-continuation-felan-no-session-compaction-2026-09-11T15-42-50-178Z-1",
+        "session-compaction-continuation-felan-no-session-compaction-2026-09-11T15-43-51-907Z-2",
+        "session-compaction-continuation-felan-inherit-compaction-2026-09-11T15-45-08-651Z-3",
+        "session-compaction-continuation-felan-inherit-compaction-2026-09-11T15-46-08-378Z-4",
+        "session-compaction-continuation-felan-inherit-compaction-2026-09-11T15-47-01-735Z-5"
+      ],
+      "quality": {
+        "baseline": {
+          "runs": 3,
+          "validRuns": 3,
+          "passed": 2,
+          "failed": 1,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": []
+        },
+        "candidate": {
+          "runs": 3,
+          "validRuns": 3,
+          "passed": 3,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "report": {
+        "sourceRelativePath": "sources/provenance/session-compaction.json",
+        "runCount": 6,
+        "derivedRunCount": 0,
+        "publishedRelativePath": "benchmarks/session-compaction/results.html",
+        "sourceSha256": "7c3c54a536b0b0fc0bc1cebfb2f0ae8d631a08f215d6d5bb065d24b5e9a70ba1"
+      },
+      "batch": {
+        "status": "completed",
+        "expectedRunCount": 6,
+        "actualRunCount": 6,
+        "startedAt": "2026-09-11T15:41:48.062Z",
+        "completedAt": "2026-09-11T15:48:16.172Z"
+      },
+      "publishedOutcomes": {
+        "quality": "candidate-gate-passed",
+        "cost": "available",
+        "note": "The candidate passed 3/3; the baseline 2/3 result remains disclosed separately."
+      }
+    }
+  ],
+  "publicationAggregation": {
+    "mode": "ratioOfReducedSums",
+    "trials": "median",
+    "evidenceRelativePath": "sources/provenance/aggregate-gain-recalculation.json",
+    "scope": "Seven benchmark primary/secondary additive resource objectives, evaluated against each candidate quality gate.",
+    "macroDiagnostics": "Retained as case-level average/min/max fields."
+  }
+}

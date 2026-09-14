@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "id": "codebase-memory",
+  "benchmarkId": "codebase-memory",
+  "label": "Codebase Memory retrieval cost",
+  "status": "complete",
+  "publicationEligible": true,
+  "coverage": {
+    "cases": 3,
+    "runs": 18,
+    "trialsPerArmPerCase": 3,
+    "caseIds": [
+      "cbm-extension-architecture",
+      "cbm-extension-config-scope",
+      "cbm-project-instructions"
+    ]
+  },
+  "arms": {
+    "baseline": "felan-cbm-off",
+    "candidate": "felan-cbm-on"
+  },
+  "trialReducer": "median",
+  "caseEstimator": "ratioOfReducedSums",
+  "comparisons": {
+    "cost.total": {
+      "baselineReducedCaseSum": 5.727142,
+      "candidateReducedCaseSum": 4.135741,
+      "ratioOfReducedSumsGainPercent": 27.78700091598915,
+      "macroMeanCaseGainPercent": 11.269148006055824,
+      "caseGainsPercent": [
+        -1.031951759483988,
+        42.405964690752015,
+        -7.566568913100557
+      ],
+      "rawAttemptTotalGainPercent": 25.052814651585376
+    },
+    "duration.stepsMs": {
+      "baselineReducedCaseSum": 1167282,
+      "candidateReducedCaseSum": 1076719,
+      "ratioOfReducedSumsGainPercent": 7.758450828505879,
+      "macroMeanCaseGainPercent": 7.722228120587097,
+      "caseGainsPercent": [
+        -4.424578138032808,
+        8.454515222057623,
+        19.136747277736475
+      ],
+      "rawAttemptTotalGainPercent": 7.991582891817235
+    },
+    "usage.promptTokens": {
+      "baselineReducedCaseSum": 7116614,
+      "candidateReducedCaseSum": 4211297,
+      "ratioOfReducedSumsGainPercent": 40.82442858359327,
+      "macroMeanCaseGainPercent": 12.229176806088622,
+      "caseGainsPercent": [
+        6.630136175439376,
+        51.406820352517045,
+        -21.349426109690555
+      ],
+      "rawAttemptTotalGainPercent": 37.78097163969734
+    },
+    "usage.outputTokens": {
+      "baselineReducedCaseSum": 28887,
+      "candidateReducedCaseSum": 30014,
+      "ratioOfReducedSumsGainPercent": -3.901408938276733,
+      "macroMeanCaseGainPercent": -4.0493830621669975,
+      "caseGainsPercent": [
+        -12.590516234524642,
+        -0.9349079150850556,
+        1.3772749631087065
+      ],
+      "rawAttemptTotalGainPercent": -2.8099209881427267
+    },
+    "usage.totalTokens": {
+      "baselineReducedCaseSum": 7146562,
+      "candidateReducedCaseSum": 4240437,
+      "ratioOfReducedSumsGainPercent": 40.664658055159954,
+      "macroMeanCaseGainPercent": 12.155455036876923,
+      "caseGainsPercent": [
+        6.393150779721577,
+        51.32073563138205,
+        -21.24752130047286
+      ],
+      "rawAttemptTotalGainPercent": 37.61287572109261
+    }
+  },
+  "cases": [
+    {
+      "caseId": "cbm-extension-architecture",
+      "sourceCommits": [
+        "e5867637569bd1c7ad08420b79ec4031a5733f57"
+      ],
+      "baseline": {
+        "reducedByMedian": {
+          "cost.total": 1.2001530000000002,
+          "duration.stepsMs": 233785,
+          "usage.promptTokens": 946059,
+          "usage.outputTokens": 8562,
+          "usage.totalTokens": 953802
+        },
+        "passRate": 1.0,
+        "meanVerifierReward": 0.8666666666666667
+      },
+      "candidate": {
+        "reducedByMedian": {
+          "cost.total": 1.2125380000000001,
+          "duration.stepsMs": 244129,
+          "usage.promptTokens": 883334,
+          "usage.outputTokens": 9640,
+          "usage.totalTokens": 892824
+        },
+        "passRate": 1.0,
+        "meanVerifierReward": 1.0
+      }
+    },
+    {
+      "caseId": "cbm-extension-config-scope",
+      "sourceCommits": [
+        "51a18d8f0c853a06867ddbd48046ad4a84307058"
+      ],
+      "baseline": {
+        "reducedByMedian": {
+          "cost.total": 3.8947869999999996,
+          "duration.stepsMs": 727694,
+          "usage.promptTokens": 5717681,
+          "usage.outputTokens": 14226,
+          "usage.totalTokens": 5733850
+        },
+        "passRate": 1.0,
+        "meanVerifierReward": 1.0
+      },
+      "candidate": {
+        "reducedByMedian": {
+          "cost.total": 2.243165,
+          "duration.stepsMs": 666171,
+          "usage.promptTokens": 2778403,
+          "usage.outputTokens": 14359,
+          "usage.totalTokens": 2791196
+        },
+        "passRate": 1.0,
+        "meanVerifierReward": 1.0
+      }
+    },
+    {
+      "caseId": "cbm-project-instructions",
+      "sourceCommits": [
+        "104faa5559029c8be9e8a1eb504d87974a5864e9"
+      ],
+      "baseline": {
+        "reducedByMedian": {
+          "cost.total": 0.632202,
+          "duration.stepsMs": 205803,
+          "usage.promptTokens": 452874,
+          "usage.outputTokens": 6099,
+          "usage.totalTokens": 458910
+        },
+        "passRate": 1.0,
+        "meanVerifierReward": 1.0
+      },
+      "candidate": {
+        "reducedByMedian": {
+          "cost.total": 0.680038,
+          "duration.stepsMs": 166419,
+          "usage.promptTokens": 549560,
+          "usage.outputTokens": 6015,
+          "usage.totalTokens": 556417
+        },
+        "passRate": 1.0,
+        "meanVerifierReward": 1.0
+      }
+    }
+  ],
+  "qualityDisclosure": {
+    "frameworkPassRate": "All 18 published attempts reported status passed and pass=true.",
+    "architectureBaselineVerifierRewards": [
+      0.8,
+      0.8,
+      1.0
+    ],
+    "architectureCandidateVerifierRewards": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "architectureVerifierNote": "Two Codebase Memory-off attempts received reward 0.8 (coverage 4/5); all three Codebase Memory-on attempts scored 1.0.",
+    "configScopeVerifierRewards": {
+      "felan-cbm-off": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "felan-cbm-on": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "projectInstructionsVerifierRewards": {
+      "felan-cbm-off": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "felan-cbm-on": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "nonRequiredAssertionNote": "4 of 18 attempts recorded a non-required clean-tool-execution failure, primarily grep ENOENT (cbm-extension-architecture: 4); these failures did not affect framework pass status and occur in both arms."
+  },
+  "evidence": "../../sources/provenance/codebase-memory.json",
+  "sourceBatchCoverage": {
+    "declaredCases": 3,
+    "declaredRuns": 18,
+    "retainedCases": 3,
+    "retainedRuns": 18,
+    "complete": true
+  },
+  "runtime": {
+    "packageVersion": "0.23.2",
+    "extension": "@felan-ai/ext-codebase-memory 0.3.1",
+    "candidateNote": "felan-cbm-on is the enabled arm, run as the harness agent felan-cbm-curated: builtinExtensions.codebaseMemory=true with extensionConfig.codebaseMemory.mode=curated, the extension's default model-facing surface."
+  }
+}

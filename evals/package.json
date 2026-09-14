@@ -1,0 +1,21 @@
+{
+  "name": "@felan-ai/felan-extension-evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.5",
+  "engines": {
+    "node": "22.20.0"
+  },
+  "scripts": {
+    "list": "node scripts/source-cli.mjs list",
+    "run": "node scripts/source-cli.mjs run",
+    "view": "harness-evals view --config felan-extension-evals.yaml --latest --open",
+    "test": "bun adapters/felan-compaction.test.mjs && node scripts/source-image.test.mjs",
+    "build:runtime": "node scripts/build-runtime.mjs",
+    "build:source": "node scripts/build-source-image.mjs --allow-current-source"
+  },
+  "dependencies": {
+    "harness-evals": "0.2.16"
+  }
+}

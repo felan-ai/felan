@@ -1,0 +1,33 @@
+id: markitdown-xlsx-extraction
+suite: markitdown-cost
+description: Compare cold extraction and aggregation from an XLSX worksheet.
+workspace:
+  fixture: fixtures/markitdown/v1/source
+  setup:
+    - command: markitdown
+      args: [docs/service-capacity.xlsx]
+      timeoutMs: 60000
+      network:
+        mode: none
+agents:
+  include: [felan-no-markitdown, felan-markitdown]
+prompt: |
+  Read `docs/service-capacity.xlsx`. Report the owner and replica count for
+  `ledger-worker`, identify the critical-tier service, and give the total
+  replicas across all listed services. Do not change any files.
+assert:
+  - { type: contains, value: "ledger-worker" }
+  - { type: contains, value: "Omar Bell" }
+  - { type: contains, value: "3" }
+  - { type: contains, value: "atlas-api" }
+  - { type: contains, value: "18" }
+  - id: converted-xlsx-read
+    type: toolCalled
+    name: read
+    min: 1
+    argsContain: [docs/service-capacity.xlsx]
+    resultContains: ["<markitdown_conversion_diagnostic", docs/service-capacity.xlsx]
+    isError: false
+    when:
+      agent: felan-markitdown
+  - { type: workspaceDiff, changedFiles: [] }

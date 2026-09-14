@@ -1,0 +1,429 @@
+diff --git a/apps/tui/src/settings.ts b/apps/tui/src/settings.ts
+index ffc96a4..985a9a3 100644
+--- a/apps/tui/src/settings.ts
++++ b/apps/tui/src/settings.ts
+@@ -69,6 +69,10 @@ export function resolveExtensionConfigSettings(
+         warnings.push(`${source} contains unknown field: ${definition.id}.${field}; ignoring it.`);
+         continue;
+       }
++      if (definition.fields[field]?.scope === 'session') {
++        warnings.push(`${source}.${field} is session-scoped and cannot be configured in settings.json; ignoring it.`);
++        continue;
++      }
+       try {
+         values[field] = validateExtensionConfigValue(definition, field, value, `${source}.${field}`);
+       } catch (error) {
+diff --git a/apps/tui/test/runtime.test.ts b/apps/tui/test/runtime.test.ts
+index c283d9f..3c8260c 100644
+--- a/apps/tui/test/runtime.test.ts
++++ b/apps/tui/test/runtime.test.ts
+@@ -203,10 +203,12 @@ describe('local Agent Core lifecycle', () => {
+       fields: {
+         entryApproval: configField.enum(['ask', 'allow', 'deny'], {
+           default: 'ask',
++          scope: 'user',
+           description: 'Approval policy for model-entered Prewalk',
+         }),
+         restorePlanner: configField.boolean({
+           default: true,
++          scope: 'user',
+           description: 'Restore the planner after implementation',
+         }),
+       },
+diff --git a/apps/tui/test/settings.test.ts b/apps/tui/test/settings.test.ts
+index 23f7781..d5df8f6 100644
+--- a/apps/tui/test/settings.test.ts
++++ b/apps/tui/test/settings.test.ts
+@@ -207,6 +207,7 @@ describe('local settings', () => {
+       fields: {
+         entryApproval: configField.enum(['ask', 'allow', 'deny'], {
+           default: 'ask',
++          scope: 'user',
+           description: 'Approval policy for model-entered Prewalk',
+         }),
+       },
+@@ -228,10 +229,12 @@ describe('local settings', () => {
+       fields: {
+         entryApproval: configField.enum(['ask', 'allow', 'deny'], {
+           default: 'ask',
++          scope: 'user',
+           description: 'Approval policy for model-entered Prewalk',
+         }),
+         restorePlanner: configField.boolean({
+           default: true,
++          scope: 'user',
+           description: 'Restore the planner after implementation',
+         }),
+       },
+diff --git a/packages/agent-core/src/extension-config.ts b/packages/agent-core/src/extension-config.ts
+index 389285d..caf4483 100644
+--- a/packages/agent-core/src/extension-config.ts
++++ b/packages/agent-core/src/extension-config.ts
+@@ -12,10 +12,13 @@ export type ExtensionConfigValue =
+   | ExtensionConfigJsonObject
+   | ExtensionConfigJsonArray;
+ 
++export type ExtensionConfigScope = 'user' | 'project' | 'session';
++
+ export interface ExtensionConfigFieldOptions<T> {
+   readonly default: T;
+   readonly label?: string;
+   readonly description: string;
++  readonly scope: ExtensionConfigScope;
+   readonly cliName?: string | false;
+   readonly sensitive?: boolean;
+   readonly validate?: (value: unknown) => string | undefined;
+@@ -175,6 +178,25 @@ export function resolveExtensionConfigs(
+   return new Map([...resolved].map(([id, values]) => [id, Object.freeze({ ...values })]));
+ }
+ 
++export function getPersistableExtensionConfig(
++  definitions: readonly ExtensionConfigDefinition[],
++  overrides: readonly ExtensionConfigOverride[] = [],
++  target: 'user' | 'project' = 'user',
++): ReadonlyMap<string, Readonly<Record<string, ExtensionConfigValue>>> {
++  const resolved = resolveExtensionConfigs(definitions, overrides);
++  const definitionsById = definitionMap(definitions);
++  const persistable = new Map<string, Readonly<Record<string, ExtensionConfigValue>>>();
++  for (const [id, values] of resolved) {
++    const definition = definitionsById.get(id)!;
++    const kept: Record<string, ExtensionConfigValue> = {};
++    for (const [name, value] of Object.entries(values)) {
++      if (definition.fields[name]?.scope === target) kept[name] = value;
++    }
++    persistable.set(id, Object.freeze(kept));
++  }
++  return persistable;
++}
++
+ export function getExtensionConfigCliOptions(
+   definitions: readonly ExtensionConfigDefinition[],
+ ): readonly ExtensionConfigCliOption[] {
+@@ -267,6 +289,12 @@ function validateDefinition(definition: ExtensionConfigDefinition): void {
+     if (field.description.trim().length === 0) {
+       throw new Error(`Extension configuration field ${definition.id}.${name} must have a description`);
+     }
++    if (field.scope !== 'user' && field.scope !== 'project' && field.scope !== 'session') {
++      throw new Error(`Extension configuration field ${definition.id}.${name} must declare a scope`);
++    }
++    if (field.sensitive === true && field.scope !== 'session') {
++      throw new Error(`Extension configuration field ${definition.id}.${name} is sensitive and must use session scope`);
++    }
+     if (field.values && field.values.length === 0) {
+       throw new Error(`Extension configuration field ${definition.id}.${name} must not have empty values`);
+     }
+diff --git a/packages/agent-core/src/index.ts b/packages/agent-core/src/index.ts
+index 390e6cf..2f54af8 100644
+--- a/packages/agent-core/src/index.ts
++++ b/packages/agent-core/src/index.ts
+@@ -63,6 +63,7 @@ export {
+   extensionConfigOverridesFromObject,
+   getExtensionConfigCliOptions,
+   getExtensionConfigDefinition,
++  getPersistableExtensionConfig,
+   parseExtensionConfigCliValue,
+   resolveExtensionConfigs,
+   validateExtensionConfigValue,
+@@ -72,6 +73,7 @@ export type {
+   ExtensionConfigDefinition,
+   ExtensionConfigField,
+   ExtensionConfigFieldOptions,
++  ExtensionConfigScope,
+   ExtensionConfigFields,
+   ExtensionConfigOverride,
+   ExtensionConfigPrimitive,
+diff --git a/packages/agent-core/test/extension-config.test.ts b/packages/agent-core/test/extension-config.test.ts
+index 61eb6e5..4df7737 100644
+--- a/packages/agent-core/test/extension-config.test.ts
++++ b/packages/agent-core/test/extension-config.test.ts
+@@ -11,9 +11,9 @@ const definition = defineExtensionConfig({
+   id: 'example',
+   title: 'Example',
+   fields: {
+-    enabled: configField.boolean({ default: true, description: 'Enable the feature' }),
+-    mode: configField.enum(['safe', 'fast'], { default: 'safe', description: 'Execution mode' }),
+-    limit: configField.number({ default: 3, description: 'Maximum items' }),
++    enabled: configField.boolean({ default: true, scope: 'user', description: 'Enable the feature' }),
++    mode: configField.enum(['safe', 'fast'], { default: 'safe', scope: 'user', description: 'Execution mode' }),
++    limit: configField.number({ default: 3, scope: 'user', description: 'Maximum items' }),
+   },
+ });
+ 
+@@ -50,7 +50,7 @@ describe('declarative extension configuration', () => {
+       id: 'json-example',
+       title: 'JSON Example',
+       fields: {
+-        layout: configField.json({ default: layout, description: 'Structured layout' }),
++        layout: configField.json({ default: layout, scope: 'project', description: 'Structured layout' }),
+       },
+     });
+     const resolved = resolveExtensionConfigs([jsonDefinition], [{
+@@ -70,7 +70,7 @@ describe('declarative extension configuration', () => {
+       id: 'json-cli',
+       title: 'JSON CLI',
+       fields: {
+-        value: configField.json({ default: {}, description: 'Structured value' }),
++        value: configField.json({ default: {}, scope: 'project', description: 'Structured value' }),
+       },
+     });
+     const option = getExtensionConfigCliOptions([jsonDefinition])[0]!;
+@@ -86,8 +86,8 @@ describe('declarative extension configuration', () => {
+       id: 'sensitive-example',
+       title: 'Sensitive Example',
+       fields: {
+-        apiKey: configField.string({ default: '', description: 'Credential source', sensitive: true }),
+-        enabled: configField.boolean({ default: true, description: 'Enable feature' }),
++        apiKey: configField.string({ default: '', scope: 'session', description: 'Credential source', sensitive: true }),
++        enabled: configField.boolean({ default: true, scope: 'user', description: 'Enable feature' }),
+       },
+     });
+     expect(getExtensionConfigCliOptions([sensitiveDefinition]).map((option) => option.field)).toEqual(['enabled']);
+diff --git a/packages/ext-ask-user/src/config.ts b/packages/ext-ask-user/src/config.ts
+index 60e8fa4..c23cf52 100644
+--- a/packages/ext-ask-user/src/config.ts
++++ b/packages/ext-ask-user/src/config.ts
+@@ -31,22 +31,26 @@ export const ASK_USER_CONFIG = defineExtensionConfig({
+   fields: {
+     displayMode: configField.enum(['overlay', 'inline'], {
+       default: DEFAULT_ASK_USER_CONFIG.displayMode,
++      scope: 'user',
+       label: 'Display mode',
+       description: 'Render questions inline or in a centered overlay',
+     }),
+     singleSelectLayout: configField.enum(['auto', 'list'], {
+       default: DEFAULT_ASK_USER_CONFIG.singleSelectLayout,
++      scope: 'user',
+       label: 'Single-select layout',
+       description: 'Use a wide-terminal preview automatically or always show a list',
+     }),
+     overlayToggleKey: configField.string({
+       default: DEFAULT_ASK_USER_CONFIG.overlayToggleKey,
++      scope: 'user',
+       label: 'Overlay toggle key',
+       description: 'Shortcut for hiding or reopening an overlay; use off to disable',
+       validate: shortcutValidationIssue,
+     }),
+     commentToggleKey: configField.string({
+       default: DEFAULT_ASK_USER_CONFIG.commentToggleKey,
++      scope: 'user',
+       label: 'Comment toggle key',
+       description: 'Shortcut for toggling optional extra context; use off to disable',
+       validate: shortcutValidationIssue,
+diff --git a/packages/ext-codebase-memory/src/config.ts b/packages/ext-codebase-memory/src/config.ts
+index 24a9182..dd70698 100644
+--- a/packages/ext-codebase-memory/src/config.ts
++++ b/packages/ext-codebase-memory/src/config.ts
+@@ -6,6 +6,7 @@ export const CODEBASE_MEMORY_CONFIG = defineExtensionConfig({
+   fields: {
+     maxCacheBytes: configField.number({
+       default: 0,
++      scope: 'user',
+       description: 'Maximum bytes retained by the Codebase Memory LRU cache; 0 uses the runtime default',
+       validate: (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+         ? undefined
+diff --git a/packages/ext-codex/src/config.ts b/packages/ext-codex/src/config.ts
+index a1d22b4..889d6aa 100644
+--- a/packages/ext-codex/src/config.ts
++++ b/packages/ext-codex/src/config.ts
+@@ -18,9 +18,9 @@ export const CODEX_CONFIG = defineExtensionConfig({
+   id: 'codex',
+   title: 'Codex tools',
+   fields: {
+-    fast: configField.boolean({ default: false, description: 'Request priority service tier' }),
+-    verbosity: configField.enum(['low', 'medium', 'high'], { default: 'low', description: 'Codex response verbosity' }),
+-    forceCachedWebSockets: configField.boolean({ default: true, description: 'Prefer cached WebSocket transport' }),
++    fast: configField.boolean({ default: false, scope: 'user', description: 'Request priority service tier' }),
++    verbosity: configField.enum(['low', 'medium', 'high'], { default: 'low', scope: 'user', description: 'Codex response verbosity' }),
++    forceCachedWebSockets: configField.boolean({ default: true, scope: 'user', description: 'Prefer cached WebSocket transport' }),
+   },
+ });
+ 
+diff --git a/packages/ext-context-view/src/config.ts b/packages/ext-context-view/src/config.ts
+index 783972b..2698750 100644
+--- a/packages/ext-context-view/src/config.ts
++++ b/packages/ext-context-view/src/config.ts
+@@ -11,6 +11,7 @@ export const CONTEXT_VIEW_CONFIG = defineExtensionConfig({
+ 	fields: {
+ 		displayMode: configField.enum(CONTEXT_VIEW_DISPLAY_MODES, {
+ 			default: DEFAULT_CONTEXT_VIEW_DISPLAY_MODE,
++			scope: "user",
+ 			label: "Display mode",
+ 			description: "Render context usage inline or in a centered overlay",
+ 		}),
+diff --git a/packages/ext-output-style/src/index.ts b/packages/ext-output-style/src/index.ts
+index f91f3a4..67c2282 100644
+--- a/packages/ext-output-style/src/index.ts
++++ b/packages/ext-output-style/src/index.ts
+@@ -10,11 +10,13 @@ export const OUTPUT_STYLE_CONFIG = defineExtensionConfig({
+   fields: {
+     style: configField.enum(OUTPUT_STYLES, {
+       default: DEFAULT_OUTPUT_STYLE,
++      scope: 'user',
+       description: 'Response detail and explanation style',
+       cliName: 'output-style',
+     }),
+     instructions: configField.string({
+       default: '',
++      scope: 'user',
+       description: 'Custom system-prompt instructions used when output style is custom',
+       cliName: 'output-style-instructions',
+     }),
+diff --git a/packages/ext-powerline/src/config.ts b/packages/ext-powerline/src/config.ts
+index 62d5a98..ae43e59 100644
+--- a/packages/ext-powerline/src/config.ts
++++ b/packages/ext-powerline/src/config.ts
+@@ -106,11 +106,11 @@ export const POWERLINE_CONFIG = defineExtensionConfig({
+   id: 'powerline',
+   title: 'Powerline',
+   fields: {
+-    style: configField.enum(['minimal', 'powerline', 'capsule'], { default: DEFAULT_CONFIG.display.style, description: 'Powerline footer style' }),
+-    charset: configField.enum(['text', 'unicode'], { default: DEFAULT_CONFIG.display.charset, description: 'Powerline footer charset' }),
+-    autoWrap: configField.boolean({ default: DEFAULT_CONFIG.display.autoWrap, description: 'Wrap long powerline segments' }),
+-    padding: configField.number({ default: DEFAULT_CONFIG.display.padding, description: 'Horizontal segment padding', validate: validatePadding }),
+-    lines: configField.json({ default: DEFAULT_CONFIG.display.lines, description: 'Ordered powerline lines and segments', validate: validateLines }),
++    style: configField.enum(['minimal', 'powerline', 'capsule'], { default: DEFAULT_CONFIG.display.style, scope: 'user', description: 'Powerline footer style' }),
++    charset: configField.enum(['text', 'unicode'], { default: DEFAULT_CONFIG.display.charset, scope: 'user', description: 'Powerline footer charset' }),
++    autoWrap: configField.boolean({ default: DEFAULT_CONFIG.display.autoWrap, scope: 'user', description: 'Wrap long powerline segments' }),
++    padding: configField.number({ default: DEFAULT_CONFIG.display.padding, scope: 'user', description: 'Horizontal segment padding', validate: validatePadding }),
++    lines: configField.json({ default: DEFAULT_CONFIG.display.lines, scope: 'project', description: 'Ordered powerline lines and segments', validate: validateLines }),
+   },
+ });
+ 
+diff --git a/packages/ext-prewalk/src/index.ts b/packages/ext-prewalk/src/index.ts
+index b43c7d2..5f98a31 100644
+--- a/packages/ext-prewalk/src/index.ts
++++ b/packages/ext-prewalk/src/index.ts
+@@ -64,18 +64,19 @@ export const PREWALK_CONFIG = defineExtensionConfig({
+   fields: {
+     targetModel: configField.string({
+       default: 'low',
++      scope: 'user',
+       description: 'Implementation model tier or exact model',
+       validate: (value) => parseTargetModel(String(value)) ? undefined : 'must be a model tier or provider/model-id',
+     }),
+     targetThinking: configField.enum(['off', 'low', 'medium', 'high', 'xhigh', 'max'], {
+-      default: 'medium', description: 'Implementation thinking level',
++      default: 'medium', scope: 'user', description: 'Implementation thinking level',
+     }),
+-    restorePlanner: configField.boolean({ default: true, description: 'Restore the planner after implementation' }),
++    restorePlanner: configField.boolean({ default: true, scope: 'user', description: 'Restore the planner after implementation' }),
+     entryApproval: configField.enum(['ask', 'allow', 'deny'], {
+-      default: 'ask', description: 'Approval policy for model-entered Prewalk',
++      default: 'ask', scope: 'user', description: 'Approval policy for model-entered Prewalk',
+     }),
+     planReview: configField.enum(['inherit', 'ask', 'skip'], {
+-      default: 'inherit', description: 'Plan review policy; inherit asks when entry approval asks',
++      default: 'inherit', scope: 'user', description: 'Plan review policy; inherit asks when entry approval asks',
+     }),
+   },
+ });
+diff --git a/packages/ext-prompt-history/src/config.ts b/packages/ext-prompt-history/src/config.ts
+index 45e19be..7463308 100644
+--- a/packages/ext-prompt-history/src/config.ts
++++ b/packages/ext-prompt-history/src/config.ts
+@@ -11,6 +11,7 @@ export const PROMPT_HISTORY_CONFIG = defineExtensionConfig({
+ 	fields: {
+ 		displayMode: configField.enum(PROMPT_HISTORY_DISPLAY_MODES, {
+ 			default: DEFAULT_PROMPT_HISTORY_DISPLAY_MODE,
++			scope: "user",
+ 			label: "Display mode",
+ 			description: "Render prompt history inline or in a centered overlay",
+ 		}),
+diff --git a/packages/ext-rtk-optimizer/src/config.ts b/packages/ext-rtk-optimizer/src/config.ts
+index e6ca72b..1745922 100644
+--- a/packages/ext-rtk-optimizer/src/config.ts
++++ b/packages/ext-rtk-optimizer/src/config.ts
+@@ -11,26 +11,26 @@ export const RTK_OPTIMIZER_CONFIG = defineExtensionConfig({
+   id: 'rtkOptimizer',
+   title: 'RTK optimizer',
+   fields: {
+-    enabled: configField.boolean({ default: true, description: 'Enable RTK command rewriting and compaction' }),
+-    mode: configField.enum(RTK_MODES, { default: 'rewrite', description: 'Rewrite commands or only suggest rewrites' }),
+-    guardWhenRtkMissing: configField.boolean({ default: true, description: 'Bypass RTK when the executable is unavailable' }),
+-    showRewriteNotifications: configField.boolean({ default: true, description: 'Show rewrite notifications' }),
+-    compactionEnabled: configField.boolean({ default: true, description: 'Enable output compaction' }),
+-    stripAnsi: configField.boolean({ default: true, description: 'Strip ANSI sequences from command output' }),
+-    readCompaction: configField.boolean({ default: false, description: 'Enable lossy read compaction' }),
+-    truncate: configField.boolean({ default: true, description: 'Enable hard output truncation' }),
+-    truncateMaxChars: configField.number({ default: 12_000, description: 'Maximum characters after truncation', validate: integerRange(1_000, 200_000) }),
+-    sourceCodeFilteringEnabled: configField.boolean({ default: false, description: 'Enable source-code filtering' }),
+-    preserveExactSkillReads: configField.boolean({ default: false, description: 'Preserve exact skill reads' }),
+-    sourceFiltering: configField.enum(RTK_SOURCE_FILTER_LEVELS, { default: 'none', description: 'Source-code filtering level' }),
+-    smartTruncate: configField.boolean({ default: false, description: 'Enable smart truncation' }),
+-    smartTruncateMaxLines: configField.number({ default: 220, description: 'Maximum lines for smart truncation', validate: integerRange(40, 4_000) }),
+-    aggregateTestOutput: configField.boolean({ default: true, description: 'Aggregate test output' }),
+-    filterBuildOutput: configField.boolean({ default: true, description: 'Filter build output' }),
+-    compactGitOutput: configField.boolean({ default: true, description: 'Compact Git output' }),
+-    aggregateLinterOutput: configField.boolean({ default: true, description: 'Aggregate linter output' }),
+-    groupSearchOutput: configField.boolean({ default: true, description: 'Group search output' }),
+-    trackSavings: configField.boolean({ default: true, description: 'Track output savings' }),
++    enabled: configField.boolean({ scope: 'user', default: true, description: 'Enable RTK command rewriting and compaction' }),
++    mode: configField.enum(RTK_MODES, { scope: 'user', default: 'rewrite', description: 'Rewrite commands or only suggest rewrites' }),
++    guardWhenRtkMissing: configField.boolean({ scope: 'user', default: true, description: 'Bypass RTK when the executable is unavailable' }),
++    showRewriteNotifications: configField.boolean({ scope: 'user', default: true, description: 'Show rewrite notifications' }),
++    compactionEnabled: configField.boolean({ scope: 'user', default: true, description: 'Enable output compaction' }),
++    stripAnsi: configField.boolean({ scope: 'user', default: true, description: 'Strip ANSI sequences from command output' }),
++    readCompaction: configField.boolean({ scope: 'user', default: false, description: 'Enable lossy read compaction' }),
++    truncate: configField.boolean({ scope: 'user', default: true, description: 'Enable hard output truncation' }),
++    truncateMaxChars: configField.number({ scope: 'user', default: 12_000, description: 'Maximum characters after truncation', validate: integerRange(1_000, 200_000) }),
++    sourceCodeFilteringEnabled: configField.boolean({ scope: 'user', default: false, description: 'Enable source-code filtering' }),
++    preserveExactSkillReads: configField.boolean({ scope: 'user', default: false, description: 'Preserve exact skill reads' }),
++    sourceFiltering: configField.enum(RTK_SOURCE_FILTER_LEVELS, { scope: 'user', default: 'none', description: 'Source-code filtering level' }),
++    smartTruncate: configField.boolean({ scope: 'user', default: false, description: 'Enable smart truncation' }),
++    smartTruncateMaxLines: configField.number({ scope: 'user', default: 220, description: 'Maximum lines for smart truncation', validate: integerRange(40, 4_000) }),
++    aggregateTestOutput: configField.boolean({ scope: 'user', default: true, description: 'Aggregate test output' }),
++    filterBuildOutput: configField.boolean({ scope: 'user', default: true, description: 'Filter build output' }),
++    compactGitOutput: configField.boolean({ scope: 'user', default: true, description: 'Compact Git output' }),
++    aggregateLinterOutput: configField.boolean({ scope: 'user', default: true, description: 'Aggregate linter output' }),
++    groupSearchOutput: configField.boolean({ scope: 'user', default: true, description: 'Group search output' }),
++    trackSavings: configField.boolean({ scope: 'user', default: true, description: 'Track output savings' }),
+   },
+ });
+ 
+diff --git a/packages/ext-tasks/src/config.ts b/packages/ext-tasks/src/config.ts
+index 1b00910..cee2aab 100644
+--- a/packages/ext-tasks/src/config.ts
++++ b/packages/ext-tasks/src/config.ts
+@@ -11,6 +11,7 @@ export const TASKS_CONFIG = defineExtensionConfig({
+   fields: {
+     displayMode: configField.enum(TASKS_DISPLAY_MODES, {
+       default: DEFAULT_TASKS_DISPLAY_MODE,
++      scope: 'user',
+       label: 'Display mode',
+       description: 'Render session tasks inline or in a centered overlay',
+     }),
+diff --git a/packages/ext-web-access/src/config.ts b/packages/ext-web-access/src/config.ts
+index 8ac046a..d12a3fd 100644
+--- a/packages/ext-web-access/src/config.ts
++++ b/packages/ext-web-access/src/config.ts
+@@ -35,18 +35,18 @@ export const WEB_ACCESS_CONFIG = defineExtensionConfig({
+   id: 'webAccess',
+   title: 'Web access',
+   fields: {
+-    provider: configField.json({ default: 'auto', description: 'Default web search provider', validate: validateProvider }),
+-    searchProvider: configField.json({ default: null, description: 'Legacy provider alias', validate: (value) => value === null ? undefined : validateProvider(value) }),
+-    openaiApiKey: configField.string({ default: '', description: 'OpenAI credential source', sensitive: true }),
+-    openaiSearchModel: configField.string({ default: '', description: 'OpenAI web search model' }),
+-    exaApiKey: configField.string({ default: '', description: 'Exa credential source', sensitive: true }),
+-    braveApiKey: configField.string({ default: '', description: 'Brave credential source', sensitive: true }),
+-    searxngBaseUrl: configField.string({ default: '', description: 'SearXNG base URL', validate: validateOptionalUrl }),
+-    searxngHeaders: configField.json({ default: {}, description: 'SearXNG request headers', sensitive: true, validate: validateHeaders }),
+-    pdf: configField.json({ default: {}, description: 'PDF extraction limits', validate: validatePdf }),
+-    githubClone: configField.json({ default: {}, description: 'GitHub clone limits', validate: validateGithubClone }),
+-    fetchContent: configField.json({ default: {}, description: 'Fetch domain policy', validate: validateFetchContent }),
+-    ssrf: configField.json({ default: {}, description: 'SSRF allow ranges', validate: validateSsrf }),
++    provider: configField.json({ scope: 'project', default: 'auto', description: 'Default web search provider', validate: validateProvider }),
++    searchProvider: configField.json({ scope: 'project', default: null, description: 'Legacy provider alias', validate: (value) => value === null ? undefined : validateProvider(value) }),
++    openaiApiKey: configField.string({ scope: 'session', default: '', description: 'OpenAI credential source', sensitive: true }),
++    openaiSearchModel: configField.string({ scope: 'user', default: '', description: 'OpenAI web search model' }),
++    exaApiKey: configField.string({ scope: 'session', default: '', description: 'Exa credential source', sensitive: true }),
++    braveApiKey: configField.string({ scope: 'session', default: '', description: 'Brave credential source', sensitive: true }),
++    searxngBaseUrl: configField.string({ scope: 'user', default: '', description: 'SearXNG base URL', validate: validateOptionalUrl }),
++    searxngHeaders: configField.json({ scope: 'session', default: {}, description: 'SearXNG request headers', sensitive: true, validate: validateHeaders }),
++    pdf: configField.json({ scope: 'project', default: {}, description: 'PDF extraction limits', validate: validatePdf }),
++    githubClone: configField.json({ scope: 'project', default: {}, description: 'GitHub clone limits', validate: validateGithubClone }),
++    fetchContent: configField.json({ scope: 'project', default: {}, description: 'Fetch domain policy', validate: validateFetchContent }),
++    ssrf: configField.json({ scope: 'project', default: {}, description: 'SSRF allow ranges', validate: validateSsrf }),
+   },
+ });
+ 

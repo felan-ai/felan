@@ -1,0 +1,2341 @@
+{
+  "id": "prewalk",
+  "definition": {
+    "revision": 11,
+    "label": "Prewalk organic routing cost",
+    "description": "Compare organic Prewalk routing with Prewalk disabled; candidate attempts without a successful entry are invalid.",
+    "select": {
+      "cases": [
+        "prewalk-checkout",
+        "memory-summary-links"
+      ]
+    },
+    "arms": {
+      "baseline": "felan-no-prewalk",
+      "candidate": "felan-prewalk"
+    },
+    "trials": 3,
+    "qualityGates": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8
+      }
+    ],
+    "objective": [
+      {
+        "metric": "cost.total",
+        "goal": "minimize"
+      }
+    ],
+    "aggregation": {
+      "trials": "median",
+      "cases": "ratioOfReducedSums"
+    }
+  },
+  "cases": [
+    "memory-summary-links",
+    "prewalk-checkout"
+  ],
+  "expectedTrials": 3,
+  "baseline": {
+    "agentName": "felan-no-prewalk",
+    "comparisonId": "felan-no-prewalk",
+    "state": "eligible",
+    "expectedRuns": 6,
+    "actualRuns": 6,
+    "missingRuns": 0,
+    "cases": [
+      {
+        "caseId": "memory-summary-links",
+        "observations": {
+          "cost.total": [
+            5.280604000000001,
+            6.814177999999999,
+            8.344949
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            1004288,
+            1301857,
+            1802658
+          ],
+          "usage.promptTokens": [
+            6107312,
+            8762446,
+            11521537
+          ],
+          "usage.uncachedInputTokens": [
+            199344,
+            174670,
+            187649
+          ],
+          "usage.cacheReadInputTokens": [
+            5907968,
+            8587776,
+            11333888
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            44330,
+            54898,
+            57992
+          ],
+          "usage.requests": [
+            52,
+            80,
+            97
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 5.280604000000001,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 6.814177999999999,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 8.344949,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 1004288,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1301857,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1802658,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 6107312,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 8762446,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 11521537,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 199344,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 174670,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 187649,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 5907968,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 8587776,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 11333888,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 44330,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 54898,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 57992,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 52,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 80,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 97,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 1004288,
+            "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 1301857,
+            "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 1802658,
+            "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+          }
+        ],
+        "values": {
+          "cost.total": 6.814177999999999,
+          "quality.passRate": 1,
+          "duration.ms": 1301857,
+          "usage.promptTokens": 8762446,
+          "usage.uncachedInputTokens": 187649,
+          "usage.cacheReadInputTokens": 8587776,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 54898,
+          "usage.requests": 80
+        }
+      },
+      {
+        "caseId": "prewalk-checkout",
+        "observations": {
+          "cost.total": [
+            1.6813550000000002,
+            1.7208690000000002,
+            1.710072
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            553316,
+            549752,
+            563253
+          ],
+          "usage.promptTokens": [
+            1186339,
+            1286979,
+            1080912
+          ],
+          "usage.uncachedInputTokens": [
+            74019,
+            72771,
+            85328
+          ],
+          "usage.cacheReadInputTokens": [
+            1112320,
+            1214208,
+            995584
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            25170,
+            24997,
+            26188
+          ],
+          "usage.requests": [
+            27,
+            31,
+            24
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 1.6813550000000002,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1.7208690000000002,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1.710072,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 553316,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 549752,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 563253,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1186339,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1286979,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1080912,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 74019,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 72771,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 85328,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1112320,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1214208,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 995584,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 25170,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 24997,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 26188,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 27,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 31,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 24,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 553316,
+            "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 549752,
+            "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 563253,
+            "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+          }
+        ],
+        "values": {
+          "cost.total": 1.710072,
+          "quality.passRate": 1,
+          "duration.ms": 553316,
+          "usage.promptTokens": 1186339,
+          "usage.uncachedInputTokens": 74019,
+          "usage.cacheReadInputTokens": 1112320,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 25170,
+          "usage.requests": 27
+        }
+      }
+    ],
+    "values": {
+      "cost.total": 4.262124999999999,
+      "quality.passRate": 1,
+      "duration.ms": 927586.5,
+      "usage.promptTokens": 4974392.5,
+      "usage.uncachedInputTokens": 130834,
+      "usage.cacheReadInputTokens": 4850048,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.outputTokens": 40034,
+      "usage.requests": 53.5
+    },
+    "deltas": {},
+    "gateResults": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8,
+        "value": 1,
+        "pass": true
+      }
+    ]
+  },
+  "candidate": {
+    "agentName": "felan-prewalk",
+    "comparisonId": "felan-prewalk",
+    "state": "eligible",
+    "expectedRuns": 6,
+    "actualRuns": 6,
+    "missingRuns": 0,
+    "cases": [
+      {
+        "caseId": "memory-summary-links",
+        "observations": {
+          "cost.total": [
+            2.1564544000000003,
+            1.93362268,
+            1.44525888
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            800822,
+            886263,
+            641654
+          ],
+          "usage.promptTokens": [
+            5239388,
+            4387757,
+            3980316
+          ],
+          "usage.uncachedInputTokens": [
+            331356,
+            297645,
+            219676
+          ],
+          "usage.cacheReadInputTokens": [
+            4908032,
+            4090112,
+            3760640
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            25518,
+            21589,
+            22934
+          ],
+          "usage.requests": [
+            40,
+            40,
+            50
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 2.1564544000000003,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1.93362268,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1.44525888,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 800822,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 886263,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 641654,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 5239388,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4387757,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3980316,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 331356,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 297645,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 219676,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 4908032,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4090112,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3760640,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 25518,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 21589,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 22934,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 40,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 40,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 50,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 800822,
+            "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 886263,
+            "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 641654,
+            "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+          }
+        ],
+        "values": {
+          "cost.total": 1.93362268,
+          "quality.passRate": 1,
+          "duration.ms": 800822,
+          "usage.promptTokens": 4387757,
+          "usage.uncachedInputTokens": 297645,
+          "usage.cacheReadInputTokens": 4090112,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 22934,
+          "usage.requests": 40
+        }
+      },
+      {
+        "caseId": "prewalk-checkout",
+        "observations": {
+          "cost.total": [
+            0.9660633200000002,
+            0.96672892,
+            0.83866872
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            441694,
+            958772,
+            397528
+          ],
+          "usage.promptTokens": [
+            2126065,
+            1845467,
+            1747050
+          ],
+          "usage.uncachedInputTokens": [
+            173809,
+            177499,
+            143722
+          ],
+          "usage.cacheReadInputTokens": [
+            1952256,
+            1667968,
+            1603328
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            18519,
+            18148,
+            16962
+          ],
+          "usage.requests": [
+            37,
+            36,
+            34
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.9660633200000002,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.96672892,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.83866872,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 441694,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 958772,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 397528,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 2126065,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1845467,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1747050,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 173809,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 177499,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 143722,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1952256,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1667968,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1603328,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 18519,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 18148,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 16962,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 37,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 36,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 34,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 441694,
+            "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 958772,
+            "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 397528,
+            "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+          }
+        ],
+        "values": {
+          "cost.total": 0.9660633200000002,
+          "quality.passRate": 1,
+          "duration.ms": 441694,
+          "usage.promptTokens": 1845467,
+          "usage.uncachedInputTokens": 173809,
+          "usage.cacheReadInputTokens": 1667968,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 18148,
+          "usage.requests": 36
+        }
+      }
+    ],
+    "values": {
+      "cost.total": 1.449843,
+      "quality.passRate": 1,
+      "duration.ms": 621258,
+      "usage.promptTokens": 3116612,
+      "usage.uncachedInputTokens": 235727,
+      "usage.cacheReadInputTokens": 2879040,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.outputTokens": 20541,
+      "usage.requests": 38
+    },
+    "deltas": {
+      "cost.total": -2.8122819999999993,
+      "quality.passRate": 0,
+      "duration.ms": -306328.5,
+      "usage.promptTokens": -1857780.5,
+      "usage.uncachedInputTokens": 104893,
+      "usage.cacheReadInputTokens": -1971008,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.outputTokens": -19493,
+      "usage.requests": -15.5
+    },
+    "gateResults": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8,
+        "value": 1,
+        "pass": true
+      }
+    ]
+  },
+  "comparison": {
+    "averageChangePercent": -57.56549245867434,
+    "minChangePercent": -71.62353727771713,
+    "maxChangePercent": -43.50744763963154,
+    "averageGainPercent": 57.56549245867434,
+    "minGainPercent": 43.50744763963154,
+    "maxGainPercent": 71.62353727771713,
+    "comparedCases": 2,
+    "expectedCases": 2,
+    "cases": [
+      {
+        "caseId": "memory-summary-links",
+        "baselineValue": 6.814177999999999,
+        "candidateValue": 1.93362268,
+        "changePercent": -71.62353727771713,
+        "gainPercent": 71.62353727771713,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 5.280604000000001,
+            "candidateValue": 2.1564544000000003,
+            "changePercent": -59.16273214200497,
+            "gainPercent": 59.16273214200497,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 1004288,
+              "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 800822,
+              "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 6.814177999999999,
+            "candidateValue": 1.93362268,
+            "changePercent": -71.62353727771713,
+            "gainPercent": 71.62353727771713,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 1301857,
+              "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 886263,
+              "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 8.344949,
+            "candidateValue": 1.44525888,
+            "changePercent": -82.68103400032763,
+            "gainPercent": 82.68103400032763,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 1802658,
+              "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 641654,
+              "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+            }
+          }
+        ]
+      },
+      {
+        "caseId": "prewalk-checkout",
+        "baselineValue": 1.710072,
+        "candidateValue": 0.9660633200000002,
+        "changePercent": -43.50744763963154,
+        "gainPercent": 43.50744763963154,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 1.6813550000000002,
+            "candidateValue": 0.9660633200000002,
+            "changePercent": -42.54257310324113,
+            "gainPercent": 42.54257310324113,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 553316,
+              "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 441694,
+              "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 1.7208690000000002,
+            "candidateValue": 0.96672892,
+            "changePercent": -43.823212574577155,
+            "gainPercent": 43.823212574577155,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 549752,
+              "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 958772,
+              "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 1.710072,
+            "candidateValue": 0.83866872,
+            "changePercent": -50.957110577800236,
+            "gainPercent": 50.957110577800236,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 563253,
+              "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 397528,
+              "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+            }
+          }
+        ]
+      }
+    ],
+    "metric": "cost.total",
+    "goal": "minimize",
+    "role": "primary",
+    "baselineReducedSum": 8.524249999999999,
+    "candidateReducedSum": 2.899686,
+    "aggregateChangePercent": -65.98309528697538,
+    "aggregateGainPercent": 65.98309528697538
+  },
+  "objectiveComparisons": [
+    {
+      "averageChangePercent": -57.56549245867434,
+      "minChangePercent": -71.62353727771713,
+      "maxChangePercent": -43.50744763963154,
+      "averageGainPercent": 57.56549245867434,
+      "minGainPercent": 43.50744763963154,
+      "maxGainPercent": 71.62353727771713,
+      "comparedCases": 2,
+      "expectedCases": 2,
+      "cases": [
+        {
+          "caseId": "memory-summary-links",
+          "baselineValue": 6.814177999999999,
+          "candidateValue": 1.93362268,
+          "changePercent": -71.62353727771713,
+          "gainPercent": 71.62353727771713,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 5.280604000000001,
+              "candidateValue": 2.1564544000000003,
+              "changePercent": -59.16273214200497,
+              "gainPercent": 59.16273214200497,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1004288,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 800822,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 6.814177999999999,
+              "candidateValue": 1.93362268,
+              "changePercent": -71.62353727771713,
+              "gainPercent": 71.62353727771713,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1301857,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 886263,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 8.344949,
+              "candidateValue": 1.44525888,
+              "changePercent": -82.68103400032763,
+              "gainPercent": 82.68103400032763,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 1802658,
+                "runId": "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 641654,
+                "runId": "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "prewalk-checkout",
+          "baselineValue": 1.710072,
+          "candidateValue": 0.9660633200000002,
+          "changePercent": -43.50744763963154,
+          "gainPercent": 43.50744763963154,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 1.6813550000000002,
+              "candidateValue": 0.9660633200000002,
+              "changePercent": -42.54257310324113,
+              "gainPercent": 42.54257310324113,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 553316,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 441694,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 1.7208690000000002,
+              "candidateValue": 0.96672892,
+              "changePercent": -43.823212574577155,
+              "gainPercent": 43.823212574577155,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 549752,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 958772,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 1.710072,
+              "candidateValue": 0.83866872,
+              "changePercent": -50.957110577800236,
+              "gainPercent": 50.957110577800236,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 563253,
+                "runId": "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 397528,
+                "runId": "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53"
+              }
+            }
+          ]
+        }
+      ],
+      "metric": "cost.total",
+      "goal": "minimize",
+      "role": "primary",
+      "baselineReducedSum": 8.524249999999999,
+      "candidateReducedSum": 2.899686,
+      "aggregateChangePercent": -65.98309528697538,
+      "aggregateGainPercent": 65.98309528697538
+    }
+  ],
+  "warnings": [
+    "Primary and secondary resource outcomes were recalculated with ratioOfReducedSums for this publication."
+  ],
+  "runCount": 12,
+  "derivedRunCount": 12,
+  "publicationAggregation": {
+    "mode": "ratioOfReducedSums",
+    "source": "offline recalculation from retained report observations",
+    "sourceSha256Before": "c5abca0c68fa3071d0205df8f8af9860b12087a3ff81401b4a6ce5470c26d99c",
+    "legacyDiagnostics": "average* and min/max* fields remain macro-mean case diagnostics"
+  }
+}

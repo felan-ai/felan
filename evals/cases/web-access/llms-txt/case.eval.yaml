@@ -1,0 +1,17 @@
+id: web-access-llms-txt
+suite: web-access-cost
+description: Fetch an HTML documentation page whose origin serves llms.txt, then report what the documented runtime is.
+workspace: { fixture: fixtures/felan-adapter-smoke/v1/source }
+agents:
+  include: [felan-no-web-access, felan-web-access]
+prompt: |
+  Open the official Node.js documentation landing page below and report, in
+  one or two sentences, what Node.js is. Cite the page you used and do not
+  modify the workspace.
+
+  https://nodejs.org/en/docs
+assert:
+  - { type: contains, value: "Node.js" }
+  - { type: contains, value: "JavaScript" }
+  - { type: contains, value: "nodejs.org" }
+  - { type: workspaceDiff, changedFiles: [] }

@@ -1,0 +1,38 @@
+id: output-style-coding-summary
+suite: output-style
+description: Compare final summaries after the same small coding task.
+workspace:
+  fixture: fixtures/output-style/v1/source
+agents:
+  include:
+    - felan-no-output-style
+    - felan-concise
+    - felan-explanatory
+    - felan-caveman
+prompt: |
+  Implement `add(left, right)` in `src/calculator.js` so it returns the numeric
+  sum of its arguments. Keep the change limited to that file.
+assert:
+  - id: outcome-retained
+    type: contains
+    value: "add"
+  - id: files-retained
+    type: contains
+    value: "src/calculator.js"
+  - id: no-unsupported-test-claim
+    type: notContains
+    value: "tests passed"
+  - id: focused-edit
+    type: workspaceDiff
+    changedFiles: [src/calculator.js]
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /workspace
+  assetsDir: cases/output-style/coding-summary/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.txt
+  rewardFormat: text
+  timeoutMs: 30000
+  network:
+    mode: none

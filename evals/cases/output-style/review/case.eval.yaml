@@ -1,0 +1,26 @@
+id: output-style-review
+suite: output-style
+description: Compare review summaries for the same merge-readiness finding.
+workspace:
+  fixture: fixtures/output-style/v1/source
+agents:
+  include:
+    - felan-no-output-style
+    - felan-concise
+    - felan-explanatory
+    - felan-caveman
+prompt: |
+  Review `src/calculator.js` for merge readiness. Do not change any files.
+assert:
+  - id: outcome-retained
+    type: contains
+    value: "not implemented"
+  - id: verification-retained
+    type: contains
+    value: "src/calculator.js"
+  - id: function-retained
+    type: contains
+    value: "add"
+  - id: no-files-edited
+    type: workspaceDiff
+    changedFiles: []

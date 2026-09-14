@@ -1,0 +1,30 @@
+id: markitdown-docx-extraction
+suite: markitdown-cost
+description: Compare cold extraction of narrative facts from a DOCX document.
+workspace:
+  fixture: fixtures/markitdown/v1/source
+  setup:
+    - command: markitdown
+      args: [docs/orion-service-brief.docx]
+      timeoutMs: 60000
+      network:
+        mode: none
+agents:
+  include: [felan-no-markitdown, felan-markitdown]
+prompt: |
+  Read `docs/orion-service-brief.docx` and report the release codename, service
+  owner, and maintenance window. Do not change any files.
+assert:
+  - { type: contains, value: "Quartz Lantern" }
+  - { type: contains, value: "Mira Chen" }
+  - { type: contains, value: "02:30 UTC" }
+  - id: converted-docx-read
+    type: toolCalled
+    name: read
+    min: 1
+    argsContain: [docs/orion-service-brief.docx]
+    resultContains: ["<markitdown_conversion_diagnostic", docs/orion-service-brief.docx]
+    isError: false
+    when:
+      agent: felan-markitdown
+  - { type: workspaceDiff, changedFiles: [] }

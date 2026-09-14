@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "felan-adapter-smoke-v1",
+  "source": "authored-in-repository",
+  "files": ["source/target.txt"]
+}

@@ -1,0 +1,874 @@
+{
+  "schemaVersion": 1,
+  "studyId": "felan-extensions-2026-09",
+  "title": "Felan extension benchmark results \u2014 September 2026",
+  "status": "complete",
+  "methodology": {
+    "outcomes": "Primary and secondary additive resource outcomes use the configured trial reducer within each case, then the ratio of reduced case sums. Legacy macro-mean case gains and ranges remain diagnostics.",
+    "quality": "Quality is the candidate aggregate pass rate; baseline values and percentage-point changes remain available in the benchmark quality data.",
+    "overallScore": null,
+    "aggregation": {
+      "headline": "ratioOfReducedSums",
+      "trialReducer": "median",
+      "diagnostics": "macroMean case-level gains and ranges",
+      "zeroBaseline": "percentage unavailable"
+    }
+  },
+  "primaryBenchmarks": [
+    {
+      "cohortId": "local-subagents",
+      "benchmarkId": "subagents",
+      "label": "Subagents organic exploration",
+      "evidenceRole": "primary",
+      "evidenceType": "recalculated-direct",
+      "status": "eligible",
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "max"
+      ],
+      "felanVersion": [
+        "0.21.1"
+      ],
+      "cases": [
+        "subagents-codebase-exploration"
+      ],
+      "trials": 3,
+      "aggregation": {
+        "trials": "median",
+        "cases": "ratioOfReducedSums"
+      },
+      "quality": {
+        "baseline": {
+          "runs": 3,
+          "validRuns": 3,
+          "passed": 3,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 3,
+          "validRuns": 3,
+          "passed": 3,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "status": "recalculated",
+          "baselineValue": 1.2856670000000001,
+          "candidateValue": 0.9811268400000001,
+          "averageChangePercent": -23.68732805617629,
+          "averageGainPercent": 23.68732805617629,
+          "minGainPercent": 23.68732805617629,
+          "maxGainPercent": 23.68732805617629,
+          "comparedCases": 1,
+          "expectedCases": 1,
+          "evidence": "sources/provenance/subagents-cost-recalculation.json",
+          "macroMeanBaselineValue": 1.2856670000000001,
+          "macroMeanCandidateValue": 0.9811268400000001,
+          "macroMeanChangePercent": -23.68732805617629,
+          "macroMeanGainPercent": 23.68732805617629,
+          "macroMinGainPercent": 23.68732805617629,
+          "macroMaxGainPercent": 23.68732805617629,
+          "aggregateBaselineValue": 1.2856670000000001,
+          "aggregateCandidateValue": 0.9811268400000001,
+          "aggregateChangePercent": -23.68732805617629,
+          "aggregateGainPercent": 23.68732805617629,
+          "headlineEstimator": "ratioOfReducedSums"
+        }
+      ],
+      "selectedBatchId": "20260903-052334-7809",
+      "sourceBatchId": "20260903-052334-7809",
+      "reverificationId": null,
+      "publicationEligible": true,
+      "notes": [
+        "Cost was recalculated by adding billed usage from all nine Luna child sessions to their corresponding root runs before aggregation.",
+        "The prompt-token secondary objective is omitted."
+      ],
+      "qualityComparison": {
+        "metric": "quality.passRate",
+        "baselineValue": 1.0,
+        "candidateValue": 1.0,
+        "changePercentagePoints": 0.0
+      },
+      "report": "benchmarks/subagents/results.html"
+    },
+    {
+      "cohortId": "local-markitdown-cost",
+      "benchmarkId": "markitdown-cost",
+      "label": "MarkItDown conversion",
+      "evidenceRole": "primary",
+      "evidenceType": "offline-reverification",
+      "status": "eligible",
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-terra"
+      ],
+      "thinking": [
+        "low"
+      ],
+      "felanVersion": [
+        "0.19.0"
+      ],
+      "cases": [
+        "markitdown-document-configuration",
+        "markitdown-docx-extraction",
+        "markitdown-pptx-extraction",
+        "markitdown-xlsx-extraction"
+      ],
+      "trials": 3,
+      "aggregation": {
+        "trials": "median",
+        "cases": "ratioOfReducedSums"
+      },
+      "quality": {
+        "baseline": {
+          "runs": 12,
+          "validRuns": 12,
+          "passed": 12,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 12,
+          "validRuns": 12,
+          "passed": 12,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "baselineValue": 0.013873299999999998,
+          "candidateValue": 0.0095683,
+          "averageChangePercent": -31.763528811240008,
+          "averageGainPercent": 31.763528811240008,
+          "minGainPercent": 18.485677936697634,
+          "maxGainPercent": 47.760325770796975,
+          "comparedCases": 4,
+          "expectedCases": 4,
+          "macroMeanBaselineValue": 0.013873299999999998,
+          "macroMeanCandidateValue": 0.0095683,
+          "macroMeanChangePercent": -31.763528811240008,
+          "macroMeanGainPercent": 31.763528811240008,
+          "macroMinGainPercent": 18.485677936697634,
+          "macroMaxGainPercent": 47.760325770796975,
+          "aggregateBaselineValue": 0.05549319999999999,
+          "aggregateCandidateValue": 0.0382732,
+          "aggregateChangePercent": -31.030829002472366,
+          "aggregateGainPercent": 31.030829002472366,
+          "headlineEstimator": "ratioOfReducedSums"
+        },
+        {
+          "metric": "usage.promptTokens",
+          "role": "secondary",
+          "goal": "minimize",
+          "baselineValue": 5392.25,
+          "candidateValue": 4650.75,
+          "averageChangePercent": -14.854257660239346,
+          "averageGainPercent": 14.854257660239346,
+          "minGainPercent": -6.4,
+          "maxGainPercent": 32.65392781316348,
+          "comparedCases": 4,
+          "expectedCases": 4,
+          "macroMeanBaselineValue": 5392.25,
+          "macroMeanCandidateValue": 4650.75,
+          "macroMeanChangePercent": -14.854257660239346,
+          "macroMeanGainPercent": 14.854257660239346,
+          "macroMinGainPercent": -6.4,
+          "macroMaxGainPercent": 32.65392781316348,
+          "aggregateBaselineValue": 21569,
+          "aggregateCandidateValue": 18603,
+          "aggregateChangePercent": -13.751217024433215,
+          "aggregateGainPercent": 13.751217024433215,
+          "headlineEstimator": "ratioOfReducedSums"
+        }
+      ],
+      "selectedBatchId": "20260903-045947-5857",
+      "sourceBatchId": "20260902-112808-33e8",
+      "reverificationId": "20260903-045947-56b5",
+      "publicationEligible": false,
+      "report": "benchmarks/markitdown-cost/results.html",
+      "json": "benchmarks/markitdown-cost/results.json",
+      "notes": [],
+      "qualityComparison": {
+        "metric": "quality.passRate",
+        "baselineValue": 1.0,
+        "candidateValue": 1.0,
+        "changePercentagePoints": 0.0
+      }
+    },
+    {
+      "cohortId": "local-output-style-concise",
+      "benchmarkId": "output-style-concise",
+      "label": "Concise output style",
+      "evidenceRole": "primary",
+      "evidenceType": "offline-reverification",
+      "status": "eligible",
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "max"
+      ],
+      "felanVersion": [
+        "0.20.2"
+      ],
+      "cases": [
+        "output-style-planning",
+        "output-style-review",
+        "output-style-support"
+      ],
+      "trials": 3,
+      "aggregation": {
+        "trials": "median",
+        "cases": "ratioOfReducedSums"
+      },
+      "quality": {
+        "baseline": {
+          "runs": 9,
+          "validRuns": 9,
+          "passed": 9,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 9,
+          "validRuns": 9,
+          "passed": 9,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "baselineValue": 0.076516,
+          "candidateValue": 0.06541933333333333,
+          "averageChangePercent": -14.890486501973443,
+          "averageGainPercent": 14.890486501973443,
+          "minGainPercent": 6.985581490433768,
+          "maxGainPercent": 19.557637499242023,
+          "comparedCases": 3,
+          "expectedCases": 3,
+          "macroMeanBaselineValue": 0.076516,
+          "macroMeanCandidateValue": 0.06541933333333333,
+          "macroMeanChangePercent": -14.890486501973443,
+          "macroMeanGainPercent": 14.890486501973443,
+          "macroMinGainPercent": 6.985581490433768,
+          "macroMaxGainPercent": 19.557637499242023,
+          "aggregateBaselineValue": 0.229548,
+          "aggregateCandidateValue": 0.196258,
+          "aggregateChangePercent": -14.502413438583659,
+          "aggregateGainPercent": 14.502413438583659,
+          "headlineEstimator": "ratioOfReducedSums"
+        },
+        {
+          "metric": "usage.outputTokens",
+          "role": "secondary",
+          "goal": "minimize",
+          "baselineValue": 1395.6666666666667,
+          "candidateValue": 1166.6666666666667,
+          "averageChangePercent": -15.981398627528208,
+          "averageGainPercent": 15.981398627528208,
+          "minGainPercent": 12.088974854932303,
+          "maxGainPercent": 21.218074656188605,
+          "comparedCases": 3,
+          "expectedCases": 3,
+          "macroMeanBaselineValue": 1395.6666666666667,
+          "macroMeanCandidateValue": 1166.6666666666667,
+          "macroMeanChangePercent": -15.981398627528208,
+          "macroMeanGainPercent": 15.981398627528208,
+          "macroMinGainPercent": 12.088974854932303,
+          "macroMaxGainPercent": 21.218074656188605,
+          "aggregateBaselineValue": 4187,
+          "aggregateCandidateValue": 3500,
+          "aggregateChangePercent": -16.40792930499164,
+          "aggregateGainPercent": 16.40792930499164,
+          "headlineEstimator": "ratioOfReducedSums"
+        }
+      ],
+      "selectedBatchId": "20260903-045947-ba0e",
+      "sourceBatchId": "20260902-121757-89d1",
+      "reverificationId": "20260903-045947-56b5",
+      "publicationEligible": false,
+      "report": "benchmarks/output-style-concise/results.html",
+      "json": "benchmarks/output-style-concise/results.json",
+      "notes": [],
+      "qualityComparison": {
+        "metric": "quality.passRate",
+        "baselineValue": 1.0,
+        "candidateValue": 1.0,
+        "changePercentagePoints": 0.0
+      }
+    },
+    {
+      "cohortId": "local-prewalk",
+      "benchmarkId": "prewalk",
+      "label": "Prewalk organic routing cost",
+      "evidenceRole": "primary",
+      "evidenceType": "offline-reverification",
+      "status": "eligible",
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "max"
+      ],
+      "felanVersion": [
+        "0.20.2"
+      ],
+      "cases": [
+        "memory-summary-links",
+        "prewalk-checkout"
+      ],
+      "trials": 3,
+      "aggregation": {
+        "trials": "median",
+        "cases": "ratioOfReducedSums"
+      },
+      "quality": {
+        "baseline": {
+          "runs": 6,
+          "validRuns": 6,
+          "passed": 6,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 6,
+          "validRuns": 6,
+          "passed": 6,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "baselineValue": 4.262124999999999,
+          "candidateValue": 1.449843,
+          "averageChangePercent": -57.56549245867434,
+          "averageGainPercent": 57.56549245867434,
+          "minGainPercent": 43.50744763963154,
+          "maxGainPercent": 71.62353727771713,
+          "comparedCases": 2,
+          "expectedCases": 2,
+          "macroMeanBaselineValue": 4.262124999999999,
+          "macroMeanCandidateValue": 1.449843,
+          "macroMeanChangePercent": -57.56549245867434,
+          "macroMeanGainPercent": 57.56549245867434,
+          "macroMinGainPercent": 43.50744763963154,
+          "macroMaxGainPercent": 71.62353727771713,
+          "aggregateBaselineValue": 8.524249999999999,
+          "aggregateCandidateValue": 2.899686,
+          "aggregateChangePercent": -65.98309528697538,
+          "aggregateGainPercent": 65.98309528697538,
+          "headlineEstimator": "ratioOfReducedSums"
+        }
+      ],
+      "selectedBatchId": "20260903-044517-8452",
+      "sourceBatchId": "20260902-121757-b16d",
+      "reverificationId": "20260903-044517-d1f1",
+      "publicationEligible": false,
+      "report": "benchmarks/prewalk/results.html",
+      "json": "benchmarks/prewalk/results.json",
+      "notes": [],
+      "qualityComparison": {
+        "metric": "quality.passRate",
+        "baselineValue": 1.0,
+        "candidateValue": 1.0,
+        "changePercentagePoints": 0.0
+      }
+    },
+    {
+      "cohortId": "local-rtk",
+      "benchmarkId": "rtk",
+      "label": "RTK context reduction",
+      "evidenceRole": "primary",
+      "evidenceType": "offline-reverification",
+      "status": "eligible-with-failure",
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "max"
+      ],
+      "felanVersion": [
+        "0.20.0"
+      ],
+      "cases": [
+        "prewalk-checkout",
+        "rtk-felan-project-instructions"
+      ],
+      "trials": 3,
+      "aggregation": {
+        "trials": "median",
+        "cases": "ratioOfReducedSums"
+      },
+      "quality": {
+        "baseline": {
+          "runs": 6,
+          "validRuns": 6,
+          "passed": 6,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 6,
+          "validRuns": 6,
+          "passed": 5,
+          "failed": 1,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 0.8333333333333334,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "baselineValue": 3.1299044999999994,
+          "candidateValue": 2.2984535000000004,
+          "averageChangePercent": -24.12217601810633,
+          "averageGainPercent": 24.12217601810633,
+          "minGainPercent": 15.397141844201368,
+          "maxGainPercent": 32.84721019201129,
+          "comparedCases": 2,
+          "expectedCases": 2,
+          "macroMeanBaselineValue": 3.1299044999999994,
+          "macroMeanCandidateValue": 2.2984535000000004,
+          "macroMeanChangePercent": -24.12217601810633,
+          "macroMeanGainPercent": 24.12217601810633,
+          "macroMinGainPercent": 15.397141844201368,
+          "macroMaxGainPercent": 32.84721019201129,
+          "aggregateBaselineValue": 6.259808999999999,
+          "aggregateCandidateValue": 4.596907000000001,
+          "aggregateChangePercent": -26.564740234086987,
+          "aggregateGainPercent": 26.564740234086987,
+          "headlineEstimator": "ratioOfReducedSums"
+        },
+        {
+          "metric": "usage.promptTokens",
+          "role": "secondary",
+          "goal": "minimize",
+          "baselineValue": 3620221.5,
+          "candidateValue": 2151053.5,
+          "averageChangePercent": -34.42765636669536,
+          "averageGainPercent": 34.42765636669536,
+          "minGainPercent": 21.345442121159167,
+          "maxGainPercent": 47.50987061223156,
+          "comparedCases": 2,
+          "expectedCases": 2,
+          "macroMeanBaselineValue": 3620221.5,
+          "macroMeanCandidateValue": 2151053.5,
+          "macroMeanChangePercent": -34.42765636669536,
+          "macroMeanGainPercent": 34.42765636669536,
+          "macroMinGainPercent": 21.345442121159167,
+          "macroMaxGainPercent": 47.50987061223156,
+          "aggregateBaselineValue": 7240443,
+          "aggregateCandidateValue": 4302107,
+          "aggregateChangePercent": -40.582268239664344,
+          "aggregateGainPercent": 40.582268239664344,
+          "headlineEstimator": "ratioOfReducedSums"
+        }
+      ],
+      "selectedBatchId": "20260903-045947-e11d",
+      "sourceBatchId": "20260902-121847-5fa4",
+      "reverificationId": "20260903-045947-56b5",
+      "publicationEligible": false,
+      "report": "benchmarks/rtk/results.html",
+      "json": "benchmarks/rtk/results.json",
+      "notes": [
+        "One candidate attempt timed out; the configured quality gate still passed.",
+        "The displayed quality.passRate arm value of 1 is the macro mean of per-case trial medians; the aggregate candidate pass rate used by the gate is 5/6 (0.8333)."
+      ],
+      "qualityComparison": {
+        "metric": "quality.passRate",
+        "baselineValue": 1.0,
+        "candidateValue": 0.8333333333333334,
+        "changePercentagePoints": -16.666666666666664
+      }
+    },
+    {
+      "cohortId": "local-codebase-memory",
+      "benchmarkId": "codebase-memory",
+      "label": "Codebase Memory retrieval cost",
+      "evidenceRole": "primary",
+      "evidenceType": "derived-local-case-batches",
+      "status": "eligible",
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "medium"
+      ],
+      "felanVersion": [
+        "0.23.2"
+      ],
+      "cases": [
+        "cbm-extension-architecture",
+        "cbm-extension-config-scope",
+        "cbm-project-instructions"
+      ],
+      "trials": 3,
+      "aggregation": {
+        "trials": "median",
+        "cases": "ratioOfReducedSums"
+      },
+      "quality": {
+        "baseline": {
+          "runs": 9,
+          "validRuns": 9,
+          "passed": 9,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        },
+        "candidate": {
+          "runs": 9,
+          "validRuns": 9,
+          "passed": 9,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "baselineValue": 1.9090473333333333,
+          "candidateValue": 1.3785803333333333,
+          "averageChangePercent": -11.269148006055824,
+          "averageGainPercent": 11.269148006055824,
+          "minGainPercent": -7.566568913100557,
+          "maxGainPercent": 42.405964690752015,
+          "comparedCases": 3,
+          "expectedCases": 3,
+          "macroMeanBaselineValue": 1.9090473333333333,
+          "macroMeanCandidateValue": 1.3785803333333333,
+          "macroMeanChangePercent": -11.269148006055824,
+          "macroMeanGainPercent": 11.269148006055824,
+          "macroMinGainPercent": -7.566568913100557,
+          "macroMaxGainPercent": 42.405964690752015,
+          "aggregateBaselineValue": 5.727142,
+          "aggregateCandidateValue": 4.135741,
+          "aggregateChangePercent": -27.78700091598915,
+          "aggregateGainPercent": 27.78700091598915,
+          "headlineEstimator": "ratioOfReducedSums",
+          "evidence": "sources/provenance/codebase-memory.json"
+        },
+        {
+          "metric": "duration.stepsMs",
+          "role": "secondary",
+          "goal": "minimize",
+          "baselineValue": 389094,
+          "candidateValue": 358906.3333333333,
+          "averageChangePercent": -7.722228120587097,
+          "averageGainPercent": 7.722228120587097,
+          "minGainPercent": -4.424578138032808,
+          "maxGainPercent": 19.136747277736475,
+          "comparedCases": 3,
+          "expectedCases": 3,
+          "macroMeanBaselineValue": 389094,
+          "macroMeanCandidateValue": 358906.3333333333,
+          "macroMeanChangePercent": -7.722228120587097,
+          "macroMeanGainPercent": 7.722228120587097,
+          "macroMinGainPercent": -4.424578138032808,
+          "macroMaxGainPercent": 19.136747277736475,
+          "aggregateBaselineValue": 1167282,
+          "aggregateCandidateValue": 1076719,
+          "aggregateChangePercent": -7.758450828505879,
+          "aggregateGainPercent": 7.758450828505879,
+          "headlineEstimator": "ratioOfReducedSums",
+          "evidence": "sources/provenance/codebase-memory.json"
+        }
+      ],
+      "selectedBatchId": "20260908-090907-5a66,20260908-114759-951e,20260909-123711-ff11",
+      "sourceBatchId": "20260908-090907-5a66,20260908-114759-951e,20260909-123711-ff11",
+      "reverificationId": null,
+      "publicationEligible": true,
+      "report": "benchmarks/codebase-memory/results.html",
+      "json": "benchmarks/codebase-memory/results.json",
+      "notes": [
+        "The published result covers all 18 off and on attempts across three cases, on Felan 0.23.2 with @felan-ai/ext-codebase-memory 0.3.1.",
+        "All attempts passed; two Codebase Memory-off architecture attempts received verifier reward 0.8 while every other reward was 1.0.",
+        "felan-cbm-on is the enabled arm, run as the harness agent felan-cbm-curated: builtinExtensions.codebaseMemory=true with extensionConfig.codebaseMemory.mode=curated, the extension's default model-facing surface.",
+        "Cases were run as three separate --case batches without a benchmark stamp; figures are recomputed from run artifacts with the declared estimator."
+      ],
+      "qualityComparison": {
+        "metric": "quality.passRate",
+        "baselineValue": 1.0,
+        "candidateValue": 1.0,
+        "changePercentagePoints": 0.0
+      }
+    },
+    {
+      "cohortId": "local-session-compaction",
+      "benchmarkId": "session-compaction",
+      "label": "Inherited-model session compaction",
+      "evidenceRole": "primary",
+      "evidenceType": "direct-local-pre-release",
+      "status": "eligible-with-baseline-failure",
+      "provider": [
+        "openai-codex"
+      ],
+      "model": [
+        "gpt-5.6-sol"
+      ],
+      "thinking": [
+        "low"
+      ],
+      "felanVersion": [
+        "0.24.7"
+      ],
+      "cases": [
+        "session-compaction-continuation"
+      ],
+      "trials": 3,
+      "aggregation": {
+        "trials": "median",
+        "cases": "ratioOfReducedSums"
+      },
+      "quality": {
+        "baseline": {
+          "runs": 3,
+          "validRuns": 3,
+          "passed": 2,
+          "failed": 1,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": []
+        },
+        "candidate": {
+          "runs": 3,
+          "validRuns": 3,
+          "passed": 3,
+          "failed": 0,
+          "invalid": 0,
+          "state": "eligible",
+          "gateResults": [
+            {
+              "metric": "quality.passRate",
+              "min": 0.8,
+              "value": 1.0,
+              "pass": true
+            }
+          ]
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "baselineValue": 0.49551,
+          "candidateValue": 0.27131000000000005,
+          "averageChangePercent": -45.24631188068857,
+          "averageGainPercent": 45.24631188068857,
+          "minGainPercent": 45.24631188068857,
+          "maxGainPercent": 45.24631188068857,
+          "comparedCases": 1,
+          "expectedCases": 1,
+          "macroMeanBaselineValue": 0.49551,
+          "macroMeanCandidateValue": 0.27131000000000005,
+          "macroMeanChangePercent": -45.24631188068857,
+          "macroMeanGainPercent": 45.24631188068857,
+          "macroMinGainPercent": 45.24631188068857,
+          "macroMaxGainPercent": 45.24631188068857,
+          "aggregateBaselineValue": 0.49551,
+          "aggregateCandidateValue": 0.27131000000000005,
+          "aggregateChangePercent": -45.24631188068857,
+          "aggregateGainPercent": 45.24631188068857,
+          "headlineEstimator": "ratioOfReducedSums",
+          "evidence": "sources/provenance/session-compaction.json"
+        },
+        {
+          "metric": "usage.promptTokens",
+          "role": "secondary",
+          "goal": "minimize",
+          "baselineValue": 83304,
+          "candidateValue": 39891,
+          "averageChangePercent": -52.11394410832612,
+          "averageGainPercent": 52.11394410832612,
+          "minGainPercent": 52.11394410832612,
+          "maxGainPercent": 52.11394410832612,
+          "comparedCases": 1,
+          "expectedCases": 1,
+          "macroMeanBaselineValue": 83304,
+          "macroMeanCandidateValue": 39891,
+          "macroMeanChangePercent": -52.11394410832612,
+          "macroMeanGainPercent": 52.11394410832612,
+          "macroMinGainPercent": 52.11394410832612,
+          "macroMaxGainPercent": 52.11394410832612,
+          "aggregateBaselineValue": 83304,
+          "aggregateCandidateValue": 39891,
+          "aggregateChangePercent": -52.11394410832612,
+          "aggregateGainPercent": 52.11394410832612,
+          "headlineEstimator": "ratioOfReducedSums",
+          "evidence": "sources/provenance/session-compaction.json"
+        }
+      ],
+      "selectedBatchId": "20260911-154148-3bc0",
+      "sourceBatchId": "20260911-154148-3bc0",
+      "reverificationId": null,
+      "publicationEligible": false,
+      "notes": [
+        "The selected batch is direct provider-backed evidence from a local pre-release image containing an unreleased 0.1.2 artifact.",
+        "The candidate quality gate passes at 3/3; one native baseline continuation omitted the required black-box end-to-end publication plan.",
+        "The later npm 0.1.2 artifact is not byte-identical to the benchmarked local artifact; the package comparison is recorded in sources/provenance/session-compaction.json.",
+        "Resource outcomes are included in the descriptive portfolio total; the baseline failure remains visible in detailed evidence."
+      ],
+      "qualityComparison": {
+        "metric": "quality.passRate",
+        "baselineValue": 0.6666666666666666,
+        "candidateValue": 1.0,
+        "changePercentagePoints": 33.333333333333336
+      },
+      "report": "benchmarks/session-compaction/results.html"
+    }
+  ],
+  "publicationAggregation": {
+    "mode": "ratioOfReducedSums",
+    "evidence": "sources/provenance/aggregate-gain-recalculation.json",
+    "headline": "Aggregate resource outcome; macro case gains remain diagnostics.",
+    "scope": "Seven benchmark primary/secondary additive resource objectives"
+  }
+}

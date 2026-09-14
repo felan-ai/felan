@@ -1,0 +1,103 @@
+id: cbm-extension-config-scope
+suite: codebase-memory
+description: Compare Codebase Memory disabled versus enabled on a fan-out refactor that adds a persistence scope to every Felan extension-config field across 11 packages.
+timeoutMs: 1200000
+workspace:
+  # codebase-memory-mcp refuses to index a root named /workspace, so pin a
+  # realistic project path. This is the agent cwd, the mount target, and the
+  # verifier cwd (src/adapters/felan.ts resolves cwd from containerPath).
+  containerPath: /home/dev/felan
+  git:
+    repository: https://github.com/felan-ai/felan.git
+    commit: 51a18d8f0c853a06867ddbd48046ad4a84307058
+  setup:
+    # Setup resolves commit 51a18d8's lockfile from the npm registry, so this
+    # case shares the generic Felan runtime instead of an image carrying a
+    # commit-specific pnpm store.
+    - command: pnpm
+      args: [install, --frozen-lockfile, --store-dir, /tmp/pnpm-store]
+      timeoutMs: 300000
+      network:
+        mode: default
+agents:
+  include:
+    - felan-cbm-off
+    - felan-cbm-curated
+    - felan-cbm-direct
+    - felan-cbm-single-proxy
+prompt: |
+  Give Felan's declarative extension-configuration system a persistence
+  "scope" - every extension-config field should declare where its value is
+  allowed to live.
+
+  Required outcomes:
+
+  - Every extension-config field carries a required scope: `user` (a
+    machine-wide preference), `project` (belongs with a repository and may be
+    committed), or `session` (only meaningful for the current run, never
+    written to disk). The scope is part of the field descriptor
+    `defineExtensionConfig` produces, and an `ExtensionConfigScope` type is
+    exported from `@felan-ai/agent-core` alongside the other extension-config
+    exports.
+
+  - Defining an extension config is rejected when a field's scope is missing or
+    invalid, or when a `sensitive` field is any scope other than `session` - a
+    secret must never be eligible for a user or project file. All existing
+    definition validation still applies.
+
+  - A new exported `getPersistableExtensionConfig(definitions, overrides,
+    target)` resolves configuration exactly as `resolveExtensionConfigs` does,
+    then returns, per extension, only the fields whose scope equals `target`
+    (`user` or `project`) - never session-scoped fields - with its output
+    frozen the same way `resolveExtensionConfigs` freezes its own.
+
+  - When `settings.json`'s `extensionConfig` block sets a session-scoped field,
+    that field is ignored (left at its default, no override emitted) and a
+    warning naming the field records that it is session-scoped and cannot be
+    configured in settings.json. Every other settings behaviour is unchanged.
+
+  - Every field of every builtin extension's configuration declares a scope,
+    assigned mechanically from attributes already on the field - never from its
+    name or meaning - by the first matching rule: `sensitive: true` ->
+    `session`; built with `configField.json(...)` -> `project`; otherwise ->
+    `user`.
+
+  Keep production changes inside `packages/*/src` and `apps/tui/src`; you may
+  update in-repo tests under `packages/*/test` and `apps/tui/test` that the new
+  required scope breaks. Do not change package versions, dependencies,
+  lockfiles, build configuration, or repository history, and do not create a
+  Git commit. `@felan-ai/agent-core` is consumed through its built `dist/`.
+
+  These are acceptance criteria and scope boundaries, not a prescribed
+  implementation plan. Determine the approach from the repository, verify the
+  relevant behaviour, and summarize the result.
+assert:
+  - id: source-changed
+    type: workspaceDiff
+    minChanged: 6
+  - id: run-code-used
+    type: toolCalled
+    name: run_code
+    min: 1
+    isError: false
+    resultContains: [toolCallId]
+    when:
+      agent: felan-code-mode
+  - id: run-code-disabled
+    type: toolCalled
+    name: run_code
+    min: 0
+    max: 0
+    when:
+      agent: felan-no-run
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /home/dev/felan
+  assetsDir: cases/codebase-memory/extension-config-scope/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.txt
+  rewardFormat: text
+  timeoutMs: 600000
+  network:
+    mode: none

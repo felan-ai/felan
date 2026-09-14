@@ -1,0 +1,790 @@
+{
+  "schemaVersion": 1,
+  "status": "published-with-qualifications",
+  "benchmarkId": "session-compaction",
+  "label": "Inherited-model session compaction",
+  "evidenceType": "direct-local-pre-release",
+  "publicationEligible": false,
+  "publicationEligibilityNote": "The provider-backed runs are complete, but the selected image contains a local pre-release 0.1.2 artifact rather than the byte-identical npm tarball later published under 0.1.2.",
+  "batch": {
+    "batchId": "20260911-154148-3bc0",
+    "argv": [
+      "run",
+      "--config",
+      "felan-extension-evals.yaml",
+      "--benchmark",
+      "session-compaction",
+      "--concurrency",
+      "1",
+      "--image",
+      "harness-evals-local-session-compaction:0.1.2-7f6194c6e1bb"
+    ],
+    "status": "completed",
+    "expectedRunCount": 6,
+    "actualRunCount": 6,
+    "startedAt": "2026-09-11T15:41:48.062Z",
+    "completedAt": "2026-09-11T15:48:16.172Z",
+    "sourceManifestRelativePath": "sources/provenance/batches/20260911-154148-3bc0.json"
+  },
+  "definition": {
+    "revision": 4,
+    "digest": "32aea55491eb12e63ed01cf2a6fab513c7ae7b36191e073443e3dfa7390f783a",
+    "cases": [
+      "session-compaction-continuation"
+    ],
+    "arms": {
+      "baseline": "felan-no-session-compaction",
+      "candidate": "felan-inherit-compaction"
+    },
+    "trials": 3,
+    "trialReducer": "median",
+    "caseEstimator": "ratioOfReducedSums",
+    "qualityGate": {
+      "metric": "quality.passRate",
+      "minimum": 0.8,
+      "evaluatedArm": "candidate"
+    },
+    "objectives": [
+      {
+        "metric": "cost.total",
+        "role": "primary",
+        "goal": "minimize"
+      },
+      {
+        "metric": "usage.promptTokens",
+        "role": "secondary",
+        "goal": "minimize"
+      }
+    ]
+  },
+  "repositorySnapshot": {
+    "committedSourceSnapshot": "b9e17e30f5476e462488614a01682a7e47f63ae2",
+    "workingTreeCleanAtBatchStart": null,
+    "note": "The benchmark sources were committed after the run. The preserved hashes identify the configuration, case, verifier, adapter, and fixture used for this evidence; repository cleanliness at batch start was not recorded.",
+    "configCopy": "sources/provenance/project/felan-extension-evals-session-compaction.yaml",
+    "sourceFiles": {
+      "felan-extension-evals.yaml": {
+        "sha256": "fb0207eb3e55358f36608b1970cb1fcca6c91ecc4e3aa876ed8f3050f4df5411",
+        "bytes": 32177
+      },
+      "evals/cases/session-compaction/continuation/case.eval.yaml": {
+        "sha256": "685f99459b57125de629a0f9386c9efda46a0f83026e354c872bc85cd9300e75",
+        "bytes": 1793
+      },
+      "evals/cases/session-compaction/continuation/verifier/verify.mjs": {
+        "sha256": "701efcad9287c5afee65eccf13e452ca85361e44285b9c518382e5a9f41d90d5",
+        "bytes": 6473
+      },
+      "evals/cases/session-compaction/continuation/verifier/facts.json": {
+        "sha256": "56937d16aa5f79790cb9ebfbd3cbce1316698a1a9794fa0881d2c28d6402a5aa",
+        "bytes": 4572
+      },
+      "evals/adapters/felan-compaction.mjs": {
+        "sha256": "3f9cab000dde186f2b93a0f5b6029f3447563dbff4ce6e4fff1ad250bb51f0a2",
+        "bytes": 7651
+      },
+      "evals/fixtures/session-compaction/v1/fixture.json": {
+        "sha256": "9919ade62d75925296941cbcd331e2ce109cea76c6e19ac5c706fad76337d836",
+        "bytes": 1740
+      },
+      "evals/fixtures/session-compaction/v1/source/sessions/2026-08-27T10-35-33-058Z_01a042ca-0d42-75eb-aeac-0397822915e2.jsonl": {
+        "sha256": "f9d32534c95549767423fa86893e4c4392449b9b06652a499d5f1d39b4d1a874",
+        "bytes": 2151546
+      }
+    }
+  },
+  "fixture": {
+    "id": "session-compaction-v1",
+    "entries": 234,
+    "tokensBefore": 217549,
+    "sanitizedSha256": "f9d32534c95549767423fa86893e4c4392449b9b06652a499d5f1d39b4d1a874",
+    "historicalFirstKeptEntryId": "8fa87dbb",
+    "note": "The public results package records hashes and metadata only; it does not copy the 2.15 MB sanitized session or any run workspace/transcript."
+  },
+  "runtime": {
+    "provider": "openai-codex",
+    "activeModel": "gpt-5.6-sol",
+    "thinking": "low",
+    "felanVersion": "0.24.7",
+    "agentCoreVersion": "0.6.1",
+    "image": "harness-evals-local-session-compaction:0.1.2-7f6194c6e1bb",
+    "imageId": "sha256:b89ceb5af239bfd695227459c78d76b8c2895a71c4aceb1aa96f8f88330b17f8",
+    "baseImage": "harness-evals-managed:97e0bb213046ac9e00c865d63298fb03",
+    "baseImageId": "sha256:f785cfdab76796c50737c9dd822a356f0dbf4777fc1ba15c6d3ec61d41866a8a",
+    "benchmarkedExtensionArtifact": {
+      "name": "@felan-ai/ext-session-compaction",
+      "version": "0.1.2",
+      "sourceSha256": "08dbf17537ab1486af66a6435adf8b1b847319a413efbe174f47aa07793983df",
+      "tarballSha256": "7f6194c6e1bb2f080db30b5f36d73da7c92217c40c2adb54d999c3e959648071",
+      "installedContentSha256": "6915ebe278277a73659d05d3ec2fa062e7a5adaa57497efb8b27f19d3ad2d8d6"
+    },
+    "registryArtifactPublishedLater": {
+      "name": "@felan-ai/ext-session-compaction",
+      "version": "0.1.2",
+      "publishedAt": "2026-09-11T17:39:42.281Z",
+      "tarballUrl": "https://registry.npmjs.org/@felan-ai/ext-session-compaction/-/ext-session-compaction-0.1.2.tgz",
+      "npmIntegrity": "sha512-+CR/FZH9ujb3fRBXcU0NTstDu7w2cYTx9JXtmUKNDe3a0pCUK+DYNo2q3Iws39BUL4JVXNh+nEJZVrMTam4FHQ==",
+      "npmShasum": "28c3f838b0229c83c778337c544609b1ed7ae7c5",
+      "downloadedTarballSha256": "1c0a9c60939a174846daef01001cbd099f3daf906908b59e68960676b1db1308",
+      "byteIdenticalToBenchmarkedArtifact": false,
+      "differenceSummary": "The later registry artifact adds fallback-diagnostic observability and related exports/documentation. It is not substituted for the benchmarked bytes.",
+      "changedPackagePaths": [
+        "README.md",
+        "dist/compaction.d.ts",
+        "dist/compaction.d.ts.map",
+        "dist/compaction.js",
+        "dist/compaction.js.map",
+        "dist/index.d.ts",
+        "dist/index.d.ts.map",
+        "dist/index.js",
+        "dist/index.js.map",
+        "dist/internal/contracts.d.ts",
+        "dist/internal/contracts.d.ts.map",
+        "dist/internal/contracts.js",
+        "dist/internal/contracts.js.map"
+      ],
+      "addedPackagePaths": [
+        "dist/internal/fallback-diagnostic.d.ts",
+        "dist/internal/fallback-diagnostic.d.ts.map",
+        "dist/internal/fallback-diagnostic.js",
+        "dist/internal/fallback-diagnostic.js.map"
+      ],
+      "removedPackagePaths": []
+    }
+  },
+  "quality": {
+    "baseline": {
+      "attemptCount": 3,
+      "passed": 2,
+      "failed": 1,
+      "passRate": 0.6666666666666666
+    },
+    "candidate": {
+      "attemptCount": 3,
+      "passed": 3,
+      "failed": 0,
+      "passRate": 1.0
+    },
+    "candidateGatePassed": true,
+    "baselineDisclosure": "One native continuation omitted the required black-box end-to-end publication plan. The candidate quality gate is evaluated independently and passed 3/3."
+  },
+  "compactionValidation": {
+    "candidateExtensionOwned": 3,
+    "candidateRequestedModels": [
+      "inherit"
+    ],
+    "candidateSelectedModels": [
+      "openai-codex/gpt-5.6-sol"
+    ],
+    "candidateContinuityFactCounts": [
+      16,
+      16,
+      16
+    ],
+    "baselineNativeOwned": 3
+  },
+  "arms": {
+    "baseline": {
+      "agent": "felan-no-session-compaction",
+      "attemptCount": 3,
+      "passed": 2,
+      "failed": 1,
+      "passRate": 0.6666666666666666,
+      "reducedByMedian": {
+        "cost.total": 0.49551,
+        "duration.ms": 62095,
+        "duration.stepsMs": 60792,
+        "usage.promptTokens": 83304,
+        "usage.uncachedInputTokens": 83261,
+        "usage.cacheReadInputTokens": 0,
+        "usage.cacheWriteInputTokens": 0,
+        "usage.outputTokens": 2633,
+        "usage.totalTokens": 85937,
+        "usage.requests": 2
+      },
+      "attempts": [
+        {
+          "runId": "session-compaction-continuation-felan-no-session-compaction-2026-09-11T15-41-48-065Z-0",
+          "caseId": "session-compaction-continuation",
+          "arm": "baseline",
+          "sourceAgent": "felan-no-session-compaction",
+          "attemptNumber": 1,
+          "status": "failed",
+          "pass": false,
+          "provider": "openai-codex",
+          "model": "gpt-5.6-sol",
+          "thinking": "low",
+          "metrics": {
+            "duration.ms": 62095,
+            "duration.stepsMs": 60792,
+            "quality.passRate": 0,
+            "cost.total": 0.4950550000000001,
+            "usage.promptTokens": 83261,
+            "usage.uncachedInputTokens": 83261,
+            "usage.cacheReadInputTokens": 0,
+            "usage.cacheWriteInputTokens": 0,
+            "usage.outputTokens": 2625,
+            "usage.requests": 2,
+            "usage.totalTokens": 85886
+          },
+          "verifier": {
+            "reason": "0 (continuation missing required facts: black-box-e2e-plan)",
+            "reward": {
+              "path": ".harness-evals-reward.json",
+              "format": "json",
+              "values": {
+                "summaryFidelity": 0,
+                "continuationFidelity": 0
+              },
+              "primary": 0,
+              "binary": false
+            }
+          },
+          "compaction": {
+            "expectedOwner": "native",
+            "fromHook": false,
+            "tokensBefore": 217549,
+            "firstKeptEntryId": "8fa87dbb",
+            "usage": {
+              "input": 54538,
+              "output": 1471,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 44,
+              "totalTokens": 56009,
+              "cost": {
+                "input": 0.27269000000000004,
+                "output": 0.04413,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.31682000000000005
+              }
+            }
+          },
+          "evidenceFiles": {
+            "run-started.json": {
+              "sha256": "43e50d8389cf739eb5c4d2700f4e592d3345947e3df7bb91bdbeef152eaed726",
+              "bytes": 2006
+            },
+            "summary.json": {
+              "sha256": "ef2c80b307884a3437d96bfc1a8e43df24ae523210857ed6e4b6d58f95d75712",
+              "bytes": 17601
+            },
+            "cost-summary.json": {
+              "sha256": "649b0a84a4201df7e4be6199c3efd295fceff2c733aaacb4147dab664f91fecc",
+              "bytes": 6478
+            },
+            "image-resolution.json": {
+              "sha256": "22bdd5bc60bb20e20999dff4ea3f1fca7e2500766fc6f39994ee854986b9eb7a",
+              "bytes": 358
+            },
+            "verifier/result.json": {
+              "sha256": "325d772d72552b0f464bf1a83280a8cef9ace35b8d5cf16f69be24151195dd03",
+              "bytes": 2969
+            },
+            "verifier/reward.json": {
+              "sha256": "5d9752d4eb505cb499acb3da517c8bf7ad70c70cadb50948eddc9572d5abf6a1",
+              "bytes": 173
+            }
+          }
+        },
+        {
+          "runId": "session-compaction-continuation-felan-no-session-compaction-2026-09-11T15-42-50-178Z-1",
+          "caseId": "session-compaction-continuation",
+          "arm": "baseline",
+          "sourceAgent": "felan-no-session-compaction",
+          "attemptNumber": 2,
+          "status": "passed",
+          "pass": true,
+          "provider": "openai-codex",
+          "model": "gpt-5.6-sol",
+          "thinking": "low",
+          "metrics": {
+            "duration.ms": 61721,
+            "duration.stepsMs": 60710,
+            "quality.passRate": 1,
+            "cost.total": 0.49551,
+            "usage.promptTokens": 83304,
+            "usage.uncachedInputTokens": 83304,
+            "usage.cacheReadInputTokens": 0,
+            "usage.cacheWriteInputTokens": 0,
+            "usage.outputTokens": 2633,
+            "usage.requests": 2,
+            "usage.totalTokens": 85937
+          },
+          "verifier": {
+            "reason": "1 (summary=8/9 continuation=9/10)",
+            "reward": {
+              "path": ".harness-evals-reward.json",
+              "format": "json",
+              "values": {
+                "summaryFidelity": 0.888889,
+                "continuationFidelity": 0.9
+              },
+              "primary": 0.8944445000000001,
+              "binary": false
+            }
+          },
+          "compaction": {
+            "expectedOwner": "native",
+            "fromHook": false,
+            "tokensBefore": 217549,
+            "firstKeptEntryId": "8fa87dbb",
+            "usage": {
+              "input": 54538,
+              "output": 1505,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 34,
+              "totalTokens": 56043,
+              "cost": {
+                "input": 0.27269000000000004,
+                "output": 0.04515,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.31784
+              }
+            }
+          },
+          "evidenceFiles": {
+            "run-started.json": {
+              "sha256": "25de3664f71b2d7cb2f036090f4c29bb38e04534c00bfa9335400af27b380751",
+              "bytes": 2006
+            },
+            "summary.json": {
+              "sha256": "73def0384792a78d1b535d540ce5bb64d1274bdb336d03b5dbc5c4fd01a096a1",
+              "bytes": 17381
+            },
+            "cost-summary.json": {
+              "sha256": "6a6a2354fbcfe3a5fbcd8332e237ccdce55fcd41a2d0e70ee8884da12da76742",
+              "bytes": 6346
+            },
+            "image-resolution.json": {
+              "sha256": "0191174d11c16716eb1c41ddfe0a200c68fd4214598336a98a8b73944857512a",
+              "bytes": 357
+            },
+            "verifier/result.json": {
+              "sha256": "1f19c0fd23e1d391127419b48db6fb917ba2bb0ea41c86bcfeb5a773f58fed70",
+              "bytes": 2952
+            },
+            "verifier/reward.json": {
+              "sha256": "542f29526230ba6d4198284ffb37e57506a4d703f2d5d15a8480338c3528b9fc",
+              "bytes": 199
+            }
+          }
+        },
+        {
+          "runId": "session-compaction-continuation-felan-no-session-compaction-2026-09-11T15-43-51-907Z-2",
+          "caseId": "session-compaction-continuation",
+          "arm": "baseline",
+          "sourceAgent": "felan-no-session-compaction",
+          "attemptNumber": 3,
+          "status": "passed",
+          "pass": true,
+          "provider": "openai-codex",
+          "model": "gpt-5.6-sol",
+          "thinking": "low",
+          "metrics": {
+            "duration.ms": 76736,
+            "duration.stepsMs": 75710,
+            "quality.passRate": 1,
+            "cost.total": 0.502,
+            "usage.promptTokens": 83354,
+            "usage.uncachedInputTokens": 81434,
+            "usage.cacheReadInputTokens": 1920,
+            "usage.cacheWriteInputTokens": 0,
+            "usage.outputTokens": 3129,
+            "usage.requests": 2,
+            "usage.totalTokens": 86483
+          },
+          "verifier": {
+            "reason": "1 (summary=8/9 continuation=9/10)",
+            "reward": {
+              "path": ".harness-evals-reward.json",
+              "format": "json",
+              "values": {
+                "summaryFidelity": 0.888889,
+                "continuationFidelity": 0.9
+              },
+              "primary": 0.8944445000000001,
+              "binary": false
+            }
+          },
+          "compaction": {
+            "expectedOwner": "native",
+            "fromHook": false,
+            "tokensBefore": 217549,
+            "firstKeptEntryId": "8fa87dbb",
+            "usage": {
+              "input": 54538,
+              "output": 1555,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 34,
+              "totalTokens": 56093,
+              "cost": {
+                "input": 0.27269000000000004,
+                "output": 0.046650000000000004,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.31934
+              }
+            }
+          },
+          "evidenceFiles": {
+            "run-started.json": {
+              "sha256": "59fd9de6651930b8a5aca103d490f88ded88670f015e67d9dac1262b8da9bb42",
+              "bytes": 2006
+            },
+            "summary.json": {
+              "sha256": "7859f1d6b389ff6d394e9ee9e0f9ffc5c9079f6496c9ea90d5a65b1d7cb63dfb",
+              "bytes": 17429
+            },
+            "cost-summary.json": {
+              "sha256": "e972054bbe7dd8b58bfb1ac494ebdfa77e63caaa43b7aad1ef8880b8cfc1dc3c",
+              "bytes": 6392
+            },
+            "image-resolution.json": {
+              "sha256": "557292327528b71c4ed7e70a826516b2460f0cdd75213ce57a0e7a37fba6de45",
+              "bytes": 357
+            },
+            "verifier/result.json": {
+              "sha256": "21490900dbfa5c853ddc70a5e8f43a094cddc565b8dfb14ab257dd2c6d108183",
+              "bytes": 2952
+            },
+            "verifier/reward.json": {
+              "sha256": "542f29526230ba6d4198284ffb37e57506a4d703f2d5d15a8480338c3528b9fc",
+              "bytes": 199
+            }
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "agent": "felan-inherit-compaction",
+      "attemptCount": 3,
+      "passed": 3,
+      "failed": 0,
+      "passRate": 1.0,
+      "reducedByMedian": {
+        "cost.total": 0.27131000000000005,
+        "duration.ms": 59720,
+        "duration.stepsMs": 58731,
+        "usage.promptTokens": 39891,
+        "usage.uncachedInputTokens": 39856,
+        "usage.cacheReadInputTokens": 0,
+        "usage.cacheWriteInputTokens": 0,
+        "usage.outputTokens": 2401,
+        "usage.totalTokens": 42268,
+        "usage.requests": 2
+      },
+      "attempts": [
+        {
+          "runId": "session-compaction-continuation-felan-inherit-compaction-2026-09-11T15-45-08-651Z-3",
+          "caseId": "session-compaction-continuation",
+          "arm": "candidate",
+          "sourceAgent": "felan-inherit-compaction",
+          "attemptNumber": 1,
+          "status": "passed",
+          "pass": true,
+          "provider": "openai-codex",
+          "model": "gpt-5.6-sol",
+          "thinking": "low",
+          "metrics": {
+            "duration.ms": 59720,
+            "duration.stepsMs": 58731,
+            "quality.passRate": 1,
+            "cost.total": 0.27076500000000003,
+            "usage.promptTokens": 39891,
+            "usage.uncachedInputTokens": 39891,
+            "usage.cacheReadInputTokens": 0,
+            "usage.cacheWriteInputTokens": 0,
+            "usage.outputTokens": 2377,
+            "usage.requests": 2,
+            "usage.totalTokens": 42268
+          },
+          "verifier": {
+            "reason": "1 (summary=7/9 continuation=9/10)",
+            "reward": {
+              "path": ".harness-evals-reward.json",
+              "format": "json",
+              "values": {
+                "summaryFidelity": 0.777778,
+                "continuationFidelity": 0.9
+              },
+              "primary": 0.838889,
+              "binary": false
+            }
+          },
+          "compaction": {
+            "expectedOwner": "extension",
+            "fromHook": true,
+            "tokensBefore": 217549,
+            "firstKeptEntryId": "8fa87dbb",
+            "usage": {
+              "input": 10826,
+              "output": 1241,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 80,
+              "totalTokens": 12067,
+              "cost": {
+                "input": 0.054130000000000005,
+                "output": 0.03723,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.09136
+              }
+            },
+            "namespace": "felan.session-compaction",
+            "schemaVersion": 1,
+            "requestedModel": "inherit",
+            "selectedModel": "openai-codex/gpt-5.6-sol",
+            "continuityFactCount": 16
+          },
+          "evidenceFiles": {
+            "run-started.json": {
+              "sha256": "7aa3bfc0e7084b454ff1ba3a7ecb3f26d2c04b79318adfb736ea74b5a5570915",
+              "bytes": 2008
+            },
+            "summary.json": {
+              "sha256": "636ffe12eb0a9f7791578aadfbeb306e665e99317a6e1437367bf15cf25d47ed",
+              "bytes": 17548
+            },
+            "cost-summary.json": {
+              "sha256": "1933a6a80c51152b50c7e7da6844ec860e49832e89b71bdf2962a71cab0d3b14",
+              "bytes": 6472
+            },
+            "image-resolution.json": {
+              "sha256": "21c151dfc4e2115d66314da7d01d8212f65fd4b472e3e62b52506948354b3470",
+              "bytes": 357
+            },
+            "verifier/result.json": {
+              "sha256": "a872e515be6b02729f962db73c797ed4f094ff10aeb4d9d1955ce1bf1ca45770",
+              "bytes": 2920
+            },
+            "verifier/reward.json": {
+              "sha256": "693e9d506d899831b79233daa2e1fd134ee3b036b3bcfff5112101ed2620566f",
+              "bytes": 189
+            }
+          }
+        },
+        {
+          "runId": "session-compaction-continuation-felan-inherit-compaction-2026-09-11T15-46-08-378Z-4",
+          "caseId": "session-compaction-continuation",
+          "arm": "candidate",
+          "sourceAgent": "felan-inherit-compaction",
+          "attemptNumber": 2,
+          "status": "passed",
+          "pass": true,
+          "provider": "openai-codex",
+          "model": "gpt-5.6-sol",
+          "thinking": "low",
+          "metrics": {
+            "duration.ms": 53347,
+            "duration.stepsMs": 52326,
+            "quality.passRate": 1,
+            "cost.total": 0.27131000000000005,
+            "usage.promptTokens": 39856,
+            "usage.uncachedInputTokens": 39856,
+            "usage.cacheReadInputTokens": 0,
+            "usage.cacheWriteInputTokens": 0,
+            "usage.outputTokens": 2401,
+            "usage.requests": 2,
+            "usage.totalTokens": 42257
+          },
+          "verifier": {
+            "reason": "1 (summary=7/9 continuation=9/10)",
+            "reward": {
+              "path": ".harness-evals-reward.json",
+              "format": "json",
+              "values": {
+                "summaryFidelity": 0.777778,
+                "continuationFidelity": 0.9
+              },
+              "primary": 0.838889,
+              "binary": false
+            }
+          },
+          "compaction": {
+            "expectedOwner": "extension",
+            "fromHook": true,
+            "tokensBefore": 217549,
+            "firstKeptEntryId": "8fa87dbb",
+            "usage": {
+              "input": 10826,
+              "output": 1209,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 83,
+              "totalTokens": 12035,
+              "cost": {
+                "input": 0.054130000000000005,
+                "output": 0.036270000000000004,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.09040000000000001
+              }
+            },
+            "namespace": "felan.session-compaction",
+            "schemaVersion": 1,
+            "requestedModel": "inherit",
+            "selectedModel": "openai-codex/gpt-5.6-sol",
+            "continuityFactCount": 16
+          },
+          "evidenceFiles": {
+            "run-started.json": {
+              "sha256": "af00aa86fcb0a31f425c201527dad378b92322a966a4d66b95ffb19db70ac3c8",
+              "bytes": 2008
+            },
+            "summary.json": {
+              "sha256": "57d876679f3f73a6ad89fec444fcae2ad1d47268594605c8ded2514dcb617a4d",
+              "bytes": 17544
+            },
+            "cost-summary.json": {
+              "sha256": "646d0f39ce9ae5cb0e118f9268a78f1a2dc3ef7c64139792f4f5bf99ecef00cf",
+              "bytes": 6472
+            },
+            "image-resolution.json": {
+              "sha256": "5069345de3a3e664eda8a13b19483971e263ad703d325210e964fd13766db8e7",
+              "bytes": 357
+            },
+            "verifier/result.json": {
+              "sha256": "897bc2c591a007280ab51abf1c8078663cd95b62a84e034a1d075cf6c867ad4c",
+              "bytes": 2920
+            },
+            "verifier/reward.json": {
+              "sha256": "693e9d506d899831b79233daa2e1fd134ee3b036b3bcfff5112101ed2620566f",
+              "bytes": 189
+            }
+          }
+        },
+        {
+          "runId": "session-compaction-continuation-felan-inherit-compaction-2026-09-11T15-47-01-735Z-5",
+          "caseId": "session-compaction-continuation",
+          "arm": "candidate",
+          "sourceAgent": "felan-inherit-compaction",
+          "attemptNumber": 3,
+          "status": "passed",
+          "pass": true,
+          "provider": "openai-codex",
+          "model": "gpt-5.6-sol",
+          "thinking": "low",
+          "metrics": {
+            "duration.ms": 74428,
+            "duration.stepsMs": 73426,
+            "quality.passRate": 1,
+            "cost.total": 0.28073400000000004,
+            "usage.promptTokens": 40026,
+            "usage.uncachedInputTokens": 37978,
+            "usage.cacheReadInputTokens": 2048,
+            "usage.cacheWriteInputTokens": 0,
+            "usage.outputTokens": 2994,
+            "usage.requests": 2,
+            "usage.totalTokens": 43020
+          },
+          "verifier": {
+            "reason": "1 (summary=7/9 continuation=9/10)",
+            "reward": {
+              "path": ".harness-evals-reward.json",
+              "format": "json",
+              "values": {
+                "summaryFidelity": 0.777778,
+                "continuationFidelity": 0.9
+              },
+              "primary": 0.838889,
+              "binary": false
+            }
+          },
+          "compaction": {
+            "expectedOwner": "extension",
+            "fromHook": true,
+            "tokensBefore": 217549,
+            "firstKeptEntryId": "8fa87dbb",
+            "usage": {
+              "input": 10826,
+              "output": 1423,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 127,
+              "totalTokens": 12249,
+              "cost": {
+                "input": 0.054130000000000005,
+                "output": 0.04269,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.09682
+              }
+            },
+            "namespace": "felan.session-compaction",
+            "schemaVersion": 1,
+            "requestedModel": "inherit",
+            "selectedModel": "openai-codex/gpt-5.6-sol",
+            "continuityFactCount": 16
+          },
+          "evidenceFiles": {
+            "run-started.json": {
+              "sha256": "ee151f3c151d1af17b1036df2458cdc37204acdec13c050ce170dca860d5ce75",
+              "bytes": 2008
+            },
+            "summary.json": {
+              "sha256": "f36e76493219ef6bd970af5ae5d5b7856fda7ce10c4a61cfd6d995fe8d362567",
+              "bytes": 17638
+            },
+            "cost-summary.json": {
+              "sha256": "1e75f66fa7e1c63799398b0ce62012ad9bc2ea6277d45395818249a326300bf5",
+              "bytes": 6542
+            },
+            "image-resolution.json": {
+              "sha256": "6f49f475619652b6ad0073b14c6fb9b17e3bbc0af4124fd1ceb3d12b5b216ed4",
+              "bytes": 357
+            },
+            "verifier/result.json": {
+              "sha256": "f74b8c4cfa4d65df6e441a8c7ab9e62159d8dc0b747757f92a4d59ef59084826",
+              "bytes": 2920
+            },
+            "verifier/reward.json": {
+              "sha256": "693e9d506d899831b79233daa2e1fd134ee3b036b3bcfff5112101ed2620566f",
+              "bytes": 189
+            }
+          }
+        }
+      ]
+    }
+  },
+  "comparisons": {
+    "cost.total": {
+      "baselineReducedCaseSum": 0.49551,
+      "candidateReducedCaseSum": 0.27131000000000005,
+      "changePercent": -45.24631188068857,
+      "gainPercent": 45.24631188068857,
+      "rawAttemptTotalGainPercent": 44.87281960919625
+    },
+    "usage.promptTokens": {
+      "baselineReducedCaseSum": 83304,
+      "candidateReducedCaseSum": 39891,
+      "changePercent": -52.11394410832612,
+      "gainPercent": 52.11394410832612,
+      "rawAttemptTotalGainPercent": 52.075272388253794
+    }
+  },
+  "report": {
+    "sourceRelativePath": ".harness-evals/output/benchmarks/session-compaction-local-0.1.2/results.json",
+    "publishedRelativePath": "benchmarks/session-compaction/results.html",
+    "source": {
+      "sha256": "ea99f9458eb368e9e8731506c43fda2925236527c5ff4eef0e8afbefeca292e9",
+      "bytes": 49200
+    },
+    "publishedJson": {
+      "sha256": "34ad693f952d23c74d5bb953aad06ece74a6e0b77dad45eb5176966ac3b4441d",
+      "bytes": 48995
+    },
+    "runCount": 6,
+    "derivedRunCount": 0
+  },
+  "excludedEvidence": [
+    "Low-tier batch 20260911-160043-bd79: candidate fell back natively in all three attempts and rejected-request cost is incomplete.",
+    "Low-tier diagnostic attempt 20260911-163746-c737: one native fallback, not an aggregate.",
+    "Medium-tier diagnostic batch 20260911-164401-3c7f: candidate quality 2/3 is below the 0.8 gate and cache use is asymmetric."
+  ]
+}

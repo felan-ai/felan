@@ -1,0 +1,66 @@
+id: rtk-felan-project-instructions
+suite: rtk
+description: Compare RTK disabled versus enabled while fixing a real historical Felan project-instructions regression.
+timeoutMs: 1800000
+workspace:
+  git:
+    repository: https://github.com/felan-ai/felan.git
+    commit: 104faa5559029c8be9e8a1eb504d87974a5864e9
+  setup:
+    - command: pnpm
+      args: [install, --frozen-lockfile, --store-dir, /tmp/pnpm-store]
+      timeoutMs: 300000
+      network:
+        mode: default
+agents:
+  include:
+    - felan-no-rtk-optimizer
+    - felan-rtk-optimizer
+prompt: |
+  Restore Felan's root project instructions for newly created project sessions.
+
+  Required outcomes:
+
+  - A new session includes at most one root instruction file from its working
+    directory. Prefer a readable, non-empty `AGENTS.md`; fall back to `CLAUDE.md`
+    only when `AGENTS.md` is absent or unreadable. An empty selected file adds no
+    project instructions, and missing, unreadable, or empty files remain nonfatal.
+  - Root project instructions appear in the composed system prompt before the
+    current-working-directory section.
+  - Ambient and nested context-file discovery stays disabled, and existing
+    extension, capability, skill, and runtime-tool composition keeps working.
+
+  Keep production changes inside `packages/agent-core/src`. Do not change tests,
+  package versions, dependencies, lockfiles, or repository history, and do not
+  create a Git commit. These are acceptance criteria and scope boundaries, not a
+  prescribed implementation plan. Determine the approach from the repository,
+  verify the relevant behavior, and summarize the result.
+assert:
+  - id: prewalk-entered
+    type: toolCalled
+    name: enter_prewalk
+    min: 1
+    isError: false
+    when:
+      agent: felan-prewalk
+  - id: prewalk-disabled
+    type: toolCalled
+    name: enter_prewalk
+    min: 0
+    max: 0
+    when:
+      agent: felan-no-prewalk
+  - id: source-changed
+    type: workspaceDiff
+    minChanged: 1
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /workspace
+  assetsDir: cases/rtk/project-instructions/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.txt
+  rewardFormat: text
+  timeoutMs: 300000
+  network:
+    mode: none

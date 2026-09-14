@@ -1,0 +1,3474 @@
+{
+  "id": "output-style-concise",
+  "definition": {
+    "revision": 7,
+    "label": "Concise output style",
+    "description": "Compare concise output with output style disabled while preserving required information.",
+    "select": {
+      "cases": [
+        "output-style-planning",
+        "output-style-review",
+        "output-style-support"
+      ]
+    },
+    "arms": {
+      "baseline": "felan-no-output-style",
+      "candidate": "felan-concise"
+    },
+    "trials": 3,
+    "qualityGates": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8
+      }
+    ],
+    "objective": [
+      {
+        "metric": "cost.total",
+        "goal": "minimize"
+      },
+      {
+        "metric": "usage.outputTokens",
+        "goal": "minimize"
+      }
+    ],
+    "aggregation": {
+      "trials": "median",
+      "cases": "ratioOfReducedSums"
+    }
+  },
+  "cases": [
+    "output-style-planning",
+    "output-style-review",
+    "output-style-support"
+  ],
+  "expectedTrials": 3,
+  "baseline": {
+    "agentName": "felan-no-output-style",
+    "comparisonId": "felan-no-output-style",
+    "state": "eligible",
+    "expectedRuns": 9,
+    "actualRuns": 9,
+    "missingRuns": 0,
+    "cases": [
+      {
+        "caseId": "output-style-planning",
+        "observations": {
+          "cost.total": [
+            0.080427,
+            0.069869,
+            0.11477599999999999
+          ],
+          "usage.outputTokens": [
+            1626,
+            1314,
+            1976
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            88137,
+            80741,
+            105372
+          ],
+          "usage.promptTokens": [
+            10131,
+            10237,
+            20776
+          ],
+          "usage.uncachedInputTokens": [
+            5907,
+            5629,
+            10024
+          ],
+          "usage.cacheReadInputTokens": [
+            4224,
+            4608,
+            10752
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.requests": [
+            4,
+            4,
+            7
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.080427,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.069869,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.11477599999999999,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1626,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1314,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1976,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 88137,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 80741,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 105372,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 10131,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 10237,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 20776,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 5907,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 5629,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 10024,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 4224,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4608,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 10752,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 7,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 88137,
+            "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 80741,
+            "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 105372,
+            "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+          }
+        ],
+        "values": {
+          "cost.total": 0.080427,
+          "usage.outputTokens": 1626,
+          "quality.passRate": 1,
+          "duration.ms": 88137,
+          "usage.promptTokens": 10237,
+          "usage.uncachedInputTokens": 5907,
+          "usage.cacheReadInputTokens": 4608,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.requests": 4
+        }
+      },
+      {
+        "caseId": "output-style-review",
+        "observations": {
+          "cost.total": [
+            0.048179,
+            0.06596400000000001,
+            0.07808100000000001
+          ],
+          "usage.outputTokens": [
+            1017,
+            1034,
+            1412
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            41430,
+            51772,
+            56042
+          ],
+          "usage.promptTokens": [
+            7681,
+            14016,
+            11061
+          ],
+          "usage.uncachedInputTokens": [
+            3073,
+            6208,
+            6709
+          ],
+          "usage.cacheReadInputTokens": [
+            4608,
+            7808,
+            4352
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.requests": [
+            3,
+            5,
+            4
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.048179,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.06596400000000001,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.07808100000000001,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1017,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1034,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1412,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 41430,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 51772,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 56042,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 7681,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 14016,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 11061,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 3073,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 6208,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 6709,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 4608,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 7808,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4352,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 3,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 5,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 41430,
+            "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 51772,
+            "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 56042,
+            "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+          }
+        ],
+        "values": {
+          "cost.total": 0.06596400000000001,
+          "usage.outputTokens": 1034,
+          "quality.passRate": 1,
+          "duration.ms": 51772,
+          "usage.promptTokens": 11061,
+          "usage.uncachedInputTokens": 6208,
+          "usage.cacheReadInputTokens": 4608,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.requests": 4
+        }
+      },
+      {
+        "caseId": "output-style-support",
+        "observations": {
+          "cost.total": [
+            0.08315700000000001,
+            0.091277,
+            0.067857
+          ],
+          "usage.outputTokens": [
+            1725,
+            1527,
+            1252
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            75101,
+            60686,
+            53477
+          ],
+          "usage.promptTokens": [
+            10083,
+            13471,
+            9861
+          ],
+          "usage.uncachedInputTokens": [
+            5859,
+            8607,
+            5637
+          ],
+          "usage.cacheReadInputTokens": [
+            4224,
+            4864,
+            4224
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.requests": [
+            4,
+            5,
+            4
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.08315700000000001,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.091277,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.067857,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1725,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1527,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1252,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 75101,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 60686,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 53477,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 10083,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 13471,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 9861,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 5859,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 8607,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 5637,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 4224,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4864,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4224,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 5,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 75101,
+            "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 60686,
+            "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 53477,
+            "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+          }
+        ],
+        "values": {
+          "cost.total": 0.08315700000000001,
+          "usage.outputTokens": 1527,
+          "quality.passRate": 1,
+          "duration.ms": 60686,
+          "usage.promptTokens": 10083,
+          "usage.uncachedInputTokens": 5859,
+          "usage.cacheReadInputTokens": 4224,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.requests": 4
+        }
+      }
+    ],
+    "values": {
+      "cost.total": 0.076516,
+      "usage.outputTokens": 1395.6666666666667,
+      "quality.passRate": 1,
+      "duration.ms": 66865,
+      "usage.promptTokens": 10460.333333333334,
+      "usage.uncachedInputTokens": 5991.333333333333,
+      "usage.cacheReadInputTokens": 4480,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.requests": 4
+    },
+    "deltas": {},
+    "gateResults": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8,
+        "value": 1,
+        "pass": true
+      }
+    ]
+  },
+  "candidate": {
+    "agentName": "felan-concise",
+    "comparisonId": "felan-concise",
+    "state": "eligible",
+    "expectedRuns": 9,
+    "actualRuns": 9,
+    "missingRuns": 0,
+    "cases": [
+      {
+        "caseId": "output-style-planning",
+        "observations": {
+          "cost.total": [
+            0.09546,
+            0.065847,
+            0.06176700000000001
+          ],
+          "usage.outputTokens": [
+            1948,
+            1388,
+            1281
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            72057,
+            53970,
+            52572
+          ],
+          "usage.promptTokens": [
+            12012,
+            12099,
+            11925
+          ],
+          "usage.uncachedInputTokens": [
+            6892,
+            4035,
+            3861
+          ],
+          "usage.cacheReadInputTokens": [
+            5120,
+            8064,
+            8064
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.requests": [
+            4,
+            4,
+            4
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.09546,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.065847,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.06176700000000001,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1948,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1388,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1281,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 72057,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 53970,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 52572,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 12012,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 12099,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 11925,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 6892,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4035,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3861,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 5120,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 8064,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 8064,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 72057,
+            "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 53970,
+            "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 52572,
+            "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+          }
+        ],
+        "values": {
+          "cost.total": 0.065847,
+          "usage.outputTokens": 1388,
+          "quality.passRate": 1,
+          "duration.ms": 53970,
+          "usage.promptTokens": 12012,
+          "usage.uncachedInputTokens": 4035,
+          "usage.cacheReadInputTokens": 8064,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.requests": 4
+        }
+      },
+      {
+        "caseId": "output-style-review",
+        "observations": {
+          "cost.total": [
+            0.053063,
+            0.09976300000000002,
+            0.04283000000000001
+          ],
+          "usage.outputTokens": [
+            909,
+            1555,
+            765
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            36922,
+            62126,
+            33830
+          ],
+          "usage.promptTokens": [
+            8845,
+            16613,
+            8584
+          ],
+          "usage.uncachedInputTokens": [
+            4749,
+            9957,
+            3464
+          ],
+          "usage.cacheReadInputTokens": [
+            4096,
+            6656,
+            5120
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.requests": [
+            3,
+            5,
+            3
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.053063,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.09976300000000002,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.04283000000000001,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 909,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1555,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 765,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 36922,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 62126,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 33830,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 8845,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 16613,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 8584,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 4749,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 9957,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3464,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 4096,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 6656,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 5120,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 3,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 5,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 36922,
+            "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 62126,
+            "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 33830,
+            "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+          }
+        ],
+        "values": {
+          "cost.total": 0.053063,
+          "usage.outputTokens": 909,
+          "quality.passRate": 1,
+          "duration.ms": 36922,
+          "usage.promptTokens": 8845,
+          "usage.uncachedInputTokens": 4749,
+          "usage.cacheReadInputTokens": 5120,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.requests": 3
+        }
+      },
+      {
+        "caseId": "output-style-support",
+        "observations": {
+          "cost.total": [
+            0.077545,
+            0.077348,
+            0.057412000000000005
+          ],
+          "usage.outputTokens": [
+            1203,
+            1495,
+            1160
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            54055,
+            67273,
+            49638
+          ],
+          "usage.promptTokens": [
+            15203,
+            14794,
+            11780
+          ],
+          "usage.uncachedInputTokens": [
+            7523,
+            5578,
+            3716
+          ],
+          "usage.cacheReadInputTokens": [
+            7680,
+            9216,
+            8064
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.requests": [
+            5,
+            5,
+            4
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 0.077545,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0.077348,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0.057412000000000005,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1203,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1495,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1160,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 54055,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 67273,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 49638,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 15203,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 14794,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 11780,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 7523,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 5578,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3716,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 7680,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 9216,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 8064,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 5,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 5,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 4,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 54055,
+            "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 67273,
+            "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "durationMs": 49638,
+            "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+          }
+        ],
+        "values": {
+          "cost.total": 0.077348,
+          "usage.outputTokens": 1203,
+          "quality.passRate": 1,
+          "duration.ms": 54055,
+          "usage.promptTokens": 14794,
+          "usage.uncachedInputTokens": 5578,
+          "usage.cacheReadInputTokens": 8064,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.requests": 5
+        }
+      }
+    ],
+    "values": {
+      "cost.total": 0.06541933333333333,
+      "usage.outputTokens": 1166.6666666666667,
+      "quality.passRate": 1,
+      "duration.ms": 48315.666666666664,
+      "usage.promptTokens": 11883.666666666666,
+      "usage.uncachedInputTokens": 4787.333333333333,
+      "usage.cacheReadInputTokens": 7082.666666666667,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.requests": 4
+    },
+    "deltas": {
+      "cost.total": -0.011096666666666671,
+      "usage.outputTokens": -229,
+      "quality.passRate": 0,
+      "duration.ms": -18549.333333333336,
+      "usage.promptTokens": 1423.3333333333321,
+      "usage.uncachedInputTokens": -1204,
+      "usage.cacheReadInputTokens": 2602.666666666667,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.requests": 0
+    },
+    "gateResults": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8,
+        "value": 1,
+        "pass": true
+      }
+    ]
+  },
+  "comparison": {
+    "averageChangePercent": -14.890486501973443,
+    "minChangePercent": -19.557637499242023,
+    "maxChangePercent": -6.985581490433768,
+    "averageGainPercent": 14.890486501973443,
+    "minGainPercent": 6.985581490433768,
+    "maxGainPercent": 19.557637499242023,
+    "comparedCases": 3,
+    "expectedCases": 3,
+    "cases": [
+      {
+        "caseId": "output-style-planning",
+        "baselineValue": 0.080427,
+        "candidateValue": 0.065847,
+        "changePercent": -18.12824051624454,
+        "gainPercent": 18.12824051624454,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 0.080427,
+            "candidateValue": 0.09546,
+            "changePercent": 18.691484203066143,
+            "gainPercent": -18.691484203066143,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 88137,
+              "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 72057,
+              "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 0.069869,
+            "candidateValue": 0.065847,
+            "changePercent": -5.7564871402195505,
+            "gainPercent": 5.7564871402195505,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 80741,
+              "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 53970,
+              "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 0.11477599999999999,
+            "candidateValue": 0.06176700000000001,
+            "changePercent": -46.1847424548686,
+            "gainPercent": 46.1847424548686,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 105372,
+              "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 52572,
+              "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+            }
+          }
+        ]
+      },
+      {
+        "caseId": "output-style-review",
+        "baselineValue": 0.06596400000000001,
+        "candidateValue": 0.053063,
+        "changePercent": -19.557637499242023,
+        "gainPercent": 19.557637499242023,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 0.048179,
+            "candidateValue": 0.053063,
+            "changePercent": 10.137196703958155,
+            "gainPercent": -10.137196703958155,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 41430,
+              "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 36922,
+              "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 0.06596400000000001,
+            "candidateValue": 0.09976300000000002,
+            "changePercent": 51.23855436298588,
+            "gainPercent": -51.23855436298588,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 51772,
+              "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 62126,
+              "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 0.07808100000000001,
+            "candidateValue": 0.04283000000000001,
+            "changePercent": -45.1467066251713,
+            "gainPercent": 45.1467066251713,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 56042,
+              "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 33830,
+              "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+            }
+          }
+        ]
+      },
+      {
+        "caseId": "output-style-support",
+        "baselineValue": 0.08315700000000001,
+        "candidateValue": 0.077348,
+        "changePercent": -6.985581490433768,
+        "gainPercent": 6.985581490433768,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 0.08315700000000001,
+            "candidateValue": 0.077545,
+            "changePercent": -6.748680207318693,
+            "gainPercent": 6.748680207318693,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 75101,
+              "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 54055,
+              "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 0.091277,
+            "candidateValue": 0.077348,
+            "changePercent": -15.260142204498392,
+            "gainPercent": 15.260142204498392,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 60686,
+              "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 67273,
+              "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 0.067857,
+            "candidateValue": 0.057412000000000005,
+            "changePercent": -15.392663984555751,
+            "gainPercent": 15.392663984555751,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 53477,
+              "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "durationMs": 49638,
+              "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+            }
+          }
+        ]
+      }
+    ],
+    "metric": "cost.total",
+    "goal": "minimize",
+    "role": "primary",
+    "baselineReducedSum": 0.229548,
+    "candidateReducedSum": 0.196258,
+    "aggregateChangePercent": -14.502413438583659,
+    "aggregateGainPercent": 14.502413438583659
+  },
+  "objectiveComparisons": [
+    {
+      "averageChangePercent": -14.890486501973443,
+      "minChangePercent": -19.557637499242023,
+      "maxChangePercent": -6.985581490433768,
+      "averageGainPercent": 14.890486501973443,
+      "minGainPercent": 6.985581490433768,
+      "maxGainPercent": 19.557637499242023,
+      "comparedCases": 3,
+      "expectedCases": 3,
+      "cases": [
+        {
+          "caseId": "output-style-planning",
+          "baselineValue": 0.080427,
+          "candidateValue": 0.065847,
+          "changePercent": -18.12824051624454,
+          "gainPercent": 18.12824051624454,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 0.080427,
+              "candidateValue": 0.09546,
+              "changePercent": 18.691484203066143,
+              "gainPercent": -18.691484203066143,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 0.069869,
+              "candidateValue": 0.065847,
+              "changePercent": -5.7564871402195505,
+              "gainPercent": 5.7564871402195505,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 0.11477599999999999,
+              "candidateValue": 0.06176700000000001,
+              "changePercent": -46.1847424548686,
+              "gainPercent": 46.1847424548686,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "output-style-review",
+          "baselineValue": 0.06596400000000001,
+          "candidateValue": 0.053063,
+          "changePercent": -19.557637499242023,
+          "gainPercent": 19.557637499242023,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 0.048179,
+              "candidateValue": 0.053063,
+              "changePercent": 10.137196703958155,
+              "gainPercent": -10.137196703958155,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 0.06596400000000001,
+              "candidateValue": 0.09976300000000002,
+              "changePercent": 51.23855436298588,
+              "gainPercent": -51.23855436298588,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 0.07808100000000001,
+              "candidateValue": 0.04283000000000001,
+              "changePercent": -45.1467066251713,
+              "gainPercent": 45.1467066251713,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "output-style-support",
+          "baselineValue": 0.08315700000000001,
+          "candidateValue": 0.077348,
+          "changePercent": -6.985581490433768,
+          "gainPercent": 6.985581490433768,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 0.08315700000000001,
+              "candidateValue": 0.077545,
+              "changePercent": -6.748680207318693,
+              "gainPercent": 6.748680207318693,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 0.091277,
+              "candidateValue": 0.077348,
+              "changePercent": -15.260142204498392,
+              "gainPercent": 15.260142204498392,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 0.067857,
+              "candidateValue": 0.057412000000000005,
+              "changePercent": -15.392663984555751,
+              "gainPercent": 15.392663984555751,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ]
+        }
+      ],
+      "metric": "cost.total",
+      "goal": "minimize",
+      "role": "primary",
+      "baselineReducedSum": 0.229548,
+      "candidateReducedSum": 0.196258,
+      "aggregateChangePercent": -14.502413438583659,
+      "aggregateGainPercent": 14.502413438583659
+    },
+    {
+      "averageChangePercent": -15.981398627528208,
+      "minChangePercent": -21.218074656188605,
+      "maxChangePercent": -12.088974854932303,
+      "averageGainPercent": 15.981398627528208,
+      "minGainPercent": 12.088974854932303,
+      "maxGainPercent": 21.218074656188605,
+      "comparedCases": 3,
+      "expectedCases": 3,
+      "cases": [
+        {
+          "caseId": "output-style-planning",
+          "baselineValue": 1626,
+          "candidateValue": 1388,
+          "changePercent": -14.637146371463713,
+          "gainPercent": 14.637146371463713,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 1626,
+              "candidateValue": 1948,
+              "changePercent": 19.803198031980322,
+              "gainPercent": -19.803198031980322,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 88137,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 72057,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 1314,
+              "candidateValue": 1388,
+              "changePercent": 5.6316590563165905,
+              "gainPercent": -5.6316590563165905,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 80741,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53970,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 1976,
+              "candidateValue": 1281,
+              "changePercent": -35.17206477732793,
+              "gainPercent": 35.17206477732793,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 105372,
+                "runId": "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 52572,
+                "runId": "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "output-style-review",
+          "baselineValue": 1034,
+          "candidateValue": 909,
+          "changePercent": -12.088974854932303,
+          "gainPercent": 12.088974854932303,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 1017,
+              "candidateValue": 909,
+              "changePercent": -10.619469026548673,
+              "gainPercent": 10.619469026548673,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 41430,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 36922,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 1034,
+              "candidateValue": 1555,
+              "changePercent": 50.38684719535783,
+              "gainPercent": -50.38684719535783,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 51772,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 62126,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 1412,
+              "candidateValue": 765,
+              "changePercent": -45.8215297450425,
+              "gainPercent": 45.8215297450425,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 56042,
+                "runId": "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 33830,
+                "runId": "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "output-style-support",
+          "baselineValue": 1527,
+          "candidateValue": 1203,
+          "changePercent": -21.218074656188605,
+          "gainPercent": 21.218074656188605,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 1725,
+              "candidateValue": 1203,
+              "changePercent": -30.26086956521739,
+              "gainPercent": 30.26086956521739,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 75101,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 54055,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 1527,
+              "candidateValue": 1495,
+              "changePercent": -2.0956123117223315,
+              "gainPercent": 2.0956123117223315,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 60686,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 67273,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 1252,
+              "candidateValue": 1160,
+              "changePercent": -7.348242811501597,
+              "gainPercent": 7.348242811501597,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 53477,
+                "runId": "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "durationMs": 49638,
+                "runId": "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+              }
+            }
+          ]
+        }
+      ],
+      "metric": "usage.outputTokens",
+      "goal": "minimize",
+      "role": "secondary",
+      "baselineReducedSum": 4187,
+      "candidateReducedSum": 3500,
+      "aggregateChangePercent": -16.40792930499164,
+      "aggregateGainPercent": 16.40792930499164
+    }
+  ],
+  "warnings": [
+    "Primary and secondary resource outcomes were recalculated with ratioOfReducedSums for this publication."
+  ],
+  "runCount": 18,
+  "derivedRunCount": 18,
+  "publicationAggregation": {
+    "mode": "ratioOfReducedSums",
+    "source": "offline recalculation from retained report observations",
+    "sourceSha256Before": "0f44fb5f500ede4a5cc92abd4bfae0a130b123be4e3ba839399ce7ce3a1aaad3",
+    "legacyDiagnostics": "average* and min/max* fields remain macro-mean case diagnostics"
+  }
+}

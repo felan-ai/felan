@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260902-121757-b16d",
+    "startedAt": "2026-09-02T12:17:57.876Z",
+    "label": "felan-no-prewalk,felan-prewalk · 2 cases",
+    "argv": [
+      "run",
+      "--config",
+      "harness-evals.yaml",
+      "--benchmark",
+      "prewalk",
+      "--concurrency",
+      "3",
+      "--refresh-managed-image"
+    ],
+    "agents": [
+      "felan-no-prewalk",
+      "felan-prewalk"
+    ],
+    "caseCount": 2,
+    "runCount": 12
+  },
+  "status": "completed",
+  "expectedRunCount": 12,
+  "runIds": [
+    "prewalk-checkout-felan-no-prewalk-2026-09-02T12-17-57-883Z-0",
+    "prewalk-checkout-felan-no-prewalk-2026-09-02T12-17-57-883Z-1",
+    "prewalk-checkout-felan-no-prewalk-2026-09-02T12-17-57-883Z-2",
+    "prewalk-checkout-felan-prewalk-2026-09-02T12-27-08-484Z-3",
+    "prewalk-checkout-felan-prewalk-2026-09-02T12-27-19-843Z-4",
+    "prewalk-checkout-felan-prewalk-2026-09-02T12-27-31-377Z-5",
+    "memory-summary-links-felan-no-prewalk-2026-09-02T12-34-03-859Z-6",
+    "memory-summary-links-felan-no-prewalk-2026-09-02T12-34-37-108Z-7",
+    "memory-summary-links-felan-no-prewalk-2026-09-02T12-43-13-555Z-8",
+    "memory-summary-links-felan-prewalk-2026-09-02T12-50-35-974Z-9",
+    "memory-summary-links-felan-prewalk-2026-09-02T12-56-11-415Z-10",
+    "memory-summary-links-felan-prewalk-2026-09-02T13-03-52-772Z-11"
+  ],
+  "completedAt": "2026-09-02T13:14:49.136Z"
+}

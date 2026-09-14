@@ -1,0 +1,28 @@
+id: output-style-blocker
+suite: output-style
+description: Compare failure reports that preserve blockers without inventing verification.
+workspace:
+  fixture: fixtures/output-style/v1/source
+agents:
+  include:
+    - felan-no-output-style
+    - felan-concise
+    - felan-explanatory
+    - felan-caveman
+prompt: |
+  We're preparing to deploy this workspace. The deployment expects its settings
+  at `src/config.json`. Review the workspace and tell me whether it is ready.
+  Do not change any files.
+assert:
+  - id: blocker-retained
+    type: contains
+    value: "missing"
+  - id: configuration-retained
+    type: contains
+    value: "src/config.json"
+  - id: unsupported-deployment-claim
+    type: notContains
+    value: "deployment succeeded"
+  - id: no-files-edited
+    type: workspaceDiff
+    changedFiles: []

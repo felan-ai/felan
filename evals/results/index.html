@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Published Felan benchmark results.">
+  <title>Felan Benchmark Results</title>
+  <link rel="icon" href="2026-09-felan-extensions/assets/felan/felan-logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="2026-09-felan-extensions/assets/felan/styles.css">
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      min-width: 320px;
+      margin: 0;
+      background: hsl(var(--surface-1));
+      color: hsl(var(--foreground));
+      font-family: var(--font-sans);
+    }
+
+    main {
+      width: min(760px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 80px 0;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: hsl(var(--foreground));
+      font-weight: var(--weight-bold);
+      text-decoration: none;
+    }
+
+    .brand img {
+      width: 28px;
+      height: 29px;
+    }
+
+    h1 {
+      margin: 48px 0 10px;
+      font-size: clamp(var(--text-3xl), 7vw, var(--text-5xl));
+      letter-spacing: var(--tracking-tight);
+      line-height: var(--leading-tight);
+    }
+
+    .intro {
+      margin: 0;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-lg);
+    }
+
+    .report-link {
+      display: block;
+      margin-top: 40px;
+      padding: 24px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+      color: hsl(var(--foreground));
+      text-decoration: none;
+    }
+
+    .report-link:hover {
+      border-color: hsl(var(--brand) / 0.45);
+      box-shadow: var(--shadow-md);
+    }
+
+    .date {
+      display: block;
+      color: hsl(var(--brand));
+      font-size: var(--text-xs);
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .title {
+      display: block;
+      margin-top: 8px;
+      font-size: var(--text-xl);
+      font-weight: var(--weight-semibold);
+    }
+
+    .description {
+      display: block;
+      margin-top: 6px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-sm);
+    }
+
+    .action {
+      display: block;
+      margin-top: 18px;
+      color: hsl(var(--brand));
+      font-size: var(--text-sm);
+      font-weight: var(--weight-semibold);
+      text-decoration: underline;
+      text-underline-offset: 4px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="brand" href="https://felan.ai" aria-label="Felan AI website">
+      <img src="2026-09-felan-extensions/assets/felan/felan-logo.svg" alt="">
+      <span>Felan AI</span>
+    </a>
+    <h1>Benchmark Results</h1>
+    <p class="intro">Auditable performance studies for Felan.</p>
+
+    <a class="report-link" href="2026-09-felan-extensions/">
+      <span class="date">September 2026</span>
+      <span class="title">Felan Extension Benchmark Results</span>
+      <span class="description">Quality, cost, token, and duration outcomes for seven extensions.</span>
+      <span class="action">View results →</span>
+    </a>
+  </main>
+</body>
+</html>

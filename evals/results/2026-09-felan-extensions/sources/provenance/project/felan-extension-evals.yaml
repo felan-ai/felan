@@ -1,0 +1,874 @@
+version: 1
+
+tests:
+  - evals/cases/codebase-memory/**/*.eval.yaml
+  - evals/cases/output-style/**/*.eval.yaml
+  - evals/cases/prewalk/**/*.eval.yaml
+  - evals/cases/rtk/**/*.eval.yaml
+  - evals/cases/markitdown/**/*.eval.yaml
+  - evals/cases/web-access/**/*.eval.yaml
+  - evals/cases/repository-fetch/**/*.eval.yaml
+  - evals/cases/memory/**/*.eval.yaml
+  - evals/cases/subagents/**/*.eval.yaml
+
+# The smoke config uses these same roots so local history and reports stay unified.
+artifactRoot: .harness-evals/runs
+outputRoot: .harness-evals/output
+
+workspace:
+  mode: copy
+  containerPath: /workspace
+
+docker:
+  repoPath: /workspace
+  home: /tmp/felan-home
+  envAllowlist: []
+  # Dependency cases layer Felan over a local runtime tag that cannot be pulled.
+  pullOnRefresh: false
+
+agents:
+  # Public reports group results by comparisonId. Keep an ID stable for the same
+  # logical arm and use a distinct ID for each behaviorally different variant.
+  # Except for the ordinary-read MarkItDown profiles, every arm keeps Codex,
+  # Tasks, and progressive Context on and varies only its named extension.
+  felan-no-prewalk:
+    adapter: felan
+    label: Felan · Prewalk off
+    comparisonId: felan-no-prewalk
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+        felanTui:
+          memoryProcessing: false
+
+  felan-prewalk:
+    adapter: felan
+    label: Felan · Prewalk on
+    comparisonId: felan-prewalk
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: true
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+          prewalk:
+            targetModel: openai-codex/gpt-5.6-luna
+            targetThinking: medium
+            restorePlanner: true
+            entryApproval: allow
+        felanTui:
+          memoryProcessing: false
+
+  felan-no-output-style:
+    adapter: felan
+    label: Felan · output style off
+    comparisonId: felan-no-output-style
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: false
+        felanTui:
+          memoryProcessing: false
+
+  felan-concise:
+    adapter: felan
+    label: Felan · concise
+    comparisonId: felan-concise
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: true
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: false
+          outputStyle:
+            style: concise
+        felanTui:
+          memoryProcessing: false
+
+  felan-explanatory:
+    adapter: felan
+    label: Felan · explanatory
+    comparisonId: felan-explanatory
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: true
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: false
+          outputStyle:
+            style: explanatory
+        felanTui:
+          memoryProcessing: false
+
+  # Adapted from Julius Brussee's Caveman skill:
+  # https://github.com/JuliusBrussee/caveman/blob/main/skills/caveman/SKILL.md
+  # Copyright (c) 2026 Julius Brussee. Used under the MIT License.
+  felan-caveman:
+    adapter: felan
+    label: Felan · Caveman
+    comparisonId: felan-caveman
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: true
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: false
+          outputStyle:
+            style: custom
+            instructions: |
+              Respond tersely like a careful technical expert. Use the fewest words that preserve correctness, clarity, and all required technical substance.
+
+              ## Rules
+
+              - Omit greetings, restatements, filler, decorative prose, emoji, and redundant transitions.
+              - Prefer short sentences, compact bullets, and concise paragraphs. Fragments are acceptable when they remain clear and professional.
+              - Drop unnecessary articles only when meaning and grammar remain clear. Never add words or mangle grammar merely to sound like a caveman.
+              - Use standard, widely understood technical acronyms when helpful. Do not invent abbreviations or use symbols that save no tokens and make the response harder to decode.
+              - Keep technical terms, code blocks, code symbols, commands, paths, identifiers, API names, numbers, units, and exact error messages unchanged.
+              - Never omit or alter negation, conditions, scope, exceptions, caveats, verification results, or blockers merely to shorten the response.
+              - State each fact once. Do not provide both a normal answer and a terse duplicate.
+              - Do not dump long raw error logs unless requested. Quote the shortest decisive exact lines and summarize the rest accurately.
+              - Do not narrate ordinary tool calls or announce the next tool call. Before a tool call, write only what is needed to resolve ambiguity, explain a safety concern, or confirm an irreversible action.
+              - Felan child agents run asynchronously. Continue useful independent work while they run, then integrate and verify their results before reporting completion.
+              - Do not claim a task, change, test, or investigation is complete until available evidence supports that claim.
+
+              ## Clarity and safety
+
+              Use clear, complete prose instead of compressed fragments when compression could cause ambiguity, especially for security warnings, destructive or irreversible actions, ordered multi-step procedures, errors, blockers, limitations, recovery instructions, complex plans, tradeoffs, or requests for clarification.
+
+              For destructive or irreversible work, state what will happen, what cannot be undone, and what must be verified first.
+
+              Reply in the user's language. Do not translate code, commands, identifiers, API names, or exact error strings unless explicitly requested.
+
+              When producing durable artifacts or text intended for other people, including source comments, documentation, commits, issues, pull requests, tickets, or memory entries, use clear conventional prose rather than deliberately broken grammar. Preserve exact technical content and requested formats.
+
+              Do not add a style label, mode announcement, redundant recap, or filler closing.
+        felanTui:
+          memoryProcessing: false
+
+  felan-no-subagents:
+    adapter: felan
+    label: Felan · subagents off
+    comparisonId: felan-no-subagents
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+        felanTui:
+          memoryProcessing: false
+
+  felan-delegated-exploration:
+    adapter: felan
+    label: Felan · delegated exploration
+    comparisonId: felan-delegated-exploration
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: true
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+        felanTui:
+          memoryProcessing: false
+
+  felan-no-rtk-optimizer:
+    adapter: felan
+    label: Felan · RTK optimizer off
+    comparisonId: felan-no-rtk-optimizer
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+        felanTui:
+          memoryProcessing: false
+
+  felan-rtk-optimizer:
+    adapter: felan
+    label: Felan · RTK optimizer on
+    comparisonId: felan-rtk-optimizer
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: true
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+        felanTui:
+          memoryProcessing: false
+
+  felan-no-web-access:
+    adapter: felan
+    label: Felan · web access off
+    comparisonId: felan-no-web-access
+    provider: openai-codex
+    model: gpt-5.6-terra
+    thinking: low
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: false
+          webAccess:
+            provider: openai
+        felanTui:
+          memoryProcessing: false
+
+  felan-web-access:
+    adapter: felan
+    label: Felan · web access on
+    comparisonId: felan-web-access
+    provider: openai-codex
+    model: gpt-5.6-terra
+    thinking: low
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: true
+        extensionConfig:
+          codex:
+            fast: false
+          webAccess:
+            provider: openai
+        felanTui:
+          memoryProcessing: false
+
+  felan-no-markitdown:
+    adapter: felan
+    label: Felan · MarkItDown off
+    comparisonId: felan-no-markitdown
+    provider: openai-codex
+    model: gpt-5.6-terra
+    thinking: low
+    timeoutMs: 600000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      packageVersion: 0.19.0
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: false
+          context: false
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: false
+          webAccess: false
+        felanTui:
+          memoryProcessing: false
+
+  felan-markitdown:
+    adapter: felan
+    label: Felan · MarkItDown on
+    comparisonId: felan-markitdown
+    provider: openai-codex
+    model: gpt-5.6-terra
+    thinking: low
+    timeoutMs: 600000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      packageVersion: 0.19.0
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: false
+          context: false
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: true
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: false
+          webAccess: false
+        felanTui:
+          memoryProcessing: false
+
+  # Codebase Memory (CBM) A/B pair. Identical except builtinExtensions.codebaseMemory.
+  # felan 0.21.3 bundles @felan-ai/ext-codebase-memory 0.1.5, which hard-pins the
+  # codebase-memory-mcp binary at 0.10.8 (strict equality; a mismatch disables the
+  # extension nonfatally). The binary is baked into evals/runtimes/felan/Dockerfile.
+  felan-cbm-off:
+    adapter: felan
+    label: Felan · Codebase Memory off
+    comparisonId: felan-cbm-off
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: medium
+    timeoutMs: 900000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      packageVersion: 0.21.3
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+        felanTui:
+          memoryProcessing: false
+
+  felan-cbm-on:
+    adapter: felan
+    label: Felan · Codebase Memory on
+    comparisonId: felan-cbm-on
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: medium
+    timeoutMs: 900000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      packageVersion: 0.21.3
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: true
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+        felanTui:
+          memoryProcessing: false
+
+scoring:
+  verifierReward:
+    weight: 1
+  assertionPassRate:
+    weight: 0
+  judgeScore:
+    weight: 0
+
+# Benchmark objectives are independent from the weighted score above. They
+# compare declared arms across all attempts and gate resource metrics on quality.
+benchmarks:
+  codebase-memory:
+    revision: 2
+    label: Codebase Memory retrieval cost
+    description: Compare Codebase Memory enabled against disabled on Felan-repository tasks that must locate and understand code, with or without changing it.
+    select:
+      suites: [codebase-memory]
+    arms:
+      baseline: felan-cbm-off
+      candidate: felan-cbm-on
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: cost.total
+        goal: minimize
+      # duration.stepsMs sums the agent steps only. The whole-run duration.ms
+      # also carries workspace setup (a networked pnpm install of the Felan
+      # tree), image probes and the verifier, whose variance would swamp the
+      # agent-speed signal this objective is after. Requires harness-evals
+      # 0.2.15 or newer.
+      - metric: duration.stepsMs
+        goal: minimize
+    aggregation:
+      trials: median
+      cases: macroMean
+
+  subagents:
+    revision: 3
+    label: Subagents organic exploration
+    description: Compare organic repository exploration with and without read-focused subagents.
+    select:
+      cases: [subagents-codebase-exploration]
+    arms:
+      baseline: felan-no-subagents
+      candidate: felan-delegated-exploration
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: cost.total
+        goal: minimize
+      - metric: usage.promptTokens
+        goal: minimize
+
+  markitdown-cost:
+    revision: 5
+    label: MarkItDown conversion
+    description: Compare automatic ordinary-read conversion with the same converter installed but the extension disabled.
+    select:
+      suites: [markitdown-cost]
+    arms:
+      baseline: felan-no-markitdown
+      candidate: felan-markitdown
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: cost.total
+        goal: minimize
+      - metric: usage.promptTokens
+        goal: minimize
+    aggregation:
+      trials: median
+      cases: macroMean
+
+  output-style-concise:
+    revision: 7
+    label: Concise output style
+    description: Compare concise output with output style disabled while preserving required information.
+    select:
+      cases: [output-style-planning, output-style-review, output-style-support]
+    arms:
+      baseline: felan-no-output-style
+      candidate: felan-concise
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: cost.total
+        goal: minimize
+      - metric: usage.outputTokens
+        goal: minimize
+
+  prewalk:
+    revision: 11
+    label: Prewalk organic routing cost
+    description: Compare organic Prewalk routing with Prewalk disabled; candidate attempts without a successful entry are invalid.
+    select:
+      cases: [prewalk-checkout, memory-summary-links]
+    arms:
+      baseline: felan-no-prewalk
+      candidate: felan-prewalk
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: cost.total
+        goal: minimize
+
+  rtk:
+    revision: 12
+    label: RTK context reduction
+    select:
+      cases: [rtk-felan-project-instructions, prewalk-checkout]
+    arms:
+      baseline: felan-no-rtk-optimizer
+      candidate: felan-rtk-optimizer
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: cost.total
+        goal: minimize
+      - metric: usage.promptTokens
+        goal: minimize
+
+visualization:
+  enabled: true
+  formats: [html, json, csv]
+  latest: true

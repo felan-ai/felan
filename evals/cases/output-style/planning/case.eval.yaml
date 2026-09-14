@@ -1,0 +1,36 @@
+id: output-style-planning
+suite: output-style
+description: Compare planning responses for the same requirements and open design decisions.
+workspace:
+  fixture: fixtures/output-style/v1/source
+agents:
+  include:
+    - felan-no-output-style
+    - felan-concise
+    - felan-explanatory
+    - felan-caveman
+prompt: |
+  We need an unauthenticated `GET /health` endpoint for a small Node service. It
+  should return a 200 JSON response with `{ "status": "ok" }` without exposing
+  internal information. We have not decided whether it should be a simple
+  liveness check or include dependency health, and the deployment platform is
+  still undecided. Propose an implementation plan without changing any files.
+assert:
+  - id: outcome-retained
+    type: contains
+    value: "GET /health"
+  - id: response-retained
+    type: contains
+    value: "200"
+  - id: payload-retained
+    type: contains
+    value: "status"
+  - id: blocker-retained
+    type: contains
+    value: "platform"
+  - id: tradeoff-retained
+    type: contains
+    value: "dependenc"
+  - id: no-files-edited
+    type: workspaceDiff
+    changedFiles: []

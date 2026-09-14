@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "session-compaction-v1",
+  "source": {
+    "kind": "local-felan-session",
+    "sessionId": "01a042ca-0d42-75eb-aeac-0397822915e2",
+    "file": "2026-08-27T10-35-33-058Z_01a042ca-0d42-75eb-aeac-0397822915e2.jsonl",
+    "sha256": "c187226f44134c7ac34eecc2e5e4695ed0dba5083d0d57cb57769a0d68a5fc6e",
+    "prefixSha256": "2147d443cd12927089ca6a808e98b0ef4f9110d1e7d7772e8e98f1269d079776"
+  },
+  "generatedWith": {
+    "method": "first 234 real session entries before the first historical compaction",
+    "piSessionVersion": 3,
+    "sourceCompaction": {
+      "line": 235,
+      "tokensBefore": 217549,
+      "firstKeptEntryId": "8fa87dbb",
+      "fromHook": false
+    },
+    "sanitization": [
+      "removed 82 thinking signatures, 8 text signatures, and 85 provider response IDs while retaining message text and visible reasoning",
+      "mapped the source repository root to /workspace",
+      "redacted remaining absolute home paths, user names, email addresses, and URL query values",
+      "rejected known API key, bearer token, JWT, private key, npm token, GitHub token, Slack token, and AWS key patterns"
+    ]
+  },
+  "files": [
+    {
+      "path": "sessions/2026-08-27T10-35-33-058Z_01a042ca-0d42-75eb-aeac-0397822915e2.jsonl",
+      "sha256": "f9d32534c95549767423fa86893e4c4392449b9b06652a499d5f1d39b4d1a874",
+      "bytes": 2151546,
+      "entries": 234
+    }
+  ],
+  "excluded": [
+    "the historical compaction entry and all later session entries",
+    "provider reasoning/text signatures, response IDs, and encrypted reasoning",
+    "credentials and secret-like values",
+    "absolute host paths and personal identifiers",
+    "sidecar storage, generated run output, dependencies, and caches"
+  ]
+}

@@ -1,0 +1,1543 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description"
+    content="Methodology, controls, aggregation, provenance, and limitations for the September 2026 Felan extension benchmarks.">
+  <title>Methodology — Felan Extension Benchmarks</title>
+  <link rel="icon" href="assets/felan/felan-logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/felan/styles.css">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      color-scheme: light;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      min-width: 320px;
+      margin: 0;
+      background: hsl(var(--surface-1));
+      color: hsl(var(--foreground));
+      font-family: var(--font-sans);
+      font-size: var(--text-sm);
+      line-height: var(--leading-normal);
+    }
+
+    a {
+      color: inherit;
+      text-decoration-color: hsl(var(--border));
+      text-decoration-thickness: 1px;
+      text-underline-offset: 4px;
+    }
+
+    a:hover {
+      color: hsl(var(--brand));
+    }
+
+    a:focus-visible,
+    summary:focus-visible {
+      border-radius: var(--radius-sm);
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 3px;
+    }
+
+    code {
+      padding: 0.12em 0.35em;
+      border-radius: var(--radius-sm);
+      background: hsl(var(--muted));
+      font-family: var(--font-mono);
+      font-size: 0.88em;
+      overflow-wrap: anywhere;
+    }
+
+    .skip-link {
+      position: fixed;
+      z-index: 20;
+      top: 12px;
+      left: 12px;
+      padding: 8px 12px;
+      border-radius: var(--radius-md);
+      background: hsl(var(--primary));
+      color: hsl(var(--primary-foreground));
+      transform: translateY(-160%);
+    }
+
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    .shell {
+      width: min(1120px, calc(100% - 48px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      border-bottom: 1px solid hsl(var(--border));
+      background: hsl(var(--card));
+    }
+
+    .topbar-inner {
+      display: flex;
+      min-height: 68px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand-lockup {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: var(--text-base);
+      font-weight: var(--weight-bold);
+      letter-spacing: var(--tracking-tight);
+      text-decoration: none;
+    }
+
+    .brand-lockup img {
+      width: 28px;
+      height: 29px;
+    }
+
+    .report-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px 18px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+      font-weight: var(--weight-medium);
+    }
+
+    .report-links a {
+      text-decoration: none;
+    }
+
+    .report-links a[aria-current="page"] {
+      color: hsl(var(--foreground));
+      font-weight: var(--weight-semibold);
+      text-decoration: underline;
+      text-decoration-color: hsl(var(--brand));
+    }
+
+    main {
+      padding: 68px 0 76px;
+    }
+
+    .intro {
+      max-width: 820px;
+    }
+
+    .overline {
+      margin: 0 0 14px;
+      color: hsl(var(--brand));
+      font-size: var(--text-xs);
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 760px;
+      margin: 0;
+      font-size: clamp(var(--text-4xl), 5vw, var(--text-5xl));
+      font-weight: var(--weight-bold);
+      letter-spacing: var(--tracking-tight);
+      line-height: var(--leading-tight);
+    }
+
+    .lede {
+      max-width: 740px;
+      margin: 18px 0 0;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-lg);
+      line-height: var(--leading-relaxed);
+    }
+
+    .study-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      margin: 22px 0 0;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+    }
+
+    .study-meta span+span::before {
+      margin-right: 18px;
+      color: hsl(var(--border));
+      content: "/";
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 38px;
+    }
+
+    .summary-card {
+      padding: 20px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+    }
+
+    .summary-value {
+      display: block;
+      font-size: var(--text-2xl);
+      font-weight: var(--weight-bold);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: var(--tracking-tight);
+    }
+
+    .summary-label {
+      display: block;
+      margin-top: 5px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+      line-height: var(--leading-relaxed);
+    }
+
+    .content-layout {
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      gap: 56px;
+      margin-top: 64px;
+    }
+
+    .section-nav {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+    }
+
+    .section-nav p {
+      margin: 0 0 12px;
+      color: hsl(var(--muted-foreground));
+      font-size: 0.6875rem;
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .section-nav ol {
+      display: grid;
+      gap: 9px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .section-nav a {
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+      font-weight: var(--weight-medium);
+      text-decoration: none;
+    }
+
+    .section-nav a:hover {
+      color: hsl(var(--brand));
+    }
+
+    .methodology {
+      min-width: 0;
+    }
+
+    .method-section {
+      scroll-margin-top: 24px;
+    }
+
+    .method-section+.method-section {
+      margin-top: 54px;
+      padding-top: 54px;
+      border-top: 1px solid hsl(var(--border));
+    }
+
+    h2 {
+      margin: 0;
+      font-size: var(--text-2xl);
+      font-weight: var(--weight-semibold);
+      letter-spacing: var(--tracking-tight);
+      line-height: var(--leading-snug);
+    }
+
+    h3 {
+      margin: 30px 0 0;
+      font-size: var(--text-base);
+      font-weight: var(--weight-semibold);
+      letter-spacing: var(--tracking-tight);
+    }
+
+    .section-intro {
+      max-width: 720px;
+      margin: 12px 0 0;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-base);
+      line-height: var(--leading-relaxed);
+    }
+
+    .methodology p,
+    .methodology li,
+    .methodology dd {
+      line-height: var(--leading-relaxed);
+    }
+
+    .methodology p {
+      margin: 14px 0 0;
+    }
+
+    .methodology ul,
+    .methodology ol {
+      margin: 14px 0 0;
+      padding-left: 22px;
+    }
+
+    .methodology li+li {
+      margin-top: 7px;
+    }
+
+    .principles-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+
+    .principle-card {
+      padding: 20px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+    }
+
+    .principle-card strong {
+      display: block;
+      font-size: var(--text-sm);
+      font-weight: var(--weight-semibold);
+    }
+
+    .principle-card span {
+      display: block;
+      margin-top: 7px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+      line-height: var(--leading-relaxed);
+    }
+
+    .callout {
+      margin-top: 22px;
+      padding: 18px 20px;
+      border-left: 3px solid hsl(var(--brand));
+      border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+      background: hsl(var(--card));
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+    }
+
+    .callout strong {
+      color: hsl(var(--foreground));
+    }
+
+    .callout p:first-child {
+      margin-top: 0;
+    }
+
+    .table-card {
+      margin-top: 22px;
+      overflow-x: auto;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+      -webkit-overflow-scrolling: touch;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .matrix-table {
+      min-width: 900px;
+    }
+
+    .source-table {
+      min-width: 760px;
+    }
+
+    .quality-table,
+    .result-table,
+    .evidence-table {
+      min-width: 700px;
+    }
+
+    th,
+    td {
+      padding: 15px 17px;
+      border-bottom: 1px solid hsl(var(--border));
+      text-align: left;
+      vertical-align: top;
+    }
+
+    thead th {
+      background: hsl(var(--surface-1));
+      color: hsl(var(--muted-foreground));
+      font-size: 0.6875rem;
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    tbody tr:last-child th,
+    tbody tr:last-child td,
+    tfoot tr:last-child th,
+    tfoot tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody th {
+      font-weight: var(--weight-semibold);
+    }
+
+    tbody tr:hover {
+      background: hsl(var(--surface-1));
+    }
+
+    tfoot th,
+    tfoot td {
+      border-top: 2px solid hsl(var(--border));
+      background: hsl(var(--surface-1));
+      font-weight: var(--weight-semibold);
+    }
+
+    .cell-title {
+      display: block;
+      font-weight: var(--weight-semibold);
+    }
+
+    .cell-meta {
+      display: block;
+      margin-top: 4px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+      line-height: var(--leading-relaxed);
+    }
+
+    .case-list {
+      display: grid;
+      gap: 5px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .case-list li+li {
+      margin-top: 0;
+    }
+
+    .case-list code {
+      padding: 0;
+      background: transparent;
+      color: hsl(var(--muted-foreground));
+      font-size: 0.72rem;
+    }
+
+    .numeric {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .positive {
+      color: hsl(var(--brand));
+      font-weight: var(--weight-semibold);
+    }
+
+    .warning {
+      color: hsl(28 72% 36%);
+      font-weight: var(--weight-semibold);
+    }
+
+    .formula {
+      display: grid;
+      gap: 12px;
+      margin-top: 20px;
+      padding: 20px;
+      overflow-x: auto;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+    }
+
+    .formula code {
+      display: block;
+      width: max-content;
+      min-width: 100%;
+      padding: 0;
+      background: transparent;
+      font-size: var(--text-sm);
+      line-height: var(--leading-relaxed);
+    }
+
+    .definition-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin: 22px 0 0;
+    }
+
+    .definition-grid div {
+      padding: 17px 18px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-lg);
+      background: hsl(var(--card));
+    }
+
+    .definition-grid dt {
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      font-weight: var(--weight-semibold);
+    }
+
+    .definition-grid dd {
+      margin: 6px 0 0;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+    }
+
+    .exception-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .exception-list details {
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-lg);
+      background: hsl(var(--card));
+    }
+
+    .exception-list summary {
+      padding: 16px 18px;
+      cursor: pointer;
+      font-weight: var(--weight-semibold);
+    }
+
+    .exception-list details[open] summary {
+      border-bottom: 1px solid hsl(var(--border));
+    }
+
+    .exception-body {
+      padding: 2px 18px 18px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+    }
+
+    .provenance-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 22px;
+    }
+
+    .provenance-card {
+      padding: 19px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+    }
+
+    .provenance-card h3 {
+      margin: 0;
+      font-size: var(--text-sm);
+    }
+
+    .provenance-card dl {
+      display: grid;
+      grid-template-columns: minmax(100px, auto) minmax(0, 1fr);
+      gap: 8px 14px;
+      margin: 14px 0 0;
+      font-size: var(--text-xs);
+    }
+
+    .provenance-card dt {
+      color: hsl(var(--muted-foreground));
+    }
+
+    .provenance-card dd {
+      min-width: 0;
+      margin: 0;
+      font-family: var(--font-mono);
+      overflow-wrap: anywhere;
+    }
+
+    .artifact-links {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .artifact-link {
+      display: block;
+      padding: 15px 17px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-lg);
+      background: hsl(var(--card));
+      color: hsl(var(--foreground));
+      font-size: var(--text-xs);
+      font-weight: var(--weight-semibold);
+      text-decoration: none;
+    }
+
+    .artifact-link span {
+      display: block;
+      margin-top: 4px;
+      color: hsl(var(--muted-foreground));
+      font-weight: var(--weight-regular);
+    }
+
+    .integrity-command {
+      margin-top: 18px;
+      padding: 15px 17px;
+      overflow-x: auto;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-lg);
+      background: hsl(var(--primary));
+      color: hsl(var(--primary-foreground));
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      white-space: nowrap;
+    }
+
+    footer {
+      border-top: 1px solid hsl(var(--border));
+      background: hsl(var(--card));
+    }
+
+    .footer-inner {
+      display: flex;
+      min-height: 74px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+    }
+
+    .footer-inner p {
+      margin: 0;
+    }
+
+    .footer-inner nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+    }
+
+    .footer-inner a {
+      text-decoration: none;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 900px) {
+      .summary-grid,
+      .principles-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .content-layout {
+        grid-template-columns: 1fr;
+        gap: 34px;
+        margin-top: 50px;
+      }
+
+      .section-nav {
+        position: static;
+        padding: 17px 18px;
+        border: 1px solid hsl(var(--border));
+        border-radius: var(--radius-xl);
+        background: hsl(var(--card));
+      }
+
+      .section-nav ol {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .shell {
+        width: min(100% - 32px, 1120px);
+      }
+
+      .topbar-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 10px;
+        padding: 16px 0;
+      }
+
+      .report-links {
+        justify-content: flex-start;
+      }
+
+      main {
+        padding: 48px 0 58px;
+      }
+
+      .study-meta {
+        display: grid;
+        gap: 4px;
+      }
+
+      .study-meta span+span::before {
+        content: none;
+      }
+
+      .definition-grid,
+      .provenance-grid,
+      .artifact-links {
+        grid-template-columns: 1fr;
+      }
+
+      .footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+        padding: 18px 0;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .summary-grid,
+      .principles-grid,
+      .section-nav ol {
+        grid-template-columns: 1fr;
+      }
+
+      .summary-grid {
+        gap: 10px;
+      }
+
+      .method-section+.method-section {
+        margin-top: 42px;
+        padding-top: 42px;
+      }
+
+      .provenance-card dl {
+        grid-template-columns: 1fr;
+        gap: 3px;
+      }
+
+      .provenance-card dd+dt {
+        margin-top: 8px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <a class="skip-link" href="#main-content">Skip to methodology</a>
+
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand-lockup" href="index.html" aria-label="Felan AI benchmark results">
+        <img src="assets/felan/felan-logo.svg" alt="">
+        <span>Felan AI</span>
+      </a>
+      <nav class="report-links" aria-label="Report navigation">
+        <a href="index.html">Overview</a>
+        <a href="methodology.html" aria-current="page">Methodology</a>
+        <a href="results.json">JSON</a>
+        <a href="results.csv">CSV</a>
+        <a href="manifest.json">Provenance</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-content" class="shell">
+    <section class="intro" aria-labelledby="page-title">
+      <p class="overline">Benchmark Methodology</p>
+      <h1 id="page-title">How the extension benchmarks were run</h1>
+      <p class="lede">Seven isolated A/B comparisons measured whether a single Felan extension changed model cost,
+        token use, or agent-step duration while task correctness remained above a declared quality floor.</p>
+      <p class="study-meta"><span>Source runs: 2–11 September 2026</span><span>Study ID:
+          felan-extensions-2026-09</span><span>Status: complete</span></p>
+
+      <div class="summary-grid" aria-label="Study scope">
+        <div class="summary-card">
+          <span class="summary-value">7</span>
+          <span class="summary-label">independent extension comparisons</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-value">16</span>
+          <span class="summary-label">benchmark-case combinations</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-value">96</span>
+          <span class="summary-label">retained attempts: 48 per arm</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-value">3</span>
+          <span class="summary-label">trials per arm and case</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="content-layout">
+      <aside>
+        <nav class="section-nav" aria-label="Methodology sections">
+          <p>On this page</p>
+          <ol>
+            <li><a href="#design">Study design</a></li>
+            <li><a href="#matrix">Benchmark matrix</a></li>
+            <li><a href="#workspaces">Workspaces and checks</a></li>
+            <li><a href="#quality">Quality and eligibility</a></li>
+            <li><a href="#metrics">Metrics and aggregation</a></li>
+            <li><a href="#provenance">Evidence and provenance</a></li>
+            <li><a href="#limitations">Limitations</a></li>
+            <li><a href="#integrity">Artifacts and integrity</a></li>
+          </ol>
+        </nav>
+      </aside>
+
+      <article class="methodology">
+        <section id="design" class="method-section" aria-labelledby="design-heading">
+          <h2 id="design-heading">1. Study design</h2>
+          <p class="section-intro">Each benchmark compares a feature-off baseline with a feature-on candidate on the
+            same tasks. The study estimates extension-specific effects; it is not an all-extensions-on evaluation.</p>
+
+          <div class="principles-grid">
+            <div class="principle-card">
+              <strong>Controlled within each benchmark</strong>
+              <span>Prompt, workspace source, setup, provider, model, thinking level, timeout, and grading stay fixed
+                between the two arms.</span>
+            </div>
+            <div class="principle-card">
+              <strong>One treatment at a time</strong>
+              <span>The candidate enables the named extension and its required feature configuration; the matching
+                baseline leaves that extension off.</span>
+            </div>
+            <div class="principle-card">
+              <strong>Repeated, then quality-gated</strong>
+              <span>Every arm runs three times per case. Resource outcomes are interpreted only after the benchmark's
+                candidate pass-rate gate is evaluated.</span>
+            </div>
+          </div>
+
+          <p>Most pairs keep Felan's Codex, Context, and Tasks extensions enabled in both arms while disabling
+            unrelated built-ins. MarkItDown is the intentional exception: both arms use the specialized ordinary-read
+            profile with Codex, Context, and Tasks disabled, and differ only in automatic MarkItDown conversion.
+            Profiles are explicit rather than inherited.</p>
+
+          <p>Prompts request user-facing outcomes rather than instructing the agent to use the feature under test.
+            Feature-use assertions then confirm organic activation where it is part of the hypothesis: successful
+            Prewalk entry, explorer-subagent delegation, or converted-document reads. The corresponding control arm
+            must not make the treatment tool call.</p>
+
+          <aside class="callout">
+            <p><strong>Published scope.</strong> These seven primary comparisons are a selected subset of the repository's
+              evaluation cases. Unselected profiles, cases, and smoke checks do not contribute to any figure on the
+              results page. The 16 count is benchmark-case combinations; <code>prewalk-checkout</code> appears in both
+              the Prewalk and RTK comparisons.</p>
+          </aside>
+        </section>
+
+        <section id="matrix" class="method-section" aria-labelledby="matrix-heading">
+          <h2 id="matrix-heading">2. Benchmark matrix</h2>
+          <p class="section-intro">All root sessions used the <code>openai-codex</code> provider. Models, thinking
+            levels, and Felan releases are held constant within a row, but not across rows.</p>
+
+          <div class="table-card" role="region" aria-label="Benchmark comparison matrix" tabindex="0">
+            <table class="matrix-table">
+              <caption class="sr-only">Published benchmark arms, cases, attempts, execution identity, and objectives
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Comparison and treatment</th>
+                  <th scope="col">Published cases</th>
+                  <th scope="col">Attempts</th>
+                  <th scope="col">Root execution</th>
+                  <th scope="col">Objectives</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">
+                    <span class="cell-title">Subagents</span>
+                    <span class="cell-meta"><code>felan-no-subagents</code> →
+                      <code>felan-delegated-exploration</code><br><code>subagents: false</code> →
+                      <code>true</code></span>
+                  </th>
+                  <td>
+                    <ul class="case-list">
+                      <li><code>subagents-codebase-exploration</code></li>
+                    </ul>
+                  </td>
+                  <td><span class="cell-title">6</span><span class="cell-meta">1 case × 2 arms × 3 trials</span></td>
+                  <td><span class="cell-title">Felan 0.21.1</span><span class="cell-meta">gpt-5.6-sol · max<br>children:
+                      gpt-5.6-luna</span></td>
+                  <td><span class="cell-title">Cost</span><span class="cell-meta">Prompt-token result omitted after
+                      descendant-cost correction</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <span class="cell-title">MarkItDown</span>
+                    <span class="cell-meta"><code>felan-no-markitdown</code> →
+                      <code>felan-markitdown</code><br><code>markitdown: false</code> → <code>true</code></span>
+                  </th>
+                  <td>
+                    <ul class="case-list">
+                      <li><code>markitdown-document-configuration</code></li>
+                      <li><code>markitdown-docx-extraction</code></li>
+                      <li><code>markitdown-pptx-extraction</code></li>
+                      <li><code>markitdown-xlsx-extraction</code></li>
+                    </ul>
+                  </td>
+                  <td><span class="cell-title">24</span><span class="cell-meta">4 cases × 2 arms × 3 trials</span></td>
+                  <td><span class="cell-title">Felan 0.19.0</span><span class="cell-meta">gpt-5.6-terra · low</span></td>
+                  <td><span class="cell-title">Cost</span><span class="cell-meta">Prompt tokens</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <span class="cell-title">Concise output</span>
+                    <span class="cell-meta"><code>felan-no-output-style</code> →
+                      <code>felan-concise</code><br><code>outputStyle: false</code> → <code>concise</code></span>
+                  </th>
+                  <td>
+                    <ul class="case-list">
+                      <li><code>output-style-planning</code></li>
+                      <li><code>output-style-review</code></li>
+                      <li><code>output-style-support</code></li>
+                    </ul>
+                  </td>
+                  <td><span class="cell-title">18</span><span class="cell-meta">3 cases × 2 arms × 3 trials</span></td>
+                  <td><span class="cell-title">Felan 0.20.2</span><span class="cell-meta">gpt-5.6-sol · max</span></td>
+                  <td><span class="cell-title">Cost</span><span class="cell-meta">Output tokens</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <span class="cell-title">Prewalk</span>
+                    <span class="cell-meta"><code>felan-no-prewalk</code> → <code>felan-prewalk</code><br><code>prewalk:
+                        false</code> → <code>true</code></span>
+                  </th>
+                  <td>
+                    <ul class="case-list">
+                      <li><code>prewalk-checkout</code></li>
+                      <li><code>memory-summary-links</code></li>
+                    </ul>
+                  </td>
+                  <td><span class="cell-title">12</span><span class="cell-meta">2 cases × 2 arms × 3 trials</span></td>
+                  <td><span class="cell-title">Felan 0.20.2</span><span class="cell-meta">gpt-5.6-sol · max<br>planner:
+                      gpt-5.6-luna · medium</span></td>
+                  <td><span class="cell-title">Cost</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <span class="cell-title">RTK</span>
+                    <span class="cell-meta"><code>felan-no-rtk-optimizer</code> →
+                      <code>felan-rtk-optimizer</code><br><code>rtkOptimizer: false</code> → <code>true</code></span>
+                  </th>
+                  <td>
+                    <ul class="case-list">
+                      <li><code>prewalk-checkout</code></li>
+                      <li><code>rtk-felan-project-instructions</code></li>
+                    </ul>
+                  </td>
+                  <td><span class="cell-title">12</span><span class="cell-meta">2 cases × 2 arms × 3 trials</span></td>
+                  <td><span class="cell-title">Felan 0.20.0</span><span class="cell-meta">gpt-5.6-sol · max</span></td>
+                  <td><span class="cell-title">Cost</span><span class="cell-meta">Prompt tokens</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <span class="cell-title">Codebase Memory</span>
+                    <span class="cell-meta"><code>felan-cbm-off</code> → <code>felan-cbm-on</code><br><code>codebaseMemory:
+                        false</code> → <code>true</code> · mode <code>curated</code></span>
+                  </th>
+                  <td>
+                    <ul class="case-list">
+                      <li><code>cbm-extension-architecture</code></li>
+                      <li><code>cbm-extension-config-scope</code></li>
+                      <li><code>cbm-project-instructions</code></li>
+                    </ul>
+                  </td>
+                  <td><span class="cell-title">18</span><span class="cell-meta">3 cases × 2 arms × 3 trials</span></td>
+                  <td><span class="cell-title">Felan 0.23.2*</span><span
+                      class="cell-meta">gpt-5.6-sol · medium</span></td>
+                  <td><span class="cell-title">Cost</span><span class="cell-meta">Agent-step duration</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <span class="cell-title">Session Compaction</span>
+                    <span class="cell-meta"><code>felan-no-session-compaction</code> → <code>felan-inherit-compaction</code><br>native Pi → verified extension; <code>model: inherit</code></span>
+                  </th>
+                  <td><ul class="case-list"><li><code>session-compaction-continuation</code></li></ul></td>
+                  <td><span class="cell-title">6</span><span class="cell-meta">1 case × 2 arms × 3 trials</span></td>
+                  <td><span class="cell-title">Felan 0.24.7</span><span class="cell-meta">gpt-5.6-sol · low<br>local pre-release extension artifact</span></td>
+                  <td><span class="cell-title">Cost</span><span class="cell-meta">Prompt tokens</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <aside class="callout">
+            <p><strong>* Codebase Memory evidence provenance.</strong> The three cases ran as separate batches on Felan
+              <code>0.23.2</code> with <code>@felan-ai/ext-codebase-memory</code> <code>0.3.1</code>; the enabled arm
+              used the harness agent <code>felan-cbm-curated</code> (<code>mode: curated</code>, the extension default),
+              presented here as <code>felan-cbm-on</code>. The batches were launched with <code>--case</code>, so runs
+              carry no benchmark stamp; published figures are recomputed from each run's recorded metrics with the
+              declared estimator. The frozen project config in this package predates these runs. The Session Compaction config and evidence are linked below.</p>
+          </aside>
+        </section>
+
+        <section id="workspaces" class="method-section" aria-labelledby="workspaces-heading">
+          <h2 id="workspaces-heading">3. Workspaces and checks</h2>
+          <p class="section-intro">Every attempt starts from a copied, isolated workspace. Public repositories are
+            pinned to full commits; authored document and response tasks use versioned local fixtures.</p>
+
+          <div class="table-card" role="region" aria-label="Benchmark workspace sources and checks" tabindex="0">
+            <table class="source-table">
+              <caption class="sr-only">Workspace source and verification approach for each published case group
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Case or group</th>
+                  <th scope="col">Pinned source</th>
+                  <th scope="col">Principal checks</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row"><code>subagents-codebase-exploration</code></th>
+                  <td>Felan <code>5e67c921794c00ad23e0a223299a2a1fc8a0f3fd</code></td>
+                  <td>Organic explorer delegation, repository coverage, no edits</td>
+                </tr>
+                <tr>
+                  <th scope="row">Four MarkItDown cases</th>
+                  <td><code>evals/fixtures/markitdown/v1/source</code></td>
+                  <td>Expected document facts, converted reads, exact runtime JSON, no unintended edits</td>
+                </tr>
+                <tr>
+                  <th scope="row">Three output-style cases</th>
+                  <td><code>evals/fixtures/output-style/v1/source</code></td>
+                  <td>Required information retained, no edits; no LLM judge</td>
+                </tr>
+                <tr>
+                  <th scope="row"><code>prewalk-checkout</code></th>
+                  <td>Storzy <code>9cb213463222732cb955067953220d665b2f561b</code></td>
+                  <td>Type-check, both feature-flag builds, hidden checkout and API tests; Prewalk entry in its
+                    benchmark</td>
+                </tr>
+                <tr>
+                  <th scope="row"><code>memory-summary-links</code></th>
+                  <td>Felan <code>0b461533f86c4d58521cdd7da7d9f298da03b123</code></td>
+                  <td>Hidden behavior verifier, workspace boundary, Prewalk entry in its benchmark</td>
+                </tr>
+                <tr>
+                  <th scope="row"><code>rtk-felan-project-instructions</code></th>
+                  <td>Felan <code>104faa5559029c8be9e8a1eb504d87974a5864e9</code></td>
+                  <td>Agent Core type-check, focused public and hidden tests, build</td>
+                </tr>
+                <tr>
+                  <th scope="row"><code>session-compaction-continuation</code></th>
+                  <td><code>evals/fixtures/session-compaction/v1/source</code></td>
+                  <td>Sanitized 234-entry real session; native versus inherited extension ownership, summary fact ledger, continuation fidelity, no tools</td>
+                </tr>
+                <tr>
+                  <th scope="row"><code>cbm-extension-architecture</code></th>
+                  <td>Felan <code>e5867637569bd1c7ad08420b79ec4031a5733f57</code></td>
+                  <td>Read-only file boundary, 150-word minimum, directional five-fact coverage check</td>
+                </tr>
+                <tr>
+                  <th scope="row"><code>cbm-extension-config-scope</code></th>
+                  <td>Felan <code>51a18d8f0c853a06867ddbd48046ad4a84307058</code></td>
+                  <td>Workspace boundary, package build, existing and hidden behavior tests</td>
+                </tr>
+                <tr>
+                  <th scope="row"><code>cbm-project-instructions</code></th>
+                  <td>Felan <code>104faa5559029c8be9e8a1eb504d87974a5864e9</code></td>
+                  <td>Agent Core type-check, focused public and hidden tests, build</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <ul>
+            <li>Dependency-bearing cases install from their committed lockfile with
+              <code>pnpm install --frozen-lockfile</code>. Network access is enabled only for that setup operation;
+              setup runs before the measured agent attempt.</li>
+            <li>MarkItDown fixture setup runs the same installed converter in both arms with network disabled.</li>
+            <li>Verifier commands run with <code>network.mode: none</code>. Hidden grading assets are mounted for the
+              verifier and are not exposed to the evaluated agent.</li>
+            <li>Whole-run infrastructure time is retained in detailed reports but is not the Codebase Memory duration
+              objective.</li>
+          </ul>
+        </section>
+
+        <section id="quality" class="method-section" aria-labelledby="quality-heading">
+          <h2 id="quality-heading">4. Quality and eligibility</h2>
+          <p class="section-intro">Correctness is a guardrail, not a resource metric. Every benchmark requires the
+            candidate aggregate pass rate to be at least <strong>0.8</strong>.</p>
+
+          <p>A run's pass status reflects execution status, required assertions, and any verifier process. The project
+            score weights verifier reward at 1 and gives assertion-pass-rate and LLM-judge scores weight 0; required
+            assertions still determine whether their run passes. No published comparison uses an LLM judge.</p>
+
+          <div class="table-card" role="region" aria-label="Quality pass counts" tabindex="0">
+            <table class="quality-table">
+              <caption class="sr-only">Baseline and candidate pass counts with quality-gate outcome</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Benchmark</th>
+                  <th scope="col" class="numeric">Baseline</th>
+                  <th scope="col" class="numeric">Candidate</th>
+                  <th scope="col">Gate result</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Subagents</th>
+                  <td class="numeric">3/3</td>
+                  <td class="numeric">3/3</td>
+                  <td class="positive">Passed</td>
+                </tr>
+                <tr>
+                  <th scope="row">MarkItDown</th>
+                  <td class="numeric">12/12</td>
+                  <td class="numeric">12/12</td>
+                  <td class="positive">Passed</td>
+                </tr>
+                <tr>
+                  <th scope="row">Concise output</th>
+                  <td class="numeric">9/9</td>
+                  <td class="numeric">9/9</td>
+                  <td class="positive">Passed</td>
+                </tr>
+                <tr>
+                  <th scope="row">Prewalk</th>
+                  <td class="numeric">6/6</td>
+                  <td class="numeric">6/6</td>
+                  <td class="positive">Passed</td>
+                </tr>
+                <tr>
+                  <th scope="row">RTK</th>
+                  <td class="numeric">6/6</td>
+                  <td class="numeric">5/6</td>
+                  <td class="warning">Passed at 83.3%</td>
+                </tr>
+                <tr>
+                  <th scope="row">Session Compaction</th>
+                  <td class="numeric">2/3</td>
+                  <td class="numeric">3/3</td>
+                  <td class="positive">Passed at 100%</td>
+                </tr>
+                <tr>
+                  <th scope="row">Codebase Memory</th>
+                  <td class="numeric">9/9</td>
+                  <td class="numeric">9/9</td>
+                  <td class="positive">Passed</td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th scope="row">Descriptive total</th>
+                  <td class="numeric">47/48</td>
+                  <td class="numeric">47/48</td>
+                  <td>Gates are evaluated per benchmark</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div class="exception-list">
+            <details open>
+              <summary>RTK timeout and resource observations</summary>
+              <div class="exception-body">
+                <p>One candidate <code>prewalk-checkout</code> attempt timed out. It remains a failed attempt in the
+                  5/6 aggregate pass rate, while its recorded cost and token observations remain in the three-trial
+                  median. The absolute 0.8 gate passed, despite a 16.7 percentage-point pass-rate decrease from the
+                  6/6 baseline.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Codebase Memory pass status versus verifier reward</summary>
+              <div class="exception-body">
+                <p>All 18 attempts reported <code>status: passed</code> and <code>pass: true</code>. Two baseline
+                  architecture attempts received reward 0.8 after matching four of five directional facts; every other
+                  reward was 1.0, including all three candidate architecture attempts. Reward magnitude and binary
+                  framework pass rate are therefore not interchangeable. Four architecture attempts, two per arm, also
+                  recorded a non-required clean-tool-execution assertion failure, which did not affect pass status.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Feature-use eligibility</summary>
+              <div class="exception-body">
+                <p>A Prewalk candidate attempt without a successful <code>enter_prewalk</code> call is invalid. A
+                  Subagents candidate must make a successful <code>Agent</code> call with
+                  <code>subagent_type: explore</code>. Their baselines must make no corresponding call.</p>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <section id="metrics" class="method-section" aria-labelledby="metrics-heading">
+          <h2 id="metrics-heading">5. Metrics and aggregation</h2>
+          <p class="section-intro">Every declared objective is minimized. A positive gain means the candidate used
+            less of the measured resource; a negative gain means it used more.</p>
+
+          <div class="definition-grid">
+            <div>
+              <dl>
+                <dt>cost.total</dt>
+                <dd>Provider-reported billed model cost in US dollars. This is the primary objective for all seven
+                  comparisons.</dd>
+              </dl>
+            </div>
+            <div>
+              <dl>
+                <dt>usage.promptTokens</dt>
+                <dd>Provider-reported prompt tokens. Secondary for MarkItDown and RTK.</dd>
+              </dl>
+            </div>
+            <div>
+              <dl>
+                <dt>usage.outputTokens</dt>
+                <dd>Provider-reported output tokens. Secondary for concise output style.</dd>
+              </dl>
+            </div>
+            <div>
+              <dl>
+                <dt>duration.stepsMs</dt>
+                <dd>Sum of measured agent-step durations in milliseconds. It excludes workspace setup, image probes,
+                  and verifier time; secondary for Codebase Memory.</dd>
+              </dl>
+            </div>
+          </div>
+
+          <h3>Headline estimator</h3>
+          <ol>
+            <li>For each case and arm, take the median of its three numeric trial observations.</li>
+            <li>Sum those case medians separately for the baseline and candidate.</li>
+            <li>Calculate the goal-aware change from the two sums.</li>
+          </ol>
+
+          <div class="formula" aria-label="Ratio of reduced sums formula">
+            <code>m<sub>arm,case</sub> = median(trial 1, trial 2, trial 3)</code>
+            <code>gain = (Σ m<sub>baseline,case</sub> − Σ m<sub>candidate,case</sub>) ÷ Σ
+              m<sub>baseline,case</sub> × 100</code>
+          </div>
+
+          <p>This <strong>ratio of reduced sums</strong> is the published headline. It weights cases by the magnitude
+            of their baseline resource value. The equal-weight macro mean of case gains and the case minimum/maximum
+            remain diagnostics in detailed JSON; raw attempt totals are not the headline estimator. If a baseline sum
+            is zero, the percentage is unavailable.</p>
+
+          <h3>Published estimator inputs</h3>
+          <div class="table-card" role="region" aria-label="Published reduced cost sums" tabindex="0">
+            <table class="result-table">
+              <caption class="sr-only">Median-reduced baseline and candidate cost sums and resulting gains</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Benchmark</th>
+                  <th scope="col" class="numeric">Baseline cost sum</th>
+                  <th scope="col" class="numeric">Candidate cost sum</th>
+                  <th scope="col" class="numeric">Cost gain</th>
+                  <th scope="col">Secondary reduced sums</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Subagents</th>
+                  <td class="numeric">$1.285667</td>
+                  <td class="numeric">$0.98112684</td>
+                  <td class="numeric positive">23.687%</td>
+                  <td>Not published</td>
+                </tr>
+                <tr>
+                  <th scope="row">MarkItDown</th>
+                  <td class="numeric">$0.0554932</td>
+                  <td class="numeric">$0.0382732</td>
+                  <td class="numeric positive">31.031%</td>
+                  <td>21,569 → 18,603 prompt tokens; 13.751% gain</td>
+                </tr>
+                <tr>
+                  <th scope="row">Concise output</th>
+                  <td class="numeric">$0.229548</td>
+                  <td class="numeric">$0.196258</td>
+                  <td class="numeric positive">14.502%</td>
+                  <td>4,187 → 3,500 output tokens; 16.408% gain</td>
+                </tr>
+                <tr>
+                  <th scope="row">Prewalk</th>
+                  <td class="numeric">$8.52425</td>
+                  <td class="numeric">$2.899686</td>
+                  <td class="numeric positive">65.983%</td>
+                  <td>None declared</td>
+                </tr>
+                <tr>
+                  <th scope="row">RTK</th>
+                  <td class="numeric">$6.259809</td>
+                  <td class="numeric">$4.596907</td>
+                  <td class="numeric positive">26.565%</td>
+                  <td>7,240,443 → 4,302,107 prompt tokens; 40.582% gain</td>
+                </tr>
+                <tr>
+                  <th scope="row">Session Compaction</th>
+                  <td class="numeric">$0.49551</td>
+                  <td class="numeric">$0.27131</td>
+                  <td class="numeric positive">45.246%</td>
+                  <td>83,304 → 39,891 prompt tokens; 52.114% gain</td>
+                </tr>
+                <tr>
+                  <th scope="row">Codebase Memory</th>
+                  <td class="numeric">$5.727142</td>
+                  <td class="numeric">$4.135741</td>
+                  <td class="numeric positive">27.787%</td>
+                  <td>1,167,282 → 1,076,719 step ms; 7.758% gain</td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th scope="row">Cost-weighted portfolio</th>
+                  <td class="numeric">$22.5774192</td>
+                  <td class="numeric">$13.11930204</td>
+                  <td class="numeric positive">41.892%</td>
+                  <td>Seven independent primary comparisons</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <aside class="callout">
+            <p><strong>Interpret the portfolio carefully.</strong> These dollar values are sums of case-level medians,
+              not the raw invoice total for all 96 attempts. The 41.9% figure is a descriptive cost-weighted aggregate
+              across seven separately configured comparisons. It does not measure a single run with all seven extensions
+              enabled, and the largest-cost tasks contribute the most weight.</p>
+          </aside>
+        </section>
+
+        <section id="provenance" class="method-section" aria-labelledby="provenance-heading">
+          <h2 id="provenance-heading">6. Evidence and provenance</h2>
+          <p class="section-intro">The package combines direct runs, verifier-only reprocessing of retained
+            workspaces, and one separately supplied redacted batch. Source relationships remain explicit.</p>
+
+          <div class="table-card" role="region" aria-label="Benchmark evidence chain" tabindex="0">
+            <table class="evidence-table">
+              <caption class="sr-only">Evidence type, source batch, and selected batch for each benchmark</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Benchmark</th>
+                  <th scope="col">Evidence type</th>
+                  <th scope="col">Source batch</th>
+                  <th scope="col">Selected batch</th>
+                  <th scope="col">Reverification</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Subagents</th>
+                  <td>Direct, cost recalculated</td>
+                  <td><code>20260903-052334-7809</code></td>
+                  <td><code>20260903-052334-7809</code></td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <th scope="row">MarkItDown</th>
+                  <td>Offline verifier replay</td>
+                  <td><code>20260902-112808-33e8</code></td>
+                  <td><code>20260903-045947-5857</code></td>
+                  <td><code>20260903-045947-56b5</code></td>
+                </tr>
+                <tr>
+                  <th scope="row">Concise output</th>
+                  <td>Offline verifier replay</td>
+                  <td><code>20260902-121757-89d1</code></td>
+                  <td><code>20260903-045947-ba0e</code></td>
+                  <td><code>20260903-045947-56b5</code></td>
+                </tr>
+                <tr>
+                  <th scope="row">Prewalk</th>
+                  <td>Offline verifier replay</td>
+                  <td><code>20260902-121757-b16d</code></td>
+                  <td><code>20260903-044517-8452</code></td>
+                  <td><code>20260903-044517-d1f1</code></td>
+                </tr>
+                <tr>
+                  <th scope="row">RTK</th>
+                  <td>Offline verifier replay</td>
+                  <td><code>20260902-121847-5fa4</code></td>
+                  <td><code>20260903-045947-e11d</code></td>
+                  <td><code>20260903-045947-56b5</code></td>
+                </tr>
+                <tr>
+                  <th scope="row">Session Compaction</th>
+                  <td>Direct local pre-release</td>
+                  <td><code>20260911-154148-3bc0</code></td>
+                  <td><code>20260911-154148-3bc0</code></td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <th scope="row">Codebase Memory</th>
+                  <td>Derived from three local case batches</td>
+                  <td><code>20260908-090907-5a66</code><br><code>20260908-114759-951e</code><br><code>20260909-123711-ff11</code></td>
+                  <td><code>20260908-090907-5a66</code><br><code>20260908-114759-951e</code><br><code>20260909-123711-ff11</code></td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p>Offline reprocessing reran only the current network-isolated verifiers against retained workspaces. It
+            made no agent or provider call, did not overwrite the source runs, and preserved source-run IDs. These
+            derived batches carry <code>publicationEligible: false</code> because they are not independent
+            provider-backed evidence; this package includes them only with their source relationship.</p>
+
+          <p>The RTK source batch contained a third <code>memory-summary-links</code> case. The selected publication
+            reprocessed only <code>prewalk-checkout</code> and <code>rtk-felan-project-instructions</code>, matching the
+            two-case benchmark definition. Runs from the unselected case do not contribute to the RTK figures.</p>
+
+          <div class="provenance-grid">
+            <div class="provenance-card">
+              <h3>Repository freeze</h3>
+              <dl>
+                <dt>Commit</dt>
+                <dd>f7530cac88fb0d86e95bb713040d66df6abcadd3</dd>
+                <dt>Clean tree</dt>
+                <dd>true</dd>
+                <dt>Config SHA-256</dt>
+                <dd>7a847181e54b618d92aa672bf7a5a6c29eceecacda0af7c4600ddbdfd600c170</dd>
+                <dt>Freeze-time path</dt>
+                <dd>harness-evals.yaml</dd>
+              </dl>
+            </div>
+            <div class="provenance-card">
+              <h3>Harness at freeze</h3>
+              <dl>
+                <dt>Dependency spec</dt>
+                <dd>^0.2.15</dd>
+                <dt>Local link</dt>
+                <dd>active</dd>
+                <dt>Linked version</dt>
+                <dd>0.2.13</dd>
+                <dt>Linked commit</dt>
+                <dd>d5aaab2afc5f9536a86bbf8ffefd67def1c5c002</dd>
+              </dl>
+            </div>
+          </div>
+
+          <h3>Session Compaction evidence qualification</h3>
+          <p>The selected six-attempt batch used a local pre-release image containing an unreleased <code>0.1.2</code> artifact. The candidate used extension-owned compaction in all three attempts and passed its quality gate at 100%. The native baseline passed two of three because one continuation omitted the required black-box end-to-end publication plan. The later registry <code>0.1.2</code> tarball is not byte-identical; this provenance limitation is independent of candidate quality. See the <a href="sources/provenance/session-compaction.json">full evidence</a>.</p>
+
+          <h3>Subagents descendant-cost correction</h3>
+          <p>Native root-session telemetry omitted the candidate's child-session spend. For each candidate attempt,
+            every child assistant message's <code>usage.cost.total</code> was summed and added to the native root cost
+            before the median was taken. The correction covers nine child sessions and 75 child assistant requests.
+            It changes the candidate median to $0.98112684 versus $1.285667 for the baseline, a 23.687% gain.</p>
+
+          <p>Only numeric cost aggregates, session/model identity, and source hashes were retained for that correction.
+            Prompts, responses, tool output, and reasoning were excluded. Because an equivalent descendant-inclusive
+            token aggregation was not established, the configured Subagents prompt-token objective is omitted from
+            the publication.</p>
+
+          <div class="artifact-links" aria-label="Provenance files">
+            <a class="artifact-link" href="manifest.json">Provenance manifest<span>Selections, limitations, hashes,
+                and package inventory</span></a>
+            <a class="artifact-link" href="sources/provenance/selected-evidence.json">Selected evidence<span>Run IDs,
+                batches, quality, and source relationships</span></a>
+            <a class="artifact-link" href="sources/provenance/aggregate-gain-recalculation.json">Aggregation
+              evidence<span>Per-case medians and ratio-of-reduced-sums calculations</span></a>
+            <a class="artifact-link" href="sources/provenance/subagents-cost-recalculation.json">Subagents cost
+              evidence<span>Descendant-inclusive attempt costs and source hashes</span></a>
+            <a class="artifact-link" href="sources/provenance/codebase-memory.json">Codebase Memory evidence<span>All
+                18 retained attempts in the final three-case scope</span></a>
+            <a class="artifact-link" href="sources/provenance/session-compaction.json">Session Compaction evidence<span>Six retained attempts, ownership, quality, and pre-release qualification</span></a>
+            <a class="artifact-link" href="sources/provenance/project/felan-extension-evals.yaml">Frozen project
+              config<span>Byte-preserved configuration at the repository freeze</span></a>
+          </div>
+        </section>
+
+        <section id="limitations" class="method-section" aria-labelledby="limitations-heading">
+          <h2 id="limitations-heading">7. Limitations</h2>
+          <ul>
+            <li>Three trials per arm and case are enough for a median, not for a confidence interval or a claim of
+              statistical significance.</li>
+            <li>Results apply to the selected prompts, fixtures, repository commits, models, thinking levels, Felan
+              releases, and run conditions. They do not establish universal extension performance.</li>
+            <li>Models, thinking levels, releases, task counts, and batch concurrency differ across benchmark rows.
+              Compare candidate with baseline within a row; do not use the table to rank extensions against one
+              another.</li>
+            <li>The 41.9% portfolio result is cost-weighted and dominated by higher-cost benchmark cases. It is not an
+              equal-weight average and not an all-extensions-enabled measurement.</li>
+            <li>The RTK resource outcomes remain eligible under the configured absolute 0.8 floor even though candidate
+              quality was 83.3% versus the baseline's 100%.</li>
+            <li>Subagents cost uses a documented manual recalculation. Its descendant-inclusive prompt-token result is
+              unavailable.</li>
+            <li>Session Compaction candidate quality was 100% (3/3); the native baseline passed 2/3. The benchmarked local pre-release artifact is not byte-identical to the later npm 0.1.2 artifact.</li>
+            <li>The Codebase Memory result comes from three separately launched case batches without a benchmark stamp;
+              its figures are recomputed from recorded run metrics, and it ran on Felan 0.23.2 while the other
+              extensions ran on earlier releases.</li>
+            <li>Credentials, authentication and model stores, raw workspaces, full transcripts, and full session JSONL
+              are excluded. The preserved files support aggregate audit, not full conversation replay.</li>
+          </ul>
+        </section>
+
+        <section id="integrity" class="method-section" aria-labelledby="integrity-heading">
+          <h2 id="integrity-heading">8. Artifacts and integrity</h2>
+          <p class="section-intro">Every benchmark has a linked HTML detail page. MarkItDown, concise output, Prewalk, RTK, Codebase Memory, and Session Compaction also include report-local JSON and CSV evidence; Subagents' corrected evidence is
+            the dedicated provenance JSON.</p>
+
+          <p>The canonical <a href="results.json">top-level JSON</a> records methodology, arms, cases, execution
+            identity, quality, objectives, exact values, and selections. The <a href="results.csv">top-level CSV</a>
+            is rectangular. Detailed benchmark CSV attempt rows retain the renderer's historical missing final empty
+            column; those files remain standards-parseable.</p>
+
+          <p><a href="SHA256SUMS">SHA256SUMS</a> covers every package file except itself. From this report directory,
+            verify the complete package with:</p>
+          <div class="integrity-command">shasum -a 256 -c SHA256SUMS</div>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer>
+    <div class="shell footer-inner">
+      <p>© 2026 Felan</p>
+      <nav aria-label="Supporting files">
+        <a href="index.html">Results overview</a>
+        <a href="results.json">Machine-readable results</a>
+        <a href="manifest.json">Provenance</a>
+        <a href="SHA256SUMS">Integrity hashes</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+
+</html>

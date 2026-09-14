@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Descendant-inclusive Subagents benchmark cost result.">
+  <title>Subagents Benchmark Result — Felan</title>
+  <link rel="icon" href="../../assets/felan/felan-logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../../assets/felan/styles.css">
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: hsl(var(--surface-1));
+      color: hsl(var(--foreground));
+      font-family: var(--font-sans);
+      font-size: var(--text-sm);
+      line-height: var(--leading-normal);
+    }
+
+    a {
+      color: hsl(var(--brand));
+      font-weight: var(--weight-medium);
+      text-underline-offset: 4px;
+    }
+
+    a:focus-visible {
+      border-radius: var(--radius-sm);
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 3px;
+    }
+
+    .shell {
+      width: min(900px, calc(100% - 48px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      border-bottom: 1px solid hsl(var(--border));
+      background: hsl(var(--card));
+    }
+
+    .topbar-inner {
+      display: flex;
+      min-height: 68px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand-lockup {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: hsl(var(--foreground));
+      font-size: var(--text-base);
+      font-weight: var(--weight-bold);
+      letter-spacing: var(--tracking-tight);
+      text-decoration: none;
+    }
+
+    .brand-lockup img {
+      width: 28px;
+      height: 29px;
+    }
+
+    .back-link { font-size: var(--text-xs); }
+
+    main { padding: 56px 0 64px; }
+
+    .overline {
+      margin: 0 0 12px;
+      color: hsl(var(--brand));
+      font-size: var(--text-xs);
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(var(--text-3xl), 5vw, var(--text-5xl));
+      font-weight: var(--weight-bold);
+      letter-spacing: var(--tracking-tight);
+      line-height: var(--leading-tight);
+    }
+
+    .lede {
+      max-width: 680px;
+      margin: 16px 0 0;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-lg);
+      line-height: var(--leading-relaxed);
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 36px;
+    }
+
+    .metric-card {
+      padding: 22px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+    }
+
+    .metric-label {
+      display: block;
+      color: hsl(var(--muted-foreground));
+      font-size: 0.6875rem;
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      display: block;
+      margin-top: 8px;
+      font-size: var(--text-3xl);
+      font-weight: var(--weight-bold);
+      letter-spacing: var(--tracking-tight);
+    }
+
+    .metric-value.positive { color: hsl(var(--brand)); }
+
+    .metric-context {
+      display: block;
+      margin-top: 6px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+    }
+
+    section { margin-top: 40px; }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: var(--text-xl);
+      font-weight: var(--weight-semibold);
+      letter-spacing: var(--tracking-tight);
+    }
+
+    .table-card {
+      overflow-x: auto;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+    }
+
+    table {
+      width: 100%;
+      min-width: 620px;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th,
+    td {
+      padding: 14px 18px;
+      border-bottom: 1px solid hsl(var(--border));
+      text-align: right;
+    }
+
+    th:first-child,
+    td:first-child { text-align: left; }
+
+    thead th {
+      background: hsl(var(--surface-1));
+      color: hsl(var(--muted-foreground));
+      font-size: 0.6875rem;
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    tbody tr:last-child td { border-bottom: 0; }
+
+    .note {
+      margin-top: 18px;
+      padding: 16px 18px;
+      border-left: 3px solid hsl(var(--brand));
+      background: hsl(var(--card));
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+      line-height: var(--leading-relaxed);
+    }
+
+    .note p { margin: 0; }
+
+    .note p + p { margin-top: 8px; }
+
+    footer {
+      border-top: 1px solid hsl(var(--border));
+      background: hsl(var(--card));
+    }
+
+    .footer-inner {
+      display: flex;
+      min-height: 72px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+    }
+
+    .footer-inner p { margin: 0; }
+
+    @media (max-width: 640px) {
+      .shell { width: min(100% - 32px, 900px); }
+      .topbar-inner { align-items: flex-start; flex-direction: column; gap: 8px; padding: 16px 0; }
+      main { padding: 44px 0 52px; }
+      .summary-grid { grid-template-columns: 1fr; }
+      .footer-inner { align-items: flex-start; flex-direction: column; gap: 6px; padding: 18px 0; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand-lockup" href="../../index.html" aria-label="Felan AI benchmark results">
+        <img src="../../assets/felan/felan-logo.svg" alt="">
+        <span>Felan AI</span>
+      </a>
+      <a class="back-link" href="../../index.html">← All Extension Results</a>
+    </div>
+  </header>
+
+  <main class="shell">
+    <header>
+      <p class="overline">Extension Benchmark</p>
+      <h1>Subagents</h1>
+      <p class="lede">Descendant-inclusive cost for the selected three-attempt benchmark.</p>
+    </header>
+
+    <div class="summary-grid" aria-label="Subagents benchmark summary">
+      <article class="metric-card">
+        <span class="metric-label">Cost vs baseline</span>
+        <strong class="metric-value positive">23.7% lower*</strong>
+        <span class="metric-context">$1.2857 baseline → $0.9811 candidate median</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Quality vs baseline</span>
+        <strong class="metric-value">100%</strong>
+        <span class="metric-context">3 of 3 candidate attempts passed</span>
+      </article>
+    </div>
+
+    <section aria-labelledby="attempts-heading">
+      <h2 id="attempts-heading">Recalculated Candidate Attempts</h2>
+      <div class="table-card">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Attempt</th>
+              <th scope="col">Root cost</th>
+              <th scope="col">Child cost</th>
+              <th scope="col">Recalculated cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td>$0.94187900</td><td>$0.03924784</td><td>$0.98112684</td></tr>
+            <tr><td>2</td><td>$1.28467700</td><td>$0.12250892</td><td>$1.40718592</td></tr>
+            <tr><td>3</td><td>$0.86932100</td><td>$0.05614616</td><td>$0.92546716</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <aside class="note" aria-label="Recalculation method">
+        <p><strong>* Recalculated result.</strong> The native report counted only each parent session. This result adds the billed cost of all nine child sessions to their corresponding parent runs before taking the candidate median.</p>
+        <p><a href="../../sources/provenance/subagents-cost-recalculation.json">View cost evidence</a></p>
+      </aside>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell footer-inner">
+      <p>© 2026 Felan</p>
+      <a href="../../index.html">Back to Extension Results</a>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Inherited-model session compaction</title><style>
+:root {
+  color-scheme: light;
+  --ink: #20232d;
+  --muted: #687083;
+  --rule: #dfe2e7;
+  --subtle: #f7f7f6;
+  --track: #e8eaee;
+  --positive: #21764f;
+  --positive-fill: #5fc98a;
+  --negative: #b33a2b;
+  --negative-fill: #ef8673;
+  --warning: #8a5d00;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: #fff; color: var(--ink); font: 14px/1.45 system-ui, -apple-system, sans-serif; }
+main { max-width: 1140px; margin: 0 auto; padding: 52px 24px 72px; }
+a { color: inherit; }
+h1 { margin: 0; font-size: 36px; letter-spacing: -.035em; }
+h2 { margin: 0 0 14px; font-size: 19px; }
+.back { display: inline-block; margin-bottom: 28px; color: var(--muted); text-decoration: none; }
+.back:hover { color: var(--ink); }
+.index > header { margin-bottom: 24px; }
+.detail-header { margin-bottom: 34px; }
+.objective-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: -12px 0 28px; }
+.objective-card { display: grid; gap: 3px; padding: 13px; border: 1px solid var(--rule); background: var(--subtle); }
+.objective-card span, .objective-card small { color: var(--muted); font-size: 11px; }
+.objective-card b { font-size: 20px; }
+.pair { margin: 5px 0 0; color: var(--muted); font: 12px ui-monospace, monospace; }
+.result-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; margin-top: 20px; color: var(--muted); }
+.result-stat { display: inline-flex; align-items: baseline; gap: 7px; white-space: nowrap; }
+.result-stat strong { color: var(--ink); font-size: 16px; }
+.result-stat:first-child strong { font-size: 26px; }
+.result-line .change-value.positive { color: var(--positive); }
+.result-line .change-value.negative { color: var(--negative); }
+.result-line .change-value.neutral { color: var(--muted); }
+.separator { margin: 0 3px; color: #a2a7b0; }
+.status-text { flex: 0 0 auto; padding: 1px 6px; border: 1px solid var(--rule); border-radius: 999px; color: var(--muted); font-size: 10px; }
+.status-text.bad { border-color: #edc2bc; background: #fff5f3; color: var(--negative); }
+.benchmark-list { border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.benchmark-columns, .benchmark-row { display: grid; grid-template-columns: minmax(230px, 1.35fr) minmax(280px, 2fr) 90px minmax(180px, .9fr); gap: 18px; align-items: center; }
+.benchmark-columns { padding: 10px 14px; color: var(--muted); border-bottom: 1px solid var(--rule); font: 600 10px ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.change-heading { grid-column: 2 / 4; }
+.benchmark-row { min-height: 72px; padding: 13px 14px; border-bottom: 1px solid var(--rule); }
+.benchmark-row:last-child { border-bottom: 0; }
+.benchmark-name { min-width: 0; }
+.benchmark-name > a { display: block; overflow: hidden; font-weight: 650; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.benchmark-name > a:hover { text-decoration: underline; }
+.benchmark-meta { display: flex; gap: 6px; align-items: center; min-width: 0; color: var(--muted); font: 11px ui-monospace, monospace; }
+.benchmark-meta > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.change-chart { position: relative; height: 24px; }
+.change-track { position: absolute; inset: 11px 0 auto; height: 2px; background: var(--track); }
+.change-bar { position: absolute; top: 7px; left: var(--bar-left); width: max(2px, var(--bar-width)); height: 10px; background: var(--positive-fill); }
+.change-chart.negative .change-bar { background: var(--negative-fill); }
+.change-chart.neutral .change-bar { background: var(--muted); }
+.change-range { position: absolute; top: 3px; left: var(--range-left); width: max(1px, var(--range-width)); height: 18px; border-left: 1px solid #596170; border-right: 1px solid #596170; }
+.change-range::after { content: ""; position: absolute; top: 8px; left: 0; width: 100%; border-top: 1px solid #596170; }
+.change-chart.unavailable { display: flex; align-items: center; color: var(--muted); }
+.change-value { font-variant-numeric: tabular-nums; }
+.objective { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+.quality-warning { margin: 16px 0 0; color: var(--negative); font-size: 12px; }
+.change-value.positive { color: var(--positive); }
+.change-value.negative { color: var(--negative); }
+.change-value.neutral { color: var(--muted); }
+.secondary-outcome { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.secondary-outcome.positive { color: var(--positive); }
+.secondary-outcome.negative { color: var(--negative); }
+.secondary-outcome.neutral { color: var(--warning); }
+.secondary-outcome.muted { color: var(--muted); }
+.data-section { margin-top: 0; padding: 26px 0; border-top: 1px solid var(--rule); }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 10px 8px; border-bottom: 1px solid var(--rule); text-align: left; }
+thead th { color: var(--muted); font: 600 10px ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+tbody th { font-weight: 600; }
+.metric-table { overflow-x: auto; }
+.metric-table table { min-width: 620px; }
+.metric-table th:first-child { width: 28%; }
+.metric-table th, .metric-table td { vertical-align: top; }
+.arm-heading { display: grid; gap: 2px; overflow-wrap: anywhere; }
+.arm-heading small { color: var(--muted); font: 500 10px/1.35 system-ui, -apple-system, sans-serif; letter-spacing: 0; text-transform: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.test-list { overflow-x: auto; border-top: 1px solid var(--rule); }
+.test-columns, .test-summary, .attempt-row { display: grid; grid-template-columns: minmax(250px, 2fr) repeat(3, minmax(125px, 1fr)); gap: 16px; align-items: center; min-width: 720px; }
+.test-columns { padding: 10px 12px; color: var(--muted); border-bottom: 1px solid var(--rule); font: 600 10px ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.test-block { min-width: 720px; border-bottom: 1px solid var(--rule); }
+.test-block:last-child { border-bottom: 0; }
+.test-summary { padding: 12px; cursor: pointer; list-style: none; }
+.test-summary::-webkit-details-marker { display: none; }
+.test-summary:hover { background: var(--subtle); }
+.test-summary:focus-visible { outline: 2px solid #555d6c; outline-offset: -2px; }
+.test-name { min-width: 0; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.test-name::before { content: "›"; display: inline-block; width: 18px; color: var(--muted); transform-origin: 45% 50%; }
+.test-block[open] .test-name::before { transform: rotate(90deg); }
+.quality { display: block; margin-top: 3px; font: 500 10px ui-monospace, monospace; }
+.quality.ok { color: var(--positive); }
+.quality.bad { color: var(--negative); }
+.quality.muted { color: var(--muted); }
+.attempt-list { background: var(--subtle); }
+.attempt-row { padding: 9px 12px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 12px; }
+.attempt-row > span:first-child { padding-left: 18px; }
+.empty-list { margin: 0; padding: 18px 12px; color: var(--muted); }
+@media (max-width: 900px) {
+  .benchmark-columns { display: none; }
+  .benchmark-row { grid-template-columns: 82px 1fr; gap: 10px; min-height: 108px; }
+  .benchmark-name { grid-column: 1 / 3; }
+  .change-chart { grid-column: 1 / 3; }
+  .secondary-outcome { justify-self: end; text-align: right; }
+}
+@media (max-width: 760px) {
+  main { padding: 30px 14px 56px; }
+  h1 { font-size: 31px; }
+}
+</style></head><body><main><a class="back" href="../../index.html">← Benchmarks</a><header class="detail-header"><h1>Inherited-model session compaction</h1><p class="pair">felan-inherit-compaction vs felan-no-session-compaction</p><p class="objective">Cost · minimize · Ratio of reduced sums · lower is better</p><div class="result-line"><span class="result-stat"><strong class="change-value positive" aria-label="Aggregate outcome +45.2%; favorable">+45.2%</strong><span>primary outcome · Ratio of reduced sums</span></span><span class="separator">·</span><span class="result-stat"><strong>+45.2% to +45.2%</strong><span>Case range (macro mean)</span></span></div></header><section class="objective-grid"><div class="objective-card"><strong>Cost</strong><span>primary · minimize · Ratio of reduced sums</span><b class="change-value positive" aria-label="Cost outcome +45.2%; favorable">+45.2%</b><small>Aggregate values: baseline $0.4955; candidate $0.2713 · case mean +45.2%; Case range (macro mean) +45.2% to +45.2%</small></div><div class="objective-card"><strong>Prompt tokens</strong><span>secondary · minimize · Ratio of reduced sums</span><b class="change-value positive" aria-label="Prompt tokens outcome +52.1%; favorable">+52.1%</b><small>Aggregate values: baseline 83,304 tokens; candidate 39,891 tokens · case mean +52.1%; Case range (macro mean) +52.1% to +52.1%</small></div></section><section class="data-section"><h2>Metrics</h2><p class="objective metric-note">Arm values remain macro means across cases. The objective headline uses the ratio of reduced sums after per-case median trial reduction.</p><div class="metric-table"><table><caption class="sr-only">Benchmark metrics by arm</caption><thead><tr><th scope="col">Metric</th><th scope="col"><span class="arm-heading">felan-no-session-compaction<small>baseline · 3/3 runs · 2/3 passed; 1 failed · verifier</small></span></th><th scope="col"><span class="arm-heading">felan-inherit-compaction<small>candidate · 3/3 runs · 3/3 passed</small></span></th><th scope="col">Delta</th></tr></thead><tbody><tr><th scope="row">Cost</th><td>$0.4955</td><td>$0.2713</td><td>-$0.2242</td></tr><tr><th scope="row">Prompt tokens</th><td>83,304 tokens</td><td>39,891 tokens</td><td>-43,413 tokens</td></tr><tr><th scope="row">quality.passRate</th><td>1</td><td>1</td><td>0</td></tr><tr><th scope="row">Duration</th><td>62095</td><td>59720</td><td>-2375</td></tr><tr><th scope="row">duration.stepsMs</th><td>60792</td><td>58731</td><td>-2061</td></tr><tr><th scope="row">Uncached input tokens</th><td>83,261 tokens</td><td>39,856 tokens</td><td>-43,405 tokens</td></tr><tr><th scope="row">Cache-read input tokens</th><td>0 tokens</td><td>0 tokens</td><td>0 tokens</td></tr><tr><th scope="row">Cache-write input tokens</th><td>0 tokens</td><td>0 tokens</td><td>0 tokens</td></tr><tr><th scope="row">Output tokens</th><td>2,633 tokens</td><td>2,401 tokens</td><td>-232 tokens</td></tr><tr><th scope="row">Requests</th><td>2</td><td>2</td><td>0</td></tr></tbody></table></div></section><section class="data-section"><h2>Tests</h2><div class="test-list"><div class="test-columns"><span>Test</span><span>Baseline (Median trials; Ratio of reduced sums)</span><span>Candidate (Median trials; Ratio of reduced sums)</span><span>vs baseline</span></div><details class="test-block"><summary class="test-summary" aria-label="session-compaction-continuation: baseline $0.4955, 2/3 passed; 1 failed · verifier; candidate $0.2713, 3/3 passed; outcome +45.2%, favorable"><span class="test-name">session-compaction-continuation</span><span>$0.4955<small class="quality bad">2/3 passed; 1 failed · verifier</small></span><span>$0.2713<small class="quality ok">3/3 passed</small></span><span class="change-value positive">+45.2%</span></summary><div class="attempt-list"><div class="attempt-row"><span>Attempt 1</span><span>$0.4951<small class="quality bad">Failed · verifier</small></span><span>$0.2708<small class="quality ok">Passed</small></span><span class="change-value positive" aria-label="Outcome +45.3%; favorable">+45.3%</span></div><div class="attempt-row"><span>Attempt 2</span><span>$0.4955<small class="quality ok">Passed</small></span><span>$0.2713<small class="quality ok">Passed</small></span><span class="change-value positive" aria-label="Outcome +45.2%; favorable">+45.2%</span></div><div class="attempt-row"><span>Attempt 3</span><span>$0.5020<small class="quality ok">Passed</small></span><span>$0.2807<small class="quality ok">Passed</small></span><span class="change-value positive" aria-label="Outcome +44.1%; favorable">+44.1%</span></div></div></details></div></section></main></body></html>

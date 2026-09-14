@@ -1,0 +1,42 @@
+id: markitdown-document-configuration
+suite: markitdown-cost
+description: Compare a configuration task whose complete requirements are stored in DOCX.
+workspace:
+  fixture: fixtures/markitdown/v1/source
+  setup:
+    - command: markitdown
+      args: [docs/orion-service-brief.docx]
+      timeoutMs: 60000
+      network:
+        mode: none
+agents:
+  include: [felan-no-markitdown, felan-markitdown]
+prompt: |
+  Read `docs/orion-service-brief.docx` and implement its runtime configuration
+  task exactly. Keep the change limited to the requested configuration file.
+  Verify the resulting JSON before finishing.
+assert:
+  - id: converted-requirements-read
+    type: toolCalled
+    name: read
+    min: 1
+    argsContain: [docs/orion-service-brief.docx]
+    resultContains: ["<markitdown_conversion_diagnostic", docs/orion-service-brief.docx]
+    isError: false
+    when:
+      agent: felan-markitdown
+  - type: workspaceDiff
+    addedFiles: [config/runtime.json]
+    changedFiles: [config/runtime.json]
+    deletedFiles: []
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /workspace
+  assetsDir: cases/markitdown/configuration/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.txt
+  rewardFormat: text
+  timeoutMs: 30000
+  network:
+    mode: none

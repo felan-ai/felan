@@ -15,10 +15,10 @@ target is **cost per verified task**:
 3. compare total cost across the attempts needed to obtain a verified result;
 4. use token counts and latency to explain the outcome, not replace it.
 
-The public [harness-bench](https://github.com/felan-ai/harness-bench) repository
-contains the reproducible evaluation definitions. Published product claims need
-representative repeated results; a single passing comparison is case evidence,
-not a universal savings claim.
+The extension evaluations in [`evals/`](../../evals/README.md) contain the
+reproducible evaluation definitions. Published product claims need representative
+repeated results; a single passing comparison is case evidence, not a universal
+savings claim.
 
 ## Where Felan Code reduces waste
 

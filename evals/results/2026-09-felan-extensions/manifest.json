@@ -1,0 +1,384 @@
+{
+  "schemaVersion": 1,
+  "studyId": "felan-extensions-2026-09",
+  "status": "amended-qualified-evidence",
+  "createdAt": "2026-09-04T12:02:05Z",
+  "repository": {
+    "commit": "f7530cac88fb0d86e95bb713040d66df6abcadd3",
+    "cleanBeforeFreeze": true,
+    "configSha256": "7a847181e54b618d92aa672bf7a5a6c29eceecacda0af7c4600ddbdfd600c170",
+    "configFrozenRelativePath": "sources/provenance/project/felan-extension-evals.yaml",
+    "activeConfigRelativePath": "felan-extension-evals.yaml",
+    "configRelativePathAtFreeze": "harness-evals.yaml"
+  },
+  "frameworkAtFreeze": {
+    "dependencySpec": "^0.2.15",
+    "localLinkActive": true,
+    "linkedPackageVersion": "0.2.13",
+    "linkedGitCommit": "d5aaab2afc5f9536a86bbf8ffefd67def1c5c002"
+  },
+  "canonicalFiles": [
+    "methodology.html",
+    "README-snippet.md",
+    "index.html",
+    "results.json",
+    "results.csv",
+    "manifest.json",
+    "SHA256SUMS"
+  ],
+  "sourcePolicy": {
+    "sourceCopies": "Selected batch manifest, redacted source evidence, frozen configuration, aggregate configuration, reverification manifests, and recalculation evidence are preserved under sources/; duplicate framework report copies are omitted.",
+    "excludedSensitiveArtifacts": [
+      "credentials",
+      "auth stores",
+      "model stores",
+      "raw workspaces",
+      "full transcripts",
+      "full session JSONL"
+    ],
+    "subagentsCostProjection": "Cost-only descendant aggregates and raw source hashes are retained without conversation content."
+  },
+  "primarySelections": [
+    {
+      "benchmarkId": "subagents",
+      "selectedBatchId": "20260903-052334-7809",
+      "sourceBatchId": "20260903-052334-7809",
+      "reverificationId": null,
+      "evidenceType": "recalculated-direct",
+      "report": "benchmarks/subagents/results.html",
+      "publishedOutcomes": {
+        "quality": "available",
+        "cost": "recalculated"
+      },
+      "recalculationEvidence": "sources/provenance/subagents-cost-recalculation.json"
+    },
+    {
+      "benchmarkId": "markitdown-cost",
+      "selectedBatchId": "20260903-045947-5857",
+      "sourceBatchId": "20260902-112808-33e8",
+      "reverificationId": "20260903-045947-56b5",
+      "evidenceType": "offline-reverification",
+      "report": "benchmarks/markitdown-cost/results.json"
+    },
+    {
+      "benchmarkId": "output-style-concise",
+      "selectedBatchId": "20260903-045947-ba0e",
+      "sourceBatchId": "20260902-121757-89d1",
+      "reverificationId": "20260903-045947-56b5",
+      "evidenceType": "offline-reverification",
+      "report": "benchmarks/output-style-concise/results.json"
+    },
+    {
+      "benchmarkId": "prewalk",
+      "selectedBatchId": "20260903-044517-8452",
+      "sourceBatchId": "20260902-121757-b16d",
+      "reverificationId": "20260903-044517-d1f1",
+      "evidenceType": "offline-reverification",
+      "report": "benchmarks/prewalk/results.json"
+    },
+    {
+      "benchmarkId": "rtk",
+      "selectedBatchId": "20260903-045947-e11d",
+      "sourceBatchId": "20260902-121847-5fa4",
+      "reverificationId": "20260903-045947-56b5",
+      "evidenceType": "offline-reverification",
+      "report": "benchmarks/rtk/results.json"
+    },
+    {
+      "benchmarkId": "codebase-memory",
+      "selectedBatchId": "20260908-090907-5a66,20260908-114759-951e,20260909-123711-ff11",
+      "sourceBatchId": "20260908-090907-5a66,20260908-114759-951e,20260909-123711-ff11",
+      "reverificationId": null,
+      "evidenceType": "derived-local-case-batches",
+      "report": "benchmarks/codebase-memory/results.json",
+      "evidence": "sources/provenance/codebase-memory.json",
+      "publicationScope": {
+        "cases": 3,
+        "runs": 18,
+        "trialsPerArmPerCase": 3
+      }
+    },
+    {
+      "benchmarkId": "session-compaction",
+      "selectedBatchId": "20260911-154148-3bc0",
+      "sourceBatchId": "20260911-154148-3bc0",
+      "reverificationId": null,
+      "evidenceType": "direct-local-pre-release",
+      "report": "benchmarks/session-compaction/results.html",
+      "publishedOutcomes": {
+        "quality": "candidate-gate-passed",
+        "cost": "available"
+      },
+      "evidence": "sources/provenance/session-compaction.json"
+    }
+  ],
+  "knownLimitations": [
+    "Subagents cost is a documented recalculation that adds billed child-session usage to the native parent-session totals.",
+    "Headline resource outcomes use ratioOfReducedSums: median trial value within each case, then a sum across cases. Macro-mean case gains and ranges remain diagnostics.",
+    "The Codebase Memory result covers all 18 off and on attempts across three cases from three separately launched --case batches on Felan 0.23.2; runs carry no benchmark stamp and figures are recomputed from recorded run metrics.",
+    "RTK candidate aggregate quality is 83.3% (5/6); its detailed framework report also retains the reducer-derived arm value.",
+    "Detailed benchmark CSV attempt rows omit the final empty column; the files remain parseable and the canonical top-level results.csv is rectangular.",
+    "Session Compaction is qualified local pre-release audit evidence: the candidate passed 3/3, the native baseline passed 2/3, and the later npm 0.1.2 artifact is not byte-identical to the benchmarked local artifact."
+  ],
+  "sourceFiles": [
+    {
+      "path": "sources/provenance/aggregate-gain-recalculation.json",
+      "sha256": "b88b3a512f5251920d23ae9a9071300eedae6c75a2318c4d24d425602d2494dd",
+      "bytes": 30423,
+      "preservation": "derived-aggregate-recalculation"
+    },
+    {
+      "path": "sources/provenance/batches/20260902-112808-33e8.json",
+      "sha256": "bfea0be5ec9eeae3f81153c4ec137e7f3263f655270f2d8ea0253b6d048b2d0b",
+      "bytes": 2577,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260902-121757-89d1.json",
+      "sha256": "4a5f0b6452494658300ac3f6b5ca96f7005bc6582ebaf0240f2a74d97466bc85",
+      "bytes": 1938,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260902-121757-b16d.json",
+      "sha256": "25a42a3c26ea99b26e24f06b54e23ca0be77777ee8d1f5503597fbfa7225604a",
+      "bytes": 1417,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260902-121847-5fa4.json",
+      "sha256": "9503c424ae9d416ae825a971358391d1bb121c7811b296f64f6bced9f87b0635",
+      "bytes": 2001,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260903-044517-8452.json",
+      "sha256": "55ca33a4678dd8050dca5238d46b2094f2ae87e657e64cb6833ef41ab458c2bb",
+      "bytes": 1494,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260903-045947-5857.json",
+      "sha256": "778ac99eb732f01ff9a7aa18c31a8f473178a0cfb3f986aee18c1eccc224f897",
+      "bytes": 2778,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260903-045947-ba0e.json",
+      "sha256": "da5e302fb54156b8e36ea19ea3d8ba137aa455273248e7a7279d66524f66656b",
+      "bytes": 2089,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260903-045947-e11d.json",
+      "sha256": "078add0aa58e9748011610e86968f3b7ae9cafad9c7c4ebb34155b23808bcc74",
+      "bytes": 1630,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260903-052334-7809.json",
+      "sha256": "9c59e7c727c842d2124eb95fe5d5a5f3616124bb7e571d5a1d1026b8c52f3c2d",
+      "bytes": 1122,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260908-090907-5a66.json",
+      "sha256": "66e51e4680db911c4b3491c9ee3d83bd45d37478cd531f930cd5328a46f82fff",
+      "bytes": 1761,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260908-114759-951e.json",
+      "sha256": "e97a03d1c0f3ebafe76e7c47ee0f9665e0bb856cb4b7d051d4411f27bcf49600",
+      "bytes": 1761,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260909-123711-ff11.json",
+      "sha256": "49694845b687fab6c6ebe4612539483fcb89553efe03773937df6ea1e3f34014",
+      "bytes": 1735,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/batches/20260911-154148-3bc0.json",
+      "sha256": "b89155d2a0367a94e0addf35fed66f8e10192027a5db15f2b7efbc94ba55a261",
+      "bytes": 1259,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/codebase-memory.json",
+      "sha256": "d712f29701196491246c803766c8f3a482e64236b4e3798caf0d235cceb1ac11",
+      "bytes": 48129,
+      "preservation": "derived-published-evidence"
+    },
+    {
+      "path": "sources/provenance/project/felan-extension-evals-aggregate.yaml",
+      "sha256": "dd0016a08e30255826cbf724d4394d1a4a5855828e630a629035610ebb333ca9",
+      "bytes": 25022,
+      "preservation": "derived-aggregate-config"
+    },
+    {
+      "path": "sources/provenance/project/felan-extension-evals-session-compaction.yaml",
+      "sha256": "fb0207eb3e55358f36608b1970cb1fcca6c91ecc4e3aa876ed8f3050f4df5411",
+      "bytes": 32177,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/project/felan-extension-evals.yaml",
+      "sha256": "7a847181e54b618d92aa672bf7a5a6c29eceecacda0af7c4600ddbdfd600c170",
+      "bytes": 24724,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/reverifications/20260903-044517-d1f1.json",
+      "sha256": "1d70c174e8a4c0e033bcc842f3d79f32394e73df44ce44d02f385bee33ebfa24",
+      "bytes": 120420,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/reverifications/20260903-045947-56b5.json",
+      "sha256": "7909a852d47d94eefdf18fd83f8b7f8efc547310efd4c92423e5f7ad266d93c3",
+      "bytes": 88804,
+      "preservation": "byte-preserved-copy"
+    },
+    {
+      "path": "sources/provenance/selected-evidence.json",
+      "sha256": "7069c231495884bd5e5a8d00f08bc7535d87e7ba7c3f0c97b809eda05550f8f3",
+      "bytes": 34264,
+      "preservation": "derived-provenance-index"
+    },
+    {
+      "path": "sources/provenance/session-compaction.json",
+      "sha256": "7c3c54a536b0b0fc0bc1cebfb2f0ae8d631a08f215d6d5bb065d24b5e9a70ba1",
+      "bytes": 28863,
+      "preservation": "derived-published-evidence"
+    },
+    {
+      "path": "sources/provenance/subagents-cost-recalculation.json",
+      "sha256": "711b3265612210842bbdda9ff549a0de663d9693a8e4ef95006250b7dab600e3",
+      "bytes": 7742,
+      "preservation": "derived-cost-recalculation"
+    }
+  ],
+  "presentationAnnotations": [
+    {
+      "benchmarkId": "rtk",
+      "scope": "Quality aggregation disclosure",
+      "reason": "Candidate passed 5/6 attempts while the reducer-derived arm value is 1.",
+      "report": "benchmarks/rtk/results.json"
+    },
+    {
+      "benchmarkId": "subagents",
+      "scope": "Descendant-inclusive cost detail",
+      "reason": "The native report omits child-session cost.",
+      "report": "benchmarks/subagents/results.html"
+    },
+    {
+      "benchmarkId": "all-comparable",
+      "scope": "Headline aggregation",
+      "reason": "Primary and secondary additive resource outcomes use the ratio of median-reduced case sums; macro case gains remain diagnostics.",
+      "evidence": "sources/provenance/aggregate-gain-recalculation.json"
+    },
+    {
+      "benchmarkId": "codebase-memory",
+      "scope": "Published evidence scope",
+      "reason": "The current result covers all 18 off and on attempts across three cases on Felan 0.23.2; the enabled arm ran the curated tool surface. The runs carry no benchmark stamp, so figures are recomputed from recorded run metrics.",
+      "report": "benchmarks/codebase-memory/results.html"
+    },
+    {
+      "benchmarkId": "session-compaction",
+      "scope": "Qualified local pre-release evidence",
+      "reason": "Candidate passed its quality gate 3/3; the native baseline passed 2/3. The benchmarked local 0.1.2 artifact is not byte-identical to the later npm 0.1.2 artifact.",
+      "report": "benchmarks/session-compaction/results.html",
+      "evidence": "sources/provenance/session-compaction.json"
+    }
+  ],
+  "designSystem": {
+    "name": "Felan AI Design System",
+    "sourceCommit": "7b26e2675debe55717725f11c32f0772eb3b4b7b",
+    "integration": "Copied canonical styles, tokens, and logo into a report-local asset directory.",
+    "files": [
+      {
+        "packagedPath": "assets/felan/styles.css",
+        "sha256": "632c0d7f22e19646b27a0ccc164ec6e8bdd37cfa0ae65b37bf9a4d3b5682a141",
+        "sourcePathFromProjectRoot": "../design-system/project/styles.css"
+      },
+      {
+        "packagedPath": "assets/felan/colors_and_type.css",
+        "sha256": "7cfc5b8b934bbe33a7f8037b8caeba8b14d2867e498a2f994b329dfa5dd25c8e",
+        "sourcePathFromProjectRoot": "../design-system/project/colors_and_type.css"
+      },
+      {
+        "packagedPath": "assets/felan/felan-logo.svg",
+        "sha256": "7a8eb8b8fb6ea8298428e3e0e4cfcc53b406a17d2ed6332d7fefcba92edcb6bf",
+        "sourcePathFromProjectRoot": "../design-system/project/assets/felan-logo.svg"
+      }
+    ],
+    "sourceRepositoryPathFromProjectRoot": "../design-system"
+  },
+  "manualCorrections": [
+    {
+      "benchmarkId": "subagents",
+      "scope": "Candidate cost only",
+      "method": "Add child assistant billed cost to each parent run before benchmark aggregation.",
+      "evidence": "sources/provenance/subagents-cost-recalculation.json",
+      "descendantSessions": 9,
+      "descendantAssistantRequests": 75
+    }
+  ],
+  "readmeSnippet": {
+    "path": "README-snippet.md",
+    "target": "felan-ai/felan README",
+    "linkBase": "https://felan-ai.github.io/harness-bench/results/2026-09-felan-extensions/",
+    "requires": "GitHub Pages publishing the harness-bench main branch from the repository root"
+  },
+  "publicationAggregation": {
+    "mode": "ratioOfReducedSums",
+    "trials": "median",
+    "evidence": "sources/provenance/aggregate-gain-recalculation.json",
+    "activeConfig": "sources/provenance/project/felan-extension-evals-aggregate.yaml",
+    "legacyDiagnostics": "Macro mean case-level gains and ranges remain in detailed report JSON.",
+    "scope": "Seven primary benchmark comparisons evaluated against candidate quality gates; Session Compaction retains separate baseline and local pre-release disclosures."
+  },
+  "derivedReports": [
+    "benchmarks/markitdown-cost/results.json",
+    "benchmarks/markitdown-cost/results.csv",
+    "benchmarks/markitdown-cost/results.html",
+    "benchmarks/output-style-concise/results.json",
+    "benchmarks/output-style-concise/results.csv",
+    "benchmarks/output-style-concise/results.html",
+    "benchmarks/prewalk/results.json",
+    "benchmarks/prewalk/results.csv",
+    "benchmarks/prewalk/results.html",
+    "benchmarks/rtk/results.json",
+    "benchmarks/rtk/results.csv",
+    "benchmarks/rtk/results.html",
+    "benchmarks/codebase-memory/results.json",
+    "benchmarks/codebase-memory/results.csv",
+    "benchmarks/codebase-memory/results.html",
+    "benchmarks/session-compaction/results.json",
+    "benchmarks/session-compaction/results.csv",
+    "benchmarks/session-compaction/results.html"
+  ],
+  "amendments": [
+    {
+      "date": "2026-09-11",
+      "benchmarkId": "codebase-memory",
+      "summary": "Replaced the 2026-09-04 Codebase Memory evidence (batch 20260904-124556-6ffe, Felan 0.21.11, 5.2% lower cost) with three 2026-09-08/09 case batches on Felan 0.23.2 / ext-codebase-memory 0.3.1 (27.8% lower cost). Same three case definitions. Portfolio aggregate moved from 36.6% to 41.8%.",
+      "batches": [
+        "20260908-090907-5a66",
+        "20260908-114759-951e",
+        "20260909-123711-ff11"
+      ]
+    },
+    {
+      "date": "2026-09-13",
+      "benchmarkId": "session-compaction",
+      "summary": "Added the completed inherited-model session-compaction batch. The candidate passed its quality gate 3/3 and the native baseline passed 2/3. Recalculated the seven-comparison portfolio while preserving the local pre-release package qualification.",
+      "batches": [
+        "20260911-154148-3bc0"
+      ]
+    }
+  ],
+  "amendedAt": "2026-09-13"
+}

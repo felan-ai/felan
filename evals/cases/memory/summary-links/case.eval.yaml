@@ -1,0 +1,74 @@
+id: memory-summary-links
+suite: memory-regression
+description: Restore safe reading and projection of memory artifacts whose summaries contain links.
+timeoutMs: 1800000
+workspace:
+  git:
+    repository: https://github.com/felan-ai/felan.git
+    commit: 0b461533f86c4d58521cdd7da7d9f298da03b123
+  setup:
+    - command: pnpm
+      args: [install, --frozen-lockfile, --store-dir, /tmp/pnpm-store]
+      timeoutMs: 300000
+      network:
+        mode: default
+    - command: pnpm
+      args: [--filter, '@felan-ai/felan...', build]
+      timeoutMs: 300000
+agents:
+  include:
+    - felan-no-prewalk
+    - felan-prewalk
+prompt: |
+  Restore safe reading and projection of linked memory summaries in Felan.
+
+  Required outcomes:
+
+  - Existing memory whose `summary.md` contains ordinary Markdown links remains
+    readable and projectable even when the artifact is incomplete.
+  - Strict validation for newly published memory continues to enforce required
+    files, provenance, and navigation without relaxing path safety.
+  - Session projections rebase resolvable links in both `summary.md` and
+    `index.md`, preserve anchors and wiki-link syntax, and leave external links
+    unchanged.
+  - Unresolvable, malformed, and traversal-like link targets must never be
+    dereferenced or rebased outside the projection. Safe preservation,
+    sanitization, or rejection is acceptable.
+  - Projection does not mutate the canonical artifact or its fingerprint, and
+    existing source restrictions and session-store behavior remain intact.
+
+  Keep production changes inside `packages/ext-memory/src/` and
+  `apps/tui/src/memory/`. Do not modify tests, documentation, package versions,
+  dependencies, lockfiles, or repository history, and do not create a Git commit.
+  These are acceptance criteria and scope boundaries, not a prescribed
+  implementation plan. Determine the approach from the repository, verify the
+  relevant behavior, and summarize the result.
+assert:
+  - id: prewalk-entered
+    type: toolCalled
+    name: enter_prewalk
+    min: 1
+    isError: false
+    when:
+      agent: felan-prewalk
+  - id: prewalk-disabled
+    type: toolCalled
+    name: enter_prewalk
+    min: 0
+    max: 0
+    when:
+      agent: felan-no-prewalk
+  - id: source-changed
+    type: workspaceDiff
+    minChanged: 1
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /workspace
+  assetsDir: cases/memory/summary-links/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.txt
+  rewardFormat: text
+  timeoutMs: 300000
+  network:
+    mode: none

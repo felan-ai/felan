@@ -1,0 +1,25 @@
+id: output-style-support
+suite: output-style
+description: Compare how response styles answer the same open-ended benchmark question.
+workspace:
+  fixture: fixtures/output-style/v1/source
+agents:
+  include:
+    - felan-no-output-style
+    - felan-concise
+    - felan-explanatory
+    - felan-caveman
+prompt: |
+  A teammate is considering using this benchmark and asks, "What does it
+  actually tell us?" Review the workspace and answer their question. Do not
+  change any files.
+assert:
+  - id: outcome-retained
+    type: contains
+    value: "response"
+  - id: style-retained
+    type: contains
+    value: "style"
+  - id: no-files-edited
+    type: workspaceDiff
+    changedFiles: []

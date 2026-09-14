@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260902-121757-89d1",
+    "startedAt": "2026-09-02T12:17:57.876Z",
+    "label": "felan-no-output-style,felan-concise · 3 cases",
+    "argv": [
+      "run",
+      "--config",
+      "harness-evals.yaml",
+      "--benchmark",
+      "output-style-concise",
+      "--concurrency",
+      "3",
+      "--refresh-managed-image"
+    ],
+    "agents": [
+      "felan-no-output-style",
+      "felan-concise"
+    ],
+    "caseCount": 3,
+    "runCount": 18
+  },
+  "status": "completed",
+  "expectedRunCount": 18,
+  "runIds": [
+    "output-style-planning-felan-no-output-style-2026-09-02T12-17-57-883Z-0",
+    "output-style-planning-felan-no-output-style-2026-09-02T12-17-57-883Z-1",
+    "output-style-planning-felan-no-output-style-2026-09-02T12-17-57-883Z-2",
+    "output-style-planning-felan-concise-2026-09-02T12-19-18-639Z-3",
+    "output-style-planning-felan-concise-2026-09-02T12-19-26-027Z-4",
+    "output-style-planning-felan-concise-2026-09-02T12-19-43-263Z-5",
+    "output-style-review-felan-no-output-style-2026-09-02T12-20-20-004Z-6",
+    "output-style-review-felan-no-output-style-2026-09-02T12-20-30-703Z-7",
+    "output-style-review-felan-no-output-style-2026-09-02T12-20-35-842Z-8",
+    "output-style-review-felan-concise-2026-09-02T12-21-01-439Z-9",
+    "output-style-review-felan-concise-2026-09-02T12-21-22-481Z-10",
+    "output-style-review-felan-concise-2026-09-02T12-21-31-889Z-11",
+    "output-style-support-felan-no-output-style-2026-09-02T12-21-38-366Z-12",
+    "output-style-support-felan-no-output-style-2026-09-02T12-22-05-724Z-13",
+    "output-style-support-felan-no-output-style-2026-09-02T12-22-24-613Z-14",
+    "output-style-support-felan-concise-2026-09-02T12-22-53-474Z-15",
+    "output-style-support-felan-concise-2026-09-02T12-23-06-416Z-16",
+    "output-style-support-felan-concise-2026-09-02T12-23-18-096Z-17"
+  ],
+  "completedAt": "2026-09-02T12:24:13.694Z"
+}

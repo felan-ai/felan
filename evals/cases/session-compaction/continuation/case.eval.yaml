@@ -1,0 +1,53 @@
+id: session-compaction-continuation
+suite: session-compaction
+description: Compare trajectory fidelity after native Pi and Felan default inherited-model compaction of one real coding session.
+timeoutMs: 900000
+workspace:
+  fixture: fixtures/session-compaction/v1/source
+agents:
+  include:
+    - felan-no-session-compaction
+    - felan-inherit-compaction
+prompt: |
+  Continue from this real session at its compaction boundary. The next user
+  request was: "Can you review the changes for overcomplication and
+  over-engineering? Explain how they were tested end to end; if a true
+  black-box end-to-end test was not run, outline exactly how to run one."
+
+  The source checkout is intentionally absent from this fixture. Do not use
+  tools and do not change files. Based only on the preserved trajectory,
+  provide a concise review and handoff that identifies the latest storage
+  decision and the superseded design, summarizes the implemented state and
+  recorded verification, and gives a safe filesystem-publication end-to-end
+  scenario with the expected archive artifacts. Do not invent work or tests.
+assert:
+  - id: no-apply-patch
+    type: toolCalled
+    name: apply_patch
+    min: 0
+    max: 0
+  - id: no-bash
+    type: toolCalled
+    name: bash
+    min: 0
+    max: 0
+  - id: no-exec-command
+    type: toolCalled
+    name: exec_command
+    min: 0
+    max: 0
+  - id: session-persisted
+    type: workspaceDiff
+    changedFiles:
+      - sessions/2026-08-27T10-35-33-058Z_01a042ca-0d42-75eb-aeac-0397822915e2.jsonl
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /workspace
+  assetsDir: cases/session-compaction/continuation/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.json
+  rewardFormat: json
+  timeoutMs: 120000
+  network:
+    mode: none

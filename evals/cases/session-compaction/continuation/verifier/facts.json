@@ -1,0 +1,168 @@
+{
+  "summaryThreshold": 0.75,
+  "continuationThreshold": 0.7,
+  "summaryFacts": [
+    {
+      "id": "archive-goal",
+      "required": true,
+      "sourceEntryIds": ["2a8f520f"],
+      "groups": [
+        ["public.{0,30}(?:results?|benchmark).{0,30}archive", "archive.{0,30}public.{0,30}(?:results?|benchmark)"]
+      ]
+    },
+    {
+      "id": "filesystem-first",
+      "required": true,
+      "sourceEntryIds": ["ff94255a", "cb7f95ba", "0de40c6f"],
+      "groups": [
+        ["file ?system", "filesystem"],
+        ["initial", "first", "only", "backend", "store", "current", "now"]
+      ]
+    },
+    {
+      "id": "aws-s3-superseded",
+      "required": true,
+      "sourceEntryIds": ["06180011", "ff94255a", "cb7f95ba", "0de40c6f", "1d438cf7"],
+      "groups": [
+        ["aws(?: sdk)?", "s3"],
+        ["remov", "defer", "drop", "without", "no longer", "not (?:implement|use|keep)", "filesystem[- ]only"]
+      ]
+    },
+    {
+      "id": "future-cloud-provider",
+      "sourceEntryIds": ["ff94255a", "cb7f95ba"],
+      "groups": [
+        ["supabase", "vercel(?: blob| storage)?"],
+        ["future", "later", "defer", "not (?:yet|now)", "can be added"]
+      ]
+    },
+    {
+      "id": "provider-neutral-contract",
+      "sourceEntryIds": ["cb7f95ba", "8ae1182a"],
+      "groups": [
+        ["provider[- ]neutral", "PublicResultsStore"]
+      ]
+    },
+    {
+      "id": "public-data-boundary",
+      "sourceEntryIds": ["5f6a03c5", "100cc1b9"],
+      "groups": [
+        ["allowlist", "compact.{0,20}(?:summar|projection|manifest)"],
+        ["raw.{0,20}(?:artifact|log)", "credentials?", "detailed run"],
+        ["never", "not", "exclude", "omit", "only"]
+      ]
+    },
+    {
+      "id": "separate-from-live-output",
+      "sourceEntryIds": ["5f6a03c5"],
+      "groups": [
+        ["public.{0,20}archive"],
+        ["live.{0,20}output provider", "output provider"],
+        ["separate", "independent", "not"]
+      ]
+    },
+    {
+      "id": "atomic-batch-state",
+      "sourceEntryIds": ["100cc1b9"],
+      "groups": [
+        ["batch record"],
+        ["atomic", "running.{0,20}completed", "finaliz"]
+      ]
+    },
+    {
+      "id": "publication-work-at-cut",
+      "sourceEntryIds": ["9aaeb155", "89075371"],
+      "groups": [
+        ["publish", "publication"],
+        ["implement", "complete", "orchestrat", "workflow", "next"]
+      ]
+    }
+  ],
+  "continuationFacts": [
+    {
+      "id": "latest-storage-state",
+      "required": true,
+      "sourceEntryIds": ["76be8ab5"],
+      "groups": [
+        ["file ?system", "filesystem"],
+        ["aws(?: sdk)?", "s3"],
+        ["remov", "defer", "drop", "no longer", "without"]
+      ]
+    },
+    {
+      "id": "future-storage-options",
+      "sourceEntryIds": ["76be8ab5"],
+      "groups": [
+        ["supabase", "vercel(?: blob| storage)?"],
+        ["future", "later", "defer", "not (?:yet|now)"]
+      ]
+    },
+    {
+      "id": "publication-cli",
+      "required": true,
+      "sourceEntryIds": ["5dd1813e", "2dae2ec6", "76be8ab5"],
+      "groups": [
+        ["publish"],
+        ["publish-status"]
+      ]
+    },
+    {
+      "id": "public-artifacts",
+      "sourceEntryIds": ["3d492e60", "5dd1813e", "76be8ab5"],
+      "groups": [
+        ["json"],
+        ["csv"],
+        ["html"]
+      ]
+    },
+    {
+      "id": "immutability-and-reclassification",
+      "sourceEntryIds": ["5dd1813e", "76be8ab5"],
+      "groups": [
+        ["immutable"],
+        ["catalog", "status", "reclass"]
+      ]
+    },
+    {
+      "id": "filesystem-safety",
+      "sourceEntryIds": ["3d492e60", "76be8ab5"],
+      "groups": [
+        ["traversal", "symlink", "safe.{0,20}(?:path|key)", "root confinement"]
+      ]
+    },
+    {
+      "id": "recorded-verification",
+      "required": true,
+      "sourceEntryIds": ["889b996b", "76be8ab5"],
+      "groups": [
+        ["129"],
+        ["tests?", "bun test"]
+      ]
+    },
+    {
+      "id": "uncommitted-state",
+      "sourceEntryIds": ["889b996b", "76be8ab5"],
+      "groups": [
+        ["uncommitted", "not committed"]
+      ]
+    },
+    {
+      "id": "black-box-e2e-plan",
+      "required": true,
+      "sourceEntryIds": ["next-user-request"],
+      "groups": [
+        ["end[- ]to[- ]end", "e2e", "black[- ]box"],
+        ["temp", "temporary", "fixture", "isolated"],
+        ["publish"],
+        ["index\\.json", "manifest\\.json", "results\\.html", "results\\.csv", "v1/"]
+      ]
+    },
+    {
+      "id": "complexity-review",
+      "sourceEntryIds": ["next-user-request"],
+      "groups": [
+        ["over[- ]?engineer", "complex", "simplif", "scope"]
+      ]
+    }
+  ]
+}

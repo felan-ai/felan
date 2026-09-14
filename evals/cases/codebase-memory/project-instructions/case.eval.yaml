@@ -1,0 +1,76 @@
+id: cbm-project-instructions
+suite: codebase-memory
+description: Compare Codebase Memory disabled versus enabled while fixing a real historical Felan project-instructions regression.
+timeoutMs: 900000
+workspace:
+  # codebase-memory-mcp refuses to index a root named /workspace, so pin a
+  # realistic project path. This is the agent cwd, the mount target, and the
+  # verifier cwd (src/adapters/felan.ts resolves cwd from containerPath).
+  containerPath: /home/dev/felan
+  git:
+    repository: https://github.com/felan-ai/felan.git
+    commit: 104faa5559029c8be9e8a1eb504d87974a5864e9
+  setup:
+    - command: pnpm
+      args: [install, --frozen-lockfile, --store-dir, /tmp/pnpm-store]
+      timeoutMs: 300000
+      network:
+        mode: default
+agents:
+  include:
+    - felan-cbm-off
+    - felan-cbm-curated
+    - felan-cbm-direct
+    - felan-cbm-single-proxy
+prompt: |
+  Fix Felan's root project-instructions regression.
+
+  A session created for a project currently starts without that project's root
+  instructions. At session creation time, Felan must load at most one
+  instruction file from the session working directory through `AgentRuntime`:
+
+  - prefer `AGENTS.md` when it is readable and non-empty;
+  - use `CLAUDE.md` only when `AGENTS.md` is absent or unreadable;
+  - if the selected file is empty, add no project instructions;
+  - missing, unreadable, and empty instruction files must remain nonfatal; and
+  - do not enable ambient or nested context-file discovery.
+
+  The selected file must appear in the composed system prompt as project
+  instructions before the current-working-directory section. Preserve existing
+  extension, capability, skill, and runtime-tool composition behavior.
+
+  Keep changes inside `packages/agent-core/src`. Do not change tests, package
+  versions, dependencies, lockfiles, or repository history, and do not create a
+  Git commit. Run the Agent Core build and type-check plus the focused session
+  and resource-loader tests before finishing; unrelated host-process integration
+  tests are outside this task. Summarize the implementation and verification.
+assert:
+  - id: source-changed
+    type: workspaceDiff
+    minChanged: 1
+  - id: run-code-used
+    type: toolCalled
+    name: run_code
+    min: 1
+    isError: false
+    resultContains: [toolCallId]
+    when:
+      agent: felan-code-mode
+  - id: run-code-disabled
+    type: toolCalled
+    name: run_code
+    min: 0
+    max: 0
+    when:
+      agent: felan-no-run
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /home/dev/felan
+  assetsDir: cases/codebase-memory/project-instructions/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.txt
+  rewardFormat: text
+  timeoutMs: 300000
+  network:
+    mode: none

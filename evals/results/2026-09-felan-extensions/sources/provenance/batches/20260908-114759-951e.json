@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260908-114759-951e",
+    "startedAt": "2026-09-08T11:47:59.653Z",
+    "label": "felan-cbm-off,felan-cbm-curated,felan-cbm-direct,felan-cbm-single-proxy · 1 case",
+    "argv": [
+      "run",
+      "--config",
+      "felan-extension-evals.yaml",
+      "--case",
+      "cbm-extension-config-scope",
+      "--agents",
+      "felan-cbm-off,felan-cbm-curated,felan-cbm-direct,felan-cbm-single-proxy",
+      "--concurrency",
+      "1",
+      "--attempts",
+      "3"
+    ],
+    "agents": [
+      "felan-cbm-off",
+      "felan-cbm-curated",
+      "felan-cbm-direct",
+      "felan-cbm-single-proxy"
+    ],
+    "caseCount": 1,
+    "runCount": 12
+  },
+  "status": "completed",
+  "expectedRunCount": 12,
+  "runIds": [
+    "cbm-extension-config-scope-felan-cbm-off-2026-09-08T11-47-59-658Z-0",
+    "cbm-extension-config-scope-felan-cbm-off-2026-09-08T12-00-52-571Z-1",
+    "cbm-extension-config-scope-felan-cbm-off-2026-09-08T12-16-18-598Z-2",
+    "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-29-48-122Z-3",
+    "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-42-47-889Z-4",
+    "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-53-07-165Z-5",
+    "cbm-extension-config-scope-felan-cbm-direct-2026-09-08T13-05-59-605Z-6",
+    "cbm-extension-config-scope-felan-cbm-direct-2026-09-08T13-17-45-957Z-7",
+    "cbm-extension-config-scope-felan-cbm-direct-2026-09-08T13-29-17-130Z-8",
+    "cbm-extension-config-scope-felan-cbm-single-proxy-2026-09-08T13-39-52-580Z-9",
+    "cbm-extension-config-scope-felan-cbm-single-proxy-2026-09-08T13-57-29-682Z-10",
+    "cbm-extension-config-scope-felan-cbm-single-proxy-2026-09-08T14-10-36-764Z-11"
+  ],
+  "completedAt": "2026-09-08T14:19:18.470Z"
+}

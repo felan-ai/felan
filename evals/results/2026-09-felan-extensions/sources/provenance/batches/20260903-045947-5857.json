@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260903-045947-5857",
+    "startedAt": "2026-09-03T04:59:47.194Z",
+    "label": "Offline verifier replay · markitdown-cost · source 20260902-112808-33e8",
+    "argv": [
+      "reprocess",
+      "--source",
+      "markitdown-cost=20260902-112808-33e8"
+    ],
+    "agents": [
+      "felan-no-markitdown",
+      "felan-markitdown"
+    ],
+    "caseCount": 4,
+    "runCount": 24
+  },
+  "status": "completed",
+  "expectedRunCount": 24,
+  "runIds": [
+    "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-195Z-0",
+    "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-196Z-1",
+    "markitdown-document-configuration-felan-no-markitdown-reverified-2026-09-03T04-59-47-197Z-2",
+    "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-198Z-3",
+    "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-199Z-4",
+    "markitdown-document-configuration-felan-markitdown-reverified-2026-09-03T04-59-47-200Z-5",
+    "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-201Z-6",
+    "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-202Z-7",
+    "markitdown-docx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-203Z-8",
+    "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-204Z-9",
+    "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-205Z-10",
+    "markitdown-docx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-206Z-11",
+    "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-207Z-12",
+    "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-208Z-13",
+    "markitdown-pptx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-209Z-14",
+    "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-210Z-15",
+    "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-211Z-16",
+    "markitdown-pptx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-212Z-17",
+    "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-213Z-18",
+    "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-214Z-19",
+    "markitdown-xlsx-extraction-felan-no-markitdown-reverified-2026-09-03T04-59-47-215Z-20",
+    "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-216Z-21",
+    "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-217Z-22",
+    "markitdown-xlsx-extraction-felan-markitdown-reverified-2026-09-03T04-59-47-218Z-23"
+  ],
+  "completedAt": "2026-09-03T05:02:11.143Z"
+}

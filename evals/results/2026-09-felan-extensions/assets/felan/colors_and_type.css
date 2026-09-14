@@ -1,0 +1,309 @@
+/* ============================================================
+   Felan AI — Foundations: Colors & Type
+   Source of truth: web/app/globals.css (HSL var system) +
+                   web/tailwind.config.ts (font families)
+
+   Fonts: Geist Sans + Geist Mono (via Google Fonts CDN)
+   The production app uses the `geist` npm package; the
+   Google Fonts equivalent is visually identical.
+
+   Modes: default is LIGHT; add class="dark" on root for DARK.
+   The marketing site actually ships in forced-dark mode — see
+   web/app/page.tsx which wraps the homepage in <div className="dark">.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* ---------- Brand palette (raw) ---------- */
+  --felan-green:      hsl(152 44% 26%); /* @kind color */ /* primary brand */
+  --felan-green-hot:  hsl(150 55% 34%); /* @kind color */ /* hero glow / gradient orb */
+  --felan-green-dark: hsl(152 48% 20%); /* @kind color */
+  --felan-ink:        hsl(20 14% 11%);  /* @kind color */ /* near-black, warm */
+  --felan-paper:      hsl(0 0% 99%);     /* @kind color */ /* warm off-white */
+
+  /* ---------- Core tokens (HSL triplets, Tailwind-compatible) ---------- */
+  /* Backgrounds */
+  --background: 0 0% 99%;  /* @kind color */
+  --foreground: 20 14% 11%; /* @kind color */
+
+  /* Cards & Popovers */
+  --card: 0 0% 100%; /* @kind color */
+  --card-foreground: 20 14% 11%; /* @kind color */
+  --popover: 0 0% 100%; /* @kind color */
+  --popover-foreground: 20 14% 11%; /* @kind color */
+
+  /* Primary — neutral ink for high contrast */
+  --primary: 20 14% 11%; /* @kind color */
+  --primary-foreground: 0 0% 99%; /* @kind color */
+
+  /* Secondary */
+  --secondary: 30 10% 95%; /* @kind color */
+  --secondary-foreground: 20 14% 20%; /* @kind color */
+
+  /* Muted */
+  --muted: 30 10% 95%; /* @kind color */
+  --muted-foreground: 20 6% 44%; /* @kind color */
+
+  /* Accent (shadcn hover) */
+  --accent: 30 10% 95%; /* @kind color */
+  --accent-foreground: 20 14% 11%; /* @kind color */
+
+  /* Brand — the green identity */
+  --brand: 152 44% 26%; /* @kind color */
+  --brand-foreground: 0 0% 100%; /* @kind color */
+
+  /* Destructive */
+  --destructive: 0 84% 60%; /* @kind color */
+  --destructive-foreground: 0 0% 98%; /* @kind color */
+
+  /* Structural */
+  --border: 30 10% 90%; /* @kind color */
+  --input: 30 10% 90%; /* @kind color */
+  --ring: 152 44% 26%; /* @kind color */
+  --radius: 0.5rem; /* @kind radius */
+
+  /* Surface elevation layers (warm neutrals) */
+  --surface-1: 30 8% 97%; /* @kind color */
+  --surface-2: 30 8% 94%; /* @kind color */
+  --surface-3: 30 8% 91%; /* @kind color */
+
+  /* Charts / categorical */
+  --chart-1: 152 44% 26%; /* @kind color */ /* brand green */
+  --chart-2: 180 55% 42%; /* @kind color */ /* teal */
+  --chart-3: 220 65% 50%; /* @kind color */ /* blue */
+  --chart-4: 45 85% 50%;  /* @kind color */ /* amber */
+  --chart-5: 280 60% 55%; /* @kind color */ /* violet */
+
+  /* Status (marketing + product) */
+  --success: 142 71% 45%; /* @kind color */
+  --warning: 38 92% 50%; /* @kind color */
+  --info:    210 90% 55%; /* @kind color */
+
+  /* Sidebar (product app) */
+  --sidebar-background: 30 8% 97%; /* @kind color */
+  --sidebar-foreground: 20 6% 40%; /* @kind color */
+  --sidebar-primary: 152 44% 26%; /* @kind color */
+  --sidebar-primary-foreground: 0 0% 100%; /* @kind color */
+  --sidebar-accent: 30 12% 91%; /* @kind color */
+  --sidebar-accent-foreground: 20 14% 9%; /* @kind color */
+  --sidebar-border: 30 10% 90%; /* @kind color */
+  --sidebar-ring: 152 44% 26%; /* @kind color */
+
+  /* ---------- Typography ---------- */
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Type scale — matches Tailwind defaults used across the app */
+  --text-xs:   0.75rem;  /* @kind font */ /* 12px — micro labels, tags */
+  --text-sm:   0.875rem; /* @kind font */ /* 14px — body small, nav */
+  --text-base: 1rem;     /* @kind font */ /* 16px — body */
+  --text-lg:   1.125rem; /* @kind font */ /* 18px — lead paragraph */
+  --text-xl:   1.25rem;  /* @kind font */ /* 20px — eyebrow/sub-head */
+  --text-2xl:  1.5rem;   /* @kind font */ /* 24px — h3 */
+  --text-3xl:  1.875rem; /* @kind font */ /* 30px — h2 small */
+  --text-4xl:  2.25rem;  /* @kind font */ /* 36px — h2 */
+  --text-5xl:  3rem;     /* @kind font */ /* 48px — h1 mid */
+  --text-6xl:  3.75rem;  /* @kind font */ /* 60px — hero h1 */
+  --text-hero: 4.5rem;   /* @kind font */ /* 72px — landing hero */
+
+  --leading-tight:   1.08; /* @kind font */ /* hero lines */
+  --leading-snug:    1.2;  /* @kind font */
+  --leading-normal:  1.5;  /* @kind font */
+  --leading-relaxed: 1.65; /* @kind font */
+
+  --tracking-tight:  -0.02em; /* @kind font */
+  --tracking-normal: 0;       /* @kind font */
+
+  --weight-regular:  400; /* @kind font */
+  --weight-medium:   500; /* @kind font */
+  --weight-semibold: 600; /* @kind font */
+  --weight-bold:     700; /* @kind font */
+  --weight-extrabold: 800; /* @kind font */
+
+  /* ---------- Elevation & spacing ---------- */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.04);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.10), 0 8px 10px -6px rgb(0 0 0 / 0.06);
+  --shadow-brand: 0 10px 30px -8px hsl(152 44% 26% / 0.35);
+
+  --radius-sm: calc(var(--radius) - 4px);  /* 4px */
+  --radius-md: calc(var(--radius) - 2px);  /* 6px */
+  --radius-lg: var(--radius);              /* 8px */
+  --radius-xl: 0.75rem;                    /* 12px — cards */
+  --radius-2xl: 1rem;                      /* 16px */
+  --radius-full: 9999px;
+
+  /* Signature gradients */
+  --gradient-hero-green: radial-gradient(ellipse, hsla(150,55%,34%,0.20) 0%, transparent 70%); /* @kind other */
+  --gradient-hero-blue:   radial-gradient(ellipse, hsla(220,80%,50%,0.14) 0%, transparent 70%); /* @kind other */
+  --gradient-text-fade:   linear-gradient(to bottom, hsl(0 0% 100%) 0%, hsl(0 0% 100% / 0.7) 100%); /* @kind other */
+  --gradient-divider:     linear-gradient(to right, transparent, hsl(0 0% 100% / 0.08), transparent); /* @kind other */
+}
+
+/* ============================================================
+   DARK MODE (default for marketing homepage)
+   ============================================================ */
+.dark {
+  --background: 20 10% 7%; /* @kind color */ /* warm near-black */
+  --foreground: 30 10% 90%; /* @kind color */
+
+  --card: 20 8% 10%; /* @kind color */
+  --card-foreground: 30 10% 90%; /* @kind color */
+  --popover: 20 8% 10%; /* @kind color */
+  --popover-foreground: 30 10% 90%; /* @kind color */
+
+  --primary: 30 10% 90%; /* @kind color */
+  --primary-foreground: 20 10% 7%; /* @kind color */
+
+  --secondary: 20 8% 15%; /* @kind color */
+  --secondary-foreground: 30 10% 90%; /* @kind color */
+
+  --muted: 20 8% 15%; /* @kind color */
+  --muted-foreground: 20 5% 55%; /* @kind color */
+
+  --accent: 20 8% 15%; /* @kind color */
+  --accent-foreground: 30 10% 90%; /* @kind color */
+
+  --brand: 152 46% 34%; /* @kind color */ /* brighter on dark */
+  --brand-foreground: 0 0% 100%; /* @kind color */
+
+  --destructive: 0 63% 31%; /* @kind color */
+  --destructive-foreground: 0 0% 98%; /* @kind color */
+
+  --border: 20 6% 18%; /* @kind color */
+  --input: 20 6% 18%; /* @kind color */
+  --ring: 152 46% 34%; /* @kind color */
+
+  --surface-1: 20 8% 9%; /* @kind color */
+  --surface-2: 20 8% 12%; /* @kind color */
+  --surface-3: 20 8% 15%; /* @kind color */
+
+  --sidebar-background: 20 8% 9%; /* @kind color */
+  --sidebar-foreground: 20 5% 55%; /* @kind color */
+  --sidebar-primary: 152 46% 34%; /* @kind color */
+  --sidebar-primary-foreground: 0 0% 100%; /* @kind color */
+  --sidebar-accent: 20 8% 16%; /* @kind color */
+  --sidebar-accent-foreground: 0 0% 98%; /* @kind color */
+  --sidebar-border: 20 6% 15%; /* @kind color */
+  --sidebar-ring: 152 46% 34%; /* @kind color */
+}
+
+/* ============================================================
+   SEMANTIC UTILITIES
+   ============================================================ */
+.felan-bg         { background-color: hsl(var(--background)); color: hsl(var(--foreground)); }
+.felan-card       { background-color: hsl(var(--card)); color: hsl(var(--card-foreground)); border: 1px solid hsl(var(--border)); border-radius: var(--radius-xl); }
+.felan-surface-1  { background-color: hsl(var(--surface-1)); }
+.felan-surface-2  { background-color: hsl(var(--surface-2)); }
+.felan-surface-3  { background-color: hsl(var(--surface-3)); }
+
+/* Hero headline treatment — gradient text fade (dark mode signature) */
+.felan-headline-fade {
+  background: linear-gradient(to bottom, #fff 0%, rgba(255,255,255,0.7) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ============================================================
+   SEMANTIC TYPOGRAPHY
+   ============================================================ */
+body, .felan-body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.felan-h1, h1.felan {
+  font-family: var(--font-sans);
+  font-size: clamp(var(--text-4xl), 6vw, var(--text-hero));
+  font-weight: var(--weight-extrabold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+}
+
+.felan-h2, h2.felan {
+  font-family: var(--font-sans);
+  font-size: clamp(var(--text-3xl), 4vw, var(--text-5xl));
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.15;
+}
+
+.felan-h3, h3.felan {
+  font-family: var(--font-sans);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.25;
+}
+
+.felan-h4, h4.felan {
+  font-family: var(--font-sans);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+}
+
+.felan-lead {
+  font-family: var(--font-sans);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-regular);
+  color: hsl(var(--muted-foreground));
+  line-height: var(--leading-relaxed);
+}
+
+.felan-p, p.felan {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  color: hsl(var(--foreground));
+}
+
+.felan-small {
+  font-size: var(--text-sm);
+  color: hsl(var(--muted-foreground));
+}
+
+.felan-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--radius-lg);
+  letter-spacing: 0;
+}
+
+.felan-overline {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: hsl(var(--muted-foreground));
+}
+
+.felan-code, code.felan {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  padding: 0.125em 0.375em;
+  border-radius: var(--radius-sm);
+}
+
+.felan-link {
+  color: hsl(var(--brand));
+  text-decoration: none;
+  font-weight: var(--weight-medium);
+}
+.felan-link:hover { text-decoration: underline; }

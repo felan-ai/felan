@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260903-045947-ba0e",
+    "startedAt": "2026-09-03T04:59:47.195Z",
+    "label": "Offline verifier replay · output-style-concise · source 20260902-121757-89d1",
+    "argv": [
+      "reprocess",
+      "--source",
+      "output-style-concise=20260902-121757-89d1"
+    ],
+    "agents": [
+      "felan-no-output-style",
+      "felan-concise"
+    ],
+    "caseCount": 3,
+    "runCount": 18
+  },
+  "status": "completed",
+  "expectedRunCount": 18,
+  "runIds": [
+    "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-220Z-24",
+    "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-221Z-25",
+    "output-style-planning-felan-no-output-style-reverified-2026-09-03T04-59-47-222Z-26",
+    "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-223Z-27",
+    "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-224Z-28",
+    "output-style-planning-felan-concise-reverified-2026-09-03T04-59-47-225Z-29",
+    "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-226Z-30",
+    "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-227Z-31",
+    "output-style-review-felan-no-output-style-reverified-2026-09-03T04-59-47-228Z-32",
+    "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-229Z-33",
+    "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-230Z-34",
+    "output-style-review-felan-concise-reverified-2026-09-03T04-59-47-231Z-35",
+    "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-232Z-36",
+    "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-233Z-37",
+    "output-style-support-felan-no-output-style-reverified-2026-09-03T04-59-47-234Z-38",
+    "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-235Z-39",
+    "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-236Z-40",
+    "output-style-support-felan-concise-reverified-2026-09-03T04-59-47-237Z-41"
+  ],
+  "completedAt": "2026-09-03T05:02:11.143Z"
+}

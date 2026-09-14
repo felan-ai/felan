@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "output-style-v1",
+  "source": "authored-in-repository",
+  "files": ["README.md", "src/calculator.js", "src/missing-config.example"]
+}

@@ -1,0 +1,66 @@
+id: prewalk-checkout
+suite: prewalk
+description: Compare Felan with and without Prewalk on a non-trivial authenticated checkout task.
+workspace:
+  git:
+    repository: https://github.com/bugzy-ai/storzy.git
+    commit: 9cb213463222732cb955067953220d665b2f561b
+  setup:
+    - command: pnpm
+      args: [install, --frozen-lockfile, --store-dir, /tmp/pnpm-store]
+      timeoutMs: 300000
+      network:
+        mode: default
+agents:
+  include:
+    - felan-no-prewalk
+    - felan-prewalk
+prompt: |
+  Complete the authenticated checkout flow for this Storzy application.
+
+  Required outcomes:
+
+  - Valid existing credentials establish an authenticated store session. Invalid
+    credentials remain on the login page with a visible error, and logout ends the
+    session completely.
+  - Authenticated customers can submit a valid, non-empty cart through the
+    existing application API. Preserve field validation, prevent duplicate
+    submissions, and keep the cart intact when the request fails while showing a
+    stable visible error. Only a successful order may clear the cart and open the
+    completion page.
+  - A successful order produces a stable receipt containing the order id,
+    customer name, and total. Preserve the existing empty-cart and login guards.
+  - Preserve both checkout form variants, the product catalog, the API's
+    subtotal-only order total, and the existing add-to-cart feature-flag behavior.
+
+  Keep changes within the application source. Do not change dependencies, public
+  API contracts, or environment flags. These are acceptance criteria and scope
+  boundaries, not a prescribed implementation plan. Determine the approach from
+  the repository, verify the relevant behavior, and summarize the result.
+assert:
+  - id: prewalk-entered
+    type: toolCalled
+    name: enter_prewalk
+    min: 1
+    isError: false
+    when:
+      agent: felan-prewalk
+  - id: prewalk-disabled
+    type: toolCalled
+    name: enter_prewalk
+    min: 0
+    max: 0
+    when:
+      agent: felan-no-prewalk
+verifier:
+  command: node
+  args:
+    - /tests/verify.mjs
+  cwd: /workspace
+  assetsDir: cases/prewalk/checkout/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.txt
+  rewardFormat: text
+  timeoutMs: 180000
+  network:
+    mode: none

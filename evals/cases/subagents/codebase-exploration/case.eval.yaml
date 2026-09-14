@@ -1,0 +1,36 @@
+id: subagents-codebase-exploration
+suite: subagents
+description: Compare organic Felan repository exploration with and without read-focused subagents.
+timeoutMs: 1800000
+workspace:
+  git:
+    repository: https://github.com/felan-ai/felan.git
+    commit: 5e67c921794c00ad23e0a223299a2a1fc8a0f3fd
+agents:
+  include:
+    - felan-no-subagents
+    - felan-delegated-exploration
+prompt: Explore this repository.
+assert:
+  - id: explore-subagent-used
+    type: toolCalled
+    name: Agent
+    min: 1
+    argsContain:
+      - '"subagent_type":"explore"'
+    isError: false
+    when:
+      agent: felan-delegated-exploration
+  - id: delegation-disabled
+    type: toolCalled
+    name: Agent
+    min: 0
+    max: 0
+    when:
+      agent: felan-no-subagents
+  - { id: apps-covered, type: contains, value: "apps/" }
+  - { id: packages-covered, type: contains, value: "packages/" }
+  - id: clean-tool-execution
+    type: noToolErrors
+    required: false
+  - { id: no-files-edited, type: workspaceDiff, changedFiles: [] }

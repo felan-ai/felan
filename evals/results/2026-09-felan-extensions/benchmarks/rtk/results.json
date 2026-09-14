@@ -1,0 +1,2578 @@
+{
+  "id": "rtk",
+  "definition": {
+    "revision": 12,
+    "label": "RTK context reduction",
+    "select": {
+      "cases": [
+        "rtk-felan-project-instructions",
+        "prewalk-checkout"
+      ]
+    },
+    "arms": {
+      "baseline": "felan-no-rtk-optimizer",
+      "candidate": "felan-rtk-optimizer"
+    },
+    "trials": 3,
+    "qualityGates": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8
+      }
+    ],
+    "objective": [
+      {
+        "metric": "cost.total",
+        "goal": "minimize"
+      },
+      {
+        "metric": "usage.promptTokens",
+        "goal": "minimize"
+      }
+    ],
+    "aggregation": {
+      "trials": "median",
+      "cases": "ratioOfReducedSums"
+    }
+  },
+  "cases": [
+    "prewalk-checkout",
+    "rtk-felan-project-instructions"
+  ],
+  "expectedTrials": 3,
+  "baseline": {
+    "agentName": "felan-no-rtk-optimizer",
+    "comparisonId": "felan-no-rtk-optimizer",
+    "state": "eligible",
+    "expectedRuns": 6,
+    "actualRuns": 6,
+    "missingRuns": 0,
+    "cases": [
+      {
+        "caseId": "prewalk-checkout",
+        "observations": {
+          "cost.total": [
+            2.66953,
+            2.054107999999999,
+            2.2536910000000003
+          ],
+          "usage.promptTokens": [
+            2652506,
+            1796806,
+            1917065
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            680100,
+            572299,
+            607737
+          ],
+          "usage.uncachedInputTokens": [
+            102746,
+            83910,
+            89993
+          ],
+          "usage.cacheReadInputTokens": [
+            2549760,
+            1712896,
+            1827072
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            29364,
+            25937,
+            29673
+          ],
+          "usage.requests": [
+            47,
+            36,
+            35
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 2.66953,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 2.054107999999999,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 2.2536910000000003,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 2652506,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1796806,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1917065,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 680100,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 572299,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 607737,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 102746,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 83910,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 89993,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 2549760,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1712896,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1827072,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 29364,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 25937,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 29673,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 47,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 36,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 35,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 680100,
+            "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 572299,
+            "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 607737,
+            "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+          }
+        ],
+        "values": {
+          "cost.total": 2.2536910000000003,
+          "usage.promptTokens": 1917065,
+          "quality.passRate": 1,
+          "duration.ms": 607737,
+          "usage.uncachedInputTokens": 89993,
+          "usage.cacheReadInputTokens": 1827072,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 29364,
+          "usage.requests": 36
+        }
+      },
+      {
+        "caseId": "rtk-felan-project-instructions",
+        "observations": {
+          "cost.total": [
+            4.006117999999999,
+            4.608859000000001,
+            3.992243
+          ],
+          "usage.promptTokens": [
+            5323378,
+            5948705,
+            5300077
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            560148,
+            483653,
+            583575
+          ],
+          "usage.uncachedInputTokens": [
+            150642,
+            214817,
+            132461
+          ],
+          "usage.cacheReadInputTokens": [
+            5172736,
+            5733888,
+            5167616
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            22218,
+            22261,
+            24871
+          ],
+          "usage.requests": [
+            51,
+            38,
+            57
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 4.006117999999999,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 4.608859000000001,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 3.992243,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 5323378,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 5948705,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 5300077,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 560148,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 483653,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 583575,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 150642,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 214817,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 132461,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 5172736,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 5733888,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 5167616,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 22218,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 22261,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 24871,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 51,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 38,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 57,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 560148,
+            "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 483653,
+            "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 583575,
+            "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+          }
+        ],
+        "values": {
+          "cost.total": 4.006117999999999,
+          "usage.promptTokens": 5323378,
+          "quality.passRate": 1,
+          "duration.ms": 560148,
+          "usage.uncachedInputTokens": 150642,
+          "usage.cacheReadInputTokens": 5172736,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 22261,
+          "usage.requests": 51
+        }
+      }
+    ],
+    "values": {
+      "cost.total": 3.1299044999999994,
+      "usage.promptTokens": 3620221.5,
+      "quality.passRate": 1,
+      "duration.ms": 583942.5,
+      "usage.uncachedInputTokens": 120317.5,
+      "usage.cacheReadInputTokens": 3499904,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.outputTokens": 25812.5,
+      "usage.requests": 43.5
+    },
+    "deltas": {},
+    "gateResults": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8,
+        "value": 1,
+        "pass": true
+      }
+    ]
+  },
+  "candidate": {
+    "agentName": "felan-rtk-optimizer",
+    "comparisonId": "felan-rtk-optimizer",
+    "state": "eligible",
+    "expectedRuns": 6,
+    "actualRuns": 6,
+    "missingRuns": 0,
+    "cases": [
+      {
+        "caseId": "prewalk-checkout",
+        "observations": {
+          "cost.total": [
+            2.4292299999999996,
+            1.906687,
+            1.8581370000000001
+          ],
+          "usage.promptTokens": [
+            1608452,
+            1507859,
+            1336857
+          ],
+          "quality.passRate": [
+            0,
+            1,
+            1
+          ],
+          "duration.ms": [
+            1851595,
+            508074,
+            492458
+          ],
+          "usage.uncachedInputTokens": [
+            157572,
+            86035,
+            109593
+          ],
+          "usage.cacheReadInputTokens": [
+            1450880,
+            1421824,
+            1227264
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            30531,
+            25520,
+            23218
+          ],
+          "usage.requests": [
+            31,
+            30,
+            32
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 2.4292299999999996,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1.906687,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1.8581370000000001,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1608452,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1507859,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1336857,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 1851595,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 508074,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 492458,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 157572,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 86035,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 109593,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 1450880,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1421824,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1227264,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 30531,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 25520,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 23218,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 31,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 30,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 32,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "timeout",
+            "pass": false,
+            "categories": [
+              "timeout"
+            ],
+            "verifierReward": 1,
+            "durationMs": 1851595,
+            "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 508074,
+            "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 492458,
+            "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+          }
+        ],
+        "values": {
+          "cost.total": 1.906687,
+          "usage.promptTokens": 1507859,
+          "quality.passRate": 1,
+          "duration.ms": 508074,
+          "usage.uncachedInputTokens": 109593,
+          "usage.cacheReadInputTokens": 1421824,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 25520,
+          "usage.requests": 31
+        }
+      },
+      {
+        "caseId": "rtk-felan-project-instructions",
+        "observations": {
+          "cost.total": [
+            3.2122260000000002,
+            2.6902200000000005,
+            2.2193159999999996
+          ],
+          "usage.promptTokens": [
+            2794248,
+            3094710,
+            2362440
+          ],
+          "quality.passRate": [
+            1,
+            1,
+            1
+          ],
+          "duration.ms": [
+            604693,
+            686070,
+            666852
+          ],
+          "usage.uncachedInputTokens": [
+            207496,
+            108470,
+            89928
+          ],
+          "usage.cacheReadInputTokens": [
+            2586752,
+            2986240,
+            2272512
+          ],
+          "usage.cacheWriteInputTokens": [
+            0,
+            0,
+            0
+          ],
+          "usage.outputTokens": [
+            29379,
+            21825,
+            21114
+          ],
+          "usage.requests": [
+            42,
+            47,
+            45
+          ]
+        },
+        "attempts": {
+          "cost.total": [
+            {
+              "attemptNumber": 1,
+              "value": 3.2122260000000002,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 2.6902200000000005,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 2.2193159999999996,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ],
+          "usage.promptTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 2794248,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 3094710,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 2362440,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ],
+          "quality.passRate": [
+            {
+              "attemptNumber": 1,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 1,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ],
+          "duration.ms": [
+            {
+              "attemptNumber": 1,
+              "value": 604693,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 686070,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 666852,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ],
+          "usage.uncachedInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 207496,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 108470,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 89928,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ],
+          "usage.cacheReadInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 2586752,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 2986240,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 2272512,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ],
+          "usage.cacheWriteInputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 0,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ],
+          "usage.outputTokens": [
+            {
+              "attemptNumber": 1,
+              "value": 29379,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 21825,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 21114,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ],
+          "usage.requests": [
+            {
+              "attemptNumber": 1,
+              "value": 42,
+              "quality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "value": 47,
+              "quality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "value": 45,
+              "quality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ]
+        },
+        "qualityAttempts": [
+          {
+            "attemptNumber": 1,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 604693,
+            "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+          },
+          {
+            "attemptNumber": 2,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 686070,
+            "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+          },
+          {
+            "attemptNumber": 3,
+            "status": "passed",
+            "pass": true,
+            "categories": [],
+            "verifierReward": 1,
+            "durationMs": 666852,
+            "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+          }
+        ],
+        "values": {
+          "cost.total": 2.6902200000000005,
+          "usage.promptTokens": 2794248,
+          "quality.passRate": 1,
+          "duration.ms": 666852,
+          "usage.uncachedInputTokens": 108470,
+          "usage.cacheReadInputTokens": 2586752,
+          "usage.cacheWriteInputTokens": 0,
+          "usage.outputTokens": 21825,
+          "usage.requests": 45
+        }
+      }
+    ],
+    "values": {
+      "cost.total": 2.2984535000000004,
+      "usage.promptTokens": 2151053.5,
+      "quality.passRate": 1,
+      "duration.ms": 587463,
+      "usage.uncachedInputTokens": 109031.5,
+      "usage.cacheReadInputTokens": 2004288,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.outputTokens": 23672.5,
+      "usage.requests": 38
+    },
+    "deltas": {
+      "cost.total": -0.831450999999999,
+      "usage.promptTokens": -1469168,
+      "quality.passRate": 0,
+      "duration.ms": 3520.5,
+      "usage.uncachedInputTokens": -11286,
+      "usage.cacheReadInputTokens": -1495616,
+      "usage.cacheWriteInputTokens": 0,
+      "usage.outputTokens": -2140,
+      "usage.requests": -5.5
+    },
+    "gateResults": [
+      {
+        "metric": "quality.passRate",
+        "min": 0.8,
+        "value": 0.8333333333333334,
+        "pass": true
+      }
+    ]
+  },
+  "comparison": {
+    "averageChangePercent": -24.12217601810633,
+    "minChangePercent": -32.84721019201129,
+    "maxChangePercent": -15.397141844201368,
+    "averageGainPercent": 24.12217601810633,
+    "minGainPercent": 15.397141844201368,
+    "maxGainPercent": 32.84721019201129,
+    "comparedCases": 2,
+    "expectedCases": 2,
+    "cases": [
+      {
+        "caseId": "prewalk-checkout",
+        "baselineValue": 2.2536910000000003,
+        "candidateValue": 1.906687,
+        "changePercent": -15.397141844201368,
+        "gainPercent": 15.397141844201368,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 2.66953,
+            "candidateValue": 2.4292299999999996,
+            "changePercent": -9.001584548590966,
+            "gainPercent": 9.001584548590966,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 680100,
+              "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "timeout",
+              "pass": false,
+              "categories": [
+                "timeout"
+              ],
+              "verifierReward": 1,
+              "durationMs": 1851595,
+              "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 2.054107999999999,
+            "candidateValue": 1.906687,
+            "changePercent": -7.176886512296286,
+            "gainPercent": 7.176886512296286,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 572299,
+              "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 508074,
+              "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 2.2536910000000003,
+            "candidateValue": 1.8581370000000001,
+            "changePercent": -17.55138570460636,
+            "gainPercent": 17.55138570460636,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 607737,
+              "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 492458,
+              "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+            }
+          }
+        ]
+      },
+      {
+        "caseId": "rtk-felan-project-instructions",
+        "baselineValue": 4.006117999999999,
+        "candidateValue": 2.6902200000000005,
+        "changePercent": -32.84721019201129,
+        "gainPercent": 32.84721019201129,
+        "attempts": [
+          {
+            "attemptNumber": 1,
+            "baselineValue": 4.006117999999999,
+            "candidateValue": 3.2122260000000002,
+            "changePercent": -19.816989913926623,
+            "gainPercent": 19.816989913926623,
+            "baselineQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 560148,
+              "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+            },
+            "candidateQuality": {
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 604693,
+              "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+            }
+          },
+          {
+            "attemptNumber": 2,
+            "baselineValue": 4.608859000000001,
+            "candidateValue": 2.6902200000000005,
+            "changePercent": -41.62937074013329,
+            "gainPercent": 41.62937074013329,
+            "baselineQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 483653,
+              "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+            },
+            "candidateQuality": {
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 686070,
+              "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+            }
+          },
+          {
+            "attemptNumber": 3,
+            "baselineValue": 3.992243,
+            "candidateValue": 2.2193159999999996,
+            "changePercent": -44.409295726738094,
+            "gainPercent": 44.409295726738094,
+            "baselineQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 583575,
+              "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+            },
+            "candidateQuality": {
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "categories": [],
+              "verifierReward": 1,
+              "durationMs": 666852,
+              "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+            }
+          }
+        ]
+      }
+    ],
+    "metric": "cost.total",
+    "goal": "minimize",
+    "role": "primary",
+    "baselineReducedSum": 6.259808999999999,
+    "candidateReducedSum": 4.596907000000001,
+    "aggregateChangePercent": -26.564740234086987,
+    "aggregateGainPercent": 26.564740234086987
+  },
+  "objectiveComparisons": [
+    {
+      "averageChangePercent": -24.12217601810633,
+      "minChangePercent": -32.84721019201129,
+      "maxChangePercent": -15.397141844201368,
+      "averageGainPercent": 24.12217601810633,
+      "minGainPercent": 15.397141844201368,
+      "maxGainPercent": 32.84721019201129,
+      "comparedCases": 2,
+      "expectedCases": 2,
+      "cases": [
+        {
+          "caseId": "prewalk-checkout",
+          "baselineValue": 2.2536910000000003,
+          "candidateValue": 1.906687,
+          "changePercent": -15.397141844201368,
+          "gainPercent": 15.397141844201368,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 2.66953,
+              "candidateValue": 2.4292299999999996,
+              "changePercent": -9.001584548590966,
+              "gainPercent": 9.001584548590966,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 2.054107999999999,
+              "candidateValue": 1.906687,
+              "changePercent": -7.176886512296286,
+              "gainPercent": 7.176886512296286,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 2.2536910000000003,
+              "candidateValue": 1.8581370000000001,
+              "changePercent": -17.55138570460636,
+              "gainPercent": 17.55138570460636,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "rtk-felan-project-instructions",
+          "baselineValue": 4.006117999999999,
+          "candidateValue": 2.6902200000000005,
+          "changePercent": -32.84721019201129,
+          "gainPercent": 32.84721019201129,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 4.006117999999999,
+              "candidateValue": 3.2122260000000002,
+              "changePercent": -19.816989913926623,
+              "gainPercent": 19.816989913926623,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 4.608859000000001,
+              "candidateValue": 2.6902200000000005,
+              "changePercent": -41.62937074013329,
+              "gainPercent": 41.62937074013329,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 3.992243,
+              "candidateValue": 2.2193159999999996,
+              "changePercent": -44.409295726738094,
+              "gainPercent": 44.409295726738094,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ]
+        }
+      ],
+      "metric": "cost.total",
+      "goal": "minimize",
+      "role": "primary",
+      "baselineReducedSum": 6.259808999999999,
+      "candidateReducedSum": 4.596907000000001,
+      "aggregateChangePercent": -26.564740234086987,
+      "aggregateGainPercent": 26.564740234086987
+    },
+    {
+      "averageChangePercent": -34.42765636669536,
+      "minChangePercent": -47.50987061223156,
+      "maxChangePercent": -21.345442121159167,
+      "averageGainPercent": 34.42765636669536,
+      "minGainPercent": 21.345442121159167,
+      "maxGainPercent": 47.50987061223156,
+      "comparedCases": 2,
+      "expectedCases": 2,
+      "cases": [
+        {
+          "caseId": "prewalk-checkout",
+          "baselineValue": 1917065,
+          "candidateValue": 1507859,
+          "changePercent": -21.345442121159167,
+          "gainPercent": 21.345442121159167,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 2652506,
+              "candidateValue": 1608452,
+              "changePercent": -39.36104197313786,
+              "gainPercent": 39.36104197313786,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 680100,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "timeout",
+                "pass": false,
+                "categories": [
+                  "timeout"
+                ],
+                "verifierReward": 1,
+                "durationMs": 1851595,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 1796806,
+              "candidateValue": 1507859,
+              "changePercent": -16.081146211666702,
+              "gainPercent": 16.081146211666702,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 572299,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 508074,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 1917065,
+              "candidateValue": 1336857,
+              "changePercent": -30.265431792870874,
+              "gainPercent": 30.265431792870874,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 607737,
+                "runId": "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 492458,
+                "runId": "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47"
+              }
+            }
+          ]
+        },
+        {
+          "caseId": "rtk-felan-project-instructions",
+          "baselineValue": 5323378,
+          "candidateValue": 2794248,
+          "changePercent": -47.50987061223156,
+          "gainPercent": 47.50987061223156,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "baselineValue": 5323378,
+              "candidateValue": 2794248,
+              "changePercent": -47.50987061223156,
+              "gainPercent": 47.50987061223156,
+              "baselineQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 560148,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48"
+              },
+              "candidateQuality": {
+                "attemptNumber": 1,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 604693,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51"
+              }
+            },
+            {
+              "attemptNumber": 2,
+              "baselineValue": 5948705,
+              "candidateValue": 3094710,
+              "changePercent": -47.97674451834475,
+              "gainPercent": 47.97674451834475,
+              "baselineQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 483653,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49"
+              },
+              "candidateQuality": {
+                "attemptNumber": 2,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 686070,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52"
+              }
+            },
+            {
+              "attemptNumber": 3,
+              "baselineValue": 5300077,
+              "candidateValue": 2362440,
+              "changePercent": -55.42630795741269,
+              "gainPercent": 55.42630795741269,
+              "baselineQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 583575,
+                "runId": "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50"
+              },
+              "candidateQuality": {
+                "attemptNumber": 3,
+                "status": "passed",
+                "pass": true,
+                "categories": [],
+                "verifierReward": 1,
+                "durationMs": 666852,
+                "runId": "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+              }
+            }
+          ]
+        }
+      ],
+      "metric": "usage.promptTokens",
+      "goal": "minimize",
+      "role": "secondary",
+      "baselineReducedSum": 7240443,
+      "candidateReducedSum": 4302107,
+      "aggregateChangePercent": -40.582268239664344,
+      "aggregateGainPercent": 40.582268239664344
+    }
+  ],
+  "warnings": [
+    "Candidate aggregate pass rate is 5/6 (0.8333); the displayed quality.passRate arm value of 1 is the macro mean of per-case trial medians.",
+    "Primary and secondary resource outcomes were recalculated with ratioOfReducedSums for this publication."
+  ],
+  "runCount": 12,
+  "derivedRunCount": 12,
+  "qualitySummary": {
+    "baseline": {
+      "passed": 6,
+      "runs": 6,
+      "aggregatePassRate": 1
+    },
+    "candidate": {
+      "passed": 5,
+      "runs": 6,
+      "aggregatePassRate": 0.8333333333333334,
+      "failures": {
+        "timeout": 1
+      }
+    },
+    "displayedArmValue": {
+      "baseline": 1,
+      "candidate": 1
+    },
+    "explanation": "Arm values use the benchmark trial/case reducers; quality gates use aggregate valid-attempt pass rate."
+  },
+  "publicationAggregation": {
+    "mode": "ratioOfReducedSums",
+    "source": "offline recalculation from retained report observations",
+    "sourceSha256Before": "760b96cc2e24e59acff3c7bef94deb05d651033c4f991e51cc56aed01c0b88f7",
+    "legacyDiagnostics": "average* and min/max* fields remain macro-mean case diagnostics"
+  }
+}

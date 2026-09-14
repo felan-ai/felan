@@ -1,0 +1,881 @@
+{
+  "schemaVersion": 1,
+  "status": "complete",
+  "estimator": {
+    "name": "ratioOfReducedSums",
+    "trials": "Use each report definition aggregation.trials reducer within each case before summing.",
+    "cases": "Sum reduced case values per arm, then compute goal-aware candidate-versus-baseline percentage.",
+    "diagnostics": "Existing case-level average/min/max gains remain macro-mean diagnostics."
+  },
+  "benchmarks": [
+    {
+      "benchmarkId": "subagents",
+      "sourceEvidence": "sources/provenance/subagents-cost-recalculation.json",
+      "sourceSha256": "711b3265612210842bbdda9ff549a0de663d9693a8e4ef95006250b7dab600e3",
+      "originalDefinition": {
+        "trials": "median",
+        "cases": "one case",
+        "metric": "cost.total"
+      },
+      "publicationDefinition": {
+        "trials": "median",
+        "cases": "ratioOfReducedSums"
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "subagents-codebase-exploration",
+              "baselineReducedValue": 1.2856670000000001,
+              "candidateReducedValue": 0.9811268400000001,
+              "caseChangePercent": -23.68732805617629,
+              "caseGainPercent": 23.68732805617629
+            }
+          ],
+          "baselineReducedSum": 1.2856670000000001,
+          "candidateReducedSum": 0.9811268400000001,
+          "aggregateChangePercent": -23.68732805617629,
+          "aggregateGainPercent": 23.68732805617629,
+          "macroMeanCaseGainPercent": 23.68732805617629,
+          "macroMinCaseGainPercent": 23.68732805617629,
+          "macroMaxCaseGainPercent": 23.68732805617629
+        }
+      ]
+    },
+    {
+      "benchmarkId": "markitdown-cost",
+      "sourceReport": "benchmarks/markitdown-cost/results.json",
+      "sourceSha256Before": "8199b9d2855f6145fd348189cbc849110ee52c45d92076ca51611fed52e24aac",
+      "originalDefinition": {
+        "revision": 5,
+        "label": "MarkItDown conversion",
+        "description": "Compare automatic ordinary-read conversion with the same converter installed but the extension disabled.",
+        "select": {
+          "suites": [
+            "markitdown-cost"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-markitdown",
+          "candidate": "felan-markitdown"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          },
+          {
+            "metric": "usage.promptTokens",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "macroMean"
+        }
+      },
+      "publicationDefinition": {
+        "revision": 5,
+        "label": "MarkItDown conversion",
+        "description": "Compare automatic ordinary-read conversion with the same converter installed but the extension disabled.",
+        "select": {
+          "suites": [
+            "markitdown-cost"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-markitdown",
+          "candidate": "felan-markitdown"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          },
+          {
+            "metric": "usage.promptTokens",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "ratioOfReducedSums"
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "markitdown-document-configuration",
+              "baselineReducedValue": 0.020751199999999997,
+              "candidateReducedValue": 0.0169152,
+              "caseChangePercent": -18.485677936697634,
+              "caseGainPercent": 18.485677936697634,
+              "baselineAttemptTotal": 0.12115599999999999,
+              "candidateAttemptTotal": 0.0550852
+            },
+            {
+              "caseId": "markitdown-docx-extraction",
+              "baselineReducedValue": 0.008628,
+              "candidateReducedValue": 0.0070079999999999995,
+              "caseChangePercent": -18.77607788595272,
+              "caseGainPercent": 18.77607788595272,
+              "baselineAttemptTotal": 0.028872,
+              "candidateAttemptTotal": 0.021023999999999998
+            },
+            {
+              "caseId": "markitdown-pptx-extraction",
+              "baselineReducedValue": 0.013751999999999999,
+              "candidateReducedValue": 0.007183999999999999,
+              "caseChangePercent": -47.760325770796975,
+              "caseGainPercent": 47.760325770796975,
+              "baselineAttemptTotal": 0.041398,
+              "candidateAttemptTotal": 0.021849999999999998
+            },
+            {
+              "caseId": "markitdown-xlsx-extraction",
+              "baselineReducedValue": 0.012362,
+              "candidateReducedValue": 0.0071660000000000005,
+              "caseChangePercent": -42.0320336515127,
+              "caseGainPercent": 42.0320336515127,
+              "baselineAttemptTotal": 0.035342,
+              "candidateAttemptTotal": 0.021512
+            }
+          ],
+          "baselineReducedSum": 0.05549319999999999,
+          "candidateReducedSum": 0.0382732,
+          "aggregateChangePercent": -31.030829002472366,
+          "aggregateGainPercent": 31.030829002472366,
+          "macroMeanCaseGainPercent": 31.763528811240008,
+          "macroMinCaseGainPercent": 18.485677936697634,
+          "macroMaxCaseGainPercent": 47.760325770796975,
+          "rawAttemptTotalGainPercent": -47.31567064136033
+        },
+        {
+          "metric": "usage.promptTokens",
+          "role": "secondary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "markitdown-document-configuration",
+              "baselineReducedValue": 9256,
+              "candidateReducedValue": 9070,
+              "caseChangePercent": -2.0095073465859983,
+              "caseGainPercent": 2.0095073465859983,
+              "baselineAttemptTotal": 134996,
+              "candidateAttemptTotal": 27923
+            },
+            {
+              "caseId": "markitdown-docx-extraction",
+              "baselineReducedValue": 3000,
+              "candidateReducedValue": 3192,
+              "caseChangePercent": 6.4,
+              "caseGainPercent": -6.4,
+              "baselineAttemptTotal": 10476,
+              "candidateAttemptTotal": 9576
+            },
+            {
+              "caseId": "markitdown-pptx-extraction",
+              "baselineReducedValue": 4710,
+              "candidateReducedValue": 3172,
+              "caseChangePercent": -32.65392781316348,
+              "caseGainPercent": 32.65392781316348,
+              "baselineAttemptTotal": 14147,
+              "candidateAttemptTotal": 9539
+            },
+            {
+              "caseId": "markitdown-xlsx-extraction",
+              "baselineReducedValue": 4603,
+              "candidateReducedValue": 3169,
+              "caseChangePercent": -31.15359548120791,
+              "caseGainPercent": 31.15359548120791,
+              "baselineAttemptTotal": 12427,
+              "candidateAttemptTotal": 9508
+            }
+          ],
+          "baselineReducedSum": 21569,
+          "candidateReducedSum": 18603,
+          "aggregateChangePercent": -13.751217024433215,
+          "aggregateGainPercent": 13.751217024433215,
+          "macroMeanCaseGainPercent": 14.854257660239346,
+          "macroMinCaseGainPercent": -6.4,
+          "macroMaxCaseGainPercent": 32.65392781316348,
+          "rawAttemptTotalGainPercent": -67.13320856050126
+        }
+      ],
+      "publishedReportSha256": "d1ac1289ba94b1122bb98d69a1806bfd8d8a7478a983ca48bb51db01d92175e2"
+    },
+    {
+      "benchmarkId": "output-style-concise",
+      "sourceReport": "benchmarks/output-style-concise/results.json",
+      "sourceSha256Before": "0f44fb5f500ede4a5cc92abd4bfae0a130b123be4e3ba839399ce7ce3a1aaad3",
+      "originalDefinition": {
+        "revision": 7,
+        "label": "Concise output style",
+        "description": "Compare concise output with output style disabled while preserving required information.",
+        "select": {
+          "cases": [
+            "output-style-planning",
+            "output-style-review",
+            "output-style-support"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-output-style",
+          "candidate": "felan-concise"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          },
+          {
+            "metric": "usage.outputTokens",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "macroMean"
+        }
+      },
+      "publicationDefinition": {
+        "revision": 7,
+        "label": "Concise output style",
+        "description": "Compare concise output with output style disabled while preserving required information.",
+        "select": {
+          "cases": [
+            "output-style-planning",
+            "output-style-review",
+            "output-style-support"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-output-style",
+          "candidate": "felan-concise"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          },
+          {
+            "metric": "usage.outputTokens",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "ratioOfReducedSums"
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "output-style-planning",
+              "baselineReducedValue": 0.080427,
+              "candidateReducedValue": 0.065847,
+              "caseChangePercent": -18.12824051624454,
+              "caseGainPercent": 18.12824051624454,
+              "baselineAttemptTotal": 0.265072,
+              "candidateAttemptTotal": 0.22307400000000002
+            },
+            {
+              "caseId": "output-style-review",
+              "baselineReducedValue": 0.06596400000000001,
+              "candidateReducedValue": 0.053063,
+              "caseChangePercent": -19.557637499242023,
+              "caseGainPercent": 19.557637499242023,
+              "baselineAttemptTotal": 0.192224,
+              "candidateAttemptTotal": 0.19565600000000002
+            },
+            {
+              "caseId": "output-style-support",
+              "baselineReducedValue": 0.08315700000000001,
+              "candidateReducedValue": 0.077348,
+              "caseChangePercent": -6.985581490433768,
+              "caseGainPercent": 6.985581490433768,
+              "baselineAttemptTotal": 0.242291,
+              "candidateAttemptTotal": 0.21230500000000002
+            }
+          ],
+          "baselineReducedSum": 0.229548,
+          "candidateReducedSum": 0.196258,
+          "aggregateChangePercent": -14.502413438583659,
+          "aggregateGainPercent": 14.502413438583659,
+          "macroMeanCaseGainPercent": 14.890486501973443,
+          "macroMinCaseGainPercent": 6.985581490433768,
+          "macroMaxCaseGainPercent": 19.557637499242023,
+          "rawAttemptTotalGainPercent": -9.798924222434085
+        },
+        {
+          "metric": "usage.outputTokens",
+          "role": "secondary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "output-style-planning",
+              "baselineReducedValue": 1626,
+              "candidateReducedValue": 1388,
+              "caseChangePercent": -14.637146371463713,
+              "caseGainPercent": 14.637146371463713,
+              "baselineAttemptTotal": 4916,
+              "candidateAttemptTotal": 4617
+            },
+            {
+              "caseId": "output-style-review",
+              "baselineReducedValue": 1034,
+              "candidateReducedValue": 909,
+              "caseChangePercent": -12.088974854932303,
+              "caseGainPercent": 12.088974854932303,
+              "baselineAttemptTotal": 3463,
+              "candidateAttemptTotal": 3229
+            },
+            {
+              "caseId": "output-style-support",
+              "baselineReducedValue": 1527,
+              "candidateReducedValue": 1203,
+              "caseChangePercent": -21.218074656188605,
+              "caseGainPercent": 21.218074656188605,
+              "baselineAttemptTotal": 4504,
+              "candidateAttemptTotal": 3858
+            }
+          ],
+          "baselineReducedSum": 4187,
+          "candidateReducedSum": 3500,
+          "aggregateChangePercent": -16.40792930499164,
+          "aggregateGainPercent": 16.40792930499164,
+          "macroMeanCaseGainPercent": 15.981398627528208,
+          "macroMinCaseGainPercent": 12.088974854932303,
+          "macroMaxCaseGainPercent": 21.218074656188605,
+          "rawAttemptTotalGainPercent": -9.151595125359
+        }
+      ],
+      "publishedReportSha256": "247fada4ab4008dda78b73223c7f1363be2f9a2e7ec05445d58867fa9d825eac"
+    },
+    {
+      "benchmarkId": "prewalk",
+      "sourceReport": "benchmarks/prewalk/results.json",
+      "sourceSha256Before": "c5abca0c68fa3071d0205df8f8af9860b12087a3ff81401b4a6ce5470c26d99c",
+      "originalDefinition": {
+        "revision": 11,
+        "label": "Prewalk organic routing cost",
+        "description": "Compare organic Prewalk routing with Prewalk disabled; candidate attempts without a successful entry are invalid.",
+        "select": {
+          "cases": [
+            "prewalk-checkout",
+            "memory-summary-links"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-prewalk",
+          "candidate": "felan-prewalk"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "macroMean"
+        }
+      },
+      "publicationDefinition": {
+        "revision": 11,
+        "label": "Prewalk organic routing cost",
+        "description": "Compare organic Prewalk routing with Prewalk disabled; candidate attempts without a successful entry are invalid.",
+        "select": {
+          "cases": [
+            "prewalk-checkout",
+            "memory-summary-links"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-prewalk",
+          "candidate": "felan-prewalk"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "ratioOfReducedSums"
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "memory-summary-links",
+              "baselineReducedValue": 6.814177999999999,
+              "candidateReducedValue": 1.93362268,
+              "caseChangePercent": -71.62353727771713,
+              "caseGainPercent": 71.62353727771713,
+              "baselineAttemptTotal": 20.439731000000002,
+              "candidateAttemptTotal": 5.53533596
+            },
+            {
+              "caseId": "prewalk-checkout",
+              "baselineReducedValue": 1.710072,
+              "candidateReducedValue": 0.9660633200000002,
+              "caseChangePercent": -43.50744763963154,
+              "caseGainPercent": 43.50744763963154,
+              "baselineAttemptTotal": 5.112296000000001,
+              "candidateAttemptTotal": 2.77146096
+            }
+          ],
+          "baselineReducedSum": 8.524249999999999,
+          "candidateReducedSum": 2.899686,
+          "aggregateChangePercent": -65.98309528697538,
+          "aggregateGainPercent": 65.98309528697538,
+          "macroMeanCaseGainPercent": 57.56549245867434,
+          "macroMinCaseGainPercent": 43.50744763963154,
+          "macroMaxCaseGainPercent": 71.62353727771713,
+          "rawAttemptTotalGainPercent": -67.49065379431542
+        }
+      ],
+      "publishedReportSha256": "27d856ac470ad6865892405dac695721761a86cc5b396c061789ab60b55c2951"
+    },
+    {
+      "benchmarkId": "rtk",
+      "sourceReport": "benchmarks/rtk/results.json",
+      "sourceSha256Before": "760b96cc2e24e59acff3c7bef94deb05d651033c4f991e51cc56aed01c0b88f7",
+      "originalDefinition": {
+        "revision": 12,
+        "label": "RTK context reduction",
+        "select": {
+          "cases": [
+            "rtk-felan-project-instructions",
+            "prewalk-checkout"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-rtk-optimizer",
+          "candidate": "felan-rtk-optimizer"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          },
+          {
+            "metric": "usage.promptTokens",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "macroMean"
+        }
+      },
+      "publicationDefinition": {
+        "revision": 12,
+        "label": "RTK context reduction",
+        "select": {
+          "cases": [
+            "rtk-felan-project-instructions",
+            "prewalk-checkout"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-rtk-optimizer",
+          "candidate": "felan-rtk-optimizer"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          },
+          {
+            "metric": "usage.promptTokens",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "ratioOfReducedSums"
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "prewalk-checkout",
+              "baselineReducedValue": 2.2536910000000003,
+              "candidateReducedValue": 1.906687,
+              "caseChangePercent": -15.397141844201368,
+              "caseGainPercent": 15.397141844201368,
+              "baselineAttemptTotal": 6.977328999999999,
+              "candidateAttemptTotal": 6.1940539999999995
+            },
+            {
+              "caseId": "rtk-felan-project-instructions",
+              "baselineReducedValue": 4.006117999999999,
+              "candidateReducedValue": 2.6902200000000005,
+              "caseChangePercent": -32.84721019201129,
+              "caseGainPercent": 32.84721019201129,
+              "baselineAttemptTotal": 12.60722,
+              "candidateAttemptTotal": 8.121762
+            }
+          ],
+          "baselineReducedSum": 6.259808999999999,
+          "candidateReducedSum": 4.596907000000001,
+          "aggregateChangePercent": -26.564740234086987,
+          "aggregateGainPercent": 26.564740234086987,
+          "macroMeanCaseGainPercent": 24.12217601810633,
+          "macroMinCaseGainPercent": 15.397141844201368,
+          "macroMaxCaseGainPercent": 32.84721019201129,
+          "rawAttemptTotalGainPercent": -26.902498495114692
+        },
+        {
+          "metric": "usage.promptTokens",
+          "role": "secondary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "prewalk-checkout",
+              "baselineReducedValue": 1917065,
+              "candidateReducedValue": 1507859,
+              "caseChangePercent": -21.345442121159167,
+              "caseGainPercent": 21.345442121159167,
+              "baselineAttemptTotal": 6366377,
+              "candidateAttemptTotal": 4453168
+            },
+            {
+              "caseId": "rtk-felan-project-instructions",
+              "baselineReducedValue": 5323378,
+              "candidateReducedValue": 2794248,
+              "caseChangePercent": -47.50987061223156,
+              "caseGainPercent": 47.50987061223156,
+              "baselineAttemptTotal": 16572160,
+              "candidateAttemptTotal": 8251398
+            }
+          ],
+          "baselineReducedSum": 7240443,
+          "candidateReducedSum": 4302107,
+          "aggregateChangePercent": -40.582268239664344,
+          "aggregateGainPercent": 40.582268239664344,
+          "macroMeanCaseGainPercent": 34.42765636669536,
+          "macroMinCaseGainPercent": 21.345442121159167,
+          "macroMaxCaseGainPercent": 47.50987061223156,
+          "rawAttemptTotalGainPercent": -44.614750278101866
+        }
+      ],
+      "publishedReportSha256": "607907919f032cb05553cd07abc282349064ea74f247b59fa61c9b358917a9ab"
+    },
+    {
+      "benchmarkId": "codebase-memory",
+      "sourceEvidence": "sources/provenance/codebase-memory.json",
+      "sourceSha256": "d712f29701196491246c803766c8f3a482e64236b4e3798caf0d235cceb1ac11",
+      "originalDefinition": {
+        "trials": "median",
+        "cases": "three cases from three --case batches",
+        "metrics": [
+          "cost.total",
+          "duration.stepsMs"
+        ]
+      },
+      "publicationDefinition": {
+        "trials": "median",
+        "cases": "ratioOfReducedSums"
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "cbm-extension-architecture",
+              "baselineReducedValue": 1.2001530000000002,
+              "candidateReducedValue": 1.2125380000000001,
+              "caseChangePercent": 1.031951759483988,
+              "caseGainPercent": -1.031951759483988
+            },
+            {
+              "caseId": "cbm-extension-config-scope",
+              "baselineReducedValue": 3.8947869999999996,
+              "candidateReducedValue": 2.243165,
+              "caseChangePercent": -42.405964690752015,
+              "caseGainPercent": 42.405964690752015
+            },
+            {
+              "caseId": "cbm-project-instructions",
+              "baselineReducedValue": 0.632202,
+              "candidateReducedValue": 0.680038,
+              "caseChangePercent": 7.566568913100557,
+              "caseGainPercent": -7.566568913100557
+            }
+          ],
+          "baselineReducedSum": 5.727142,
+          "candidateReducedSum": 4.135741,
+          "aggregateChangePercent": -27.78700091598915,
+          "aggregateGainPercent": 27.78700091598915,
+          "macroMeanCaseGainPercent": 11.269148006055824,
+          "macroMinCaseGainPercent": -7.566568913100557,
+          "macroMaxCaseGainPercent": 42.405964690752015
+        },
+        {
+          "metric": "duration.stepsMs",
+          "role": "secondary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "cbm-extension-architecture",
+              "baselineReducedValue": 233785,
+              "candidateReducedValue": 244129,
+              "caseChangePercent": 4.424578138032808,
+              "caseGainPercent": -4.424578138032808
+            },
+            {
+              "caseId": "cbm-extension-config-scope",
+              "baselineReducedValue": 727694,
+              "candidateReducedValue": 666171,
+              "caseChangePercent": -8.454515222057623,
+              "caseGainPercent": 8.454515222057623
+            },
+            {
+              "caseId": "cbm-project-instructions",
+              "baselineReducedValue": 205803,
+              "candidateReducedValue": 166419,
+              "caseChangePercent": -19.136747277736475,
+              "caseGainPercent": 19.136747277736475
+            }
+          ],
+          "baselineReducedSum": 1167282,
+          "candidateReducedSum": 1076719,
+          "aggregateChangePercent": -7.758450828505879,
+          "aggregateGainPercent": 7.758450828505879,
+          "macroMeanCaseGainPercent": 7.722228120587097,
+          "macroMinCaseGainPercent": -4.424578138032808,
+          "macroMaxCaseGainPercent": 19.136747277736475
+        }
+      ]
+    },
+    {
+      "benchmarkId": "session-compaction",
+      "sourceReport": "benchmarks/session-compaction/results.json",
+      "sourceSha256Before": "ea99f9458eb368e9e8731506c43fda2925236527c5ff4eef0e8afbefeca292e9",
+      "originalDefinition": {
+        "revision": 4,
+        "label": "Inherited-model session compaction",
+        "description": "Compare native Pi compaction with Felan's verified summary using the default inherited active model on a sanitized real coding trajectory.",
+        "select": {
+          "suites": [
+            "session-compaction"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-session-compaction",
+          "candidate": "felan-inherit-compaction"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          },
+          {
+            "metric": "usage.promptTokens",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "ratioOfReducedSums"
+        }
+      },
+      "publicationDefinition": {
+        "revision": 4,
+        "label": "Inherited-model session compaction",
+        "description": "Compare native Pi compaction with Felan's verified summary using the default inherited active model on a sanitized real coding trajectory.",
+        "select": {
+          "suites": [
+            "session-compaction"
+          ]
+        },
+        "arms": {
+          "baseline": "felan-no-session-compaction",
+          "candidate": "felan-inherit-compaction"
+        },
+        "trials": 3,
+        "qualityGates": [
+          {
+            "metric": "quality.passRate",
+            "min": 0.8
+          }
+        ],
+        "objective": [
+          {
+            "metric": "cost.total",
+            "goal": "minimize"
+          },
+          {
+            "metric": "usage.promptTokens",
+            "goal": "minimize"
+          }
+        ],
+        "aggregation": {
+          "trials": "median",
+          "cases": "ratioOfReducedSums"
+        }
+      },
+      "objectives": [
+        {
+          "metric": "cost.total",
+          "role": "primary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "session-compaction-continuation",
+              "baselineReducedValue": 0.49551,
+              "candidateReducedValue": 0.27131000000000005,
+              "caseChangePercent": -45.24631188068857,
+              "caseGainPercent": 45.24631188068857
+            }
+          ],
+          "baselineReducedSum": 0.49551,
+          "candidateReducedSum": 0.27131000000000005,
+          "aggregateChangePercent": -45.24631188068857,
+          "aggregateGainPercent": 45.24631188068857,
+          "macroMeanCaseGainPercent": 45.24631188068857,
+          "macroMinCaseGainPercent": 45.24631188068857,
+          "macroMaxCaseGainPercent": 45.24631188068857
+        },
+        {
+          "metric": "usage.promptTokens",
+          "role": "secondary",
+          "goal": "minimize",
+          "trialReducer": "median",
+          "cases": [
+            {
+              "caseId": "session-compaction-continuation",
+              "baselineReducedValue": 83304,
+              "candidateReducedValue": 39891,
+              "caseChangePercent": -52.11394410832612,
+              "caseGainPercent": 52.11394410832612
+            }
+          ],
+          "baselineReducedSum": 83304,
+          "candidateReducedSum": 39891,
+          "aggregateChangePercent": -52.11394410832612,
+          "aggregateGainPercent": 52.11394410832612,
+          "macroMeanCaseGainPercent": 52.11394410832612,
+          "macroMinCaseGainPercent": 52.11394410832612,
+          "macroMaxCaseGainPercent": 52.11394410832612
+        }
+      ],
+      "quality": {
+        "baseline": {
+          "attemptCount": 3,
+          "passed": 2,
+          "failed": 1,
+          "passRate": 0.6666666666666666
+        },
+        "candidate": {
+          "attemptCount": 3,
+          "passed": 3,
+          "failed": 0,
+          "passRate": 1.0
+        },
+        "candidateGatePassed": true,
+        "baselineDisclosure": "One native continuation omitted the required black-box end-to-end publication plan; the candidate quality gate is evaluated independently and passed 3/3."
+      },
+      "publicationNote": "The candidate quality gate passed 3/3. The metric is included in the descriptive portfolio total; the native baseline 2/3 result and local pre-release provenance remain disclosed."
+    }
+  ]
+}

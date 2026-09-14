@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260902-121847-5fa4",
+    "startedAt": "2026-09-02T12:18:47.699Z",
+    "label": "felan-no-rtk-optimizer,felan-rtk-optimizer · 3 cases",
+    "argv": [
+      "run",
+      "--config",
+      "harness-evals.yaml",
+      "--benchmark",
+      "rtk",
+      "--concurrency",
+      "3"
+    ],
+    "agents": [
+      "felan-no-rtk-optimizer",
+      "felan-rtk-optimizer"
+    ],
+    "caseCount": 3,
+    "runCount": 18
+  },
+  "status": "completed",
+  "expectedRunCount": 18,
+  "runIds": [
+    "prewalk-checkout-felan-no-rtk-optimizer-2026-09-02T12-18-47-701Z-0",
+    "prewalk-checkout-felan-no-rtk-optimizer-2026-09-02T12-18-47-701Z-1",
+    "prewalk-checkout-felan-no-rtk-optimizer-2026-09-02T12-18-47-701Z-2",
+    "prewalk-checkout-felan-rtk-optimizer-2026-09-02T12-28-08-415Z-3",
+    "prewalk-checkout-felan-rtk-optimizer-2026-09-02T12-28-51-175Z-4",
+    "prewalk-checkout-felan-rtk-optimizer-2026-09-02T12-29-56-890Z-5",
+    "rtk-felan-project-instructions-felan-no-rtk-optimizer-2026-09-02T12-37-06-366Z-6",
+    "rtk-felan-project-instructions-felan-no-rtk-optimizer-2026-09-02T12-37-56-347Z-7",
+    "rtk-felan-project-instructions-felan-no-rtk-optimizer-2026-09-02T12-45-55-257Z-8",
+    "rtk-felan-project-instructions-felan-rtk-optimizer-2026-09-02T12-46-22-379Z-9",
+    "rtk-felan-project-instructions-felan-rtk-optimizer-2026-09-02T12-55-39-877Z-10",
+    "rtk-felan-project-instructions-felan-rtk-optimizer-2026-09-02T12-56-27-158Z-11",
+    "memory-summary-links-felan-no-rtk-optimizer-2026-09-02T12-58-51-047Z-12",
+    "memory-summary-links-felan-no-rtk-optimizer-2026-09-02T13-07-00-461Z-13",
+    "memory-summary-links-felan-no-rtk-optimizer-2026-09-02T13-07-33-388Z-14",
+    "memory-summary-links-felan-rtk-optimizer-2026-09-02T13-18-48-021Z-15",
+    "memory-summary-links-felan-rtk-optimizer-2026-09-02T13-21-37-032Z-16",
+    "memory-summary-links-felan-rtk-optimizer-2026-09-02T13-23-10-451Z-17"
+  ],
+  "completedAt": "2026-09-02T13:49:34.477Z"
+}

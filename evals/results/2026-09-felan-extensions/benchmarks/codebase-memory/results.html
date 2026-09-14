@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Three-case Codebase Memory benchmark result.">
+  <title>Codebase Memory Benchmark Result</title>
+  <link rel="icon" href="../../assets/felan/felan-logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../../assets/felan/styles.css">
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      min-width: 320px;
+      margin: 0;
+      background: hsl(var(--surface-1));
+      color: hsl(var(--foreground));
+      font-family: var(--font-sans);
+      font-size: var(--text-sm);
+      line-height: var(--leading-normal);
+    }
+
+    a {
+      color: hsl(var(--brand));
+      font-weight: var(--weight-medium);
+      text-underline-offset: 4px;
+    }
+
+    a:focus-visible {
+      border-radius: var(--radius-sm);
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 3px;
+    }
+
+    .shell { width: min(900px, calc(100% - 48px)); margin: 0 auto; }
+
+    .topbar { border-bottom: 1px solid hsl(var(--border)); background: hsl(var(--card)); }
+
+    .topbar-inner {
+      display: flex;
+      min-height: 68px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand-lockup {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: hsl(var(--foreground));
+      font-size: var(--text-base);
+      font-weight: var(--weight-bold);
+      letter-spacing: var(--tracking-tight);
+      text-decoration: none;
+    }
+
+    .brand-lockup img { width: 28px; height: 29px; }
+    .back-link { font-size: var(--text-xs); }
+    main { padding: 56px 0 64px; }
+
+    .overline {
+      margin: 0 0 12px;
+      color: hsl(var(--brand));
+      font-size: var(--text-xs);
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(var(--text-3xl), 5vw, var(--text-5xl));
+      font-weight: var(--weight-bold);
+      letter-spacing: var(--tracking-tight);
+      line-height: var(--leading-tight);
+    }
+
+    .lede {
+      max-width: 680px;
+      margin: 16px 0 0;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-lg);
+      line-height: var(--leading-relaxed);
+    }
+
+    .scope-note {
+      margin-top: 28px;
+      padding: 16px 18px;
+      border-left: 3px solid hsl(var(--brand));
+      background: hsl(var(--card));
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+      line-height: var(--leading-relaxed);
+    }
+
+    .scope-note p { margin: 0; }
+    .scope-note p + p { margin-top: 8px; }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 28px;
+    }
+
+    .metric-card {
+      padding: 22px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+    }
+
+    .metric-label {
+      display: block;
+      color: hsl(var(--muted-foreground));
+      font-size: 0.6875rem;
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      display: block;
+      margin-top: 8px;
+      font-size: var(--text-2xl);
+      font-weight: var(--weight-bold);
+      letter-spacing: var(--tracking-tight);
+    }
+
+    .metric-value.positive { color: hsl(var(--brand)); }
+
+    .metric-context {
+      display: block;
+      margin-top: 6px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+    }
+
+    section { margin-top: 40px; }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: var(--text-xl);
+      font-weight: var(--weight-semibold);
+      letter-spacing: var(--tracking-tight);
+    }
+
+    .table-card {
+      overflow-x: auto;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-xl);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+    }
+
+    table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th,
+    td {
+      padding: 14px 18px;
+      border-bottom: 1px solid hsl(var(--border));
+      text-align: right;
+    }
+
+    th:first-child,
+    td:first-child { text-align: left; }
+
+    thead th {
+      background: hsl(var(--surface-1));
+      color: hsl(var(--muted-foreground));
+      font-size: 0.6875rem;
+      font-weight: var(--weight-semibold);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    tbody tr:last-child td { border-bottom: 0; }
+
+    .positive { color: hsl(var(--brand)); }
+
+    .note {
+      margin-top: 18px;
+      padding: 16px 18px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius-lg);
+      background: hsl(var(--card));
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+      line-height: var(--leading-relaxed);
+    }
+
+    .note p { margin: 0; }
+    .note p + p { margin-top: 8px; }
+
+    footer { border-top: 1px solid hsl(var(--border)); background: hsl(var(--card)); }
+
+    .footer-inner {
+      display: flex;
+      min-height: 72px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      color: hsl(var(--muted-foreground));
+      font-size: var(--text-xs);
+    }
+
+    .footer-inner p { margin: 0; }
+
+    @media (max-width: 760px) {
+      .summary-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 640px) {
+      .shell { width: min(100% - 32px, 900px); }
+      .topbar-inner { align-items: flex-start; flex-direction: column; gap: 8px; padding: 16px 0; }
+      main { padding: 44px 0 52px; }
+      .footer-inner { align-items: flex-start; flex-direction: column; gap: 6px; padding: 18px 0; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand-lockup" href="../../index.html" aria-label="Felan AI benchmark results">
+        <img src="../../assets/felan/felan-logo.svg" alt="">
+        <span>Felan AI</span>
+      </a>
+      <a class="back-link" href="../../index.html">← All Extension Results</a>
+    </div>
+  </header>
+
+  <main class="shell">
+    <header>
+      <p class="overline">Extension Benchmark Result</p>
+      <h1>Codebase Memory</h1>
+      <p class="lede">A three-case Codebase Memory comparison using the ratio of median-reduced case costs.</p>
+    </header>
+
+    <aside class="scope-note" aria-label="Evidence scope">
+      <p><strong>Published scope:</strong> all 18 attempts across Extension architecture, Extension config scope, and Project instructions.</p>
+      <p>Felan 0.23.2 with <code>@felan-ai/ext-codebase-memory</code> 0.3.1.</p>
+    </aside>
+
+    <div class="summary-grid" aria-label="Codebase Memory summary">
+      <article class="metric-card">
+        <span class="metric-label">Cost vs baseline</span>
+        <strong class="metric-value positive">27.8% lower</strong>
+        <span class="metric-context">$5.7271 baseline → $4.1357 candidate</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Agent-step duration</span>
+        <strong class="metric-value positive">7.8% shorter</strong>
+        <span class="metric-context">1,167,282 ms baseline → 1,076,719 ms candidate</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Framework pass rate</span>
+        <strong class="metric-value">100%</strong>
+        <span class="metric-context">18 of 18 published attempts passed</span>
+      </article>
+    </div>
+
+    <section aria-labelledby="cost-heading">
+      <h2 id="cost-heading">Cost by case</h2>
+      <div class="table-card">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Case</th>
+              <th scope="col">Baseline median</th>
+              <th scope="col">Candidate median</th>
+              <th scope="col">Case gain</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Extension architecture</td><td>$1.2002</td><td>$1.2125</td><td>1.0% higher</td></tr>
+            <tr><td>Extension config scope</td><td>$3.8948</td><td>$2.2432</td><td class="positive">42.4% lower</td></tr>
+            <tr><td>Project instructions</td><td>$0.6322</td><td>$0.6800</td><td>7.6% higher</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <aside class="note">
+        <p><strong>Aggregate cost result:</strong> $5.7271 − $4.1357 = $1.5914 lower, or <strong>27.8% lower</strong> when the three reduced case values are summed.</p>
+        <p>The equal-case macro mean is <strong>11.3% lower</strong>, and the raw-attempt total is <strong>25.1% lower</strong>. These diagnostics are not the headline estimator, which uses the median trial per case followed by the ratio of reduced sums.</p>
+        <p>The estimator sums absolute case values, so Extension config scope carries <strong>68%</strong> of the baseline sum and supplies almost all of the aggregate gain.</p>
+      </aside>
+    </section>
+
+    <section aria-labelledby="quality-heading">
+      <h2 id="quality-heading">Quality and evidence notes</h2>
+      <aside class="note">
+        <p>All 18 published attempts reported framework status <strong>passed</strong>. Two Codebase Memory-off architecture attempts received verifier reward <strong>0.8</strong> (coverage 4/5); the other 16 verifier rewards were 1.0, including all three Codebase Memory-on architecture attempts.</p>
+        <p>Four architecture attempts, two in each arm, recorded a non-required <code>clean-tool-execution</code> failure, primarily <code>grep</code> ENOENT; these failures did not affect framework pass status.</p>
+        <p><a href="../../sources/provenance/codebase-memory.json">View redacted evidence and source hashes</a> · <a href="results.json">JSON</a> · <a href="results.csv">CSV</a></p>
+      </aside>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell footer-inner">
+      <p>© 2026 Felan</p>
+      <a href="../../index.html">Back to Extension Results</a>
+    </div>
+  </footer>
+</body>
+</html>

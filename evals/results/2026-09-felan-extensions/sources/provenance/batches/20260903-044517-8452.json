@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260903-044517-8452",
+    "startedAt": "2026-09-03T04:45:17.623Z",
+    "label": "Offline verifier replay · prewalk · source 20260902-121757-b16d",
+    "argv": [
+      "reprocess",
+      "--source",
+      "prewalk=20260902-121757-b16d"
+    ],
+    "agents": [
+      "felan-no-prewalk",
+      "felan-prewalk"
+    ],
+    "caseCount": 2,
+    "runCount": 12
+  },
+  "status": "completed",
+  "expectedRunCount": 12,
+  "runIds": [
+    "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-672Z-48",
+    "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-673Z-49",
+    "prewalk-checkout-felan-no-prewalk-reverified-2026-09-03T04-45-17-674Z-50",
+    "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-675Z-51",
+    "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-676Z-52",
+    "prewalk-checkout-felan-prewalk-reverified-2026-09-03T04-45-17-677Z-53",
+    "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-678Z-54",
+    "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-679Z-55",
+    "memory-summary-links-felan-no-prewalk-reverified-2026-09-03T04-45-17-680Z-56",
+    "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-681Z-57",
+    "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-682Z-58",
+    "memory-summary-links-felan-prewalk-reverified-2026-09-03T04-45-17-683Z-59"
+  ],
+  "completedAt": "2026-09-03T04:50:44.879Z"
+}

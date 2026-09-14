@@ -1,0 +1,57 @@
+{
+  "config": {
+    "minWords": 150,
+    "windowChars": 1200,
+    "windowStep": 300,
+    "failBelow": 0.6
+  },
+  "_note": "Loose directional check for a generic 'explain the extension system' prompt. Each fact is a claim every accurate explanation contains, matched as a co-occurrence inside one sliding window (all patterns match, no `none` pattern matches). reward = matched / total, or 0 below `failBelow`. Report quality is validated by hand; this only gates 'did the agent engage with the core of the system'.",
+  "facts": [
+    {
+      "id": "host-boundary",
+      "note": "Felan builds on @earendil-works/pi-coding-agent's ExtensionAPI; FelanExtensionAPI extends it.",
+      "all": [
+        "FelanExtensionAPI|FelanExtension\\b",
+        "ExtensionAPI",
+        "pi-coding-agent|\\bhost\\b"
+      ],
+      "none": []
+    },
+    {
+      "id": "extension-is-a-function",
+      "note": "A Felan extension is a callable that receives the extension API (pi).",
+      "all": [
+        "FelanExtension\\b",
+        "function|callable|=>|\\(\\s*pi\\b|receives .{0,20}\\bpi\\b|takes .{0,20}\\bpi\\b"
+      ],
+      "none": ["\\bclass\\s+\\w*Extension\\b"]
+    },
+    {
+      "id": "loading-and-binding",
+      "note": "Packages are dynamically loaded and bound into a running session.",
+      "all": [
+        "loadFelanExtensions|loadFelanSessionExtensions|bindFelanExtension|importExtension",
+        "session|bind|load|compose"
+      ],
+      "none": []
+    },
+    {
+      "id": "config-reaches-extension",
+      "note": "Resolved declarative config is surfaced to the extension as pi.config.",
+      "all": [
+        "pi\\.config|resolved config",
+        "resolv|inject|surface|supplie|expose|configField|defineExtensionConfig"
+      ],
+      "none": []
+    },
+    {
+      "id": "tool-to-model-path",
+      "note": "A tool an extension registers reaches the model through the host - the extension calls registerTool (or 'registers a tool') and the host session exposes it to the model.",
+      "all": [
+        "registerTool|register(s|ed)?\\s+[\\w-]{0,20}\\s*tool|tool registration|registers?\\s+[\\w-]{0,20}\\s*tools",
+        "host|model|model-facing|ExtensionAPI|pi-coding-agent|session"
+      ],
+      "none": ["Felan wraps registerTool", "registerTool is (a )?Felan (method|addition|API)"]
+    }
+  ]
+}

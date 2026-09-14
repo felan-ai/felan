@@ -1,0 +1,13 @@
+status,caseId,metric,baselineReducedMedian,candidateReducedMedian,caseGainPercent,ratioOfReducedSumsGainPercent,macroMeanCaseGainPercent,baselinePassRate,candidatePassRate,candidateMeanVerifierReward
+eligible,cbm-extension-architecture,cost.total,1.2001530000000002,1.2125380000000001,-1.031951759483988,27.78700091598915,11.269148006055824,1.0,1.0,1.0
+eligible,cbm-extension-config-scope,cost.total,3.8947869999999996,2.243165,42.405964690752015,27.78700091598915,11.269148006055824,1.0,1.0,1.0
+eligible,cbm-project-instructions,cost.total,0.632202,0.680038,-7.566568913100557,27.78700091598915,11.269148006055824,1.0,1.0,1.0
+eligible,cbm-extension-architecture,duration.stepsMs,233785,244129,-4.424578138032808,7.758450828505879,7.722228120587097,1.0,1.0,1.0
+eligible,cbm-extension-config-scope,duration.stepsMs,727694,666171,8.454515222057623,7.758450828505879,7.722228120587097,1.0,1.0,1.0
+eligible,cbm-project-instructions,duration.stepsMs,205803,166419,19.136747277736475,7.758450828505879,7.722228120587097,1.0,1.0,1.0
+eligible,cbm-extension-architecture,usage.promptTokens,946059,883334,6.630136175439376,40.82442858359327,12.229176806088622,1.0,1.0,1.0
+eligible,cbm-extension-config-scope,usage.promptTokens,5717681,2778403,51.406820352517045,40.82442858359327,12.229176806088622,1.0,1.0,1.0
+eligible,cbm-project-instructions,usage.promptTokens,452874,549560,-21.349426109690555,40.82442858359327,12.229176806088622,1.0,1.0,1.0
+eligible,cbm-extension-architecture,usage.outputTokens,8562,9640,-12.590516234524642,-3.901408938276733,-4.0493830621669975,1.0,1.0,1.0
+eligible,cbm-extension-config-scope,usage.outputTokens,14226,14359,-0.9349079150850556,-3.901408938276733,-4.0493830621669975,1.0,1.0,1.0
+eligible,cbm-project-instructions,usage.outputTokens,6099,6015,1.3772749631087065,-3.901408938276733,-4.0493830621669975,1.0,1.0,1.0

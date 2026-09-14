@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "kind": "subagents-descendant-inclusive-cost-recalculation",
+  "batchId": "20260903-052334-7809",
+  "method": "For each candidate attempt, sum every child assistant message usage.cost.total and add it to the native root-session cost. Compare the median recalculated candidate cost with the unchanged baseline median.",
+  "privacy": "Cost-only numeric aggregates, session/model identity, and raw source hashes are retained. Prompts, responses, tool output, and reasoning content are excluded.",
+  "baseline": {
+    "attemptCosts": [
+      0.947578,
+      1.709251,
+      1.2856670000000001
+    ],
+    "medianCost": 1.2856670000000001
+  },
+  "candidate": {
+    "attempts": [
+      {
+        "attemptNumber": 1,
+        "runId": "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-25-54-972Z-3",
+        "rootCost": 0.941879,
+        "childCost": 0.039247840000000006,
+        "recalculatedCost": 0.9811268400000001,
+        "childSessionCount": 2,
+        "childAssistantRequests": 14,
+        "childSessions": [
+          {
+            "sessionId": "617454c9-76af-42aa-911e-f8150fc66d32",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "assistantRequests": 6,
+            "costTotal": 0.0202008,
+            "rawSourceRelativePath": ".harness-evals/runs/subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-25-54-972Z-3/config/felan/subagents/01a065bb-22b3-7e23-b461-817971edfa66/sessions/2026-09-03T05-26-06-666Z_617454c9-76af-42aa-911e-f8150fc66d32.jsonl",
+            "rawSourceSha256": "95e02f84c01d684d97fb6ddce208a0d6bfc1d8a14c1069a36e9f50fa54372709"
+          },
+          {
+            "sessionId": "7a3e62dc-3275-4f56-97cb-2cfd5cb6addb",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "assistantRequests": 8,
+            "costTotal": 0.01904704,
+            "rawSourceRelativePath": ".harness-evals/runs/subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-25-54-972Z-3/config/felan/subagents/01a065bb-22b3-7e23-b461-817971edfa66/sessions/2026-09-03T05-26-06-671Z_7a3e62dc-3275-4f56-97cb-2cfd5cb6addb.jsonl",
+            "rawSourceSha256": "5ac99492b950aabf073e33a3b900a3987edc938f2fc8711a30635df34636a305"
+          }
+        ]
+      },
+      {
+        "attemptNumber": 2,
+        "runId": "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-26-28-856Z-4",
+        "rootCost": 1.284677,
+        "childCost": 0.12250892000000001,
+        "recalculatedCost": 1.40718592,
+        "childSessionCount": 4,
+        "childAssistantRequests": 40,
+        "childSessions": [
+          {
+            "sessionId": "865aaf70-7879-4106-8957-12ce00b4a03e",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "assistantRequests": 9,
+            "costTotal": 0.021989560000000002,
+            "rawSourceRelativePath": ".harness-evals/runs/subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-26-28-856Z-4/config/felan/subagents/01a065bb-a652-7279-8280-89a215f68de3/sessions/2026-09-03T05-26-50-026Z_865aaf70-7879-4106-8957-12ce00b4a03e.jsonl",
+            "rawSourceSha256": "5cdc4fbd051274419cbac46a3fff67e8e3b281a0d7c2ddc7767699365c8f9612"
+          },
+          {
+            "sessionId": "99388a67-1048-401d-a5af-e28f35a490b1",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "assistantRequests": 12,
+            "costTotal": 0.04351924,
+            "rawSourceRelativePath": ".harness-evals/runs/subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-26-28-856Z-4/config/felan/subagents/01a065bb-a652-7279-8280-89a215f68de3/sessions/2026-09-03T05-26-50-031Z_99388a67-1048-401d-a5af-e28f35a490b1.jsonl",
+            "rawSourceSha256": "ac3133e47291f3a1eb3b2f83286bed365798d6ec802f4c7beccd755623be874a"
+          },
+          {
+            "sessionId": "26c06849-ec71-4427-a69b-67bd31a97842",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "assistantRequests": 9,
+            "costTotal": 0.03678196,
+            "rawSourceRelativePath": ".harness-evals/runs/subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-26-28-856Z-4/config/felan/subagents/01a065bb-a652-7279-8280-89a215f68de3/sessions/2026-09-03T05-26-50-035Z_26c06849-ec71-4427-a69b-67bd31a97842.jsonl",
+            "rawSourceSha256": "090fb00e01153a0409cfa74a377bdb27e6361e50dc5b4d8561d1a906313d08b5"
+          },
+          {
+            "sessionId": "c97d1823-5b32-4238-a843-06c3108b7ef6",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "assistantRequests": 10,
+            "costTotal": 0.02021816,
+            "rawSourceRelativePath": ".harness-evals/runs/subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-26-28-856Z-4/config/felan/subagents/01a065bb-a652-7279-8280-89a215f68de3/sessions/2026-09-03T05-26-50-042Z_c97d1823-5b32-4238-a843-06c3108b7ef6.jsonl",
+            "rawSourceSha256": "bee582f3a901d1130dd9e7b3a68cd938e5620dbfc6812182373908a9f3955dbd"
+          }
+        ]
+      },
+      {
+        "attemptNumber": 3,
+        "runId": "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-27-02-089Z-5",
+        "rootCost": 0.869321,
+        "childCost": 0.05614616,
+        "recalculatedCost": 0.92546716,
+        "childSessionCount": 3,
+        "childAssistantRequests": 21,
+        "childSessions": [
+          {
+            "sessionId": "6135c68d-7df2-474a-bad9-a137e9ab6cb5",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "assistantRequests": 8,
+            "costTotal": 0.01676656,
+            "rawSourceRelativePath": ".harness-evals/runs/subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-27-02-089Z-5/config/felan/subagents/01a065bc-28c8-73a9-9183-b3f943493d90/sessions/2026-09-03T05-27-14-164Z_6135c68d-7df2-474a-bad9-a137e9ab6cb5.jsonl",
+            "rawSourceSha256": "9b29a9e7345a18dcbc0687ef86c4d6636a8eca59d56fa48fe80b688ebb671707"
+          },
+          {
+            "sessionId": "0bb59b04-c489-4c70-9ff7-7ce803bd45c2",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "assistantRequests": 7,
+            "costTotal": 0.026113400000000002,
+            "rawSourceRelativePath": ".harness-evals/runs/subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-27-02-089Z-5/config/felan/subagents/01a065bc-28c8-73a9-9183-b3f943493d90/sessions/2026-09-03T05-27-14-168Z_0bb59b04-c489-4c70-9ff7-7ce803bd45c2.jsonl",
+            "rawSourceSha256": "f4311bcc560bfa9e56a8e29f62f29d087d12d8f1d018fbd6c7af9ffa601f2505"
+          },
+          {
+            "sessionId": "364f7ce3-a568-42f9-9ccf-c0e0b24772ed",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "assistantRequests": 6,
+            "costTotal": 0.0132662,
+            "rawSourceRelativePath": ".harness-evals/runs/subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-27-02-089Z-5/config/felan/subagents/01a065bc-28c8-73a9-9183-b3f943493d90/sessions/2026-09-03T05-27-14-170Z_364f7ce3-a568-42f9-9ccf-c0e0b24772ed.jsonl",
+            "rawSourceSha256": "c1a81ee8889a12139862044575b8d24b4ba206b8cedba12c9d760db3aa86962b"
+          }
+        ]
+      }
+    ],
+    "medianRecalculatedCost": 0.9811268400000001
+  },
+  "result": {
+    "baselineMedianCost": 1.2856670000000001,
+    "candidateMedianCost": 0.9811268400000001,
+    "changePercent": -23.68732805617629,
+    "gainPercent": 23.68732805617629
+  },
+  "totals": {
+    "childSessions": 9,
+    "childAssistantRequests": 75
+  }
+}

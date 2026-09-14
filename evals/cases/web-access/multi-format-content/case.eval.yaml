@@ -1,0 +1,24 @@
+id: web-access-multi-format-content
+suite: web-access-cost
+description: Extract selected facts from bounded JSON, text, and remote PDF sources.
+workspace: { fixture: fixtures/felan-adapter-smoke/v1/source }
+agents:
+  include: [felan-no-web-access, felan-web-access]
+prompt: |
+  Review the three sources below and report one fact from each: the minimum
+  Node.js version in the exact npm release record, the package-manager version
+  in the pinned plain-text manifest, and the complete title printed inside the
+  remote PDF. Cite each source URL and do not modify the workspace.
+
+  - https://registry.npmjs.org/@felan-ai%2ffelan/0.20.0
+  - https://raw.githubusercontent.com/felan-ai/felan/a01b419b7b20c7f135fe5a7ae7d5cd488e0a25a8/package.json
+  - https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf
+assert:
+  - { type: contains, value: "22.19.0" }
+  - { type: contains, value: "pnpm" }
+  - { type: contains, value: "9.15.5" }
+  - { type: contains, value: "Dummy PDF file" }
+  - { type: contains, value: "registry.npmjs.org" }
+  - { type: contains, value: "raw.githubusercontent.com" }
+  - { type: contains, value: "dummy.pdf" }
+  - { type: workspaceDiff, changedFiles: [] }

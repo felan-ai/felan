@@ -1,0 +1,12 @@
+/* ============================================================
+   Felan AI — Design System entry stylesheet
+   Link THIS file to get the full foundation (tokens + type).
+   Consumers: <link rel="stylesheet" href="styles.css">
+
+   The per-kit stylesheets (ui_kits/marketing/marketing.css,
+   ui_kits/product/product.css) are component-scoped reference
+   implementations — link those only inside their own kit,
+   NOT globally (each sets its own html/body background).
+   ============================================================ */
+
+@import url('./colors_and_type.css');

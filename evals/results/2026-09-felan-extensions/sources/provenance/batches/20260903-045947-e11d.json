@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260903-045947-e11d",
+    "startedAt": "2026-09-03T04:59:47.196Z",
+    "label": "Offline verifier replay · rtk · source 20260902-121847-5fa4",
+    "argv": [
+      "reprocess",
+      "--source",
+      "rtk=20260902-121847-5fa4"
+    ],
+    "agents": [
+      "felan-no-rtk-optimizer",
+      "felan-rtk-optimizer"
+    ],
+    "caseCount": 2,
+    "runCount": 12
+  },
+  "status": "completed",
+  "expectedRunCount": 12,
+  "runIds": [
+    "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-239Z-42",
+    "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-240Z-43",
+    "prewalk-checkout-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-241Z-44",
+    "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-242Z-45",
+    "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-243Z-46",
+    "prewalk-checkout-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-244Z-47",
+    "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-245Z-48",
+    "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-246Z-49",
+    "rtk-felan-project-instructions-felan-no-rtk-optimizer-reverified-2026-09-03T04-59-47-247Z-50",
+    "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-248Z-51",
+    "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-249Z-52",
+    "rtk-felan-project-instructions-felan-rtk-optimizer-reverified-2026-09-03T04-59-47-250Z-53"
+  ],
+  "completedAt": "2026-09-03T05:02:11.143Z"
+}

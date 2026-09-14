@@ -1,0 +1,19 @@
+id: web-access-discovery-passage
+suite: web-access-cost
+description: Discover an authoritative page, then extract only the passages needed to answer.
+workspace: { fixture: fixtures/felan-adapter-smoke/v1/source }
+agents:
+  include: [felan-no-web-access, felan-web-access]
+prompt: |
+  Find the official RFC Editor record for the current HTTP Semantics standard.
+  Report its RFC number, publication month and year, and the earlier HTTP
+  semantics RFC that it obsoletes. Verify those details in the official record
+  rather than relying only on a search-result summary. Cite the authoritative
+  page you used and do not modify the workspace.
+assert:
+  - { type: contains, value: "RFC 9110" }
+  - { type: contains, value: "June" }
+  - { type: contains, value: "2022" }
+  - { type: contains, value: "RFC 7231" }
+  - { type: contains, value: "rfc-editor.org" }
+  - { type: workspaceDiff, changedFiles: [] }

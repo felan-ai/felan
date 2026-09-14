@@ -1,0 +1,1229 @@
+{
+  "schemaVersion": 1,
+  "status": "published",
+  "benchmarkId": "codebase-memory",
+  "label": "Codebase Memory retrieval cost",
+  "evidenceType": "derived-local-case-batches",
+  "publicationEligible": true,
+  "batches": [
+    {
+      "caseId": "cbm-extension-architecture",
+      "batchId": "20260908-090907-5a66",
+      "argv": [
+        "run",
+        "--config",
+        "felan-extension-evals.yaml",
+        "--case",
+        "cbm-extension-architecture",
+        "--agents",
+        "felan-cbm-off,felan-cbm-curated,felan-cbm-direct,felan-cbm-single-proxy",
+        "--concurrency",
+        "1",
+        "--attempts",
+        "3"
+      ],
+      "status": "completed",
+      "startedAt": "2026-09-08T09:09:07.259Z",
+      "completedAt": "2026-09-08T10:06:15.076Z",
+      "sourceManifestRelativePath": "sources/provenance/batches/20260908-090907-5a66.json"
+    },
+    {
+      "caseId": "cbm-extension-config-scope",
+      "batchId": "20260908-114759-951e",
+      "argv": [
+        "run",
+        "--config",
+        "felan-extension-evals.yaml",
+        "--case",
+        "cbm-extension-config-scope",
+        "--agents",
+        "felan-cbm-off,felan-cbm-curated,felan-cbm-direct,felan-cbm-single-proxy",
+        "--concurrency",
+        "1",
+        "--attempts",
+        "3"
+      ],
+      "status": "completed",
+      "startedAt": "2026-09-08T11:47:59.653Z",
+      "completedAt": "2026-09-08T14:19:18.470Z",
+      "sourceManifestRelativePath": "sources/provenance/batches/20260908-114759-951e.json"
+    },
+    {
+      "caseId": "cbm-project-instructions",
+      "batchId": "20260909-123711-ff11",
+      "argv": [
+        "run",
+        "--config",
+        "felan-extension-evals.yaml",
+        "--case",
+        "cbm-project-instructions",
+        "--agents",
+        "felan-cbm-off,felan-cbm-curated,felan-cbm-direct,felan-cbm-single-proxy",
+        "--concurrency",
+        "1",
+        "--attempts",
+        "3"
+      ],
+      "status": "completed",
+      "startedAt": "2026-09-09T12:37:11.940Z",
+      "completedAt": "2026-09-09T13:27:41.333Z",
+      "sourceManifestRelativePath": "sources/provenance/batches/20260909-123711-ff11.json"
+    }
+  ],
+  "definition": {
+    "benchmarkStamp": null,
+    "stampNote": "The three case batches were launched individually with --case rather than --benchmark, so their runs carry no benchmark stamp (run-started.benchmark is null) and harness-evals reprocess/publish cannot ingest them. Per-attempt metrics are read verbatim from each run's summary.json metrics block; case medians, reduced sums and gains were computed from those values with the declared estimator.",
+    "cases": [
+      "cbm-extension-architecture",
+      "cbm-extension-config-scope",
+      "cbm-project-instructions"
+    ],
+    "arms": {
+      "baseline": "felan-cbm-off",
+      "candidate": "felan-cbm-on"
+    },
+    "candidateNote": "felan-cbm-on is the enabled arm, run as the harness agent felan-cbm-curated: builtinExtensions.codebaseMemory=true with extensionConfig.codebaseMemory.mode=curated, the extension's default model-facing surface.",
+    "sourceAgents": {
+      "baseline": "felan-cbm-off",
+      "candidate": "felan-cbm-curated"
+    },
+    "trials": 3,
+    "trialReducer": "median",
+    "recommendedCaseEstimator": "ratioOfReducedSums",
+    "excludedArms": [
+      "felan-cbm-direct",
+      "felan-cbm-single-proxy"
+    ],
+    "excludedArmsNote": "The same batches also ran the direct and single-proxy surfaces; they are experimental alternatives and are not part of this published comparison."
+  },
+  "commonRuntime": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinking": "medium",
+    "packageVersion": "0.23.2",
+    "extension": "@felan-ai/ext-codebase-memory 0.3.1",
+    "binary": "codebase-memory-mcp 0.10.8",
+    "repository": "https://github.com/felan-ai/felan.git"
+  },
+  "cases": [
+    {
+      "caseId": "cbm-extension-architecture",
+      "sourceCommits": [
+        "e5867637569bd1c7ad08420b79ec4031a5733f57"
+      ],
+      "arms": {
+        "felan-cbm-off": {
+          "attemptCount": 3,
+          "attempts": [
+            {
+              "runId": "cbm-extension-architecture-felan-cbm-off-2026-09-08T09-09-07-267Z-0",
+              "caseId": "cbm-extension-architecture",
+              "arm": "felan-cbm-off",
+              "sourceAgent": "felan-cbm-off",
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "e5867637569bd1c7ad08420b79ec4031a5733f57"
+              },
+              "metrics": {
+                "cost.total": 1.1295810000000002,
+                "duration.ms": 313638,
+                "duration.stepsMs": 250166,
+                "usage.promptTokens": 716037,
+                "usage.outputTokens": 9782,
+                "usage.totalTokens": 725819
+              },
+              "verifierReward": 0.8,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "537ac94aaac28d84021af248f5fb12665f427e86b1d81bd8ee96a4a56be8e956",
+                  "bytes": 1863
+                },
+                "summary.json": {
+                  "sha256": "edd5b4c882dd98c51e9f7c81addba07c6ac8d4edb733f934125033e22588d71e",
+                  "bytes": 16727
+                },
+                "cost-summary.json": {
+                  "sha256": "d8483c481aeab6e22cb7993501037142e5da6dc49af616cd8b02b0d6c5a78486",
+                  "bytes": 6200
+                },
+                "workspace-source.json": {
+                  "sha256": "9a2eeefcc703297374921ba63e3f78eedab5b02fa03310e954f1e53fb7e991c1",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "30ad512775f715ce404756fb831e3b8d95c20a86785f5c702c2b9987b6134fd5",
+                  "bytes": 136
+                }
+              }
+            },
+            {
+              "runId": "cbm-extension-architecture-felan-cbm-off-2026-09-08T09-14-21-067Z-1",
+              "caseId": "cbm-extension-architecture",
+              "arm": "felan-cbm-off",
+              "sourceAgent": "felan-cbm-off",
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "e5867637569bd1c7ad08420b79ec4031a5733f57"
+              },
+              "metrics": {
+                "cost.total": 1.6862970000000002,
+                "duration.ms": 240895,
+                "duration.stepsMs": 233785,
+                "usage.promptTokens": 1408281,
+                "usage.outputTokens": 8562,
+                "usage.totalTokens": 1416843
+              },
+              "verifierReward": 0.8,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "e040d29041302271060cab8d70a556ac7cae69a0acec612e70075f9b3884d2c8",
+                  "bytes": 1863
+                },
+                "summary.json": {
+                  "sha256": "185dbf8fafbb7d9528bdf55306cbae2a038d418fdfe6bc722c227d5917bd488f",
+                  "bytes": 16782
+                },
+                "cost-summary.json": {
+                  "sha256": "4ad2d292d7769665a44b3eb796a5087f6cf5b3742af0ed9f6366adfdb4cd43ec",
+                  "bytes": 6241
+                },
+                "workspace-source.json": {
+                  "sha256": "9a2eeefcc703297374921ba63e3f78eedab5b02fa03310e954f1e53fb7e991c1",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "30ad512775f715ce404756fb831e3b8d95c20a86785f5c702c2b9987b6134fd5",
+                  "bytes": 136
+                }
+              }
+            },
+            {
+              "runId": "cbm-extension-architecture-felan-cbm-off-2026-09-08T09-18-22-240Z-2",
+              "caseId": "cbm-extension-architecture",
+              "arm": "felan-cbm-off",
+              "sourceAgent": "felan-cbm-off",
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "e5867637569bd1c7ad08420b79ec4031a5733f57"
+              },
+              "metrics": {
+                "cost.total": 1.2001530000000002,
+                "duration.ms": 232481,
+                "duration.stepsMs": 223494,
+                "usage.promptTokens": 946059,
+                "usage.outputTokens": 7743,
+                "usage.totalTokens": 953802
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "ad762b9fad5af6bf8e1a5e2baa35dc61da743fa80763efff748980fb2a418ecc",
+                  "bytes": 1863
+                },
+                "summary.json": {
+                  "sha256": "49c0cbdfe0a0a3fce98fed8afeb1cf5296ebf038400b0fdf9406319a4b24a6f7",
+                  "bytes": 16672
+                },
+                "cost-summary.json": {
+                  "sha256": "cd96f2541dc8d7d1a6e15000fd95b3e5323ffae60f16b6c98767ce1b4a22649f",
+                  "bytes": 6200
+                },
+                "workspace-source.json": {
+                  "sha256": "9a2eeefcc703297374921ba63e3f78eedab5b02fa03310e954f1e53fb7e991c1",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            }
+          ],
+          "reducedByMedian": {
+            "cost.total": 1.2001530000000002,
+            "duration.stepsMs": 233785,
+            "usage.promptTokens": 946059,
+            "usage.outputTokens": 8562,
+            "usage.totalTokens": 953802
+          },
+          "passRate": 1.0,
+          "meanVerifierReward": 0.8666666666666667
+        },
+        "felan-cbm-on": {
+          "attemptCount": 3,
+          "attempts": [
+            {
+              "runId": "cbm-extension-architecture-felan-cbm-curated-2026-09-08T09-22-14-881Z-3",
+              "caseId": "cbm-extension-architecture",
+              "arm": "felan-cbm-on",
+              "sourceAgent": "felan-cbm-curated",
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "e5867637569bd1c7ad08420b79ec4031a5733f57"
+              },
+              "metrics": {
+                "cost.total": 1.2125380000000001,
+                "duration.ms": 233460,
+                "duration.stepsMs": 227586,
+                "usage.promptTokens": 883334,
+                "usage.outputTokens": 9490,
+                "usage.totalTokens": 892824
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "7d1866b528ac02267d048f6b98eab6ddb29aed20dc6bb1e776838277892b289f",
+                  "bytes": 1883
+                },
+                "summary.json": {
+                  "sha256": "c7517c72706325834321bdb86aef40758f4196faa2d988f9097b7c82c9a86074",
+                  "bytes": 16736
+                },
+                "cost-summary.json": {
+                  "sha256": "a021091e9a1df64235c2f747bb576f1d170c8e9f632d763ce783c43705e3eea5",
+                  "bytes": 6224
+                },
+                "workspace-source.json": {
+                  "sha256": "9a2eeefcc703297374921ba63e3f78eedab5b02fa03310e954f1e53fb7e991c1",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-extension-architecture-felan-cbm-curated-2026-09-08T09-26-08-463Z-4",
+              "caseId": "cbm-extension-architecture",
+              "arm": "felan-cbm-on",
+              "sourceAgent": "felan-cbm-curated",
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "e5867637569bd1c7ad08420b79ec4031a5733f57"
+              },
+              "metrics": {
+                "cost.total": 1.1918980000000001,
+                "duration.ms": 247668,
+                "duration.stepsMs": 244129,
+                "usage.promptTokens": 868514,
+                "usage.outputTokens": 9640,
+                "usage.totalTokens": 878154
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "5811f420b77e01ed0a155fcb41c6da81274d8972a5953fad1ff49f3a4837d41a",
+                  "bytes": 1883
+                },
+                "summary.json": {
+                  "sha256": "d95a5aaf1eac01c2e6f14e179944d54a2a70f2b7cf8ac35a6e5810cef93eaf82",
+                  "bytes": 16736
+                },
+                "cost-summary.json": {
+                  "sha256": "3c638e3513a9ac9db7223bd7ef0a9563675fe09f7d3914bb06e1918301938a79",
+                  "bytes": 6224
+                },
+                "workspace-source.json": {
+                  "sha256": "9a2eeefcc703297374921ba63e3f78eedab5b02fa03310e954f1e53fb7e991c1",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-extension-architecture-felan-cbm-curated-2026-09-08T09-30-16-278Z-5",
+              "caseId": "cbm-extension-architecture",
+              "arm": "felan-cbm-on",
+              "sourceAgent": "felan-cbm-curated",
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "e5867637569bd1c7ad08420b79ec4031a5733f57"
+              },
+              "metrics": {
+                "cost.total": 1.4039499999999996,
+                "duration.ms": 365207,
+                "duration.stepsMs": 361150,
+                "usage.promptTokens": 1171382,
+                "usage.outputTokens": 10352,
+                "usage.totalTokens": 1181734
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "39c222460e7b8d0b44b186ca9b960611fd3043f80a757ded5802477a03642835",
+                  "bytes": 1883
+                },
+                "summary.json": {
+                  "sha256": "63fa7b1264608239f05f7081271813c8aed506edf2b9bacd0453f19e51170020",
+                  "bytes": 16812
+                },
+                "cost-summary.json": {
+                  "sha256": "04c4bf2cb95b9e4dafda93fa588bb319ec8fba00b69d352f6ec3b6b38a79bb28",
+                  "bytes": 6275
+                },
+                "workspace-source.json": {
+                  "sha256": "9a2eeefcc703297374921ba63e3f78eedab5b02fa03310e954f1e53fb7e991c1",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            }
+          ],
+          "reducedByMedian": {
+            "cost.total": 1.2125380000000001,
+            "duration.stepsMs": 244129,
+            "usage.promptTokens": 883334,
+            "usage.outputTokens": 9640,
+            "usage.totalTokens": 892824
+          },
+          "passRate": 1.0,
+          "meanVerifierReward": 1.0
+        }
+      }
+    },
+    {
+      "caseId": "cbm-extension-config-scope",
+      "sourceCommits": [
+        "51a18d8f0c853a06867ddbd48046ad4a84307058"
+      ],
+      "arms": {
+        "felan-cbm-off": {
+          "attemptCount": 3,
+          "attempts": [
+            {
+              "runId": "cbm-extension-config-scope-felan-cbm-off-2026-09-08T11-47-59-658Z-0",
+              "caseId": "cbm-extension-config-scope",
+              "arm": "felan-cbm-off",
+              "sourceAgent": "felan-cbm-off",
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "51a18d8f0c853a06867ddbd48046ad4a84307058"
+              },
+              "metrics": {
+                "cost.total": 3.8947869999999996,
+                "duration.ms": 772699,
+                "duration.stepsMs": 679355,
+                "usage.promptTokens": 5717681,
+                "usage.outputTokens": 16169,
+                "usage.totalTokens": 5733850
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "c742c438c64f04aa3a5772e65648d69b63da6f0ebf19c0effd4bf64c8a5cbb8a",
+                  "bytes": 1885
+                },
+                "summary.json": {
+                  "sha256": "67f528fcf9359ab3f22d1b7085c2e8b2d1c4e759c10cefc0a7ed488cdd553ff5",
+                  "bytes": 21347
+                },
+                "cost-summary.json": {
+                  "sha256": "e677c951ead3e65489f1545afb160a11293fa0ad8dff55a8fbb3a8c65dc3a6f6",
+                  "bytes": 6251
+                },
+                "workspace-source.json": {
+                  "sha256": "1714e85bcbfcadc9209b43f611a1393d3791f61017684dfc42deb37bcbd5f401",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-extension-config-scope-felan-cbm-off-2026-09-08T12-00-52-571Z-1",
+              "caseId": "cbm-extension-config-scope",
+              "arm": "felan-cbm-off",
+              "sourceAgent": "felan-cbm-off",
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "51a18d8f0c853a06867ddbd48046ad4a84307058"
+              },
+              "metrics": {
+                "cost.total": 3.4504089999999987,
+                "duration.ms": 925730,
+                "duration.stepsMs": 837612,
+                "usage.promptTokens": 5165123,
+                "usage.outputTokens": 13443,
+                "usage.totalTokens": 5178566
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "1e133180090b76bea979c7d3465436965e2b976570d4ecc8b04de6c19fa87db0",
+                  "bytes": 1885
+                },
+                "summary.json": {
+                  "sha256": "544faca16ce5e9325e64c817ecfd088675e538cb068535269d6e47adbf4007c1",
+                  "bytes": 21348
+                },
+                "cost-summary.json": {
+                  "sha256": "d3598e64a576249421354fb6c5074824bfaba3b592c1b20557b64403a8f395d2",
+                  "bytes": 6251
+                },
+                "workspace-source.json": {
+                  "sha256": "1714e85bcbfcadc9209b43f611a1393d3791f61017684dfc42deb37bcbd5f401",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-extension-config-scope-felan-cbm-off-2026-09-08T12-16-18-598Z-2",
+              "caseId": "cbm-extension-config-scope",
+              "arm": "felan-cbm-off",
+              "sourceAgent": "felan-cbm-off",
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "51a18d8f0c853a06867ddbd48046ad4a84307058"
+              },
+              "metrics": {
+                "cost.total": 4.196322000000002,
+                "duration.ms": 809312,
+                "duration.stepsMs": 727694,
+                "usage.promptTokens": 6388110,
+                "usage.outputTokens": 14226,
+                "usage.totalTokens": 6402336
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "f4c59bc3e567e5a8b72571c2344476db92d26c2026ce30b391560a28c20a03e9",
+                  "bytes": 1885
+                },
+                "summary.json": {
+                  "sha256": "d7b81cbb5c8daaa760c6bf6d378baa73459d3af883a46e29e1786aed9753ee3f",
+                  "bytes": 21328
+                },
+                "cost-summary.json": {
+                  "sha256": "0d92deca65610072c7b0a85db45972bf624818b2b43c881650e555478d285ab4",
+                  "bytes": 6239
+                },
+                "workspace-source.json": {
+                  "sha256": "1714e85bcbfcadc9209b43f611a1393d3791f61017684dfc42deb37bcbd5f401",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            }
+          ],
+          "reducedByMedian": {
+            "cost.total": 3.8947869999999996,
+            "duration.stepsMs": 727694,
+            "usage.promptTokens": 5717681,
+            "usage.outputTokens": 14226,
+            "usage.totalTokens": 5733850
+          },
+          "passRate": 1.0,
+          "meanVerifierReward": 1.0
+        },
+        "felan-cbm-on": {
+          "attemptCount": 3,
+          "attempts": [
+            {
+              "runId": "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-29-48-122Z-3",
+              "caseId": "cbm-extension-config-scope",
+              "arm": "felan-cbm-on",
+              "sourceAgent": "felan-cbm-curated",
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "51a18d8f0c853a06867ddbd48046ad4a84307058"
+              },
+              "metrics": {
+                "cost.total": 3.1585900000000007,
+                "duration.ms": 779503,
+                "duration.stepsMs": 704392,
+                "usage.promptTokens": 4243904,
+                "usage.outputTokens": 18129,
+                "usage.totalTokens": 4262033
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "f4cc6523fd079305a3a28aca514bb8edc90dd58c0fc98467acb5bb2703266e7e",
+                  "bytes": 1905
+                },
+                "summary.json": {
+                  "sha256": "02cd748b4ec874906af15fdb7de9a6dc0158f142d8de3a6a75e7bca6815c7877",
+                  "bytes": 21410
+                },
+                "cost-summary.json": {
+                  "sha256": "c81d6c8ca8e8da917b45ebedad68631b689da572bf0174d1d8a47f8a2376920c",
+                  "bytes": 6275
+                },
+                "workspace-source.json": {
+                  "sha256": "1714e85bcbfcadc9209b43f611a1393d3791f61017684dfc42deb37bcbd5f401",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-42-47-889Z-4",
+              "caseId": "cbm-extension-config-scope",
+              "arm": "felan-cbm-on",
+              "sourceAgent": "felan-cbm-curated",
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "51a18d8f0c853a06867ddbd48046ad4a84307058"
+              },
+              "metrics": {
+                "cost.total": 2.243165,
+                "duration.ms": 619161,
+                "duration.stepsMs": 543877,
+                "usage.promptTokens": 2778403,
+                "usage.outputTokens": 12793,
+                "usage.totalTokens": 2791196
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "b9e83f3768f3da81a04a3782fb4a3d3febb58f3af2e8276a9ebd5664ea3ba962",
+                  "bytes": 1905
+                },
+                "summary.json": {
+                  "sha256": "ab5467f6e20f2056317af00678cefbf23b154e9778fe73a9e68ed1f05feac66f",
+                  "bytes": 21248
+                },
+                "cost-summary.json": {
+                  "sha256": "00faf6e78990e936c57e75c31a70ee650b6998d2e6eca109f7d3e7b5e0e88aad",
+                  "bytes": 6155
+                },
+                "workspace-source.json": {
+                  "sha256": "1714e85bcbfcadc9209b43f611a1393d3791f61017684dfc42deb37bcbd5f401",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-extension-config-scope-felan-cbm-curated-2026-09-08T12-53-07-165Z-5",
+              "caseId": "cbm-extension-config-scope",
+              "arm": "felan-cbm-on",
+              "sourceAgent": "felan-cbm-curated",
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "51a18d8f0c853a06867ddbd48046ad4a84307058"
+              },
+              "metrics": {
+                "cost.total": 1.82352,
+                "duration.ms": 772286,
+                "duration.stepsMs": 666171,
+                "usage.promptTokens": 1922454,
+                "usage.outputTokens": 14359,
+                "usage.totalTokens": 1936813
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "6fb1130e6c7aa73132f4a41f792eb3d8d85585edb110f5f746c4c6038001fe1f",
+                  "bytes": 1905
+                },
+                "summary.json": {
+                  "sha256": "6d2c996a56286396bcddbf18a0bffb0c576cc0b4fa5f143c6cdcceb16c83aa79",
+                  "bytes": 21174
+                },
+                "cost-summary.json": {
+                  "sha256": "26d2065efb1bd3db4531afaf607ea45bb5821062bd5e9631e171a63ed98aff37",
+                  "bytes": 6123
+                },
+                "workspace-source.json": {
+                  "sha256": "1714e85bcbfcadc9209b43f611a1393d3791f61017684dfc42deb37bcbd5f401",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            }
+          ],
+          "reducedByMedian": {
+            "cost.total": 2.243165,
+            "duration.stepsMs": 666171,
+            "usage.promptTokens": 2778403,
+            "usage.outputTokens": 14359,
+            "usage.totalTokens": 2791196
+          },
+          "passRate": 1.0,
+          "meanVerifierReward": 1.0
+        }
+      }
+    },
+    {
+      "caseId": "cbm-project-instructions",
+      "sourceCommits": [
+        "104faa5559029c8be9e8a1eb504d87974a5864e9"
+      ],
+      "arms": {
+        "felan-cbm-off": {
+          "attemptCount": 3,
+          "attempts": [
+            {
+              "runId": "cbm-project-instructions-felan-cbm-off-2026-09-09T12-37-11-946Z-0",
+              "caseId": "cbm-project-instructions",
+              "arm": "felan-cbm-off",
+              "sourceAgent": "felan-cbm-off",
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "104faa5559029c8be9e8a1eb504d87974a5864e9"
+              },
+              "metrics": {
+                "cost.total": 0.854833,
+                "duration.ms": 294622,
+                "duration.stepsMs": 205803,
+                "usage.promptTokens": 691259,
+                "usage.outputTokens": 8939,
+                "usage.totalTokens": 700198
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "05398281bd40482061fdc2626933e655693a7c1fad119c4cab3b24b8f211ba2b",
+                  "bytes": 1831
+                },
+                "summary.json": {
+                  "sha256": "0a2639a4a630facdf0fcc4388f6560cca31792ef230e7f7e1cd04b26aeb32be6",
+                  "bytes": 17690
+                },
+                "cost-summary.json": {
+                  "sha256": "17813026afd86f8c358134f1ec734e624937164dd9d10a44942b0603caa236d4",
+                  "bytes": 6042
+                },
+                "workspace-source.json": {
+                  "sha256": "aedfb9e29e32db9079c05eb7bb5524b91dcfde2842054a3acac0bf081c337c23",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-project-instructions-felan-cbm-off-2026-09-09T12-42-06-679Z-1",
+              "caseId": "cbm-project-instructions",
+              "arm": "felan-cbm-off",
+              "sourceAgent": "felan-cbm-off",
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "104faa5559029c8be9e8a1eb504d87974a5864e9"
+              },
+              "metrics": {
+                "cost.total": 0.632202,
+                "duration.ms": 325275,
+                "duration.stepsMs": 252044,
+                "usage.promptTokens": 452874,
+                "usage.outputTokens": 6036,
+                "usage.totalTokens": 458910
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "3aaf87887ab0068f44237cd7daacf9ce84be727d96f16d5dd0d51c610a66a5d6",
+                  "bytes": 1831
+                },
+                "summary.json": {
+                  "sha256": "3fe097fed25a05031b66dc631b68298c06c585bc1ed026256081136ad7ede8f1",
+                  "bytes": 17690
+                },
+                "cost-summary.json": {
+                  "sha256": "500c467279a52cadf446948925058865b3a19362d55606657c85233f652bd3ca",
+                  "bytes": 6042
+                },
+                "workspace-source.json": {
+                  "sha256": "aedfb9e29e32db9079c05eb7bb5524b91dcfde2842054a3acac0bf081c337c23",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-project-instructions-felan-cbm-off-2026-09-09T12-47-32-028Z-2",
+              "caseId": "cbm-project-instructions",
+              "arm": "felan-cbm-off",
+              "sourceAgent": "felan-cbm-off",
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "104faa5559029c8be9e8a1eb504d87974a5864e9"
+              },
+              "metrics": {
+                "cost.total": 0.601561,
+                "duration.ms": 180134,
+                "duration.stepsMs": 123327,
+                "usage.promptTokens": 397523,
+                "usage.outputTokens": 6099,
+                "usage.totalTokens": 403622
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "6de026b164623f75e92e13cdf667df2fdab51a80530ae83cdff974ffcf8345fa",
+                  "bytes": 1831
+                },
+                "summary.json": {
+                  "sha256": "b77c8bd881a9109c8e155e14c2c9ec438ba6062782f7f5b43e345129365c81dc",
+                  "bytes": 17690
+                },
+                "cost-summary.json": {
+                  "sha256": "0ff1befc4fac4ab6a647ebbf8a1676ecc58a94b616a63c3e07f64324022ad039",
+                  "bytes": 6042
+                },
+                "workspace-source.json": {
+                  "sha256": "aedfb9e29e32db9079c05eb7bb5524b91dcfde2842054a3acac0bf081c337c23",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            }
+          ],
+          "reducedByMedian": {
+            "cost.total": 0.632202,
+            "duration.stepsMs": 205803,
+            "usage.promptTokens": 452874,
+            "usage.outputTokens": 6099,
+            "usage.totalTokens": 458910
+          },
+          "passRate": 1.0,
+          "meanVerifierReward": 1.0
+        },
+        "felan-cbm-on": {
+          "attemptCount": 3,
+          "attempts": [
+            {
+              "runId": "cbm-project-instructions-felan-cbm-curated-2026-09-09T12-50-32-243Z-3",
+              "caseId": "cbm-project-instructions",
+              "arm": "felan-cbm-on",
+              "sourceAgent": "felan-cbm-curated",
+              "attemptNumber": 1,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "104faa5559029c8be9e8a1eb504d87974a5864e9"
+              },
+              "metrics": {
+                "cost.total": 0.680038,
+                "duration.ms": 250250,
+                "duration.stepsMs": 185231,
+                "usage.promptTokens": 549560,
+                "usage.outputTokens": 6857,
+                "usage.totalTokens": 556417
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "8022e259fc98a96046f8b9a14229262e5153814add1c39b20e48862900eebf86",
+                  "bytes": 1851
+                },
+                "summary.json": {
+                  "sha256": "c196f4ccc51977875c05a056377e01b56184af3585bdd18d5c334d7189fe28b3",
+                  "bytes": 17757
+                },
+                "cost-summary.json": {
+                  "sha256": "834892b662e9cf86cc647bee56761e6225b3fb810fb1d2db686c1dea8be1440d",
+                  "bytes": 6066
+                },
+                "workspace-source.json": {
+                  "sha256": "aedfb9e29e32db9079c05eb7bb5524b91dcfde2842054a3acac0bf081c337c23",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-project-instructions-felan-cbm-curated-2026-09-09T12-54-42-619Z-4",
+              "caseId": "cbm-project-instructions",
+              "arm": "felan-cbm-on",
+              "sourceAgent": "felan-cbm-curated",
+              "attemptNumber": 2,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "104faa5559029c8be9e8a1eb504d87974a5864e9"
+              },
+              "metrics": {
+                "cost.total": 0.941311,
+                "duration.ms": 247270,
+                "duration.stepsMs": 166419,
+                "usage.promptTokens": 781625,
+                "usage.outputTokens": 6015,
+                "usage.totalTokens": 787640
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "8a5f95fef5802441f10fb8f6f9877e342c9493ee3a2684d6868b7c6fe6df7bdc",
+                  "bytes": 1851
+                },
+                "summary.json": {
+                  "sha256": "79072f1ab0854986a8720e963948211cec2dee3ebf69e4d07ced09b304c2f91a",
+                  "bytes": 17754
+                },
+                "cost-summary.json": {
+                  "sha256": "464bc033dab377ec3eef8865ed9ea071fbe47475a02e04a85f202221b9a8f7e0",
+                  "bytes": 6066
+                },
+                "workspace-source.json": {
+                  "sha256": "aedfb9e29e32db9079c05eb7bb5524b91dcfde2842054a3acac0bf081c337c23",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            },
+            {
+              "runId": "cbm-project-instructions-felan-cbm-curated-2026-09-09T12-58-49-961Z-5",
+              "caseId": "cbm-project-instructions",
+              "arm": "felan-cbm-on",
+              "sourceAgent": "felan-cbm-curated",
+              "attemptNumber": 3,
+              "status": "passed",
+              "pass": true,
+              "provider": "openai-codex",
+              "model": "gpt-5.6-sol",
+              "thinking": "medium",
+              "packageVersion": "0.23.2",
+              "benchmark": null,
+              "source": {
+                "repository": "https://github.com/felan-ai/felan.git",
+                "commit": "104faa5559029c8be9e8a1eb504d87974a5864e9"
+              },
+              "metrics": {
+                "cost.total": 0.570279,
+                "duration.ms": 217600,
+                "duration.stepsMs": 151960,
+                "usage.promptTokens": 416181,
+                "usage.outputTokens": 5921,
+                "usage.totalTokens": 422102
+              },
+              "verifierReward": 1,
+              "evidenceFiles": {
+                "run-started.json": {
+                  "sha256": "51986c164f089c3cbf8f94fe85c7b0e169366774ff33e4e69a645ab5801e3412",
+                  "bytes": 1851
+                },
+                "summary.json": {
+                  "sha256": "44e0ea5478e42a071e298fbab735c1c6921a1ea73aba4ee7ae1675b332ee9906",
+                  "bytes": 17754
+                },
+                "cost-summary.json": {
+                  "sha256": "a13c120904812c4fb6f17d8c11f5259b44c966aee9455dd33b13844fbe9ab54b",
+                  "bytes": 6066
+                },
+                "workspace-source.json": {
+                  "sha256": "aedfb9e29e32db9079c05eb7bb5524b91dcfde2842054a3acac0bf081c337c23",
+                  "bytes": 133
+                },
+                "verifier/reward.json": {
+                  "sha256": "d2c27300a81c0056768a90237e8eec2f646fef44db730d2eaf75562394024156",
+                  "bytes": 131
+                }
+              }
+            }
+          ],
+          "reducedByMedian": {
+            "cost.total": 0.680038,
+            "duration.stepsMs": 166419,
+            "usage.promptTokens": 549560,
+            "usage.outputTokens": 6015,
+            "usage.totalTokens": 556417
+          },
+          "passRate": 1.0,
+          "meanVerifierReward": 1.0
+        }
+      }
+    }
+  ],
+  "qualityDisclosure": {
+    "frameworkPassRate": "All 18 published attempts reported status passed and pass=true.",
+    "architectureBaselineVerifierRewards": [
+      0.8,
+      0.8,
+      1.0
+    ],
+    "architectureCandidateVerifierRewards": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "architectureVerifierNote": "Two Codebase Memory-off attempts received reward 0.8 (coverage 4/5); all three Codebase Memory-on attempts scored 1.0.",
+    "configScopeVerifierRewards": {
+      "felan-cbm-off": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "felan-cbm-on": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "projectInstructionsVerifierRewards": {
+      "felan-cbm-off": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "felan-cbm-on": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "nonRequiredAssertionNote": "4 of 18 attempts recorded a non-required clean-tool-execution failure, primarily grep ENOENT (cbm-extension-architecture: 4); these failures did not affect framework pass status and occur in both arms."
+  },
+  "excludedFromPublication": [
+    "credentials",
+    "auth/model stores",
+    "raw workspaces",
+    "full transcripts",
+    "session JSONL",
+    "logs",
+    "verifier command metadata",
+    "hidden verifier assets",
+    "local absolute paths",
+    ".DS_Store"
+  ],
+  "publicationScope": {
+    "status": "final",
+    "caseCount": 3,
+    "runCount": 18,
+    "trialsPerArmPerCase": 3,
+    "caseIds": [
+      "cbm-extension-architecture",
+      "cbm-extension-config-scope",
+      "cbm-project-instructions"
+    ]
+  },
+  "comparisons": {
+    "cost.total": {
+      "baselineReducedCaseSum": 5.727142,
+      "candidateReducedCaseSum": 4.135741,
+      "ratioOfReducedSumsGainPercent": 27.78700091598915,
+      "macroMeanCaseGainPercent": 11.269148006055824,
+      "caseGainsPercent": [
+        -1.031951759483988,
+        42.405964690752015,
+        -7.566568913100557
+      ],
+      "rawAttemptTotalGainPercent": 25.052814651585376
+    },
+    "duration.stepsMs": {
+      "baselineReducedCaseSum": 1167282,
+      "candidateReducedCaseSum": 1076719,
+      "ratioOfReducedSumsGainPercent": 7.758450828505879,
+      "macroMeanCaseGainPercent": 7.722228120587097,
+      "caseGainsPercent": [
+        -4.424578138032808,
+        8.454515222057623,
+        19.136747277736475
+      ],
+      "rawAttemptTotalGainPercent": 7.991582891817235
+    },
+    "usage.promptTokens": {
+      "baselineReducedCaseSum": 7116614,
+      "candidateReducedCaseSum": 4211297,
+      "ratioOfReducedSumsGainPercent": 40.82442858359327,
+      "macroMeanCaseGainPercent": 12.229176806088622,
+      "caseGainsPercent": [
+        6.630136175439376,
+        51.406820352517045,
+        -21.349426109690555
+      ],
+      "rawAttemptTotalGainPercent": 37.78097163969734
+    },
+    "usage.outputTokens": {
+      "baselineReducedCaseSum": 28887,
+      "candidateReducedCaseSum": 30014,
+      "ratioOfReducedSumsGainPercent": -3.901408938276733,
+      "macroMeanCaseGainPercent": -4.0493830621669975,
+      "caseGainsPercent": [
+        -12.590516234524642,
+        -0.9349079150850556,
+        1.3772749631087065
+      ],
+      "rawAttemptTotalGainPercent": -2.8099209881427267
+    },
+    "usage.totalTokens": {
+      "baselineReducedCaseSum": 7146562,
+      "candidateReducedCaseSum": 4240437,
+      "ratioOfReducedSumsGainPercent": 40.664658055159954,
+      "macroMeanCaseGainPercent": 12.155455036876923,
+      "caseGainsPercent": [
+        6.393150779721577,
+        51.32073563138205,
+        -21.24752130047286
+      ],
+      "rawAttemptTotalGainPercent": 37.61287572109261
+    }
+  },
+  "sourceScopeNotes": [
+    "The published result covers all 18 off and on attempts across the three cases.",
+    "The three case batches were launched individually with --case rather than --benchmark, so their runs carry no benchmark stamp (run-started.benchmark is null) and harness-evals reprocess/publish cannot ingest them. Per-attempt metrics are read verbatim from each run's summary.json metrics block; case medians, reduced sums and gains were computed from those values with the declared estimator.",
+    "Supersedes the earlier 2026-09-04 Codebase Memory evidence (batch 20260904-124556-6ffe, Felan 0.21.11), which reported 5.2% lower cost on the same three case definitions."
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "batch": {
+    "batchId": "20260903-052334-7809",
+    "startedAt": "2026-09-03T05:23:34.146Z",
+    "label": "felan-no-subagents,felan-delegated-exploration · 1 case",
+    "argv": [
+      "run",
+      "--config",
+      "harness-evals.yaml",
+      "--benchmark",
+      "subagents",
+      "--concurrency",
+      "3"
+    ],
+    "agents": [
+      "felan-no-subagents",
+      "felan-delegated-exploration"
+    ],
+    "caseCount": 1,
+    "runCount": 6
+  },
+  "status": "completed",
+  "expectedRunCount": 6,
+  "runIds": [
+    "subagents-codebase-exploration-felan-no-subagents-2026-09-03T05-23-34-148Z-0",
+    "subagents-codebase-exploration-felan-no-subagents-2026-09-03T05-23-34-148Z-1",
+    "subagents-codebase-exploration-felan-no-subagents-2026-09-03T05-23-34-148Z-2",
+    "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-25-54-972Z-3",
+    "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-26-28-856Z-4",
+    "subagents-codebase-exploration-felan-delegated-exploration-2026-09-03T05-27-02-089Z-5"
+  ],
+  "completedAt": "2026-09-03T05:29:44.502Z"
+}
