@@ -21,6 +21,7 @@ import {
   type Model,
 } from '@felan-ai/agent-core';
 import { bindSubagentSession } from '@felan-ai/ext-subagents';
+import type { BrowserAuthorizationPolicy } from '@felan-ai/ext-browser';
 import { BackgroundBashCoordinator } from '@felan-ai/ext-background-bash';
 import {
   resolveModelScopeWithDiagnostics,
@@ -43,7 +44,9 @@ import {
   getFelanSettings,
   getLocalOutputStyle,
   getLocalToolDisplayMode,
+  getBrowserAuthorizationPolicy,
   resolveExtensionConfigSettings,
+  setExtensionConfigValue,
 } from './settings.js';
 import { loadLocalAppendSystemPrompt } from './system-prompt.js';
 import {
@@ -188,6 +191,18 @@ export function createLocalSessionRuntimeFactory(
       ...extensionConfigSettings.overrides,
       ...(options.extensionConfigOverrides ?? []),
     ];
+    const browserPolicyOverride = [...(options.extensionConfigOverrides ?? [])].reverse().find((override) => (
+      override.extensionId === 'browser' && Object.hasOwn(override.values, 'authorizationPolicy')
+    ));
+    const browserAuthorizationPolicy = {
+      get: (): BrowserAuthorizationPolicy => browserPolicyOverride?.values.authorizationPolicy as BrowserAuthorizationPolicy
+        ?? getBrowserAuthorizationPolicy(settingsManager),
+      persist: async (policy: BrowserAuthorizationPolicy): Promise<void> => {
+        if (browserPolicyOverride) throw new Error('The browser authorization policy is overridden for this runtime.');
+        await setExtensionConfigValue(options.agentDir, 'browser', 'authorizationPolicy', policy);
+        await settingsManager.reload();
+      },
+    };
     const outputStyle = getLocalOutputStyle(
       settingsManager,
       extensionConfigSettings.configs.get('outputStyle') ?? null,
@@ -340,6 +355,8 @@ export function createLocalSessionRuntimeFactory(
         savings,
         sessionManager.getSessionDir(),
         backgroundBashCoordinator,
+        true,
+        browserAuthorizationPolicy,
       ),
       modelRuntime: options.modelRuntime,
       settingsManager,

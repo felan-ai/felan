@@ -33,6 +33,28 @@ describe('local browser authorization host', () => {
     expect(f.status).toHaveBeenLastCalledWith('browser-authorization', undefined);
   });
 
+  it('offers a persistent always-allow choice and saves it before attaching', async () => {
+    const f = fixture('tui', { selected: 'Always allow' });
+    await expect(f.authorize()).resolves.toEqual({ status: 'authorized' });
+    expect(f.select).toHaveBeenCalledOnce();
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.persist).toHaveBeenCalledOnce();
+  });
+
+  it('skips Felan consent when always-allow is configured', async () => {
+    const f = fixture('tui', { policy: 'always-allow' });
+    await expect(f.authorize()).resolves.toEqual({ status: 'authorized' });
+    expect(f.select).not.toHaveBeenCalled();
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.inspect).toHaveBeenCalledOnce();
+  });
+
+  it('continues with one-time access when saving always-allow fails', async () => {
+    const f = fixture('tui', { selected: 'Always allow', persistFailure: true });
+    await expect(f.authorize()).resolves.toEqual({ status: 'authorized' });
+    expect(f.persist).toHaveBeenCalledOnce();
+  });
+
   it('opens setup only when disabled and rechecks only after user confirmation', async () => {
     const f = fixture();
     f.inspect.mockResolvedValueOnce({ state: 'disabled', processId: 123, applicationPath: APPLICATION });
@@ -134,7 +156,7 @@ describe('local browser authorization host', () => {
 
 const READY = { state: 'ready', processId: 123, connection: { port: 4141, webSocketPath: '/devtools/browser' } } as const;
 
-function fixture(mode = 'tui') {
+function fixture(mode = 'tui', options: { selected?: string; policy?: 'ask' | 'always-allow'; persistFailure?: boolean } = {}) {
   const controller = new AbortController();
   const leaseController = new AbortController();
   const state = { connected: true };
@@ -145,6 +167,9 @@ function fixture(mode = 'tui') {
     close: vi.fn(async () => { leaseController.abort(); }),
   };
   const confirm = vi.fn(async (_title: string, _message: string, _options?: { signal?: AbortSignal }) => true);
+  const select = vi.fn(async () => options.selected);
+  const persist = vi.fn(async () => {});
+  if (options.persistFailure) persist.mockRejectedValue(new Error('settings unavailable'));
   const inspect = vi.fn(async (_signal: AbortSignal): Promise<ChromePreflight> => READY);
   const createLease = vi.fn(async () => lease);
   const attach = vi.fn<BrowserAuthorizationRequest['attach']>(async () => ({ ready: true }));
@@ -153,8 +178,11 @@ function fixture(mode = 'tui') {
   const runtime = { kind: 'host', exec: openTarget } as unknown as AgentRuntime;
   const request: BrowserAuthorizationRequest = {
     origin: 'https://example.com', signal: controller.signal, attach,
-    extensionContext: { mode, hasUI: true, ui: { confirm, setStatus: status, notify: vi.fn() } } as unknown as ExtensionContext,
+    extensionContext: { mode, hasUI: true, ui: {
+      confirm, ...(options.selected === undefined ? {} : { select }), setStatus: status, notify: vi.fn(),
+    } } as unknown as ExtensionContext,
   };
-  return { controller, state, lease, confirm, inspect, createLease, attach, status, attention,
-    authorize: () => createLocalBrowserAuthorizationHost({ runtime, inspect, createLease, onAttention: attention }).authorize(request) };
+  return { controller, state, lease, confirm, select, persist, inspect, createLease, attach, status, attention,
+    authorize: () => createLocalBrowserAuthorizationHost({ runtime, inspect, createLease, onAttention: attention,
+      ...(options.policy === undefined ? {} : { authorizationPolicy: options.policy }), persistAuthorizationPolicy: persist }).authorize(request) };
 }

@@ -29,6 +29,7 @@ import {
 import { createPromptHistoryExtension, PROMPT_HISTORY_CONFIG } from '@felan-ai/ext-prompt-history';
 import { createLocalMcpExtension } from './mcp/index.js';
 import { createLocalBrowserAuthorizationHost } from './browser/authorization-host.js';
+import { BROWSER_CONFIG, type BrowserAuthorizationPolicy } from '@felan-ai/ext-browser';
 import { HERDR_BLOCKED_EVENT } from './herdr.js';
 import { createLocalSavingsUsageHost, createLocalSubscriptionUsageHost } from './powerline.js';
 import type { SavingsService } from './savings.js';
@@ -146,6 +147,10 @@ export function createLocalExtensionImporter(
   sessionDirectory?: string,
   backgroundBashCoordinator?: BackgroundBashCoordinator,
   backgroundBashCoordinatorOwner = true,
+  browserAuthorizationPolicy?: {
+    readonly get: () => BrowserAuthorizationPolicy;
+    readonly persist: (policy: BrowserAuthorizationPolicy) => Promise<void>;
+  },
 ): ExtensionPackageImporter {
   let powerlineLoaded = false;
   let agentRailRenderer: AgentRailRenderer | undefined;
@@ -184,13 +189,19 @@ export function createLocalExtensionImporter(
     }
     if (packageName === builtinExtensionPackages.browser) {
       const { createBrowserExtension } = await import('@felan-ai/ext-browser');
-      return {
-        default: (pi: FelanExtensionAPI) => createBrowserExtension({
-          authorizationHost: createLocalBrowserAuthorizationHost({
-            runtime: pi.runtime,
-            onAttention: (active, label) => pi.events.emit(HERDR_BLOCKED_EVENT, { active, label }),
+      const extension = (pi: FelanExtensionAPI) => createBrowserExtension({
+        authorizationHost: createLocalBrowserAuthorizationHost({
+          runtime: pi.runtime,
+          ...(browserAuthorizationPolicy === undefined ? {} : {
+            getAuthorizationPolicy: browserAuthorizationPolicy.get,
+            persistAuthorizationPolicy: browserAuthorizationPolicy.persist,
           }),
-        })(pi),
+          onAttention: (active, label) => pi.events.emit(HERDR_BLOCKED_EVENT, { active, label }),
+        }),
+      })(pi);
+      associateExtensionConfig(extension, BROWSER_CONFIG);
+      return {
+        default: extension,
       };
     }
     if (packageName === subagentsExtensionPackage) {

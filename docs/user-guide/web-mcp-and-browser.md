@@ -138,7 +138,7 @@ limits, policy options, and a fresh configuration that excludes ambient
 
 Before its first action, the agent retrieves the `core` skill or an appropriate
 specialized skill. Attaching to an existing browser requires
-`browser_authorize`. The local TUI asks for consent, discovers Chrome's bounded
+`browser_authorize`. The local TUI asks for consent by default, discovers Chrome's bounded
 local `DevToolsActivePort` file, and makes one direct-CDP connection attempt.
 If the file is unavailable, it opens `chrome://inspect/#remote-debugging` in
 Chrome and rediscovers only after you confirm setup is complete. It then binds
@@ -147,8 +147,12 @@ can be inspected or revoked through `browser_authorize`. Direct `connect`,
 `--cdp`, and `--auto-connect` arguments are rejected by `browser`; failed
 authorization never silently falls back to an isolated logged-out browser.
 
-CDP attachment is browser-level authority. Pinned-tab and origin checks reduce
-accidental cross-tab or cross-origin actions but are not a network sandbox.
+CDP attachment is browser-level authority. The requested origin is only the
+initial tab destination; attached navigation may cross HTTP(S) origins. Pinned
+target, safe-URL, and command checks reduce accidental misuse but are not a
+network sandbox. Set `extensionConfig.browser.authorizationPolicy` to
+`always-allow` to skip Felan's repeated consent prompt, or restore `ask` in
+`/settings`; Chrome's own approval is still required.
 Print, ACP/RPC, cloud, and subagent contexts fail closed because they cannot
 present the local consent flow.
 

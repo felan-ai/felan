@@ -31,7 +31,7 @@ describe('browser extension', () => {
     const harness = await createHarness();
     expect(harness.capabilities).toEqual([{
       id: 'browser',
-      instructions: expect.stringContaining('ask the user to confirm unless their current request already explicitly authorizes'),
+      instructions: expect.stringContaining('browser_authorize'),
     }]);
     expect([...harness.tools.keys()]).toEqual(['browser']);
     expect(harness.tools.get('browser').promptGuidelines).toEqual(expect.arrayContaining([
@@ -146,8 +146,10 @@ describe('browser extension', () => {
     await expect(authorize.execute('authorize-again', { operation: 'authorize', origin: 'https://example.com/path' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { reused: true } });
     await expect(authorize.execute('authorize-other', { operation: 'authorize', origin: 'https://example.org' }, undefined, undefined, harness.context))
-      .resolves.toMatchObject({ details: { state: 'unavailable' } });
+      .resolves.toMatchObject({ details: { reused: true } });
     await expect(browser.execute('snapshot', { operation: 'run', args: ['snapshot', '-i'] }, undefined, undefined, harness.context))
+      .resolves.toBeDefined();
+    await expect(browser.execute('cross-origin-open', { operation: 'run', args: ['open', 'https://example.org/private'] }, undefined, undefined, harness.context))
       .resolves.toBeDefined();
     await expect(browser.execute('cookies', { operation: 'run', args: ['cookies'] }, undefined, undefined, harness.context))
       .rejects.toThrow('unavailable on an authorized existing browser session');
@@ -915,12 +917,12 @@ describe('browser extension', () => {
     expect(lease.close).toHaveBeenCalledOnce();
   });
 
-  it.each(['origin', 'target'] as const)('withholds output and screenshot reads after a postflight %s change', async (change) => {
+  it.each(['scheme', 'target'] as const)('withholds output and screenshot reads after a postflight %s change', async (change) => {
     const harness = await createHarness({
       authorizationHost: createAuthorizationHost(createLease()),
       commands: {
         screenshot: ({ args, session, runtime }) => {
-          if (change === 'origin') session.currentURL = 'https://other.example/private';
+          if (change === 'scheme') session.currentURL = 'file:///private';
           else session.targetId = 'unexpected-target';
           const path = args.find((arg) => arg.endsWith('.png'))!;
           runtime.files.set(path, VALID_PNG_HEADER);
@@ -936,7 +938,7 @@ describe('browser extension', () => {
     resizeImageMock.mockClear();
 
     const screenshot = browser.execute('screenshot', { operation: 'run', args: ['screenshot'] }, undefined, undefined, harness.context);
-    await expect(screenshot).rejects.toThrow(/origin|target|authorization|quarantined/u);
+    await expect(screenshot).rejects.toThrow(/HTTP|target|authorization|quarantined/u);
     await expect(screenshot).rejects.not.toThrow('PRIVATE_BROWSER_RESPONSE');
     expect(harness.runtime.calls.filter((call) => call.args[0] === 'screenshot')).toHaveLength(1);
     expect(readFile).not.toHaveBeenCalled();

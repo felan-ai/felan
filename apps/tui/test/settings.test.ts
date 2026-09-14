@@ -13,6 +13,7 @@ import { initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agen
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createLocalSettingsManager,
+  getBrowserAuthorizationPolicy,
   getFelanSettings,
   getLocalOutputStyle,
   getLocalToolDisplayMode,
@@ -226,6 +227,22 @@ describe('local settings', () => {
     }]);
     expect(resolved.configs.get('prewalk')).toEqual({ entryApproval: 'allow' });
     expect(resolved.warnings).toEqual([]);
+  });
+
+  it('reads the browser authorization policy and restores ask when configured', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), '{}\n');
+    const manager = createLocalSettingsManager(root, agentDir);
+
+    expect(getBrowserAuthorizationPolicy(manager)).toBe('ask');
+    await setExtensionConfigValue(agentDir, 'browser', 'authorizationPolicy', 'always-allow');
+    await manager.reload();
+    expect(getBrowserAuthorizationPolicy(manager)).toBe('always-allow');
+    await setExtensionConfigValue(agentDir, 'browser', 'authorizationPolicy', 'ask');
+    await manager.reload();
+    expect(getBrowserAuthorizationPolicy(manager)).toBe('ask');
   });
 
   it('warns and uses defaults for invalid persisted extension configuration', () => {

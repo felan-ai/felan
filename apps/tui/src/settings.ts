@@ -19,6 +19,7 @@ import {
   type BuiltinExtensionName,
   type BuiltinExtensionSettings,
 } from './extensions.js';
+import { BROWSER_AUTHORIZATION_POLICIES, type BrowserAuthorizationPolicy } from '@felan-ai/ext-browser';
 import type { LocalSubagentSettings } from './subagents/host.js';
 import { withLocalFileLock } from './lock.js';
 
@@ -178,6 +179,13 @@ export function createLocalSettingsManager(cwd: string, agentDir: string): Setti
 
 export function getFelanSettings(settingsManager: SettingsManager): FelanSettings {
   return settingsManager.getGlobalSettings() as FelanSettings;
+}
+
+export function getBrowserAuthorizationPolicy(settingsManager: SettingsManager): BrowserAuthorizationPolicy {
+  const configured = getFelanSettings(settingsManager).extensionConfig?.browser?.authorizationPolicy;
+  return BROWSER_AUTHORIZATION_POLICIES.includes(configured as BrowserAuthorizationPolicy)
+    ? configured as BrowserAuthorizationPolicy
+    : 'ask';
 }
 
 export function getLocalToolDisplayMode(settingsManager: SettingsManager): LocalToolDisplayMode {

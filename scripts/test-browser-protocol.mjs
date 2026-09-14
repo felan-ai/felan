@@ -635,7 +635,7 @@ async function wrapperScenario(context, connectionLoss) {
   const authorized = await call('browser_authorize', { operation: 'authorize', origin: 'https://example.test' });
   output.push(authorized);
   check(authorized.details.state === 'authorized', 'wrapper_authorization_failed');
-  for (const args of [['get', 'title'], ['open', 'https://example.test/first'], ['get', 'url']]) {
+  for (const args of [['get', 'title'], ['open', 'https://other.example/first'], ['get', 'url']]) {
     const result = await call('browser', { operation: 'run', args });
     output.push(result);
     check(!result.isError && result.details.code === 0, 'wrapper_command_failed');

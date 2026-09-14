@@ -40,8 +40,8 @@ export function installFelanSettingsCommand(
     return;
   }
   const nativeSettings = internals.showSettingsSelector.bind(mode);
-  const state = loadExtensionSettingsState(options);
   internals.showSettingsSelector = () => {
+    const state = loadExtensionSettingsState(options);
     internals.showSelector((done) => {
       const items: SettingItem[] = [
         {

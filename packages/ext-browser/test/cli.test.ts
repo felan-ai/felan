@@ -407,15 +407,18 @@ describe('attached browser command policy', () => {
   });
 
   it.each([
-    'http://example.com', 'https://other.test', 'https://example.com:444',
-    'https://example.com.other.test', 'https://example.com@other.test',
+    'http://example.com@other.test', 'https://example.com@other.test',
     'https://user:password@example.com', ' https://example.com', 'https://example.com\n',
     'https://example.com\\@other.test', 'data:text/html,test', 'file:///tmp/page.html',
     '//example.com',
-  ])('rejects navigation outside the exact origin or ambiguous URL %j', (target) => {
+  ])('rejects unsafe or ambiguous navigation URL %j', (target) => {
     for (const command of ['open', 'goto', 'navigate']) {
       expect(() => validateAttachedBrowserCommand([command, target], 'https://example.com')).toThrow();
     }
+  });
+
+  it.each(['http://other.test', 'https://other.test/path'])('allows navigation to another HTTP(S) origin %j', (target) => {
+    expect(() => validateAttachedBrowserCommand(['open', target], 'https://example.com')).not.toThrow();
   });
 
   it('retains the explicit trusted path for private observations and close', async () => {

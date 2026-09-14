@@ -109,15 +109,19 @@ JSON/text output. Ambient CLI configuration and plugins are not loaded. The
 local host owns dependency installation and explicit policy confirmation.
 
 Attaching to an existing browser is a high-trust action. The separate
-`browser_authorize` tool requires local interactive consent, reads only a
+`browser_authorize` tool uses local host authorization (consent is interactive
+by default), reads only a
 bounded stable-Chrome `DevToolsActivePort` file, and grants a current-session
 pinned-tab scope. The ordinary `browser` tool cannot pass direct CDP or
 auto-connect options. The endpoint is used transiently for one direct-CDP
 attachment and never enters model output, logs, status, or persisted state.
 Revoke and shutdown disconnect the Felan session without closing externally
-owned Chrome. CDP remains browser-level authority, so these checks are defense
-in depth and not a network sandbox. A managed CLI install does not install
-Chrome.
+owned Chrome. The requested URL is only the initial destination; attached
+navigation may cross HTTP(S) origins. CDP remains browser-level authority, so
+these checks are defense in depth and not a network sandbox. The local TUI
+defaults to asking before each new authorization, with an optional persisted
+`extensionConfig.browser.authorizationPolicy: "always-allow"` setting that can
+be reset to `ask`. A managed CLI install does not install Chrome.
 
 ## Dependency installation
 

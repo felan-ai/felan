@@ -190,6 +190,19 @@ format and model-selection behavior.
 
 ## Feature-specific configuration
 
+### Browser authorization
+
+`extensionConfig.browser.authorizationPolicy` controls Felan's local consent
+prompt when reusing an existing authenticated Chrome session. It defaults to
+`ask`, whose prompt offers Allow once, Always allow, or Deny. Set it to
+`always-allow` to skip only Felan's repeated prompt; Chrome's own approval,
+HTTP(S)-only navigation, pinned-target checks, command restrictions, and leased
+attachment lifecycle remain active. Set it back to `ask` in `/settings` or with
+`--browser-authorization-policy ask` to restore the default behavior. The
+preference is global to `$FELAN_AGENT_DIR`; live grants and CDP connection
+material are never persisted. Explicit CLI and programmatic overrides take
+precedence for the runtime.
+
 ### Prewalk
 
 Model-called `enter_prewalk` uses the resolved `extensionConfig.prewalk`

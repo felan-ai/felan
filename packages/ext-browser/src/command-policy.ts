@@ -256,14 +256,11 @@ function parseOptions(args: readonly string[], rules: OptionRules): {
   return { positional, options, ...(firstOption === undefined ? {} : { firstOption }) };
 }
 
-function validateNavigation(target: string, origin?: string): void {
+function validateNavigation(target: string, _origin?: string): void {
   let url: URL;
   try { url = new URL(target); } catch { throw new Error('Authorized browser navigation requires an absolute HTTP(S) URL.'); }
   if (!/^https?:\/\//iu.test(target) || /[\s\\]/u.test(target) || url.username || url.password) {
     throw new Error('Authorized browser navigation requires an unambiguous HTTP(S) URL without credentials.');
-  }
-  if (origin !== undefined && url.origin !== origin) {
-    throw new Error('Browser navigation is outside the authorized origin; revoke and authorize the new origin.');
   }
 }
 

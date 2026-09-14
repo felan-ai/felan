@@ -11,8 +11,10 @@ The extension registers the ordinary `browser` tool and, when its host supplies
 authorization, a separate `browser_authorize` control-plane tool.
 
 `browser_authorize` supports `authorize`, `status`, and `revoke`. Authorization
-is interactive, held only for the current session, and opens a fresh strict
-pinned tab in the existing Chrome session. The host supplies a transient
+defaults to an interactive local consent choice and opens a fresh strict pinned
+tab in the existing Chrome session. The local TUI can persist `always-allow`
+through browser settings; changing it back to `ask` restores the prompt for
+later authorizations. The host supplies a transient
 validated loopback CDP endpoint; it never returns cookies, profile paths, CDP
 endpoints, or unrelated tab data. Direct `connect`, `--cdp`, and
 `--auto-connect` arguments are rejected by `browser`.
@@ -52,9 +54,11 @@ paths remain text-only and are never opened automatically.
 
 The owned browser session is closed during session shutdown. Revocation and
 shutdown disconnect an attached session without closing the user's Chrome.
-CDP attachment remains browser-level authority; pinned-tab and origin checks
-are defense in depth, not a network sandbox. Felan makes one connection attempt
-per approval and retries setup only after an explicit user action.
+CDP attachment remains browser-level authority; pinned-target, safe-URL, and
+command checks are defense in depth, not a network sandbox. The requested
+origin is only the initial destination, and attached navigation may cross
+HTTP(S) origins. Felan makes one connection attempt per approval and retries
+setup only after an explicit user action.
 
 A managed CLI install sets a one-hour daemon idle timeout; it does not install Chrome. Run
 the explicit `agent-browser install` action when a local Chrome for Testing

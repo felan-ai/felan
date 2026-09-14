@@ -1,4 +1,5 @@
 import type { BrowserAuthorizationHost, BrowserAuthorizationRequest } from '@felan-ai/ext-browser';
+import type { BrowserAuthorizationPolicy } from '@felan-ai/ext-browser';
 import type { AgentRuntime } from '@felan-ai/agent-core';
 import { assertAgentBrowserEnvironment, inspectChromeRemoteDebugging, type ChromePreflight } from './chrome-devtools.js';
 import { createChromeConnectionLease, type ChromeConnectionLease } from './connection-lease.js';
@@ -7,6 +8,9 @@ const CHROME_REMOTE_DEBUGGING_URL = 'chrome://inspect/#remote-debugging';
 
 export interface LocalBrowserAuthorizationDependencies {
   readonly runtime?: AgentRuntime;
+  readonly authorizationPolicy?: BrowserAuthorizationPolicy;
+  readonly getAuthorizationPolicy?: () => BrowserAuthorizationPolicy;
+  readonly persistAuthorizationPolicy?: (policy: BrowserAuthorizationPolicy) => Promise<void>;
   readonly onAttention?: (active: boolean, label?: string) => void;
   readonly openSetup?: (applicationPath: string, signal: AbortSignal) => Promise<void>;
   readonly inspect?: (signal: AbortSignal) => Promise<ChromePreflight>;
@@ -41,13 +45,31 @@ async function authorize(
   let lease: ChromeConnectionLease | undefined;
   let authorized = false;
   try {
-    dependencies.onAttention?.(true, `Authorize Chrome for ${request.origin}`);
-    const approved = await context.ui.confirm(
-      'Authorize existing Chrome?',
-      `Allow Felan to use your current Chrome for ${request.origin}? Chrome grants browser-wide debugging authority; Felan restricts its tools to one fresh tab. Approve the single Chrome prompt when it appears.`,
-      { signal: request.signal },
-    );
-    if (!approved || request.signal.aborted) return { status: 'cancelled', message: 'Existing-browser authorization was declined.' };
+    dependencies.onAttention?.(true, 'Authorize existing Chrome');
+    const policy = dependencies.getAuthorizationPolicy?.() ?? dependencies.authorizationPolicy ?? 'ask';
+    if (policy !== 'always-allow') {
+      const selected = typeof context.ui.select === 'function'
+        ? await context.ui.select(
+          'Authorize existing Chrome?',
+          ['Allow once', 'Always allow', 'Deny'],
+          { signal: request.signal },
+        )
+        : (await context.ui.confirm(
+          'Authorize existing Chrome?',
+          `Allow Felan to use HTTP(S) pages in your current Chrome? Chrome grants browser-wide debugging authority; Felan restricts its tools to one fresh tab. Approve the single Chrome prompt when it appears.`,
+          { signal: request.signal },
+        ) ? 'Allow once' : 'Deny');
+      if (selected === 'Deny' || !selected || request.signal.aborted) {
+        return { status: 'cancelled', message: 'Existing-browser authorization was declined.' };
+      }
+      if (selected === 'Always allow') {
+        try {
+          await dependencies.persistAuthorizationPolicy?.('always-allow');
+        } catch {
+          context.ui.notify('Always-allow could not be saved; this authorization will apply once.', 'warning');
+        }
+      }
+    }
     context.ui.setStatus('browser-authorization', `… Checking Chrome for ${request.origin}`);
     const inspect = dependencies.inspect ?? ((signal: AbortSignal) => inspectChromeRemoteDebugging(signal, {
       ...(dependencies.runtime ? { runtime: dependencies.runtime } : {}),

@@ -94,13 +94,11 @@ export class BrowserAttachments {
     const key = scopeKey(root);
     const previous = this.#attempts.get(key);
     if (previous?.state === 'pending') {
-      if (previous.origin !== origin) return { state: 'unavailable', message: 'Another browser authorization request is already in progress.' };
       try {
         return await (signal ? abortable(previous.authorization, signal) : previous.authorization);
       } catch { return { state: 'cancelled', message: 'This authorization request was cancelled.' }; }
     }
     if (previous?.state === 'authorized') {
-      if (previous.origin !== origin) return { state: 'unavailable', message: 'Revoke the current browser authorization before authorizing a different origin.' };
       try {
         await this.verify(previous, signal);
         return { state: 'authorized', reused: true };
@@ -249,10 +247,12 @@ export class BrowserAttachments {
     const active = pages.tabs.filter((tab: unknown) => isRecord(tab) && tab.active === true);
     const tab = active[0] as Record<string, unknown> | undefined;
     if (active.length !== 1 || !tab || typeof tab.targetId !== 'string' || !tab.targetId
-      || (attempt.targetId !== undefined && tab.targetId !== attempt.targetId)
-      || originOf(tab.url) !== attempt.origin) throw new Error('Pinned browser target changed.');
+      || (attempt.targetId !== undefined && tab.targetId !== attempt.targetId)) {
+      throw new Error('Pinned browser target changed.');
+    }
+    if (!isSafeHttpUrl(tab.url)) throw new Error('Pinned browser target left HTTP(S).');
     const location = await read(['get', 'url']);
-    if (originOf(location.url) !== attempt.origin) throw new Error('Browser left its authorized origin.');
+    if (!isSafeHttpUrl(location.url)) throw new Error('Pinned browser target left HTTP(S).');
     attempt.daemonPid = Number(info.pid);
     attempt.targetId = tab.targetId;
   }
@@ -380,9 +380,12 @@ function scopeKey(scope: BrowserSessionScope): string {
   return `${scope.namespace}/${scope.session}`;
 }
 
-function originOf(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  try { return new URL(value).origin; } catch { return undefined; }
+function isSafeHttpUrl(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password;
+  } catch { return false; }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

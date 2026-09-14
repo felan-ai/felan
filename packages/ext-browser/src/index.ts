@@ -1,4 +1,5 @@
 import type { AgentRuntime, FelanExtension, Model } from '@felan-ai/agent-core';
+import { associateExtensionConfig } from '@felan-ai/agent-core';
 import { inspectAgentBrowserRuntime } from './installer.js';
 import type { AgentBrowserInvocation } from './installer.js';
 import {
@@ -18,6 +19,7 @@ import { readBrowserImage } from './image.js';
 import { StringEnum } from '@felan-ai/agent-core';
 import { Type, type Static } from 'typebox';
 import type { BrowserAuthorizationHost } from './authorization.js';
+import { BROWSER_CONFIG } from './config.js';
 
 const BrowserParameters = Type.Object({
   operation: StringEnum(['run', 'skill'] as const, {
@@ -73,7 +75,7 @@ interface BrowserToolDetails {
 }
 
 export function createBrowserExtension(options: BrowserExtensionOptions = {}): FelanExtension {
-  return (pi) => {
+  const extension: FelanExtension = (pi) => {
     let invocation: AgentBrowserInvocation | undefined;
     const isolatedScopes = new Map<string, BrowserSessionScope>();
     const attachments = new BrowserAttachments(pi.runtime, options.authorizationHost, signal => getInvocation(pi.runtime, signal));
@@ -93,7 +95,7 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
         'For operation "run", pass literal args such as ["open", "https://example.com"] or ["snapshot", "-i"], never a shell command string.',
         'Start run args with the agent-browser command and place permitted options after it; Felan supplies session isolation and output-policy options.',
         'Use browser_authorize before reusing an existing authenticated Chrome session; direct CDP and auto-connect arguments are rejected by browser.',
-        'After declined or failed authorization, report the result and wait for the user before requesting another browser connection.',
+        'browser_authorize owns the local consent prompt; after declined or failed authorization, report the result and wait for the user before requesting another browser connection.',
         'Run commands one at a time; nested agent-browser batch commands are unavailable through this tool.',
         'Re-run snapshot after navigation or interaction because agent-browser refs are invalidated by page changes.',
         'Use a bare ["screenshot"] when you want Felan to attach the screenshot directly to an image-capable model.',
@@ -244,7 +246,7 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
       pi.registerTool({
         name: BROWSER_AUTHORIZATION_TOOL_NAME,
         label: 'Authorize Browser',
-        description: 'Request explicit local-user authorization to reuse the existing authenticated Chrome session for one origin in the current Felan session.',
+        description: 'Request local-user authorization to reuse the existing authenticated Chrome session for HTTP(S) browsing in the current Felan session.',
         promptSnippet: 'Authorize an existing authenticated Chrome session before using browser',
         parameters: Type.Object({
           operation: StringEnum(['authorize', 'status', 'revoke'] as const),
@@ -293,6 +295,8 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
       return invocation;
     }
   };
+  associateExtensionConfig(extension, BROWSER_CONFIG);
+  return extension;
 }
 
 const browserExtension = createBrowserExtension();
@@ -353,6 +357,9 @@ export type {
   BrowserAuthorizationRequest,
   BrowserAuthorizationLease,
 } from './authorization.js';
+
+export { BROWSER_CONFIG, BROWSER_AUTHORIZATION_POLICIES } from './config.js';
+export type { BrowserAuthorizationPolicy } from './config.js';
 
 export {
   createBrowserSessionScope,

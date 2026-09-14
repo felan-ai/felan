@@ -456,6 +456,18 @@ describe('felan CLI', () => {
     })]);
   });
 
+  it('parses browser authorization configuration options', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+    const exitCode = await runCli(['--browser-authorization-policy', 'always-allow', 'inspect'], {
+      launch: async (options) => launches.push(options),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(launches[0]?.extensionConfigOverrides).toEqual([expect.objectContaining({
+      extensionId: 'browser', values: { authorizationPolicy: 'always-allow' },
+    })]);
+  });
+
   it('parses Tasks display configuration options', async () => {
     const launches: RunLocalFelanOptions[] = [];
     const exitCode = await runCli([

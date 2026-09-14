@@ -73,6 +73,16 @@ describe('local extension importer', () => {
     })]);
   });
 
+  it('discovers browser authorization configuration', async () => {
+    const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-browser']);
+    expect(definitions).toEqual([expect.objectContaining({
+      id: 'browser',
+      fields: expect.objectContaining({
+        authorizationPolicy: expect.objectContaining({ default: 'ask', values: ['ask', 'always-allow'] }),
+      }),
+    })]);
+  });
+
   it('imports only the source-controlled package list', async () => {
     expect(localExtensionPackages).toEqual([
       '@felan-ai/ext-subagents',
