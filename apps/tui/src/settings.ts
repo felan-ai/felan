@@ -49,7 +49,9 @@ export function resolveExtensionConfigSettings(
     return {
       overrides: [],
       configs: resolveExtensionConfigs(definitions),
-      warnings: ['settings.json.extensionConfig must be an object; using extension defaults.'],
+      warnings: [
+        'settings.json.extensionConfig must be an object; using extension defaults.',
+      ],
     };
   }
 

@@ -48,8 +48,7 @@ browser and Powerline extensions:
     "sessionCompaction": true,
     "outputStyle": true,
     "powerline": false,
-    "sessionTitle": true,
-    "run": true
+    "sessionTitle": true
   },
   "extensionConfig": {
     "prewalk": { "entryApproval": "allow", "planReview": "skip" },
@@ -59,8 +58,7 @@ browser and Powerline extensions:
     "codebaseMemory": { "maxCacheBytes": 0 },
     "promptHistory": { "displayMode": "inline" },
     "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
-    "sessionCompaction": { "model": "inherit" },
-    "run": { "toolNames": ["read", "grep", "find", "ls", "search_code"] }
+    "sessionCompaction": { "model": "inherit" }
   },
   "felanSubagents": {
     "concurrency": 4,
@@ -87,31 +85,6 @@ Defaults:
 
 `builtinExtensions.sessionTitle` controls automatic names for interactive root
 sessions. Disable it to keep the first prompt as the session-picker fallback.
-
-### Code mode
-
-`builtinExtensions.run` enables the `run_code` tool. Its default exact catalog
-contains bounded read and web-access tools. Set `extensionConfig.run.toolNames`
-to an exact replacement list of active tools when a workflow needs additional
-capabilities. `run_code`, `enter_prewalk`, `enter_plan_mode`, and `exit_plan_mode`
-remain excluded.
-Generated code runs in a local QuickJS worker with no Node.js, filesystem,
-modules, environment variables, network, continuations, or rollback. Normal
-nested results are bounded text; direct tools remain preferable for interactive,
-mutating, image, and lifecycle operations.
-
-Nested `terminate: true` stops the worker and propagates the nested termination
-content and error status to the outer result, even if guest code catches errors.
-Termination content remains subject to the same text-only and final-output byte
-limits.
-Configured side effects may partially finish; termination does not roll them
-back. Nested arguments and outcomes are retained only in host-side result
-details, including caught failures and outer execution failures. This audit is
-terminal-safe, redacts sensitive argument keys case-insensitively, and is capped
-at 256 entries and 64 KiB total, with 2 KiB arguments/outcome summaries.
-`callsTruncated` identifies incomplete audit data. Redaction does not detect
-secrets in arbitrary text. See the [Run extension audit policy](../../packages/ext-run/README.md#host-only-audit)
-for field limits and lifecycle handling.
 
 `builtinExtensions.sessionCompaction` controls verified session compaction and
 active-lineage `session_recall`. It is enabled by default. Disable it to use

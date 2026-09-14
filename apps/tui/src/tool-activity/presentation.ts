@@ -389,8 +389,6 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
     value = codebaseMemoryArgumentPreview(args);
   } else if (normalized.startsWith('mcp__')) {
     value = formatToolName(call.name);
-  } else if (normalized === 'run_code') {
-    value = firstString(args, ['title']);
   } else if (normalized === 'apply_patch') {
     value = patchPathPreview(firstString(args, ['input', 'patchText', 'patch']));
   } else if (['read', 'read_file', 'edit', 'write', 'view_image'].includes(normalized)) {

@@ -20,7 +20,7 @@ describe('@felan-ai/ext-output-style package boundary', () => {
       },
       publishConfig: { access: 'public', provenance: true },
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
-      peerDependencies: { '@felan-ai/agent-core': '^0.6.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.7.0' },
     });
     expect(license).toContain('MIT License');
     expect(notice).toContain('original Felan code');

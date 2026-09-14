@@ -40,9 +40,6 @@ Felan Code has several independent efficiency boundaries:
 - **Explicit work state:** tasks, structured questions, retained subagent
   records, and local project memory keep decisions and progress available
   without relying on one opaque chat transcript.
-- **Code mode:** one bounded local invocation can parallelize eligible tools and
-  filter intermediate results before they reach the model. This is a workflow
-  capability, not a measured savings claim.
 
 Not every boundary produces a savings measurement today. User-facing totals
 include only measurements reported by supported optimization producers.

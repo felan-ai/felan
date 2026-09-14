@@ -17,7 +17,7 @@ describe('@felan-ai/ext-rtk-optimizer package boundary', () => {
         url: 'git+https://github.com/felan-ai/felan.git',
         directory: 'packages/ext-rtk-optimizer',
       },
-      peerDependencies: { '@felan-ai/agent-core': '^0.6.1' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.7.0' },
       publishConfig: { access: 'public', provenance: true },
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
     });

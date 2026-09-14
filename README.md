@@ -211,7 +211,6 @@ The [documentation hub](docs/README.md) routes readers by audience:
 | [`@felan-ai/ext-memory`](packages/ext-memory/README.md) | Portable local-first memory contracts | [Memory architecture](docs/concepts/local-memory.md) |
 | [`@felan-ai/ext-output-style`](packages/ext-output-style/README.md) | Validated concise, explanatory, and custom response instructions | [Configuration](docs/user-guide/configuration.md#output-style) |
 | [`@felan-ai/ext-web-access`](packages/ext-web-access/README.md) | Bounded web discovery and matching text/PDF passages | [Web access](docs/user-guide/web-mcp-and-browser.md) |
-| [`@felan-ai/ext-run`](packages/ext-run/README.md) | Bounded QuickJS code mode for composing active tools | [Configuration](docs/user-guide/configuration.md#code-mode) |
 | [`@felan-ai/ext-mcp`](packages/ext-mcp/README.md) | Portable OAuth-only remote MCP gateway | [MCP](docs/user-guide/web-mcp-and-browser.md) |
 | [`@felan-ai/ext-felan-api`](packages/ext-felan-api/README.md) | Single authenticated Felan API gateway | [Configuration](docs/user-guide/configuration.md#felan-api) |
 | [`@felan-ai/ext-browser`](packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration | [Browser](docs/user-guide/web-mcp-and-browser.md) |

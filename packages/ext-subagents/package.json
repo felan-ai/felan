@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-subagents",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Portable Felan subagent tools",
   "license": "MIT",
   "type": "module",
@@ -34,7 +34,7 @@
     "typebox": "1.1.38"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.6.0"
+    "@felan-ai/agent-core": "^0.7.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

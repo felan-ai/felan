@@ -32,7 +32,3 @@ pnpm eval:view
 Source-image builds are local development actions and do not make model calls.
 Benchmark runs may use paid or subscription providers and require explicit
 authorization. Keep run artifacts, credentials, and caches out of Git.
-
-The `run-code` benchmark compares the current source with bounded code mode
-disabled versus enabled on the read-heavy Codebase Memory tasks. It is an
-extension benchmark and therefore belongs here, not in `harness-bench`.

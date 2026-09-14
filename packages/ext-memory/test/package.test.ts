@@ -10,7 +10,7 @@ describe('@felan-ai/ext-memory package boundary', () => {
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-memory',
       license: 'MIT',
-      peerDependencies: { '@felan-ai/agent-core': '^0.6.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.7.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },

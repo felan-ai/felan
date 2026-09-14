@@ -33,8 +33,10 @@ to do.
   staging, validation, publication, and session projections.
 - [ADR 0001](decisions/0001-retain-local-memory-as-standard-sessions.md) — why
   local memory workers use standard, segregated, read-only-inspectable sessions.
-- [ADR 0007](decisions/0007-compose-tools-through-local-code-mode.md) — why
-  active tools are composed through the local sandboxed code-mode boundary.
+- [ADR 0007](decisions/0007-compose-tools-through-local-code-mode.md) — historical
+  decision superseded by ADR 0010.
+- [ADR 0010](decisions/0010-retire-code-mode.md) — why code mode and nested
+  tool invocation were retired after benchmark evaluation.
 - [Extension catalog](reference/extension-catalog.md) — every first-party
   package, its host boundary, commands, and runtime conditions.
 - [Runtime dependencies](reference/runtime-dependencies.md) — external
@@ -77,7 +79,6 @@ The package READMEs are the canonical npm-facing API and development references:
 - [`@felan-ai/ext-subagents`](../packages/ext-subagents/README.md)
 - [`@felan-ai/ext-tasks`](../packages/ext-tasks/README.md)
 - [`@felan-ai/ext-web-access`](../packages/ext-web-access/README.md)
-- [`@felan-ai/ext-run`](../packages/ext-run/README.md)
 
 Felan Code's local application loads only source-controlled built-ins. Public
 extension packages are composition building blocks for Felan hosts; they are

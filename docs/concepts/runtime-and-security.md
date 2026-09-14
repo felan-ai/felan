@@ -28,14 +28,6 @@ executable extension or prompt resource to a Felan Code session. It does not pre
 the model from using the ordinary coding tools against files and processes that
 the current user can access.
 
-Code mode is defense in depth, not an OS sandbox. Its Run SDK QuickJS worker
-has no ambient Node.js, filesystem, module, environment, or network access;
-host functions remain trusted authority. The default catalog is bounded and
-read-only, nested results are text-only and size-limited, and planning,
-authentication, browser, subagent, process, and lifecycle controls are not
-available by default. Explicitly configured side effects are still not
-transactional or reversible.
-
 ## Credential ownership
 
 The portable packages never assume a credential store or callback listener:

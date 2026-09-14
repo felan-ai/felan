@@ -327,22 +327,6 @@ describe('tool activity rendering', () => {
     expect(output).toContain('Fetched content · https://example.com/docs');
   });
 
-  it('renders a safe code-mode title instead of source', () => {
-    const harness = activityHarness([
-      assistant([
-        toolCall('run-code', 'run_code', {
-          title: 'Inspect\u001b]0;hidden\u0007\nextension wiring',
-          source: 'return await tools.read({ path: "secret" });',
-        }),
-      ], 10),
-      toolResult('run-code', 'run_code', 'result', false, 20),
-    ]);
-
-    const output = renderToolActivityGroup(harness.state, 'run-code', theme, false);
-    expect(output).toContain('Run Code · Inspect extension wiring');
-    expect(output).not.toMatch(/hidden|secret|\u001b|\u0007/u);
-  });
-
   it('renders one-line action rows, bounded previews, and no rows for non-anchor calls', () => {
     const harness = activityHarness([
       assistant([

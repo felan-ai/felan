@@ -1,9 +1,9 @@
 # ADR 0007: Compose active tools through local code mode
 
-> Status: Accepted
+> Status: Superseded by [ADR 0010](0010-retire-code-mode.md)
 > Date: 2026-09-13
 > Deciders: Felan maintainers
-> Related: [Vercel Run](https://vercel.com/blog/introducing-run), [`@felan-ai/ext-run`](../../packages/ext-run/README.md)
+> Related: [Vercel Run](https://vercel.com/blog/introducing-run)
 
 ## Context
 

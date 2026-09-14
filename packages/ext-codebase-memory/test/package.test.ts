@@ -11,7 +11,7 @@ describe('@felan-ai/ext-codebase-memory package boundary', () => {
     const notice = await readFile(join(packageRoot, 'NOTICE'), 'utf8');
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-codebase-memory',
-      peerDependencies: { '@felan-ai/agent-core': '^0.6.1' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.7.0' },
       publishConfig: { access: 'public', provenance: true },
     });
     expect(notice).toContain('pi-cbm 1.2.1');

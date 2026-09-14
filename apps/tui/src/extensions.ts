@@ -51,7 +51,6 @@ export const insightsExtensionPackage = '@felan-ai/ext-insights';
 export const promptHistoryExtensionPackage = '@felan-ai/ext-prompt-history';
 export const sessionTitleExtensionPackage = '@felan-ai/ext-session-title';
 export const sessionCompactionExtensionPackage = '@felan-ai/ext-session-compaction';
-export const runExtensionPackage = '@felan-ai/ext-run';
 export const builtinExtensionPackages = {
   subagents: subagentsExtensionPackage,
   askUser: askUserExtensionPackage,
@@ -64,7 +63,6 @@ export const builtinExtensionPackages = {
   backgroundBash: '@felan-ai/ext-background-bash',
   codex: '@felan-ai/ext-codex',
   sessionCompaction: sessionCompactionExtensionPackage,
-  run: runExtensionPackage,
   rtkOptimizer: '@felan-ai/ext-rtk-optimizer',
   codebaseMemory: '@felan-ai/ext-codebase-memory',
   // Append conversion diagnostics after result optimization, then restore the source path for progressive context.

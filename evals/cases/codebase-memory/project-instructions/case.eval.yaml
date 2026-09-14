@@ -48,21 +48,6 @@ assert:
   - id: source-changed
     type: workspaceDiff
     minChanged: 1
-  - id: run-code-used
-    type: toolCalled
-    name: run_code
-    min: 1
-    isError: false
-    resultContains: [toolCallId]
-    when:
-      agent: felan-code-mode
-  - id: run-code-disabled
-    type: toolCalled
-    name: run_code
-    min: 0
-    max: 0
-    when:
-      agent: felan-no-run
 verifier:
   command: node
   args: [/tests/verify.mjs]
