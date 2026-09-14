@@ -57,6 +57,32 @@ describe('BackgroundBashManager', () => {
     await expect(manager.list('completed')).resolves.toHaveLength(1);
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
+  it('lists running jobs first and sorts each group by most recent start', async () => {
+    const { manager, runtime } = await createManager();
+    const store = new BackgroundBashJobStore(runtime, runtime.storage('session'));
+    const now = vi.spyOn(Date, 'now');
+
+    now.mockReturnValue(1_000);
+    const olderRunning = await store.createJob('older running');
+    now.mockReturnValue(2_000);
+    const olderFinished = await store.createJob('older finished');
+    await store.markStatus(olderFinished.meta.id, { status: 'completed', exitCode: 0 });
+    now.mockReturnValue(3_000);
+    const newerRunning = await store.createJob('newer running');
+    now.mockReturnValue(4_000);
+    const newerFinished = await store.createJob('newer finished');
+    await store.markStatus(newerFinished.meta.id, { status: 'failed', exitCode: 1 });
+
+    const listed = await manager.list('all');
+
+    expect(listed.map((job) => job.meta.id)).toEqual([
+      newerRunning.meta.id,
+      olderRunning.meta.id,
+      newerFinished.meta.id,
+      olderFinished.meta.id,
+    ]);
+  });
+
   it('preserves detached completion after foreground promotion', async () => {
     const { manager, runtime } = await createManager();
     const started = await manager.start("sleep 1; exit 7");

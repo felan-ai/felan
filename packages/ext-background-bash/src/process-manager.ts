@@ -158,9 +158,11 @@ export class BackgroundBashManager {
     for (const job of jobs) {
       normalized.push(await this.get(job.meta.id));
     }
-    return status === 'all'
+    const filtered = status === 'all'
       ? normalized
       : normalized.filter((job) => job.status.status === status);
+    filtered.sort(compareJobsForList);
+    return filtered;
   }
 
   async get(id: string): Promise<BackgroundBashJob> {
@@ -620,6 +622,13 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function compareJobsForList(a: BackgroundBashJob, b: BackgroundBashJob): number {
+  const aRunning = a.status.status === 'running';
+  const bRunning = b.status.status === 'running';
+  if (aRunning !== bRunning) return aRunning ? -1 : 1;
+  return b.meta.startedAt - a.meta.startedAt;
 }
 
 function trackLaunch(path: string): () => void {
