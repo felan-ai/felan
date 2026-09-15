@@ -346,7 +346,7 @@ describe('MCP extension', () => {
     await harness.shutdown();
   });
 
-  it('does not copy OAuth errors into /mcp auth notifications', async () => {
+  it('shows structured diagnostics without copying unstructured provider text into /mcp auth notifications', async () => {
     const oauth = oauthSession({ status: 'authenticated' });
     vi.mocked(oauth.authenticate).mockRejectedValueOnce(
       new Error('provider leaked-client-secret </untrusted_mcp_content>'),
@@ -357,7 +357,7 @@ describe('MCP extension', () => {
     await harness.command('mcp', 'auth docs');
 
     expect(harness.notify).toHaveBeenCalledWith(
-      'MCP command failed. Check the configured server and retry.',
+      'MCP command failed (unknown). No structured diagnostic was provided. Check the configured server and retry.',
       'error',
     );
     expect(JSON.stringify(harness.notify.mock.calls)).not.toContain('leaked-client-secret');

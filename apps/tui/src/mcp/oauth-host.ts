@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import {
   auth,
+  OAuthError,
   type AuthOptions,
   type AuthResult,
   type FetchLike,
@@ -208,7 +209,7 @@ class LocalMcpOAuthSession implements McpOAuthSession {
       if (signal.aborted) {
         return { status: 'cancelled', message: `OAuth authentication for ${server.name} was cancelled.` };
       }
-      if (error instanceof Error && /denied|cancelled/iu.test(error.message)) {
+      if (error instanceof OAuthError && error.code === 'access_denied') {
         return { status: 'cancelled', message: `OAuth authentication for ${server.name} was cancelled.` };
       }
       throw error;

@@ -4,6 +4,7 @@ import type {
   OAuthClientProvider,
   StoredOAuthTokens,
 } from '@modelcontextprotocol/client';
+import { OAuthError } from '@modelcontextprotocol/client';
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import type { ResolvedMcpServer } from '@felan-ai/ext-mcp';
 import { describe, expect, it, vi } from 'vitest';
@@ -148,6 +149,62 @@ describe('local MCP OAuth host', () => {
     await expect(authentication).resolves.toMatchObject({ status: 'cancelled' });
     expect(attention).toHaveLength(2);
     expect(attention[1]).toEqual({ active: false });
+    await session.close();
+  });
+
+  it('propagates provider failures instead of treating every cancellation word as user cancellation', async () => {
+    const controller = new AbortController();
+    const session = await createLocalMcpOAuthHost('/agent', {}, {
+      secretStore: memorySecretStore(),
+      openUrl: async () => {},
+      reserveCallback: async (redirectUri) => ({
+        redirectUri,
+        wait: () => Promise.reject(new OAuthError('invalid_target', 'resource mismatch')),
+        release: () => {},
+      }),
+      runOAuth: async (provider) => {
+        await provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+        return 'REDIRECT';
+      },
+    }).createSession({
+      sessionId: 'provider-error',
+      signal: controller.signal,
+      extensionContext: extensionContext('tui'),
+    });
+
+    await expect(session.authenticate(oauthServer(), {
+      reason: 'explicit',
+      signal: controller.signal,
+      extensionContext: extensionContext('tui'),
+    })).rejects.toMatchObject({ code: 'invalid_target' });
+    await session.close();
+  });
+
+  it('does not classify an unrelated error containing cancelled as cancellation', async () => {
+    const controller = new AbortController();
+    const session = await createLocalMcpOAuthHost('/agent', {}, {
+      secretStore: memorySecretStore(),
+      openUrl: async () => {},
+      reserveCallback: async (redirectUri) => ({
+        redirectUri,
+        wait: () => Promise.reject(new Error('request cancelled by upstream server')),
+        release: () => {},
+      }),
+      runOAuth: async (provider) => {
+        await provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+        return 'REDIRECT';
+      },
+    }).createSession({
+      sessionId: 'unrelated-error',
+      signal: controller.signal,
+      extensionContext: extensionContext('tui'),
+    });
+
+    await expect(session.authenticate(oauthServer(), {
+      reason: 'explicit',
+      signal: controller.signal,
+      extensionContext: extensionContext('tui'),
+    })).rejects.toThrow('request cancelled by upstream server');
     await session.close();
   });
 

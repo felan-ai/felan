@@ -120,6 +120,10 @@ store; authentication fails closed when secure storage is unavailable.
 The model sees one `mcp` gateway rather than every remote tool in its initial
 schema. Descriptions, schemas, results, resources, and remote errors remain
 bounded untrusted content.
+Interactive `/mcp` failures show bounded, sanitized diagnostics where the SDK
+provides structured OAuth, HTTP, timeout, or network information. Model-facing
+failures expose only safe categories, provider error codes, and HTTP statuses;
+they do not copy arbitrary remote error text into the model context.
 
 ## Browser automation
 

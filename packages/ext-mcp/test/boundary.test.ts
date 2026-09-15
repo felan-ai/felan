@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatMcpToolResult,
+  mcpErrorDiagnostic,
+  safeMcpErrorMessage,
   untrustedMcpMetadata,
 } from '../src/boundary.js';
 
@@ -47,5 +49,19 @@ describe('MCP untrusted output boundary', () => {
     expect(text.text.length).toBeLessThanOrEqual(50_000);
     expect(result.details).toMatchObject({ truncated: true });
     expect(text.text).not.toContain('<'.repeat(100));
+  });
+
+  it('redacts credentials and preserves structured transport diagnostics', () => {
+    const error = new Error(
+      'Bearer bearer-secret https://user:password@example.test/path?access_token=secret',
+      { cause: new Error('request timed out') },
+    );
+    const message = safeMcpErrorMessage(error);
+
+    expect(message).not.toContain('bearer-secret');
+    expect(message).not.toContain('password');
+    expect(message).not.toContain('access_token=secret');
+    expect(message).toContain('https://example.test/path');
+    expect(mcpErrorDiagnostic(error)).toMatchObject({ category: 'unknown' });
   });
 });

@@ -24,6 +24,10 @@ mcp({ action: 'reconnect', server: 'docs' });
 If reconnecting reports `needs-auth`, use the model-facing `authenticate`
 action. For other failures, retry once and then inspect the consumer-owned MCP
 configuration and network policy rather than starting OAuth unnecessarily.
+Interactive `/mcp` messages include bounded, sanitized diagnostics when the
+SDK provides a structured OAuth, HTTP, timeout, or network error. Model-facing
+errors expose only the safe category, provider error code, and HTTP status;
+remote error text is not copied into model context.
 
 ## Consumer-owned OAuth
 

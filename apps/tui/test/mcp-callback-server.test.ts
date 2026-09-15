@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { OAuthError } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 import { reserveOAuthCallback } from '../src/mcp/callback-server.js';
 
@@ -55,6 +56,49 @@ describe('local MCP OAuth callback server', () => {
       'f'.repeat(43),
       new AbortController().signal,
     )).rejects.toThrow('loopback');
+  });
+
+  it('preserves a safe OAuth provider error without echoing callback data', async () => {
+    const port = await availablePort();
+    const state = 'g'.repeat(43);
+    const callback = await reserveOAuthCallback(
+      `http://127.0.0.1:${port}/callback`,
+      state,
+      new AbortController().signal,
+    );
+    const response = await fetch(
+      `http://127.0.0.1:${port}/callback?error=invalid_target&error_description=${encodeURIComponent('resource mismatch')}&state=${state}&error_uri=${encodeURIComponent('https://issuer.test/docs')}`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('invalid_target');
+    await expect(callback.wait()).rejects.toMatchObject({
+      code: 'invalid_target',
+      message: 'resource mismatch',
+    });
+    await expect(callback.wait()).rejects.toBeInstanceOf(OAuthError);
+    expect(await response.text().catch(() => '')).not.toContain('resource mismatch');
+  });
+
+  it('bounds and sanitizes an unsafe OAuth provider description', async () => {
+    const port = await availablePort();
+    const state = 'h'.repeat(43);
+    const callback = await reserveOAuthCallback(
+      `http://127.0.0.1:${port}/callback`,
+      state,
+      new AbortController().signal,
+    );
+    const description = `\u001b[31m${'x'.repeat(2_000)}`;
+    await fetch(
+      `http://127.0.0.1:${port}/callback?error=server_error&error_description=${encodeURIComponent(description)}&state=${state}`,
+    );
+
+    await expect(callback.wait()).rejects.toSatisfy((error: unknown) => (
+      error instanceof OAuthError
+      && error.code === 'server_error'
+      && error.message.length <= 1_000
+      && !error.message.includes('\u001b')
+    ));
   });
 });
 

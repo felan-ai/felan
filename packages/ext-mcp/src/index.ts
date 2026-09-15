@@ -9,6 +9,7 @@ import { Check } from 'typebox/value';
 import {
   formatMcpToolResult,
   MCP_UNTRUSTED_INSTRUCTION,
+  mcpErrorDiagnostic,
   safeMcpErrorMessage,
   untrustedMcpMetadata,
   type McpResultDetails,
@@ -393,7 +394,7 @@ async function showMcpTools(state: SessionState, ctx: ExtensionContext, serverNa
     } catch (error) {
       lines.push(error instanceof McpAuthenticationRequiredError
         ? `\n${name} — authentication required (run /mcp auth ${name})`
-        : `\n${name} — failed to load tools`);
+        : `\n${name} — failed to load tools: ${mcpUserErrorText(error)}`);
     }
   }
   ctx.ui.notify(lines.join('\n').slice(0, 20_000), 'info');
@@ -421,7 +422,7 @@ async function reconnectMcpServers(
     } catch (error) {
       messages.push(error instanceof McpAuthenticationRequiredError
         ? `${name}: authentication required`
-        : `${name}: connection failed`);
+        : `${name}: connection failed — ${mcpUserErrorText(error)}`);
     }
   }
   if (ctx.hasUI) ctx.ui.notify(messages.join('\n'), messages.some((message) => !message.includes(': connected')) ? 'warning' : 'info');
@@ -452,9 +453,9 @@ async function authenticateMcpCommand(
       text: `Authenticated and connected to MCP server ${serverName} (${tools.length} ${tools.length === 1 ? 'tool' : 'tools'}).`,
       type: 'info',
     };
-  } catch {
+  } catch (error) {
     return {
-      text: `Authenticated with MCP server ${serverName}, but reconnecting failed. Run /mcp reconnect ${serverName} to retry.`,
+      text: `Authenticated with MCP server ${serverName}, but reconnecting failed: ${mcpUserErrorText(error)} Run /mcp reconnect ${serverName} to retry.`,
       type: 'warning',
     };
   }
@@ -475,7 +476,7 @@ function mcpCommandError(error: unknown): string {
   if (error instanceof Error && error.message.startsWith('Unknown MCP server:')) {
     return safeMcpErrorMessage(error);
   }
-  return 'MCP command failed. Check the configured server and retry.';
+  return `MCP command failed (${diagnosticSummary(mcpErrorDiagnostic(error))}). ${mcpUserErrorText(error)} Check the configured server and retry.`;
 }
 
 async function executeMcpAction(
@@ -722,30 +723,37 @@ function toolError(error: unknown, params: McpParams) {
   const action = params.action ?? 'status';
   const server = params.server;
   if (action === 'reconnect' && server !== undefined) {
+    const diagnostic = mcpErrorDiagnostic(error);
     return {
       content: [{
         type: 'text' as const,
         text: [
           `MCP reconnect for server ${JSON.stringify(server)} failed.`,
+          `Diagnostic: ${diagnosticSummary(diagnostic)}.`,
           'Call status for this server; authenticate only if it reports "needs-auth",',
           'otherwise retry reconnect once and inspect the host MCP configuration or network policy.',
         ].join(' '),
       }],
       isError: true,
       details: { error: 'mcp_reconnect_failed', action, server },
+      ...mcpErrorDetails(error),
     };
   }
   const details: McpToolErrorDetails = {
     error: 'mcp_error',
     ...(server === undefined ? {} : { server }),
+    ...mcpErrorDetails(error),
   };
+  const diagnostic = mcpErrorDiagnostic(error);
+  const diagnosticText = diagnosticSummary(diagnostic);
   return {
     content: [{
       type: 'text' as const,
       text: server === undefined
-        ? 'MCP request failed. Check the action parameters or host MCP configuration and retry.'
+        ? `MCP request failed (${diagnosticText}). Check the action parameters or host MCP configuration and retry.`
         : [
           `MCP request for server ${JSON.stringify(server)} failed.`,
+          `Diagnostic: ${diagnosticText}.`,
           'Retry once; if it persists, call status and authenticate only if it reports "needs-auth";',
           'otherwise inspect the host MCP configuration or network policy.',
         ].join(' '),
@@ -753,4 +761,28 @@ function toolError(error: unknown, params: McpParams) {
     isError: true,
     details,
   };
+}
+
+function mcpErrorDetails(error: unknown): Record<string, unknown> {
+  const diagnostic = mcpErrorDiagnostic(error);
+  return {
+    category: diagnostic.category,
+    ...(diagnostic.code === undefined ? {} : { code: diagnostic.code }),
+    ...(diagnostic.status === undefined ? {} : { status: diagnostic.status }),
+  };
+}
+
+function diagnosticSummary(diagnostic: ReturnType<typeof mcpErrorDiagnostic>): string {
+  return [
+    diagnostic.category,
+    ...(diagnostic.code === undefined ? [] : [`code ${diagnostic.code}`]),
+    ...(diagnostic.status === undefined ? [] : [`HTTP ${diagnostic.status}`]),
+  ].join(', ');
+}
+
+function mcpUserErrorText(error: unknown): string {
+  const diagnostic = mcpErrorDiagnostic(error);
+  return diagnostic.category === 'unknown'
+    ? 'No structured diagnostic was provided.'
+    : `${diagnosticSummary(diagnostic)}: ${diagnostic.message}`;
 }

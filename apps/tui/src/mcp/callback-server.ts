@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { OAuthError } from '@modelcontextprotocol/client';
 
 const DEFAULT_CALLBACK_TIMEOUT_MS = 5 * 60 * 1_000;
 
@@ -160,8 +161,10 @@ class EndpointBroker {
     const providerError = url.searchParams.get('error');
     const code = url.searchParams.get('code');
     if (providerError) {
-      this.#remove(state, new Error('OAuth authorization was denied'));
-      respond(response, 400, 'OAuth authorization was not completed. You can close this window.');
+      const errorCode = safeOAuthErrorCode(providerError);
+      const description = boundedCallbackValue(url.searchParams.get('error_description'));
+      this.#remove(state, new OAuthError(errorCode, description ?? errorCode));
+      respond(response, 400, `OAuth authorization failed (${errorCode}). You can close this window.`);
       return;
     }
     if (!code) {
@@ -211,6 +214,20 @@ class EndpointBroker {
       });
     });
   }
+}
+
+function safeOAuthErrorCode(value: string): string {
+  return /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u.test(value) ? value : 'invalid_request';
+}
+
+function boundedCallbackValue(value: string | null): string | undefined {
+  if (value === null) return undefined;
+  const sanitized = value
+    .replace(/[\u0000-\u001F\u007F-\u009F]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!sanitized) return undefined;
+  return sanitized.length <= 1_000 ? sanitized : `${sanitized.slice(0, 999)}…`;
 }
 
 function parseRedirectUri(value: string): ParsedRedirectUri {
