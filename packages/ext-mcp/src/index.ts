@@ -735,8 +735,12 @@ function toolError(error: unknown, params: McpParams) {
         ].join(' '),
       }],
       isError: true,
-      details: { error: 'mcp_reconnect_failed', action, server },
-      ...mcpErrorDetails(error),
+      details: {
+        error: 'mcp_reconnect_failed',
+        action,
+        server,
+        ...mcpErrorDetails(error),
+      },
     };
   }
   const details: McpToolErrorDetails = {

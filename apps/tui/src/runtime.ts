@@ -69,6 +69,7 @@ import { installPiAsyncFileLockGuard } from './pi-lock.js';
 import { createThinkingGroupExtension } from './thinking-groups.js';
 import { createHerdrExtension } from './herdr.js';
 import { fileURLToPath } from 'node:url';
+import { acquireFelanModelDefaults } from './model-defaults.js';
 
 installPiAsyncFileLockGuard();
 
@@ -384,44 +385,83 @@ export function createLocalSessionRuntimeFactory(
   });
 
   return async (request) => {
-    const result = await createCoreRuntime(request);
-    const {
-      host,
-      modelScope,
-      shutdownState,
-      toolActivityState,
-      extensionConfigWarnings,
-      memoryEnabled,
-      modelScopeConfigured,
-    } = sessions.get(request.sessionManager)!;
-    options.onSessionModel?.(
-      result.session.model,
-      modelScopeConfigured ? modelScope.scopedModels.map(({ model }) => model) : undefined,
-    );
-    options.onMemoryEnabled?.(memoryEnabled);
-    toolActivityState.attach(result.session);
-    registerToolActivitySession(result.session, toolActivityState);
-    bindSubagentSession({ host, session: result.session });
-    Object.defineProperty(result.services, localSubagentHost, { value: host });
-    Object.defineProperty(result.services, localSubagentShutdown, { value: shutdownState });
-    const settingsErrors = result.services.settingsManager.drainErrors();
-
-    return {
-      ...result,
-      diagnostics: [
-        { type: 'info', message: `Agent Core version: ${AGENT_CORE_VERSION}` },
-        ...result.diagnostics,
-        ...modelScope.diagnostics,
-        ...extensionConfigWarnings.map((message) => ({
-          type: 'warning' as const,
-          message,
-        })),
-        ...settingsErrors.map(({ scope, error }) => ({
-          type: 'warning' as const,
-          message: `${scope} settings: ${error.message}`,
-        })),
-      ],
+    const releaseModelDefaults = await acquireFelanModelDefaults();
+    let result: Awaited<ReturnType<typeof createCoreRuntime>>;
+    try {
+      result = await createCoreRuntime(request);
+    } catch (error) {
+      releaseModelDefaults();
+      throw error;
+    }
+    const disposeSession = result.session.dispose.bind(result.session);
+    result.session.dispose = () => {
+      try {
+        disposeSession();
+      } finally {
+        releaseModelDefaults();
+      }
     };
+    let setupHost: LocalSubagentHost | undefined;
+    try {
+      const sessionState = sessions.get(request.sessionManager);
+      if (!sessionState) throw new Error('Local session state is unavailable');
+      const {
+        host,
+        modelScope,
+        shutdownState,
+        toolActivityState,
+        extensionConfigWarnings,
+        memoryEnabled,
+        modelScopeConfigured,
+      } = sessionState;
+      setupHost = host;
+      options.onSessionModel?.(
+        result.session.model,
+        modelScopeConfigured ? modelScope.scopedModels.map(({ model }) => model) : undefined,
+      );
+      options.onMemoryEnabled?.(memoryEnabled);
+      toolActivityState.attach(result.session);
+      registerToolActivitySession(result.session, toolActivityState);
+      bindSubagentSession({ host, session: result.session });
+      Object.defineProperty(result.services, localSubagentHost, { value: host });
+      Object.defineProperty(result.services, localSubagentShutdown, { value: shutdownState });
+      const settingsErrors = result.services.settingsManager.drainErrors();
+
+      return {
+        ...result,
+        diagnostics: [
+          { type: 'info', message: `Agent Core version: ${AGENT_CORE_VERSION}` },
+          ...result.diagnostics,
+          ...modelScope.diagnostics,
+          ...extensionConfigWarnings.map((message) => ({
+            type: 'warning' as const,
+            message,
+          })),
+          ...settingsErrors.map(({ scope, error }) => ({
+            type: 'warning' as const,
+            message: `${scope} settings: ${error.message}`,
+          })),
+        ],
+      };
+    } catch (error) {
+      const cleanupErrors: unknown[] = [];
+      if (setupHost) {
+        try {
+          await setupHost.shutdown();
+        } catch (shutdownError) {
+          cleanupErrors.push(shutdownError);
+        }
+      }
+      try {
+        result.session.dispose();
+      } catch (disposeError) {
+        cleanupErrors.push(disposeError);
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError([error, ...cleanupErrors], 'Local session setup cleanup failed');
+      }
+      throw error;
+    }
   };
 }
 

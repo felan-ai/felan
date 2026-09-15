@@ -202,8 +202,7 @@ describe('AgentNavigator', () => {
 
     harness.navigator.handleInput('\x1b[M' + String.fromCharCode(65 + 32, 33, 33));
     const afterWheelDown = harness.navigator.render(80).join('\n');
-    expect(afterWheelDown.replace(/\d+m \d+s/u, '<duration>'))
-      .toEqual(first.replace(/\d+m \d+s/u, '<duration>'));
+    expect(withoutElapsedDurations(afterWheelDown)).toEqual(withoutElapsedDurations(first));
     expect(harness.tui.requestRender).toHaveBeenCalledTimes(2);
     harness.navigator.dispose();
   });
@@ -222,7 +221,8 @@ describe('AgentNavigator', () => {
     const first = harness.navigator.render(80).join('\n');
     harness.tui.requestRender.mockClear();
     harness.navigator.handleInput('\x1b[<0;20;5M');
-    expect(harness.navigator.render(80).join('\n')).toEqual(first);
+    expect(withoutElapsedDurations(harness.navigator.render(80).join('\n')))
+      .toEqual(withoutElapsedDurations(first));
     expect(harness.tui.requestRender).not.toHaveBeenCalled();
 
     harness.navigator.handleInput('\r');
@@ -708,6 +708,10 @@ function record(
     startedAt: '2026-01-01T00:00:01.000Z',
     ...overrides,
   };
+}
+
+function withoutElapsedDurations(value: string): string {
+  return value.replace(/(?:\d+m \d+s|\d+\.\d+s)/gu, '<duration>');
 }
 
 function sessionWithMessages(

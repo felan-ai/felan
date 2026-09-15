@@ -34,7 +34,7 @@ directory:
 felan "inspect this project"
 felan --continue
 felan --mode text "summarize the current work"
-felan --mode json --provider openai --model gpt-5.5 --thinking high "run the tests"
+felan --mode json --provider openai --model gpt-5.6-sol --thinking high "run the tests"
 ```
 
 ## CLI

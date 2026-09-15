@@ -274,7 +274,16 @@ describe('MCP extension', () => {
 
       expect(result).toMatchObject({
         isError: true,
-        details: { error: 'mcp_reconnect_failed', action: 'reconnect', server: 'docs' },
+        details: {
+          error: 'mcp_reconnect_failed',
+          action: 'reconnect',
+          server: 'docs',
+          category: 'unknown',
+        },
+      });
+      expect(result).not.toHaveProperty('category');
+      expect(result.content[0]).toMatchObject({
+        text: expect.stringContaining('Diagnostic: unknown.'),
       });
       expect(result.content[0]).toMatchObject({
         text: expect.stringContaining('authenticate only if it reports "needs-auth"'),

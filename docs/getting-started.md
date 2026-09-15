@@ -66,7 +66,7 @@ message. For automation, use the one-shot text or JSONL modes:
 
 ```sh
 felan --mode text "inspect this project and explain how to run its tests"
-felan --mode json --provider openai --model gpt-5.5 --thinking high "run the tests"
+felan --mode json --provider openai --model gpt-5.6-sol --thinking high "run the tests"
 ```
 
 Text mode prints the final response. JSON mode emits Pi-compatible JSONL events

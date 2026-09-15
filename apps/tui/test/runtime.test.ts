@@ -41,6 +41,7 @@ import { HERDR_EXTENSION_NAME } from '../src/herdr.js';
 import { createToolActivityRuntimeView } from '../src/tool-activity/runtime-view.js';
 import { LocalMemoryCoordinator } from '../src/memory/coordinator.js';
 import { builtinExtensionPackages } from '../src/extensions.js';
+import { LocalSubagentHost } from '../src/subagents/host.js';
 
 const temporaryPaths: string[] = [];
 
@@ -185,6 +186,185 @@ describe('local Agent Core lifecycle', () => {
       anthropic: { type: 'api_key', key: 'anthropic-test-key' },
       openai: { type: 'api_key', key: 'openai-test-key' },
     });
+  });
+
+  it('uses the Felan provider default when no model preference is saved', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'auth.json'), JSON.stringify({
+      openai: { type: 'api_key', key: 'test-key' },
+    }));
+
+    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
+      agentDir,
+      homeDir: root,
+      modelRuntime: await createLocalModelRuntime(agentDir),
+      extensionPackages: [],
+      importExtension: async () => {
+        throw new Error('No extensions should be imported');
+      },
+    }), {
+      cwd,
+      agentDir,
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+
+    expect(runtime.session.model).toMatchObject({ provider: 'openai', id: 'gpt-5.6-sol' });
+    await runtime.dispose();
+  });
+
+  it('preserves an explicitly saved model over the Felan provider default', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await Promise.all([
+      writeFile(join(agentDir, 'auth.json'), JSON.stringify({
+        openai: { type: 'api_key', key: 'test-key' },
+      })),
+      writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+        defaultProvider: 'openai',
+        defaultModel: 'gpt-5.5',
+      })),
+    ]);
+
+    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
+      agentDir,
+      homeDir: root,
+      modelRuntime: await createLocalModelRuntime(agentDir),
+      extensionPackages: [],
+      importExtension: async () => {
+        throw new Error('No extensions should be imported');
+      },
+    }), {
+      cwd,
+      agentDir,
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+
+    expect(runtime.session.model).toMatchObject({ provider: 'openai', id: 'gpt-5.5' });
+    await runtime.dispose();
+  });
+
+  it('restores a session model over the Felan provider default', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'auth.json'), JSON.stringify({
+      openai: { type: 'api_key', key: 'test-key' },
+    }));
+    const sessionManager = SessionManager.inMemory(cwd);
+    sessionManager.appendModelChange('openai', 'gpt-5.5');
+    sessionManager.appendMessage({
+      role: 'user', content: 'keep the session model', timestamp: Date.now(),
+    });
+
+    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
+      agentDir,
+      homeDir: root,
+      modelRuntime: await createLocalModelRuntime(agentDir),
+      extensionPackages: [],
+      importExtension: async () => {
+        throw new Error('No extensions should be imported');
+      },
+    }), {
+      cwd,
+      agentDir,
+      sessionManager,
+    });
+
+    expect(runtime.session.model).toMatchObject({ provider: 'openai', id: 'gpt-5.5' });
+    await runtime.dispose();
+  });
+
+  it('selects and saves the Felan provider default after first login', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
+      agentDir,
+      homeDir: root,
+      modelRuntime,
+      extensionPackages: [],
+      importExtension: async () => {
+        throw new Error('No extensions should be imported');
+      },
+    }), {
+      cwd,
+      agentDir,
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+    const previousModel = {
+      provider: 'unknown',
+      id: 'unknown',
+      api: 'unknown',
+    } as typeof runtime.session.model;
+    const mode = new InteractiveMode(createToolActivityRuntimeView(runtime));
+
+    try {
+      await modelRuntime.login('openai', 'api_key', {
+        prompt: async () => 'test-key',
+        notify: () => {},
+      });
+      vi.spyOn(modelRuntime, 'refresh').mockResolvedValue({ aborted: false, errors: new Map() });
+      await (mode as unknown as {
+        completeProviderAuthentication(
+          providerId: string,
+          providerName: string,
+          authType: 'api_key',
+          previous: typeof previousModel,
+        ): Promise<void>;
+      }).completeProviderAuthentication('openai', 'OpenAI', 'api_key', previousModel);
+
+      expect(runtime.session.model).toMatchObject({ provider: 'openai', id: 'gpt-5.6-sol' });
+      expect(runtime.services.settingsManager.getDefaultProvider()).toBe('openai');
+      expect(runtime.services.settingsManager.getDefaultModel()).toBe('gpt-5.6-sol');
+    } finally {
+      mode.stop();
+      await runtime.dispose();
+    }
+  });
+
+  it('releases the Felan defaults when local session setup fails', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const piEntry = import.meta.resolve('@earendil-works/pi-coding-agent');
+    const resolverUrl = new URL('./core/model-resolver.js', piEntry);
+    const resolver = await import(resolverUrl.href) as {
+      readonly defaultModelPerProvider: Record<string, string>;
+    };
+    const originalDefaults = { ...resolver.defaultModelPerProvider };
+    const shutdownHost = vi.spyOn(LocalSubagentHost.prototype, 'shutdown');
+
+    try {
+      await expect(createAgentSessionRuntime(createLocalSessionRuntimeFactory({
+        agentDir,
+        homeDir: root,
+        modelRuntime: await createLocalModelRuntime(agentDir),
+        extensionPackages: [],
+        onSessionModel: () => {
+          throw new Error('setup failed');
+        },
+        importExtension: async () => {
+          throw new Error('No extensions should be imported');
+        },
+      }), {
+        cwd,
+        agentDir,
+        sessionManager: SessionManager.inMemory(cwd),
+      })).rejects.toThrow('setup failed');
+      expect(shutdownHost).toHaveBeenCalledOnce();
+      expect(resolver.defaultModelPerProvider).toEqual(originalDefaults);
+    } finally {
+      shutdownHost.mockRestore();
+    }
   });
 
   it('uses the Felan root for sessions and loads only configured built-ins, root instructions, and .agents skills', async () => {

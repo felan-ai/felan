@@ -240,7 +240,7 @@ an initial prompt:
 
 ```sh
 felan --mode text "inspect this project and summarize the risks"
-felan --mode json --provider openai --model gpt-5.5 --thinking high "run the tests"
+felan --mode json --provider openai --model gpt-5.6-sol --thinking high "run the tests"
 felan --mode text --continue "continue the previous task"
 ```
 
