@@ -79,6 +79,7 @@ describe('createInsightsExtension', () => {
     expect(data.totalSessions).toBe(1);
     expect(data.totalCost).toBe(50);
     expect(data.sessions[0].agentSessionCount).toBe(2);
+    expect(data.cache.versions).toEqual({ schema: '2', parser: '2' });
     expect(cache).toContain('"activity"');
     expect(data.export.outputFormats).toEqual(['html']);
   });

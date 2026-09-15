@@ -67,6 +67,9 @@ describe("computeAnalytics", () => {
       expect(result.totalMessages).toBe(10);
       expect(result.totalTokens).toBe(1700);
       expect(result.totalCost).toBeCloseTo(0.016);
+      expect(result).not.toHaveProperty("temporal");
+      expect(result).not.toHaveProperty("analysis");
+      expect(result).not.toHaveProperty("ai");
     });
 
     it("maps session to correct date in dailyStats", () => {
@@ -327,66 +330,6 @@ describe("computeAnalytics", () => {
     });
   });
 
-  describe("temporal insights", () => {
-    it("computes week-over-week trajectory and deterministic friction", () => {
-      const sessions = [
-        makeSession({
-          id: "previous",
-          startTime: new Date("2025-03-05T10:00:00Z"),
-          endTime: new Date("2025-03-05T10:30:00Z"),
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.02 },
-          toolCallErrors: 2,
-          metadata: {
-            primaryModel: "gpt-4",
-            responseTimesMs: [90_000],
-            avgResponseTimeMs: 90_000,
-            firstResponseTimeMs: 90_000,
-            activityByHour: { "10": 2 },
-            filesMentioned: [],
-            languageCounts: {},
-            gitActivity: { commits: 0, pushes: 0, statusChecks: 0, diffs: 0 },
-            toolErrorsByName: { Bash: 2 },
-            userInterruptions: 1,
-          },
-        }),
-        makeSession({
-          id: "current",
-          startTime: new Date("2025-03-15T10:00:00Z"),
-          endTime: new Date("2025-03-15T10:30:00Z"),
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 },
-          toolCallErrors: 0,
-        }),
-      ];
-
-      const result = computeAnalytics(sessions);
-
-      expect(result.temporal?.weekOverWeek?.sessionsDelta).toBe(0);
-      expect(result.temporal?.weekOverWeek?.toolErrorDelta).toBe(-2);
-      expect(result.temporal?.trajectory?.cost).toBe("improving");
-      expect(result.temporal?.trajectory?.errors).toBe("improving");
-      expect(result.temporal?.deterministicFriction?.resolved.map(item => item.title)).toEqual(["Tool errors", "Slow responses", "Interruptions"]);
-      expect(result.temporal?.decayWeightedActivity?.sessions).toBeGreaterThan(1);
-    });
-
-    it("detects cost anomalies", () => {
-      const sessions = Array.from({ length: 10 }, (_, index) => makeSession({
-        id: `normal-${index}`,
-        startTime: new Date(`2025-03-${String(index + 1).padStart(2, "0")}T10:00:00Z`),
-        endTime: new Date(`2025-03-${String(index + 1).padStart(2, "0")}T10:30:00Z`),
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 },
-      })).concat(makeSession({
-        id: "spike",
-        startTime: new Date("2025-03-15T10:00:00Z"),
-        endTime: new Date("2025-03-15T10:30:00Z"),
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
-      }));
-
-      const result = computeAnalytics(sessions);
-
-      expect(result.temporal?.anomalies?.some(item => item.title === "Cost spike" && item.sessionIds?.includes("spike"))).toBe(true);
-    });
-  });
-
   describe("modelEfficiency", () => {
     it("computes model efficiency summaries", () => {
       const sessions = [
@@ -410,42 +353,7 @@ describe("computeAnalytics", () => {
       expect(opus?.costPerMessage).toBeCloseTo(0.5);
       expect(opus?.avgSessionDuration).toBe(20);
       expect(opus?.toolErrorRate).toBe(1);
-      expect(result.modelEfficiency?.recommendations.join(" ")).toContain("opus");
-    });
-  });
-
-  describe("deterministic analysis", () => {
-    it("generates actionable recommendations without AI facets", () => {
-      const sessions = [
-        makeSession({
-          id: "previous",
-          projectName: "secondary",
-          startTime: new Date("2025-03-05T10:00:00Z"),
-          endTime: new Date("2025-03-05T10:30:00Z"),
-          models: { sonnet: { count: 2, tokens: 500, cost: 0.05 } },
-        }),
-        makeSession({
-          id: "current",
-          projectName: "main-project",
-          startTime: new Date("2025-03-15T10:00:00Z"),
-          endTime: new Date("2025-03-15T10:30:00Z"),
-          toolCallErrors: 2,
-          models: {
-            opus: { count: 2, tokens: 100, cost: 1 },
-            sonnet: { count: 2, tokens: 1000, cost: 0.1 },
-          },
-          rageHits: [{ word: "damn", group: "damn", hour: 10, model: "opus", msgIndex: 1 }],
-        }),
-      ];
-
-      const result = computeAnalytics(sessions);
-
-      expect(result.ai).toBeUndefined();
-      expect(result.analysis?.takeaways.map(item => item.title)).toContain("Primary project");
-      expect(result.analysis?.recommendations.map(item => item.title)).toContain("Fix tool-error hotspots");
-      expect(result.analysis?.recommendations.map(item => item.title)).toContain("Tune model usage");
-      expect(result.analysis?.stopDoing.map(item => item.title)).toContain("Stop retrying failed tool calls blindly");
-      expect(result.analysis?.stopDoing.map(item => item.title)).toContain("Stop pushing through frustration signals");
+      expect(result.modelEfficiency).not.toHaveProperty("recommendations");
     });
   });
 });

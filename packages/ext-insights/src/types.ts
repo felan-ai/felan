@@ -180,40 +180,6 @@ export interface RageStats {
   topWords: { word: string; group: string; count: number }[];
 }
 
-export interface InsightFlag {
-  severity: "info" | "warning" | "critical";
-  title: string;
-  detail: string;
-  sessionIds?: string[];
-}
-
-export interface TemporalInsights {
-  generatedAt: string;
-  decayHalfLifeDays?: number;
-  decayWeightedActivity?: {
-    sessions: number;
-    messages: number;
-    tokens: number;
-    cost: number;
-  };
-  weekOverWeek?: {
-    currentStart: string;
-    previousStart: string;
-    sessionsDelta: number;
-    costDelta: number;
-    toolErrorDelta: number;
-  };
-  trajectory?: {
-    cost: "improving" | "worsening" | "stable";
-    errors: "improving" | "worsening" | "stable";
-  };
-  anomalies?: InsightFlag[];
-  deterministicFriction?: {
-    ongoing: InsightFlag[];
-    resolved: InsightFlag[];
-  };
-}
-
 export interface ModelEfficiencyInsight {
   model: string;
   tokens: number;
@@ -229,44 +195,6 @@ export interface ModelEfficiencyInsight {
 export interface ModelEfficiencySummary {
   generatedAt: string;
   models: ModelEfficiencyInsight[];
-  recommendations: string[];
-}
-
-export interface AiSessionFacet {
-  sessionId: string;
-  goal?: string;
-  goalCategories?: string[];
-  outcome?: string;
-  satisfaction?: "positive" | "neutral" | "negative" | "mixed";
-  friction?: string[];
-  helpfulness?: string;
-  sessionType?: string;
-  summary?: string;
-}
-
-export interface InsightRecommendation {
-  title: string;
-  detail: string;
-  prompt?: string;
-  category?: "try" | "stop" | "workflow" | "model";
-}
-
-export interface AiInsights {
-  status: "available" | "unavailable" | "partial";
-  generatedAt?: string;
-  sourceRange?: { start: string; end: string };
-  cacheState?: "hit" | "miss" | "mixed" | "skipped";
-  unavailableReason?: string;
-  facets: AiSessionFacet[];
-  recommendations: InsightRecommendation[];
-  stopDoing: InsightRecommendation[];
-}
-
-export interface DeterministicAnalysis {
-  generatedAt: string;
-  takeaways: InsightFlag[];
-  recommendations: InsightRecommendation[];
-  stopDoing: InsightRecommendation[];
 }
 
 export interface AnalyticsCacheMetadata {
@@ -275,7 +203,6 @@ export interface AnalyticsCacheMetadata {
   versions: {
     schema: string;
     parser: string;
-    facetPrompt: string;
   };
   sessionMeta: {
     hits: number;
@@ -342,10 +269,7 @@ export interface Analytics {
   rageStats: RageStats;
   cache?: AnalyticsCacheMetadata;
   export?: ReportExportMetadata;
-  temporal?: TemporalInsights;
   modelEfficiency?: ModelEfficiencySummary;
-  analysis?: DeterministicAnalysis;
-  ai?: AiInsights;
   sessions: Array<{
     id: string;
     cwd: string;

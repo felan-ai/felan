@@ -13,6 +13,11 @@ describe('renderReport', () => {
     expect(html).toContain('255F44');
     expect(html).toContain('data:image/svg+xml;base64');
     expect(html).toContain('felan-insights-theme');
+    expect(html).toContain('Model Efficiency');
+    expect(html).not.toContain('Trends');
+    expect(html).not.toContain('Recommendations');
+    expect(html).not.toContain('Cost Trajectory');
+    expect(html).not.toContain('Recommended Next Steps');
     expect(html).not.toContain('fonts.googleapis.com');
     expect(html).not.toContain('🤬');
   });
@@ -37,6 +42,8 @@ describe('renderReport', () => {
     const html = renderReport(analytics);
     expect(html).toContain('Savings');
     expect(html).toContain('Estimated avoided');
+    expect(html).toContain('Actual Cost');
+    expect(html).toContain('stat-baseline-value');
     expect(html).toContain('Measurement details');
     expect(html).toContain('Producer');
   });

@@ -1,4 +1,4 @@
-import type { AiInsights, Analytics, InsightFlag, InsightRecommendation } from "./types.js";
+import type { Analytics } from "./types.js";
 
 export function generateMarkdown(analytics: Analytics): string {
   const lines: string[] = ["# Felan Code Insights Report", ""];
@@ -38,49 +38,21 @@ export function generateMarkdown(analytics: Analytics): string {
     formatDuration(model.avgDuration),
   ]));
 
+  addModelEfficiency(lines, analytics);
+
   addTable(lines, "Tools", ["Tool", "Calls"], analytics.topTools.slice(0, 10).map(tool => [
     tool.name,
     formatNumber(tool.count),
   ]));
 
-  addTemporalInsights(lines, analytics);
-  addModelEfficiency(lines, analytics);
-  addDeterministicAnalysis(lines, analytics);
-  addAiRecommendations(lines, analytics.ai);
-
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
-}
-
-function addTemporalInsights(lines: string[], analytics: Analytics): void {
-  const temporal = analytics.temporal;
-  if (!temporal) return;
-
-  lines.push("## Temporal insights", "");
-
-  if (temporal.weekOverWeek) {
-    lines.push(`- Week over week (${temporal.weekOverWeek.currentStart} vs ${temporal.weekOverWeek.previousStart}): sessions ${formatSignedNumber(temporal.weekOverWeek.sessionsDelta)}, cost ${formatSignedCurrency(temporal.weekOverWeek.costDelta)}, tool errors ${formatSignedNumber(temporal.weekOverWeek.toolErrorDelta)}.`);
-  }
-
-  if (temporal.trajectory) {
-    lines.push(`- Trajectory: cost ${temporal.trajectory.cost}; errors ${temporal.trajectory.errors}.`);
-  }
-
-  if (temporal.decayWeightedActivity) {
-    const weighted = temporal.decayWeightedActivity;
-    lines.push(`- Decay-weighted activity: ${formatNumber(weighted.sessions)} sessions, ${formatNumber(weighted.messages)} messages, ${formatNumber(weighted.tokens)} tokens, ${formatCurrency(weighted.cost)}.`);
-  }
-
-  lines.push("");
-  addFlags(lines, "Anomalies", temporal.anomalies ?? []);
-  addFlags(lines, "Ongoing friction", temporal.deterministicFriction?.ongoing ?? []);
-  addFlags(lines, "Resolved friction", temporal.deterministicFriction?.resolved ?? []);
 }
 
 function addModelEfficiency(lines: string[], analytics: Analytics): void {
   const efficiency = analytics.modelEfficiency;
   if (!efficiency) return;
 
-  addTable(lines, "Model efficiency", ["Model", "Sessions", "Messages", "Tokens", "Cost", "Cost/token", "Cost/message", "Avg duration", "Tool error rate"], efficiency.models.slice(0, 10).map(model => [
+  addTable(lines, "Efficiency", ["Model", "Sessions", "Messages", "Tokens", "Cost", "Cost/token", "Cost/message", "Avg duration", "Tool error rate"], efficiency.models.slice(0, 10).map(model => [
     model.model,
     formatNumber(model.sessions),
     formatNumber(model.messages),
@@ -90,49 +62,11 @@ function addModelEfficiency(lines: string[], analytics: Analytics): void {
     formatCurrency(model.costPerMessage),
     formatDuration(model.avgSessionDuration),
     model.toolErrorRate === undefined ? "n/a" : formatPercent(model.toolErrorRate),
-  ]));
-
-  if (efficiency.recommendations.length > 0) {
-    lines.push("### Model efficiency recommendations", "");
-    for (const recommendation of efficiency.recommendations) {
-      lines.push(`- ${inline(recommendation)}`);
-    }
-    lines.push("");
-  }
+  ]), "###");
 }
 
-function addDeterministicAnalysis(lines: string[], analytics: Analytics): void {
-  const analysis = analytics.analysis;
-  if (!analysis) return;
-
-  lines.push("## Analysis and recommendations", "");
-  addFlags(lines, "Key takeaways", analysis.takeaways);
-  addRecommendations(lines, "Recommended next steps", analysis.recommendations);
-  addRecommendations(lines, "Consider stopping", analysis.stopDoing);
-
-  if (analysis.takeaways.length === 0 && analysis.recommendations.length === 0 && analysis.stopDoing.length === 0) {
-    lines.push("_No deterministic recommendations were generated._", "");
-  }
-}
-
-function addAiRecommendations(lines: string[], ai: AiInsights | undefined): void {
-  if (!ai || (ai.status !== "available" && ai.status !== "partial")) return;
-
-  lines.push("## AI recommendations", "", `Status: ${ai.status}`);
-  if (ai.sourceRange) lines.push(`Source range: ${ai.sourceRange.start} to ${ai.sourceRange.end}`);
-  if (ai.cacheState) lines.push(`Cache: ${ai.cacheState}`);
-  lines.push("");
-
-  addRecommendations(lines, "Recommendations", ai.recommendations);
-  addRecommendations(lines, "Stop doing", ai.stopDoing);
-
-  if (ai.recommendations.length === 0 && ai.stopDoing.length === 0) {
-    lines.push("_No AI recommendations were generated._", "");
-  }
-}
-
-function addTable(lines: string[], title: string, headers: string[], rows: string[][]): void {
-  lines.push(`## ${title}`, "");
+function addTable(lines: string[], title: string, headers: string[], rows: string[][], heading: "##" | "###" = "##"): void {
+  lines.push(`${heading} ${title}`, "");
   if (rows.length === 0) {
     lines.push("_No data._", "");
     return;
@@ -144,25 +78,6 @@ function addTable(lines: string[], title: string, headers: string[], rows: strin
     ...rows.map(tableRow),
     ""
   );
-}
-
-function addFlags(lines: string[], title: string, flags: InsightFlag[]): void {
-  if (flags.length === 0) return;
-  lines.push(`### ${title}`, "");
-  for (const flag of flags) {
-    lines.push(`- ${flag.severity}: ${inline(flag.title)} — ${inline(flag.detail)}`);
-  }
-  lines.push("");
-}
-
-function addRecommendations(lines: string[], title: string, recommendations: InsightRecommendation[]): void {
-  if (recommendations.length === 0) return;
-  lines.push(`### ${title}`, "");
-  for (const recommendation of recommendations) {
-    const category = recommendation.category ? ` (${recommendation.category})` : "";
-    lines.push(`- ${inline(recommendation.title)}${category} — ${inline(recommendation.detail)}`);
-  }
-  lines.push("");
 }
 
 function tableRow(cells: string[]): string {
@@ -186,18 +101,10 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 }
 
-function formatSignedNumber(value: number): string {
-  return value > 0 ? `+${formatNumber(value)}` : formatNumber(value);
-}
-
 function formatCurrency(value: number): string {
   const abs = Math.abs(value);
   const digits = abs >= 0.1 ? 2 : 4;
   return `${value < 0 ? "-" : ""}$${abs.toFixed(digits)}`;
-}
-
-function formatSignedCurrency(value: number): string {
-  return value > 0 ? `+${formatCurrency(value)}` : formatCurrency(value);
 }
 
 function formatPercent(value: number): string {

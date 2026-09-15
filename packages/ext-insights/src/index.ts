@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { buildAiInsights } from './facets.js';
 import { computeAnalytics } from './analytics.js';
 import { getInsightsArgumentCompletions, getSinceCutoff, parseInsightsArgs } from './cli.js';
 import { generateMarkdown } from './markdown.js';
@@ -15,7 +14,6 @@ const MAX_SESSION_BYTES = 64 * 1024 * 1024;
 const PARSER_VERSION = '2';
 
 export type { InsightsHost, InsightsSessionReference } from './contracts.js';
-export type { FacetModelClient } from './facets.js';
 export * from './analytics.js';
 export * from './cli.js';
 export * from './markdown.js';
@@ -38,7 +36,6 @@ export function createInsightsExtension(host: InsightsHost): FelanExtension {
         let references: readonly InsightsSessionReference[];
         try { references = await host.listSessions(pi.runtime); } catch (error) { ctx.ui.notify(`Could not list sessions: ${errorMessage(error)}`, 'error'); return; }
         const grouped = new Map<string, ParsedSession[]>();
-        const transcripts = new Map<string, string>();
         let cacheHits = 0;
         let cacheMisses = 0;
         let cacheWrites = 0;
@@ -58,7 +55,6 @@ export function createInsightsExtension(host: InsightsHost): FelanExtension {
           if (!transcript || new TextEncoder().encode(transcript).byteLength > MAX_SESSION_BYTES) continue;
           const session = parseSessionTranscript(transcript, reference.id);
           if (!session) continue;
-          transcripts.set(session.id, transcript);
           await writeCachedSession(pi.runtime, reference, session);
           cacheWrites++;
           const sliced = sliceParsedSession(session, cutoff, new Date());
@@ -70,11 +66,10 @@ export function createInsightsExtension(host: InsightsHost): FelanExtension {
         });
         if (!sessions.length) { ctx.ui.notify('No valid sessions found for the selected range.', 'warning'); return; }
         let analytics = computeAnalytics(sessions);
-        analytics.cache = { root: pi.runtime.storage('agent').root, refreshed: options.refresh, versions: { schema: '1', parser: PARSER_VERSION, facetPrompt: '1' }, sessionMeta: { hits: cacheHits, misses: cacheMisses, writes: cacheWrites, errors: 0 } };
+        analytics.cache = { root: pi.runtime.storage('agent').root, refreshed: options.refresh, versions: { schema: '2', parser: PARSER_VERSION }, sessionMeta: { hits: cacheHits, misses: cacheMisses, writes: cacheWrites, errors: 0 } };
         analytics.export = { generatedAt: new Date().toISOString(), outputFormats: options.markdown ? ['html', 'markdown'] : ['html'] };
         if (host.enrichAnalytics) analytics = await host.enrichAnalytics(analytics, pi.runtime);
         if (host.savings) analytics.savings = await host.savings(pi.runtime, analytics);
-        analytics.ai = await buildAiInsights({ sessions, transcriptById: transcripts, modelClient: host.modelClient?.(pi.runtime) });
         const reportPath = await host.writeReport(pi.runtime, 'felan-insights.html', renderReport(analytics));
         if (options.markdown && host.writeMarkdown) await host.writeMarkdown(pi.runtime, 'felan-insights.md', generateMarkdown(analytics));
         ctx.ui.notify(`Insights report ready: ${reportPath}`, 'info');

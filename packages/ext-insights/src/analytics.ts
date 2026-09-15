@@ -5,15 +5,8 @@ import type {
   ProjectStats,
   ModelStats,
   RageStats,
-  TemporalInsights,
   ModelEfficiencySummary,
-  InsightFlag,
-  InsightRecommendation,
-  DeterministicAnalysis,
 } from "./types.js";
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const DECAY_HALF_LIFE_DAYS = 10;
 
 export function computeAnalytics(sessions: ParsedSession[]): Analytics {
   if (sessions.length === 0) {
@@ -186,17 +179,7 @@ export function computeAnalytics(sessions: ParsedSession[]): Analytics {
       .slice(0, 20),
   };
 
-  const temporal = computeTemporalInsights(sorted);
   const modelEfficiency = computeModelEfficiency(sorted);
-  const analysis = computeDeterministicAnalysis(
-    sorted,
-    projectStats,
-    modelStats,
-    modelSwitchCount,
-    rageStats,
-    temporal,
-    modelEfficiency
-  );
 
   return {
     totalSessions,
@@ -219,9 +202,7 @@ export function computeAnalytics(sessions: ParsedSession[]): Analytics {
     hourlyDistribution,
     modelSwitchCount,
     rageStats,
-    temporal,
     modelEfficiency,
-    analysis,
     sessions: sorted.map(s => ({
       id: s.id,
       cwd: s.cwd,
@@ -247,35 +228,6 @@ export function computeAnalytics(sessions: ParsedSession[]): Analytics {
       activity: s.activity?.map((item) => ({ ...item, timestamp: item.timestamp.toISOString() })),
       agentSessionCount: s.agentSessionCount,
     })),
-  };
-}
-
-function computeTemporalInsights(sorted: ParsedSession[]): TemporalInsights {
-  const end = sorted[sorted.length - 1].endTime;
-  const currentStart = new Date(end.getTime() - 7 * MS_PER_DAY);
-  const previousStart = new Date(end.getTime() - 14 * MS_PER_DAY);
-  const current = sorted.filter(sess => sess.startTime >= currentStart && sess.startTime <= end);
-  const previous = sorted.filter(sess => sess.startTime >= previousStart && sess.startTime < currentStart);
-  const currentTotals = summarizeSessions(current);
-  const previousTotals = summarizeSessions(previous);
-
-  return {
-    generatedAt: new Date().toISOString(),
-    decayHalfLifeDays: DECAY_HALF_LIFE_DAYS,
-    decayWeightedActivity: computeDecayWeightedActivity(sorted, end),
-    weekOverWeek: {
-      currentStart: currentStart.toISOString().split("T")[0],
-      previousStart: previousStart.toISOString().split("T")[0],
-      sessionsDelta: currentTotals.sessions - previousTotals.sessions,
-      costDelta: currentTotals.cost - previousTotals.cost,
-      toolErrorDelta: currentTotals.toolErrors - previousTotals.toolErrors,
-    },
-    trajectory: {
-      cost: compareTrend(currentTotals.cost, previousTotals.cost, true),
-      errors: compareTrend(currentTotals.toolErrors, previousTotals.toolErrors, true),
-    },
-    anomalies: detectAnomalies(sorted),
-    deterministicFriction: computeDeterministicFriction(currentTotals, previousTotals),
   };
 }
 
@@ -318,292 +270,7 @@ function computeModelEfficiency(sorted: ParsedSession[]): ModelEfficiencySummary
   return {
     generatedAt: new Date().toISOString(),
     models,
-    recommendations: modelEfficiencyRecommendations(models),
   };
-}
-
-function computeDeterministicAnalysis(
-  sorted: ParsedSession[],
-  projectStats: ProjectStats[],
-  modelStats: ModelStats[],
-  modelSwitchCount: number,
-  rageStats: RageStats,
-  temporal: TemporalInsights,
-  modelEfficiency: ModelEfficiencySummary
-): DeterministicAnalysis {
-  const totalSessions = sorted.length;
-  const totalCost = sorted.reduce((sum, sess) => sum + sess.cost.total, 0);
-  const totalMessages = sorted.reduce((sum, sess) => sum + sess.messageCount, 0);
-  const takeaways: InsightFlag[] = [];
-  const recommendations: InsightRecommendation[] = [];
-  const stopDoing: InsightRecommendation[] = [];
-
-  const weekOverWeek = temporal.weekOverWeek;
-  if (weekOverWeek) {
-    takeaways.push({
-      severity: "info",
-      title: "Activity change",
-      detail: describeDelta("session", weekOverWeek.sessionsDelta, "in the current 7-day window compared with the previous 7 days."),
-    });
-  }
-
-  const topProject = projectStats[0];
-  if (topProject) {
-    takeaways.push({
-      severity: "info",
-      title: "Primary project",
-      detail: `${topProject.name} accounts for ${topProject.sessions} of ${totalSessions} sessions and ${formatPercent(topProject.cost, totalCost)} of observed spend.`,
-    });
-  }
-
-  const primaryModel = modelStats[0];
-  if (primaryModel) {
-    takeaways.push({
-      severity: "info",
-      title: "Primary model",
-      detail: `${primaryModel.name} produced ${formatPercent(primaryModel.tokens, sorted.reduce((sum, sess) => sum + sess.tokenUsage.total, 0))} of observed tokens.`,
-    });
-  }
-
-  if (temporal.trajectory?.errors) {
-    takeaways.push({
-      severity: temporal.trajectory.errors === "worsening" ? "warning" : "info",
-      title: "Tool-error trend",
-      detail: `Tool-error trend is ${temporal.trajectory.errors}.`,
-    });
-  }
-
-  if (weekOverWeek && temporal.trajectory?.cost === "worsening" && weekOverWeek.costDelta > 0) {
-    recommendations.push({
-      title: "Audit recent cost drivers",
-      detail: `Recent spend increased by ${formatCurrency(weekOverWeek.costDelta)}. Review the most expensive recent sessions before changing default models or prompts.`,
-      category: "workflow",
-    });
-  }
-
-  for (const recommendation of modelEfficiency.recommendations) {
-    recommendations.push({ title: "Tune model usage", detail: recommendation, category: "model" });
-  }
-
-  for (const signal of temporal.deterministicFriction?.ongoing ?? []) {
-    if (signal.title === "Tool errors") {
-      recommendations.push({
-        title: "Fix tool-error hotspots",
-        detail: `${signal.detail} Check failing command/tool patterns before repeating the same workflow.`,
-        category: "workflow",
-      });
-      stopDoing.push({
-        title: "Stop retrying failed tool calls blindly",
-        detail: "Inspect the first failure and adjust inputs before rerunning similar commands.",
-        category: "stop",
-      });
-    } else if (signal.title === "Slow responses") {
-      recommendations.push({
-        title: "Split slow sessions into checkpoints",
-        detail: `${signal.detail} Smaller scopes usually make progress easier to verify and resume.`,
-        category: "workflow",
-      });
-    } else if (signal.title === "Interruptions") {
-      recommendations.push({
-        title: "Clarify success criteria before long runs",
-        detail: `${signal.detail} Add explicit verification targets before starting broad tasks.`,
-        category: "workflow",
-      });
-    }
-  }
-
-  if (totalSessions >= 3 && modelSwitchCount / totalSessions >= 0.25) {
-    recommendations.push({
-      title: "Make model switching deliberate",
-      detail: `${modelSwitchCount} of ${totalSessions} sessions used multiple models. Split lightweight lookups from high-reasoning implementation work when possible.`,
-      category: "model",
-    });
-    stopDoing.push({
-      title: "Stop switching models mid-session without a reason",
-      detail: "Use a stronger model for planning/review and a faster model for routine edits, rather than mixing ad hoc within one task.",
-      category: "stop",
-    });
-  }
-
-  if (topProject && totalCost > 0 && topProject.cost / totalCost >= 0.5 && projectStats.length > 1) {
-    recommendations.push({
-      title: "Review the dominant project",
-      detail: `${topProject.name} represents ${formatPercent(topProject.cost, totalCost)} of spend. Check whether repeated work there can be captured in tests, docs, or reusable commands.`,
-      category: "workflow",
-    });
-  }
-
-  if (totalSessions > 0 && totalMessages / totalSessions >= 25) {
-    recommendations.push({
-      title: "Checkpoint long conversations",
-      detail: `Average depth is ${Math.round(totalMessages / totalSessions)} messages per session. Save plans, test commands, and open questions before context gets noisy.`,
-      category: "workflow",
-    });
-  }
-
-  if (rageStats.messagesWithSwears > 0) {
-    stopDoing.push({
-      title: "Stop pushing through frustration signals",
-      detail: `${rageStats.messagesWithSwears} messages contained rage language. Treat these as points to narrow scope, inspect logs, or ask for clarification.`,
-      category: "stop",
-    });
-  }
-
-  if (recommendations.length === 0 && topProject && primaryModel) {
-    recommendations.push({
-      title: "Keep monitoring the main workflow",
-      detail: `No deterministic friction stood out. Continue watching ${topProject.name} and ${primaryModel.name} for changes in spend, errors, and session length.`,
-      category: "workflow",
-    });
-  }
-
-  return {
-    generatedAt: new Date().toISOString(),
-    takeaways: dedupeFlags(takeaways),
-    recommendations: dedupeRecommendationObjects(recommendations),
-    stopDoing: dedupeRecommendationObjects(stopDoing),
-  };
-}
-
-function summarizeSessions(sessions: ParsedSession[]) {
-  return sessions.reduce((summary, sess) => {
-    summary.sessions++;
-    summary.messages += sess.messageCount;
-    summary.tokens += sess.tokenUsage.total;
-    summary.cost += sess.cost.total;
-    summary.toolErrors += sess.toolCallErrors;
-    summary.interruptions += sess.metadata?.userInterruptions ?? 0;
-    summary.slowResponses += (sess.metadata?.responseTimesMs ?? []).filter(ms => ms > 60_000).length;
-    return summary;
-  }, { sessions: 0, messages: 0, tokens: 0, cost: 0, toolErrors: 0, interruptions: 0, slowResponses: 0 });
-}
-
-function computeDecayWeightedActivity(sorted: ParsedSession[], end: Date) {
-  return sorted.reduce((weighted, sess) => {
-    const ageDays = Math.max(0, (end.getTime() - sess.startTime.getTime()) / MS_PER_DAY);
-    const weight = Math.pow(0.5, ageDays / DECAY_HALF_LIFE_DAYS);
-    weighted.sessions += weight;
-    weighted.messages += sess.messageCount * weight;
-    weighted.tokens += sess.tokenUsage.total * weight;
-    weighted.cost += sess.cost.total * weight;
-    return weighted;
-  }, { sessions: 0, messages: 0, tokens: 0, cost: 0 });
-}
-
-function compareTrend(current: number, previous: number, lowerIsBetter = false): "improving" | "worsening" | "stable" {
-  if (previous === 0 && current === 0) return "stable";
-  if (previous === 0) return lowerIsBetter ? "worsening" : "improving";
-  const ratio = current / previous;
-  if (ratio > 1.1) return lowerIsBetter ? "worsening" : "improving";
-  if (ratio < 0.9) return lowerIsBetter ? "improving" : "worsening";
-  return "stable";
-}
-
-function detectAnomalies(sorted: ParsedSession[]): InsightFlag[] {
-  return [
-    ...metricAnomalies(sorted, sess => sess.cost.total, "Cost spike", "Session cost is unusually high compared with nearby history."),
-    ...metricAnomalies(sorted, sess => sess.toolCallErrors, "Tool error spike", "Session tool errors are unusually high compared with nearby history."),
-  ];
-}
-
-function metricAnomalies(
-  sessions: ParsedSession[],
-  selector: (session: ParsedSession) => number,
-  title: string,
-  detail: string
-): InsightFlag[] {
-  if (sessions.length < 3) return [];
-  const values = sessions.map(selector);
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const variance = values.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / values.length;
-  const threshold = mean + Math.sqrt(variance) * 2;
-
-  return sessions
-    .filter(sess => selector(sess) > 0 && selector(sess) > threshold)
-    .map(sess => ({ severity: "warning" as const, title, detail, sessionIds: [sess.id] }));
-}
-
-function computeDeterministicFriction(
-  current: ReturnType<typeof summarizeSessions>,
-  previous: ReturnType<typeof summarizeSessions>
-): TemporalInsights["deterministicFriction"] {
-  const ongoing: InsightFlag[] = [];
-  const resolved: InsightFlag[] = [];
-  collectFriction("Tool errors", current.toolErrors, previous.toolErrors, ongoing, resolved);
-  collectFriction("Slow responses", current.slowResponses, previous.slowResponses, ongoing, resolved);
-  collectFriction("Interruptions", current.interruptions, previous.interruptions, ongoing, resolved);
-  return { ongoing, resolved };
-}
-
-function collectFriction(
-  label: string,
-  current: number,
-  previous: number,
-  ongoing: InsightFlag[],
-  resolved: InsightFlag[]
-): void {
-  if (current > 0) {
-    ongoing.push({ severity: "warning", title: label, detail: `${current} recent ${label.toLowerCase()} signal${current === 1 ? "" : "s"} detected.` });
-  } else if (previous > 0) {
-    resolved.push({ severity: "info", title: label, detail: `No recent ${label.toLowerCase()} signals after ${previous} in the previous period.` });
-  }
-}
-
-function modelEfficiencyRecommendations(models: ModelEfficiencySummary["models"]): string[] {
-  if (models.length === 0) return [];
-  const recommendations: string[] = [];
-  const byCostPerToken = [...models].sort((a, b) => b.costPerToken - a.costPerToken);
-  const mostExpensive = byCostPerToken[0];
-  const median = byCostPerToken[Math.floor(byCostPerToken.length / 2)]?.costPerToken ?? mostExpensive.costPerToken;
-
-  if (median > 0 && mostExpensive.costPerToken > median * 2) {
-    recommendations.push(`${mostExpensive.model} has the highest observed cost per token; reserve it for tasks that need that capability.`);
-  }
-
-  const errorProne = models.find(model => (model.toolErrorRate ?? 0) > 0.2);
-  if (errorProne) {
-    recommendations.push(`${errorProne.model} appears in sessions with frequent tool errors; inspect prompts or tool usage before increasing usage.`);
-  }
-
-  return recommendations;
-}
-
-function describeDelta(noun: string, delta: number, suffix: string): string {
-  if (delta === 0) return `No ${noun} change ${suffix}`;
-  const abs = Math.abs(delta);
-  const plural = abs === 1 ? noun : `${noun}s`;
-  return `${abs} ${delta > 0 ? "more" : "fewer"} ${plural} ${suffix}`;
-}
-
-function formatPercent(part: number, total: number): string {
-  if (total <= 0) return "0%";
-  return `${Math.round((part / total) * 100)}%`;
-}
-
-function formatCurrency(value: number): string {
-  const abs = Math.abs(value);
-  const digits = abs >= 0.1 ? 2 : 4;
-  return `${value < 0 ? "-" : ""}$${abs.toFixed(digits)}`;
-}
-
-function dedupeFlags(flags: InsightFlag[]): InsightFlag[] {
-  const seen = new Set<string>();
-  return flags.filter(flag => {
-    const key = `${flag.title}\n${flag.detail}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function dedupeRecommendationObjects(recommendations: InsightRecommendation[]): InsightRecommendation[] {
-  const seen = new Set<string>();
-  return recommendations.filter(recommendation => {
-    const key = `${recommendation.title}\n${recommendation.detail}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function emptyAnalytics(): Analytics {

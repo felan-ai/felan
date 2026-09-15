@@ -100,7 +100,6 @@ function filterAnalyticsByDate(analytics: Analytics, range: DateRange): Analytic
     .filter((session): session is ComputedSession => session !== null);
 
   const filtered = computeAnalytics(sessions) as unknown as Analytics;
-  filtered.ai = analytics.ai;
   filtered.cache = analytics.cache;
   filtered.export = analytics.export;
   if (analytics.savings) {
@@ -135,9 +134,10 @@ function summarizeSavings(report: InsightsSavingsReport, buckets: InsightsSaving
 
 // ── Stat Card ───────────────────────────────────────────────────────
 
-function StatCard({ value, label, sublabel }: { value: string; label: string; sublabel?: string }) {
+function StatCard({ value, label, sublabel, baselineValue }: { value: string; label: string; sublabel?: string; baselineValue?: string }) {
   return (
     <div className="stat-card">
+      {baselineValue && <s className="stat-baseline-value" title="Estimated cost without measured optimizations">{baselineValue}</s>}
       <div className="stat-value">{value}</div>
       <div className="stat-label">{label}</div>
       {sublabel && <div className="stat-sublabel">{sublabel}</div>}
@@ -396,189 +396,33 @@ function RageTab({ rage, totalUserMessages }: { rage: RageStats; totalUserMessag
   );
 }
 
-function DeltaValue({ value, format = 'number' }: { value: number; format?: 'number' | 'cost' }) {
-  const positive = value > 0;
-  const display = format === 'cost' ? formatCost(Math.abs(value)) : formatNumber(Math.abs(value));
-  return <span className={positive ? 'delta negative' : value < 0 ? 'delta positive' : 'delta'}>{positive ? '+' : value < 0 ? '−' : ''}{display}</span>;
-}
-
-function TrendsTab({ data }: { data: Analytics }) {
-  const temporal = data.temporal;
-
-  if (!temporal) {
-    return <EmptyState title="No trend data" detail="Temporal analytics were not generated for this report." />;
-  }
-
-  return (
-    <>
-      <div className="stats-grid">
-        <StatCard value={temporal.trajectory?.cost ?? 'stable'} label="Cost Trajectory" sublabel="week over week" />
-        <StatCard value={temporal.trajectory?.errors ?? 'stable'} label="Error Trajectory" sublabel="week over week" />
-        <StatCard value={formatNumber(Math.round(temporal.decayWeightedActivity?.sessions ?? 0))} label="Weighted Sessions" sublabel={`${formatNumber(temporal.decayHalfLifeDays ?? 10)}d half-life`} />
-        <StatCard value={formatCost(temporal.decayWeightedActivity?.cost ?? 0)} label="Weighted Cost" sublabel="recent sessions count more" />
-      </div>
-
-      <div className="section">
-        <div className="section-header"><h2 className="section-title">What Changed This Week</h2></div>
-        <div className="section-subtitle">Current 7-day window compared with the previous 7 days</div>
-        <div className="chart-card insight-grid">
-          <InsightMetric label="Sessions" value={<DeltaValue value={temporal.weekOverWeek?.sessionsDelta ?? 0} />} />
-          <InsightMetric label="Cost" value={<DeltaValue value={temporal.weekOverWeek?.costDelta ?? 0} format="cost" />} />
-          <InsightMetric label="Tool errors" value={<DeltaValue value={temporal.weekOverWeek?.toolErrorDelta ?? 0} />} />
-        </div>
-      </div>
-
-      <div className="chart-row">
-        <div className="section">
-          <div className="section-header"><h2 className="section-title">Anomalies</h2></div>
-          <div className="section-subtitle">Cost and error spikes detected deterministically</div>
-          <div className="chart-card">
-            {temporal.anomalies?.length ? temporal.anomalies.map((item, index) => <InsightItem key={index} item={item} />) : <MutedText>No anomalies detected.</MutedText>}
-          </div>
-        </div>
-
-        <div className="section">
-          <div className="section-header"><h2 className="section-title">Friction Signals</h2></div>
-          <div className="section-subtitle">Resolved vs ongoing deterministic friction</div>
-          <div className="chart-card">
-            <h3 className="mini-heading">Ongoing</h3>
-            {temporal.deterministicFriction?.ongoing.length ? temporal.deterministicFriction.ongoing.map((item, index) => <InsightItem key={index} item={item} />) : <MutedText>No ongoing deterministic friction.</MutedText>}
-            <h3 className="mini-heading" style={{ marginTop: 16 }}>Resolved</h3>
-            {temporal.deterministicFriction?.resolved.length ? temporal.deterministicFriction.resolved.map((item, index) => <InsightItem key={index} item={item} />) : <MutedText>No recently resolved friction signals.</MutedText>}
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-function ModelEfficiencyTab({ data }: { data: Analytics }) {
+function ModelEfficiencySection({ data }: { data: Analytics }) {
   const summary = data.modelEfficiency;
   const maxCost = Math.max(...(summary?.models.map(model => model.cost) ?? []), 1);
 
   if (!summary || summary.models.length === 0) {
-    return <EmptyState title="No model-efficiency data" detail="No token-generating model usage was found for this date range." />;
+    return null;
   }
 
   return (
-    <>
-      <div className="section">
-        <div className="section-header"><h2 className="section-title">Model Efficiency</h2></div>
-        <div className="section-subtitle">Cost, throughput, duration, and tool-error signals by model</div>
-        <div className="chart-card">
-          {summary.models.map((model, index) => (
-            <div key={model.model} className="efficiency-row">
-              <ModelBar name={model.model} value={model.cost} max={maxCost} color={COLORS[index % COLORS.length]} formatValue={formatCost} />
-              <div className="efficiency-metrics">
-                <span>{formatNumber(model.tokens)} tokens</span>
-                <span>{formatCost(model.cost)} total</span>
-                <span>{formatCost(model.costPerToken)} / token</span>
-                <span>{formatCost(model.costPerMessage)} / msg</span>
-                <span>{formatDuration(model.avgSessionDuration)} avg</span>
-                <span>{formatPercent(model.toolErrorRate ?? 0)} error-rate</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-header"><h2 className="section-title">Efficiency Recommendations</h2></div>
-        <div className="chart-card">
-          {summary.recommendations.length ? summary.recommendations.map((rec, index) => <InsightItem key={index} item={{ severity: 'info', title: 'Recommendation', detail: rec }} />) : <MutedText>No model-efficiency recommendations generated.</MutedText>}
-        </div>
-      </div>
-    </>
-  );
-}
-
-function RecommendationsTab({ data }: { data: Analytics }) {
-  const ai = data.ai;
-  const analysis = data.analysis;
-  const availableAi = ai && ai.status !== 'unavailable' ? ai : undefined;
-
-  return (
-    <>
-      <div className="section">
-        <div className="section-header"><h2 className="section-title">Deterministic Analysis</h2></div>
-        <div className="section-subtitle">Generated locally from session metadata, trends, friction, and model-efficiency signals</div>
-        <div className="chart-card">
-          {analysis?.takeaways.length ? analysis.takeaways.map((item, index) => <InsightItem key={index} item={item} />) : <MutedText>No deterministic takeaways generated for this date range.</MutedText>}
-        </div>
-      </div>
-
-      <div className="chart-row">
-        <RecommendationSection title="Recommended Next Steps" empty="No deterministic recommendations generated." items={analysis?.recommendations ?? []} />
-        <RecommendationSection title="Consider Stopping" empty="No deterministic stop-doing suggestions generated." items={analysis?.stopDoing ?? []} />
-      </div>
-
-      <div className="section">
-        <div className="section-header"><h2 className="section-title">AI Facet Source</h2></div>
-        <div className="chart-card insight-grid">
-          <InsightMetric label="Status" value={ai?.status ?? 'unavailable'} />
-          <InsightMetric label="Cache" value={ai?.cacheState ?? 'skipped'} />
-          <InsightMetric label="Range" value={ai?.sourceRange ? `${localDate(ai.sourceRange.start)} – ${localDate(ai.sourceRange.end)}` : 'not generated'} />
-        </div>
-        <div className="section-subtitle" style={{ marginTop: 10 }}>{availableAi ? 'AI facets are generated at report time and are not recomputed by browser-side date filtering.' : (ai?.unavailableReason ?? 'AI facets were not generated; deterministic analysis above remains available.')}</div>
-      </div>
-
-      {availableAi && (
-        <>
-          <div className="chart-row">
-            <RecommendationSection title="AI Next Steps" empty="No AI recommendations generated." items={availableAi.recommendations} />
-            <RecommendationSection title="AI Stop-Doing Suggestions" empty="No AI stop-doing suggestions generated." items={availableAi.stopDoing} />
-          </div>
-
-          <div className="section">
-            <div className="section-header"><h2 className="section-title">Session Facets</h2></div>
-            <div className="chart-card facets-grid">
-              {availableAi.facets.length ? availableAi.facets.map(facet => (
-                <div className="facet-card" key={facet.sessionId}>
-                  <div className="facet-title">{facet.goal ?? facet.summary ?? facet.sessionId}</div>
-                  <div className="facet-meta">{facet.sessionType ?? 'session'} · {facet.satisfaction ?? 'unknown satisfaction'}</div>
-                  {facet.outcome && <p>{facet.outcome}</p>}
-                  {facet.friction?.length ? <div className="facet-tags">{facet.friction.map(item => <span className="tag" key={item}>{item}</span>)}</div> : null}
-                </div>
-              )) : <MutedText>No AI session facets generated.</MutedText>}
-            </div>
-          </div>
-        </>
-      )}
-    </>
-  );
-}
-
-function RecommendationSection({ title, empty, items }: { title: string; empty: string; items: NonNullable<Analytics['ai']>['recommendations'] }) {
-  return (
     <div className="section">
-      <div className="section-header"><h2 className="section-title">{title}</h2></div>
+      <div className="section-header"><h2 className="section-title">Model Efficiency</h2></div>
+      <div className="section-subtitle">Cost, throughput, duration, and tool-error signals by model</div>
       <div className="chart-card">
-        {items.length ? items.map((item, index) => (
-          <div className="recommendation" key={`${item.title}-${index}`}>
-            <div className="recommendation-title">{item.title}</div>
-            <div className="recommendation-detail">{item.detail}</div>
-            {item.prompt && <code>{item.prompt}</code>}
+        {summary.models.map((model, index) => (
+          <div key={model.model} className="efficiency-row">
+            <ModelBar name={model.model} value={model.cost} max={maxCost} color={COLORS[index % COLORS.length]} formatValue={formatCost} />
+            <div className="efficiency-metrics">
+              <span>{formatNumber(model.tokens)} tokens</span>
+              <span>{formatCost(model.cost)} total</span>
+              <span>{formatCost(model.costPerToken)} / token</span>
+              <span>{formatCost(model.costPerMessage)} / msg</span>
+              <span>{formatDuration(model.avgSessionDuration)} avg</span>
+              <span>{formatPercent(model.toolErrorRate ?? 0)} error-rate</span>
+            </div>
           </div>
-        )) : <MutedText>{empty}</MutedText>}
+        ))}
       </div>
-    </div>
-  );
-}
-
-function InsightMetric({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="insight-metric">
-      <div className="insight-metric-label">{label}</div>
-      <div className="insight-metric-value">{value}</div>
-    </div>
-  );
-}
-
-function InsightItem({ item }: { item: { severity: string; title: string; detail: string } }) {
-  return (
-    <div className={`insight-item ${item.severity}`}>
-      <div className="insight-item-title">{item.title}</div>
-      <div className="insight-item-detail">{item.detail}</div>
     </div>
   );
 }
@@ -683,12 +527,9 @@ function MoonIcon() {
 const navigationItems = [
   ['overview', 'Overview'],
   ['savings', 'Savings'],
-  ['trends', 'Trends'],
   ['models', 'Models'],
-  ['efficiency', 'Model Efficiency'],
   ['projects', 'Projects'],
   ['sessions', 'Sessions'],
-  ['recommendations', 'Recommendations'],
   ['rage', 'Rage'],
 ] as const;
 type NavigationItem = typeof navigationItems[number][0];
@@ -745,6 +586,8 @@ function App() {
   }, [data.projectStats, projectSort]);
 
   const dateRangeStr = formatDateRange(dateRange);
+  const estimatedAvoidedCost = data.savings?.savedCostUsd ?? 0;
+  const hasEstimatedSavings = estimatedAvoidedCost > 0;
 
   useEffect(() => {
     const key = 'felan-insights-theme';
@@ -814,7 +657,12 @@ function App() {
             <StatCard value={formatDuration(data.totalDuration)} label="Active Time" sublabel={`${formatDuration(data.avgSessionDuration)} avg`} />
             <StatCard value={formatInteger(data.modelStats.length)} label="Models" sublabel={`${formatInteger(data.modelSwitchCount)} multi-model sessions`} />
             <StatCard value={formatNumber(data.totalTokens)} label="Tokens" />
-            <StatCard value={formatCost(data.totalCost)} label="Cost" />
+            <StatCard
+              value={formatCost(data.totalCost)}
+              baselineValue={hasEstimatedSavings ? formatCost(data.totalCost + estimatedAvoidedCost) : undefined}
+              label={hasEstimatedSavings ? "Actual Cost" : "Cost"}
+              sublabel={hasEstimatedSavings ? `${formatCost(estimatedAvoidedCost)} estimated avoided` : undefined}
+            />
           </div>
           <div className="section">
             <div className="section-header">
@@ -874,8 +722,6 @@ function App() {
         </>
       )}
 
-      {activeTab === 'trends' && <TrendsTab data={data} />}
-
       {activeTab === 'models' && (
         <>
           <div className="section">
@@ -920,6 +766,8 @@ function App() {
             </div>
           </div>
 
+          <ModelEfficiencySection data={data} />
+
           <div className="section">
             <div className="section-header">
               <h2 className="section-title">Thinking Levels</h2>
@@ -949,8 +797,6 @@ function App() {
           </div>
         </>
       )}
-
-      {activeTab === 'efficiency' && <ModelEfficiencyTab data={data} />}
 
       {activeTab === 'projects' && (
         <div className="section">
@@ -1049,7 +895,6 @@ function App() {
         <RageTab rage={data.rageStats} totalUserMessages={data.totalMessages} />
       )}
 
-      {activeTab === 'recommendations' && <RecommendationsTab data={data} />}
       {activeTab === 'savings' && <SavingsTab report={data.savings} />}
 
       <div className="footer">
