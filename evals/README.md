@@ -4,6 +4,17 @@ This is the home for Felan extension tests and benchmarks, powered by
 `harness-evals`. Agent-comparison and smoke evaluations remain in the sibling
 `harness-bench` repository.
 
+Portable extension behavior belongs here when it can be exercised without
+Felan Cloud: enabled/disabled effects, output quality, cost, tokens, latency,
+and portable lifecycle contracts. The catalog contains 24 cases across
+Codebase Memory, MarkItDown, Memory, Output Style, Prewalk, RTK, Session
+Compaction, Subagents, Tasks, and Web Access.
+
+Felan Cloud's `apps/agent/evals` owns platform composition and product
+workflows: cloud session persistence, runtime wiring, system events, runtime
+catalogs and skills, workspace/container ownership, entitlements, Slack/API
+routing, Git/PR workflows, QA behavior, and archive publication.
+
 ## Layout
 
 - `cases/` — extension-specific prompts, assertions, and verifiers.
@@ -11,6 +22,10 @@ This is the home for Felan extension tests and benchmarks, powered by
 - `adapters/` — project adapters used by the cases.
 - `runtimes/` — reusable Docker runtime assets.
 - `results/` — published historical extension evidence.
+
+Do not duplicate a case merely because both repositories mention an extension.
+Overlap is appropriate only when the Felan case checks portable behavior and
+the platform case checks host composition.
 
 ## Current-source workflow
 

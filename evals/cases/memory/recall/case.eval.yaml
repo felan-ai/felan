@@ -1,0 +1,46 @@
+id: memory-recall
+suite: memory
+description: Compare memory-disabled and memory-enabled recall of durable project decisions.
+timeoutMs: 900000
+workspace:
+  fixture: fixtures/memory-recall/v1/source
+  setup:
+    - command: node
+      args: [.eval-setup/stage-memory.mjs]
+      cwd: /workspace
+      timeoutMs: 30000
+      network:
+        mode: none
+agents:
+  include:
+    - felan-no-memory
+    - felan-memory
+prompt: >-
+  We are touching auth and I am reviewing the release. What release-smoke
+  coverage should I expect, how should review feedback be grouped, and is there
+  any unresolved owner question I should know about? Answer concisely from the
+  available project context. Do not modify files.
+assert:
+  - id: no-memory-does-not-invent
+    type: notContains
+    value: auth smoke
+    when:
+      agent: felan-no-memory
+  - id: memory-recalls-release-coverage
+    type: contains
+    value: successful login
+    when:
+      agent: felan-memory
+  - id: memory-recalls-review-grouping
+    type: contains
+    value: blocking
+    when:
+      agent: felan-memory
+  - id: memory-recalls-owner-gap
+    type: contains
+    value: owner is not confirmed
+    when:
+      agent: felan-memory
+  - id: no-files-edited
+    type: workspaceDiff
+    changedFiles: []

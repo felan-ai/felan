@@ -1,0 +1,28 @@
+id: subagents-error-surfacing
+suite: subagents
+description: Surface a failed child command instead of silently swallowing it.
+timeoutMs: 300000
+workspace:
+  fixture: fixtures/felan-adapter-smoke/v1/source
+agents:
+  include:
+    - felan-delegated-exploration
+prompt: >-
+  Use the Agent tool exactly once with subagent_type general. Ask the helper to
+  execute `cat /tmp/absolutely-does-not-exist-xyz-9876` and return the exact
+  stderr. Report the real error text from the child, not a paraphrase. Do not
+  edit files.
+assert:
+  - id: one-child
+    type: toolCalled
+    name: Agent
+    min: 1
+    max: 1
+    argsContain:
+      - 'general'
+  - id: child-error-reported
+    type: contains
+    value: No such file or directory
+  - id: no-files-edited
+    type: workspaceDiff
+    changedFiles: []

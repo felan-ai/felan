@@ -1,0 +1,41 @@
+id: tasks-session-storage
+suite: tasks
+description: Persist and read a root-session task through the Tasks extension.
+timeoutMs: 300000
+workspace:
+  fixture: fixtures/felan-adapter-smoke/v1/source
+agents:
+  include:
+    - felan-no-prewalk
+prompt: >-
+  Use TaskCreate exactly once to create a pending task titled
+  TASK_STORAGE_SENTINEL_7C91 with acceptance criteria "The persisted task is
+  readable". Then use TaskList with view "all" and report the task's exact title
+  and status. Do not update the task, delegate, or edit workspace files.
+assert:
+  - id: task-created
+    type: toolCalled
+    name: TaskCreate
+    min: 1
+    max: 1
+  - id: task-listed
+    type: toolCalled
+    name: TaskList
+    min: 1
+  - id: task-reported
+    type: contains
+    value: TASK_STORAGE_SENTINEL_7C91
+  - id: task-is-pending
+    type: contains
+    value: pending
+  - id: no-files-edited
+    type: workspaceDiff
+    changedFiles: []
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /workspace
+  assetsDir: cases/tasks/session-storage/verifier
+  assetsTarget: /tests
+  network:
+    mode: none

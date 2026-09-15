@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "memory-recall-v1",
+  "source": "authored-in-repository",
+  "files": [
+    "README.md",
+    ".eval-setup/stage-memory.mjs",
+    ".eval-setup/memory/summary.md",
+    ".eval-setup/memory/index.md",
+    ".eval-setup/memory/pages/release/index.md",
+    ".eval-setup/memory/pages/release/auth-smoke.md",
+    ".eval-setup/memory/pages/review/index.md",
+    ".eval-setup/memory/pages/review/feedback.md"
+  ]
+}

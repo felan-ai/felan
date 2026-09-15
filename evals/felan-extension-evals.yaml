@@ -16,6 +16,7 @@ tests:
   - cases/web-access/**/*.eval.yaml
   - cases/memory/**/*.eval.yaml
   - cases/subagents/**/*.eval.yaml
+  - cases/tasks/**/*.eval.yaml
   - cases/session-compaction/**/*.eval.yaml
 
 # All root configs use these same paths so local history and reports stay unified.
@@ -125,6 +126,92 @@ agents:
             targetThinking: medium
             restorePlanner: true
             entryApproval: allow
+        felanTui:
+          memoryProcessing: false
+
+  felan-no-memory:
+    adapter: felan
+    label: Felan · memory off
+    comparisonId: felan-no-memory
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 900000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          sessionCompaction: false
+          rtkOptimizer: false
+          sessionTitle: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+        felanTui:
+          memoryProcessing: false
+
+  felan-memory:
+    adapter: felan
+    label: Felan · memory on
+    comparisonId: felan-memory
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 900000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: true
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          sessionCompaction: false
+          rtkOptimizer: false
+          sessionTitle: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
         felanTui:
           memoryProcessing: false
 
@@ -957,6 +1044,26 @@ scoring:
 # Benchmark objectives are independent from the weighted score above. They
 # compare declared arms across all attempts and gate resource metrics on quality.
 benchmarks:
+  memory-recall:
+    revision: 1
+    label: Memory recall quality
+    description: Compare recall of durable project decisions with the memory extension disabled and enabled.
+    select:
+      cases: [memory-recall]
+    arms:
+      baseline: felan-no-memory
+      candidate: felan-memory
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: quality.passRate
+        goal: maximize
+    aggregation:
+      trials: median
+      cases: macroMean
+
   codebase-memory:
     revision: 6
     label: Codebase Memory retrieval cost
