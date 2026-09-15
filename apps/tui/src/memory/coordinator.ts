@@ -72,6 +72,8 @@ interface MemoryCheckpointCursor {
 const MEMORY_INPUT_BLOCKED_MESSAGE = 'Some memory checkpoints could not be materialized; evidence remains pending';
 const MEMORY_AUTOMATIC_UPDATE_THRESHOLD = 5;
 const MEMORY_AUTOMATIC_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+const MEMORY_DREAM_INPUT_MAX_BYTES = 10 * 1024 * 1024;
+const MEMORY_MAX_BATCH_SESSIONS = 8;
 
 export interface LocalMemoryCoordinatorOptions {
   readonly agentDir: string;
@@ -80,6 +82,7 @@ export interface LocalMemoryCoordinatorOptions {
   readonly enabled?: boolean;
   readonly debounceMs?: number;
   readonly batchSize?: number;
+  readonly maxInputBytes?: number;
   readonly maxTranscriptBytes?: number;
   readonly recoveryStableMs?: number;
   readonly recover?: boolean;
@@ -110,6 +113,7 @@ export class LocalMemoryCoordinator {
   readonly #projections = new Map<string, string>();
   readonly #statusListeners = new Set<() => void>();
   readonly #dreamRunner: LocalMemoryDreamRunner;
+  readonly #batchSize: number;
   #enabled: boolean;
   #selectedModel: Model<Api> | undefined;
   #scopedModels: readonly Model<Api>[] | undefined;
@@ -120,6 +124,7 @@ export class LocalMemoryCoordinator {
 
   constructor(options: LocalMemoryCoordinatorOptions) {
     this.#options = options;
+    this.#batchSize = boundedMemoryBatchSize(options.batchSize);
     this.#enabled = options.enabled !== false;
     this.#selectedModel = options.selectedModel;
     this.#scopedModels = options.scopedModels === undefined ? undefined : [...options.scopedModels];
@@ -598,7 +603,7 @@ export class LocalMemoryCoordinator {
         return;
       }
       const snapshot = await context.store.processingSnapshot(
-        this.#options.batchSize ?? 8,
+        this.#batchSize,
         (checkpoint) => !isBlockedCheckpoint(context, checkpoint),
       );
       if (snapshot.checkpoints.length === 0) {
@@ -624,7 +629,10 @@ export class LocalMemoryCoordinator {
           Object.entries(snapshot.state.processed).map(([sessionId, entry]) => [sessionId, entry.checkpoint]),
         ),
         baseSnapshot: createMemorySnapshot(snapshot.artifact, '.memory', { mode: 'read' }),
-        maxTranscriptBytes: this.#options.maxTranscriptBytes ?? 256 * 1024,
+        maxInputBytes: this.#options.maxInputBytes ?? MEMORY_DREAM_INPUT_MAX_BYTES,
+        ...(this.#options.maxTranscriptBytes === undefined
+          ? {}
+          : { maxTranscriptBytes: this.#options.maxTranscriptBytes }),
         signal: abort.signal,
       });
       for (const failure of manifest.failures) {
@@ -849,6 +857,14 @@ class LocalMemorySessionHost implements MemoryHost {
 function isBlockedCheckpoint(context: ProjectContext, checkpoint: SessionCheckpoint): boolean {
   const blocked = context.blocked.get(checkpoint.sessionId);
   return blocked !== undefined && sameCheckpointCursor(blocked, checkpoint);
+}
+
+function boundedMemoryBatchSize(requested: number | undefined): number {
+  if (requested === undefined) return MEMORY_MAX_BATCH_SESSIONS;
+  if (!Number.isSafeInteger(requested) || requested <= 0) {
+    throw new Error('Memory batch size must be a positive safe integer');
+  }
+  return Math.min(requested, MEMORY_MAX_BATCH_SESSIONS);
 }
 
 function sameCheckpointCursor(

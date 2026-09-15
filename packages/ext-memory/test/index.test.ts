@@ -244,6 +244,27 @@ describe('@felan-ai/ext-memory', () => {
     }
   });
 
+  it('ignores macOS metadata only when reading an existing memory artifact', async () => {
+    const root = await temporaryDirectory();
+    await writeFile(join(root, 'summary.md'), '', 'utf8');
+    await writeFile(join(root, 'index.md'), '# Memory index', 'utf8');
+    await writeFile(join(root, '.DS_Store'), 'finder metadata', 'utf8');
+
+    await expect(readMemoryDirectory(root, { mode: 'read' })).resolves.toMatchObject({
+      files: expect.not.arrayContaining([expect.objectContaining({ path: '.DS_Store' })]),
+    });
+    await expect(readMemoryDirectory(root, { requireSources: false })).rejects.toThrow(
+      'Unsafe memory path: ".DS_Store"',
+    );
+    if (process.platform !== 'win32') {
+      await rm(join(root, '.DS_Store'));
+      await symlink('/etc/passwd', join(root, '.DS_Store'));
+      await expect(readMemoryDirectory(root, { mode: 'read' })).rejects.toThrow(
+        'Unsafe memory entry type: .DS_Store',
+      );
+    }
+  });
+
   it('renders memory as hidden lower-priority reference context', () => {
     const snapshot = createMemorySnapshot(createEmptyMemoryArtifact('/work/.memory'), '/work/.memory');
     const prompt = formatMemoryPromptContext(snapshot);

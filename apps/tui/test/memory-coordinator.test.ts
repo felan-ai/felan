@@ -24,6 +24,14 @@ afterEach(async () => {
 });
 
 describe('LocalMemoryCoordinator', () => {
+  it('rejects invalid batch sizes', () => {
+    expect(() => new LocalMemoryCoordinator({
+      agentDir: '/tmp/felan-memory-test',
+      modelRuntime: {} as ModelRuntime,
+      batchSize: 0,
+    })).toThrow('Memory batch size must be a positive safe integer');
+  });
+
   it('passes the selected root-session model and model scope to the dream runner', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -179,7 +187,7 @@ describe('LocalMemoryCoordinator', () => {
       agentDir,
       modelRuntime: {} as ModelRuntime,
       recover: false,
-      maxTranscriptBytes: 256,
+      maxTranscriptBytes: 4 * 1024,
       dreamRunner: async (input) => {
         observed.input = input;
         const session = input.manifest.sessions[0]!;
@@ -204,7 +212,7 @@ describe('LocalMemoryCoordinator', () => {
     expect(observed.transcripts[0]).not.toContain(MEMORY_CONTEXT_CUSTOM_TYPE);
     expect(observed.transcripts[0]).not.toContain('old memory must not be ingested');
     expect(observed.transcripts[0]).not.toContain('abandoned branch');
-    expect(Buffer.byteLength(observed.transcripts[0]!, 'utf8')).toBeLessThanOrEqual(256);
+    expect(Buffer.byteLength(observed.transcripts[0]!, 'utf8')).toBeLessThanOrEqual(4 * 1024);
     const refreshed = await host.readCurrent();
     expect(refreshed).toMatchObject({ files: expect.arrayContaining([
       { path: 'summary.md', content: 'The project prefers focused changes.' },
@@ -467,7 +475,7 @@ describe('LocalMemoryCoordinator', () => {
     await coordinator.dispose();
   });
 
-  it('processes valid evidence behind a full batch of blocked checkpoints', async () => {
+  it('processes valid evidence alongside blocked checkpoints', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
@@ -477,25 +485,96 @@ describe('LocalMemoryCoordinator', () => {
       modelRuntime: {} as ModelRuntime,
       recover: false,
       debounceMs: 100,
-      batchSize: 9,
+      batchSize: 8,
       dreamRunner: async (input) => {
         runs += 1;
         return updatedArtifact(input.manifest.sessions[0]!.checkpoint.sessionId);
       },
     });
     const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
-    for (let index = 0; index < 8; index += 1) {
+    for (let index = 0; index < 7; index += 1) {
       const sessionId = `invalid-${index}`;
       const path = await writeSession(cwd, sessionId);
       await host.recordCheckpoint({ ...checkpointFor(path, sessionId), transcriptDigest: '0'.repeat(64) });
     }
-    expect(await coordinator.runNow(cwd)).toMatchObject({ state: 'blocked', pendingCheckpoints: 8 });
+    expect(await coordinator.runNow(cwd)).toMatchObject({ state: 'blocked', pendingCheckpoints: 7 });
     expect(runs).toBe(0);
 
     const valid = await writeSession(cwd, 'valid-session');
     await host.recordCheckpoint(checkpointFor(valid, 'valid-session'));
-    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'blocked', pendingCheckpoints: 8 });
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'blocked', pendingCheckpoints: 7 });
     expect(runs).toBe(1);
+    await coordinator.dispose();
+  });
+
+  it('enforces the eight-session durable metadata bound', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    let processedSessionIds: string[] = [];
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir: join(root, 'agent'),
+      modelRuntime: {} as ModelRuntime,
+      enabled: false,
+      recover: false,
+      batchSize: Number.MAX_SAFE_INTEGER,
+      dreamRunner: async (input) => {
+        processedSessionIds = input.manifest.sessions.map(({ checkpoint }) => checkpoint.sessionId);
+        return updatedArtifact(processedSessionIds[0]!);
+      },
+    });
+    const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
+    const seedSessionFile = await writeSession(cwd, 'seed-session');
+    await host.recordCheckpoint(checkpointFor(seedSessionFile, 'seed-session'));
+    coordinator.setEnabled(true);
+    await coordinator.runNow(cwd);
+    coordinator.setEnabled(false);
+    processedSessionIds = [];
+    for (let index = 0; index < 9; index += 1) {
+      const sessionId = `session-${index}`;
+      const sessionFile = await writeSession(cwd, sessionId);
+      await host.recordCheckpoint(checkpointFor(sessionFile, sessionId));
+    }
+
+    coordinator.setEnabled(true);
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
+    expect(processedSessionIds).toHaveLength(8);
+    await coordinator.dispose();
+  });
+
+  it('stops after the crossing delta without charging failed materializations to the byte target', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    let processedSessionIds: string[] = [];
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir: join(root, 'agent'),
+      modelRuntime: {} as ModelRuntime,
+      enabled: false,
+      recover: false,
+      maxInputBytes: 1,
+      dreamRunner: async (input) => {
+        processedSessionIds = input.manifest.sessions.map(({ checkpoint }) => checkpoint.sessionId);
+        return updatedArtifact(processedSessionIds[0]!);
+      },
+    });
+    const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
+    const seedSessionFile = await writeSession(cwd, 'seed-session');
+    await host.recordCheckpoint(checkpointFor(seedSessionFile, 'seed-session'));
+    coordinator.setEnabled(true);
+    await coordinator.runNow(cwd);
+    coordinator.setEnabled(false);
+    processedSessionIds = [];
+    for (let index = 0; index < 3; index += 1) {
+      const sessionId = `session-${index}`;
+      const sessionFile = await writeSession(cwd, sessionId);
+      const checkpoint = checkpointFor(sessionFile, sessionId);
+      await host.recordCheckpoint(index === 0 ? { ...checkpoint, transcriptDigest: '0'.repeat(64) } : checkpoint);
+    }
+
+    coordinator.setEnabled(true);
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'blocked', pendingCheckpoints: 2 });
+    expect(processedSessionIds).toEqual(['session-1']);
     await coordinator.dispose();
   });
 

@@ -1,8 +1,11 @@
 import {
   MEMORY_INPUT_MANIFEST_VERSION,
+  MEMORY_INPUT_PROJECTION_VERSION,
   type MemoryInputManifest,
   type MemoryInputManifestOptions,
+  type MemoryInputProjection,
   type MemoryInputSession,
+  type SessionCheckpoint,
 } from './contracts.js';
 
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
@@ -78,6 +81,9 @@ function normalizeSessions(value: readonly unknown[]): readonly MemoryInputSessi
     }
     if (seen.has(sessionId)) throw new Error(`Duplicate memory input session: ${sessionId}`);
     seen.add(sessionId);
+    const projection = raw.projection === undefined
+      ? undefined
+      : normalizeProjection(raw.projection, sessionId);
     sessions.push({
       checkpoint: { sessionId, sessionFile, leafId, transcriptDigest },
       metadataPath,
@@ -85,9 +91,54 @@ function normalizeSessions(value: readonly unknown[]): readonly MemoryInputSessi
       materializedDigest: raw.materializedDigest,
       byteLength,
       redactionCount,
+      ...(projection === undefined ? {} : { projection }),
     });
   }
   return sessions.sort((left, right) => left.checkpoint.sessionId.localeCompare(right.checkpoint.sessionId));
+}
+
+function normalizeProjection(value: unknown, sessionId: string): MemoryInputProjection {
+  if (!isRecord(value) || value.version !== MEMORY_INPUT_PROJECTION_VERSION) {
+    throw new Error(`Invalid memory input projection for ${sessionId}`);
+  }
+  const relations = ['initial', 'unchanged', 'appended', 'diverged'] as const;
+  if (!relations.includes(value.relation as typeof relations[number])) {
+    throw new Error(`Invalid memory input projection relation for ${sessionId}`);
+  }
+  const includedEntryCount = countField(value, 'includedEntryCount', sessionId);
+  const evidenceRecordCount = countField(value, 'evidenceRecordCount', sessionId);
+  const removedEntryCount = countField(value, 'removedEntryCount', sessionId);
+  const previousCheckpoint = value.previousCheckpoint === undefined
+    ? undefined
+    : normalizeCheckpoint(value.previousCheckpoint, sessionId);
+  return {
+    version: MEMORY_INPUT_PROJECTION_VERSION,
+    relation: value.relation as MemoryInputProjection['relation'],
+    includedEntryCount,
+    evidenceRecordCount,
+    removedEntryCount,
+    ...(previousCheckpoint === undefined ? {} : { previousCheckpoint }),
+  };
+}
+
+function normalizeCheckpoint(value: unknown, sessionId: string): SessionCheckpoint {
+  if (!isRecord(value)) throw new Error(`Invalid previous memory checkpoint for ${sessionId}`);
+  const previousSessionId = stringField(value, 'sessionId');
+  const sessionFile = stringField(value, 'sessionFile');
+  const leafId = value.leafId === null ? null : stringField(value, 'leafId');
+  const transcriptDigest = stringField(value, 'transcriptDigest');
+  if (previousSessionId !== sessionId || !DIGEST_PATTERN.test(transcriptDigest)) {
+    throw new Error(`Invalid previous memory checkpoint for ${sessionId}`);
+  }
+  return { sessionId: previousSessionId, sessionFile, leafId, transcriptDigest };
+}
+
+function countField(record: Record<string, unknown>, field: string, sessionId: string): number {
+  const value = record[field];
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid memory input projection count for ${sessionId}`);
+  }
+  return value;
 }
 
 export function isSafeInputPath(path: string): boolean {

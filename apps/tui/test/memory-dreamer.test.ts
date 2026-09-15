@@ -9,6 +9,7 @@ import {
   digestActiveBranch,
   removeMemoryContextEntries,
   type MemoryInputManifest,
+  type SessionCheckpoint,
 } from '@felan-ai/ext-memory';
 import {
   createDefaultLocalMemoryDreamRunner,
@@ -327,6 +328,39 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
 });
 
 describe('materializeMemoryInput', () => {
+  it('rejects an invalid cumulative input budget', async () => {
+    await expect(materializeMemoryInput({
+      stagingDirectory: await temporaryDirectory(),
+      checkpoints: [],
+      baseSnapshot: createMemorySnapshot(createEmptyMemoryArtifact('.memory'), '.memory'),
+      maxInputBytes: 0,
+    })).rejects.toThrow('Memory input byte limit must be a positive safe integer');
+  });
+
+  it('batches complete checkpoint deltas until reaching the cumulative input budget', async () => {
+    const stagingDirectory = await temporaryDirectory();
+    const checkpoints: SessionCheckpoint[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const sessionId = `session-${index + 1}`;
+      const sessionFile = join(stagingDirectory, `${sessionId}.jsonl`);
+      const entries = [sessionEntry('root', null, `Evidence ${index}. `.repeat(25_000))];
+      await writeSessionFile(sessionFile, entries, sessionId);
+      checkpoints.push(checkpointForEntries(sessionFile, entries, 'root', sessionId));
+    }
+
+    const result = await materializeMemoryInput({
+      stagingDirectory,
+      checkpoints,
+      baseSnapshot: createMemorySnapshot(createEmptyMemoryArtifact('.memory'), '.memory'),
+      maxInputBytes: 512 * 1024,
+    });
+
+    expect(result.failures).toEqual([]);
+    expect(result.sessions.map(({ checkpoint }) => checkpoint.sessionId)).toEqual(['session-1', 'session-2']);
+    expect(result.sessions.every(({ byteLength }) => byteLength > 256 * 1024)).toBe(true);
+    expect(result.sessions.reduce((total, { byteLength }) => total + byteLength, 0)).toBeGreaterThanOrEqual(512 * 1024);
+  });
+
   it('streams a large source file and ignores large abandoned branches', async () => {
     const stagingDirectory = await temporaryDirectory();
     const sessionFile = join(stagingDirectory, 'session.jsonl');
@@ -342,6 +376,7 @@ describe('materializeMemoryInput', () => {
       stagingDirectory,
       checkpoints: [checkpoint],
       baseSnapshot: createMemorySnapshot(createEmptyMemoryArtifact('.memory'), '.memory'),
+      maxInputBytes: 10 * 1024 * 1024,
       maxTranscriptBytes: 512,
     });
 
@@ -356,7 +391,7 @@ describe('materializeMemoryInput', () => {
     expect(transcript).not.toContain('Do not ingest this abandoned branch.');
   });
 
-  it('accepts a large active branch while bounding the staged evidence', async () => {
+  it('keeps oversized active evidence pending without writing partial JSONL', async () => {
     const stagingDirectory = await temporaryDirectory();
     const sessionFile = join(stagingDirectory, 'large-active-session.jsonl');
     const entries = [
@@ -370,17 +405,15 @@ describe('materializeMemoryInput', () => {
       stagingDirectory,
       checkpoints: [checkpoint],
       baseSnapshot: createMemorySnapshot(createEmptyMemoryArtifact('.memory'), '.memory'),
+      maxInputBytes: 10 * 1024 * 1024,
       maxTranscriptBytes: 512,
     });
 
-    expect(result.failures).toEqual([]);
-    expect(result.sessions[0]?.byteLength).toBeLessThanOrEqual(512);
-    expect(result.sessions[0]?.byteLength).toBeGreaterThan(0);
-    const transcript = await readFile(
-      join(stagingDirectory, '.dreaming', 'input', result.sessions[0]!.transcriptPath),
-      'utf8',
-    );
-    expect(transcript).toContain('[TRUNCATED]');
+    expect(result.sessions).toEqual([]);
+    expect(result.failures).toMatchObject([{
+      code: 'output_too_large',
+      checkpoint: { sessionId: 'session-1' },
+    }]);
   });
 
   it('isolates a changed checkpoint as a deterministic materialization failure', async () => {
@@ -396,6 +429,7 @@ describe('materializeMemoryInput', () => {
         transcriptDigest: '0'.repeat(64),
       }],
       baseSnapshot: createMemorySnapshot(createEmptyMemoryArtifact('.memory'), '.memory'),
+      maxInputBytes: 10 * 1024 * 1024,
       maxTranscriptBytes: 512,
     });
 
@@ -415,6 +449,7 @@ describe('materializeMemoryInput', () => {
       stagingDirectory,
       checkpoints: [],
       baseSnapshot: createMemorySnapshot(createEmptyMemoryArtifact('.memory'), '.memory'),
+      maxInputBytes: 10 * 1024 * 1024,
       maxTranscriptBytes: 512,
       signal: controller.signal,
     })).rejects.toThrow('Memory processing was cancelled');
@@ -537,10 +572,13 @@ function sessionEntry(id: string, parentId: string | null, text: string): Record
   };
 }
 
-async function writeSessionFile(sessionFile: string, entries: readonly Record<string, unknown>[]): Promise<void> {
+async function writeSessionFile(
+  sessionFile: string,
+  entries: readonly Record<string, unknown>[],
+  sessionId = 'session-1',
+): Promise<void> {
   await writeFile(sessionFile, [
-    JSON.stringify({ type: 'session', version: 3, id: 'session-1', timestamp: new Date().toISOString(), cwd: '/' }),
-    'this is a malformed session entry and should be skipped',
+    JSON.stringify({ type: 'session', version: 3, id: sessionId, timestamp: new Date().toISOString(), cwd: '/' }),
     ...entries.map((entry) => JSON.stringify(entry)),
     '',
   ].join('\n'), 'utf8');
@@ -550,9 +588,10 @@ function checkpointForEntries(
   sessionFile: string,
   entries: readonly Record<string, unknown>[],
   leafId: string,
+  sessionId = 'session-1',
 ) {
   return {
-    sessionId: 'session-1',
+    sessionId,
     sessionFile,
     leafId,
     transcriptDigest: digestActiveBranch(removeMemoryContextEntries(entries)),

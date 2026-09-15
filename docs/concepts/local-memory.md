@@ -49,9 +49,9 @@ their own evidence.
 ## Roles and ownership
 
 The portable `@felan-ai/ext-memory` package owns the artifact schema,
-validation, hydration, root checkpoint contracts, and reader/root extension
-behavior. It does not choose a project scope, schedule a worker, call a model,
-or publish files.
+validation, hydration, root checkpoint contracts, checkpoint-input compaction,
+and reader/root extension behavior. It does not choose a project scope,
+schedule a worker, call a model, or publish files.
 
 The local TUI owns the coordinator, automatic evidence/time gates, startup
 recovery, retries, shutdown cancellation, model selection, retained sessions,
@@ -101,10 +101,18 @@ tool output and bookkeeping.
 
 ### 2. Evidence materialization
 
-The host redacts staged evidence and caps each transcript at 256 KiB. A large
+The host supplies a replayable transcript source to the portable materializer,
+which validates the active checkpoint lineage, removes injected memory context,
+preserves Pi compaction and branch-summary records, and redacts deterministic
+JSONL evidence. Local stages up to eight complete projected checkpoint deltas
+in pending order using the same post-add 10 MiB soft byte target as cloud; it
+retains the delta that reaches or crosses the target and does not truncate
+individual deltas. The local session-count bound keeps durable attempt metadata
+within its storage limit. Checkpoints beyond that batch remain pending. A large
 source session file is not rejected solely because its total size is large. A
 changed, missing, or malformed source remains pending without blocking valid
-checkpoints in the same batch.
+checkpoints in the same batch. A diverged lineage emits the complete current
+visible lineage and records the prior cursor for downstream reconciliation.
 
 ### 3. Dreamer worker
 

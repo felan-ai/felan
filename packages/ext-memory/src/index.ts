@@ -11,6 +11,7 @@ export * from './checkpoint.js';
 export * from './contracts.js';
 export * from './dreamer.js';
 export * from './hydration.js';
+export * from './input-materializer.js';
 export * from './manifest.js';
 export * from './schema.js';
 export * from './validation.js';

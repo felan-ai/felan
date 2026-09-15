@@ -1,5 +1,6 @@
 export const MEMORY_ARTIFACT_VERSION = 1 as const;
 export const MEMORY_INPUT_MANIFEST_VERSION = 1 as const;
+export const MEMORY_INPUT_PROJECTION_VERSION = 1 as const;
 
 export type MemoryRole = 'root' | 'reader';
 
@@ -26,6 +27,20 @@ export interface SessionCheckpoint {
   readonly sessionFile: string;
   readonly leafId: string | null;
   readonly transcriptDigest: string;
+}
+
+export type MemoryInputRelation = 'initial' | 'unchanged' | 'appended' | 'diverged';
+
+export interface MemoryInputProjection {
+  readonly version: typeof MEMORY_INPUT_PROJECTION_VERSION;
+  readonly relation: MemoryInputRelation;
+  /** Visible lineage entries selected by the checkpoint relation. */
+  readonly includedEntryCount: number;
+  /** Complete JSONL evidence records emitted from selected entries. */
+  readonly evidenceRecordCount: number;
+  /** Hidden lineage entries and selected non-evidence entries omitted from JSONL. */
+  readonly removedEntryCount: number;
+  readonly previousCheckpoint?: SessionCheckpoint;
 }
 
 export type MemoryProcessingState =
@@ -59,6 +74,7 @@ export interface MemoryInputSession {
   readonly materializedDigest: string;
   readonly byteLength: number;
   readonly redactionCount: number;
+  readonly projection?: MemoryInputProjection;
 }
 
 export interface MemoryInputManifest {

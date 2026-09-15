@@ -19,6 +19,7 @@ import {
 
 const MARKDOWN_LINK_TARGET = /(!?\[[^\]]*\]\()([^)\s]+)((?:\s+['"][^'"]*['"])?\))/gu;
 const WIKI_LINK_TARGET = /(\[\[)([^\]|#]+)((?:#[^\]|]+)?(?:\|[^\]]+)?)\]\]/gu;
+const READ_MODE_IGNORED_FILES = new Set(['.DS_Store']);
 
 export function memoryArtifactFingerprint(artifact: MemoryArtifact | readonly MemoryFile[]): string {
   const files = 'files' in artifact ? artifact.files : artifact;
@@ -149,6 +150,7 @@ async function walk(
     const absolute = join(current, entry.name);
     const relativePath = relative(root, absolute).split(sep).join('/');
     const stats = await lstat(absolute);
+    if (options.mode === 'read' && stats.isFile() && READ_MODE_IGNORED_FILES.has(entry.name)) continue;
     if (stats.isSymbolicLink() || (!stats.isDirectory() && !stats.isFile())) {
       throw new Error(`Unsafe memory entry type: ${relativePath}`);
     }

@@ -25,10 +25,9 @@ import {
   type ModelRuntime,
 } from '@felan-ai/agent-core';
 import {
-  createActiveBranchDigester,
   createMemoryInputManifest,
   createMemoryDreamerInstructions,
-  isMemoryContextEntry,
+  materializeMemoryInputDelta,
   isSafeMemoryPath,
   type MemoryArtifact,
   type MemoryInputManifest,
@@ -109,7 +108,8 @@ export interface MaterializeMemoryInputOptions {
   readonly checkpoints: readonly SessionCheckpoint[];
   readonly previousCheckpoints?: Readonly<Record<string, SessionCheckpoint>>;
   readonly baseSnapshot: MemorySnapshot;
-  readonly maxTranscriptBytes: number;
+  readonly maxInputBytes: number;
+  readonly maxTranscriptBytes?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -117,7 +117,9 @@ export type MemoryInputMaterializationFailureCode =
   | 'source_unavailable'
   | 'invalid_source'
   | 'checkpoint_changed'
-  | 'previous_checkpoint_changed';
+  | 'output_too_large'
+  | 'previous_checkpoint_changed'
+  | 'source_changed';
 
 export interface MemoryInputMaterializationFailure {
   readonly checkpoint: SessionCheckpoint;
@@ -134,17 +136,21 @@ export async function materializeMemoryInput({
   checkpoints,
   previousCheckpoints,
   baseSnapshot,
+  maxInputBytes,
   maxTranscriptBytes,
   signal,
 }: MaterializeMemoryInputOptions): Promise<MaterializeMemoryInputResult> {
   throwIfAborted(signal);
+  if (!Number.isSafeInteger(maxInputBytes) || maxInputBytes <= 0) {
+    throw new Error('Memory input byte limit must be a positive safe integer');
+  }
   const inputDirectory = join(stagingDirectory, '.dreaming', 'input');
   await mkdir(join(inputDirectory, 'sessions'), { recursive: true, mode: 0o700 });
   const sessions: MemoryInputSession[] = [];
   const failures: MemoryInputMaterializationFailure[] = [];
-  const ordered = [...checkpoints].sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+  let inputBytes = 0;
 
-  for (const [index, checkpoint] of ordered.entries()) {
+  for (const [index, checkpoint] of checkpoints.entries()) {
     throwIfAborted(signal);
     const directory = join(inputDirectory, 'sessions', `${String(index).padStart(3, '0')}-${safeSessionDirectoryId(checkpoint.sessionId)}`);
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -155,7 +161,7 @@ export async function materializeMemoryInput({
       const evidence = await materializeCheckpointEvidence({
         checkpoint,
         ...(previousCheckpoint === undefined ? {} : { previousCheckpoint }),
-        maxTranscriptBytes,
+        ...(maxTranscriptBytes === undefined ? {} : { maxTranscriptBytes }),
         ...(signal === undefined ? {} : { signal }),
       });
       await writeFile(join(inputDirectory, transcriptPath), evidence.text, { encoding: 'utf8', mode: 0o400 });
@@ -164,16 +170,19 @@ export async function materializeMemoryInput({
         leafId: checkpoint.leafId,
         transcriptDigest: checkpoint.transcriptDigest,
         sessionFile: checkpoint.sessionFile,
-        truncated: evidence.truncated,
+        projection: evidence.projection,
       }, null, 2)}\n`, { encoding: 'utf8', mode: 0o400 });
       sessions.push({
         checkpoint,
         metadataPath,
         transcriptPath,
-        materializedDigest: sha256(evidence.text),
-        byteLength: Buffer.byteLength(evidence.text, 'utf8'),
+        materializedDigest: evidence.materializedDigest,
+        byteLength: evidence.byteLength,
         redactionCount: evidence.redactionCount,
+        projection: evidence.projection,
       });
+      inputBytes += evidence.byteLength;
+      if (inputBytes >= maxInputBytes) break;
     } catch (error) {
       if (!(error instanceof MemoryInputMaterializationError)) throw error;
       failures.push({ checkpoint, code: error.code, message: error.message });
@@ -332,35 +341,26 @@ function selectMemoryDreamModel(
 interface MaterializeCheckpointEvidenceOptions {
   readonly checkpoint: SessionCheckpoint;
   readonly previousCheckpoint?: SessionCheckpoint;
-  readonly maxTranscriptBytes: number;
+  readonly maxTranscriptBytes?: number;
   readonly signal?: AbortSignal;
 }
 
 interface MaterializedCheckpointEvidence {
   readonly text: string;
   readonly redactionCount: number;
-  readonly truncated: boolean;
+  readonly materializedDigest: string;
+  readonly byteLength: number;
+  readonly projection: NonNullable<MemoryInputSession['projection']>;
 }
 
-interface SessionFileIndex {
-  readonly entries: ReadonlyMap<string, IndexedSessionEntry>;
-  readonly memoryIds: ReadonlySet<string>;
-}
-
-interface IndexedSessionEntry {
-  readonly lineNumber: number;
-  readonly parent: IndexedParent;
-  readonly hidden: boolean;
-}
-
-type IndexedParent =
-  | { readonly kind: 'root' }
-  | { readonly kind: 'id'; readonly value: string }
-  | { readonly kind: 'invalid' };
-
-interface BranchSelection {
-  readonly ids: readonly string[];
-  readonly positions: ReadonlyMap<string, number>;
+class MemoryInputMaterializationError extends Error {
+  constructor(
+    readonly code: MemoryInputMaterializationFailureCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'MemoryInputMaterializationError';
+  }
 }
 
 async function materializeCheckpointEvidence({
@@ -379,244 +379,48 @@ async function materializeCheckpointEvidence({
     throw new MemoryInputMaterializationError('source_unavailable', 'Memory checkpoint source is unavailable');
   }
 
-  const index = await indexSessionFile(checkpoint.sessionFile, sourceBytes, signal);
-  const current = selectVisibleBranch(index, checkpoint.leafId);
-  const previous = previousCheckpoint
-    ? selectVisibleBranch(index, previousCheckpoint.leafId)
-    : undefined;
-  const deltaStart = previous === undefined ? 0 : deltaStartIndex(current.ids, previous.ids);
-  const writer = new BoundedTranscriptWriter(maxTranscriptBytes);
-  const currentDigester = createActiveBranchDigester();
-  const previousDigester = previous === undefined ? undefined : createActiveBranchDigester();
-  let currentPosition = 0;
-  let previousPosition = 0;
-
-  await readSessionFileLines(checkpoint.sessionFile, sourceBytes, signal, (line, lineNumber) => {
-    const value = parseSessionEntryLine(line);
-    if (!value) return;
-    const id = value.id as string;
-    const indexed = index.entries.get(id);
-    if (!indexed || indexed.lineNumber !== lineNumber) return;
-    const currentIndex = current.positions.get(id);
-    if (currentIndex !== undefined) {
-      if (currentIndex !== currentPosition) {
-        throw new MemoryInputMaterializationError('invalid_source', 'Memory checkpoint branch order is invalid');
-      }
-      const normalized = normalizeVisibleEntry(value, index);
-      currentDigester.update(normalized);
-      if (currentPosition >= deltaStart) {
-        const redacted = redactTranscript(`${JSON.stringify(normalized)}\n`);
-        writer.append(redacted.text, redacted.count);
-      }
-      currentPosition += 1;
-    }
-    const previousIndex = previous?.positions.get(id);
-    if (previousIndex !== undefined) {
-      if (previousIndex !== previousPosition) {
-        throw new MemoryInputMaterializationError('invalid_source', 'Previously processed memory branch order is invalid');
-      }
-      previousDigester!.update(normalizeVisibleEntry(value, index));
-      previousPosition += 1;
-    }
+  const result = await materializeMemoryInputDelta({
+    lines: () => readSessionFileLinesAsSource(checkpoint.sessionFile, sourceBytes, signal),
+    checkpoint,
+    ...(previousCheckpoint === undefined ? {} : { previousCheckpoint }),
+    ...(maxTranscriptBytes === undefined ? {} : { maxOutputBytes: maxTranscriptBytes }),
+    ...(signal === undefined ? {} : { signal }),
   });
-
-  if (currentPosition !== current.ids.length || currentDigester.digest() !== checkpoint.transcriptDigest) {
-    throw new MemoryInputMaterializationError(
-      'checkpoint_changed',
-      'Memory checkpoint transcript changed before processing',
-    );
+  if (!result.ok) {
+    const code = result.code === 'previous_checkpoint_changed' ? 'previous_checkpoint_changed'
+      : result.code === 'checkpoint_changed' ? 'checkpoint_changed'
+        : result.code === 'output_too_large' ? 'output_too_large'
+          : result.code === 'source_changed' ? 'source_changed' : 'source_unavailable';
+    throw new MemoryInputMaterializationError(code, result.message);
   }
-  if (previous !== undefined) {
-    if (previousPosition !== previous.ids.length || previousDigester!.digest() !== previousCheckpoint!.transcriptDigest) {
-      throw new MemoryInputMaterializationError(
-        'previous_checkpoint_changed',
-        'Previously processed memory checkpoint changed before processing',
-      );
-    }
-  }
-  return writer.finish();
-}
-
-async function indexSessionFile(
-  sessionFile: string,
-  sourceBytes: number,
-  signal: AbortSignal | undefined,
-): Promise<SessionFileIndex> {
-  const entries = new Map<string, IndexedSessionEntry>();
-  const memoryIds = new Set<string>();
-  await readSessionFileLines(sessionFile, sourceBytes, signal, (line, lineNumber) => {
-    const value = parseSessionEntryLine(line);
-    if (!value) return;
-    const id = value.id as string;
-    const indexed = {
-      lineNumber,
-      parent: indexedParent(value.parentId),
-      hidden: isMemoryContextEntry(value),
-    } satisfies IndexedSessionEntry;
-    entries.set(id, indexed);
-    if (indexed.hidden) memoryIds.add(id);
-  });
-  return { entries, memoryIds };
-}
-
-function selectVisibleBranch(index: SessionFileIndex, leafId: string | null): BranchSelection {
-  const visibleLeafId = visibleLeafIdFromIndex(index, leafId);
-  if (visibleLeafId === null) return { ids: [], positions: new Map() };
-  const path: string[] = [];
-  const seen = new Set<string>();
-  let current: string | null = visibleLeafId;
-  while (current !== null) {
-    if (seen.has(current)) {
-      throw new MemoryInputMaterializationError('invalid_source', 'Memory checkpoint transcript contains a cycle');
-    }
-    seen.add(current);
-    const entry = index.entries.get(current);
-    if (!entry || entry.hidden) {
-      throw new MemoryInputMaterializationError('invalid_source', 'Memory checkpoint leaf is not present in the transcript');
-    }
-    path.push(current);
-    const parent = normalizeParent(entry.parent, index);
-    if (parent.kind === 'invalid') {
-      throw new MemoryInputMaterializationError('invalid_source', 'Memory checkpoint branch has an invalid parent');
-    }
-    current = parent.kind === 'id' ? parent.value : null;
-  }
-  path.reverse();
   return {
-    ids: path,
-    positions: new Map(path.map((id, position) => [id, position])),
+    text: result.text,
+    redactionCount: result.redactionCount,
+    materializedDigest: result.materializedDigest,
+    byteLength: result.byteLength,
+    projection: result.projection,
   };
 }
 
-function visibleLeafIdFromIndex(index: SessionFileIndex, leafId: string | null): string | null {
-  let current = leafId;
-  const seen = new Set<string>();
-  while (current !== null && index.entries.get(current)?.hidden) {
-    if (seen.has(current)) return null;
-    seen.add(current);
-    const parent: IndexedParent | undefined = index.entries.get(current)?.parent;
-    current = parent?.kind === 'id' ? parent.value : null;
-  }
-  return current;
-}
-
-function normalizeVisibleEntry(value: Record<string, unknown>, index: SessionFileIndex): Record<string, unknown> {
-  if (typeof value.parentId !== 'string' || !index.memoryIds.has(value.parentId)) return value;
-  return { ...value, parentId: resolveVisibleParent(value.parentId, index) };
-}
-
-function resolveVisibleParent(id: string, index: SessionFileIndex): string | null {
-  let current: string | null = id;
-  const seen = new Set<string>();
-  while (current !== null && index.memoryIds.has(current)) {
-    if (seen.has(current)) return null;
-    seen.add(current);
-    const parent: IndexedParent | undefined = index.entries.get(current)?.parent;
-    current = parent?.kind === 'id' ? parent.value : null;
-  }
-  return current;
-}
-
-function normalizeParent(parent: IndexedParent, index: SessionFileIndex): IndexedParent {
-  if (parent.kind !== 'id' || !index.memoryIds.has(parent.value)) return parent;
-  const visible = resolveVisibleParent(parent.value, index);
-  return visible === null ? { kind: 'root' } : { kind: 'id', value: visible };
-}
-
-function indexedParent(value: unknown): IndexedParent {
-  if (value === null) return { kind: 'root' };
-  if (typeof value === 'string') return { kind: 'id', value };
-  return { kind: 'invalid' };
-}
-
-function parseSessionEntryLine(line: string): Record<string, unknown> | undefined {
-  if (line.trim().length === 0) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(line);
-  } catch {
-    return undefined;
-  }
-  if (!isRecord(value) || value.type === 'session' || typeof value.id !== 'string') return undefined;
-  return value;
-}
-
-async function readSessionFileLines(
+async function* readSessionFileLinesAsSource(
   sessionFile: string,
   sourceBytes: number,
   signal: AbortSignal | undefined,
-  callback: (line: string, lineNumber: number) => void,
-): Promise<void> {
+): AsyncIterable<string> {
   if (sourceBytes === 0) return;
   const input = createReadStream(sessionFile, { encoding: 'utf8', start: 0, end: sourceBytes - 1 });
   const lines = createInterface({ input, crlfDelay: Infinity });
-  let lineNumber = 0;
   try {
     for await (const line of lines) {
       throwIfAborted(signal);
-      callback(line, lineNumber);
-      lineNumber += 1;
+      yield line;
     }
   } catch (error) {
-    if (signal?.aborted || error instanceof MemoryInputMaterializationError) throw error;
-    throw new MemoryInputMaterializationError('source_unavailable', 'Memory checkpoint source is unavailable');
+    if (signal?.aborted) throw error;
+    throw new Error('Memory checkpoint source is unavailable');
   } finally {
     lines.close();
     input.destroy();
-  }
-}
-
-function deltaStartIndex(current: readonly string[], previous: readonly string[]): number {
-  const previousIds = new Set(previous);
-  let commonIndex = -1;
-  for (let index = 0; index < current.length; index += 1) {
-    if (previousIds.has(current[index]!)) commonIndex = index;
-  }
-  return commonIndex + 1;
-}
-
-class MemoryInputMaterializationError extends Error {
-  constructor(
-    readonly code: MemoryInputMaterializationFailureCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'MemoryInputMaterializationError';
-  }
-}
-
-class BoundedTranscriptWriter {
-  #text = '';
-  #bytes = 0;
-  #truncated = false;
-  #redactionCount = 0;
-
-  constructor(private readonly maxBytes: number) {}
-
-  append(content: string, redactionCount = 0): void {
-    this.#redactionCount += redactionCount;
-    if (this.#truncated || content.length === 0) return;
-    const available = this.maxBytes - this.#bytes;
-    if (available <= 0) {
-      this.#truncated = true;
-      return;
-    }
-    if (Buffer.byteLength(content, 'utf8') <= available) {
-      this.#text += content;
-      this.#bytes += Buffer.byteLength(content, 'utf8');
-      return;
-    }
-    this.#text += truncateUtf8(content, available);
-    this.#bytes = Buffer.byteLength(this.#text, 'utf8');
-    this.#truncated = true;
-  }
-
-  finish(): MaterializedCheckpointEvidence {
-    return {
-      text: this.#text,
-      redactionCount: this.#redactionCount,
-      truncated: this.#truncated,
-    };
   }
 }
 
@@ -743,38 +547,6 @@ class RestrictedMemoryDreamRuntime implements AgentRuntime {
 
 function sameToolNames(actual: readonly string[], expected: readonly string[]): boolean {
   return actual.length === expected.length && expected.every((name) => actual.includes(name));
-}
-
-function redactTranscript(content: string): { text: string; count: number } {
-  let count = 0;
-  const replace = (pattern: RegExp, replacement: string): void => {
-    content = content.replace(pattern, (...args: unknown[]) => {
-      count += 1;
-      return replacement.replace('$1', String(args[1] ?? ''));
-    });
-  };
-  replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gu, '[REDACTED_PRIVATE_KEY]');
-  replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{12,})\b/gu, '[REDACTED_TOKEN]');
-  replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/giu, '$1[REDACTED_TOKEN]');
-  replace(/(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization)["']?\s*[:=]\s*["']?)[^"'\s,}]+/giu, '$1[REDACTED_SECRET]');
-  return { text: content, count };
-}
-
-function truncateUtf8(content: string, maxBytes: number): string {
-  if (maxBytes <= 0) return '';
-  if (Buffer.byteLength(content, 'utf8') <= maxBytes) return content;
-  const marker = '\n[TRUNCATED]';
-  const markerBytes = Buffer.byteLength(marker, 'utf8');
-  if (maxBytes <= markerBytes) return utf8Prefix(marker, maxBytes);
-  return `${utf8Prefix(content, maxBytes - markerBytes)}${marker}`;
-}
-
-function utf8Prefix(content: string, maxBytes: number): string {
-  if (maxBytes <= 0) return '';
-  if (Buffer.byteLength(content, 'utf8') <= maxBytes) return content;
-  let prefix = new TextDecoder().decode(Buffer.from(content, 'utf8').subarray(0, maxBytes));
-  while (Buffer.byteLength(prefix, 'utf8') > maxBytes) prefix = prefix.slice(0, -1);
-  return prefix;
 }
 
 function safeSessionDirectoryId(sessionId: string): string {

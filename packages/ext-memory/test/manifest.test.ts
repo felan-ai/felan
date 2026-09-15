@@ -17,6 +17,19 @@ const session = {
   materializedDigest: 'b'.repeat(64),
   byteLength: 12,
   redactionCount: 1,
+  projection: {
+    version: 1,
+    relation: 'appended',
+    includedEntryCount: 2,
+    evidenceRecordCount: 1,
+    removedEntryCount: 1,
+    previousCheckpoint: {
+      sessionId: 'session-1',
+      sessionFile: '/tmp/session-1.jsonl',
+      leafId: 'leaf-0',
+      transcriptDigest: 'd'.repeat(64),
+    },
+  },
 } as const;
 
 describe('memory input manifests', () => {
@@ -41,5 +54,11 @@ describe('memory input manifests', () => {
       baseMemoryFingerprint: 'c'.repeat(64),
       sessions: [{ ...session, transcriptPath: '../transcript.jsonl' }],
     })).toThrow(/Unsafe memory input path/);
+    expect(() => parseMemoryInputManifest({
+      version: 1,
+      createdAt: new Date().toISOString(),
+      baseMemoryFingerprint: 'c'.repeat(64),
+      sessions: [{ ...session, projection: { ...session.projection, relation: 'unknown' } }],
+    })).toThrow(/projection relation/);
   });
 });

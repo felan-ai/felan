@@ -62,14 +62,15 @@ the root session's configured model scope, preferring its provider and model
 family. It does not silently escalate to a more expensive tier; evidence remains
 pending when no eligible model is available.
 It does not impose separate turn, tool-call, or per-file I/O budgets; its only
-execution failsafe is a one-hour wall-clock timeout. The host-side evidence
-materializer is a separate boundary: it streams the checkpoint's visible
-active-branch delta from JSONL, ignores unrelated branches, redacts it, and
-caps each staged transcript at 256 KiB. The dreamer uses the structured session
-records to ignore low-value tool and bookkeeping content according to the
-retention policy. Large source session files are not rejected solely for their
-total size. Deterministic source failures remain pending for retry, while valid
-checkpoints in the same batch can still be published.
+execution failsafe is a one-hour wall-clock timeout. Hosts can pass a replayable
+async JSONL line source to `materializeMemoryInputDelta` to validate checkpoint
+lineage and create a deterministic, redacted visible-branch delta. Diverged
+lineages emit the complete current branch. Output limits reject an oversized
+projection instead of truncating a JSONL record. Hosts remain responsible for
+reading session files and staging successful projections. Large source session
+files are not rejected solely for their total size. Deterministic source
+failures remain pending for retry, while valid checkpoints in the same batch
+can still be published.
 
 The memory schema keeps the wiki sparse. It prioritizes durable user-authored
 facts, preferences, decisions, corrections, and uncodified rationale, followed
@@ -95,9 +96,9 @@ pnpm --filter @felan-ai/ext-memory test
 ## Package boundary and requirements
 
 The package owns the portable memory schema, validation, hydration, checkpoint
-contracts, and root/reader extension behavior. The host owns project scoping,
-canonical storage, evidence materialization, scheduling, model calls, staging,
-locking, validation publication, and retry policy. It requires a compatible
+contracts, checkpoint-delta projection, and root/reader extension behavior. The
+host owns project scoping, canonical storage, transcript I/O, scheduling, model
+calls, staging, locking, validation publication, and retry policy. It requires a compatible
 `@felan-ai/agent-core` peer and remains independent of TUI, Supabase, and cloud
 application modules.
 
