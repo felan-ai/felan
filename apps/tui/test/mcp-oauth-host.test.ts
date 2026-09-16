@@ -92,6 +92,77 @@ describe('local MCP OAuth host', () => {
     await session.close();
   });
 
+  it('replaces a cached dynamic client before explicit authentication', async () => {
+    const secretStore = memorySecretStore();
+    const context = extensionContext('tui');
+    const server = oauthServer();
+    const seedController = new AbortController();
+    const host = createLocalMcpOAuthHost('/agent', {}, { secretStore });
+    const seedSession = await host.createSession({
+      sessionId: 'seed-stale-client',
+      signal: seedController.signal,
+      extensionContext: context,
+    });
+    const seedProvider = await seedSession.providerFor(server, seedController.signal);
+    await seedProvider.saveClientInformation?.({
+      client_id: 'stale-dynamic-client',
+      redirect_uris: ['http://127.0.0.1:3118/callback'],
+      issuer: 'https://auth.example.test',
+    }, { issuer: 'https://auth.example.test' });
+    await seedSession.close();
+
+    const runOAuth = vi.fn(async (provider: OAuthClientProvider, options: AuthOptions) => {
+      if (!options.authorizationCode) {
+        const existing = await provider.clientInformation({ issuer: 'https://auth.example.test' });
+        const clientId = existing?.client_id ?? 'fresh-dynamic-client';
+        if (!existing) {
+          await provider.saveClientInformation?.({
+            client_id: clientId,
+            redirect_uris: ['http://127.0.0.1:3118/callback'],
+            issuer: 'https://auth.example.test',
+          }, { issuer: 'https://auth.example.test' });
+        }
+        await provider.redirectToAuthorization(new URL(
+          `https://auth.example.test/authorize?client_id=${encodeURIComponent(clientId)}`,
+        ));
+        return 'REDIRECT' as const;
+      }
+      await provider.saveTokens({
+        access_token: 'fresh-access-token',
+        token_type: 'bearer',
+        issuer: 'https://auth.example.test',
+      }, { issuer: 'https://auth.example.test' });
+      return 'AUTHORIZED' as const;
+    });
+    const controller = new AbortController();
+    const session = await createLocalMcpOAuthHost('/agent', {}, {
+      secretStore,
+      runOAuth,
+      openUrl: async (authorizationUrl) => {
+        expect(new URL(authorizationUrl).searchParams.get('client_id')).toBe('fresh-dynamic-client');
+      },
+      reserveCallback: async (redirectUri) => ({
+        redirectUri,
+        wait: async () => ({ code: 'oauth-code', iss: 'https://auth.example.test' }),
+        release: () => {},
+      }),
+    }).createSession({
+      sessionId: 'replace-stale-client',
+      signal: controller.signal,
+      extensionContext: context,
+    });
+
+    await expect(session.authenticate(server, {
+      reason: 'explicit',
+      signal: controller.signal,
+      extensionContext: context,
+    })).resolves.toEqual({ status: 'authenticated' });
+    const provider = await session.providerFor(server, controller.signal);
+    await expect(provider.clientInformation({ issuer: 'https://auth.example.test' }))
+      .resolves.toMatchObject({ client_id: 'fresh-dynamic-client' });
+    await session.close();
+  });
+
   it('does not launch a browser or callback flow in print-mode subagents', async () => {
     const runOAuth = vi.fn();
     const openUrl = vi.fn();
