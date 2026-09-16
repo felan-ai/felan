@@ -115,7 +115,11 @@ MCP Apps. Unsupported project entries are skipped with a warning.
 Use `/mcp` to inspect status and tools, reconnect, authenticate, or log out.
 OAuth browser/callback work and credential persistence belong to the local
 host. Tokens and dynamic-client credentials are stored in the OS credential
-store; authentication fails closed when secure storage is unavailable.
+store; authentication fails closed when secure storage is unavailable. Explicit
+authentication starts a fresh dynamic-client registration, which recovers from
+authorization servers that have revoked an older cached registration. Use
+`/mcp logout <server>` when you intentionally want to clear credentials before
+authorizing again.
 
 The model sees one `mcp` gateway rather than every remote tool in its initial
 schema. Descriptions, schemas, results, resources, and remote errors remain

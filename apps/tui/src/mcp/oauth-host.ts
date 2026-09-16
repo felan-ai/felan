@@ -173,6 +173,9 @@ class LocalMcpOAuthSession implements McpOAuthSession {
       context.signal,
     );
     const provider = await this.providerFor(server, signal) as LocalOAuthProvider;
+    if (!this.#configs[server.name]?.clientId) {
+      await provider.invalidateCredentials('all');
+    }
     provider.beginFlow(signal);
     let callback: OAuthCallbackReservation | undefined;
     try {
