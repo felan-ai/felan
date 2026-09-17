@@ -18,10 +18,13 @@ run in an isolated container, VM, or dedicated account supplied by the host.
 
 ## What the local host filters
 
-The local TUI loads only source-controlled built-ins, Felan-owned settings and
+The local TUI loads source-controlled built-ins, Felan-owned settings and
 prompt appends, explicit global/workspace agent definitions and Agent Skills,
-and the selected cwd instruction file. It filters ambient Pi packages,
-extensions, prompts, themes, project settings, and package resources.
+the selected cwd instruction file, and local Pi extensions explicitly supplied
+with `--extension`/`-e` for the interactive root TUI. It filters ambient Pi
+packages, extensions, prompts, themes, project settings, and package resources.
+Explicit extensions are executable code with the current user's filesystem and
+process permissions; they are not loaded in headless, ACP, or subagent sessions.
 
 This prevents an arbitrary project configuration from silently adding an
 executable extension or prompt resource to a Felan Code session. It does not prevent

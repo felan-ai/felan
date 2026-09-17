@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AGENT_CORE_VERSION } from '@felan-ai/agent-core';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
@@ -240,6 +240,42 @@ describe('felan CLI', () => {
     expect(exitCode).toBe(0);
     expect(launches[0]?.restartArgs).toEqual([
       '--verbose', '--prewalk-entry-approval', 'allow',
+    ]);
+  });
+
+  it('passes repeatable local Pi extension paths to interactive launch and restart', async () => {
+    const launches: RunLocalFelanOptions[] = [];
+    const exitCode = await runCli([
+      '--extension', './first-extension.ts',
+      '-e', '~/second-extension.ts',
+      'inspect',
+    ], { launch: async (options) => launches.push(options) });
+
+    expect(exitCode).toBe(0);
+    expect(launches[0]?.extensionPaths).toEqual([
+      resolve(process.cwd(), 'first-extension.ts'),
+      resolve(homedir(), 'second-extension.ts'),
+    ]);
+    expect(launches[0]?.restartArgs).toEqual([
+      '--extension', './first-extension.ts', '-e', '~/second-extension.ts',
+    ]);
+  });
+
+  it('rejects non-local or headless Pi extension paths', async () => {
+    const errors: string[] = [];
+    expect(await runCli(['--extension', 'npm:@example/extension'], {
+      writeError: (line) => errors.push(line),
+    })).toBe(1);
+    expect(await runCli(['--mode', 'text', '-e', './extension.ts', 'inspect'], {
+      writeError: (line) => errors.push(line),
+    })).toBe(1);
+    expect(await runCli(['-e'], {
+      writeError: (line) => errors.push(line),
+    })).toBe(1);
+    expect(errors).toEqual([
+      'Extension source must be a local file or directory: npm:@example/extension',
+      '--extension is interactive-only',
+      '-e requires a local extension path',
     ]);
   });
 

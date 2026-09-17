@@ -443,6 +443,8 @@ try {
       const fs = await import('node:fs/promises');
       const ptySessionStorage = process.env.PACKED_SMOKE_WORKSPACE + '/.pty-session';
       const ptyAgentStorage = process.env.PACKED_SMOKE_WORKSPACE + '/.pty-agent';
+      const explicitExtensionPath = process.env.PACKED_SMOKE_WORKSPACE + '/packed-extension.mjs';
+      await fs.writeFile(explicitExtensionPath, 'export default (pi) => pi.registerCommand("packed-extension", { description: "packed extension" });');
       await Promise.all([
         fs.mkdir(ptySessionStorage, { recursive: true }),
         fs.mkdir(ptyAgentStorage, { recursive: true }),
@@ -476,7 +478,13 @@ try {
       const runtime = await app.createLocalFelanRuntime({
         cwd: process.env.PACKED_SMOKE_WORKSPACE,
         agentDir: process.env.FELAN_AGENT_DIR,
+        extensionPaths: [explicitExtensionPath],
       });
+      if (!runtime.services.resourceLoader.getExtensions().extensions.some((extension) => (
+        extension.path === explicitExtensionPath && extension.commands.has('packed-extension')
+      ))) {
+        throw new Error('Packed runtime did not load an explicit local Pi extension');
+      }
       const imageRuntime = new core.HostAgentRuntime(process.env.PACKED_SMOKE_WORKSPACE, {
         sessionStorageRoot: ptySessionStorage,
         agentStorageRoot: ptyAgentStorage,
@@ -540,6 +548,7 @@ try {
     !help.stdout.includes('Usage: felan [options] [message]')
     || !help.stdout.includes('-r, --resume')
     || !help.stdout.includes('--mode <text|json>')
+    || !help.stdout.includes('-e, --extension <path>')
     || !help.stdout.includes('update')
   ) {
     throw new Error('Packed felan --help did not start the local TUI CLI');

@@ -12,6 +12,7 @@ import { runFelanUpdate } from './update.js';
 import { FELAN_VERSION } from './version.js';
 import { runLocalSavingsCli } from './savings-command.js';
 import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
 export interface CliDependencies {
@@ -33,6 +34,7 @@ Options:
   --provider <name>   Select a headless model provider
   --model <name>      Select a headless model or provider/model reference
   --thinking <level>  Select headless thinking: off|minimal|low|medium|high|xhigh|max
+  -e, --extension <path>  Load a local Pi extension (repeatable; interactive TUI only)
   -c, --continue     Continue the most recent session for this directory
   -r, --resume       Pick a session to resume
   --session <id>     Resume a specific session
@@ -100,6 +102,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   let provider: string | undefined;
   let model: string | undefined;
   let thinkingLevel: RunLocalFelanHeadlessOptions['thinkingLevel'];
+  const extensionPaths: string[] = [];
   const messageParts: string[] = [];
   let positionalOnly = false;
   const cliOverrides = new Map<string, Record<string, unknown>>();
@@ -136,6 +139,19 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       else if (argument === '--model') model = value;
       else thinkingLevel = parseThinkingLevel(value, writeError);
       if (argument === '--thinking' && thinkingLevel === undefined) return 1;
+      index += 1;
+    } else if (argument === '-e' || argument === '--extension') {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('-')) {
+        writeError(`${argument} requires a local extension path`);
+        return 1;
+      }
+      try {
+        extensionPaths.push(resolveLocalExtensionPath(value, process.cwd()));
+      } catch (error) {
+        writeError(error instanceof Error ? error.message : String(error));
+        return 1;
+      }
       index += 1;
     } else if (argument === '-r' || argument === '--resume') {
       resume = true;
@@ -234,6 +250,10 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     return 1;
   }
   if (mode !== undefined) {
+    if (extensionPaths.length > 0) {
+      writeError('--extension is interactive-only');
+      return 1;
+    }
     if (provider !== undefined && model === undefined) {
       writeError('--provider requires --model in headless mode');
       return 1;
@@ -314,6 +334,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
         source: 'CLI',
       })) satisfies ExtensionConfigOverride[],
     }),
+    ...(extensionPaths.length === 0 ? {} : { extensionPaths }),
   });
   return 0;
 }
@@ -328,6 +349,12 @@ function buildRestartArgs(
     if (argument === '--') break;
     if (argument === '-c' || argument === '--continue' || argument === '-r' || argument === '--resume') continue;
     if (argument === '--session' || argument === '--session-dir') {
+      index += 1;
+      continue;
+    }
+    if (argument === '-e' || argument === '--extension') {
+      const value = args[index + 1];
+      if (value !== undefined) restartArgs.push(argument, value);
       index += 1;
       continue;
     }
@@ -349,6 +376,18 @@ function buildRestartArgs(
     }
   }
   return restartArgs;
+}
+
+function resolveLocalExtensionPath(value: string, cwd: string): string {
+  if (!/^[A-Za-z]:[\\/]/u.test(value) && /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value)) {
+    throw new Error(`Extension source must be a local file or directory: ${value}`);
+  }
+  const expanded = value === '~'
+    ? homedir()
+    : value.startsWith('~/') || value.startsWith('~\\')
+      ? resolve(homedir(), value.slice(2))
+      : value;
+  return resolve(cwd, expanded);
 }
 
 async function runSavingsCommand(

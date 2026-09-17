@@ -127,8 +127,9 @@ its own Agent Core, host runtime, and extensions.
 
 ### Can I use a Pi extension unchanged?
 
-Not automatically in the local TUI. Felan Code loads only source-controlled built-
-ins. A compatible extension can be explicitly composed by a host, but it must
+Not automatically in the local TUI. Felan Code loads source-controlled built-ins
+and explicitly supplied local extension paths. A compatible extension can be
+loaded with `--extension`/`-e`, but it must
 respect the Agent Runtime and host-adapter boundaries.
 
 ### Does Felan Code replace Pi's provider support?

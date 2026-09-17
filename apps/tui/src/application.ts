@@ -38,7 +38,7 @@ export interface RunLocalFelanOptions extends CreateLocalFelanRuntimeOptions {
   readonly restartArgs?: readonly string[];
 }
 
-export interface RunLocalFelanHeadlessOptions extends Omit<CreateLocalFelanRuntimeOptions, 'model'> {
+export interface RunLocalFelanHeadlessOptions extends Omit<CreateLocalFelanRuntimeOptions, 'model' | 'extensionPaths'> {
   readonly mode: PrintModeOptions['mode'];
   readonly initialMessage: string;
   readonly provider?: string;

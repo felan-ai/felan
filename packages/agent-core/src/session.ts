@@ -34,6 +34,7 @@ export interface CreateAgentCoreSessionOptions {
   readonly wrapStreamFunction?: (original: StreamFunction) => StreamFunction;
   readonly extensionPackages: readonly string[];
   readonly importExtension: ExtensionPackageImporter;
+  readonly extensionPaths?: readonly string[];
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly modelRuntime: ModelRuntime;
   readonly settingsManager: SettingsManager;
@@ -123,6 +124,7 @@ async function composeAgentCoreSession(
     cwd: options.runtime.cwd,
     agentDir,
     extensionFactories,
+    ...(options.extensionPaths === undefined ? {} : { extensionPaths: options.extensionPaths }),
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.themePaths === undefined ? {} : { themePaths: options.themePaths }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),

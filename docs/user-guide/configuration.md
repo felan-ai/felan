@@ -16,7 +16,10 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 | `agents/*.md` | Felan-specific user agent definitions |
 
 The local host does not read Pi project settings. Configuration for ambient Pi
-extensions, prompts, packages, themes, or skills is filtered.
+extensions, prompts, packages, themes, or skills is filtered. Load a local Pi
+extension explicitly for the interactive root TUI with repeatable
+`--extension`/`-e` flags; this does not enable ambient discovery or network
+package installation.
 
 ## Settings
 

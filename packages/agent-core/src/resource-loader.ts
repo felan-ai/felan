@@ -15,6 +15,7 @@ export interface CreateAgentCoreResourceLoaderOptions {
   readonly cwd: string;
   readonly agentDir: string;
   readonly extensionFactories: readonly InlineExtension[];
+  readonly extensionPaths?: readonly string[];
   readonly skillPaths?: readonly string[];
   readonly themePaths?: readonly string[];
   readonly skills?: readonly Skill[];
@@ -51,7 +52,7 @@ export async function createAgentCoreResourceLoaderWithContextFiles(
     cwd: options.cwd,
     agentDir: options.agentDir,
     settingsManager: resourceSettings,
-    additionalExtensionPaths: [],
+    additionalExtensionPaths: [...(options.extensionPaths ?? [])],
     additionalSkillPaths: [...(options.skillPaths ?? [])],
     additionalPromptTemplatePaths: [],
     additionalThemePaths: [...(options.themePaths ?? [])],

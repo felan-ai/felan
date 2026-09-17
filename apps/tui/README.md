@@ -190,10 +190,16 @@ and project memory. Root-session storage is scoped under
 `$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>` and longer-lived
 extension state under `$FELAN_AGENT_DIR/storage/agent`.
 
-The local host loads only source-controlled Felan Code built-ins, Felan-owned
-settings and prompt appends, explicit Felan Code agents and Agent Skills, and the
-Agent Core-selected cwd instruction file. Ambient Pi extensions, packages,
-prompts, themes, project settings, and package resources are filtered.
+The local host loads source-controlled Felan Code built-ins, Felan-owned
+settings and prompt appends, explicit Felan Code agents and Agent Skills, the
+Agent Core-selected cwd instruction file, and local Pi extensions explicitly
+provided with repeatable `--extension`/`-e` flags for the interactive root TUI.
+Ambient Pi extensions, packages, prompts, themes, project settings, and package
+resources remain filtered.
+
+Explicit Pi extensions execute with the current user's permissions. They are
+not installed from network/package sources and are not loaded in headless,
+ACP, or subagent sessions.
 
 When launched inside Herdr, the TUI reports its Felan Code lifecycle and session
 identity through Herdr's inherited local socket environment. This is TUI-only

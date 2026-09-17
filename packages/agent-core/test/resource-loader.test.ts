@@ -46,6 +46,36 @@ describe('Agent Core resource loading', () => {
     expect(loader.getAgentsFiles()).toEqual({ agentsFiles: [] });
   });
 
+  it('loads explicitly supplied extension paths without enabling ambient discovery', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    const projectExtensions = join(cwd, '.pi', 'extensions');
+    const explicit = join(root, 'explicit-extension.mjs');
+    await mkdir(projectExtensions, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(projectExtensions, 'ambient.mjs'),
+      'globalThis.ambientFelanExtension = true; export default () => {};');
+    await writeFile(explicit,
+      'globalThis.explicitFelanExtension = true; export default (pi) => pi.registerCommand("explicit", { description: "explicit" });');
+
+    const loader = await createAgentCoreResourceLoader({
+      cwd,
+      agentDir,
+      extensionFactories: [],
+      extensionPaths: [explicit],
+    });
+
+    expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual([explicit]);
+    expect((globalThis as { explicitFelanExtension?: boolean }).explicitFelanExtension).toBe(true);
+    expect((globalThis as { ambientFelanExtension?: boolean }).ambientFelanExtension).toBeUndefined();
+    expect(loader.getExtensions().extensions[0]?.commands.has('explicit')).toBe(true);
+
+    loader.getExtensions().runtime.invalidate('test reload');
+    await loader.reload();
+    expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual([explicit]);
+  });
+
   it('always uses the Felan core prompt and ignores ambient prompt files', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

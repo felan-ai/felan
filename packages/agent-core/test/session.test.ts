@@ -168,6 +168,40 @@ describe('Agent Core session composition', () => {
     result.session.dispose();
   });
 
+  it('loads explicitly supplied native Pi extensions while keeping ambient discovery disabled', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    const explicit = join(root, 'explicit-extension.mjs');
+    await mkdir(cwd, { recursive: true });
+    await writeFile(explicit,
+      'export default (pi) => pi.registerCommand("explicit", { description: "explicit" });');
+
+    const result = await createAgentCoreSession({
+      runtime: new TestAgentRuntime(cwd),
+      extensionPackages: [],
+      extensionPaths: [explicit],
+      importExtension: async () => {
+        throw new Error('No Felan extension package should be imported');
+      },
+      modelRuntime: await createModelRuntime(agentDir),
+      settingsManager: SettingsManager.inMemory({ extensions: [explicit] }),
+      sessionManager: SessionManager.inMemory(cwd),
+      agentDir,
+    });
+
+    expect(result.extensionsResult.extensions.map((extension) => extension.path)).toEqual([
+      explicit,
+      '<inline:@felan-ai/agent-core/runtime-tools>',
+    ]);
+    expect(result.extensionsResult.extensions[0]?.commands.has('explicit')).toBe(true);
+    expect(result.session.resourceLoader.getExtensions().extensions.map((extension) => extension.path)).toEqual([
+      explicit,
+      '<inline:@felan-ai/agent-core/runtime-tools>',
+    ]);
+    result.session.dispose();
+  });
+
   it('carries the active thinking level across a session-only model switch', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

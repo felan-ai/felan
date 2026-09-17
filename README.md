@@ -145,7 +145,7 @@ to its package, host boundary, commands, and runtime conditions.
 
 Felan Code keeps the local host narrow in some places on purpose:
 
-- only source-controlled built-in extensions are loaded;
+- only source-controlled built-in extensions and explicitly requested local Pi extension paths are loaded in the interactive TUI;
 - ambient Pi packages, extensions, prompts, themes, project settings, and
   package resources are filtered;
 - model credentials and MCP OAuth tokens belong to the local host;
@@ -153,6 +153,12 @@ Felan Code keeps the local host narrow in some places on purpose:
   bounded and treated as untrusted; and
 - missing binary dependencies degrade safely and require explicit interactive
   installation or disablement.
+
+Use repeatable `--extension`/`-e` flags to load local Pi extension files or
+directories for the interactive TUI. These extensions execute with the current
+user's permissions; Felan does not discover them from ambient settings or
+install network/package sources, and does not pass them to headless, ACP, or
+subagent sessions.
 
 These controls do not sandbox ordinary shell or filesystem operations. Read the
 [runtime and security guide](docs/concepts/runtime-and-security.md) before

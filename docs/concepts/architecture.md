@@ -87,8 +87,9 @@ untrusted workloads require it.
 The local application uses a fixed resource boundary. It imports only
 source-controlled built-ins, Felan-owned settings and prompt appends, explicit
 agent definitions, explicit Agent Skills, and the Agent Core-selected cwd
-instruction file. Ambient Pi extensions, packages, prompts, themes, project
-settings, and package resources are filtered.
+instruction file, plus explicitly requested local Pi extension paths for the
+interactive root TUI. Ambient Pi extensions, packages, prompts, themes,
+project settings, and package resources are filtered.
 
 This boundary is part of the local host, not a promise that every Felan host
 will make the same policy decision. The Felan cloud platform can provide

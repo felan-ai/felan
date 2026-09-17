@@ -103,6 +103,7 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly homeDir?: string;
   readonly modelRuntime: ModelRuntime;
   readonly extensionPackages?: readonly string[];
+  readonly extensionPaths?: readonly string[];
   readonly importExtension?: ExtensionPackageImporter;
   readonly runtimeFactory?: LocalAgentRuntimeFactory;
   readonly skillPaths?: readonly string[];
@@ -134,6 +135,7 @@ export interface CreateLocalFelanRuntimeOptions {
   readonly subagentSettings?: LocalSubagentSettings;
   readonly memoryCoordinator?: LocalMemoryCoordinator;
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
+  readonly extensionPaths?: readonly string[];
   readonly model?: CreateAgentSessionOptions['model'];
   readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
   readonly themePaths?: readonly string[];
@@ -344,6 +346,7 @@ export function createLocalSessionRuntimeFactory(
       runtime,
       ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
+      ...(options.extensionPaths === undefined ? {} : { extensionPaths: options.extensionPaths }),
       extensionConfigOverrides,
       savings,
       importExtension: createLocalExtensionImporter(
@@ -511,6 +514,7 @@ export async function createLocalFelanRuntime(
       : { subagentUiContext: options.subagentUiContext }),
     ...(options.subagentSettings === undefined ? {} : { subagentSettings: options.subagentSettings }),
     ...(options.extensionConfigOverrides === undefined ? {} : { extensionConfigOverrides: options.extensionConfigOverrides }),
+    ...(options.extensionPaths === undefined ? {} : { extensionPaths: options.extensionPaths }),
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
     memoryCoordinator,

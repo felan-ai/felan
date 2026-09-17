@@ -13,6 +13,7 @@ felan [options] [message]
 --provider <name>   Select a headless model provider
 --model <name>      Select a headless model or provider/model reference
 --thinking <level>  Select headless thinking: off|minimal|low|medium|high|xhigh|max
+-e, --extension <path>  Load a local Pi extension (repeatable; interactive TUI only)
 -c, --continue     Continue the most recent session for this directory
 -r, --resume       Pick a session to resume
 --session <id>     Resume a specific session
@@ -27,8 +28,14 @@ acp login           Configure model-provider credentials in a finite terminal fl
 --verbose          Show verbose startup details
 ```
 
-Use `--` before an initial message that begins with a dash. Unknown options are
-rejected before the TUI starts.
+Use `--` before an initial message that begins with a dash. `--extension`/`-e`
+accepts local extension files or directories and can be repeated. Paths are
+resolved against the launch directory and remain active through root session
+replacement, `/cwd`, `/reload`, and `/restart`. Network and package sources are
+rejected. Selected extensions run only in the interactive root TUI, with the
+current user's filesystem and process permissions; they are not passed to
+headless, ACP, or subagent sessions. Unknown options are rejected before the
+TUI starts.
 
 ### Native ACP v1
 
@@ -349,7 +356,7 @@ subagents.
 
 ## Resource policy
 
-The local host loads only:
+The local host loads:
 
 - Felan Code's source-controlled built-in extensions;
 - `$FELAN_AGENT_DIR/APPEND_SYSTEM.md`;
@@ -357,6 +364,11 @@ The local host loads only:
 - nested `AGENTS.md` or `CLAUDE.md` discovered by progressive context;
 - explicit user/workspace Felan Code agent definitions; and
 - Agent Skills from `~/.agents/skills` and `<workspace>/.agents/skills`.
+
+Interactive root TUI sessions can additionally load local Pi extension files or
+directories explicitly supplied with repeatable `--extension`/`-e` flags. These
+paths are not ambient resources and are not loaded in headless, ACP, or
+subagent sessions.
 
 Ambient Pi extensions, packages, prompts, project settings, themes, and package
 resources are filtered. Felan Code also does not import Claude, Cursor, Codex, or

@@ -1,6 +1,6 @@
 # Local TUI
 
 - This is the `felan` composition root. It owns credentials, settings, root-session and agent storage path mapping, model scope, the built-in extension allowlist, the local subagent host, lifecycle, and presentation; portable behavior belongs in `packages/*`.
-- Preserve the fixed resource boundary: source-controlled built-ins, Felan-owned settings/appends, explicit global/workspace agent definitions and Agent Skills, and the Agent Core-selected cwd `AGENTS.md`/`CLAUDE.md`. Ambient Pi project resources and external extensions remain filtered.
+- Preserve the fixed resource boundary: source-controlled built-ins, Felan-owned settings/appends, explicit global/workspace agent definitions and Agent Skills, the Agent Core-selected cwd `AGENTS.md`/`CLAUDE.md`, and explicitly requested local Pi extension paths for interactive root TUI sessions. Ambient Pi project resources, network/package extension sources, and extension loading in other modes remain filtered.
 - Every new, resumed, forked, cloned, or imported root session gets a host-path runtime whose cwd resolves relative paths, plus a local subagent host keyed by its active SessionManager ID. Nested subagents share that root session's storage path. Rebind presentation after replacement and await host shutdown before Pi disposal.
 - Keep external runtime dependency onboarding TUI-owned, interactive-only, explicit before installation, and persisted in Felan global settings. Binary-backed extensions must still degrade safely in non-interactive and cloud runtimes where onboarding never runs.
