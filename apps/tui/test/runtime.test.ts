@@ -475,6 +475,25 @@ describe('local Agent Core lifecycle', () => {
     await runtime.dispose();
   });
 
+  it('does not discover Pi extension directories from settings', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    const homeDir = join(root, 'home');
+    const userDir = join(homeDir, '.pi', 'agent', 'extensions');
+    await Promise.all([cwd, agentDir, userDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      piExtensions: { user: true, project: true },
+    }));
+    await writeFile(join(userDir, 'home.js'),
+      'export default (pi) => pi.registerCommand("home-ext", { description: "home" });');
+
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir });
+    expect(runtime.services.resourceLoader.getExtensions().extensions.map((extension) => extension.path))
+      .not.toContain(userDir);
+    await runtime.dispose();
+  });
+
   it('resolves configured model scope once per session', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

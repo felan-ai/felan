@@ -21,10 +21,14 @@ run in an isolated container, VM, or dedicated account supplied by the host.
 The local TUI loads source-controlled built-ins, Felan-owned settings and
 prompt appends, explicit global/workspace agent definitions and Agent Skills,
 the selected cwd instruction file, and local Pi extensions explicitly supplied
-with `--extension`/`-e` for the interactive root TUI. It filters ambient Pi
-packages, extensions, prompts, themes, project settings, and package resources.
-Explicit extensions are executable code with the current user's filesystem and
-process permissions; they are not loaded in headless, ACP, or subagent sessions.
+with `--extension`/`-e` for the interactive root TUI. Opt-in `piExtensions.user`
+and `piExtensions.project` can add `~/.pi/agent/extensions` and, after a Felan
+folder-trust prompt, `<cwd>/.pi/extensions`. Those decisions are stored in
+`$FELAN_AGENT_DIR/trust.json`, not Pi's trust file. The host still filters Pi
+packages, prompts, themes, skills, project settings, and package resources.
+Explicit and opted-in extensions are executable code with the current user's
+filesystem and process permissions; they are not loaded in headless, ACP, or
+subagent sessions.
 
 This prevents an arbitrary project configuration from silently adding an
 executable extension or prompt resource to a Felan Code session. It does not prevent

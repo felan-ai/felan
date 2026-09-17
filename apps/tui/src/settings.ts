@@ -28,7 +28,18 @@ export interface FelanSettings {
   readonly outputStyle?: OutputStyle;
   readonly felanSubagents?: LocalSubagentSettings;
   readonly felanTui?: FelanTuiSettings;
+  readonly piExtensions?: PiExtensionSettings;
   readonly extensionConfig?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
+export interface PiExtensionSettings {
+  readonly user?: boolean;
+  readonly project?: boolean;
+}
+
+export interface ResolvedPiExtensionSettings {
+  readonly user: boolean;
+  readonly project: boolean;
 }
 
 export interface ResolvedExtensionConfigSettings {
@@ -202,6 +213,17 @@ export function getLocalToolDisplayMode(settingsManager: SettingsManager): Local
   throw new Error('felanTui.toolDisplay must be "grouped" or "full"');
 }
 
+export function getPiExtensionSettings(settingsManager: SettingsManager): ResolvedPiExtensionSettings {
+  const rawSettings = settingsManager.getGlobalSettings() as Record<string, unknown>;
+  const raw = rawSettings.piExtensions;
+  if (raw === undefined) return { user: false, project: false };
+  if (!isRecord(raw)) throw new Error('piExtensions must be an object');
+  return {
+    user: optionalBooleanSetting(raw.user, 'piExtensions.user'),
+    project: optionalBooleanSetting(raw.project, 'piExtensions.project'),
+  };
+}
+
 export async function setBuiltinExtensionEnabled(
   agentDir: string,
   name: BuiltinExtensionName,
@@ -337,6 +359,12 @@ function isMissingFile(error: unknown): boolean {
 
 function isAlreadyExistsFile(error: unknown): boolean {
   return typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 'EEXIST';
+}
+
+function optionalBooleanSetting(value: unknown, path: string): boolean {
+  if (value === undefined) return false;
+  if (typeof value !== 'boolean') throw new Error(`${path} must be a boolean`);
+  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

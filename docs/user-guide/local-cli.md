@@ -34,8 +34,9 @@ resolved against the launch directory and remain active through root session
 replacement, `/cwd`, `/reload`, and `/restart`. Network and package sources are
 rejected. Selected extensions run only in the interactive root TUI, with the
 current user's filesystem and process permissions; they are not passed to
-headless, ACP, or subagent sessions. Unknown options are rejected before the
-TUI starts.
+headless, ACP, or subagent sessions. Optional `piExtensions` settings load Pi's
+standard user and trusted project directories the same way. Unknown options are
+rejected before the TUI starts.
 
 ### Native ACP v1
 
@@ -366,12 +367,13 @@ The local host loads:
 - Agent Skills from `~/.agents/skills` and `<workspace>/.agents/skills`.
 
 Interactive root TUI sessions can additionally load local Pi extension files or
-directories explicitly supplied with repeatable `--extension`/`-e` flags. These
-paths are not ambient resources and are not loaded in headless, ACP, or
-subagent sessions.
+directories explicitly supplied with repeatable `--extension`/`-e` flags, and
+can opt in to `~/.pi/agent/extensions` and trusted `<cwd>/.pi/extensions` with
+`piExtensions` in `$FELAN_AGENT_DIR/settings.json`. These paths are not loaded
+in headless, ACP, or subagent sessions.
 
-Ambient Pi extensions, packages, prompts, project settings, themes, and package
-resources are filtered. Felan Code also does not import Claude, Cursor, Codex, or
+Ambient Pi packages, prompts, project settings, themes, skills, and package
+resources stay filtered. Felan Code also does not import Claude, Cursor, Codex, or
 other tools' ambient extension configuration.
 
 Felan Code supplies two host-owned Pi themes, `felan-light` and `felan-dark`, and

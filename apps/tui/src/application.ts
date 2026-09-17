@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   InteractiveMode,
@@ -14,7 +15,8 @@ import {
   type CreateLocalFelanRuntimeOptions,
 } from './runtime.js';
 import { installFelanStartupHeader } from './startup-header.js';
-import { getFelanSettings } from './settings.js';
+import { resolveInteractivePiExtensionPaths } from './pi-extensions.js';
+import { createLocalSettingsManager, getFelanSettings, getPiExtensionSettings } from './settings.js';
 import { getLocalExtensionStartupState } from './dependencies.js';
 import { createToolActivityRuntimeView } from './tool-activity/runtime-view.js';
 import { checkForFelanUpdate } from './update.js';
@@ -169,7 +171,24 @@ async function createLocalModelRuntimeForHeadless(
 }
 
 async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<string | undefined> {
-  const runtime = await createLocalFelanRuntime(options);
+  const cwd = resolve(options.cwd ?? process.cwd());
+  const agentDir = resolve(options.agentDir ?? getLocalAgentDir());
+  const homeDir = options.homeDir ?? homedir();
+  const { extensionPaths: cliExtensionPaths, ...runtimeOptions } = options;
+  const extensionPaths = await resolveInteractivePiExtensionPaths({
+    cwd,
+    homeDir,
+    agentDir,
+    settings: getPiExtensionSettings(createLocalSettingsManager(cwd, agentDir)),
+    ...(cliExtensionPaths === undefined ? {} : { cliPaths: cliExtensionPaths }),
+  });
+  const runtime = await createLocalFelanRuntime({
+    ...runtimeOptions,
+    cwd,
+    agentDir,
+    homeDir,
+    ...(extensionPaths.length === 0 ? {} : { extensionPaths }),
+  });
   const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
   const previousPiSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
   const previousPiTelemetry = process.env.PI_TELEMETRY;

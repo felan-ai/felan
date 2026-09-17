@@ -28,6 +28,7 @@ const interactive = vi.hoisted(() => ({
   stops: 0,
   toolRenderShells: [] as Array<string | undefined>,
   toolNames: [] as string[],
+  extensionPaths: [] as string[][],
   updateCheckSignals: [] as AbortSignal[],
   updateNotifications: [] as string[],
 }));
@@ -98,6 +99,9 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
         );
         interactive.toolRenderShells.push(this.runtime.session.getToolDefinition('read')?.renderShell);
         interactive.toolNames = this.runtime.session.agent.state.tools.map((tool) => tool.name);
+        interactive.extensionPaths.push(
+          this.runtime.services.resourceLoader.getExtensions().extensions.map((extension) => extension.path),
+        );
         if (interactive.restartSession && interactive.runs === 1) {
           throw new RestartRequested();
         }
@@ -151,6 +155,8 @@ import { installFelanTuiCompatibility, normalizeFullscreenTerminalModes } from '
 import { CwdChangeRequested } from '../src/cwd-command.js';
 import { RestartRequested } from '../src/restart-command.js';
 import type { RestartProcessOptions } from '../src/process-restart.js';
+import { piProjectExtensionsDir, piUserExtensionsDir } from '../src/pi-extensions.js';
+import { createFelanProjectTrustStore } from '../src/project-trust.js';
 
 const temporaryPaths: string[] = [];
 
@@ -176,6 +182,7 @@ afterEach(async () => {
   interactive.stops = 0;
   interactive.toolRenderShells = [];
   interactive.toolNames = [];
+  interactive.extensionPaths = [];
   interactive.updateCheckSignals = [];
   interactive.updateNotifications = [];
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
@@ -570,6 +577,53 @@ describe('interactive application', () => {
     expect(interactive.runs).toBe(1);
     expect(interactive.stops).toBe(1);
     expect(interactive.disposals).toBe(1);
+  });
+
+  it('loads opted-in Pi extension directories and re-resolves them after /cwd', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const targetCwd = join(root, 'target');
+    const agentDir = join(root, 'agent');
+    const homeDir = join(root, 'home');
+    const userDir = piUserExtensionsDir(homeDir);
+    const projectDir = piProjectExtensionsDir(targetCwd);
+    await Promise.all([cwd, targetCwd, agentDir, userDir, projectDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      piExtensions: { user: true, project: true },
+    }));
+    await writeFile(join(userDir, 'home.js'),
+      'export default (pi) => pi.registerCommand("home-ext", { description: "home" });');
+    await writeFile(join(projectDir, 'project.js'),
+      'export default (pi) => pi.registerCommand("project-ext", { description: "project" });');
+    createFelanProjectTrustStore(agentDir).set(targetCwd, true);
+    interactive.restartCwd = targetCwd;
+
+    await runLocalFelan({ cwd, agentDir, homeDir });
+
+    const userFile = join(userDir, 'home.js');
+    const projectFile = join(projectDir, 'project.js');
+    expect(interactive.extensionPaths[0]).toContain(userFile);
+    expect(interactive.extensionPaths[0]).not.toContain(projectFile);
+    expect(interactive.extensionPaths[1]).toEqual(expect.arrayContaining([userFile, projectFile]));
+  });
+
+  it('does not load untrusted project Pi extensions', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    const homeDir = join(root, 'home');
+    const projectDir = piProjectExtensionsDir(cwd);
+    await Promise.all([cwd, agentDir, projectDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      piExtensions: { project: true },
+    }));
+    await writeFile(join(projectDir, 'project.js'),
+      'export default (pi) => pi.registerCommand("project-ext", { description: "project" });');
+    createFelanProjectTrustStore(agentDir).set(cwd, false);
+
+    await runLocalFelan({ cwd, agentDir, homeDir });
+
+    expect(interactive.extensionPaths[0]).not.toContain(join(projectDir, 'project.js'));
   });
 });
 

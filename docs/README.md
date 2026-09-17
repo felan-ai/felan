@@ -81,9 +81,11 @@ The package READMEs are the canonical npm-facing API and development references:
 - [`@felan-ai/ext-web-access`](../packages/ext-web-access/README.md)
 
 Felan Code's local application loads source-controlled built-ins and explicitly
-requested local Pi extension paths in interactive root TUI sessions. Public
-extension packages are composition building blocks for Felan hosts; they are
-not ambient plugins automatically discovered by the local CLI.
+requested local Pi extension paths in interactive root TUI sessions. Optional
+`piExtensions` settings can load Pi's standard user and trusted project
+extension directories. Public extension packages are composition building blocks
+for Felan hosts; they are not ambient plugins automatically discovered by the
+local CLI.
 
 ## Compare local coding agents
 

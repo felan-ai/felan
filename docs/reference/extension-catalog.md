@@ -2,8 +2,9 @@
 
 Felan publishes portable packages under `@felan-ai/*`. The local TUI composes
 the source-controlled built-ins listed here and can additionally load explicitly
-requested local Pi extension files or directories with `--extension`/`-e`.
-It does not discover ambient Pi extensions or install arbitrary npm packages.
+requested local Pi extension files or directories with `--extension`/`-e`, plus
+optional standard Pi directories through `piExtensions`.
+It does not install arbitrary npm packages or load Pi project settings.
 
 ## Composition layers
 

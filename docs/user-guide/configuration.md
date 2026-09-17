@@ -9,6 +9,7 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 | Path | Purpose |
 | --- | --- |
 | `settings.json` | Built-in enablement, extension configuration, local TUI behavior, model scope, and subagent limits |
+| `trust.json` | Remembered folder trust for optional project Pi extensions |
 | `models.json` | Pi provider credentials, custom models, and model metadata overrides |
 | `APPEND_SYSTEM.md` | Optional local application prompt append |
 | `mcp.json` | Felan-owned remote OAuth MCP servers |
@@ -16,10 +17,11 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 | `agents/*.md` | Felan-specific user agent definitions |
 
 The local host does not read Pi project settings. Configuration for ambient Pi
-extensions, prompts, packages, themes, or skills is filtered. Load a local Pi
-extension explicitly for the interactive root TUI with repeatable
-`--extension`/`-e` flags; this does not enable ambient discovery or network
-package installation.
+extensions, prompts, packages, themes, or skills is filtered by default. Load a
+local Pi extension explicitly for the interactive root TUI with repeatable
+`--extension`/`-e` flags, or opt in to Pi's standard directories with
+`piExtensions` as described below. Neither path installs network or package
+sources.
 
 ## Settings
 
@@ -70,6 +72,10 @@ browser and Powerline extensions:
   "felanTui": {
     "toolDisplay": "grouped"
   },
+  "piExtensions": {
+    "user": false,
+    "project": false
+  },
   "editorPaddingX": 1,
   "tuiMode": "fullscreen"
 }
@@ -83,8 +89,18 @@ Defaults:
 - response output style is `concise`;
 - subagent concurrency is `4` and maximum nesting depth is `3`;
 - editor horizontal padding is `1`;
-- tool display is `grouped`; and
-- local memory processing is enabled.
+- tool display is `grouped`;
+- local memory processing is enabled; and
+- `piExtensions.user` and `piExtensions.project` are `false`.
+
+When `piExtensions.user` is `true`, interactive root TUI sessions load
+`~/.pi/agent/extensions`. When `piExtensions.project` is `true`, they load
+`<cwd>/.pi/extensions` only after a Felan folder-trust decision stored in
+`$FELAN_AGENT_DIR/trust.json`. A new folder with project extensions asks once;
+parent-folder decisions apply. Trusting a folder authorizes those extension
+files only. It does not load Pi project settings, packages, skills, prompts, or
+themes. These directories are not loaded in headless, ACP, or subagent sessions.
+`--extension`/`-e` remains additive.
 
 `builtinExtensions.sessionTitle` controls automatic names for interactive root
 sessions. Disable it to keep the first prompt as the session-picker fallback.
