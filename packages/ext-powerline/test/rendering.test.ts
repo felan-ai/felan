@@ -194,6 +194,63 @@ describe('powerline segments', () => {
       },
     }));
     expect(claude.text).toBe('Claude 7d 41%');
+
+    const grok = renderSingle('subscription', {
+      enabled: true,
+      showProviderName: false,
+      showReset: true,
+    }, context({
+      model: { provider: 'xai', id: 'grok-4.6' },
+      subscription: {
+        provider: 'xai',
+        loading: false,
+        usage: {
+          provider: 'xai',
+          displayName: 'Grok Plan',
+          windows: [{ label: 'Week', usedPercent: 43, resetDescription: '2d' }],
+        },
+      },
+    }));
+    expect(grok.text).toBe('7d 57% | 2d');
+
+    const grokNamed = renderSingle('subscription', {
+      enabled: true,
+      showProviderName: true,
+      showReset: false,
+    }, context({
+      model: { provider: 'xai', id: 'grok-4.6' },
+      subscription: {
+        provider: 'xai',
+        loading: false,
+        usage: {
+          provider: 'xai',
+          displayName: 'Grok Plan',
+          windows: [{ label: 'Week', usedPercent: 43 }],
+        },
+      },
+    }));
+    expect(grokNamed.text).toBe('Grok 7d 57%');
+
+    const grokLoading = renderSingle('subscription', { enabled: true }, context({
+      model: { provider: 'xai', id: 'grok-4.6' },
+      subscription: { provider: 'xai', loading: true },
+    }));
+    expect(grokLoading.text).toBe('Grok …');
+
+    const grokNoOAuth = renderSingle('subscription', { enabled: true }, context({
+      model: { provider: 'xai', id: 'grok-4.6' },
+      subscription: {
+        provider: 'xai',
+        loading: false,
+        usage: {
+          provider: 'xai',
+          displayName: 'Grok Plan',
+          windows: [],
+          error: { code: 'NO_CREDENTIALS', message: 'No OAuth credentials found' },
+        },
+      },
+    }));
+    expect(grokNoOAuth.text).toBe('Grok no OAuth');
   });
 
   it('renders context variants and threshold colors', () => {

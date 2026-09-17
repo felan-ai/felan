@@ -240,7 +240,9 @@ function renderStatus(context: SegmentRenderContext): Omit<RenderedSegment, 'ali
 }
 
 function getSubscriptionProviderLabel(provider: SubscriptionProviderName): string {
-  return provider === 'codex' ? 'Codex' : 'Claude';
+  if (provider === 'codex') return 'Codex';
+  if (provider === 'xai') return 'Grok';
+  return 'Claude';
 }
 
 function formatSubscriptionWindow(
@@ -248,9 +250,10 @@ function formatSubscriptionWindow(
   window: RateWindow,
   config: SegmentConfig,
 ): string {
-  return provider === 'codex'
-    ? formatCompactSubscriptionWindow(window, config, 100 - window.usedPercent)
-    : formatAnthropicWindow(window, config);
+  if (provider === 'codex' || provider === 'xai') {
+    return formatCompactSubscriptionWindow(window, config, 100 - window.usedPercent);
+  }
+  return formatAnthropicWindow(window, config);
 }
 
 function formatAnthropicWindow(window: RateWindow, config: SegmentConfig): string {

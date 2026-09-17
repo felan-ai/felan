@@ -1,8 +1,8 @@
 # @felan-ai/ext-powerline
 
 Portable ANSI-aware TUI footer extension targeting Pi 0.85.1. The local Felan
-TUI enables it by default and binds a host that can display Codex or Claude
-subscription usage; the package itself is hostless by default.
+TUI enables it by default and binds a host that can display Codex, Claude, or
+Grok subscription usage; the package itself is hostless by default.
 
 The footer displays:
 
@@ -11,7 +11,7 @@ The footer displays:
 - active model and thinking level
 - session token and cost totals (the local Felan TUI includes the root session
   and local subagent sessions; hostless consumers use the active session only)
-- active Codex or Claude subscription usage
+- active Codex, Claude, or Grok subscription usage
 - estimated API-equivalent Felan savings for the configured recent-day period
 - context-window usage
 - statuses published by other Pi extensions
@@ -37,10 +37,11 @@ All configuration is supplied through the declarative `powerline` extension
 settings. The settings include scalar display fields and ordered `lines` with
 supported segment objects. Theme selection and colors belong to Pi.
 
-The `subscription` segment supports Codex and Claude OAuth plans. Codex values
-show remaining percentage; Claude values show used percentage. The segment can
-configure `showProviderName`, `showReset`, `showPercentage`, and `maxWindows`.
-It refreshes at startup, after turns and model changes, and once per minute.
+The `subscription` segment supports Codex, Claude, and Grok SuperGrok / X Premium
+OAuth plans. Codex and Grok values show remaining percentage; Claude values show
+used percentage. The segment can configure `showProviderName`, `showReset`,
+`showPercentage`, and `maxWindows`. It refreshes at startup, after turns and
+model changes, and once per minute.
 
 The `savings` segment is enabled by default at the end of the first line and is
 right-aligned above the model. It reports estimated API-equivalent savings
@@ -65,9 +66,9 @@ Hosts can supply `options.footerRows` as the second argument to append
 width-aware rows after the configured powerline status lines.
 
 Felan's local TUI supplies a host backed by `ModelRuntime`. It uses the active
-provider's Felan OAuth credential and fixed Codex or Anthropic usage endpoints.
-The extension package does not inspect authentication files, receive stored
-credential objects, or perform network requests.
+provider's Felan OAuth credential and fixed Codex, Anthropic, or xAI Grok Build
+billing endpoints. The extension package does not inspect authentication files,
+receive stored credential objects, or perform network requests.
 
 ## Package boundary and requirements
 

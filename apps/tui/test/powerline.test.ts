@@ -52,6 +52,32 @@ describe('local subscription usage host', () => {
     );
   });
 
+  it('uses xAI SuperGrok OAuth and Grok Build billing headers', async () => {
+    const modelRuntime = runtime({ provider: 'xai', token: 'xai-token' });
+    const fetchImplementation = vi.fn().mockResolvedValue(new Response(JSON.stringify({ config: {} })));
+    const host = createLocalSubscriptionUsageHost(modelRuntime, fetchImplementation);
+    const signal = new AbortController().signal;
+
+    await expect(host.fetchUsage({
+      provider: 'xai',
+      modelProvider: 'xai',
+      signal,
+    })).resolves.toEqual({ ok: true, data: { config: {} } });
+
+    expect(modelRuntime.getAuth).toHaveBeenCalledWith('xai', { signal });
+    expect(fetchImplementation).toHaveBeenCalledWith(
+      'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
+      expect.objectContaining({
+        method: 'GET',
+        signal,
+        headers: expect.objectContaining({
+          Authorization: 'Bearer xai-token',
+          'X-XAI-Token-Auth': 'xai-grok-cli',
+        }),
+      }),
+    );
+  });
+
   it('rejects non-subscription auth and maps provider failures', async () => {
     const getAuth = vi.fn();
     const modelRuntime = {

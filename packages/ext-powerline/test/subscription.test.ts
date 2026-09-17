@@ -76,6 +76,9 @@ describe('subscription usage parsing', () => {
   it('detects supported providers and prioritizes model-specific windows', () => {
     expect(detectSubscriptionProvider({ provider: 'openai-codex', id: 'gpt-5.6-sol' })).toBe('codex');
     expect(detectSubscriptionProvider({ provider: 'anthropic', id: 'claude-opus-4-6' })).toBe('anthropic');
+    expect(detectSubscriptionProvider({ provider: 'xai', id: 'grok-4.6' })).toBe('xai');
+    expect(detectSubscriptionProvider({ provider: 'groq', id: 'grok-4.6' })).toBeUndefined();
+    expect(detectSubscriptionProvider({ provider: 'openrouter', id: 'x-ai/grok-4' })).toBeUndefined();
     expect(detectSubscriptionProvider({ provider: 'google', id: 'gemini-3' })).toBeUndefined();
 
     const windows = [
@@ -83,6 +86,34 @@ describe('subscription usage parsing', () => {
       { label: 'GPT-5.6 Week', usedPercent: 2 },
     ];
     expect(prioritizeWindowsForModel(windows, { id: 'gpt-5.6' })).toEqual([windows[1], windows[0]]);
+  });
+
+  it('normalizes xAI SuperGrok weekly credits (omitted percent defaults to 0)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-06T10:00:00.000Z'));
+
+    const usage = parseUsageSnapshot('xai', {
+      config: {
+        creditUsagePercent: 43,
+        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
+        billingPeriodEnd: '2026-08-13T10:00:00.000Z',
+      },
+    });
+
+    expect(usage).toMatchObject({
+      provider: 'xai',
+      displayName: 'Grok Plan',
+      windows: [
+        { label: 'Week', usedPercent: 43, resetAt: '2026-08-13T10:00:00.000Z' },
+      ],
+    });
+
+    const omitted = parseUsageSnapshot('xai', {
+      config: {
+        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', end: '2026-08-13T10:00:00.000Z' },
+      },
+    });
+    expect(omitted.windows[0]).toMatchObject({ label: 'Week', usedPercent: 0, resetAt: '2026-08-13T10:00:00.000Z' });
   });
 
   it('formats reset durations compactly', () => {

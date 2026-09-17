@@ -1,4 +1,4 @@
-export type SubscriptionProviderName = 'codex' | 'anthropic';
+export type SubscriptionProviderName = 'codex' | 'anthropic' | 'xai';
 export type UsageErrorCode = 'NO_CREDENTIALS' | 'FETCH_FAILED' | 'HTTP_ERROR';
 
 export interface RateWindow {
@@ -95,6 +95,7 @@ const MIN_REFRESH_INTERVAL_MS = 10_000;
 const DISPLAY_NAMES: Record<SubscriptionProviderName, string> = {
   codex: 'Codex Plan',
   anthropic: 'Claude Plan',
+  xai: 'Grok Plan',
 };
 
 export function createSubscriptionController(
@@ -140,6 +141,7 @@ export function createSubscriptionController(
       abortActiveRequests();
       delete latestRequestSequence.codex;
       delete latestRequestSequence.anthropic;
+      delete latestRequestSequence.xai;
       delete state.provider;
       delete state.usage;
       state.loading = false;
@@ -231,10 +233,13 @@ export function createSubscriptionController(
     delete state.lastRefreshAt;
     delete cache.codex;
     delete cache.anthropic;
+    delete cache.xai;
     delete lastAttemptAt.codex;
     delete lastAttemptAt.anthropic;
+    delete lastAttemptAt.xai;
     delete latestRequestSequence.codex;
     delete latestRequestSequence.anthropic;
+    delete latestRequestSequence.xai;
     inFlight = undefined;
     inFlightProvider = undefined;
     inFlightSequence = undefined;
@@ -264,6 +269,7 @@ export function detectSubscriptionProvider(
     || id.includes('codex')
   ) return 'codex';
   if (provider.includes('anthropic') || id.includes('claude')) return 'anthropic';
+  if (provider.includes('xai')) return 'xai';
   return undefined;
 }
 
@@ -271,7 +277,9 @@ export function parseUsageSnapshot(
   provider: SubscriptionProviderName,
   data: unknown,
 ): UsageSnapshot {
-  return provider === 'codex' ? parseCodexUsage(data) : parseAnthropicUsage(data);
+  if (provider === 'codex') return parseCodexUsage(data);
+  if (provider === 'anthropic') return parseAnthropicUsage(data);
+  return parseXaiUsage(data);
 }
 
 async function fetchHostUsage(
@@ -341,6 +349,23 @@ function parseAnthropicUsage(data: unknown): UsageSnapshot {
   }
 
   return snapshot('anthropic', { windows, extraUsageEnabled, fiveHourUsage });
+}
+
+function parseXaiUsage(data: unknown): UsageSnapshot {
+  const root = isRecord(data) ? data : {};
+  const config = isRecord(root.config) ? root.config : {};
+  const period = isRecord(config.currentPeriod) ? config.currentPeriod : {};
+  const raw = config.creditUsagePercent;
+  const usedPercent = typeof raw === 'number' && Number.isFinite(raw) ? clampPercent(raw) : 0;
+  const end = getNonEmptyString(period.end) ?? getNonEmptyString(config.billingPeriodEnd);
+  const resetAt = parseDate(end);
+  return snapshot('xai', {
+    windows: [{
+      label: 'Week',
+      usedPercent,
+      ...(resetAt ? { resetDescription: formatReset(resetAt), resetAt: resetAt.toISOString() } : {}),
+    }],
+  });
 }
 
 function asCodexRateLimit(value: unknown): CodexRateLimit | undefined {

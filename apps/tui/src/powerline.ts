@@ -28,8 +28,10 @@ export function createLocalSavingsUsageHost(
 
 const CODEX_PROVIDER = 'openai-codex';
 const ANTHROPIC_PROVIDER = 'anthropic';
+const XAI_PROVIDER = 'xai';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const ANTHROPIC_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const XAI_USAGE_URL = 'https://cli-chat-proxy.grok.com/v1/billing?format=credits';
 
 export function createLocalSubscriptionUsageHost(
   modelRuntime: ModelRuntime,
@@ -58,6 +60,8 @@ export function createLocalSubscriptionUsageHost(
       if (request.provider === 'codex') {
         const accountId = extractCodexAccountId(token);
         if (accountId) headers['ChatGPT-Account-Id'] = accountId;
+      } else if (request.provider === 'xai') {
+        headers['X-XAI-Token-Auth'] = 'xai-grok-cli';
       } else {
         headers['anthropic-beta'] = 'oauth-2025-04-20';
       }
@@ -78,11 +82,15 @@ export function createLocalSubscriptionUsageHost(
 }
 
 function providerIdFor(provider: SubscriptionProviderName): string {
-  return provider === 'codex' ? CODEX_PROVIDER : ANTHROPIC_PROVIDER;
+  if (provider === 'codex') return CODEX_PROVIDER;
+  if (provider === 'xai') return XAI_PROVIDER;
+  return ANTHROPIC_PROVIDER;
 }
 
 function usageUrlFor(provider: SubscriptionProviderName): string {
-  return provider === 'codex' ? CODEX_USAGE_URL : ANTHROPIC_USAGE_URL;
+  if (provider === 'codex') return CODEX_USAGE_URL;
+  if (provider === 'xai') return XAI_USAGE_URL;
+  return ANTHROPIC_USAGE_URL;
 }
 
 function failure(

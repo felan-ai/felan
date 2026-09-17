@@ -245,7 +245,16 @@ describe('powerline lifecycle', () => {
       provider: 'anthropic',
     }));
 
-    await harness.emit('session_shutdown', {}, selected.value);
+    const grok = extensionContext('tui', { provider: 'xai', id: 'grok-4.6' });
+    await harness.emit('model_select', {}, grok.value);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(usageHost.fetchUsage).toHaveBeenCalledTimes(4);
+    expect(usageHost.fetchUsage).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider: 'xai',
+      modelProvider: 'xai',
+    }));
+
+    await harness.emit('session_shutdown', {}, grok.value);
   });
 });
 
