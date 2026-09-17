@@ -22,7 +22,15 @@ const alternateTarget = { provider: 'anthropic', id: 'claude-opus', name: 'Opus'
 const externalModel = { provider: 'anthropic', id: 'claude-sonnet', name: 'Sonnet', reasoning: true } as any;
 const anthropicPlanner = { provider: 'anthropic', id: 'claude-opus-4-6', name: 'Opus', reasoning: true } as any;
 const anthropicTarget = { provider: 'anthropic', id: 'claude-haiku-4-5', name: 'Haiku', reasoning: true } as any;
-const xhighTarget = { provider: 'anthropic', id: 'claude-fable-5', name: 'Fable', reasoning: true } as any;
+const xhighTarget = { provider: 'openai-codex', id: 'gpt-6-astra', name: 'Astra', reasoning: true } as any;
+const xaiPlanner = { provider: 'xai', id: 'grok-4.6', name: 'Grok 4.6', reasoning: true } as any;
+const xaiFastTarget = { provider: 'xai', id: 'grok-4.1-fast', name: 'Grok 4.1 Fast', reasoning: true } as any;
+const vercelGrokTarget = {
+  provider: 'vercel-ai-gateway',
+  id: 'spacexai/grok-4.20-non-reasoning',
+  name: 'Grok 4.20 Non-Reasoning',
+  reasoning: true,
+} as any;
 const nonReasoningTarget = { provider: 'openai-codex', id: 'gpt-5.6-fast', name: 'Fast', reasoning: false } as any;
 
 function assistant(
@@ -1446,7 +1454,59 @@ describe('model handoff and restoration', () => {
     expect(harness.setModel).toHaveBeenCalledWith(xhighTarget, { updateDefault: false });
   });
 
+  it('does not leave the planner provider for a same-family gateway model', async () => {
+    const harness = createHarness({
+      currentModel: xaiPlanner,
+      models: [xaiPlanner, vercelGrokTarget, targetModel],
+    });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).not.toHaveBeenCalled();
+    expect(harness.currentModel).toBe(xaiPlanner);
+    expect(harness.setThinkingLevel).toHaveBeenCalledWith('medium', { updateDefault: false });
+    expect(harness.ui.notify).toHaveBeenCalledWith(
+      `Prewalk handed implementation to ${xaiPlanner.provider}/${xaiPlanner.id} at medium thinking without changing models.`,
+      'info',
+    );
+  });
+
+  it('uses a same-provider target-tier model when one is authenticated', async () => {
+    const harness = createHarness({
+      currentModel: xaiPlanner,
+      models: [xaiPlanner, xaiFastTarget, vercelGrokTarget, targetModel],
+    });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).toHaveBeenCalledWith(xaiFastTarget, { updateDefault: false });
+  });
+
+  it('still honors an exact target on another provider', async () => {
+    const harness = createHarness({
+      currentModel: xaiPlanner,
+      models: [xaiPlanner, vercelGrokTarget],
+      flags: { 'prewalk-target-model': `${vercelGrokTarget.provider}/${vercelGrokTarget.id}` },
+    });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).toHaveBeenCalledWith(vercelGrokTarget, { updateDefault: false });
+  });
+
   it('resolves tiers only from the current session model scope', async () => {
+    const harness = createHarness({
+      currentModel: anthropicPlanner,
+      models: [anthropicPlanner, targetModel, anthropicTarget],
+      scopedModels: [anthropicTarget],
+    });
+
+    await qualifyHandoff(harness);
+
+    expect(harness.setModel).toHaveBeenCalledWith(anthropicTarget, { updateDefault: false });
+  });
+
+  it('keeps the planner when session scope has no same-provider target-tier model', async () => {
     const harness = createHarness({
       currentModel: anthropicPlanner,
       models: [anthropicPlanner, targetModel, anthropicTarget],
@@ -1455,7 +1515,9 @@ describe('model handoff and restoration', () => {
 
     await qualifyHandoff(harness);
 
-    expect(harness.setModel).toHaveBeenCalledWith(targetModel, { updateDefault: false });
+    expect(harness.setModel).not.toHaveBeenCalled();
+    expect(harness.currentModel).toBe(anthropicPlanner);
+    expect(harness.setThinkingLevel).toHaveBeenCalledWith('medium', { updateDefault: false });
   });
 
   it('skips a tier handoff when the target and thinking level already match the planner', async () => {
@@ -1612,27 +1674,26 @@ describe('model handoff and restoration', () => {
 });
 
 describe('model failures and manual control', () => {
-  it('cancels when the selected tier has no authenticated model', async () => {
+  it('keeps the planner and reduces thinking when the provider has no target-tier model', async () => {
     const harness = createHarness({ models: [plannerModel] });
     await qualifyHandoff(harness);
 
     expect(harness.setModel).not.toHaveBeenCalled();
+    expect(harness.currentModel).toBe(plannerModel);
+    expect(harness.setThinkingLevel).toHaveBeenCalledWith('medium', { updateDefault: false });
     expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk has no authenticated model for the low tier.',
-      'error',
+      `Prewalk handed implementation to ${plannerModel.provider}/${plannerModel.id} at medium thinking without changing models.`,
+      'info',
     );
-    expect(await contextMessages(harness, [])).toEqual([]);
   });
 
-  it('excludes unauthenticated models from tier selection', async () => {
+  it('keeps the planner when other providers are unauthenticated', async () => {
     const harness = createHarness({ authenticated: false });
     await qualifyHandoff(harness);
 
     expect(harness.setModel).not.toHaveBeenCalled();
-    expect(harness.ui.notify).toHaveBeenCalledWith(
-      'Prewalk has no authenticated model for the low tier.',
-      'error',
-    );
+    expect(harness.currentModel).toBe(plannerModel);
+    expect(harness.setThinkingLevel).toHaveBeenCalledWith('medium', { updateDefault: false });
   });
 
   it('retains explicit authentication errors for exact model overrides', async () => {

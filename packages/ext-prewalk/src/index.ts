@@ -284,14 +284,14 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       const availableModels = ctx.scopedModels.length > 0
         ? ctx.scopedModels.map(({ model }) => model)
         : ctx.modelRegistry.getAvailable();
-      const selected = selectModelForTier(targetModel.tier, availableModels, {
+      const plannerProvider = snapshot.model.provider.toLowerCase();
+      const providerModels = availableModels.filter((model) => (
+        model.provider.toLowerCase() === plannerProvider
+      ));
+      const selected = selectModelForTier(targetModel.tier, providerModels, {
         preferredModel: snapshot.model,
       });
-      if (!selected) {
-        failAutomation(ctx, `Prewalk has no authenticated model for the ${targetModel.tier} tier.`);
-        return;
-      }
-      target = selected.model;
+      target = selected?.model ?? snapshot.model;
     } else {
       const exactReference = targetModel.model;
       const registeredTarget = ctx.modelRegistry.find(exactReference.provider, exactReference.id);

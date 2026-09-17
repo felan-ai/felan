@@ -143,12 +143,15 @@ path. You can also enter explicitly without a redundant approval prompt:
 /prewalk refactor the parser and verify the tests
 ```
 
-The default target is the `low` model tier at exact `medium` thinking. Hosts or
-the declarative extension configuration can select another tier or exact authenticated `provider/model`, and can
-override the implementation effort with `off`, `low`, `medium`, `high`, `xhigh`,
-or `max`. Pi clamps that request to the target model's capabilities. The
-original planner model and thinking level are restored after the run settles by
-default.
+The default target is the `low` model tier at exact `medium` thinking. Tier
+resolution stays on the current provider. If that provider has no authenticated
+model in the target tier, Prewalk keeps the planner model and only reduces
+thinking. Hosts or the declarative extension configuration can select another
+tier or exact authenticated `provider/model`, and can override the
+implementation effort with `off`, `low`, `medium`, `high`, `xhigh`, or `max`.
+An explicit `provider/model-id` may cross providers. Pi clamps that request to
+the target model's capabilities. The original planner model and thinking level
+are restored after the run settles by default.
 
 The optional `xhigh` model tier is intended for unusually complex architecture,
 design, planning, difficult debugging, or high-stakes code review. It is
@@ -193,8 +196,10 @@ host's select dialog.
    `exit_plan_mode`. The user can approve it, return feedback for another
    planning iteration, or cancel Prewalk.
 4. It makes one focused successful `edit`, `write`, or Codex `apply_patch`.
-5. At the turn boundary, Felan Code switches the next model request to the configured
-   target and applies the configured implementation thinking level.
+5. At the turn boundary, Felan Code switches the next model request to a
+   same-provider model in the configured target tier, or to an exact target, and
+   applies the configured implementation thinking level. If the planner provider
+   has no target-tier model, it keeps the planner model and only changes thinking.
 6. The target sees the useful conversation and tool history, completes the
    task graph, and verifies the work.
 7. Felan Code restores the planner selection after the run settles. Prewalk's

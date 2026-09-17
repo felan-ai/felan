@@ -1,6 +1,6 @@
 # @felan-ai/ext-prewalk
 
-Same-session Prewalk for Felan's complex repository work: the current model explores and plans the work in the session task graph, optionally submits that plan for user review, then makes one focused mutation after approval. Felan switches the next model request to the `low` model tier at exact `medium` thinking by default, which finishes and verifies the task with the full conversation and tool history intact. Tier resolution prefers the planner's provider and model family before falling back to another authenticated provider.
+Same-session Prewalk for Felan's complex repository work: the current model explores and plans the work in the session task graph, optionally submits that plan for user review, then makes one focused mutation after approval. Felan switches the next model request to the `low` model tier at exact `medium` thinking by default, which finishes and verifies the task with the full conversation and tool history intact. Tier resolution stays on the planner's provider and prefers that provider's matching model family. If the planner provider has no model in the target tier, Prewalk keeps the planner model and only applies the configured implementation thinking level. An explicit `provider/model-id` target may still cross providers.
 
 After the run settles, Prewalk restores the original planner model and thinking level by default. All of these automated changes are scoped to the active session and do not change the user's or project's default model or thinking preference.
 
@@ -10,7 +10,7 @@ For complex repository work that benefits from substantial exploration, coordina
 
 ## Requirements
 
-- An authenticated model in the configured target tier, or an authenticated exact target model
+- An authenticated planner model. A same-provider model in the configured target tier is used when available; otherwise Prewalk keeps the planner model and reduces thinking. An explicit target requires that exact authenticated model
 - At least one explicit mutation tool: Pi's `edit` or `write`, or the Codex extension's `apply_patch`
 
 Prewalk refuses to arm when no explicit mutation tool is active. Shell tools such as `bash` and Codex `exec_command` do not qualify because they are also used for exploration and verification. When both `TaskCreate` and `TaskUpdate` are active, handoff also waits for successful task creation and an in-progress task claim; if those tools are unavailable, mutation-only handoff remains available. Prewalk does not inspect `TaskList`, `TaskGet`, todo, or Beads activity.
@@ -62,7 +62,7 @@ In modes without interactive input, `exit_plan_mode` auto-approves an `ask` revi
 4. When both task tools are active, successful `TaskCreate` and `TaskUpdate`
    calls claiming `in_progress` work open the task gate. The planner then
    performs one focused successful `edit`, `write`, or `apply_patch`.
-5. At that turn boundary, Felan resolves and switches to the configured target tier or exact model.
+5. At that turn boundary, Felan resolves a same-provider model in the configured target tier, or an exact target model. If the planner provider has no target-tier model, it keeps the planner model and applies the configured thinking level.
 6. The target model completes the existing session task graph and runs the relevant verification.
 7. Once the agent run has fully settled, Felan restores the planner model and thinking level.
 
@@ -120,7 +120,8 @@ user intent.
 
 ## Failure behavior
 
-- A target tier with no authenticated candidate, or a missing exact target model or authentication, clears the handoff and keeps the existing trajectory.
+- A target tier with no same-provider candidate keeps the planner model and applies the configured implementation thinking level.
+- A missing exact target model or authentication clears the handoff and keeps the existing trajectory.
 - A target that already matches the active planner model and effective target thinking clears Prewalk without performing a handoff.
 - A same-model target with a different effective thinking level changes effort without changing models and then enters implementation.
 - An exact target outside a nonempty session model scope is rejected before switching.
