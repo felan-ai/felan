@@ -124,9 +124,13 @@ through, use `PageUp`/`PageDown` or switch to `regular` mode.
 
 The dependency manager stores its revisioned onboarding manifest under
 `felanTui.onboarding`. It is internal state; prefer `/dependencies` over editing
-it directly. A complete manifest prevents the onboarding manager from probing
-external dependencies during normal startup. The full resource view reports
-extensions as enabled, disabled, or setup required without probing them.
+it directly. During interactive startup, missing managed installers appear in
+one initially unchecked checklist; checking an item authorizes installation and
+unchecked items use their safe fallback. Escape leaves the current pass pending.
+Available and non-installable dependencies resolve without another prompt. A
+complete manifest prevents the onboarding manager from probing external
+dependencies during normal startup. The full resource view reports extensions as
+enabled, disabled, or setup required without probing them.
 
 ## Application prompt append
 

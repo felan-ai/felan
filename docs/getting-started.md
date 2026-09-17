@@ -92,18 +92,22 @@ same project when continuing project work.
 
 ## First-start dependency choices
 
-Some built-ins need an external executable. In interactive startup Felan Code may
-offer to install a reviewed dependency or disable the affected extension:
+Some built-ins need an external executable. In interactive startup Felan Code
+shows one initially unchecked checklist for missing managed dependencies. Check
+an extension to authorize its reviewed dependency installation, or leave it
+unchecked to use its safe fallback:
 
 - MarkItDown for office-document conversion;
 - RTK for command rewriting (output compaction still works without it);
 - `agent-browser` for browser automation; and
+- Codebase Memory for structural code exploration; and
 - POSIX process utilities for detached background Bash, which Felan Code does not
   install.
 
-Installation is never started by a model tool call. Revisit these choices with
-`/dependencies`. See [runtime dependencies](reference/runtime-dependencies.md)
-for the exact versions and unavailable behavior.
+Escape leaves the current onboarding pass pending. Installation is never started
+by a model tool call. Revisit these choices with `/dependencies`. See [runtime
+dependencies](reference/runtime-dependencies.md) for the exact versions and
+unavailable behavior.
 
 ## Understand the permission boundary
 

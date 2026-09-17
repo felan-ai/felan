@@ -52,14 +52,13 @@ describe('local runtime dependency onboarding', () => {
       unavailableOutcome: 'continue',
     });
     const harness = await createHarness(fixture, [markitdown, rtk], {
-      selections: ['Install markitdown', 'Continue with output compaction only'],
-      confirmations: [true],
+      checkedIndexes: [0],
     });
 
     expect(harness.commands.has('dependencies')).toBe(true);
     await harness.emit('session_start', { reason: 'startup' });
 
-    expect(harness.confirm).toHaveBeenCalledWith('Install markitdown', 'Install markitdown?');
+    expect(harness.confirm).not.toHaveBeenCalled();
     expect(install).toHaveBeenCalledOnce();
     expect(harness.notifications).toContainEqual(['markitdown installed (1.2.3). Restart Felan Code to load the extension.', 'info']);
     const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
@@ -79,15 +78,75 @@ describe('local runtime dependency onboarding', () => {
       unavailableChoice: 'Disable the Browser extension',
     });
     const harness = await createHarness(fixture, [browser], {
-      selections: ['Install agent-browser'],
-      confirmations: [true],
+      checkedIndexes: [0],
     });
 
     await harness.emit('session_start', { reason: 'startup' });
 
-    expect(harness.confirm).toHaveBeenCalledWith('Install agent-browser', 'Install agent-browser?');
+    expect(harness.confirm).not.toHaveBeenCalled();
     expect(install).toHaveBeenCalledOnce();
     expect(harness.notifications).toContainEqual(['agent-browser installed (0.37.1). Restart Felan Code to load the extension.', 'info']);
+  });
+
+  it('shows one unchecked checklist and installs only checked dependencies', async () => {
+    const fixture = await createFixture();
+    const installs = new Map<string, ReturnType<typeof vi.fn>>();
+    const dependencies = ['agent-browser', 'codebase-memory', 'markitdown', 'rtk'].map((id) => {
+      const install = vi.fn(async () => ({ available: true as const, version: '1.0.0' }));
+      installs.set(id, install);
+      return dependency({
+        id,
+        extension: id === 'agent-browser' ? 'browser' : id === 'codebase-memory' ? 'codebaseMemory' : id === 'markitdown' ? 'markitdown' : 'rtkOptimizer',
+        install,
+      });
+    });
+    const harness = await createHarness(fixture, dependencies, { checkedIndexes: [0, 2] });
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    expect(harness.custom).toHaveBeenCalledOnce();
+    expect(harness.confirm).not.toHaveBeenCalled();
+    expect(installs.get('agent-browser')).toHaveBeenCalledOnce();
+    expect(installs.get('codebase-memory')).not.toHaveBeenCalled();
+    expect(installs.get('markitdown')).toHaveBeenCalledOnce();
+    expect(installs.get('rtk')).not.toHaveBeenCalled();
+    const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
+    expect(settings.felanTui.onboarding.extensions).toEqual({
+      browser: 1,
+      codebaseMemory: 1,
+      markitdown: 1,
+      rtkOptimizer: 1,
+    });
+  });
+
+  it('leaves all onboarding records pending when the checklist is cancelled', async () => {
+    const fixture = await createFixture();
+    const install = vi.fn(async () => ({ available: true as const }));
+    const harness = await createHarness(fixture, [dependency({ id: 'agent-browser', extension: 'browser', install })], {
+      cancelCustom: true,
+    });
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    expect(install).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'))).toEqual({});
+  });
+
+  it('continues selected installations after a failure', async () => {
+    const fixture = await createFixture();
+    const failed = vi.fn(async () => ({ available: false as const, reason: 'download failed' }));
+    const succeeded = vi.fn(async () => ({ available: true as const, version: '1.0.0' }));
+    const first = dependency({ id: 'agent-browser', extension: 'browser', install: failed });
+    const second = dependency({ id: 'markitdown', extension: 'markitdown', install: succeeded });
+    const harness = await createHarness(fixture, [first, second], { checkedIndexes: [0, 1] });
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    expect(failed).toHaveBeenCalledOnce();
+    expect(succeeded).toHaveBeenCalledOnce();
+    const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
+    expect(settings.felanTui.onboarding.extensions).toEqual({ markitdown: 1 });
+    expect(settings.builtinExtensions.browser).toBeUndefined();
   });
 
   it('persists browser extension disablement', async () => {
@@ -98,12 +157,12 @@ describe('local runtime dependency onboarding', () => {
       unavailableChoice: 'Disable the Browser extension',
     });
     const harness = await createHarness(fixture, [browser], {
-      selections: ['Disable the Browser extension'],
+      checkedIndexes: [],
     });
 
     await harness.emit('session_start', { reason: 'startup' });
 
-    expect(harness.select).toHaveBeenCalledOnce();
+    expect(harness.custom).toHaveBeenCalledOnce();
     const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
     expect(settings.builtinExtensions.browser).toBe(false);
     expect(settings.felanTui.onboarding).toEqual({ schemaVersion: 1, extensions: { browser: 1 } });
@@ -113,13 +172,13 @@ describe('local runtime dependency onboarding', () => {
     const fixture = await createFixture();
     const markitdown = dependency({ id: 'markitdown', extension: 'markitdown' });
     const harness = await createHarness(fixture, [markitdown], {
-      selections: ['Disable markitdown extension'],
+      checkedIndexes: [],
     });
 
     await harness.emit('session_start', { reason: 'startup' });
     await harness.emit('session_start', { reason: 'reload' });
 
-    expect(harness.select).toHaveBeenCalledTimes(1);
+    expect(harness.custom).toHaveBeenCalledOnce();
     const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
     expect(settings.builtinExtensions.markitdown).toBe(false);
     expect(settings.felanTui.onboarding).toEqual({ schemaVersion: 1, extensions: { markitdown: 1 } });
@@ -144,11 +203,11 @@ describe('local runtime dependency onboarding', () => {
       available: true,
       unavailableChoice: 'Disable the Browser extension',
     });
-    const harness = await createHarness(fixture, [browser], { selections: ['Enable agent-browser'] });
+    const harness = await createHarness(fixture, [browser], {});
 
     await harness.emit('session_start', { reason: 'startup' });
 
-    expect(harness.select).toHaveBeenCalledOnce();
+    expect(harness.custom).not.toHaveBeenCalled();
     const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
     expect(settings.builtinExtensions.browser).toBe(true);
     expect(settings.felanTui.onboarding).toEqual({ schemaVersion: 1, extensions: { browser: 1 } });
@@ -159,7 +218,7 @@ describe('local runtime dependency onboarding', () => {
     const check = vi.fn(() => new Promise<RuntimeDependencyStatus>(() => {}));
     const browser = dependency({ id: 'agent-browser', extension: 'browser', check });
     await setOnboarding(fixture.agentDir, 'browser', 1);
-    const harness = await createHarness(fixture, [browser], { selections: ['Disable agent-browser extension'] });
+    const harness = await createHarness(fixture, [browser], { checkedIndexes: [] });
 
     await expect(Promise.race([
       harness.emit('session_start', { reason: 'startup' }),
@@ -173,7 +232,7 @@ describe('local runtime dependency onboarding', () => {
     const changedHarness = await createHarness(fixture, [changed], { selections: ['Disable agent-browser extension'] });
     await changedHarness.emit('session_start', { reason: 'startup' });
     expect(changedCheck).toHaveBeenCalledOnce();
-    expect(changedHarness.select).toHaveBeenCalledOnce();
+    expect(changedHarness.custom).toHaveBeenCalledOnce();
   });
 
   it('leaves onboarding pending when installation fails or the user defers', async () => {
@@ -184,17 +243,16 @@ describe('local runtime dependency onboarding', () => {
       install: async () => ({ available: false, reason: 'download failed' }),
     });
     const harness = await createHarness(fixture, [failing], {
-      selections: ['Install agent-browser'],
-      confirmations: [true],
+      checkedIndexes: [0],
     });
     await harness.emit('session_start', { reason: 'startup' });
-    expect(harness.select).toHaveBeenCalledOnce();
+    expect(harness.custom).toHaveBeenCalledOnce();
     const afterFailure = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
     expect(afterFailure.felanTui?.onboarding).toBeUndefined();
 
-    const deferred = await createHarness(fixture, [failing], { selections: ['Decide later'] });
+    const deferred = await createHarness(fixture, [failing], { cancelCustom: true });
     await deferred.emit('session_start', { reason: 'startup' });
-    expect(deferred.select).toHaveBeenCalledOnce();
+    expect(deferred.custom).toHaveBeenCalledOnce();
     const afterDeferral = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
     expect(afterDeferral.felanTui?.onboarding).toBeUndefined();
   });
@@ -277,6 +335,8 @@ async function createHarness(
   uiOptions: {
     selections?: string[];
     confirmations?: boolean[];
+    checkedIndexes?: number[];
+    cancelCustom?: boolean;
     mode?: ExtensionContext['mode'];
   },
 ) {
@@ -287,6 +347,26 @@ async function createHarness(
   const confirmations = [...(uiOptions.confirmations ?? [])];
   const select = vi.fn(async () => selections.shift());
   const confirm = vi.fn(async () => confirmations.shift() ?? false);
+  let customResult: readonly string[] | undefined;
+  const custom = vi.fn(async (factory: (...args: any[]) => any) => {
+    const component = factory(
+      { requestRender: vi.fn(), terminal: { rows: 24 } },
+      { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+      { matches: () => false },
+      (value: readonly string[] | undefined) => { customResult = value; },
+    );
+    if (uiOptions.cancelCustom) {
+      component.handleInput?.('\u001b');
+    } else {
+      for (const index of uiOptions.checkedIndexes ?? []) {
+        for (let step = 0; step < index; step += 1) component.handleInput?.('\u001b[B');
+        component.handleInput?.(' ');
+        for (let step = index; step > 0; step -= 1) component.handleInput?.('\u001b[A');
+      }
+      component.handleInput?.('\r');
+    }
+    return customResult;
+  });
   const ctx = {
     cwd: fixture.runtime.cwd,
     hasUI: uiOptions.mode !== 'print',
@@ -294,6 +374,7 @@ async function createHarness(
     ui: {
       select,
       confirm,
+      custom,
       notify: (message: string, level?: string) => notifications.push([message, level]),
       setStatus: vi.fn(),
     },
@@ -318,6 +399,7 @@ async function createHarness(
   return {
     commands,
     confirm,
+    custom,
     notifications,
     select,
     async emit(name: string, event: Record<string, unknown>): Promise<void> {

@@ -34,6 +34,7 @@ import {
   isBuiltinExtensionEnabled,
   setDependencyOnboardingDecision,
 } from './settings.js';
+import { selectDependencyInstallations, type DependencyInstallOption } from './dependency-onboarding.js';
 
 export const localDependencyExtensionName = '@felan-ai/felan/runtime-dependencies';
 
@@ -279,39 +280,52 @@ async function onboardMissingDependencies(
   options: CreateLocalDependencyExtensionOptions,
   dependencies: readonly LocalRuntimeDependency[],
 ): Promise<void> {
-  for (const dependency of dependencies) {
-    await options.settingsManager.reload();
-    const settings = getFelanSettings(options.settingsManager);
-    if (isDependencyOnboardingComplete(settings, dependency.extension, dependency.revision)) continue;
+  await options.settingsManager.reload();
+  const settings = getFelanSettings(options.settingsManager);
+  const incomplete = dependencies.filter((dependency) => !isDependencyOnboardingComplete(
+    settings,
+    dependency.extension,
+    dependency.revision,
+  ));
+  if (incomplete.length === 0) return;
 
-    const status = await checkDependency(dependency, runtime);
+  const checked = await Promise.all(incomplete.map(async (dependency) => ({
+    dependency,
+    status: await checkDependency(dependency, runtime),
+  })));
+  const installCandidates = checked.filter(({ dependency, status }) => !status.available && dependency.install);
+  const automatic = checked.filter(({ dependency, status }) => status.available || !dependency.install);
 
-    const installChoice = `Install ${dependency.label}`;
-    const enableChoice = `Enable ${dependency.label}`;
-    const disableChoice = dependency.unavailableChoice;
-    const laterChoice = 'Decide later';
-    const selected = await ctx.ui.select(
-      status.available
-        ? `${dependency.label} is available (${status.version ?? 'detected'}). Choose how to enable it.`
-        : dependency.unavailableMessage?.(status) ?? formatUnavailableMessage(
-        `${dependency.label} is unavailable — ${dependency.purpose}.`,
-        undefined,
-        status,
-      ),
-      status.available
-        ? [enableChoice, disableChoice, laterChoice]
-        : [...(dependency.install ? [installChoice] : []), disableChoice, laterChoice],
-    );
-    if (!selected || selected === laterChoice) continue;
-    if (selected === installChoice) {
-      await installDependency(dependency, runtime, ctx, options, true);
-      continue;
+  if (installCandidates.length === 0) {
+    for (const { dependency, status } of automatic) {
+      if (status.available) await recordDependencyDecision(dependency, options, true);
+      else await applyUnavailableChoice(dependency, runtime, ctx, options);
     }
-    if (selected === enableChoice) {
-      await recordDependencyDecision(dependency, options, true);
-      continue;
+    return;
+  }
+
+  const installOptions: DependencyInstallOption[] = installCandidates.map(({ dependency, status }) => ({
+    id: dependency.id,
+    label: dependency.label,
+    description: sanitizeOnboardingText(
+      dependency.installConfirmation
+        ?? `Install the reviewed dependency required for ${dependency.purpose}.`,
+    ) + (status.reason ? ` Detected reason: ${sanitizeOnboardingText(status.reason)}` : ''),
+  }));
+  const selected = await selectDependencyInstallations(ctx, installOptions);
+  if (selected === undefined) return;
+
+  for (const { dependency, status } of automatic) {
+    if (status.available) await recordDependencyDecision(dependency, options, true);
+    else await applyUnavailableChoice(dependency, runtime, ctx, options);
+  }
+  const selectedIds = new Set(selected);
+  for (const { dependency } of installCandidates) {
+    if (selectedIds.has(dependency.id)) {
+      await installDependency(dependency, runtime, ctx, options, true, false);
+    } else {
+      await applyUnavailableChoice(dependency, runtime, ctx, options);
     }
-    await applyUnavailableChoice(dependency, runtime, ctx, options);
   }
 }
 
@@ -387,12 +401,13 @@ async function installDependency(
   ctx: ExtensionContext,
   options: CreateLocalDependencyExtensionOptions,
   enableAfterInstall: boolean,
+  requireConfirmation = true,
 ): Promise<void> {
   if (!dependency.install || !dependency.installConfirmation) {
     ctx.ui.notify(`${dependency.label} has no managed installer.`, 'warning');
     return;
   }
-  if (!await ctx.ui.confirm(`Install ${dependency.label}`, dependency.installConfirmation)) return;
+  if (requireConfirmation && !await ctx.ui.confirm(`Install ${dependency.label}`, dependency.installConfirmation)) return;
   const statusKey = 'felan-dependency-install';
   ctx.ui.setStatus(statusKey, `… Installing ${dependency.label}`);
   try {
@@ -483,4 +498,11 @@ function formatUnavailableMessage(
     status.reason ? `Detected reason: ${status.reason}` : undefined,
     'Use /dependencies to manage this later.',
   ].filter(Boolean).join('\n');
+}
+
+function sanitizeOnboardingText(value: string): string {
+  return value
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
 }

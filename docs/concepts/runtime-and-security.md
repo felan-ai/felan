@@ -116,10 +116,11 @@ be reset to `ask`. A managed CLI install does not install Chrome.
 ## Dependency installation
 
 Binary-backed extensions degrade safely when dependencies are absent. The local
-TUI offers explicit installation or disablement interactively; it never installs
-during startup checks, non-interactive runs, or model tool calls. Managed
-installers use reviewed versions, verify download/binary integrity, avoid
-package lifecycle scripts, and stage candidates in agent storage.
+TUI offers one initially unchecked installation checklist; checking an item is
+the explicit authorization for that reviewed installation, while unchecked items
+use their safe fallback. It never installs during non-interactive runs or model
+tool calls. Managed installers use reviewed versions, verify download/binary
+integrity, avoid package lifecycle scripts, and stage candidates in agent storage.
 
 POSIX utilities required for detached background processes are probed but not
 installed by Felan Code. Binary-backed extensions may use the optional runtime

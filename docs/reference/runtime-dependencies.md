@@ -13,14 +13,17 @@ portable detection, optional installation, and safe unavailable behavior;
    not trigger installation, repeatedly execute a missing command, or break
    unrelated extension behavior.
 3. The local TUI's source-controlled registry in
-   `apps/tui/src/dependencies.ts` performs synchronous onboarding only for
-   dependency-backed extensions without a current onboarding record. The
-   record is keyed by the stable built-in extension name and its explicit
-   onboarding revision.
+   `apps/tui/src/dependencies.ts` probes dependency-backed extensions without a
+   current onboarding record, then shows one initially unchecked checklist for
+   unavailable dependencies with managed installers. Checking an item is the
+   explicit authorization to install it; unchecked items use their safe fallback.
+   Available dependencies and unavailable dependencies without managed installers
+   are resolved without another prompt.
 4. A completed enable, disable, install, or supported degraded-mode choice is
    stored atomically with the corresponding `builtinExtensions` intent in
-   `$FELAN_AGENT_DIR/settings.json`. Cancellation, deferral, declined
-   confirmation, and failed installation remain pending.
+   `$FELAN_AGENT_DIR/settings.json`. Escape/cancellation leaves the entire pass
+   pending. A failed installation remains pending while other submitted items
+   continue independently.
 5. Once all current records exist, normal startup does not run the TUI
    dependency manager's probes. The startup resource view reports enabled,
    disabled, and setup-required Felan extensions from settings only. Use
