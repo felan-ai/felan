@@ -140,7 +140,7 @@ describe('local settings', () => {
     }, [OUTPUT_STYLE_CONFIG]);
     const outputStyle = resolved.configs.get('outputStyle');
 
-    expect(outputStyle).toEqual({ style: 'concise', instructions: '' });
+    expect(outputStyle).toEqual({ style: 'concise', instructions: '', instructionsFile: '' });
     expect(resolved.warnings).toEqual([
       'settings.json.extensionConfig.outputStyle.style must be one of: concise, explanatory, custom; using the default value.',
     ]);

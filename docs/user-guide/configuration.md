@@ -310,8 +310,9 @@ exceptions, caveats, verification results, and blockers are not omitted. The
 output-style extension appends the selected instructions as a bounded
 `## Output Style` section for root and child sessions.
 
-Use `custom` to test arbitrary system-prompt instructions without changing the
-extension source:
+Use `custom` to supply arbitrary system-prompt instructions without changing the
+extension source. Provide exactly one of inline `instructions` or
+`instructionsFile`:
 
 ```json
 {
@@ -324,13 +325,28 @@ extension source:
 }
 ```
 
-`instructions` must be a non-empty string when `style` is `custom`. Felan Code does
-not load instruction files or ambient prompt resources; callers must pass the
-text explicitly.
+```json
+{
+  "extensionConfig": {
+    "outputStyle": {
+      "style": "custom",
+      "instructionsFile": "output-style.md"
+    }
+  }
+}
+```
+
+Relative `instructionsFile` paths resolve from `$FELAN_AGENT_DIR`. Absolute paths
+are used as written. Paths starting with `~/` expand to the current home
+directory. The local host reads the file when it binds the extension for root
+and child sessions; empty, missing, or unreadable files are errors. Setting both
+`instructions` and `instructionsFile` is an error.
 
 The same value can be selected from the CLI with `--output-style concise` or
 from the interactive `/settings` screen. Custom text is available through
-`--output-style-instructions` or the corresponding `/settings` field.
+`--output-style-instructions` or the corresponding `/settings` field. Custom
+files are available through `--output-style-instructions-file` or the
+`instructionsFile` `/settings` field.
 
 The former `caveman` value has been replaced by `concise`. Existing
 configurations should change either legacy `"outputStyle": "caveman"` or
@@ -338,9 +354,9 @@ configurations should change either legacy `"outputStyle": "caveman"` or
 namespaced values produce a warning and use the concise default; invalid CLI
 or programmatic values are errors. Felan Code does not retain `caveman` as an alias.
 
-The local host captures the selection when it creates a session runtime, so
-restart Felan Code after changing it. Set `builtinExtensions.outputStyle` to `false`
-to disable the extension.
+The local host captures the selection and instruction-file contents when it
+creates a session runtime, so restart Felan Code after changing the style or the
+file. Set `builtinExtensions.outputStyle` to `false` to disable the extension.
 
 ### Codex tools
 

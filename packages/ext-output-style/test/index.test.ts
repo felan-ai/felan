@@ -7,6 +7,7 @@ import outputStyleExtension, {
   OUTPUT_STYLE_CONFIG,
   OUTPUT_STYLES,
   parseOutputStyle,
+  resolveCustomOutputStyleSource,
 } from '../src/index.js';
 
 type BeforeAgentStartHandler = (
@@ -33,6 +34,11 @@ describe('@felan-ai/ext-output-style', () => {
       type: 'string',
       default: '',
       cliName: 'output-style-instructions',
+    });
+    expect(OUTPUT_STYLE_CONFIG.fields.instructionsFile).toMatchObject({
+      type: 'string',
+      default: '',
+      cliName: 'output-style-instructions-file',
     });
   });
 
@@ -75,6 +81,33 @@ describe('@felan-ai/ext-output-style', () => {
     });
 
     expect(systemPrompt).toContain('<output_style>\nUse one sentence when enough.\n</output_style>');
+  });
+
+  it('resolves custom instructions from inline text or a file path', () => {
+    expect(resolveCustomOutputStyleSource('  Keep blockers.  ', '')).toEqual({
+      kind: 'inline',
+      instructions: 'Keep blockers.',
+    });
+    expect(resolveCustomOutputStyleSource(undefined, '  output-style.md  ')).toEqual({
+      kind: 'file',
+      path: 'output-style.md',
+    });
+    expect(() => resolveCustomOutputStyleSource('Keep blockers.', 'output-style.md')).toThrow(
+      'outputStyle.instructions and outputStyle.instructionsFile cannot both be set',
+    );
+    expect(() => resolveCustomOutputStyleSource('', '   ')).toThrow(
+      'outputStyle.instructions or outputStyle.instructionsFile must be a non-empty string when outputStyle is custom',
+    );
+    expect(() => resolveCustomOutputStyleSource(1, undefined)).toThrow('outputStyle.instructions must be a string');
+  });
+
+  it('requires a host to load custom instruction files', () => {
+    expect(() => applyExtension(outputStyleExtension, FELAN_BASE_SYSTEM_PROMPT, {
+      style: 'custom',
+      instructionsFile: 'output-style.md',
+    })).toThrow(
+      'outputStyle.instructionsFile must be resolved by the host; pass the file contents as instructions',
+    );
   });
 
   it('validates style values before registering the extension', () => {

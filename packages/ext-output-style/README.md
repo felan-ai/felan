@@ -8,7 +8,8 @@ and `explanatory` styles plus a `custom` style for caller-provided instructions.
 `concise` is the default. It minimizes prose while preserving clarity, exact
 technical content, conditions, caveats, verification, and blockers, and it
 expands for ambiguity, safety-sensitive actions, errors, and complex plans.
-File-backed styles are not supported.
+`createOutputStyleExtension` accepts instruction text only. Hosts may resolve
+`extensionConfig.outputStyle.instructionsFile` to that text before activation.
 
 ```ts
 import { createOutputStyleExtension } from '@felan-ai/ext-output-style';
@@ -19,7 +20,8 @@ const experiment = createOutputStyleExtension('custom', 'Answer in one compact p
 ```
 
 Felan declares the style as `extensionConfig.outputStyle.style`. Custom
-instructions use `extensionConfig.outputStyle.instructions`:
+instructions use exactly one of `extensionConfig.outputStyle.instructions` or
+`extensionConfig.outputStyle.instructionsFile`:
 
 ```json
 {
@@ -32,9 +34,21 @@ instructions use `extensionConfig.outputStyle.instructions`:
 }
 ```
 
-The local TUI, CLI, `/settings`, and Agent Core consumers resolve these fields
-before activating the extension for root and child sessions. A custom style
-requires non-empty instructions.
+```json
+{
+  "extensionConfig": {
+    "outputStyle": {
+      "style": "custom",
+      "instructionsFile": "output-style.md"
+    }
+  }
+}
+```
+
+The local TUI, CLI, and `/settings` resolve these fields before activating the
+extension for root and child sessions. A custom style requires non-empty inline
+instructions or a host-loaded instruction file. This package does not read the
+file; the host passes the contents to `createOutputStyleExtension`.
 
 ## Savings measurement
 
@@ -60,11 +74,11 @@ supported baseline and never contribute savings.
 
 ## Package boundary and requirements
 
-The package owns the supported style names, built-in instructions, custom-text
+The package owns the supported style names, built-in instructions, custom-source
 validation, and prompt-section formatting. A host owns style selection,
-built-in enablement, and session lifecycle. The package requires a compatible
-`@felan-ai/agent-core` peer and does not read settings, prompt files, or ambient
-resources itself.
+built-in enablement, instruction-file loading, and session lifecycle. The package
+requires a compatible `@felan-ai/agent-core` peer and does not read settings,
+prompt files, or ambient resources itself.
 
 ## Development
 

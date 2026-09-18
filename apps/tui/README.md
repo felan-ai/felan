@@ -256,10 +256,10 @@ global `outputStyle` setting to `explanatory` for more reasoning and context.
 The concise style prefers minimal prose, clear fragments, and compact bullets
 while preserving exact technical content, conditions, caveats, verification,
 and blockers; it expands when compression could create ambiguity or safety
-risk. Use `extensionConfig.outputStyle.style: custom` with explicit
-`instructions` to test alternative prompt wording;
+risk. Use `extensionConfig.outputStyle.style: custom` with explicit `instructions` or
+`instructionsFile` to test alternative prompt wording;
 the [configuration guide](../../docs/user-guide/configuration.md#output-style)
-documents validation and session-lifecycle behavior.
+documents validation, path resolution, and session-lifecycle behavior.
 
 ## Canonical user documentation
 

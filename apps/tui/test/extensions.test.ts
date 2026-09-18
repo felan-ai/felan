@@ -1,8 +1,11 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ModelRuntime } from '@felan-ai/agent-core';
 import type { FelanExtensionAPI } from '@felan-ai/agent-core';
 import { createEmptyMemoryArtifact, createMemorySnapshot, type MemoryHost } from '@felan-ai/ext-memory';
 import type { SubagentHost } from '@felan-ai/ext-subagents';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   createLocalExtensionImporter,
   importLocalExtension,
@@ -11,6 +14,12 @@ import {
   resolveBuiltinExtensionPackages,
 } from '../src/extensions.js';
 import type { LocalSubagentNavigatorHost } from '../src/subagents/agent-navigator.js';
+
+const temporaryPaths: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
+});
 
 describe('local extension importer', () => {
   it('discovers ask-user configuration for the host-bound extension', async () => {
@@ -264,6 +273,35 @@ describe('local extension importer', () => {
 
     expect(handler?.({ systemPrompt: 'Base prompt' })?.systemPrompt).toContain(
       '<output_style>\nCustom benchmark instructions.\n</output_style>',
+    );
+  });
+
+  it('loads custom output-style instructions from a file for local root sessions', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'felan-output-style-root-'));
+    temporaryPaths.push(agentDir);
+    await writeFile(join(agentDir, 'style.md'), 'Write all user-facing prose in Bulgarian.');
+    const importer = createLocalExtensionImporter(
+      testSubagentHost(),
+      testModelRuntime(),
+      async () => { throw new Error('The generic importer must not load output style'); },
+    );
+    const imported = await importer('@felan-ai/ext-output-style') as {
+      default: (pi: FelanExtensionAPI) => void | Promise<void>;
+    };
+    let handler: ((event: { systemPrompt: string }) => { systemPrompt: string } | undefined) | undefined;
+    await imported.default({
+      agentDir,
+      config: {
+        style: 'custom',
+        instructionsFile: 'style.md',
+      },
+      on: ((event: string, registered: typeof handler) => {
+        if (event === 'before_agent_start') handler = registered;
+      }) as FelanExtensionAPI['on'],
+    } as FelanExtensionAPI);
+
+    expect(handler?.({ systemPrompt: 'Base prompt' })?.systemPrompt).toContain(
+      '<output_style>\nWrite all user-facing prose in Bulgarian.\n</output_style>',
     );
   });
 

@@ -13,7 +13,6 @@ import { ASK_USER_CONFIG, createAskUserExtension, type AskUserConfig } from '@fe
 import { createTuiAskUserHost } from '@felan-ai/ext-ask-user/tui';
 import { createMemoryExtension, type MemoryHost, type MemoryRole } from '@felan-ai/ext-memory';
 import {
-  createOutputStyleExtension,
   DEFAULT_OUTPUT_STYLE,
   type OutputStyle,
   OUTPUT_STYLE_CONFIG,
@@ -34,6 +33,7 @@ import { HERDR_BLOCKED_EVENT } from './herdr.js';
 import { createLocalSavingsUsageHost, createLocalSubscriptionUsageHost } from './powerline.js';
 import type { SavingsService } from './savings.js';
 import { createLocalInsightsHost } from './insights.js';
+import { createLocalOutputStyleExtension } from './output-style-instructions.js';
 import {
   registerLocalSubagentNavigator,
   type AgentRailRenderer,
@@ -236,12 +236,7 @@ export function createLocalExtensionImporter(
       return { default: createMemoryExtension(memoryBinding) };
     }
     if (packageName === outputStyleExtensionPackage) {
-      const extension = ((pi: Parameters<ReturnType<typeof createOutputStyleExtension>>[0]) => (
-        createOutputStyleExtension(
-          pi.config?.style ?? outputStyle,
-          pi.config?.instructions,
-        )(pi)
-      ));
+      const extension = createLocalOutputStyleExtension(outputStyle);
       associateExtensionConfig(extension, OUTPUT_STYLE_CONFIG);
       return { default: extension };
     }

@@ -19,8 +19,20 @@ export const OUTPUT_STYLE_CONFIG = defineExtensionConfig({
       description: 'Custom system-prompt instructions used when output style is custom',
       cliName: 'output-style-instructions',
     }),
+    instructionsFile: configField.string({
+      default: '',
+      description: 'Path to custom system-prompt instructions used when output style is custom',
+      cliName: 'output-style-instructions-file',
+      validate: (value: unknown) => typeof value === 'string' && value.includes('\0')
+        ? 'must not contain NUL bytes'
+        : undefined,
+    }),
   },
 });
+
+export type CustomOutputStyleSource =
+  | { readonly kind: 'inline'; readonly instructions: string }
+  | { readonly kind: 'file'; readonly path: string };
 
 const OUTPUT_STYLE_START = '<output_style>';
 const OUTPUT_STYLE_END = '</output_style>';
@@ -51,6 +63,22 @@ export function parseOutputStyle(value: unknown = DEFAULT_OUTPUT_STYLE): OutputS
     return value as OutputStyle;
   }
   throw new Error(`outputStyle must be one of: ${OUTPUT_STYLES.join(', ')}`);
+}
+
+export function resolveCustomOutputStyleSource(
+  instructions?: unknown,
+  instructionsFile?: unknown,
+): CustomOutputStyleSource {
+  const inline = optionalNonEmptyString(instructions, 'outputStyle.instructions');
+  const file = optionalNonEmptyString(instructionsFile, 'outputStyle.instructionsFile');
+  if (inline !== undefined && file !== undefined) {
+    throw new Error('outputStyle.instructions and outputStyle.instructionsFile cannot both be set');
+  }
+  if (inline !== undefined) return { kind: 'inline', instructions: inline };
+  if (file !== undefined) return { kind: 'file', path: file };
+  throw new Error(
+    'outputStyle.instructions or outputStyle.instructionsFile must be a non-empty string when outputStyle is custom',
+  );
 }
 
 export function formatOutputStyleSection(style: OutputStyle, instructions?: unknown): string {
@@ -90,10 +118,17 @@ export function createOutputStyleExtension(
   };
 }
 
-const outputStyleExtension: FelanExtension = ((pi: FelanExtensionAPI) => createOutputStyleExtension(
-  pi.config?.style ?? DEFAULT_OUTPUT_STYLE,
-  pi.config?.instructions,
-)(pi));
+const outputStyleExtension: FelanExtension = ((pi: FelanExtensionAPI) => {
+  const style = parseOutputStyle(pi.config?.style ?? DEFAULT_OUTPUT_STYLE);
+  if (style !== 'custom') return createOutputStyleExtension(style)(pi);
+  const source = resolveCustomOutputStyleSource(pi.config?.instructions, pi.config?.instructionsFile);
+  if (source.kind === 'file') {
+    throw new Error(
+      'outputStyle.instructionsFile must be resolved by the host; pass the file contents as instructions',
+    );
+  }
+  return createOutputStyleExtension(style, source.instructions)(pi);
+});
 associateExtensionConfig(outputStyleExtension, OUTPUT_STYLE_CONFIG);
 
 export default outputStyleExtension;
@@ -103,4 +138,11 @@ function parseCustomInstructions(value: unknown): string {
     throw new Error('outputStyle.instructions must be a non-empty string when outputStyle is custom');
   }
   return value.trim();
+}
+
+function optionalNonEmptyString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') throw new Error(`${field} must be a string`);
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
 }

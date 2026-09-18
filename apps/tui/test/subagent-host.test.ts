@@ -127,6 +127,41 @@ describe('LocalSubagentHost', () => {
     await host.shutdown();
   });
 
+  it('binds custom output-style instruction files into child extension composition', async () => {
+    const { host, modelRuntime } = await harness({
+      runner: async () => ({ result: 'unused' }),
+    });
+    const agentDir = await mkdtemp(join(tmpdir(), 'felan-output-style-child-'));
+    temporaryPaths.push(agentDir);
+    await writeFile(join(agentDir, 'style.md'), 'Child file instructions.');
+    const importer = createLocalSubagentExtensionImporter({
+      modelRuntime,
+      importExtension: async () => {
+        throw new Error('The generic importer must not load output style');
+      },
+      outputStyle: 'custom',
+    }, host);
+    const imported = await importer('@felan-ai/ext-output-style') as {
+      default: (pi: FelanExtensionAPI) => void | Promise<void>;
+    };
+    let handler: ((event: { systemPrompt: string }) => { systemPrompt: string }) | undefined;
+    await imported.default({
+      agentDir,
+      config: {
+        style: 'custom',
+        instructionsFile: 'style.md',
+      },
+      on: ((event: string, registered: typeof handler) => {
+        if (event === 'before_agent_start') handler = registered;
+      }) as FelanExtensionAPI['on'],
+    } as FelanExtensionAPI);
+
+    expect(handler?.({ systemPrompt: 'Child base prompt' }).systemPrompt).toContain(
+      '<output_style>\nChild file instructions.\n</output_style>',
+    );
+    await host.shutdown();
+  });
+
   it('awaits child extension shutdown before completing the subagent', async () => {
     const response = createAssistantMessageEventStream();
     const shutdownStarted = deferred();
