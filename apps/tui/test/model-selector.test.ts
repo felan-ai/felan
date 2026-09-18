@@ -95,6 +95,79 @@ describe('Felan model selector behavior', () => {
     expect(hint).not.toContain('to set as default');
   });
 
+  it('does not throw when the component is not a model selector', () => {
+    expect(() => applyFelanModelSelectorBehavior({})).not.toThrow();
+    expect(() => applyFelanModelSelectorBehavior(null)).not.toThrow();
+  });
+
+  it('swaps callbacks when the hint child is missing', () => {
+    const persist = vi.fn();
+    const sessionOnly = vi.fn();
+    const selector = {
+      onSelectCallback: sessionOnly,
+      onSelectAsDefaultCallback: persist,
+      children: [],
+    };
+
+    expect(() => applyFelanModelSelectorBehavior(selector)).not.toThrow();
+    selector.onSelectCallback(model);
+    expect(persist).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledWith(model);
+    expect(sessionOnly).not.toHaveBeenCalled();
+  });
+
+  it('rewrites a duck-typed hint child that is not a pi-tui Text', () => {
+    const hint = {
+      text: '  Enter to select · Ctrl+S to set as default · Esc to cancel',
+      setText(text: string) {
+        this.text = text;
+      },
+    };
+    applyFelanModelSelectorBehavior({
+      onSelectCallback: vi.fn(),
+      onSelectAsDefaultCallback: vi.fn(),
+      children: [hint],
+    });
+
+    expect(hint.text).toContain('set as default');
+    expect(hint.text).toContain('this session');
+    expect(hint.text).not.toContain('to set as default');
+  });
+
+  it('patches a selector constructed with scoped models', () => {
+    const persist = vi.fn();
+    const sessionOnly = vi.fn();
+    const selector = createSelector(sessionOnly, persist, [
+      { model: { ...model, id: 'scoped-a' } },
+      { model: { ...model, id: 'scoped-b' } },
+      { model: { ...model, id: 'scoped-c' } },
+    ]);
+    applyFelanModelSelectorBehavior(selector);
+
+    selector.handleInput('\r');
+    expect(persist).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledWith(model);
+    expect(sessionOnly).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when showModelSelector creates a non-selector component', () => {
+    const showSelector = vi.fn((create: (done: () => void) => { component: unknown }) => (
+      create(() => {})
+    ));
+    const mode = {
+      showSelector,
+      showModelSelector() {
+        this.showSelector(() => ({ component: {} }));
+      },
+    } as unknown as InteractiveMode & {
+      showSelector: typeof showSelector;
+      showModelSelector(): void;
+    };
+
+    installFelanModelSelectorBehavior(mode as InteractiveMode);
+    expect(() => mode.showModelSelector()).not.toThrow();
+  });
+
   it('patches the selector created through InteractiveMode.showModelSelector', () => {
     const persist = vi.fn();
     const sessionOnly = vi.fn();
@@ -132,6 +205,7 @@ describe('Felan model selector behavior', () => {
 function createSelector(
   onSelect: (model: unknown) => void,
   onSelectAsDefault: (model: unknown) => void,
+  scopedModels: ReadonlyArray<{ model: typeof model }> = [],
 ): ModelSelectorComponent {
   const selector = new ModelSelectorComponent(
     { requestRender() {} } as TUI,
@@ -142,7 +216,7 @@ function createSelector(
       getError: () => undefined,
       refresh: async () => ({ errors: new Map(), aborted: false }),
     } as never,
-    [],
+    scopedModels as never,
     onSelect,
     () => {},
     undefined,
