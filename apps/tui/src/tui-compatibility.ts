@@ -1,5 +1,6 @@
 import { getSelectListTheme, type InteractiveMode } from '@earendil-works/pi-coding-agent';
 import { formatSessionTerminalTitle } from '@felan-ai/ext-session-title';
+import { installOverlayImageStacking } from './overlay-images.js';
 
 const ENTER_ALT_SCREEN = '\x1b[?1049h';
 const DISABLE_ALT_SCROLL = '\x1b[?1007l';
@@ -58,6 +59,7 @@ export function installFelanTuiCompatibility(
   platform: NodeJS.Platform = process.platform,
 ): void {
   const internals = mode as unknown as InteractiveModeTerminalInternals;
+  installOverlayImageStacking();
   installPiMessageFilters(mode, internals);
   installFelanTerminalTitle(mode, internals);
   installFelanWorkingIndicator(mode, internals);
