@@ -15,6 +15,7 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 | `mcp.json` | Felan-owned remote OAuth MCP servers |
 | `<workspace>/.mcp.json` | Project MCP entries; higher precedence by server name |
 | `agents/*.md` | Felan-specific user agent definitions |
+| `themes/*.json` | User Pi themes; same JSON `name` as `felan-light` or `felan-dark` shadows the packaged theme |
 
 The local host does not read Pi project settings. Configuration for ambient Pi
 extensions, prompts, packages, themes, or skills is filtered by default. Load a
@@ -436,8 +437,10 @@ pricing coverage.
 Powerline inherits the active Pi theme and maps its semantic segment roles to
 Pi foreground/background tokens. There is no second Powerline palette or
 color mode. Felan Code supplies `felan-light` and `felan-dark` and defaults to
-following the terminal appearance when no Pi theme is saved. Changes take
-effect in a newly constructed process/session. The built-in is enabled by default; set
+`felan-light/felan-dark` when no Pi theme is saved. User JSON in `themes/` can
+shadow those IDs by name. Auto light/dark follows the terminal background
+(OSC 11), not the OS color-scheme (CSI 997). Changes take effect in a newly
+constructed process/session. The built-in is enabled by default; set
 `builtinExtensions.powerline` to `false` to remove it.
 
 Felan Code keeps its theme IDs namespaced instead of replacing Pi's `dark` and

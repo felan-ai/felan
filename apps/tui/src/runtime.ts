@@ -1,7 +1,7 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import {
   AGENT_CORE_VERSION,
   HostAgentRuntime,
@@ -156,6 +156,48 @@ export function getLocalSkillPaths(cwd: string, homeDir: string = homedir()): re
     resolve(cwd, '.agents', 'skills'),
     resolve(homeDir, '.agents', 'skills'),
   ])].filter((path) => existsSync(path));
+}
+
+export function getLocalThemePaths(
+  agentDir: string,
+  packaged: readonly string[] = FELAN_THEME_PATHS,
+): readonly string[] {
+  const userThemesDir = join(agentDir, 'themes');
+  if (!existsSync(userThemesDir)) return [...packaged];
+  const userNames = readUserThemeNames(userThemesDir);
+  return [
+    userThemesDir,
+    ...packaged.filter((path) => !userNames.has(basename(path, '.json'))),
+  ];
+}
+
+function readUserThemeNames(userThemesDir: string): Set<string> {
+  const names = new Set<string>();
+  let files: string[];
+  try {
+    files = readdirSync(userThemesDir);
+  } catch {
+    return names;
+  }
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(join(userThemesDir, file), 'utf8'));
+      if (
+        typeof parsed === 'object'
+        && parsed !== null
+        && 'name' in parsed
+        && typeof parsed.name === 'string'
+        && parsed.name.length > 0
+        && !parsed.name.includes('/')
+      ) {
+        names.add(parsed.name);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return names;
 }
 
 export function createLocalSessionRuntimeFactory(
@@ -365,7 +407,7 @@ export function createLocalSessionRuntimeFactory(
       modelRuntime: options.modelRuntime,
       settingsManager,
       skillPaths,
-      themePaths: options.themePaths ?? FELAN_THEME_PATHS,
+      themePaths: options.themePaths ?? getLocalThemePaths(options.agentDir),
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
       inlineExtensions: [

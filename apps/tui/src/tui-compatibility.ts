@@ -22,9 +22,17 @@ interface TerminalTitleSessionManager {
   getSessionName(): string | undefined;
 }
 
+interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
 interface InteractiveModeTerminalInternals {
   ui?: {
     terminal?: TerminalTitleWriter;
+    queryTerminalColorScheme?(options: { timeoutMs: number }): Promise<'light' | 'dark' | undefined>;
+    queryTerminalBackgroundColor?(options: { timeoutMs: number }): Promise<RgbColor | undefined>;
   };
   sessionManager?: TerminalTitleSessionManager;
   renderer?: {
@@ -38,6 +46,7 @@ interface InteractiveModeTerminalInternals {
   updateTerminalTitle?(): void;
   themeController?: {
     onChanged?: () => void;
+    applyTerminalTheme?(theme: 'light' | 'dark'): void;
   };
 }
 
@@ -53,6 +62,7 @@ const installedModes = new WeakSet<object>();
 const installedMessageFilters = new WeakSet<object>();
 const installedTerminalTitles = new WeakSet<object>();
 const installedWorkingIndicators = new WeakSet<object>();
+const installedThemeDetection = new WeakSet<object>();
 
 export function installFelanTuiCompatibility(
   mode: InteractiveMode,
@@ -63,6 +73,7 @@ export function installFelanTuiCompatibility(
   installPiMessageFilters(mode, internals);
   installFelanTerminalTitle(mode, internals);
   installFelanWorkingIndicator(mode, internals);
+  installFelanTerminalThemeDetection(internals);
   if (platform !== 'win32') return;
   const terminal = internals.renderer?.terminal;
   if (!terminal || typeof terminal.write !== 'function') return;
@@ -119,6 +130,42 @@ function installFelanTerminalTitle(
       sessionManager.getCwd(),
     ));
   };
+}
+
+function installFelanTerminalThemeDetection(
+  internals: InteractiveModeTerminalInternals,
+): void {
+  const ui = internals.ui;
+  const themeController = internals.themeController;
+  if (!ui || installedThemeDetection.has(ui)) return;
+  installedThemeDetection.add(ui);
+
+  // Pi auto-theme prefers CSI 997 OS color-scheme over OSC 11 terminal background.
+  ui.queryTerminalColorScheme = async () => undefined;
+
+  const applyTerminalTheme = themeController?.applyTerminalTheme;
+  if (!themeController || typeof applyTerminalTheme !== 'function') return;
+  themeController.applyTerminalTheme = (terminalTheme) => {
+    const query = ui.queryTerminalBackgroundColor;
+    if (typeof query !== 'function') {
+      Reflect.apply(applyTerminalTheme, themeController, [terminalTheme]);
+      return;
+    }
+    void query({ timeoutMs: 100 }).then((rgb) => {
+      Reflect.apply(applyTerminalTheme, themeController, [rgb ? themeForRgb(rgb) : terminalTheme]);
+    }).catch(() => {
+      Reflect.apply(applyTerminalTheme, themeController, [terminalTheme]);
+    });
+  };
+}
+
+function themeForRgb(rgb: RgbColor): 'light' | 'dark' {
+  const toLinear = (channel: number) => {
+    const value = channel / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * toLinear(rgb.r) + 0.7152 * toLinear(rgb.g) + 0.0722 * toLinear(rgb.b);
+  return luminance >= 0.5 ? 'light' : 'dark';
 }
 
 function installFelanWorkingIndicator(

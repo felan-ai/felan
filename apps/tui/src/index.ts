@@ -16,6 +16,7 @@ export {
   createLocalSessionRuntimeFactory,
   getLocalAgentDir,
   getLocalSkillPaths,
+  getLocalThemePaths,
 } from './runtime.js';
 export { LocalSubagentHost } from './subagents/host.js';
 export type {

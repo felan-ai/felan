@@ -317,6 +317,7 @@ $FELAN_AGENT_DIR/
   APPEND_SYSTEM.md
   mcp.json
   agents/
+  themes/
   sessions/
   storage/
     agent/
@@ -363,8 +364,9 @@ The local host loads:
 - `$FELAN_AGENT_DIR/APPEND_SYSTEM.md`;
 - one cwd-level `AGENTS.md`, falling back to `CLAUDE.md`;
 - nested `AGENTS.md` or `CLAUDE.md` discovered by progressive context;
-- explicit user/workspace Felan Code agent definitions; and
-- Agent Skills from `~/.agents/skills` and `<workspace>/.agents/skills`.
+- explicit user/workspace Felan Code agent definitions;
+- Agent Skills from `~/.agents/skills` and `<workspace>/.agents/skills`; and
+- user Pi theme JSON from `$FELAN_AGENT_DIR/themes`.
 
 Interactive root TUI sessions can additionally load local Pi extension files or
 directories explicitly supplied with repeatable `--extension`/`-e` flags, and
@@ -378,10 +380,15 @@ other tools' ambient extension configuration.
 
 Felan Code supplies two host-owned Pi themes, `felan-light` and `felan-dark`, and
 uses `felan-light/felan-dark` by default when no saved theme setting exists.
-The active Pi theme is shared by built-in UI, Felan Code overlays, and the Powerline
-footer. Felan Code keeps these namespaced rather than replacing Pi's `dark` and
-`light` IDs: Pi 0.85.1 resolves those built-in names first when exporting HTML,
-which would make runtime and exported sessions disagree.
+JSON files in `$FELAN_AGENT_DIR/themes` (default `~/.felan/themes`) load as user
+themes. A file whose JSON `name` is `felan-light` or `felan-dark` shadows the
+packaged theme of that ID and survives `felan update`. Auto light/dark follows
+the terminal background (OSC 11), not the OS color-scheme (CSI 997), so a dark
+terminal on a light desktop stays on the dark theme ID. The active Pi theme is
+shared by built-in UI, Felan Code overlays, and the Powerline footer. Felan Code
+keeps these namespaced rather than replacing Pi's `dark` and `light` IDs:
+Pi 0.85.1 resolves those built-in names first when exporting HTML, which would
+make runtime and exported sessions disagree.
 
 Startup is intentionally compact: it shows a Felan Code welcome and key hints
 instead of listing every Context, Skill, Extension, and Theme. Press `Ctrl+O`

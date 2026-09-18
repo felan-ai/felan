@@ -292,6 +292,40 @@ describe('interactive application', () => {
     initTheme('dark');
   });
 
+  it('prefers OSC 11 terminal background over CSI 997 OS color-scheme', async () => {
+    const applied: Array<'light' | 'dark'> = [];
+    let background = { r: 0, g: 0, b: 0 };
+    const queryTerminalColorScheme = vi.fn(async () => 'light' as const);
+    const queryTerminalBackgroundColor = vi.fn(async () => background);
+    const themeController = {
+      onChanged: vi.fn(),
+      applyTerminalTheme: (theme: 'light' | 'dark') => {
+        applied.push(theme);
+      },
+    };
+    const mode = {
+      ui: { queryTerminalColorScheme, queryTerminalBackgroundColor },
+      themeController,
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+
+    installFelanTuiCompatibility(mode, 'darwin');
+    const internals = mode as unknown as {
+      ui: {
+        queryTerminalColorScheme(options: { timeoutMs: number }): Promise<'light' | 'dark' | undefined>;
+      };
+      themeController: { applyTerminalTheme(theme: 'light' | 'dark'): void };
+    };
+
+    await expect(internals.ui.queryTerminalColorScheme({ timeoutMs: 100 })).resolves.toBeUndefined();
+    internals.themeController.applyTerminalTheme('light');
+    await vi.waitFor(() => expect(applied).toEqual(['dark']));
+
+    background = { r: 255, g: 255, b: 255 };
+    internals.themeController.applyTerminalTheme('dark');
+    await vi.waitFor(() => expect(applied).toEqual(['dark', 'light']));
+    expect(queryTerminalBackgroundColor).toHaveBeenCalledTimes(2);
+  });
+
   it('reasserts fullscreen mouse tracking after Windows raw input initialization', () => {
     const events: string[] = [];
     const terminal = {
