@@ -34,7 +34,12 @@ import {
   isBuiltinExtensionEnabled,
   setDependencyOnboardingDecision,
 } from './settings.js';
-import { selectDependencyInstallations, type DependencyInstallOption } from './dependency-onboarding.js';
+import {
+  DependencyInstallProgressLoader,
+  runDependencyOnboarding,
+  type DependencyInstallOption,
+  type DependencyInstallProgress,
+} from './dependency-onboarding.js';
 
 export const localDependencyExtensionName = '@felan-ai/felan/runtime-dependencies';
 
@@ -312,21 +317,20 @@ async function onboardMissingDependencies(
         ?? `Install the reviewed dependency required for ${dependency.purpose}.`,
     ) + (status.reason ? ` Detected reason: ${sanitizeOnboardingText(status.reason)}` : ''),
   }));
-  const selected = await selectDependencyInstallations(ctx, installOptions);
-  if (selected === undefined) return;
-
-  for (const { dependency, status } of automatic) {
-    if (status.available) await recordDependencyDecision(dependency, options, true);
-    else await applyUnavailableChoice(dependency, runtime, ctx, options);
-  }
-  const selectedIds = new Set(selected);
-  for (const { dependency } of installCandidates) {
-    if (selectedIds.has(dependency.id)) {
-      await installDependency(dependency, runtime, ctx, options, true, false);
-    } else {
-      await applyUnavailableChoice(dependency, runtime, ctx, options);
+  await runDependencyOnboarding(ctx, installOptions, async (selected, progress) => {
+    for (const { dependency, status } of automatic) {
+      if (status.available) await recordDependencyDecision(dependency, options, true);
+      else await applyUnavailableChoice(dependency, runtime, ctx, options);
     }
-  }
+    const selectedIds = new Set(selected);
+    for (const { dependency } of installCandidates) {
+      if (selectedIds.has(dependency.id)) {
+        await installDependency(dependency, runtime, ctx, options, true, false, progress);
+      } else {
+        await applyUnavailableChoice(dependency, runtime, ctx, options);
+      }
+    }
+  });
 }
 
 async function manageDependencies(
@@ -402,36 +406,47 @@ async function installDependency(
   options: CreateLocalDependencyExtensionOptions,
   enableAfterInstall: boolean,
   requireConfirmation = true,
+  progress?: DependencyInstallProgress,
 ): Promise<void> {
-  if (!dependency.install || !dependency.installConfirmation) {
+  const install = dependency.install;
+  if (!install || !dependency.installConfirmation) {
     ctx.ui.notify(`${dependency.label} has no managed installer.`, 'warning');
     return;
   }
   if (requireConfirmation && !await ctx.ui.confirm(`Install ${dependency.label}`, dependency.installConfirmation)) return;
-  const statusKey = 'felan-dependency-install';
-  ctx.ui.setStatus(statusKey, `… Installing ${dependency.label}`);
-  try {
-    const status = await dependency.install(runtime, (message) => {
-      ctx.ui.setStatus(statusKey, `… ${message}`);
-    });
-    if (!status.available) {
-      ctx.ui.notify(`${dependency.label} installation failed${status.reason ? `: ${status.reason}` : '.'}`, 'error');
-      return;
+
+  const run = async (setMessage: (message: string) => void) => {
+    setMessage(`Installing ${dependency.label}...`);
+    try {
+      const status = await install(runtime, setMessage);
+      if (!status.available) {
+        ctx.ui.notify(`${dependency.label} installation failed${status.reason ? `: ${status.reason}` : '.'}`, 'error');
+        return;
+      }
+      await dependency.afterInstall?.(runtime);
+      await recordDependencyDecision(dependency, options, enableAfterInstall);
+      if (enableAfterInstall) {
+        if (dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, true);
+      }
+      ctx.ui.notify(
+        `${dependency.label} installed${status.version ? ` (${status.version})` : ''}.${enableAfterInstall ? ' Restart Felan Code to load the extension.' : ''}`,
+        'info',
+      );
+    } catch (error) {
+      ctx.ui.notify(`${dependency.label} installation failed: ${errorMessage(error)}`, 'error');
     }
-    await dependency.afterInstall?.(runtime);
-    await recordDependencyDecision(dependency, options, enableAfterInstall);
-    if (enableAfterInstall) {
-      if (dependency.id === 'markitdown') setActiveMarkitdownEnabled(runtime, true);
-    }
-    ctx.ui.notify(
-      `${dependency.label} installed${status.version ? ` (${status.version})` : ''}.${enableAfterInstall ? ' Restart Felan Code to load the extension.' : ''}`,
-      'info',
-    );
-  } catch (error) {
-    ctx.ui.notify(`${dependency.label} installation failed: ${errorMessage(error)}`, 'error');
-  } finally {
-    ctx.ui.setStatus(statusKey, undefined);
+  };
+
+  if (progress) {
+    await run((message) => progress.setMessage(message));
+    return;
   }
+
+  await ctx.ui.custom((tui, theme, _keybindings, done) => {
+    const loader = new DependencyInstallProgressLoader(tui, theme, `Installing ${dependency.label}...`);
+    void run((message) => loader.setMessage(message)).finally(() => done(undefined));
+    return loader;
+  });
 }
 
 async function applyUnavailableChoice(

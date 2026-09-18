@@ -109,8 +109,8 @@ When no saved or resumed model is usable, Felan Code selects from its own
 curated provider defaults instead of Pi's defaults. Both `openai` and
 `openai-codex` currently use `gpt-5.6-sol`. A successful first login selects
 and saves that provider's Felan default only when the session does not already
-have an active model. In `/model`, Enter changes only the current session;
-Ctrl+S also saves the highlighted model as the default for future sessions.
+have an active model. In `/model`, Enter saves the highlighted model as the
+default for future sessions; Ctrl+S changes only the current session.
 
 `builtinExtensions.sessionCompaction` controls verified session compaction and
 active-lineage `session_recall`. It is enabled by default. Disable it to use

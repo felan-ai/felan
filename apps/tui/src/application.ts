@@ -24,6 +24,7 @@ import { showFelanUpdateNotification } from './update-notification.js';
 import { CwdChangeRequested, installFelanCwdCommand } from './cwd-command.js';
 import { RestartRequested, installFelanRestartCommand } from './restart-command.js';
 import { installFelanSettingsCommand } from './extension-settings.js';
+import { installFelanModelSelectorBehavior } from './model-selector.js';
 import { installFelanTuiCompatibility } from './tui-compatibility.js';
 import {
   loadLocalExtensionConfigDefinitions,
@@ -226,6 +227,7 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
       ...(startupDiagnostics.length === 0 ? {} : { startupDiagnostics }),
     });
     installFelanTuiCompatibility(mode);
+    installFelanModelSelectorBehavior(mode);
     if (runtime.services.resourceLoader.getExtensions().extensions.some(
       ({ path }) => path === `<inline:${promptHistoryExtensionPackage}>`,
     )) {

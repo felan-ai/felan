@@ -90,6 +90,12 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
         this.defaultEditor.onSubmit = () => {};
       }
 
+      showSelector(create: (done: () => void) => unknown) {
+        return create(() => {});
+      }
+
+      showModelSelector() {}
+
       async run() {
         interactive.runs += 1;
         interactive.events.push('run');

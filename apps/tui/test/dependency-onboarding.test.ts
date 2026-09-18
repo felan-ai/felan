@@ -1,7 +1,10 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
-import { DependencyInstallationChecklist } from '../src/dependency-onboarding.js';
+import {
+  DependencyInstallationChecklist,
+  DependencyOnboardingView,
+} from '../src/dependency-onboarding.js';
 
 const theme = {
   fg: (_color: string, text: string) => text,
@@ -60,5 +63,32 @@ describe('DependencyInstallationChecklist', () => {
   it('truncates content to constrained terminal widths', () => {
     const { checklist } = createChecklist();
     expect(checklist.render(20).every((line) => visibleWidth(line) <= 20)).toBe(true);
+  });
+});
+
+describe('DependencyOnboardingView', () => {
+  it('keeps the checklist visible until install progress starts', () => {
+    const onSubmit = vi.fn();
+    const view = new DependencyOnboardingView(
+      { requestRender: vi.fn() },
+      theme,
+      { matches: () => false } as never,
+      options,
+      { onCancel: vi.fn(), onSubmit },
+    );
+
+    view.handleInput(' ');
+    view.handleInput('\r');
+
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith(['browser']);
+    expect(view.render(64).join('\n')).toContain('Install optional extensions');
+
+    view.beginInstall('Installing Browser...');
+    expect(view.render(64).join('\n')).toContain('Installing Browser...');
+    expect(view.render(64).join('\n')).not.toContain('Install optional extensions');
+
+    view.setInstallMessage('Downloading the pinned installer...');
+    expect(view.render(64).join('\n')).toContain('Downloading the pinned installer...');
+    view.dispose();
   });
 });

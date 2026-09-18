@@ -1,6 +1,7 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import {
   Key,
+  Loader,
   matchesKey,
   stripTerminalSequences,
   truncateToWidth,
@@ -13,6 +14,8 @@ import {
 type Theme = ExtensionContext['ui']['theme'];
 
 const INLINE_CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu;
+const FELAN_INSTALL_FRAMES = ['⠐◉ ', '⠈◉ ', ' ◉⠁', ' ◉⠂', ' ◉⠄', '⠠◉ '];
+const FELAN_INSTALL_INTERVAL_MS = 120;
 
 export interface DependencyInstallOption {
   readonly id: string;
@@ -20,20 +23,116 @@ export interface DependencyInstallOption {
   readonly description: string;
 }
 
-export async function selectDependencyInstallations(
+export interface DependencyInstallProgress {
+  setMessage(message: string): void;
+}
+
+export async function runDependencyOnboarding(
   ctx: ExtensionContext,
   options: readonly DependencyInstallOption[],
-): Promise<readonly string[] | undefined> {
-  if (options.length === 0) return [];
-  return ctx.ui.custom<readonly string[] | undefined>(
-    (tui, theme, keybindings, done) => new DependencyInstallationChecklist(
+  afterSelection: (selected: readonly string[], progress: DependencyInstallProgress) => Promise<void>,
+): Promise<boolean> {
+  if (options.length === 0) {
+    await afterSelection([], { setMessage() {} });
+    return true;
+  }
+  let afterSelectionError: unknown;
+  const completed = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => {
+    const view = new DependencyOnboardingView(tui, theme, keybindings, options, {
+      onCancel: () => done(false),
+      onSubmit: (selected) => {
+        void (async () => {
+          try {
+            if (selected.length > 0) view.beginInstall('Installing...');
+            await afterSelection(selected, {
+              setMessage: (message) => view.setInstallMessage(message),
+            });
+            done(true);
+          } catch (error) {
+            afterSelectionError = error;
+            done(true);
+          }
+        })();
+      },
+    });
+    return view;
+  });
+  if (afterSelectionError !== undefined) throw afterSelectionError;
+  return completed === true;
+}
+
+export class DependencyInstallProgressLoader extends Loader {
+  constructor(tui: Pick<TUI, 'requestRender'>, theme: Theme, message: string) {
+    super(
+      tui as TUI,
+      (text) => theme.fg('accent', text),
+      (text) => theme.fg('muted', text),
+      message,
+      {
+        frames: FELAN_INSTALL_FRAMES.map((frame) => theme.fg('accent', frame)),
+        intervalMs: FELAN_INSTALL_INTERVAL_MS,
+      },
+    );
+  }
+
+  dispose(): void {
+    this.stop();
+  }
+}
+
+export class DependencyOnboardingView implements Component {
+  readonly #checklist: DependencyInstallationChecklist;
+  #loader: DependencyInstallProgressLoader | undefined;
+
+  constructor(
+    private readonly tui: Pick<TUI, 'requestRender'>,
+    private readonly theme: Theme,
+    keybindings: KeybindingsManager,
+    options: readonly DependencyInstallOption[],
+    handlers: {
+      onCancel: () => void;
+      onSubmit: (selected: readonly string[]) => void;
+    },
+  ) {
+    this.#checklist = new DependencyInstallationChecklist(
       tui,
       theme,
       keybindings,
       options,
-      done,
-    ),
-  );
+      (selection) => {
+        if (this.#loader) return;
+        if (selection === undefined) handlers.onCancel();
+        else handlers.onSubmit(selection);
+      },
+    );
+  }
+
+  beginInstall(message: string): void {
+    this.#loader?.dispose();
+    this.#loader = new DependencyInstallProgressLoader(this.tui, this.theme, message);
+    this.tui.requestRender();
+  }
+
+  setInstallMessage(message: string): void {
+    this.#loader?.setMessage(message);
+  }
+
+  invalidate(): void {
+    this.#loader?.invalidate();
+  }
+
+  dispose(): void {
+    this.#loader?.dispose();
+  }
+
+  render(width: number): string[] {
+    return this.#loader ? this.#loader.render(width) : this.#checklist.render(width);
+  }
+
+  handleInput(data: string): void {
+    if (this.#loader) return;
+    this.#checklist.handleInput(data);
+  }
 }
 
 export class DependencyInstallationChecklist implements Component {

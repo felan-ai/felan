@@ -60,6 +60,8 @@ describe('local runtime dependency onboarding', () => {
 
     expect(harness.confirm).not.toHaveBeenCalled();
     expect(install).toHaveBeenCalledOnce();
+    expect(harness.setStatus).not.toHaveBeenCalled();
+    expect(harness.setWidget).not.toHaveBeenCalled();
     expect(harness.notifications).toContainEqual(['markitdown installed (1.2.3). Restart Felan Code to load the extension.', 'info']);
     const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
     expect(settings.felanTui.onboarding).toEqual({
@@ -130,6 +132,32 @@ describe('local runtime dependency onboarding', () => {
 
     expect(install).not.toHaveBeenCalled();
     expect(JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'))).toEqual({});
+  });
+
+  it('keeps the onboarding UI open until selected installations finish', async () => {
+    const fixture = await createFixture();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const install = vi.fn(async () => {
+      await gate;
+      return { available: true as const, version: '1.0.0' };
+    });
+    const harness = await createHarness(fixture, [
+      dependency({ id: 'markitdown', extension: 'markitdown', install }),
+    ], { checkedIndexes: [0] });
+
+    const started = harness.emit('session_start', { reason: 'startup' });
+    await vi.waitFor(() => expect(install).toHaveBeenCalledOnce());
+    expect(JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'))).toEqual({});
+    expect(harness.setStatus).not.toHaveBeenCalled();
+    expect(harness.setWidget).not.toHaveBeenCalled();
+
+    release?.();
+    await started;
+    const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
+    expect(settings.felanTui.onboarding.extensions.markitdown).toBe(1);
   });
 
   it('continues selected installations after a failure', async () => {
@@ -347,25 +375,36 @@ async function createHarness(
   const confirmations = [...(uiOptions.confirmations ?? [])];
   const select = vi.fn(async () => selections.shift());
   const confirm = vi.fn(async () => confirmations.shift() ?? false);
-  let customResult: readonly string[] | undefined;
+  const setStatus = vi.fn();
+  const setWidget = vi.fn();
   const custom = vi.fn(async (factory: (...args: any[]) => any) => {
-    const component = factory(
-      { requestRender: vi.fn(), terminal: { rows: 24 } },
-      { fg: (_color: string, text: string) => text, bold: (text: string) => text },
-      { matches: () => false },
-      (value: readonly string[] | undefined) => { customResult = value; },
-    );
-    if (uiOptions.cancelCustom) {
-      component.handleInput?.('\u001b');
-    } else {
+    let component: { handleInput?: (data: string) => void; dispose?: () => void } | undefined;
+    return await new Promise((resolve) => {
+      let settled = false;
+      const done = (value: unknown) => {
+        if (settled) return;
+        settled = true;
+        try { component?.dispose?.(); } catch { /* ignore */ }
+        resolve(value);
+      };
+      component = factory(
+        { requestRender: vi.fn(), terminal: { rows: 24 } },
+        { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+        { matches: () => false },
+        done,
+      );
+      if (uiOptions.cancelCustom) {
+        component?.handleInput?.('\u001b');
+        return;
+      }
+      if (typeof component?.handleInput !== 'function') return;
       for (const index of uiOptions.checkedIndexes ?? []) {
         for (let step = 0; step < index; step += 1) component.handleInput?.('\u001b[B');
         component.handleInput?.(' ');
         for (let step = index; step > 0; step -= 1) component.handleInput?.('\u001b[A');
       }
       component.handleInput?.('\r');
-    }
-    return customResult;
+    });
   });
   const ctx = {
     cwd: fixture.runtime.cwd,
@@ -376,7 +415,8 @@ async function createHarness(
       confirm,
       custom,
       notify: (message: string, level?: string) => notifications.push([message, level]),
-      setStatus: vi.fn(),
+      setStatus,
+      setWidget,
     },
   } as unknown as ExtensionContext;
   const pi = {
@@ -402,6 +442,8 @@ async function createHarness(
     custom,
     notifications,
     select,
+    setStatus,
+    setWidget,
     async emit(name: string, event: Record<string, unknown>): Promise<void> {
       for (const handler of handlers.get(name) ?? []) await handler(event, ctx);
     },

@@ -79,6 +79,8 @@ list provided by the pinned Pi version.
 | `Ctrl+Shift+J` | Open process/log views |
 | `Ctrl+O` | Toggle bounded tool and completion previews |
 | `Ctrl+R` / `Cmd+R` | Open prompt history; cycle scope while the picker is open |
+| `Enter` in `/model` | Set the highlighted model as the default for future sessions |
+| `Ctrl+S` in `/model` | Use the highlighted model for this session only |
 
 Prompt history starts with the current session. Press `Ctrl+R`, `Cmd+R`, or
 `Ctrl+S` inside the picker to cycle through the current project and all
