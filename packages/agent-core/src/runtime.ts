@@ -2,6 +2,7 @@ import type {
   ExecOptions as PiExecOptions,
   ExecResult as PiExecResult,
 } from '@earendil-works/pi-coding-agent';
+import type { Logger } from './logger.js';
 
 export type ExecOptions = PiExecOptions;
 
@@ -105,6 +106,7 @@ export interface AgentRuntimeStorage {
 
   readFile(path: string, options?: AgentRuntimeFileReadOptions): Promise<Uint8Array>;
   writeFile(path: string, content: Uint8Array): Promise<void>;
+  appendFile(path: string, content: Uint8Array): Promise<void>;
   listFiles(path: string, options?: AgentRuntimeListFilesOptions): Promise<string[]>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
@@ -138,6 +140,7 @@ export interface AgentRuntimeListFilesOptions {
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
+  readonly logger: Logger;
   readonly processes?: AgentRuntimeProcesses;
   readonly privateRuntime?: AgentRuntimePrivateRuntime;
   readonly terminals?: AgentRuntimeTerminals;

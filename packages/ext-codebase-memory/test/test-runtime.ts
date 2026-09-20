@@ -1,13 +1,15 @@
-import type {
-  AgentRuntime,
-  AgentRuntimeStorage,
-  ExecOptions,
-  ExecResult,
+import {
+  createSilentLogger,
+  type AgentRuntime,
+  type AgentRuntimeStorage,
+  type ExecOptions,
+  type ExecResult,
 } from '@felan-ai/agent-core';
 import { codebaseMemoryRuntimeDirectory } from '../src/runtime-path.js';
 
 export class MemoryRuntime implements AgentRuntime {
   cwd: string = '/work/repo';
+  readonly logger = createSilentLogger();
   readonly files = new Map<string, Uint8Array>();
   readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly shellCalls: Array<{ command: string; options?: Record<string, unknown> }> = [];
@@ -69,6 +71,17 @@ function createStorage(root: string, files: Map<string, Uint8Array>): AgentRunti
         return bytes.slice();
       },
       writeFile: async (path, content) => { files.set(path, content.slice()); },
+      appendFile: async (path, content) => {
+        const existing = files.get(path);
+        if (!existing) {
+          files.set(path, content.slice());
+          return;
+        }
+        const combined = new Uint8Array(existing.byteLength + content.byteLength);
+        combined.set(existing, 0);
+        combined.set(content, existing.byteLength);
+        files.set(path, combined);
+      },
       listFiles: async (path) => [...files.keys()]
         .filter((entry) => entry.startsWith(`${path}/`))
         .map((entry) => entry.slice(path.length + 1)),

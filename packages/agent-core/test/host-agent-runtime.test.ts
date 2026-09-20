@@ -182,6 +182,7 @@ describe('HostAgentRuntime', () => {
     const sessionStorage = runtime.storage();
     const agentStorage = runtime.storage('agent');
 
+    expect(runtime.logger.level).toBe('off');
     expect(sessionStorage).toBe(runtime.storage('session'));
     expect(sessionStorage.root).toBe(sessionStorageRoot);
     expect(agentStorage.root).toBe(agentStorageRoot);
@@ -191,6 +192,7 @@ describe('HostAgentRuntime', () => {
     await sessionStorage.mkdir('background-bash', { recursive: true });
     await sessionStorage.writeFile('background-bash/state.bin', content);
     await agentStorage.writeFile('state.bin', content);
+    await agentStorage.appendFile('state.bin', new Uint8Array([4, 5]));
     await writeFile(join(outside, 'secret.bin'), content);
     await symlink(
       outside,
@@ -199,6 +201,7 @@ describe('HostAgentRuntime', () => {
     );
 
     await expect(sessionStorage.readFile('background-bash/state.bin')).resolves.toEqual(content);
+    await expect(agentStorage.readFile('state.bin')).resolves.toEqual(new Uint8Array([1, 2, 3, 4, 5]));
     await expect(runtime.readFile(resolve(sessionStorageRoot, 'background-bash/state.bin')))
       .resolves.toEqual(content);
     await expect(runtime.listFiles(sessionStorageRoot, { recursive: true }))

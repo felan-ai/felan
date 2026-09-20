@@ -599,10 +599,12 @@ function unusedRuntime(): AgentRuntime {
   return {
     kind: 'host',
     cwd: '/workspace',
+    logger: { level: 'off', child() { return this; }, debug() {}, info() {}, warn() {}, error() {} },
     storage: () => ({
       root: '/storage',
       readFile: unused,
       writeFile: unused,
+      appendFile: unused,
       listFiles: unused,
       mkdir: unused,
       remove: unused,

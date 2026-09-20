@@ -170,6 +170,18 @@ function runtime(handler: (
     writeFile: vi.fn(async (path: string, content: Uint8Array | string) => {
       files.set(path, typeof content === 'string' ? new TextEncoder().encode(content) : Uint8Array.from(content));
     }),
+    appendFile: vi.fn(async (path: string, content: Uint8Array) => {
+      const existing = files.get(path);
+      const chunk = Uint8Array.from(content);
+      if (!existing) {
+        files.set(path, chunk);
+        return;
+      }
+      const combined = new Uint8Array(existing.byteLength + chunk.byteLength);
+      combined.set(existing, 0);
+      combined.set(chunk, existing.byteLength);
+      files.set(path, combined);
+    }),
     listFiles: vi.fn(),
     mkdir: vi.fn(),
     remove: vi.fn(async (path: string) => {
@@ -190,6 +202,7 @@ function runtime(handler: (
   const agentRuntime: AgentRuntime = {
     kind: 'host',
     cwd: '/workspace',
+    logger: { level: 'off', child() { return this; }, debug() {}, info() {}, warn() {}, error() {} },
     storage: () => storage,
     exec,
     shell: unused,

@@ -266,10 +266,12 @@ function fakeRuntime(writeDelayMs = 0): {
         return handle;
       },
     },
+    logger: { level: 'off', child() { return this; }, debug() {}, info() {}, warn() {}, error() {} },
     storage: () => ({
       root: '/storage',
       readFile: unavailable,
       writeFile: unavailable,
+      appendFile: unavailable,
       listFiles: unavailable,
       mkdir: unavailable,
       remove: unavailable,
@@ -301,6 +303,7 @@ function runtimeWithoutTerminals(host: HostAgentRuntime): AgentRuntime {
   return {
     kind: host.kind,
     cwd: host.cwd,
+    logger: host.logger,
     processes: host.processes,
     storage: (scope) => host.storage(scope),
     exec: (command, args, options) => host.exec(command, args, options),
@@ -350,6 +353,7 @@ function runtimeWithRemoveFailures(host: HostAgentRuntime, failRollback: boolean
   return {
     kind: host.kind,
     cwd: host.cwd,
+    logger: host.logger,
     processes: host.processes,
     storage: (scope) => host.storage(scope),
     exec: (command, args, options) => host.exec(command, args, options),
@@ -372,6 +376,7 @@ function runtimeWithWriteFailure(host: HostAgentRuntime, failedPath: string): Ag
   return {
     kind: host.kind,
     cwd: host.cwd,
+    logger: host.logger,
     processes: host.processes,
     storage: (scope) => host.storage(scope),
     exec: (command, args, options) => host.exec(command, args, options),

@@ -130,6 +130,7 @@ function instrumentRuntime(runtime: HostAgentRuntime) {
     root: source.root,
     readFile: source.readFile.bind(source),
     writeFile,
+    appendFile: source.appendFile.bind(source),
     listFiles: source.listFiles.bind(source),
     mkdir: source.mkdir.bind(source),
     remove: source.remove.bind(source),

@@ -223,6 +223,10 @@ and exposes `session_recall` for the current active lineage. The extension is
 safe to disable with `builtinExtensions.sessionCompaction: false`; Pi's native
 compactor then remains in control.
 
+Structured logs default to `storage('agent')/logs/felan.jsonl`. Set
+`FELAN_LOG_LEVEL=off` to disable them, or `debug`/`info`/`warn`/`error` to
+change the level.
+
 Codebase Memory is a default built-in. It provides structural code
 search, symbol reads, and bounded grep augmentation, backed by the
 `codebase-memory-mcp` binary.

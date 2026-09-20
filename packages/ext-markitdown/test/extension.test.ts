@@ -554,6 +554,7 @@ async function createFixture(options: {
   const runtime: AgentRuntime = {
     kind: host.kind,
     cwd: host.cwd,
+    logger: host.logger,
     storage: host.storage.bind(host),
     exec,
     shell: host.shell.bind(host),

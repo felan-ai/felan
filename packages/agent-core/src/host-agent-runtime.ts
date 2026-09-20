@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import {
   access,
+  appendFile,
   lstat,
   mkdir,
   open,
@@ -36,6 +37,7 @@ import type {
   ExecResult,
 } from './runtime.js';
 import { fileListingGlobMatcher, normalizeFileListingPath } from './file-listing.js';
+import { createSilentLogger, type Logger } from './logger.js';
 
 export type HostShellOptions = AgentRuntimeShellOptions;
 
@@ -45,6 +47,7 @@ export interface HostAgentRuntimeOptions {
   readonly agentDir?: string;
   readonly pathAccess?: 'workspace' | 'host';
   readonly posixShell?: string;
+  readonly logger?: Logger;
 }
 
 export class HostAgentRuntime implements AgentRuntime {
@@ -57,6 +60,7 @@ export class HostAgentRuntime implements AgentRuntime {
   readonly #pathAccess: 'workspace' | 'host';
   readonly #configuredPosixShell: string | undefined;
   #posixShell: Promise<string> | undefined;
+  readonly logger: Logger;
   readonly processes: AgentRuntimeProcesses;
   readonly privateRuntime: AgentRuntimePrivateRuntime;
   readonly terminals: AgentRuntimeTerminals;
@@ -71,6 +75,7 @@ export class HostAgentRuntime implements AgentRuntime {
     this.#agentDir = options.agentDir === undefined ? undefined : resolveStorageRoot(options.agentDir);
     this.#pathAccess = options.pathAccess ?? 'workspace';
     this.#configuredPosixShell = validateConfiguredShell(options.posixShell);
+    this.logger = options.logger ?? createSilentLogger();
     this.#sessionStorage = createHostStorage(this.#sessionStorageRoot);
     this.#agentStorage = createHostStorage(this.#agentStorageRoot);
     this.processes = {
@@ -719,6 +724,10 @@ function createHostStorage(root: string): AgentRuntimeStorage {
     async writeFile(path, content) {
       const copiedContent = content.slice();
       await writeFile(await resolveContainedPath(root, path), copiedContent);
+    },
+    async appendFile(path, content) {
+      const copiedContent = content.slice();
+      await appendFile(await resolveContainedPath(root, path), copiedContent);
     },
     async listFiles(path, options) {
       const resolvedPath = await resolveContainedPath(root, path);

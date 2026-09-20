@@ -1,8 +1,15 @@
-import type { AgentRuntime, AgentRuntimeStorage, ExecOptions, ExecResult } from '@felan-ai/agent-core';
+import {
+  createSilentLogger,
+  type AgentRuntime,
+  type AgentRuntimeStorage,
+  type ExecOptions,
+  type ExecResult,
+} from '@felan-ai/agent-core';
 
 export class MemoryRuntime implements AgentRuntime {
   readonly kind = 'host' as const;
   readonly cwd = '/workspace';
+  readonly logger = createSilentLogger();
   readonly files = new Map<string, Uint8Array>();
   readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly #storage: AgentRuntimeStorage;
@@ -26,6 +33,17 @@ export class MemoryRuntime implements AgentRuntime {
       },
       writeFile: async (path, content) => {
         this.files.set(path, content.slice());
+      },
+      appendFile: async (path, content) => {
+        const existing = this.files.get(path);
+        if (!existing) {
+          this.files.set(path, content.slice());
+          return;
+        }
+        const combined = new Uint8Array(existing.byteLength + content.byteLength);
+        combined.set(existing, 0);
+        combined.set(content, existing.byteLength);
+        this.files.set(path, combined);
       },
       listFiles: async (path) => [...this.files.keys()].filter((file) => file.startsWith(path)),
       mkdir: async () => {},

@@ -33,6 +33,7 @@ import {
   type AgentSession,
 } from '@earendil-works/pi-coding-agent';
 import { createLocalExtensionImporter } from '../extensions.js';
+import { createLocalAgentLogger } from '../logger.js';
 import type { BackgroundBashCoordinator } from '@felan-ai/ext-background-bash';
 import { createLocalCodexStreamFunctionWrapper } from '../codex.js';
 import {
@@ -913,7 +914,10 @@ export class LocalSubagentManager {
       input.definition.prompt,
     );
     const runtime = this.#options.runtimeFactory?.(runtimeRequest)
-      ?? new HostAgentRuntime(input.cwd, runtimeRequest);
+      ?? new HostAgentRuntime(input.cwd, {
+        ...runtimeRequest,
+        logger: createLocalAgentLogger(runtimeRequest.agentStorageRoot),
+      });
     const wrapStreamFunction = await createLocalCodexStreamFunctionWrapper(
       extensionPackages,
       runtime,

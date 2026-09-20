@@ -1,4 +1,5 @@
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { createSilentLogger, type Logger } from '../src/logger.js';
 import type {
   AgentRuntime,
   AgentRuntimeExecOptions,
@@ -44,6 +45,7 @@ export class TestAgentRuntime implements AgentRuntime {
   readonly #shellHandler: NonNullable<TestAgentRuntimeOptions['shell']>;
   readonly #files = new Map<string, Uint8Array>();
   readonly #directories = new Set<string>();
+  readonly logger: Logger = createSilentLogger();
 
   readonly execCalls: TestExecCall[] = [];
   readonly shellCalls: TestShellCall[] = [];
@@ -179,6 +181,21 @@ export class TestAgentRuntime implements AgentRuntime {
           throw new Error(`Parent directory does not exist: ${path}`);
         }
         this.#files.set(resolvedPath, content.slice());
+      },
+      appendFile: async (path, content) => {
+        const resolvedPath = this.#resolveStoragePath(root, path);
+        if (!this.#directories.has(dirname(resolvedPath))) {
+          throw new Error(`Parent directory does not exist: ${path}`);
+        }
+        const existing = this.#files.get(resolvedPath);
+        if (!existing) {
+          this.#files.set(resolvedPath, content.slice());
+          return;
+        }
+        const combined = new Uint8Array(existing.byteLength + content.byteLength);
+        combined.set(existing, 0);
+        combined.set(content, existing.byteLength);
+        this.#files.set(resolvedPath, combined);
       },
       listFiles: async (path, options) => {
         const resolvedPath = this.#resolveStoragePath(root, path);

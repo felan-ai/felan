@@ -421,6 +421,7 @@ async function createManager(signalShell?: string): Promise<{
   const observedRuntime: AgentRuntime = {
     kind: runtime.kind,
     cwd: runtime.cwd,
+    logger: runtime.logger,
     storage(scope = 'session') {
       storageScopes.push(scope);
       return runtime.storage(scope);

@@ -113,6 +113,9 @@ and saves that provider's Felan default only when the session does not already
 have an active model. In `/model`, Enter saves the highlighted model as the
 default for future sessions; Ctrl+S changes only the current session.
 
+`FELAN_LOG_LEVEL` controls the host logger (default `debug`). Logs are written to
+`storage('agent')/logs/felan.jsonl`; set the variable to `off` to disable them.
+
 `builtinExtensions.sessionCompaction` controls verified session compaction and
 active-lineage `session_recall`. It is enabled by default. Disable it to use
 Pi's native compactor and remove the recall tool; there is intentionally no

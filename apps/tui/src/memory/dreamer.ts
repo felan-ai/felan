@@ -480,6 +480,10 @@ class RestrictedMemoryDreamRuntime implements AgentRuntime {
     this.cwd = cwd;
   }
 
+  get logger() {
+    return this.base.logger;
+  }
+
   storage(scope?: AgentRuntimeStorageScope): AgentRuntimeStorage {
     return this.base.storage(scope);
   }

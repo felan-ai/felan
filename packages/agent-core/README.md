@@ -50,7 +50,8 @@ host. Host consumers provide exact `sessionStorageRoot` and `agentStorageRoot`
 paths; each storage handle preserves binary content, rejects lexical and
 symlink escapes, and cannot remove its root. Workspace path access excludes
 agent storage, while host path access lets ordinary operations inspect both
-storage scopes.
+storage scopes. Storage handles also support `appendFile` for host log files.
+Every runtime has a structured `logger`; hosts inject the destination.
 
 Host runtimes expose optional persistent process operations for extensions that
 need incremental output and stdin. `startShell()` keeps process ownership in

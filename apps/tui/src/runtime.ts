@@ -39,6 +39,7 @@ import {
   memoryExtensionPackage,
   resolveBuiltinExtensionPackages,
 } from './extensions.js';
+import { createLocalAgentLogger } from './logger.js';
 import {
   createLocalSettingsManager,
   getFelanSettings,
@@ -272,8 +273,9 @@ export function createLocalSessionRuntimeFactory(
     const skillPaths = options.skillPaths ?? getLocalSkillPaths(cwd, options.homeDir);
     const subagentSettings = options.subagentSettings ?? felanSettings.felanSubagents;
     const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
+    const logger = createLocalAgentLogger(runtimeRequest.agentStorageRoot);
     const runtime = options.runtimeFactory?.(runtimeRequest)
-      ?? new HostAgentRuntime(cwd, runtimeRequest);
+      ?? new HostAgentRuntime(cwd, { ...runtimeRequest, logger });
     const backgroundBashCoordinator = new BackgroundBashCoordinator(runtime);
     const savings = new SavingsService({
       runtime,

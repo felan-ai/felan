@@ -1,13 +1,15 @@
-import type {
-  AgentRuntime,
-  AgentRuntimeStorage,
-  ExecOptions,
-  ExecResult,
+import {
+  createSilentLogger,
+  type AgentRuntime,
+  type AgentRuntimeStorage,
+  type ExecOptions,
+  type ExecResult,
 } from '@felan-ai/agent-core';
 
 export class BrowserTestRuntime implements AgentRuntime {
   readonly kind = 'host' as const;
   readonly cwd = '/workspace';
+  readonly logger = createSilentLogger();
   readonly files = new Map<string, Uint8Array>();
   readonly calls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly sessionStorage: BrowserTestStorage = new BrowserTestStorage('/session');
@@ -56,6 +58,19 @@ export class BrowserTestStorage implements AgentRuntimeStorage {
 
   async writeFile(path: string, content: Uint8Array): Promise<void> {
     this.files.set(path.replace(/^[/\\]+/u, ''), content.slice());
+  }
+
+  async appendFile(path: string, content: Uint8Array): Promise<void> {
+    const key = path.replace(/^[/\\]+/u, '');
+    const existing = this.files.get(key);
+    if (!existing) {
+      this.files.set(key, content.slice());
+      return;
+    }
+    const combined = new Uint8Array(existing.byteLength + content.byteLength);
+    combined.set(existing, 0);
+    combined.set(content, existing.byteLength);
+    this.files.set(key, combined);
   }
 
   async listFiles(): Promise<string[]> { return [...this.files.keys()]; }

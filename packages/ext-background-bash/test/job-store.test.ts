@@ -289,6 +289,18 @@ class MemoryStorage implements AgentRuntimeStorage {
     this.files.set(path, content);
   }
 
+  async appendFile(path: string, content: Uint8Array): Promise<void> {
+    const existing = this.files.get(path);
+    if (!existing) {
+      this.files.set(path, content);
+      return;
+    }
+    const combined = new Uint8Array(existing.byteLength + content.byteLength);
+    combined.set(existing, 0);
+    combined.set(content, existing.byteLength);
+    this.files.set(path, combined);
+  }
+
   async listFiles(path: string): Promise<string[]> {
     return [...this.files.keys()]
       .filter((file) => file.startsWith(`${path}/`))
