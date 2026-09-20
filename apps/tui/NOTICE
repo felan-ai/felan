@@ -21,6 +21,9 @@ The session compaction integration uses original Felan code from
 pi-smart-compact and pi-vcc; no upstream source is bundled. Its package-level
 LICENSE and NOTICE contain the applicable attribution.
 
+The Jev integration uses original Felan classifier client code from
+@felan-ai/agent-core. The host may inject it into local runtimes.
+
 The terminal application uses @earendil-works/pi-coding-agent and
 @earendil-works/pi-tui 0.85.1 from https://github.com/earendil-works/pi,
 licensed under the MIT License.

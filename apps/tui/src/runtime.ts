@@ -7,6 +7,7 @@ import {
   HostAgentRuntime,
   ModelRuntime,
   SessionManager,
+  createJevClassifier,
   type AgentSession,
   bindFelanExtension,
   createAgentCoreSessionRuntimeFactory,
@@ -274,8 +275,13 @@ export function createLocalSessionRuntimeFactory(
     const subagentSettings = options.subagentSettings ?? felanSettings.felanSubagents;
     const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
     const logger = createLocalAgentLogger(runtimeRequest.agentStorageRoot);
+    const classifier = createJevClassifier();
     const runtime = options.runtimeFactory?.(runtimeRequest)
-      ?? new HostAgentRuntime(cwd, { ...runtimeRequest, logger });
+      ?? new HostAgentRuntime(cwd, {
+        ...runtimeRequest,
+        logger,
+        ...(classifier === undefined ? {} : { classifier }),
+      });
     const backgroundBashCoordinator = new BackgroundBashCoordinator(runtime);
     const savings = new SavingsService({
       runtime,
@@ -350,6 +356,7 @@ export function createLocalSessionRuntimeFactory(
       ...(subagentSettings === undefined ? {} : { settings: subagentSettings }),
       backgroundBashCoordinator,
       backgroundBashCoordinatorOwner: false,
+      ...(runtime.classifier === undefined ? {} : { classifier: runtime.classifier }),
       ...(options.inlineExtensions === undefined
         ? {}
         : { inlineExtensions: options.inlineExtensions }),

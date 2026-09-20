@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import {
   HostAgentRuntime,
+  type Classifier,
   SessionManager,
   createAgentCoreSession,
   type CreateAgentCoreSessionOptions,
@@ -87,6 +88,7 @@ export interface CreateLocalSubagentHostOptions {
   }) => MemoryHost;
   readonly settings?: LocalSubagentSettings;
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
+  readonly classifier?: Classifier;
   readonly savings?: SavingsReporterProvider;
   readonly backgroundBashCoordinator?: BackgroundBashCoordinator;
   readonly backgroundBashCoordinatorOwner?: boolean;
@@ -917,6 +919,7 @@ export class LocalSubagentManager {
       ?? new HostAgentRuntime(input.cwd, {
         ...runtimeRequest,
         logger: createLocalAgentLogger(runtimeRequest.agentStorageRoot),
+        ...(this.#options.classifier === undefined ? {} : { classifier: this.#options.classifier }),
       });
     const wrapStreamFunction = await createLocalCodexStreamFunctionWrapper(
       extensionPackages,

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-ask-user",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Portable Felan ask-user extension with a rich Pi TUI adapter",
   "license": "MIT",
   "type": "module",
@@ -39,7 +39,7 @@
     "typebox": "1.1.38"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.7.0"
+    "@felan-ai/agent-core": "^0.8.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

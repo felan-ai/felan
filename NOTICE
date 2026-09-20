@@ -33,6 +33,10 @@ design references pi-smart-compact 9.6.2 and @sting8k/pi-vcc 0.7.2 without
 copying their source. Its package-level license and notice are included in
 packages/ext-session-compaction/LICENSE and NOTICE.
 
+The Jev classifier client lives in @felan-ai/agent-core as original Felan
+MIT-licensed code. Direct HTTPS to the public TypeSafe and OpenRouter API
+hosts is an intentional I/O exception.
+
 This product uses Pi 0.85.1 from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
 It also uses @earendil-works/pi-server 0.85.1 from the same project under the

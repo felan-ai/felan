@@ -14,7 +14,7 @@ describe('@felan-ai/ext-web-access package boundary', () => {
       description: 'Secure bounded web search and content access for Felan',
       license: 'MIT',
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
-      peerDependencies: { '@felan-ai/agent-core': '^0.7.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.8.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
       scripts: {

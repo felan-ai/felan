@@ -49,6 +49,14 @@ export type {
   SavingsTokenUsage,
 } from './savings.js';
 export { AGENT_CORE_VERSION } from './version.js';
+export { createJevClassifier } from './jev/classifier.js';
+export type {
+  Classifier,
+  ClassifierAnswer,
+  ClassifierAnswers,
+  ClassifierQuestion,
+  ClassifierQuestions,
+} from './classifier.js';
 export {
   MODEL_TIERS,
   formatModelReference,

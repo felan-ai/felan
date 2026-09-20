@@ -2,6 +2,7 @@ import type {
   ExecOptions as PiExecOptions,
   ExecResult as PiExecResult,
 } from '@earendil-works/pi-coding-agent';
+import type { Classifier } from './classifier.js';
 import type { Logger } from './logger.js';
 
 export type ExecOptions = PiExecOptions;
@@ -140,6 +141,7 @@ export interface AgentRuntimeListFilesOptions {
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
+  readonly classifier?: Classifier;
   readonly logger: Logger;
   readonly processes?: AgentRuntimeProcesses;
   readonly privateRuntime?: AgentRuntimePrivateRuntime;

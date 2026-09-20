@@ -91,6 +91,11 @@ try {
     `
       const packageNames = ${JSON.stringify(packageNames)};
       await Promise.all(packageNames.map((name) => import(name)));
+      const agentCore = await import('@felan-ai/agent-core');
+      if (typeof agentCore.createJevClassifier !== 'function' || typeof agentCore.createLogger !== 'function') throw new Error('agent-core is missing classifier or logger exports');
+      for (const name of ['JEV_PROVIDERS', 'JevClientError', 'createJevClient', 'OPENROUTER_DECISIONS_URL', 'TYPESAFE_SYSTEMONE_URL', 'resolveJevTransport']) {
+        if (name in agentCore) throw new Error('agent-core exposes low-level Jev API: ' + name);
+      }
       const app = await import('@felan-ai/felan');
       for (const packageName of app.localExtensionPackages) {
         const extension = await app.importLocalExtension(packageName);

@@ -13,7 +13,7 @@ describe('@felan-ai/ext-felan-api package boundary', () => {
       license: 'MIT',
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
       dependencies: { typebox: '1.1.38' },
-      peerDependencies: { '@felan-ai/agent-core': '^0.7.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.8.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
     });

@@ -51,7 +51,11 @@ paths; each storage handle preserves binary content, rejects lexical and
 symlink escapes, and cannot remove its root. Workspace path access excludes
 agent storage, while host path access lets ordinary operations inspect both
 storage scopes. Storage handles also support `appendFile` for host log files.
-Every runtime has a structured `logger`; hosts inject the destination.
+Every runtime has a structured `logger`; hosts inject the destination. Runtimes
+may also expose an optional `classifier` capability. The Jev classifier client
+is an internal implementation detail; the public provider-specific surface is
+the high-level `createJevClassifier` factory. Hosts own credential discovery
+and decide whether to inject it.
 
 Host runtimes expose optional persistent process operations for extensions that
 need incremental output and stdin. `startShell()` keeps process ownership in

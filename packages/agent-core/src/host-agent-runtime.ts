@@ -37,6 +37,7 @@ import type {
   ExecResult,
 } from './runtime.js';
 import { fileListingGlobMatcher, normalizeFileListingPath } from './file-listing.js';
+import type { Classifier } from './classifier.js';
 import { createSilentLogger, type Logger } from './logger.js';
 
 export type HostShellOptions = AgentRuntimeShellOptions;
@@ -47,6 +48,7 @@ export interface HostAgentRuntimeOptions {
   readonly agentDir?: string;
   readonly pathAccess?: 'workspace' | 'host';
   readonly posixShell?: string;
+  readonly classifier?: Classifier;
   readonly logger?: Logger;
 }
 
@@ -60,6 +62,7 @@ export class HostAgentRuntime implements AgentRuntime {
   readonly #pathAccess: 'workspace' | 'host';
   readonly #configuredPosixShell: string | undefined;
   #posixShell: Promise<string> | undefined;
+  readonly classifier?: Classifier;
   readonly logger: Logger;
   readonly processes: AgentRuntimeProcesses;
   readonly privateRuntime: AgentRuntimePrivateRuntime;
@@ -75,6 +78,7 @@ export class HostAgentRuntime implements AgentRuntime {
     this.#agentDir = options.agentDir === undefined ? undefined : resolveStorageRoot(options.agentDir);
     this.#pathAccess = options.pathAccess ?? 'workspace';
     this.#configuredPosixShell = validateConfiguredShell(options.posixShell);
+    if (options.classifier !== undefined) this.classifier = options.classifier;
     this.logger = options.logger ?? createSilentLogger();
     this.#sessionStorage = createHostStorage(this.#sessionStorageRoot);
     this.#agentStorage = createHostStorage(this.#agentStorageRoot);

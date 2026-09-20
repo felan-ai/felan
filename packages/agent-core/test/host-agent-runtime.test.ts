@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostAgentRuntime } from '../src/index.js';
+import type { Classifier } from '../src/index.js';
 
 const temporaryPaths: string[] = [];
 
@@ -219,6 +220,25 @@ describe('HostAgentRuntime', () => {
       .rejects.toThrow('runtime root cannot be removed');
     await expect(agentStorage.remove(agentStorageRoot, { recursive: true }))
       .rejects.toThrow('runtime root cannot be removed');
+  });
+
+  it('exposes an optional host-injected classifier without constructing one', async () => {
+    const workspace = await createTemporaryDirectory('workspace');
+    const storageRoot = await createTemporaryDirectory('storage');
+    const classifier: Classifier = {
+      evaluate: async () => ({ answers: {} }),
+    };
+    const runtime = new HostAgentRuntime(workspace, {
+      sessionStorageRoot: join(storageRoot, 'session'),
+      agentStorageRoot: join(storageRoot, 'agent'),
+      classifier,
+    });
+
+    expect(runtime.classifier).toBe(classifier);
+    expect(new HostAgentRuntime(workspace, {
+      sessionStorageRoot: join(storageRoot, 'session-2'),
+      agentStorageRoot: join(storageRoot, 'agent-2'),
+    }).classifier).toBeUndefined();
   });
 
   it('supports binary file IO, listing, mkdir, and removal', async () => {

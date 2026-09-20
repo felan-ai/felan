@@ -37,6 +37,10 @@ to do.
   decision superseded by ADR 0010.
 - [ADR 0010](decisions/0010-retire-code-mode.md) — why code mode and nested
   tool invocation were retired after benchmark evaluation.
+- [ADR 0014](decisions/0014-own-jev-classifier-service.md) — historical Jev
+  extension placement, superseded by ADR 0016.
+- [ADR 0016](decisions/0016-jev-classifier-in-agent-core.md) — why the Jev
+  client lives in Agent Core behind a provider-neutral runtime capability.
 - [Extension catalog](reference/extension-catalog.md) — every first-party
   package, its host boundary, commands, and runtime conditions.
 - [Runtime dependencies](reference/runtime-dependencies.md) — external

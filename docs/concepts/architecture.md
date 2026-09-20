@@ -74,7 +74,8 @@ listeners; Agent Core does not discover a consumer's ambient resources.
 - bounded file enumeration and command-output capture prevent broad searches
   from materializing unbounded host data;
 - scoped `storage('session')` and `storage('agent')` contain extension state;
-- optional persistent process and PTY capabilities are explicit; and
+- optional persistent process, PTY, logger, and classifier capabilities are
+  explicit; and
 - host implementations decide whether workspace or current-user host paths are
   available.
 

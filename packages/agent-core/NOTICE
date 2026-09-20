@@ -9,6 +9,10 @@ Copyright (c) 2025 Mario Zechner.
 It also uses @earendil-works/pi-server 0.85.1 from the same project under the
 MIT License.
 
+This package also contains original Felan MIT-licensed Jev classifier client
+code. Direct HTTPS to the public TypeSafe and OpenRouter API hosts is an
+intentional I/O exception; those hosts are pinned and fetch is injectable.
+
 This package uses @lydell/node-pty 1.2.0-beta.14 from
 https://github.com/lydell/node-pty, licensed under the MIT License.
 Copyright (c) 2026 Simon Lydell. Its platform binaries retain the MIT-licensed

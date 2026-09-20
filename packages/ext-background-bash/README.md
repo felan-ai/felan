@@ -29,7 +29,7 @@ The same process surface is available to every selected model. Model-specific
 policy belongs to the model-facing prompt/tool composition, not to process
 ownership or runtime capability checks.
 
-This release requires `@felan-ai/agent-core` `^0.7.0` because it uses the
+This release requires `@felan-ai/agent-core` `^0.8.0` because it uses the
 runtime's explicit POSIX shell flavor.
 
 ## Tools and controls

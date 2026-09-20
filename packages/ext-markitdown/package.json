@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-markitdown",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Bounded MarkItDown document conversion for Felan read workflows",
   "license": "MIT",
   "type": "module",
@@ -31,7 +31,7 @@
     "prepack": "pnpm build"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.7.0"
+    "@felan-ai/agent-core": "^0.8.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

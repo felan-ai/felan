@@ -13,7 +13,7 @@ describe('@felan-ai/ext-session-compaction package boundary', () => {
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-session-compaction',
       license: 'MIT',
-      peerDependencies: { '@felan-ai/agent-core': '^0.7.0' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.8.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
