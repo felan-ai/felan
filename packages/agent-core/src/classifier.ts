@@ -15,10 +15,27 @@ export interface ClassifierAnswer {
 
 export type ClassifierAnswers = Readonly<Record<string, ClassifierAnswer>>;
 
+export interface ClassifierUsage {
+  readonly requests: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly costUsd?: number;
+}
+
+export interface ClassifierEvaluationMetadata {
+  readonly provider?: string;
+  readonly model?: string;
+  readonly usage?: ClassifierUsage;
+  readonly elapsedMs?: number;
+}
+
 export interface Classifier {
   evaluate(
     state: unknown,
     questions: ClassifierQuestions,
     signal?: AbortSignal,
-  ): Promise<{ readonly answers: ClassifierAnswers }>;
+  ): Promise<{
+    readonly answers: ClassifierAnswers;
+    readonly metadata?: ClassifierEvaluationMetadata;
+  }>;
 }

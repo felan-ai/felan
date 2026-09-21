@@ -8,7 +8,10 @@ Portable extension behavior belongs here when it can be exercised without
 Felan Cloud: enabled/disabled effects, output quality, cost, tokens, latency,
 and portable lifecycle contracts. The catalog contains 24 cases across
 Codebase Memory, MarkItDown, Memory, Output Style, Prewalk, RTK, Session
-Compaction, Subagents, Tasks, and Web Access.
+Compaction, Subagents, Tasks, and Web Access. Session compaction also has a
+classifier-only method arm that requires
+`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` and is not a savings claim until its
+quality gate passes.
 
 Felan Cloud's `apps/agent/evals` owns platform composition and product
 workflows: cloud session persistence, runtime wiring, system events, runtime

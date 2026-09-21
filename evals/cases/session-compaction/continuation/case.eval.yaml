@@ -1,6 +1,6 @@
 id: session-compaction-continuation
 suite: session-compaction
-description: Compare trajectory fidelity after native Pi and Felan default inherited-model compaction of one real coding session.
+description: Compare trajectory fidelity after native Pi, Felan verified summarization, and classifier-only transcript compaction on one real coding session.
 timeoutMs: 900000
 workspace:
   fixture: fixtures/session-compaction/v1/source
@@ -8,6 +8,7 @@ agents:
   include:
     - felan-no-session-compaction
     - felan-inherit-compaction
+    - felan-jev-compaction
 prompt: |
   Continue from this real session at its compaction boundary. The next user
   request was: "Can you review the changes for overcomplication and

@@ -6,6 +6,7 @@ export interface CompactionPreparation {
   readonly turnPrefixMessages: readonly unknown[];
   readonly previousSummary?: string;
   readonly tokensBefore: number;
+  readonly settings?: { readonly reserveTokens?: number };
 }
 export type PreparedMessageValue = unknown;
 
@@ -38,6 +39,13 @@ export interface SessionCompactionFallbackDiagnosticV1 {
   readonly errorMessage?: string;
   readonly stopReason?: string;
   readonly detail?: string;
+  readonly prune?: {
+    readonly status: 'off' | 'skipped' | 'ran';
+    readonly reason?: string;
+    readonly kept?: number;
+    readonly shortened?: number;
+    readonly dropped?: number;
+  };
 }
 
 export type SpanSection = 'previous_summary' | 'messages_to_summarize' | 'turn_prefix';

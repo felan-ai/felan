@@ -47,9 +47,11 @@ messages are counted under Messages.
 
 ## Session compaction and recall
 
-The default session-compaction extension asks the configured summary model once
-for a bounded continuation checkpoint after deterministic extraction of the prepared
-eviction span. `inherit` is the default; tier values select an exact
+The default session-compaction method uses the runtime classifier when one is
+available. Without that capability, or when the method is explicitly set to
+`summary`, the extension asks the configured summary model once for a bounded
+continuation checkpoint after deterministic extraction of the prepared eviction
+span. `inherit` is the default summary-model policy; tier values select an exact
 text-capable model from the allowed catalog, preferring the active
 provider/family. An unavailable tier falls back to inherit. Evidence is
 priority-packed while preserving chronological order. For a split turn, user
@@ -77,6 +79,21 @@ IDs. It does not read sibling branches, prior sessions, or RTK recovery files;
 an RTK recovery pointer does not promise access to the original output. Disable
 the feature with `builtinExtensions.sessionCompaction: false` to restore Pi's
 native summarization and remove the tool.
+
+`extensionConfig.sessionCompaction.method` defaults to `classifier`. When the
+runtime exposes a classifier, session compaction may drop or shorten every
+eligible bulky successful tool result and returns the retained transcript
+without a summary-model call. Agent Core batches the complete question set as
+needed for the provider. The Agent Core Jev client judges each candidate
+against the surrounding evidence and the compaction trigger; the local host
+exposes it when `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available. It does
+not own Pi's cut point or persistence. Set the method to `summary` to disable classifier
+compaction; the same summary fallback is selected automatically when the runtime
+has no classifier. Pi's reserve/tail settings and model metadata govern
+compaction capacity; Felan's remaining bounds protect untrusted extraction,
+requests, diagnostics, and recall rather than imposing a result-size ceiling.
+See
+[ADR 0016](../decisions/0016-jev-classifier-in-agent-core.md).
 
 Memory is intentionally selective. It prioritizes durable user-authored
 preferences, decisions, corrections, important facts, and rationale not recorded

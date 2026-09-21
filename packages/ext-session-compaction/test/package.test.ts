@@ -27,8 +27,12 @@ describe('@felan-ai/ext-session-compaction package boundary', () => {
     expect(source).not.toMatch(/node:|supabase|daytona|fetch\(|process\.|@earendil-works/u);
   });
 
-  it('declares inherit as the default summary model policy', () => {
+  it('declares classifier with inherit as the default policy', () => {
     expect(getExtensionConfigDefinition(sessionCompactionExtension)).toBe(SESSION_COMPACTION_CONFIG);
+    expect(SESSION_COMPACTION_CONFIG.fields.method).toMatchObject({
+      default: 'classifier',
+      values: ['summary', 'classifier'],
+    });
     expect(SESSION_COMPACTION_CONFIG.fields.model).toMatchObject({
       default: 'inherit',
       values: ['inherit', 'xhigh', 'high', 'medium', 'low'],

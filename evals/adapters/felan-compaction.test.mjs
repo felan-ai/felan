@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   expectedCompactionOwner,
+  expectedCompactionMethod,
   felanCompactionAdapter,
   parseFelanCompactionCost,
   writeCompactionExpectation,
@@ -50,18 +51,47 @@ assert.deepEqual(extension.usage.map(({ provider, model }) => ({ provider, model
   { provider: 'openai-codex', model: 'gpt-5.6-luna' },
 ]);
 
+const classifier = await parseFelanCompactionCost({
+  stdout: `${JSON.stringify({
+    type: 'compaction_end',
+    aborted: false,
+    result: {
+      details: {
+        namespace: 'felan.session-compaction',
+        method: 'classifier',
+        prune: { status: 'ran', asked: 3, classifier: {
+          provider: 'openrouter', model: 'typesafe/jev-1.13',
+          usage: { requests: 2, inputTokens: 400, outputTokens: 20, costUsd: 0.00002 },
+        } },
+      },
+    },
+  })}\n`,
+  plan: { parser: 'pi-jsonl' },
+});
+assert.equal(classifier.metadata.classifierRequests, 2);
+assert.equal(classifier.totalCost, 0.00002);
+
 const configDir = await mkdtemp(join(tmpdir(), 'felan-compaction-adapter-'));
 try {
   assert.equal(expectedCompactionOwner({
     settings: { builtinExtensions: { sessionCompaction: false } },
   }), 'native');
-  await writeCompactionExpectation(configDir, 'native');
+  await writeCompactionExpectation(configDir, 'native', 'native');
   assert.deepEqual(JSON.parse(await readFile(join(configDir, 'session-compaction-expectation.json'), 'utf8')), {
-    expectedOwner: 'native',
+    expectedOwner: 'native', expectedMethod: 'native',
   });
   assert.equal(expectedCompactionOwner({
     settings: { builtinExtensions: { sessionCompaction: true } },
   }), 'extension');
+  assert.equal(expectedCompactionMethod({
+    settings: { builtinExtensions: { sessionCompaction: true } },
+  }), 'classifier');
+  assert.equal(expectedCompactionMethod({
+    settings: { builtinExtensions: { sessionCompaction: true }, extensionConfig: { sessionCompaction: { method: 'classifier' } } },
+  }), 'classifier');
+  assert.equal(expectedCompactionMethod({
+    settings: { builtinExtensions: { sessionCompaction: true }, extensionConfig: { sessionCompaction: { method: 'summary' } } },
+  }), 'summary');
   await assert.rejects(async () => expectedCompactionOwner({ settings: { builtinExtensions: {} } }),
     /requires explicit builtinExtensions\.sessionCompaction/,
   );
@@ -71,18 +101,18 @@ try {
   await rm(expectation);
   await writeFile(victim, 'unchanged\n');
   await symlink(victim, expectation);
-  await writeCompactionExpectation(configDir, 'extension');
+  await writeCompactionExpectation(configDir, 'extension', 'summary');
   assert.equal(await readFile(victim, 'utf8'), 'unchanged\n');
   assert.equal((await lstat(expectation)).isFile(), true);
-  assert.deepEqual(JSON.parse(await readFile(expectation, 'utf8')), { expectedOwner: 'extension' });
+  assert.deepEqual(JSON.parse(await readFile(expectation, 'utf8')), { expectedOwner: 'extension', expectedMethod: 'summary' });
 
   await felanCompactionAdapter.parseEvents({
     stdout: '',
     stderr: '',
     configDir,
-    plan: { parser: 'pi-jsonl', metadata: { compactionCost: { expectedOwner: 'native' } } },
+    plan: { parser: 'pi-jsonl', metadata: { compactionCost: { expectedOwner: 'native', expectedMethod: 'native' } } },
   });
-  assert.deepEqual(JSON.parse(await readFile(expectation, 'utf8')), { expectedOwner: 'native' });
+  assert.deepEqual(JSON.parse(await readFile(expectation, 'utf8')), { expectedOwner: 'native', expectedMethod: 'native' });
 } finally {
   await rm(configDir, { recursive: true, force: true });
 }

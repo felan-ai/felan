@@ -36,20 +36,21 @@ factories. Session compaction defines that classifier as an optional
 disabled Jev built-in, or classifier failure leave the owner’s existing
 behavior unchanged.
 
-The first consumer is opt-in prune-then-summarize in
+The first consumer is the default `classifier` method in
 `@felan-ai/ext-session-compaction`. Jev may classify eligible successful tool
-evidence as keep, drop, or shorten. Session compaction still extracts bounded
-evidence, protects split-turn prefix and failures, writes the canonical
-checkpoint, and falls back to native Pi. Jev does not write summary prose or
-replace Pi cut points. Model routing, Prewalk gating, memory filtering,
+evidence as keep, drop, or shorten; the method returns the retained transcript
+without a summary-model request. Session compaction still extracts bounded
+evidence, protects split-turn prefix and failures, and falls back to native Pi.
+Jev does not write summary prose or replace Pi cut points. Model routing,
+Prewalk gating, memory filtering,
 auto-branching, and tool-safety classification stay out of scope until those
 owners receive the same injection seam and a quality-gated eval.
 
 ## Alternatives Considered
 
 - Jev as a competing `session_before_compact` producer: rejected because it
-  creates a second compaction product, cannot emit canonical checkpoints, and
-  forces evals to disable verified summarization.
+  creates a second lifecycle owner. The classifier method remains inside the
+  existing compaction extension and uses Pi's prepared cut.
 - Session compaction imports `ext-jev`: rejected because portable extensions
   peer-depend only on Agent Core, cannot read another extension’s config, and
   would couple later owners to compaction.
@@ -60,11 +61,13 @@ owners receive the same injection seam and a quality-gated eval.
 
 ## Consequences
 
-- `extensionConfig.jev` configures provider and keys only.
-  `extensionConfig.sessionCompaction.prune` opts into Jev pruning and defaults
-  to `off`.
+- Credentials remain host-owned; there is no `extensionConfig.jev` schema.
+  `extensionConfig.sessionCompaction.method` defaults to `classifier`; the
+  extension uses it only when the host injects the capability and otherwise
+  uses verified summary compaction. Explicit `summary` configuration disables
+  classification.
 - There is one compaction producer. Eval arms that measure Jev keep session
-  compaction enabled and set prune to `jev`.
+  compaction enabled and set method to `classifier`.
 - Future owners reuse the host-injected classifier rather than depending on
   `ext-jev` or session compaction.
 - Token reduction alone is not a savings claim. Continuation quality against

@@ -118,7 +118,58 @@ describe('Jev client', () => {
       },
     })).resolves.toEqual({
       answers: { keep: { type: 'choice', choice: 'yes', confidence: 0.8 } },
+      metadata: expect.objectContaining({ provider: 'typesafe', model: TYPESAFE_MODEL }),
     });
+  });
+
+  it('returns and aggregates provider usage metadata', async () => {
+    const fetch = mockFetch({
+      answers: { first: { noul: 0.9 } },
+      usage: { input_tokens: 11, output_tokens: 3, cost: 0.0002 },
+    });
+    const client = createJevClient({ typesafeApiKey: 'ts-secret', fetch });
+    const result = await client.evaluate('state', {
+      first: { type: 'noul', instructions: 'First?' },
+    });
+    expect(result.usage).toEqual({ requests: 1, inputTokens: 11, outputTokens: 3, costUsd: 0.0002 });
+  });
+
+  it('batches large question sets while returning every answer', async () => {
+    let request = 0;
+    const fetch = vi.fn<JevFetch>(async (_url, init) => {
+      request += 1;
+      const body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({
+        answers: Object.fromEntries(
+          Object.keys(body.questions).map((id) => [id, { noul: 0.75 }]),
+        ),
+        ...(request === 2 ? { usage: { input_tokens: 7 } } : {}),
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    const client = createJevClient({ typesafeApiKey: 'ts-secret', fetch });
+    const manyQuestions = Object.fromEntries(Array.from({ length: 200 }, (_, index) => [
+      `question-${index}`,
+      { type: 'noul' as const, instructions: `Question ${index}? ${'x'.repeat(900)}` },
+    ]));
+
+    const result = await client.evaluate('state', manyQuestions);
+
+    expect(fetch.mock.calls.length).toBeGreaterThan(1);
+    expect(Object.keys(result.answers)).toHaveLength(200);
+    expect(result.usage).toMatchObject({ inputTokens: 7 });
+    expect(result.usage?.requests).toBe(fetch.mock.calls.length);
+  });
+
+  it('rejects question sets and state above the local safety envelope', async () => {
+    const client = createJevClient({ typesafeApiKey: 'ts-secret', fetch: mockFetch({ answers: {} }) });
+    const tooMany = Object.fromEntries(Array.from({ length: 257 }, (_, index) => [
+      `question-${index}`,
+      { type: 'noul' as const, instructions: 'Question?' },
+    ]));
+    await expect(client.evaluate('state', tooMany)).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(client.evaluate('x'.repeat(64 * 1_024 + 1), {
+      keep: { type: 'noul', instructions: 'Keep?' },
+    })).rejects.toMatchObject({ code: 'invalid_request' });
   });
 });
 

@@ -7,6 +7,13 @@ and the active-lineage recall design in @sting8k/pi-vcc 0.7.2, reviewed at
 https://github.com/sting8k/pi-vcc/tree/b1b8b3ad748e2c77e8a1da26dc384e58a5bb771f.
 No source code from either package is copied into this package.
 
+The classifier method was also informed by the MIT-licensed
+fast-jev-compaction repository at
+https://github.com/tamaratran/fast-jev-compaction/tree/e3f262a7f4d42bd8dd32ced30d26176f7cb545b0
+and pi-jev at
+https://github.com/iefnaf/pi-jev/tree/77516ee1a51e98958430e24a9a82d58173e3422a.
+No source code from either package is copied into this package.
+
 This package uses TypeBox 1.1.38 from
 https://github.com/sinclairzx81/typebox, licensed under the MIT License.
 Copyright (c) 2017-2026 Haydn Paterson.

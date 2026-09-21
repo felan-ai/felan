@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { FelanExtensionAPI } from '@felan-ai/agent-core';
+import { createLogger, type FelanExtensionAPI, type LogRecord } from '@felan-ai/agent-core';
 import { createSessionCompactionExtension } from '../src/compaction.js';
 
 describe('verified session compaction', () => {
@@ -26,6 +26,7 @@ describe('verified session compaction', () => {
           namespace: 'felan.session-compaction',
           schemaVersion: 1,
           attemptId: expect.any(String),
+          method: 'summary',
         },
       },
     });
@@ -127,7 +128,6 @@ describe('verified session compaction', () => {
       '18 tests passed',
     ].map((value) => prompt!.indexOf(value));
     expect(orderedFacts).toEqual([...orderedFacts].sort((left, right) => left - right));
-    expect(new TextEncoder().encode(prompt).byteLength).toBeLessThan(96 * 1_024);
   });
 
   it('preserves assistant block order around an unmatched tool call', async () => {
@@ -165,8 +165,8 @@ describe('verified session compaction', () => {
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
   });
 
-  it('falls through rather than dropping a split-turn test outcome', async () => {
-    const complete = vi.fn();
+  it('accepts a large split-turn test outcome without dropping it', async () => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
     const handlers = install(complete);
 
     const result = await handlers.before({
@@ -190,8 +190,9 @@ describe('verified session compaction', () => {
       signal: new AbortController().signal,
     });
 
-    expect(result).toBeUndefined();
-    expect(complete).not.toHaveBeenCalled();
+    expect(result?.compaction.summary).toContain('## Goal');
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete.mock.calls[0]?.[1].messages[0]?.content[0]?.text).toContain('26 tests passed');
   });
 
   it('reserves evidence capacity for an early split-turn test outcome', async () => {
@@ -263,8 +264,8 @@ describe('verified session compaction', () => {
     expect(complete.mock.calls[0]?.[1].messages[0]?.content[0]?.text).toContain('Keep this split-prefix request.');
   });
 
-  it('falls through before generation when required split-turn narrative cannot fit', async () => {
-    const complete = vi.fn();
+  it('accepts a large required split-turn narrative within the evidence boundary', async () => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
     const handlers = install(complete);
 
     const result = await handlers.before({
@@ -278,17 +279,12 @@ describe('verified session compaction', () => {
       signal: new AbortController().signal,
     });
 
-    expect(result).toBeUndefined();
-    expect(complete).not.toHaveBeenCalled();
-    expect(handlers.diagnostics).toHaveLength(1);
-    expect(handlers.notifications).toHaveLength(1);
-    const notification = handlers.notifications[0] as { message: string; type: string };
-    expect(notification).toMatchObject({ type: 'warning' });
-    expect(notification.message).toContain('Pi native compaction');
+    expect(result?.compaction.summary).toContain('## Goal');
+    expect(complete).toHaveBeenCalledOnce();
   });
 
-  it('falls through before prompt construction when a previous summary exceeds its bound', async () => {
-    const complete = vi.fn();
+  it('accepts a previous summary larger than the removed result bound', async () => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
     const handlers = install(complete);
 
     const result = await handlers.before({
@@ -302,8 +298,65 @@ describe('verified session compaction', () => {
       signal: new AbortController().signal,
     });
 
-    expect(result).toBeUndefined();
+    expect(result?.compaction.summary).toContain('## Goal');
+    expect(complete).toHaveBeenCalledOnce();
+  });
+
+  it('uses verified summary when classifier compaction is configured without a classifier', async () => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+    const handlers = install(complete, { method: 'classifier' });
+    const result = await handlers.before({
+      preparation: prepared(), branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: new AbortController().signal,
+    });
+    expect(result).toMatchObject({ compaction: { details: { method: 'summary' } } });
+    expect(complete).toHaveBeenCalledOnce();
+    expect(handlers.diagnostics).toHaveLength(0);
+  });
+
+  it('uses the classifier transcript by default without a summary-model request', async () => {
+    const complete = vi.fn();
+    const evaluate = vi.fn(async () => ({ answers: {} }));
+    const handlers = install(complete, {}, [], [], { evaluate });
+    await expect(handlers.before({
+      preparation: prepared(), branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({ compaction: { details: { method: 'classifier' } } });
+    expect(evaluate).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('accepts a non-empty summary that omits canonical headings instead of paying for native fallback', async () => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse('Continue the login fix. Run tests next.'));
+    const handlers = install(complete);
+    const result = await handlers.before({
+      preparation: prepared(),
+      branchEntries: branch(),
+      reason: 'manual',
+      willRetry: false,
+      signal: new AbortController().signal,
+    });
+    expect(result).toMatchObject({
+      compaction: {
+        summary: expect.stringContaining('Continue the login fix. Run tests next.'),
+        details: { namespace: 'felan.session-compaction' },
+      },
+    });
+    expect(handlers.diagnostics).toHaveLength(0);
+  });
+
+  it('accepts a summary larger than 24 KiB', async () => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(`## Goal\n${'x'.repeat(25 * 1_024)}`));
+    const handlers = install(complete);
+    const result = await handlers.before({
+      preparation: prepared(),
+      branchEntries: branch(),
+      reason: 'manual',
+      willRetry: false,
+      signal: new AbortController().signal,
+    });
+    expect(result?.compaction.summary.length).toBeGreaterThan(24 * 1_024);
+    expect(handlers.diagnostics).toHaveLength(0);
   });
 
   it('falls through to native compaction for an incomplete model response', async () => {
@@ -336,31 +389,6 @@ describe('verified session compaction', () => {
     expect(handlers.diagnostics).toHaveLength(1);
     expect(handlers.diagnostics[0]).toMatchObject({ reason: 'model-request-failed' });
     expect(JSON.stringify(handlers.diagnostics[0])).not.toContain('Bearer secret');
-    expect(handlers.notifications).toHaveLength(1);
-  });
-
-  it('falls through instead of cancelling when only the extension timeout aborts', async () => {
-    const timeout = new AbortController();
-    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
-    const complete = vi.fn().mockImplementation(async () => {
-      timeout.abort();
-      return assistantResponse(canonicalSummary());
-    });
-    const handlers = install(complete);
-
-    try {
-      await expect(handlers.before({
-        preparation: prepared(),
-        branchEntries: branch(),
-        reason: 'threshold',
-        willRetry: false,
-        signal: new AbortController().signal,
-      })).resolves.toBeUndefined();
-    } finally {
-      timeoutSpy.mockRestore();
-    }
-    expect(handlers.diagnostics).toHaveLength(1);
-    expect(handlers.diagnostics[0]).toMatchObject({ reason: 'model-timeout' });
     expect(handlers.notifications).toHaveLength(1);
   });
 
@@ -418,6 +446,136 @@ describe('verified session compaction', () => {
     });
     expect(complete.mock.calls[0]?.[0]).toMatchObject({ provider: 'openai', id: 'gpt-5-luna' });
   });
+
+  it('prunes successful tool observations with an injected classifier', async () => {
+    const complete = vi.fn();
+    const evaluate = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
+      answers: Object.fromEntries(
+        Object.keys(questions).map((name) => [name, {
+          type: 'choice' as const,
+          choice: 'obsolete' as const,
+          probabilities: { exact_contents: 0.05, outcome_only: 0.1, obsolete: 0.85 },
+          confidence: 0.8,
+        }]),
+      ),
+    }));
+    const handlers = install(complete, { method: 'classifier' }, [], [], { evaluate });
+    const result = await handlers.before({
+      preparation: {
+        ...prepared(),
+        messagesToSummarize: [
+          { role: 'user', content: 'Fix login. Always run tests.' },
+          {
+            role: 'assistant',
+            content: [{ type: 'toolCall', id: 'call-1', name: 'unknown_tool', arguments: {} }],
+          },
+          {
+            role: 'toolResult', toolCallId: 'call-1', toolName: 'unknown_tool', isError: false,
+            content: [{ type: 'text', text: `OBSOLETE_TOOL_OUTPUT ${'x'.repeat(120)}` }],
+          },
+        ],
+      },
+      branchEntries: branch(),
+      reason: 'manual',
+      willRetry: false,
+      signal: new AbortController().signal,
+    });
+    expect(result).toMatchObject({ compaction: { details: { method: 'classifier', prune: { status: 'ran', dropped: 1 } } } });
+    expect(result?.compaction.summary).not.toContain('OBSOLETE_TOOL_OUTPUT');
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('does not call the runtime classifier in summary mode', async () => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+    const evaluate = vi.fn(async () => ({ answers: {} }));
+    const handlers = install(complete, { method: 'summary' }, [], [], { evaluate });
+
+    const result = await handlers.before({
+      preparation: prepared(), branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: new AbortController().signal,
+    });
+
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ compaction: { details: { method: 'summary' } } });
+  });
+
+  it('accepts a classifier transcript larger than 24 KiB', async () => {
+    const complete = vi.fn();
+    const evaluate = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
+      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, {
+        type: 'choice' as const,
+        choice: 'outcome_only',
+        probabilities: { exact_contents: 0.05, outcome_only: 0.9, obsolete: 0.05 },
+        confidence: 0.9,
+      }])),
+    }));
+    const handlers = install(complete, { method: 'classifier' }, [], [], { evaluate });
+    const messages = [{ role: 'user', content: 'Review the results.' }];
+    for (let index = 0; index < 100; index += 1) {
+      messages.push(
+        { role: 'assistant', content: [{ type: 'toolCall', id: `call-${index}`, name: 'grep', arguments: {} }] } as never,
+        { role: 'toolResult', toolCallId: `call-${index}`, toolName: 'grep', isError: false, content: [{ type: 'text', text: `result-${index} ${'x'.repeat(400)}` }] } as never,
+      );
+    }
+    const result = await handlers.before({
+      preparation: { ...prepared(), messagesToSummarize: messages },
+      branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: new AbortController().signal,
+    });
+    expect(result?.compaction.summary.length).toBeGreaterThan(24 * 1_024);
+    expect(result?.compaction.details).toMatchObject({ method: 'classifier', prune: { status: 'ran', asked: expect.any(Number) } });
+    expect((result?.compaction.details as any).prune.asked).toBeGreaterThan(64);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('falls back to native compaction when the classifier fails', async () => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+    const evaluate = vi.fn().mockRejectedValue(new Error('classifier unavailable'));
+    const handlers = install(complete, { method: 'classifier' }, [], [], { evaluate });
+    const evidence = `CLASSIFIER_FAILURE_OUTPUT ${'x'.repeat(120)}`;
+
+    const result = await handlers.before({
+      preparation: {
+        ...prepared(),
+        messagesToSummarize: [
+          { role: 'user', content: 'Fix login.' },
+          { role: 'assistant', content: [{ type: 'toolCall', id: 'call-1', name: 'unknown_tool', arguments: {} }] },
+          { role: 'toolResult', toolCallId: 'call-1', toolName: 'unknown_tool', isError: false, content: [{ type: 'text', text: evidence }] },
+        ],
+      },
+      branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: new AbortController().signal,
+    });
+
+    expect(evaluate).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+    expect(handlers.diagnostics[0]).toMatchObject({ reason: 'model-request-failed' });
+  });
+
+  it('logs classifier debug without putting it on the compaction entry', async () => {
+    const complete = vi.fn();
+    const evaluate = vi.fn(async () => ({ answers: {} }));
+    const handlers = install(complete, { method: 'classifier' }, [], [], { evaluate });
+    const result = await handlers.before({
+      preparation: prepared(), branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: new AbortController().signal,
+    });
+    expect(handlers.logs).toEqual([expect.objectContaining({
+      level: 'debug',
+      msg: 'session compaction prune',
+      fields: expect.objectContaining({
+        component: 'session-compaction',
+        sessionId: 'session-1',
+        report: { status: 'skipped', reason: 'no-candidates' },
+      }),
+    })]);
+    expect(result).toMatchObject({
+      compaction: { details: { method: 'classifier', prune: { status: 'skipped', reason: 'no-candidates' } } },
+    });
+    expect(JSON.stringify(result)).not.toContain('leftovers');
+  });
 });
 
 function install(
@@ -425,13 +583,22 @@ function install(
   config: Record<string, unknown> = {},
   available: readonly Record<string, unknown>[] = [],
   scopedModels: readonly Record<string, unknown>[] = [],
+  classifier?: { evaluate: (...args: any[]) => Promise<unknown> },
 ) {
   const registered = new Map<string, (...args: any[]) => any>();
   const diagnostics: unknown[] = [];
   const notifications: unknown[] = [];
+  const logs: LogRecord[] = [];
   const model = { provider: 'test', id: 'model', maxTokens: 4_096 };
   const pi = {
     config,
+    runtime: {
+      logger: createLogger({
+        level: 'debug',
+        destination: { write: (record) => { logs.push(record); } },
+      }),
+      ...(classifier === undefined ? {} : { classifier }),
+    },
     on: (name: string, handler: (...args: any[]) => any) => registered.set(name, handler),
     appendEntry: (_type: string, data: unknown) => { diagnostics.push(data); },
   } as unknown as FelanExtensionAPI;
@@ -451,6 +618,7 @@ function install(
     before: (event: any) => registered.get('session_before_compact')!(event, ctx),
     diagnostics,
     notifications,
+    logs,
   };
 }
 

@@ -29,9 +29,12 @@ results of Felan tools.
 Create `@felan-ai/ext-session-compaction` as a portable extension. The local
 host enables it by default with the other built-ins and may disable it through
 `builtinExtensions.sessionCompaction: false`. The summary model is configurable
-through `extensionConfig.sessionCompaction.model`, defaulting to `inherit`; this
-does not create a separate strategy or mode. When the package is present it attempts verified summarization;
-when absent, Pi uses its native summarizer.
+through `extensionConfig.sessionCompaction.model`, defaulting to `inherit`. The
+package offers two explicit methods: `summary` (a verified summarizer) and
+`classifier` (a deterministic selective transcript). Classifier is the
+configured default: it runs when the host exposes a classifier and uses the
+verified summary method otherwise. Explicit `summary` configuration disables
+classification. When the package is absent, Pi uses its native summarizer.
 
 The extension handles `session_before_compact` and may return a replacement
 `CompactionResult`. Pi remains authoritative for preparation, the
@@ -55,7 +58,7 @@ For each prepared eviction span, the extension:
    supported by recorded tool results;
 3. asks the configured summary model once for a canonical continuation checkpoint;
 4. rejects unsupported outcome claims and deterministically appends missing
-   protected continuity within a fixed output budget; and
+   protected continuity within the central evidence bounds; and
 5. returns versioned, namespaced provenance and continuity data in
    `CompactionEntry.details`.
 
@@ -110,7 +113,8 @@ custom settings UI.
   constraints. Its npm artifact also lacks packaged license metadata, so no VCC
   source is copied.
 - Add `native` and `verified` extension configuration modes: rejected because
-  built-in enablement already supplies the control and rollback boundary.
+  built-in enablement already supplies the native rollback boundary; the method
+  choice is narrower and compares two extension-owned algorithms.
 
 ## Consequences
 

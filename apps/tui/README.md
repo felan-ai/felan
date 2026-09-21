@@ -214,17 +214,25 @@ All built-ins are enabled by default, including the Powerline footer in TUI
 sessions. Binary-backed features can remain inactive until their dependency is
 installed or the feature is disabled through `/dependencies`.
 
-Session compaction is also enabled by default. It makes one bounded summary
-attempt through Pi's compaction hook, using the active model by default or the
+Session compaction is also enabled by default. Its default `classifier` method
+drops or shortens eligible bulky successful tool results when
+`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` makes a runtime classifier available.
+Without a classifier it uses the verified summary method automatically; set
+`extensionConfig.sessionCompaction.method` to `summary` to disable classifier
+compaction explicitly. Summary mode uses the active model by default or the
 configured `inherit`, `xhigh`, `high`, `medium`, or `low` policy. Tier selection
 prefers the active provider/family and falls back to inherit when unavailable.
-It preserves structured continuity,
-and exposes `session_recall` for the current active lineage. The extension is
-safe to disable with `builtinExtensions.sessionCompaction: false`; Pi's native
-compactor then remains in control.
+Both methods preserve structured continuity and expose `session_recall` for the
+current active lineage. The extension is safe to disable with
+`builtinExtensions.sessionCompaction: false`; Pi's native compactor then remains
+in control and `session_recall` is removed.
 
-Structured logs default to `storage('agent')/logs/felan.jsonl`. Set
-`FELAN_LOG_LEVEL=off` to disable them, or `debug`/`info`/`warn`/`error` to
+Agent Core batches the complete classifier question set as needed; the local
+host exposes the Agent Core classifier through the runtime. Bounded compaction
+evidence is sent to the selected TypeSafe or OpenRouter endpoint. Debug logs
+default to
+`storage('agent')/logs/felan.jsonl`.
+Set `FELAN_LOG_LEVEL=off` to disable them, or `debug`/`info`/`warn`/`error` to
 change the level.
 
 Codebase Memory is a default built-in. It provides structural code

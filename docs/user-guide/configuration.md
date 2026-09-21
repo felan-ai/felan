@@ -64,7 +64,7 @@ browser and Powerline extensions:
     "codebaseMemory": { "maxCacheBytes": 0 },
     "promptHistory": { "displayMode": "inline" },
     "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
-    "sessionCompaction": { "model": "inherit" }
+    "sessionCompaction": { "method": "classifier", "model": "inherit" }
   },
   "felanSubagents": {
     "concurrency": 4,
@@ -113,13 +113,17 @@ and saves that provider's Felan default only when the session does not already
 have an active model. In `/model`, Enter saves the highlighted model as the
 default for future sessions; Ctrl+S changes only the current session.
 
-`FELAN_LOG_LEVEL` controls the host logger (default `debug`). Logs are written to
-`storage('agent')/logs/felan.jsonl`; set the variable to `off` to disable them.
-
 `builtinExtensions.sessionCompaction` controls verified session compaction and
 active-lineage `session_recall`. It is enabled by default. Disable it to use
-Pi's native compactor and remove the recall tool; there is intentionally no
-separate strategy setting. The extension makes one additional active-model
+Pi's native compactor and remove the recall tool. `extensionConfig.sessionCompaction.method`
+defaults to `classifier` and retains a selective transcript when
+`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` makes a runtime classifier available.
+Without that capability it uses the verified summary method automatically. Set
+the method to `summary` to disable classifier compaction even when a classifier
+is available. Classifier mode sends bounded compaction evidence to the selected
+TypeSafe or OpenRouter endpoint and does not make a summary-model request.
+`FELAN_LOG_LEVEL` controls the host logger (default `debug`); classifier
+traces go to `storage('agent')/logs/felan.jsonl`. Summary mode makes one additional active-model
 request when compaction runs. `extensionConfig.sessionCompaction.model` defaults
 to `inherit`, which uses the active session model. It also accepts `xhigh`,
 `high`, `medium`, and `low`; each selects an exact tier from the allowed session

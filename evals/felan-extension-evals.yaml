@@ -856,6 +856,66 @@ agents:
           codex:
             fast: false
             postAgentRunCompaction: false
+          sessionCompaction:
+            model: inherit
+            method: summary
+        felanTui:
+          memoryProcessing: false
+
+  felan-jev-compaction:
+    adapter: felan
+    label: Felan · classifier transcript compaction
+    comparisonId: felan-jev-compaction
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: low
+    timeoutMs: 900000
+    auth:
+      type: oauth
+    envAllowlist: [OPENROUTER_API_KEY]
+    useCurrentConfig: false
+    args:
+      - --session
+      - 01a042ca-0d42-75eb-aeac-0397822915e2
+      - --session-dir
+      - /workspace/sessions
+    config:
+      useCurrentConfig: false
+      compactionCostAccounting: true
+      settings:
+        compaction:
+          enabled: true
+          reserveTokens: 60000
+          keepRecentTokens: 20000
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          sessionCompaction: true
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: false
+            postAgentRunCompaction: false
+          sessionCompaction:
+            model: inherit
+            method: classifier
         felanTui:
           memoryProcessing: false
 
@@ -1245,6 +1305,28 @@ benchmarks:
     arms:
       baseline: felan-no-session-compaction
       candidate: felan-inherit-compaction
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: cost.total
+        goal: minimize
+      - metric: usage.promptTokens
+        goal: minimize
+    aggregation:
+      trials: median
+      cases: ratioOfReducedSums
+
+  session-jev-compaction:
+    revision: 1
+    label: Classifier versus summary compaction
+    description: Compare Felan verified summarization with classifier-only selective transcript compaction on the same sanitized coding trajectory. Quality pass rate is gated before cost or token claims.
+    select:
+      suites: [session-compaction]
+    arms:
+      baseline: felan-inherit-compaction
+      candidate: felan-jev-compaction
     trials: 3
     qualityGates:
       - metric: quality.passRate

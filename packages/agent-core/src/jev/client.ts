@@ -35,6 +35,14 @@ export interface JevEvaluation {
   readonly provider: 'typesafe' | 'openrouter';
   readonly model: string;
   readonly answers: JevAnswers;
+  readonly usage?: JevUsage;
+}
+
+export interface JevUsage {
+  readonly requests: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly costUsd?: number;
 }
 
 export type JevClientFailureCode =
@@ -67,10 +75,10 @@ export interface JevEvaluateOptions {
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_TIMEOUT_MS = 60_000;
-const MAX_STATE_BYTES = 24 * 1_024;
-const MAX_REQUEST_BYTES = 28 * 1_024;
+const MAX_STATE_BYTES = 64 * 1_024;
+const MAX_REQUEST_BYTES = 128 * 1_024;
 const MAX_RESPONSE_BYTES = 256 * 1_024;
-const MAX_QUESTIONS = 64;
+const MAX_QUESTIONS = 256;
 const MAX_INSTRUCTIONS_BYTES = 4_096;
 const PINNED_HOSTS = new Set(['api.typesafe.ai', 'openrouter.ai']);
 
@@ -90,12 +98,22 @@ export function createJevClient(options: CreateJevClientOptions = {}) {
       const transport = resolveTransport(options);
       if (!transport) throw new JevClientError('unavailable', 'Jev credentials are unavailable');
       const entries = questionEntries(questions);
-      const batches = partitionQuestions(state, entries);
+      const batches = partitionQuestions(transport.model, state, entries);
       const answers: Record<string, JevAnswer> = {};
+      let requests = 0;
+      let usage: Omit<JevUsage, 'requests'> | undefined;
       for (const batch of batches) {
-        Object.assign(answers, await requestAnswers(transport, fetcher, timeoutMs, state, batch, evaluateOptions.signal));
+        const response = await requestAnswers(transport, fetcher, timeoutMs, state, batch, evaluateOptions.signal);
+        requests += 1;
+        Object.assign(answers, response.answers);
+        usage = mergeUsage(usage, response.usage);
       }
-      return { provider: transport.provider, model: transport.model, answers };
+      return {
+        provider: transport.provider,
+        model: transport.model,
+        answers,
+        ...(usage === undefined ? {} : { usage: { requests, ...usage } }),
+      };
     },
   };
 }
@@ -116,7 +134,7 @@ async function requestAnswers(
   state: unknown,
   questions: JevQuestions,
   signal: AbortSignal | undefined,
-): Promise<JevAnswers> {
+): Promise<{ readonly answers: JevAnswers; readonly usage?: Omit<JevUsage, 'requests'> }> {
   if (!PINNED_HOSTS.has(transport.url.hostname) || transport.url.protocol !== 'https:') {
     throw new JevClientError('invalid_request', 'Jev endpoint is not pinned');
   }
@@ -192,6 +210,7 @@ function validateQuestion(question: JevQuestion): void {
 }
 
 function partitionQuestions(
+  model: string,
   state: unknown,
   entries: Array<readonly [string, JevQuestion]>,
 ): JevQuestions[] {
@@ -199,7 +218,7 @@ function partitionQuestions(
   if (stateBytes === 0 || stateBytes > MAX_STATE_BYTES) {
     throw new JevClientError('invalid_request', 'Jev state exceeds the size budget');
   }
-  const overhead = Buffer.byteLength(JSON.stringify({ model: 'x', state, questions: {} }), 'utf8');
+  const overhead = Buffer.byteLength(JSON.stringify({ model, state, questions: {} }), 'utf8');
   const batches: JevQuestions[] = [];
   let current: Record<string, JevQuestion> = {};
   let currentBytes = overhead;
@@ -220,7 +239,11 @@ function partitionQuestions(
   return batches;
 }
 
-function parseAnswers(text: string, questions: JevQuestions, apiKey: string): JevAnswers {
+function parseAnswers(
+  text: string,
+  questions: JevQuestions,
+  apiKey: string,
+): { readonly answers: JevAnswers; readonly usage?: Omit<JevUsage, 'requests'> } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -242,7 +265,42 @@ function parseAnswers(text: string, questions: JevQuestions, apiKey: string): Je
     }
     answers[name] = answer;
   }
-  return answers;
+  const usage = parseUsage(parsed.usage);
+  return { answers, ...(usage === undefined ? {} : { usage }) };
+}
+
+function parseUsage(value: unknown): Omit<JevUsage, 'requests'> | undefined {
+  if (!isRecord(value)) return undefined;
+  const inputTokens = nonNegativeInteger(value.input_tokens);
+  const outputTokens = nonNegativeInteger(value.output_tokens);
+  const costUsd = finiteNumber(value.cost);
+  if (inputTokens === undefined && outputTokens === undefined && costUsd === undefined) return undefined;
+  return {
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(costUsd === undefined ? {} : { costUsd }),
+  };
+}
+
+function mergeUsage(
+  current: Omit<JevUsage, 'requests'> | undefined,
+  next: Omit<JevUsage, 'requests'> | undefined,
+): Omit<JevUsage, 'requests'> | undefined {
+  if (current === undefined && next === undefined) return undefined;
+  return {
+    ...sumOptional(current?.inputTokens, next?.inputTokens, 'inputTokens'),
+    ...sumOptional(current?.outputTokens, next?.outputTokens, 'outputTokens'),
+    ...sumOptional(current?.costUsd, next?.costUsd, 'costUsd'),
+  };
+}
+
+function sumOptional(
+  current: number | undefined,
+  next: number | undefined,
+  key: 'inputTokens' | 'outputTokens' | 'costUsd',
+): Partial<JevUsage> {
+  if (current === undefined && next === undefined) return {};
+  return { [key]: (current ?? 0) + (next ?? 0) };
 }
 
 function parseAnswer(question: JevQuestion, value: unknown): JevAnswer | undefined {
@@ -322,6 +380,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function unitNumber(value: unknown): number | undefined {

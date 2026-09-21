@@ -5,6 +5,7 @@ import {
   type NativeFallbackReason,
   type SessionCompactionFallbackDiagnosticV1,
 } from './contracts.js';
+import type { EvidencePruneReport } from '../prune.js';
 
 const MAX_DIAGNOSTIC_FIELD_BYTES = 512;
 const MAX_DIAGNOSTIC_ERROR_BYTES = 1_024;
@@ -20,6 +21,7 @@ export interface FallbackDiagnosticInput {
   readonly errorMessage?: unknown;
   readonly stopReason?: unknown;
   readonly detail?: unknown;
+  readonly prune?: EvidencePruneReport;
 }
 
 export function createFallbackDiagnostic(input: FallbackDiagnosticInput): SessionCompactionFallbackDiagnosticV1 {
@@ -36,13 +38,37 @@ export function createFallbackDiagnostic(input: FallbackDiagnosticInput): Sessio
     ...(sanitizedError(input.errorMessage) ? { errorMessage: sanitizedError(input.errorMessage) } : {}),
     ...(boundedUnknown(input.stopReason) ? { stopReason: boundedUnknown(input.stopReason) } : {}),
     ...(boundedUnknown(input.detail) ? { detail: boundedUnknown(input.detail) } : {}),
+    ...(input.prune ? { prune: boundedPrune(input.prune) } : {}),
   };
   return diagnostic;
 }
 
 export function fallbackDiagnosticText(diagnostic: SessionCompactionFallbackDiagnosticV1): string {
   const error = diagnostic.errorMessage ? `: ${diagnostic.errorMessage}` : '';
-  return `Session compaction fell back to Pi native compaction (${diagnostic.reason}${error}).`;
+  const prune = pruneText(diagnostic.prune);
+  return `Session compaction fell back to Pi native compaction (${diagnostic.reason}${error}${prune}).`;
+}
+
+function boundedPrune(prune: EvidencePruneReport): NonNullable<SessionCompactionFallbackDiagnosticV1['prune']> {
+  if (prune.status === 'ran') {
+    return {
+      status: 'ran',
+      kept: prune.kept,
+      shortened: prune.shortened,
+      dropped: prune.dropped,
+    };
+  }
+  if (prune.status === 'skipped') return { status: 'skipped', reason: bounded(prune.reason) };
+  return { status: 'off' };
+}
+
+function pruneText(prune: SessionCompactionFallbackDiagnosticV1['prune']): string {
+  if (!prune) return '';
+  if (prune.status === 'ran') {
+    return `; prune ran kept=${prune.kept ?? 0} shortened=${prune.shortened ?? 0} dropped=${prune.dropped ?? 0}`;
+  }
+  if (prune.status === 'skipped') return `; prune skipped (${prune.reason ?? 'unknown'})`;
+  return '; prune off';
 }
 
 function sanitizedError(value: unknown): string {

@@ -24,72 +24,73 @@ afterEach(async () => {
 describe('local extension importer', () => {
   it('discovers ask-user configuration for the host-bound extension', async () => {
     const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-ask-user']);
-    expect(definitions).toEqual([expect.objectContaining({
+    expect(definitions.find((definition) => definition.id === 'askUser')).toEqual(expect.objectContaining({
       id: 'askUser',
       fields: expect.objectContaining({
         displayMode: expect.objectContaining({ default: 'inline' }),
       }),
-    })]);
+    }));
   });
 
   it('discovers context-view display configuration', async () => {
     const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-context-view']);
-    expect(definitions).toEqual([expect.objectContaining({
+    expect(definitions.find((definition) => definition.id === 'contextView')).toEqual(expect.objectContaining({
       id: 'contextView',
       fields: expect.objectContaining({
         displayMode: expect.objectContaining({ default: 'inline', values: ['inline', 'overlay'] }),
       }),
-    })]);
+    }));
   });
 
   it('discovers Background Bash foreground timeout configuration from factory extensions', async () => {
     const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-background-bash']);
-    expect(definitions).toEqual([expect.objectContaining({
+    expect(definitions.find((definition) => definition.id === 'backgroundBash')).toEqual(expect.objectContaining({
       id: 'backgroundBash',
       fields: expect.objectContaining({
         foregroundTimeoutSeconds: expect.objectContaining({ default: 120 }),
       }),
-    })]);
+    }));
   });
 
   it('discovers prompt-history display configuration', async () => {
     const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-prompt-history']);
-    expect(definitions).toEqual([expect.objectContaining({
+    expect(definitions.find((definition) => definition.id === 'promptHistory')).toEqual(expect.objectContaining({
       id: 'promptHistory',
       fields: expect.objectContaining({
         displayMode: expect.objectContaining({ default: 'inline', values: ['inline', 'overlay'] }),
       }),
-    })]);
+    }));
   });
 
   it('discovers Tasks display configuration', async () => {
     const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-tasks']);
-    expect(definitions).toEqual([expect.objectContaining({
+    expect(definitions.find((definition) => definition.id === 'tasks')).toEqual(expect.objectContaining({
       id: 'tasks',
       fields: expect.objectContaining({
         displayMode: expect.objectContaining({ default: 'inline', values: ['inline', 'overlay'] }),
       }),
-    })]);
+    }));
   });
 
-  it('discovers session-compaction model configuration', async () => {
+  it('discovers session-compaction method and model configuration', async () => {
     const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-session-compaction']);
-    expect(definitions).toEqual([expect.objectContaining({
+    expect(definitions.find((definition) => definition.id === 'sessionCompaction')).toEqual(expect.objectContaining({
       id: 'sessionCompaction',
       fields: expect.objectContaining({
+        method: expect.objectContaining({ default: 'classifier', values: ['summary', 'classifier'] }),
         model: expect.objectContaining({ default: 'inherit', values: ['inherit', 'xhigh', 'high', 'medium', 'low'] }),
       }),
-    })]);
+    }));
   });
 
   it('discovers browser authorization configuration', async () => {
     const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-browser']);
-    expect(definitions).toEqual([expect.objectContaining({
+    expect(definitions.find((definition) => definition.id === 'browser')).toEqual(expect.objectContaining({
       id: 'browser',
       fields: expect.objectContaining({
         authorizationPolicy: expect.objectContaining({ default: 'ask', values: ['ask', 'always-allow'] }),
       }),
-    })]);
+    }));
   });
 
   it('imports only the source-controlled package list', async () => {
@@ -189,6 +190,16 @@ describe('local extension importer', () => {
     });
 
     await expect(importer('@felan-ai/ext-powerline')).resolves.toMatchObject({
+      default: expect.any(Function),
+    });
+  });
+
+  it('loads session-compaction through the generic local importer', async () => {
+    const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => ({
+      default: () => undefined,
+    }));
+
+    await expect(importer('@felan-ai/ext-session-compaction')).resolves.toMatchObject({
       default: expect.any(Function),
     });
   });

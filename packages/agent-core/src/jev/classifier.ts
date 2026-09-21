@@ -1,4 +1,8 @@
-import type { Classifier, ClassifierAnswers } from '../classifier.js';
+import type {
+  Classifier,
+  ClassifierAnswers,
+  ClassifierEvaluationMetadata,
+} from '../classifier.js';
 import {
   JevClientError,
   createJevClient,
@@ -17,9 +21,27 @@ export function createJevClassifierWithOptions(
   if (!client.resolveTransport()) return undefined;
   return {
     async evaluate(state, questions, signal) {
+      const started = Date.now();
       const result = await client.evaluate(state, questions, signal === undefined ? {} : { signal });
-      return { answers: classifierAnswers(result.answers) };
+      return { answers: classifierAnswers(result.answers), metadata: evaluationMetadata(result, started) };
     },
+  };
+}
+
+function evaluationMetadata(
+  result: { readonly provider: string; readonly model: string; readonly usage?: {
+    readonly requests: number;
+    readonly inputTokens?: number;
+    readonly outputTokens?: number;
+    readonly costUsd?: number;
+  } },
+  started: number,
+): ClassifierEvaluationMetadata {
+  return {
+    provider: result.provider,
+    model: result.model,
+    elapsedMs: Date.now() - started,
+    ...(result.usage === undefined ? {} : { usage: { ...result.usage } }),
   };
 }
 

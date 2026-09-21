@@ -15,6 +15,7 @@ export const felanCompactionAdapter = {
     const plan = await felanAdapter.prepareStep(input);
     if (input.agent.config?.compactionCostAccounting !== true) return plan;
     const expectedOwner = expectedCompactionOwner(input.agent.config);
+    const expectedMethod = expectedCompactionMethod(input.agent.config);
     return {
       ...plan,
       metadata: {
@@ -23,6 +24,7 @@ export const felanCompactionAdapter = {
           activeProvider: input.agent.provider,
           activeModel: input.agent.model,
           expectedOwner,
+          expectedMethod,
         },
       },
     };
@@ -31,10 +33,11 @@ export const felanCompactionAdapter = {
     const events = await felanAdapter.parseEvents(input);
     if (input.plan.parser === 'text' || input.plan.metadata?.compactionCost === undefined) return events;
     const expectedOwner = input.plan.metadata.compactionCost.expectedOwner;
+    const expectedMethod = input.plan.metadata.compactionCost.expectedMethod;
     if (input.configDir === undefined || (expectedOwner !== 'native' && expectedOwner !== 'extension')) {
       throw new Error('Compaction cost accounting is missing verifier expectation metadata');
     }
-    await writeCompactionExpectation(input.configDir, expectedOwner);
+    await writeCompactionExpectation(input.configDir, expectedOwner, expectedMethod);
 
     const cost = await parseFelanCompactionCost(input);
     return cost === undefined ? events : { ...events, cost };
@@ -49,14 +52,23 @@ export function expectedCompactionOwner(config) {
   return enabled ? 'extension' : 'native';
 }
 
-export async function writeCompactionExpectation(configDir, expectedOwner) {
+export function expectedCompactionMethod(config) {
+  if (config?.settings?.builtinExtensions?.sessionCompaction !== true) return 'native';
+  const method = config?.settings?.extensionConfig?.sessionCompaction?.method;
+  return method === 'summary' ? 'summary' : 'classifier';
+}
+
+export async function writeCompactionExpectation(configDir, expectedOwner, expectedMethod = 'native') {
   if (expectedOwner !== 'native' && expectedOwner !== 'extension') {
     throw new Error(`Invalid expected compaction owner: ${String(expectedOwner)}`);
+  }
+  if (!['native', 'summary', 'classifier'].includes(expectedMethod)) {
+    throw new Error(`Invalid expected compaction method: ${String(expectedMethod)}`);
   }
   const path = join(configDir, EXPECTATION_FILE);
   const temporary = join(configDir, `.${EXPECTATION_FILE}.${randomUUID()}.tmp`);
   try {
-    await writeFile(temporary, `${JSON.stringify({ expectedOwner })}\n`, { flag: 'wx', mode: 0o600 });
+    await writeFile(temporary, `${JSON.stringify({ expectedOwner, expectedMethod })}\n`, { flag: 'wx', mode: 0o600 });
     await rename(temporary, path);
   } finally {
     await rm(temporary, { force: true });
@@ -67,6 +79,7 @@ export async function parseFelanCompactionCost(input) {
   const usageByModel = new Map();
   let assistantRequests = 0;
   let compactionRequests = 0;
+  let classifierRequests = 0;
 
   for await (const line of readStdoutLines(input)) {
     let event;
@@ -88,6 +101,13 @@ export async function parseFelanCompactionCost(input) {
     if (event.type !== 'compaction_end' || event.aborted === true || !isRecord(event.result)) continue;
     const selection = compactionModel(event.result.details, input.plan.metadata);
     if (addUsage(usageByModel, event.result.usage, selection)) compactionRequests += 1;
+    const classifier = classifierUsage(event.result.details);
+    if (classifier !== undefined) {
+      classifierRequests += classifier.requests;
+      if (addUsage(usageByModel, classifier.rawUsage, classifier.selection)) {
+        bumpRequests(usageByModel, classifier.selection, Math.max(0, classifier.requests - 1));
+      }
+    }
   }
 
   if (usageByModel.size === 0) return undefined;
@@ -102,8 +122,42 @@ export async function parseFelanCompactionCost(input) {
       source: 'felan-jsonl-with-compaction',
       assistantRequests,
       compactionRequests,
+      classifierRequests,
       compactionUsageIncluded: compactionRequests > 0,
     },
+  };
+}
+
+function bumpRequests(usageByModel, selection, amount) {
+  if (amount <= 0) return;
+  const current = usageByModel.get(JSON.stringify([selection.provider, selection.model]));
+  if (current) current.requests += amount;
+}
+
+function classifierUsage(details) {
+  const usage = isRecord(details) && isRecord(details.prune) && isRecord(details.prune.classifier)
+    ? details.prune.classifier
+    : undefined;
+  if (!usage || typeof usage.provider !== 'string' || typeof usage.model !== 'string' || typeof usage.usage !== 'object') return undefined;
+  const raw = usage.usage;
+  if (!isRecord(raw)) return undefined;
+  const input = finiteNumber(raw.inputTokens);
+  const output = finiteNumber(raw.outputTokens);
+  const cost = finiteNumber(raw.costUsd);
+  if (input === undefined && output === undefined && cost === undefined) return {
+    requests: finiteNumber(raw.requests) ?? 0,
+    rawUsage: undefined,
+    selection: { provider: usage.provider, model: usage.model },
+  };
+  return {
+    requests: finiteNumber(raw.requests) ?? 0,
+    rawUsage: {
+      ...(input === undefined ? {} : { input }),
+      ...(output === undefined ? {} : { output }),
+      totalTokens: (input ?? 0) + (output ?? 0),
+      ...(cost === undefined ? {} : { cost: { total: cost } }),
+    },
+    selection: { provider: usage.provider, model: usage.model },
   };
 }
 

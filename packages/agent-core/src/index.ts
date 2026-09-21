@@ -54,8 +54,10 @@ export type {
   Classifier,
   ClassifierAnswer,
   ClassifierAnswers,
+  ClassifierEvaluationMetadata,
   ClassifierQuestion,
   ClassifierQuestions,
+  ClassifierUsage,
 } from './classifier.js';
 export {
   MODEL_TIERS,

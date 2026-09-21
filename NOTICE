@@ -28,9 +28,12 @@ package-level license and notice are included in
 packages/ext-session-title/LICENSE and NOTICE.
 
 @felan-ai/ext-session-compaction is original Felan MIT-licensed extension code
-providing bounded verified session summaries and active-lineage recall. Its
-design references pi-smart-compact 9.6.2 and @sting8k/pi-vcc 0.7.2 without
-copying their source. Its package-level license and notice are included in
+providing bounded verified session summaries, classifier-selected transcript
+compaction, and active-lineage recall. Its design references pi-smart-compact
+9.6.2, @sting8k/pi-vcc 0.7.2, fast-jev-compaction at commit
+e3f262a7f4d42bd8dd32ced30d26176f7cb545b0, and pi-jev at commit
+77516ee1a51e98958430e24a9a82d58173e3422a without copying their source. Its
+package-level license and notice are included in
 packages/ext-session-compaction/LICENSE and NOTICE.
 
 The Jev classifier client lives in @felan-ai/agent-core as original Felan

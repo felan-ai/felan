@@ -31,7 +31,9 @@ try {
   const compaction = entries[compactionIndex];
   const summary = typeof compaction.summary === 'string' ? compaction.summary : '';
   const details = compaction.details && typeof compaction.details === 'object' ? compaction.details : {};
-  validateProvenance(compaction, details, expectation.expectedOwner);
+  const expectedMethod = expectation.expectedMethod ?? (expectation.expectedOwner === 'native' ? 'native' : 'summary');
+  validateProvenance(compaction, details, expectation.expectedOwner, expectedMethod);
+  validateMethod(details, expectedMethod);
 
   const postCompactionAssistants = entries.slice(compactionIndex + 1)
     .filter((entry) => entry.type === 'message' && entry.message?.role === 'assistant');
@@ -80,12 +82,18 @@ await writeReward({ summaryFidelity, continuationFidelity });
 console.log(`${passed ? 1 : 0} (${reason})`);
 if (!passed) process.exitCode = 1;
 
-function validateProvenance(compaction, details, expectedOwner) {
+function validateProvenance(compaction, details, expectedOwner, expectedMethod) {
   const extension = details.namespace === 'felan.session-compaction';
   if (expectedOwner === 'extension') {
     if (!extension) throw new Error('candidate used native compaction instead of the configured extension');
     if (details.requestedModel !== 'inherit' || details.modelFallback !== undefined) {
       throw new Error('extension compaction did not use the default inherit model setting');
+    }
+    if (expectedMethod === 'classifier') {
+      if (typeof details.selectedModel !== 'string' || !/^(?:typesafe|openrouter)\//u.test(details.selectedModel)) {
+        throw new Error('classifier compaction did not record the classifier model');
+      }
+      return;
     }
     if (details.selectedModel !== 'openai-codex/gpt-5.6-sol') {
       throw new Error('extension compaction did not inherit the active session model');
@@ -99,6 +107,19 @@ function validateProvenance(compaction, details, expectedOwner) {
     return;
   }
   throw new Error(`invalid expected compaction owner: ${String(expectedOwner)}`);
+}
+
+function validateMethod(details, expectedMethod) {
+  if (expectedMethod === 'native') return;
+  if (details.method !== expectedMethod) {
+    throw new Error(`expected ${expectedMethod} compaction method, got ${String(details.method)}`);
+  }
+  if (expectedMethod === 'classifier') {
+    const prune = details.prune;
+    if (!prune || prune.status !== 'ran' || prune.asked < 1) {
+      throw new Error('classifier compaction did not run a classifier decision');
+    }
+  }
 }
 
 function evaluateFacts(facts, text) {

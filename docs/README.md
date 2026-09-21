@@ -41,6 +41,8 @@ to do.
   extension placement, superseded by ADR 0016.
 - [ADR 0016](decisions/0016-jev-classifier-in-agent-core.md) — why the Jev
   client lives in Agent Core behind a provider-neutral runtime capability.
+- [ADR 0017](decisions/0017-session-compaction-methods.md) — why session
+  compaction exposes mutually exclusive summary and classifier methods.
 - [Extension catalog](reference/extension-catalog.md) — every first-party
   package, its host boundary, commands, and runtime conditions.
 - [Runtime dependencies](reference/runtime-dependencies.md) — external

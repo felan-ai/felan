@@ -1,7 +1,9 @@
 # Session Compaction Extension
 
 - Keep compaction behavior portable and host-neutral; use only Agent Core and
-  the public Pi contracts exposed through it.
+  the public Pi contracts exposed through it. The classifier method may use a
+  host-injected Agent Core `Classifier`. Log classifier traces through
+  `pi.runtime.logger`; do not write files.
 - Pi owns compaction preparation, cut points, retained tails, session trees,
   overflow recovery, and compaction persistence. This extension may provide a
   replacement `CompactionResult` from `session_before_compact`. When it declines

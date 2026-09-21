@@ -114,6 +114,7 @@ try {
           const { SESSION_COMPACTION_CONFIG } = extension;
           if (SESSION_COMPACTION_CONFIG?.fields?.model?.default !== 'inherit') throw new Error(packageName + ' has no inherit model configuration default');
           if (JSON.stringify(SESSION_COMPACTION_CONFIG.fields.model.values) !== JSON.stringify(['inherit', 'xhigh', 'high', 'medium', 'low'])) throw new Error(packageName + ' has unexpected model configuration values');
+          if (SESSION_COMPACTION_CONFIG?.fields?.method?.default !== 'classifier') throw new Error(packageName + ' must default to classifier compaction');
         } else if (typeof extension.default !== 'function') {
           throw new Error(packageName + ' has no extension factory');
         }
