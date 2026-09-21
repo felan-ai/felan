@@ -42,6 +42,22 @@ a child before taking over its unfinished scope. When using the shared task
 graph, each session claims only its own ready task; force recovery is reserved
 for an explicitly stale claim.
 
+When the local runtime has a classifier (configured by `TYPESAFE_API_KEY` or
+`OPENROUTER_API_KEY`), Felan keeps generic delegation and lifecycle guidance in
+the persistent system prompt but omits its full descriptive catalog. Before the
+model starts each user turn, Felan appends a request-specific routing decision
+to that turn's system prompt. It asks one suitability probability for
+every available definition, considering investigation/exploration,
+parallelizable or specialist implementation, and independent review internally.
+Entries at or above 0.65 appear with their full descriptions. The decision
+requires one concrete, non-overlapping `Agent` task for every listed
+`subagent_type` when its work becomes ready; an empty list keeps the request in
+the parent. Nothing launches automatically, and explicit user direction still
+takes precedence. Without a compatible classifier, Felan keeps the generic
+guidance plus the complete catalog. If classification fails, a fallback
+decision supplies the complete catalog and applies the generic delegation
+policy for that turn.
+
 `max_turns` is a hard assistant-turn budget. The local host reserves the final
 budgeted turn for a tool-free synthesis response. If a child reaches the budget
 while continuing tool work, it is reported as

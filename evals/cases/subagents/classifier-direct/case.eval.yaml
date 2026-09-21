@@ -1,0 +1,20 @@
+id: subagents-classifier-direct
+suite: subagents-routing
+description: Keep a trivial marker lookup in the parent instead of delegating it.
+timeoutMs: 300000
+workspace:
+  fixture: fixtures/subagent-routing/v1/source
+agents:
+  include:
+    - felan-grok-static
+    - felan-grok-classified
+prompt: Read target.txt and report its exact contents. Do not edit files.
+assert:
+  - id: no-unnecessary-child
+    type: toolCalled
+    name: Agent
+    min: 0
+    max: 0
+  - id: answered-directly
+    type: contains
+    value: "DIRECT_ROUTE_MARKER_91A7"

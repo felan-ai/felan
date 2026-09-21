@@ -24,3 +24,15 @@ assert:
   - id: no-files-edited
     type: workspaceDiff
     changedFiles: []
+  - id: semantic-quality
+    type: jevJudge
+    required: false
+    threshold: 0.8
+    judge:
+      rubric: >-
+        Is the final response a correct and concise merge-readiness review of
+        src/calculator.js? It must accurately identify that add is not
+        implemented, name the relevant file and function, and avoid inventing
+        tests, changes, or verification. Do not reward unsupported claims or
+        penalize concise wording.
+      inputs: [finalOutput, assertions]

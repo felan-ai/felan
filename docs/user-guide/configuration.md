@@ -122,8 +122,11 @@ Without that capability it uses the verified summary method automatically. Set
 the method to `summary` to disable classifier compaction even when a classifier
 is available. Classifier mode sends bounded compaction evidence to the selected
 TypeSafe or OpenRouter endpoint and does not make a summary-model request.
-`FELAN_LOG_LEVEL` controls the host logger (default `debug`); classifier
-traces go to `storage('agent')/logs/felan.jsonl`. Summary mode makes one additional active-model
+`FELAN_LOG_LEVEL` controls the host logger (default `debug`); session-compaction
+and subagent-routing classifier traces go to
+`storage('agent')/logs/felan.jsonl`. Subagent routing records the generated
+guidance and scored/selected agent IDs, but not the request or conversation
+state. Summary mode makes one additional active-model
 request when compaction runs. `extensionConfig.sessionCompaction.model` defaults
 to `inherit`, which uses the active session model. It also accepts `xhigh`,
 `high`, `medium`, and `low`; each selects an exact tier from the allowed session
@@ -167,6 +170,34 @@ unexpected read error stops session construction.
 
 Project `APPEND_SYSTEM.md`, Pi `SYSTEM.md`, and other ambient prompt files are
 not loaded. Use project instructions for repository-specific guidance instead.
+
+### Classifier-guided subagents
+
+When `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available, the local host
+injects its optional provider-neutral classifier into root and child runtimes.
+The subagent extension then evaluates the full current prompt, active
+model-visible user/assistant conversation text, complete catalog definitions,
+and direct-child statuses before each user turn. It scores every catalog
+definition once for suitability, considering useful investigation/exploration,
+parallelizable or specialist implementation, and independent review internally.
+Before the model starts each user turn, it appends a request-specific routing
+decision to that turn's system prompt. Entries scoring at or above 0.65 appear
+with their full descriptions. The decision requires one concrete,
+non-overlapping `Agent` task for every listed `subagent_type` when its work
+becomes ready; an empty list keeps the request in the parent. No agent is
+launched automatically. The decision is persisted as a structured system
+message but not shown in the TUI. Direct system entries are excluded from later
+classifier conversation extraction, and the structured routing log retains the
+generated guidance.
+
+The classifier state may leave the local process for the configured TypeSafe or
+OpenRouter endpoint. It contains prompt/session text and agent metadata, but not
+credentials. When classification succeeds, generic delegation and lifecycle
+guidance remains persistently in the system prompt, while the full descriptive
+catalog is omitted; valid type IDs remain in the `Agent` tool schema. If no
+classifier is available, the persistent generic guidance includes the complete
+catalog. If evaluation fails, a system-prompt fallback decision supplies that
+catalog and applies the generic delegation policy without blocking the request.
 
 ## Project instructions and skills
 

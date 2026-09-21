@@ -34,3 +34,15 @@ assert:
   - id: no-files-edited
     type: workspaceDiff
     changedFiles: []
+  - id: semantic-quality
+    type: jevJudge
+    required: false
+    threshold: 0.8
+    judge:
+      rubric: >-
+        Is the final response correct, concise, and complete for the requested
+        implementation plan? It must preserve the GET /health endpoint, the
+        200 JSON { status: ok } response contract, the unresolved deployment
+        platform decision, and the liveness-versus-dependency-health tradeoff.
+        Do not reward unsupported claims or penalize concise wording.
+      inputs: [finalOutput, assertions]

@@ -235,6 +235,19 @@ default to
 Set `FELAN_LOG_LEVEL=off` to disable them, or `debug`/`info`/`warn`/`error` to
 change the level.
 
+When `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available, the local host
+also enables classifier-guided subagent routing. The generic delegation and
+lifecycle capability remains persistently in the system prompt, but its full
+descriptive catalog is omitted. Before the model starts each user turn, a
+request-specific system-prompt routing decision scores every discovered catalog
+entry once for suitability across investigation/exploration, parallelizable or
+specialist implementation, and independent review. Scores at or above 0.65
+appear with full selected descriptions. The decision requires one concrete,
+non-overlapping `Agent` task for every listed `subagent_type` when its work
+becomes ready; an empty list keeps the request in the parent. Nothing launches
+automatically. A classifier failure supplies the full catalog and applies the
+generic policy for that turn without blocking the request.
+
 Codebase Memory is a default built-in. It provides structural code
 search, symbol reads, and bounded grep augmentation, backed by the
 `codebase-memory-mcp` binary.

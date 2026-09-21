@@ -1,0 +1,37 @@
+id: subagents-classifier-routing
+suite: subagents-routing
+description: Route a neutral multi-file investigation to the read-focused catalog agent.
+timeoutMs: 900000
+workspace:
+  fixture: fixtures/subagent-routing/v1/source
+agents:
+  include:
+    - felan-grok-static
+    - felan-grok-classified
+prompt: >-
+  Trace the batch-receiving path across the source files and report one concise
+  line containing the maximum batch size, the selected queue for an urgent
+  item, and the retry delay. Do not edit files.
+assert:
+  - id: explored-with-read-focused-agent
+    type: toolCalled
+    name: Agent
+    min: 1
+    max: 1
+    argsContain:
+      - '"subagent_type":"explore"'
+    isError: false
+    when:
+      agent: felan-grok-classified
+  - id: solved-task
+    type: contains
+    value: "17"
+  - id: solved-task-queue
+    type: contains
+    value: "priority"
+  - id: solved-task-delay
+    type: contains
+    value: "240"
+  - id: no-files-edited
+    type: workspaceDiff
+    changedFiles: []

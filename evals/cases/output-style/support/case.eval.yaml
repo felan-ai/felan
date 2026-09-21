@@ -23,3 +23,15 @@ assert:
   - id: no-files-edited
     type: workspaceDiff
     changedFiles: []
+  - id: semantic-quality
+    type: jevJudge
+    required: false
+    threshold: 0.8
+    judge:
+      rubric: >-
+        Is the final response a correct and concise explanation of what this
+        benchmark tells us? It should explain that the benchmark compares agent
+        response style while preserving task correctness and required content,
+        without inventing results or unsupported claims. Do not reward
+        unsupported claims or penalize concise wording.
+      inputs: [finalOutput, assertions]

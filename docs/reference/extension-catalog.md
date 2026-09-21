@@ -12,7 +12,7 @@ It does not install arbitrary npm packages or load Pi project settings.
 | --- | --- | --- | --- |
 | [`@felan-ai/felan`](../../apps/tui/README.md) | Account-free local terminal host | `felan` binary and interactive TUI | Node.js 22.19.0 or newer; provider credentials configured locally |
 | [`@felan-ai/agent-core`](../../packages/agent-core/README.md) | Runtime contracts, base prompt, coding tools, Pi composition | Local host runtime | Required by extensions |
-| [`@felan-ai/ext-subagents`](../../packages/ext-subagents/README.md) | Asynchronous child agents and lifecycle tools | `/agents`, `Alt+A`, agent rail | Local host supplies `SubagentHost` |
+| [`@felan-ai/ext-subagents`](../../packages/ext-subagents/README.md) | Asynchronous child agents, lifecycle tools, and optional classifier-guided catalog routing | `/agents`, `Alt+A`, agent rail | Local host supplies `SubagentHost`; routing also needs an injected classifier |
 | [`@felan-ai/ext-ask-user`](../../packages/ext-ask-user/README.md) | One-question and one-to-four-question structured input | TUI question wizard | Host supplies `AskUserHost` |
 | [`@felan-ai/ext-tasks`](../../packages/ext-tasks/README.md) | Shared dependency-aware session task graph | `/tasks`, `Ctrl+Shift+T` | Session storage required |
 | [`@felan-ai/ext-prewalk`](../../packages/ext-prewalk/README.md) | Same-session planner-to-implementation handoff | `/prewalk` | Authenticated target model and explicit mutation tool |
