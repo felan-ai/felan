@@ -1167,6 +1167,13 @@ agents:
         felanTui:
           memoryProcessing: false
 
+judge:
+  jev:
+    provider: typesafe
+    model: jev-latest
+    apiKeyEnv: TYPESAFE_API_KEY
+    timeoutMs: 60000
+
 scoring:
   verifierReward:
     weight: 1
@@ -1328,7 +1335,7 @@ benchmarks:
       cases: ratioOfReducedSums
 
   output-style-concise:
-    revision: 9
+    revision: 11
     label: Concise output style
     description: Compare concise output with output style disabled while preserving required information.
     select:

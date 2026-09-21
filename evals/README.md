@@ -34,6 +34,17 @@ descriptions; enable capture only for controlled eval catalogs without secrets.
 
 Do not run this provider-backed benchmark without explicit authorization.
 
+The `output-style-concise` benchmark also uses the unreleased structured
+`jevJudge` integration during local validation. It requires a host-side
+`TYPESAFE_API_KEY`; the key is not forwarded to evaluated agents or persisted
+in reports. Jev scores are additive evidence; deterministic assertions remain
+the benchmark's pass/fail gates. Run it serially with cleanup after linking the
+local `../harness-evals` checkout:
+
+```sh
+TYPESAFE_API_KEY=... pnpm eval:run --benchmark output-style-concise --concurrency 1 --cleanup
+```
+
 Felan Cloud's `apps/agent/evals` owns platform composition and product
 workflows: cloud session persistence, runtime wiring, system events, runtime
 catalogs and skills, workspace/container ownership, entitlements, Slack/API
