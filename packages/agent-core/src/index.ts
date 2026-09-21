@@ -190,9 +190,12 @@ export {
   calculateCost,
   clampThinkingLevel,
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
   getSupportedThinkingLevels,
   isContextOverflow,
   lazyStream,
+  normalizeContext,
   uuidv7,
 } from '@earendil-works/pi-ai';
 export type {
@@ -210,6 +213,7 @@ export type {
   ModelCostTier,
   Provider,
   SimpleStreamOptions,
+  TranscriptContext,
   Transport,
   Usage,
 } from '@earendil-works/pi-ai';

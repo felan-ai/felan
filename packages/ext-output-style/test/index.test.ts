@@ -11,8 +11,8 @@ import outputStyleExtension, {
 } from '../src/index.js';
 
 type BeforeAgentStartHandler = (
-  event: { readonly systemPrompt: string },
-) => { readonly systemPrompt: string } | undefined;
+  event: { readonly systemPrompt: string; systemPromptOptions: { sections: Record<string, string> } },
+) => { readonly systemPrompt?: string } | undefined;
 
 describe('@felan-ai/ext-output-style', () => {
   it('uses the concise style by default', () => {
@@ -145,6 +145,11 @@ function applyExtension(
     }) as FelanExtensionAPI['on'],
   } as FelanExtensionAPI);
 
-  const result = handler?.({ systemPrompt: base });
-  return result?.systemPrompt ?? base;
+  const event = {
+    systemPrompt: base,
+    systemPromptOptions: { sections: {} as Record<string, string> },
+  };
+  const result = handler?.(event);
+  const section = event.systemPromptOptions.sections.output_style;
+  return result?.systemPrompt ?? (section === undefined ? base : `${base}\n\n${section}`);
 }

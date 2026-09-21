@@ -70,12 +70,12 @@ describe('@felan-ai/ext-tasks', () => {
     const harness = await createHarness();
     const noTasks = await harness.emit('before_agent_start', { systemPrompt: 'base' });
     expect(noTasks[0]).toBeUndefined();
+    expect(harness.promptOptions.sections.session_tasks).toBeUndefined();
 
     await harness.execute('TaskCreate', { title: 'Plan implementation' });
     const withTasks = await harness.emit('before_agent_start', { systemPrompt: 'base' });
-    expect(withTasks[0]).toMatchObject({
-      systemPrompt: expect.stringMatching(/base.*# Session Tasks.*Plan implementation/su),
-    });
+    expect(withTasks[0]).toBeUndefined();
+    expect(harness.promptOptions.sections.session_tasks).toMatch(/# Session Tasks.*Plan implementation/su);
     await harness.shutdown();
   });
 
@@ -151,6 +151,7 @@ async function createHarness(
   const runtime = new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot });
   const tools = new Map<string, ToolDefinition<any, any, any>>();
   const handlers = new Map<string, Handler[]>();
+  const promptOptions = { sections: {} as Record<string, string> };
   const commands = new Map<string, unknown>();
   const shortcuts: unknown[] = [];
   const capabilities: Array<{ id: string; instructions: string }> = [];
@@ -189,7 +190,7 @@ async function createHarness(
   const emit = async (event: string, value: Record<string, unknown> = {}) => {
     const results = [];
     for (const handler of handlers.get(event) ?? []) {
-      results.push(await handler({ type: event, ...value }, ctx));
+      results.push(await handler({ type: event, systemPromptOptions: promptOptions, ...value }, ctx));
     }
     return results;
   };
@@ -209,6 +210,7 @@ async function createHarness(
     handlers,
     shortcuts,
     statuses,
+    promptOptions,
     tools,
     shutdown,
   };

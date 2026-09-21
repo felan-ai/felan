@@ -452,7 +452,7 @@ describe('local Agent Core lifecycle', () => {
       systemPrompt.indexOf('<available_skills>'),
     );
     expect(systemPrompt.indexOf('<available_skills>')).toBeLessThan(
-      systemPrompt.indexOf('Current working directory:'),
+      systemPrompt.indexOf('<cwd>'),
     );
 
     await runtime.dispose();

@@ -138,8 +138,10 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
     maybeWarnRtkMissing(ctx);
 
     if (!shouldInjectSourceFilterTroubleshootingNote(config)) return undefined;
-    const systemPrompt = injectGuidelineIntoPrompt(event.systemPrompt, SOURCE_FILTER_TROUBLESHOOTING_NOTE);
-    return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
+    if (!event.systemPromptOptions.promptGuidelines.includes(SOURCE_FILTER_TROUBLESHOOTING_NOTE)) {
+      event.systemPromptOptions.promptGuidelines.push(SOURCE_FILTER_TROUBLESHOOTING_NOTE);
+    }
+    return undefined;
   });
 
   pi.on('tool_call', async (event, ctx) => {

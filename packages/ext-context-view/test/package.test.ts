@@ -13,7 +13,7 @@ describe('@felan-ai/ext-context-view package boundary', () => {
       type: 'module',
       license: 'MIT',
       engines: { node: '>=22.19.0' },
-      dependencies: { '@earendil-works/pi-tui': '0.85.1' },
+      dependencies: { '@earendil-works/pi-tui': '0.86.1' },
       peerDependencies: { '@felan-ai/agent-core': '^0.8.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
@@ -21,7 +21,7 @@ describe('@felan-ai/ext-context-view package boundary', () => {
     });
     expect(notice).toContain('packages/pi-context');
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');
-    expect(notice).toContain('Pi-TUI 0.85.1');
+    expect(notice).toContain('Pi-TUI 0.86.1');
   });
 
   it('keeps the feature free of direct host I/O and Pi package coupling', async () => {

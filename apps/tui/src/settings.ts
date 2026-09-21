@@ -170,8 +170,13 @@ export function createLocalSettingsManager(cwd: string, agentDir: string): Setti
   const getEditorPaddingX = settingsManager.getEditorPaddingX.bind(settingsManager);
   const getGlobalSettings = settingsManager.getGlobalSettings.bind(settingsManager);
   const getProjectSettings = settingsManager.getProjectSettings.bind(settingsManager);
+  const getCacheWarmingMode = settingsManager.getCacheWarmingMode.bind(settingsManager);
 
   settingsManager.applyOverrides(runtimeOverrides);
+  settingsManager.getCacheWarmingMode = () => {
+    const configured = (getGlobalSettings() as Record<string, unknown>).cacheWarming;
+    return configured === undefined ? 'off' : getCacheWarmingMode();
+  };
   settingsManager.reload = async () => {
     await reload();
     settingsManager.applyOverrides(runtimeOverrides);

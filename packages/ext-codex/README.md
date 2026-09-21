@@ -22,7 +22,7 @@ function-tool `strict` value to `false` so optional arguments remain optional.
 Explicit `true` or `false` values, absent values, and non-function tools are
 left unchanged.
 
-Pi 0.85.1 includes GPT-6 Astra in its built-in OpenAI and OpenAI Codex catalogs.
+Pi 0.86.1 includes GPT-6 Astra in its built-in OpenAI and OpenAI Codex catalogs.
 The existing GPT policy enables this extension's structured tools and native
 Responses controls without a custom `models.json` entry.
 

@@ -13,7 +13,7 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
       license: 'MIT',
       engines: { node: '>=22.19.0' },
       dependencies: {
-        '@earendil-works/pi-tui': '0.85.1',
+        '@earendil-works/pi-tui': '0.86.1',
         typebox: '1.1.38',
       },
       peerDependencies: { '@felan-ai/agent-core': '^0.8.0' },
@@ -35,7 +35,7 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');
     expect(notice).toContain('pi-ask-user 0.14.0');
     expect(notice).toContain('2de7e145227f7a527e995e323a50e7ee9bf88b0e');
-    expect(notice).toContain('Pi-TUI 0.85.1');
+    expect(notice).toContain('Pi-TUI 0.86.1');
     expect(notice).toContain('TypeBox 1.1.38');
   });
 

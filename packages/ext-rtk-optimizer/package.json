@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-rtk-optimizer",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "RTK command rewriting and tool-output compaction for Felan",
   "license": "MIT",
   "type": "module",

@@ -103,7 +103,10 @@ export function createOutputStyleExtension(
 
   return (pi) => {
     pi.on('before_agent_start', (event) => {
-      return { systemPrompt: `${event.systemPrompt}\n\n${section}` };
+      if (!event.systemPromptOptions || event.systemPromptOptions.sections === undefined) {
+        return { systemPrompt: `${event.systemPrompt}\n\n${section}` };
+      }
+      event.systemPromptOptions.sections.output_style = section;
     });
     if (style === 'concise') {
       pi.on('turn_end', (event, ctx) => {

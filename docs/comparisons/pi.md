@@ -2,7 +2,7 @@
 
 > Last verified: 2026-08-21. Felan Code baseline `0.12.10` at
 > `abd4ee34ab2bc2289802af4d2a317b56239f44c5`; Felan Code pins the reviewed
-> `@earendil-works/pi-*` packages at `0.85.1`.
+> `@earendil-works/pi-*` packages at `0.86.1`.
 
 ## Short answer
 

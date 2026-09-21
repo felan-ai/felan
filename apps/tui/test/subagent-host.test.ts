@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createAssistantMessageEventStream,
+  getCurrentTools,
   type ExtensionPackageImporter,
   type FelanExtensionAPI,
   type SavingsMeasurement,
@@ -1646,7 +1647,7 @@ describe('LocalSubagentHost', () => {
 
   it('reserves a tool-free synthesis turn at the max-turn boundary', async () => {
     const responses = [createAssistantMessageEventStream(), createAssistantMessageEventStream()];
-    const contexts: Array<{ tools: readonly unknown[]; messages: readonly unknown[] }> = [];
+    const contexts: Array<{ messages: readonly unknown[] }> = [];
     let responseIndex = 0;
     const model = {
       id: 'test-model',
@@ -1666,7 +1667,7 @@ describe('LocalSubagentHost', () => {
       getModel: (provider: string, id: string) => (
         provider === model.provider && id === model.id ? model : undefined
       ),
-      streamSimple: (_model: unknown, context: { tools: readonly unknown[]; messages: readonly unknown[] }) => {
+      streamSimple: (_model: unknown, context: { messages: readonly unknown[] }) => {
         contexts.push(context);
         return responses[responseIndex++]!;
       },
@@ -1685,7 +1686,7 @@ describe('LocalSubagentHost', () => {
       cost: 0,
     }, 'tool-1');
     await vi.waitFor(() => expect(responseIndex).toBe(2));
-    expect(contexts[1]!.tools).toEqual([]);
+    expect(getCurrentTools(contexts[1]!.messages as never)).toEqual([]);
     expect(contexts[1]!.messages.at(-1)).toMatchObject({
       role: 'user',
       content: expect.arrayContaining([

@@ -23,6 +23,7 @@ export const FELAN_DEFAULT_MODEL_PER_PROVIDER = {
   mistral: 'devstral-medium-latest',
   minimax: 'MiniMax-M3',
   'minimax-cn': 'MiniMax-M3',
+  meta: 'muse-spark-1.3',
   moonshotai: 'kimi-k3',
   'moonshotai-cn': 'kimi-k3',
   huggingface: 'moonshotai/Kimi-K3',

@@ -467,7 +467,7 @@ constructed process/session. The built-in is enabled by default; set
 `builtinExtensions.powerline` to `false` to remove it.
 
 Felan Code keeps its theme IDs namespaced instead of replacing Pi's `dark` and
-`light`: Pi 0.85.1 gives its built-in IDs precedence during HTML export. The
+`light`: Pi 0.86.1 gives its built-in IDs precedence during HTML export. The
 interactive startup view is compact by default; press `Ctrl+O` to show full
 startup help and loaded resources.
 

@@ -2,11 +2,11 @@
 
 Copyright (c) 2026 Felan contributors
 
-This package uses @earendil-works/pi-ai 0.85.1 and
-@earendil-works/pi-coding-agent 0.85.1 from
+This package uses @earendil-works/pi-ai 0.86.1 and
+@earendil-works/pi-coding-agent 0.86.1 from
 https://github.com/earendil-works/pi, licensed under the MIT License.
 Copyright (c) 2025 Mario Zechner.
-It also uses @earendil-works/pi-server 0.85.1 from the same project under the
+It also uses @earendil-works/pi-server 0.86.1 from the same project under the
 MIT License.
 
 This package also contains original Felan MIT-licensed Jev classifier client

@@ -394,6 +394,8 @@ function addEntryEstimate(entry: SessionEntry, estimates: UsedEstimates, memory:
 
 function addMessageEstimate(message: SessionMessageEntry["message"], estimates: UsedEstimates, memory: MemoryBreakdown, memoryToolCallIds: ReadonlySet<string>): void {
 	switch (message.role) {
+		case "system":
+			return;
 		case "user":
 			estimates.messages += estimateTextContent(message.content);
 			return;

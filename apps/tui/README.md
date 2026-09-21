@@ -254,7 +254,7 @@ palette survives `felan update`. The startup view uses a compact Felan Code
 welcome; press `Ctrl+O` when you need the full startup help and loaded-resource
 listing. When no theme is saved, Felan Code follows the terminal background
 (OSC 11) automatically rather than the OS color-scheme (CSI 997). The `felan-*`
-names are intentional: Pi 0.85.1 reserves `dark` and `light` for its built-in
+names are intentional: Pi 0.86.1 reserves `dark` and `light` for its built-in
 export themes, so colliding IDs would make exported sessions use different
 colors. Powerline consumes that same active theme instead of defining its own
 colors.

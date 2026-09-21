@@ -161,6 +161,21 @@ describe('@felan-ai/ext-context-view', () => {
     expect(report.breakdown.messages).toBeGreaterThan(0);
   });
 
+  it('does not count transcript system patches beside the effective prompt', () => {
+    const entry = {
+      type: 'message', id: 'system', parentId: null, timestamp: '1',
+      message: { role: 'system', content: 'a large persisted prompt patch', timestamp: 1 },
+    } as unknown as SessionEntry;
+    const without = collectContextReport(pi(), context(), undefined, undefined);
+    const withSystem = collectContextReport(
+      pi(),
+      context({ sessionManager: { getBranch: () => [entry] } as never }),
+      undefined,
+      undefined,
+    );
+    expect(withSystem.breakdown.messages).toBe(without.breakdown.messages);
+  });
+
   it('attributes injected memory and recalled memory files separately from messages', () => {
     const entries = [
       {

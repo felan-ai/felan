@@ -307,8 +307,11 @@ const tasksExtension: FelanExtension = (pi) => {
 
   pi.on('before_agent_start', async (event) => {
     const state = await store.snapshot();
-    if (!hasOpenTasks(state)) return;
-    return { systemPrompt: `${event.systemPrompt}\n\n${formatTaskContext(state)}` };
+    if (!hasOpenTasks(state)) {
+      delete event.systemPromptOptions.sections.session_tasks;
+      return;
+    }
+    event.systemPromptOptions.sections.session_tasks = formatTaskContext(state);
   });
 
   pi.on('session_shutdown', () => {

@@ -2,6 +2,7 @@ import {
   type Api,
   type AssistantMessageEventStream,
   type Model,
+  normalizeContext,
   type StreamFunction,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
@@ -187,9 +188,10 @@ describe('OpenAI Codex transport policy', () => {
     })(second);
     const model = responseModel('openai-codex', 'gpt-5.3-codex', 'openai-codex-responses');
 
-    firstWrapped(model, { messages: [] }, { transport: 'websocket' });
-    secondWrapped(model, { messages: [] }, { transport: 'websocket' });
-    firstWrapped(model, { messages: [] }, { transport: 'sse' });
+    const context = normalizeContext({ messages: [] });
+    firstWrapped(model, context, { transport: 'websocket' });
+    secondWrapped(model, context, { transport: 'websocket' });
+    firstWrapped(model, context, { transport: 'sse' });
 
     expect(first).toHaveBeenCalledTimes(2);
     expect(first.mock.calls[0]?.[2]).toMatchObject({

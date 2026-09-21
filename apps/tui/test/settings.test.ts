@@ -53,6 +53,7 @@ describe('local settings', () => {
       outputStyle: 'explanatory',
       felanSubagents: { concurrency: 2 },
       felanTui: { toolDisplay: 'full' },
+      cacheWarming: 'streaming',
       packages: ['npm:untrusted-package'],
       extensions: ['/tmp/untrusted-extension.ts'],
       skills: ['/tmp/untrusted-skill'],
@@ -76,6 +77,7 @@ describe('local settings', () => {
     expect(settings.getThemePaths()).toEqual([]);
     expect(settings.getEditorPaddingX()).toBe(1);
     expect(settings.getEnableInstallTelemetry()).toBe(false);
+    expect(settings.getCacheWarmingMode()).toBe('streaming');
     expect(settings.getLastChangelogVersion()).toBe(PI_VERSION);
     expect(settings.getGlobalSettings().packages).toEqual([]);
     expect(settings.getProjectSettings().packages).toEqual([]);
@@ -110,6 +112,15 @@ describe('local settings', () => {
     const settings = createLocalSettingsManager(root, agentDir);
 
     expect(settings.getEditorPaddingX()).toBe(0);
+  });
+
+  it('turns off Pi cache warming only when it is not configured', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    const settings = createLocalSettingsManager(root, agentDir);
+
+    expect(settings.getCacheWarmingMode()).toBe('off');
   });
 
   it('defaults to grouped tool display and rejects invalid values', () => {

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-prewalk",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "description": "Same-session planner-to-implementation model handoff for Felan",
   "license": "MIT",
   "type": "module",
@@ -31,12 +31,12 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "0.85.1",
+    "@earendil-works/pi-tui": "0.86.1",
     "typebox": "1.1.38"
   },
   "peerDependencies": {
     "@felan-ai/agent-core": "^0.8.0",
-    "@felan-ai/ext-tasks": "^0.3.0"
+    "@felan-ai/ext-tasks": "^0.4.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

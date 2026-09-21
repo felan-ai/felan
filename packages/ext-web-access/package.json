@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-web-access",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "Secure bounded web search and content access for Felan",
   "license": "MIT",
   "type": "module",

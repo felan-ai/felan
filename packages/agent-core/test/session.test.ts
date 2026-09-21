@@ -162,7 +162,7 @@ describe('Agent Core session composition', () => {
       `<project_instructions path="${join(cwd, 'AGENTS.md').replace(/\\/g, '/')}">`,
     );
     expect(systemPrompt.indexOf('Root project instructions')).toBeLessThan(
-      systemPrompt.indexOf('Current working directory:'),
+      systemPrompt.indexOf('<cwd>'),
     );
 
     result.session.dispose();
@@ -327,7 +327,7 @@ describe('Agent Core session composition', () => {
     result.session.dispose();
   });
 
-  it('provides a Pi 0.85.1 CreateAgentSessionRuntimeFactory seam', async () => {
+  it('provides a Pi 0.86.1 CreateAgentSessionRuntimeFactory seam', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent-dir');

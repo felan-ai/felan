@@ -10,6 +10,7 @@ import type {
   CredentialStore as PiCredentialStore,
   Model as PiModel,
   SimpleStreamOptions as PiSimpleStreamOptions,
+  TranscriptContext as PiTranscriptContext,
 } from '@earendil-works/pi-ai';
 import * as piProviders from '@earendil-works/pi-ai/providers/all';
 import * as piCodingAgent from '@earendil-works/pi-coding-agent';
@@ -47,6 +48,7 @@ import type {
   SessionEntry,
   SessionMessageEntry,
   SimpleStreamOptions,
+  TranscriptContext,
   Skill,
   SlashCommandInfo,
   SourceInfo,
@@ -81,9 +83,12 @@ describe('Agent Core Pi exports', () => {
       'StringEnum',
       'clampThinkingLevel',
       'createAssistantMessageEventStream',
+      'getCurrentSystemPrompt',
+      'getCurrentTools',
       'getSupportedThinkingLevels',
       'isContextOverflow',
       'lazyStream',
+      'normalizeContext',
       'uuidv7',
     ] as const) {
       expect(agentCore[name]).toBe(piAi[name]);
@@ -110,6 +115,7 @@ describe('Agent Core Pi exports', () => {
     expectTypeOf<SessionEntry>().toEqualTypeOf<PiSessionEntry>();
     expectTypeOf<SessionMessageEntry>().toEqualTypeOf<PiSessionMessageEntry>();
     expectTypeOf<SimpleStreamOptions>().toEqualTypeOf<PiSimpleStreamOptions>();
+    expectTypeOf<TranscriptContext>().toEqualTypeOf<PiTranscriptContext>();
     expectTypeOf<Skill>().toEqualTypeOf<PiSkill>();
     expectTypeOf<SlashCommandInfo>().toEqualTypeOf<PiSlashCommandInfo>();
     expectTypeOf<SourceInfo>().toEqualTypeOf<PiSourceInfo>();

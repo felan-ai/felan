@@ -387,7 +387,7 @@ the terminal background (OSC 11), not the OS color-scheme (CSI 997), so a dark
 terminal on a light desktop stays on the dark theme ID. The active Pi theme is
 shared by built-in UI, Felan Code overlays, and the Powerline footer. Felan Code
 keeps these namespaced rather than replacing Pi's `dark` and `light` IDs:
-Pi 0.85.1 resolves those built-in names first when exporting HTML, which would
+Pi 0.86.1 resolves those built-in names first when exporting HTML, which would
 make runtime and exported sessions disagree.
 
 Startup is intentionally compact: it shows a Felan Code welcome and key hints

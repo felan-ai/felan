@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-markitdown",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Bounded MarkItDown document conversion for Felan read workflows",
   "license": "MIT",
   "type": "module",
