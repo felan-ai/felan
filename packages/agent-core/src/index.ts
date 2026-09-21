@@ -57,6 +57,10 @@ export type {
   ClassifierEvaluationMetadata,
   ClassifierQuestion,
   ClassifierQuestions,
+  ClassifierProbabilityAnswer,
+  ClassifierProbabilityAnswers,
+  ClassifierProbabilityQuestion,
+  ClassifierProbabilityQuestions,
   ClassifierUsage,
 } from './classifier.js';
 export {

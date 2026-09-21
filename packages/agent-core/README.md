@@ -57,6 +57,11 @@ is an internal implementation detail; the public provider-specific surface is
 the high-level `createJevClassifier` factory. Hosts own credential discovery
 and decide whether to inject it.
 
+The provider-neutral classifier supports the existing structured Choice
+judgment and an additive probability-of-yes judgment for independently scoring
+multiple conditions. Jev implements the latter with its Noul primitive; Agent
+Core does not expose Jev transport types through this contract.
+
 Host runtimes expose optional persistent process operations for extensions that
 need incremental output and stdin. `startShell()` keeps process ownership in
 the runtime adapter and returns a bounded polling handle with write, terminate,

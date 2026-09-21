@@ -1,11 +1,13 @@
 import { createReadStream } from 'node:fs';
 import { rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { felanAdapter } from 'harness-evals';
 
 const EXPECTATION_FILE = 'session-compaction-expectation.json';
+const SUBAGENT_ROUTING_LOG = join('felan', 'storage', 'agent', 'logs', 'felan.jsonl');
+const SUBAGENT_ROUTING_ARTIFACT = 'subagent-routing.jsonl';
 
 export const felanCompactionAdapter = {
   name: 'felan',
@@ -13,13 +15,20 @@ export const felanCompactionAdapter = {
   getInstallRecipe: (input) => felanAdapter.getInstallRecipe(input),
   async prepareStep(input) {
     const plan = await felanAdapter.prepareStep(input);
-    if (input.agent.config?.compactionCostAccounting !== true) return plan;
+    const captureRoutingTrace = input.agent.config?.captureSubagentRoutingTrace === true;
+    const metadata = {
+      ...(plan.metadata ?? {}),
+      ...(captureRoutingTrace ? { subagentRoutingTrace: { capture: true } } : {}),
+    };
+    if (input.agent.config?.compactionCostAccounting !== true) {
+      return captureRoutingTrace ? { ...plan, metadata } : plan;
+    }
     const expectedOwner = expectedCompactionOwner(input.agent.config);
     const expectedMethod = expectedCompactionMethod(input.agent.config);
     return {
       ...plan,
       metadata: {
-        ...(plan.metadata ?? {}),
+        ...metadata,
         compactionCost: {
           activeProvider: input.agent.provider,
           activeModel: input.agent.model,
@@ -30,7 +39,11 @@ export const felanCompactionAdapter = {
     };
   },
   async parseEvents(input) {
-    const events = await felanAdapter.parseEvents(input);
+    let events = await felanAdapter.parseEvents(input);
+    if (input.plan.metadata?.subagentRoutingTrace?.capture === true && input.configDir !== undefined) {
+      const trace = await preserveSubagentRoutingTrace(input.configDir);
+      if (trace.length > 0) events = { ...events, subagentRouting: trace };
+    }
     if (input.plan.parser === 'text' || input.plan.metadata?.compactionCost === undefined) return events;
     const expectedOwner = input.plan.metadata.compactionCost.expectedOwner;
     const expectedMethod = input.plan.metadata.compactionCost.expectedMethod;
@@ -43,6 +56,41 @@ export const felanCompactionAdapter = {
     return cost === undefined ? events : { ...events, cost };
   },
 };
+
+export async function preserveSubagentRoutingTrace(configDir) {
+  const records = [];
+  const path = join(configDir, SUBAGENT_ROUTING_LOG);
+  let stream;
+  try {
+    stream = createReadStream(path, { encoding: 'utf8' });
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+      for await (const line of lines) {
+        let record;
+        try {
+          record = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (isRecord(record) && record.component === 'subagent-routing') records.push(record);
+      }
+    } finally {
+      lines.close();
+      stream.destroy();
+    }
+  } catch (error) {
+    stream?.destroy();
+    if (error && typeof error === 'object' && error.code === 'ENOENT') return [];
+    throw error;
+  }
+  if (records.length === 0) return records;
+  await writeFile(
+    join(dirname(configDir), SUBAGENT_ROUTING_ARTIFACT),
+    `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  );
+  return records;
+}
 
 export function expectedCompactionOwner(config) {
   const enabled = config?.settings?.builtinExtensions?.sessionCompaction;

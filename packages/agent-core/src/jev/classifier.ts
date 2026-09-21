@@ -1,6 +1,7 @@
 import type {
   Classifier,
   ClassifierAnswers,
+  ClassifierProbabilityAnswers,
   ClassifierEvaluationMetadata,
 } from '../classifier.js';
 import {
@@ -24,6 +25,21 @@ export function createJevClassifierWithOptions(
       const started = Date.now();
       const result = await client.evaluate(state, questions, signal === undefined ? {} : { signal });
       return { answers: classifierAnswers(result.answers), metadata: evaluationMetadata(result, started) };
+    },
+    async evaluateProbabilities(state, questions, signal) {
+      const started = Date.now();
+      const result = await client.evaluate(
+        state,
+        Object.fromEntries(Object.entries(questions).map(([id, question]) => [id, {
+          type: 'noul' as const,
+          instructions: question.instructions,
+        }])),
+        signal === undefined ? {} : { signal },
+      );
+      return {
+        answers: classifierProbabilityAnswers(result.answers),
+        metadata: evaluationMetadata(result, started),
+      };
     },
   };
 }
@@ -54,4 +70,15 @@ function classifierAnswers(answers: JevAnswers): ClassifierAnswers {
     choices[name] = answer;
   }
   return choices;
+}
+
+function classifierProbabilityAnswers(answers: JevAnswers): ClassifierProbabilityAnswers {
+  const probabilities: Record<string, ClassifierProbabilityAnswers[string]> = {};
+  for (const [name, answer] of Object.entries(answers)) {
+    if (answer.type !== 'noul') {
+      throw new JevClientError('response_invalid', `Jev returned a non-noul answer for ${name}`);
+    }
+    probabilities[name] = { probability: answer.noul };
+  }
+  return probabilities;
 }

@@ -15,6 +15,18 @@ export interface ClassifierAnswer {
 
 export type ClassifierAnswers = Readonly<Record<string, ClassifierAnswer>>;
 
+export interface ClassifierProbabilityQuestion {
+  readonly instructions: string;
+}
+
+export type ClassifierProbabilityQuestions = Readonly<Record<string, ClassifierProbabilityQuestion>>;
+
+export interface ClassifierProbabilityAnswer {
+  readonly probability: number;
+}
+
+export type ClassifierProbabilityAnswers = Readonly<Record<string, ClassifierProbabilityAnswer>>;
+
 export interface ClassifierUsage {
   readonly requests: number;
   readonly inputTokens?: number;
@@ -36,6 +48,14 @@ export interface Classifier {
     signal?: AbortSignal,
   ): Promise<{
     readonly answers: ClassifierAnswers;
+    readonly metadata?: ClassifierEvaluationMetadata;
+  }>;
+  evaluateProbabilities?(
+    state: unknown,
+    questions: ClassifierProbabilityQuestions,
+    signal?: AbortSignal,
+  ): Promise<{
+    readonly answers: ClassifierProbabilityAnswers;
     readonly metadata?: ClassifierEvaluationMetadata;
   }>;
 }

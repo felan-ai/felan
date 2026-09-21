@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import {
   expectedCompactionMethod,
   felanCompactionAdapter,
   parseFelanCompactionCost,
+  preserveSubagentRoutingTrace,
   writeCompactionExpectation,
 } from './felan-compaction.mjs';
 
@@ -113,6 +114,42 @@ try {
     plan: { parser: 'pi-jsonl', metadata: { compactionCost: { expectedOwner: 'native', expectedMethod: 'native' } } },
   });
   assert.deepEqual(JSON.parse(await readFile(expectation, 'utf8')), { expectedOwner: 'native', expectedMethod: 'native' });
+
+  const routingConfigDir = join(configDir, 'config');
+  const routingLogDir = join(routingConfigDir, 'felan', 'storage', 'agent', 'logs');
+  await mkdir(routingLogDir, { recursive: true });
+  const routingRecord = {
+    time: '2026-09-21T00:00:00.000Z',
+    level: 'debug',
+    component: 'subagent-routing',
+    event: 'decision',
+    outcome: 'classified',
+    guidanceVariant: 'selected',
+    selectedAgents: ['explore', 'reviewer'],
+    guidancePlacement: 'system-prompt-section',
+    guidanceSection: 'subagent_routing',
+    guidance: '## Subagent routing decision',
+  };
+  await writeFile(join(routingLogDir, 'felan.jsonl'), [
+    JSON.stringify({ component: 'other', event: 'ignored' }),
+    'invalid json',
+    JSON.stringify(routingRecord),
+  ].join('\n'));
+  assert.deepEqual(await preserveSubagentRoutingTrace(routingConfigDir), [routingRecord]);
+  assert.deepEqual(
+    (await readFile(join(configDir, 'subagent-routing.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+    [routingRecord],
+  );
+  const routedEvents = await felanCompactionAdapter.parseEvents({
+    stdout: '',
+    stderr: '',
+    configDir: routingConfigDir,
+    plan: { parser: 'pi-jsonl', metadata: { subagentRoutingTrace: { capture: true } } },
+  });
+  assert.deepEqual(routedEvents.subagentRouting, [routingRecord]);
 } finally {
   await rm(configDir, { recursive: true, force: true });
 }

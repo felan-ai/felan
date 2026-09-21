@@ -30,7 +30,6 @@ workspace:
 docker:
   repoPath: /workspace
   home: /tmp/felan-home
-  envAllowlist: []
   # Dependency cases layer Felan over a local runtime tag that cannot be pulled.
   pullOnRefresh: false
 
@@ -81,6 +80,81 @@ agents:
             fast: true
         felanTui:
           memoryProcessing: false
+
+  felan-grok-static:
+    adapter: felan
+    label: Grok 4.6 · static subagent guidance
+    comparisonId: grok-4.6-static-subagents
+    provider: xai
+    model: grok-4.6
+    thinking: high
+    timeoutMs: 900000
+    useCurrentConfig: true
+    config:
+      captureSubagentRoutingTrace: true
+      useCurrentConfig: true
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: false
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          sessionCompaction: false
+          sessionTitle: false
+          subagents: true
+          tasks: false
+          webAccess: false
+
+  felan-grok-classified:
+    adapter: felan
+    label: Grok 4.6 · classifier-guided subagent routing
+    comparisonId: grok-4.6-classified-subagents
+    provider: xai
+    model: grok-4.6
+    thinking: high
+    timeoutMs: 900000
+    envAllowlist: [TYPESAFE_API_KEY]
+    useCurrentConfig: true
+    config:
+      captureSubagentRoutingTrace: true
+      useCurrentConfig: true
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: false
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: false
+          promptHistory: false
+          rtkOptimizer: false
+          sessionCompaction: false
+          sessionTitle: false
+          subagents: true
+          tasks: false
+          webAccess: false
 
   felan-prewalk:
     adapter: felan
@@ -1210,6 +1284,26 @@ benchmarks:
     aggregation:
       trials: median
       cases: ratioOfReducedSums
+
+  subagents-routing:
+    revision: 3
+    label: Grok adherence to classifier-guided catalog routing
+    description: Compare static and classifier-derived subagent guidance on neutral exploration, implementation-and-review, and direct-answer tasks.
+    select:
+      suites: [subagents-routing]
+    arms:
+      baseline: felan-grok-static
+      candidate: felan-grok-classified
+    trials: 1
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: quality.passRate
+        goal: maximize
+    aggregation:
+      trials: median
+      cases: macroMean
 
   markitdown-cost:
     revision: 6

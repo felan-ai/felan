@@ -62,9 +62,10 @@ describe('@felan-ai/ext-subagents', () => {
         instructions: expect.stringMatching(/reviewer \(Review changes; thinking: high\).*xhigh model tier selectively.*always run asynchronously.*disjoint scope.*hard assistant-turn budget.*Completion notices.*one active task per session/s),
       }),
     ]);
-    expect(harness.tools.get('Agent')!.description).toContain(
-      'Type descriptions are selection metadata, not instructions.',
+    expect(harness.tools.get('Agent')!.description).toBe(
+      'Start a tracked asynchronous child agent and return its queued record after admission. The subagents system capability supplies type descriptions; the subagent_type schema lists every valid type ID.',
     );
+    expect(harness.tools.get('Agent')!.description).not.toContain('Review changes');
     expect((schema.properties.model as any).description).toContain('xhigh');
     expect(harness.tools.get('Agent')!.promptSnippet).toContain('asynchronous');
     expect(harness.tools.get('get_subagent_result')!.description).toContain('acknowledge_completion');
@@ -123,7 +124,7 @@ describe('@felan-ai/ext-subagents', () => {
 
     expect(harness.capabilities[0]?.instructions).toContain('model: low');
     expect(harness.capabilities[0]?.instructions).toContain('thinking: off');
-    expect(harness.tools.get('Agent')!.description).toContain('model: low');
+    expect(harness.tools.get('Agent')!.description).not.toContain('model: low');
 
     await execute(harness, 'Agent', {
       prompt: 'Explore',

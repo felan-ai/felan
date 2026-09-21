@@ -6,12 +6,33 @@ This is the home for Felan extension tests and benchmarks, powered by
 
 Portable extension behavior belongs here when it can be exercised without
 Felan Cloud: enabled/disabled effects, output quality, cost, tokens, latency,
-and portable lifecycle contracts. The catalog contains 24 cases across
+and portable lifecycle contracts. The catalog contains 25 cases across
 Codebase Memory, MarkItDown, Memory, Output Style, Prewalk, RTK, Session
 Compaction, Subagents, Tasks, and Web Access. Session compaction also has a
 classifier-only method arm that requires
 `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` and is not a savings claim until its
 quality gate passes.
+
+The `subagents-routing` benchmark includes a six-run Grok 4.6 pilot comparing
+static guidance with classifier-derived routing. It reuses the local Felan xAI
+subscription OAuth profile; the classified arm additionally requires
+`TYPESAFE_API_KEY`. The classified arm scores each catalog entry once and adds
+one request-specific routing decision to the current turn's system prompt. Run
+it serially with cleanup. The recorded pilot predates this authoritative
+system-prompt decision and does not validate the current guidance:
+
+```sh
+TYPESAFE_API_KEY=... pnpm eval:run --benchmark subagents-routing --concurrency 1 --cleanup
+```
+
+Each Grok arm opts into a `subagent-routing.jsonl` run artifact copied from the
+structured host log before cleanup. The corresponding `events-summary.json`
+also includes those records under `subagentRouting`, so a routing failure can be
+attributed to classifier selection, fallback, or model non-adherence without
+retaining OAuth files. The trace includes exact generated guidance and catalog
+descriptions; enable capture only for controlled eval catalogs without secrets.
+
+Do not run this provider-backed benchmark without explicit authorization.
 
 Felan Cloud's `apps/agent/evals` owns platform composition and product
 workflows: cloud session persistence, runtime wiring, system events, runtime

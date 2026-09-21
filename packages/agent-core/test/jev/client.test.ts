@@ -171,6 +171,23 @@ describe('Jev client', () => {
       keep: { type: 'noul', instructions: 'Keep?' },
     })).rejects.toMatchObject({ code: 'invalid_request' });
   });
+
+  it('maps provider-neutral probability judgments to Jev Noul answers', async () => {
+    const fetch = mockFetch({ answers: { explore: { noul: 0.82 } } });
+    const classifier = createJevClassifierWithOptions({ typesafeApiKey: 'ts-secret', fetch });
+
+    await expect(classifier?.evaluateProbabilities?.('state', {
+      explore: { instructions: 'Should independent exploration be delegated?' },
+    })).resolves.toMatchObject({
+      answers: { explore: { probability: 0.82 } },
+      metadata: { provider: 'typesafe', model: TYPESAFE_MODEL },
+    });
+    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
+    expect(body.questions.explore).toEqual({
+      type: 'noul',
+      instructions: 'Should independent exploration be delegated?',
+    });
+  });
 });
 
 function mockFetch(body: unknown, options: { status?: number } = {}): ReturnType<typeof vi.fn<JevFetch>> {

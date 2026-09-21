@@ -39,6 +39,8 @@ to do.
   tool invocation were retired after benchmark evaluation.
 - [ADR 0014](decisions/0014-own-jev-classifier-service.md) — historical Jev
   extension placement, superseded by ADR 0016.
+- [ADR 0015](decisions/0015-agent-core-structured-logger.md) — why Agent Core
+  owns a small structured logger and hosts own destinations.
 - [ADR 0016](decisions/0016-jev-classifier-in-agent-core.md) — why the Jev
   client lives in Agent Core behind a provider-neutral runtime capability.
 - [ADR 0017](decisions/0017-session-compaction-methods.md) — why session
