@@ -39,6 +39,11 @@ reason and sanitized model error details. The entry is not rendered, sent to
 the model, or returned by `session_recall`; it records delegation, not native
 compaction success. User cancellation is not reported as a fallback.
 
+The local TUI identifies completed compactions as `Classifier`, `Summary`, or
+`Native` in the collapsed transcript row. Felan fallback warnings stay concise;
+the persisted metadata-only diagnostic retains the bounded reason and error
+details for troubleshooting.
+
 The split-turn narrative is mandatory, while lower-priority tool records may be
 omitted by the central extraction bounds. Summary output uses Pi's prepared
 reserve-token budget and the selected model's limits; prompt fit uses the model

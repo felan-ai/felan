@@ -73,6 +73,12 @@ diagnostic in the session. That custom entry is not shown, sent to the model,
 or returned by `session_recall`; it records why control was delegated, not that
 native compaction succeeded. User cancellation is not a fallback.
 
+The local transcript keeps this visible without extra detail: completed rows
+say `Context compacted · Classifier`, `Context compacted · Summary`, or
+`Context compacted · Native`. Expanding a row reveals the existing token count
+and checkpoint. Unknown third-party compaction metadata keeps Pi's native
+presentation rather than being guessed.
+
 `session_recall` searches only the active `SessionManager.getBranch()` lineage.
 It returns bounded, untrusted historical evidence with stable session and entry
 IDs. It does not read sibling branches, prior sessions, or RTK recovery files;

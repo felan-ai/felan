@@ -23,6 +23,10 @@ import { createToolActivitySessionView } from '../tool-activity/runtime-view.js'
 import { createToolActivityDisplayDefinition } from '../tool-activity/presentation.js';
 import { ToolActivityState } from '../tool-activity/state.js';
 import { renderThinkingGroupMarkdown } from '../thinking-groups.js';
+import {
+  CompactionMethodMessageComponent,
+  compactionMethodForMessage,
+} from '../compaction-presentation.js';
 
 type AgentMessage = AgentSession['messages'][number];
 type AssistantMessage = Extract<AgentMessage, { role: 'assistant' }>;
@@ -390,7 +394,12 @@ export class AgentTranscript implements Component {
     const key = `${message.tokensBefore}:${message.summary}`;
     if (this.#renderedCompactionMessages.has(key)) return;
     this.#renderedCompactionMessages.add(key);
-    const component = new CompactionSummaryMessageComponent(message, this.#markdownTheme);
+    const method = this.#attachment === undefined
+      ? undefined
+      : compactionMethodForMessage(this.#attachment.session.sessionManager.getBranch(), message);
+    const component = method === undefined
+      ? new CompactionSummaryMessageComponent(message, this.#markdownTheme)
+      : new CompactionMethodMessageComponent(message, method, this.#markdownTheme);
     component.setExpanded(this.#toolsExpanded);
     this.#expandableComponents.add(component);
     this.#container.addChild(new Spacer(1));

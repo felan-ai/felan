@@ -44,9 +44,7 @@ export function createFallbackDiagnostic(input: FallbackDiagnosticInput): Sessio
 }
 
 export function fallbackDiagnosticText(diagnostic: SessionCompactionFallbackDiagnosticV1): string {
-  const error = diagnostic.errorMessage ? `: ${diagnostic.errorMessage}` : '';
-  const prune = pruneText(diagnostic.prune);
-  return `Session compaction fell back to Pi native compaction (${diagnostic.reason}${error}${prune}).`;
+  return 'Felan compaction failed; native compaction will take over.';
 }
 
 function boundedPrune(prune: EvidencePruneReport): NonNullable<SessionCompactionFallbackDiagnosticV1['prune']> {
@@ -60,15 +58,6 @@ function boundedPrune(prune: EvidencePruneReport): NonNullable<SessionCompaction
   }
   if (prune.status === 'skipped') return { status: 'skipped', reason: bounded(prune.reason) };
   return { status: 'off' };
-}
-
-function pruneText(prune: SessionCompactionFallbackDiagnosticV1['prune']): string {
-  if (!prune) return '';
-  if (prune.status === 'ran') {
-    return `; prune ran kept=${prune.kept ?? 0} shortened=${prune.shortened ?? 0} dropped=${prune.dropped ?? 0}`;
-  }
-  if (prune.status === 'skipped') return `; prune skipped (${prune.reason ?? 'unknown'})`;
-  return '; prune off';
 }
 
 function sanitizedError(value: unknown): string {

@@ -1,4 +1,14 @@
-import { getSelectListTheme, type InteractiveMode } from '@earendil-works/pi-coding-agent';
+import {
+  getMarkdownTheme,
+  getSelectListTheme,
+  type InteractiveMode,
+  type SessionEntry,
+} from '@earendil-works/pi-coding-agent';
+import { Spacer } from '@earendil-works/pi-tui';
+import {
+  CompactionMethodMessageComponent,
+  compactionMethodForMessage,
+} from './compaction-presentation.js';
 import { formatSessionTerminalTitle } from '@felan-ai/ext-session-title';
 import { installOverlayImageStacking } from './overlay-images.js';
 
@@ -20,6 +30,7 @@ interface TerminalTitleWriter {
 interface TerminalTitleSessionManager {
   getCwd(): string;
   getSessionName(): string | undefined;
+  buildContextEntries?(): readonly SessionEntry[];
 }
 
 interface RgbColor {
@@ -47,6 +58,7 @@ interface InteractiveModeTerminalInternals {
   setWorkingIndicator?(options?: WorkingIndicatorOptions): void;
   showError?(message: string): void;
   showStatus?(message: string): void;
+  addMessageToChat?(message: unknown, options?: unknown): void;
   switchTuiMode?(mode: string, restoreProgress?: boolean, startRenderer?: boolean): boolean;
   updateTerminalTitle?(): void;
   themeController?: {
@@ -74,6 +86,7 @@ const installedTerminalTitles = new WeakSet<object>();
 const installedWorkingIndicators = new WeakSet<object>();
 const installedThemeDetection = new WeakSet<object>();
 const installedPromptPreflightStatus = new WeakSet<object>();
+const installedCompactionPresenters = new WeakSet<object>();
 
 export function installFelanTuiCompatibility(
   mode: InteractiveMode,
@@ -82,6 +95,7 @@ export function installFelanTuiCompatibility(
   const internals = mode as unknown as InteractiveModeTerminalInternals;
   installOverlayImageStacking();
   installPiMessageFilters(mode, internals);
+  installCompactionPresenter(mode, internals);
   installFelanTerminalTitle(mode, internals);
   installFelanWorkingIndicator(mode, internals);
   installPromptPreflightWorkingStatus(mode, internals);
@@ -120,6 +134,59 @@ export function installFelanTuiCompatibility(
     });
     return true;
   };
+}
+
+function installCompactionPresenter(
+  mode: InteractiveMode,
+  internals: InteractiveModeTerminalInternals,
+): void {
+  if (installedCompactionPresenters.has(mode)) return;
+  const addMessageToChat = internals.addMessageToChat;
+  const sessionManager = internals.sessionManager;
+  const buildContextEntries = sessionManager?.buildContextEntries;
+  if (typeof addMessageToChat !== 'function' || typeof buildContextEntries !== 'function') return;
+  installedCompactionPresenters.add(mode);
+
+  internals.addMessageToChat = (message, options) => {
+    if (!isCompactionSummaryMessage(message)) {
+      Reflect.apply(addMessageToChat, mode, [message, options]);
+      return;
+    }
+    const method = compactionMethodForMessage(Reflect.apply(buildContextEntries, sessionManager, []), message);
+    if (method === undefined) {
+      Reflect.apply(addMessageToChat, mode, [message, options]);
+      return;
+    }
+    const chatContainer = (mode as unknown as { chatContainer?: { addChild(child: unknown): void } }).chatContainer;
+    if (!chatContainer) {
+      Reflect.apply(addMessageToChat, mode, [message, options]);
+      return;
+    }
+    chatContainer.addChild(new Spacer(1));
+    const component = new CompactionMethodMessageComponent(message, method, getMarkdownTheme());
+    const expanded = (mode as unknown as { toolOutputExpanded?: unknown }).toolOutputExpanded;
+    if (typeof expanded === 'boolean') component.setExpanded(expanded);
+    chatContainer.addChild(component);
+  };
+}
+
+interface CompactionSummaryMessageLike {
+  readonly role: 'compactionSummary';
+  readonly summary: string;
+  readonly tokensBefore: number;
+  readonly timestamp: number;
+}
+
+function isCompactionSummaryMessage(value: unknown): value is CompactionSummaryMessageLike {
+  return isRecord(value)
+    && value.role === 'compactionSummary'
+    && typeof value.summary === 'string'
+    && typeof value.tokensBefore === 'number'
+    && typeof value.timestamp === 'number';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function installPromptPreflightWorkingStatus(

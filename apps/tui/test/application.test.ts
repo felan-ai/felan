@@ -225,6 +225,50 @@ describe('interactive application', () => {
     expect(errors).toEqual(['Compaction failed: Provider unavailable']);
   });
 
+  it('replaces recognized compaction rows without blocking unknown Pi entries', () => {
+    initTheme('dark', false);
+    const rendered: unknown[] = [];
+    const native = vi.fn();
+    const entry = {
+      type: 'compaction',
+      id: 'compact-1',
+      parentId: null,
+      timestamp: new Date(1).toISOString(),
+      summary: 'checkpoint',
+      tokensBefore: 100,
+      fromHook: true,
+      details: { namespace: 'felan.session-compaction', schemaVersion: 1, method: 'classifier' },
+    };
+    const mode = {
+      addMessageToChat: native,
+      chatContainer: { addChild: (child: unknown) => rendered.push(child) },
+      sessionManager: { buildContextEntries: () => [entry] },
+      toolOutputExpanded: false,
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+
+    installFelanTuiCompatibility(mode, 'darwin');
+    const internals = mode as unknown as { addMessageToChat(message: unknown): void };
+    internals.addMessageToChat({ role: 'compactionSummary', summary: 'checkpoint', tokensBefore: 100, timestamp: 2 });
+    expect(native).not.toHaveBeenCalled();
+    expect(rendered).toHaveLength(2);
+    expect(rendered[1]).toBeDefined();
+
+    const unknown = {
+      ...entry,
+      details: { namespace: 'other.extension', schemaVersion: 1 },
+    };
+    const unknownMode = {
+      addMessageToChat: native,
+      chatContainer: { addChild: vi.fn() },
+      sessionManager: { buildContextEntries: () => [unknown] },
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+    installFelanTuiCompatibility(unknownMode, 'darwin');
+    (unknownMode as unknown as { addMessageToChat(message: unknown): void }).addMessageToChat({
+      role: 'compactionSummary', summary: 'checkpoint', tokensBefore: 100, timestamp: 2,
+    });
+    expect(native).toHaveBeenCalledOnce();
+  });
+
   it('shows the normal working state while prompt preflight is pending', async () => {
     const requestRender = vi.fn();
     const showWorkingStatusIndicator = vi.fn();

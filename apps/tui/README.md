@@ -227,6 +227,11 @@ current active lineage. The extension is safe to disable with
 `builtinExtensions.sessionCompaction: false`; Pi's native compactor then remains
 in control and `session_recall` is removed.
 
+After compaction, the transcript shows the completed method as `Context
+compacted · Classifier`, `Context compacted · Summary`, or `Context compacted ·
+Native`. Expand the row for the token count and checkpoint. If Felan cannot
+complete its method, the warning is concise and native Pi compaction takes over.
+
 Agent Core batches the complete classifier question set as needed; the local
 host exposes the Agent Core classifier through the runtime. Bounded compaction
 evidence is sent to the selected TypeSafe or OpenRouter endpoint. Debug logs

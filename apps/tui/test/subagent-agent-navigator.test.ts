@@ -327,6 +327,36 @@ describe('AgentNavigator', () => {
     transcript.dispose();
   });
 
+  it('shows the compaction method in a child transcript', () => {
+    const session = sessionWithMessages([
+      {
+        role: 'compactionSummary',
+        summary: 'checkpoint',
+        tokensBefore: 100,
+        timestamp: 1,
+      },
+    ], () => {}, {
+      branch: [{
+        type: 'compaction',
+        id: 'compact-1',
+        parentId: null,
+        timestamp: new Date(1).toISOString(),
+        summary: 'checkpoint',
+        tokensBefore: 100,
+        fromHook: true,
+        details: { namespace: 'felan.session-compaction', schemaVersion: 1, method: 'summary' },
+      }],
+    });
+    const transcript = new AgentTranscript(
+      { requestRender: vi.fn() } as never,
+      new TuiKeybindingsManager(TUI_KEYBINDINGS) as unknown as KeybindingsManager,
+    );
+
+    transcript.attach(session);
+    expect(transcript.render(100).join('\n')).toContain('Context compacted · Summary');
+    transcript.dispose();
+  });
+
   it('keeps grouped child tools live and releases both session subscriptions', () => {
     const definition = toolDefinition('read');
     const listeners: Array<(event: unknown) => void> = [];
@@ -721,6 +751,7 @@ function sessionWithMessages(
     definition?: ToolDefinition<any, any, any>;
     model?: { provider: string; id: string };
     unsubscribes?: Array<ReturnType<typeof vi.fn>>;
+    branch?: unknown[];
   } = {},
 ): AgentSession {
   return {
@@ -742,7 +773,7 @@ function sessionWithMessages(
     },
     sessionManager: {
       getCwd: vi.fn(() => process.cwd()),
-      getBranch: vi.fn(() => []),
+      getBranch: vi.fn(() => options.branch ?? []),
       buildContextEntries: vi.fn(() => []),
     },
     getToolDefinition: vi.fn(() => options.definition),

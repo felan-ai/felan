@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { getExtensionConfigDefinition } from '@felan-ai/agent-core';
 import sessionCompactionExtension, { SESSION_COMPACTION_CONFIG } from '../src/index.js';
-import { createFallbackDiagnostic, fallbackDiagnosticBytes } from '../src/index.js';
+import { createFallbackDiagnostic, fallbackDiagnosticBytes, fallbackDiagnosticText } from '../src/index.js';
 
 const packageRoot = resolve(import.meta.dirname, '..');
 
@@ -48,5 +48,6 @@ describe('@felan-ai/ext-session-compaction package boundary', () => {
     expect(diagnostic.errorMessage).toContain('token=[redacted]');
     expect(diagnostic.errorMessage).not.toContain('raw');
     expect(fallbackDiagnosticBytes(diagnostic)).toBeLessThan(3_000);
+    expect(fallbackDiagnosticText(diagnostic)).toBe('Felan compaction failed; native compaction will take over.');
   });
 });
