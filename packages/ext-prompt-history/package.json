@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-prompt-history",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "TUI prompt-history picker for Felan",
   "license": "MIT",
   "type": "module",
@@ -31,10 +31,10 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "0.86.1"
+    "@earendil-works/pi-tui": "catalog:pi"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.8.0"
+    "@felan-ai/agent-core": "catalog:agent-core"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

@@ -36,13 +36,13 @@
   },
   "pnpm": {
     "overrides": {
-      "@earendil-works/pi-agent-core": "0.86.1",
-      "@earendil-works/pi-ai": "0.86.1",
-      "@earendil-works/pi-coding-agent": "0.86.1",
-      "@earendil-works/pi-protocol": "0.86.1",
-      "@earendil-works/pi-server": "0.86.1",
-      "@earendil-works/pi-telemetry": "0.86.1",
-      "@earendil-works/pi-tui": "0.86.1"
+      "@earendil-works/pi-agent-core": "catalog:pi",
+      "@earendil-works/pi-ai": "catalog:pi",
+      "@earendil-works/pi-coding-agent": "catalog:pi",
+      "@earendil-works/pi-protocol": "catalog:pi",
+      "@earendil-works/pi-server": "catalog:pi",
+      "@earendil-works/pi-telemetry": "catalog:pi",
+      "@earendil-works/pi-tui": "catalog:pi"
     }
   }
 }

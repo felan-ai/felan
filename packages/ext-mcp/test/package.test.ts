@@ -14,7 +14,7 @@ describe('@felan-ai/ext-mcp package boundary', () => {
         '@modelcontextprotocol/client': '2.0.0',
         typebox: '1.1.38',
       },
-      peerDependencies: { '@felan-ai/agent-core': '^0.8.0' },
+      peerDependencies: { '@felan-ai/agent-core': 'catalog:agent-core' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
     });
   });

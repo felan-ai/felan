@@ -134,7 +134,7 @@ content/version cache.
 
 The package owns format selection, bounded staging, conversion diagnostics, and
 cache redirection. The host supplies `AgentRuntime`, installation policy, and
-the `markitdown` executable. It requires `@felan-ai/agent-core` `^0.8.0`, and
+the `markitdown` executable. It requires a compatible `@felan-ai/agent-core` release, and
 Python 3.10 or newer only when the managed converter is installed.
 
 ## Development

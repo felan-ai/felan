@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-codebase-memory",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Portable Codebase Memory tools and grep augmentation for Felan",
   "license": "MIT",
   "type": "module",
@@ -9,10 +9,20 @@
     "url": "git+https://github.com/felan-ai/felan.git",
     "directory": "packages/ext-codebase-memory"
   },
-  "engines": { "node": ">=22.19.0" },
-  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
@@ -21,10 +31,17 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "0.86.1",
+    "@earendil-works/pi-tui": "catalog:pi",
     "typebox": "1.1.38"
   },
-  "peerDependencies": { "@felan-ai/agent-core": "^0.8.0" },
-  "devDependencies": { "@felan-ai/agent-core": "workspace:*" },
-  "publishConfig": { "access": "public", "provenance": true }
+  "peerDependencies": {
+    "@felan-ai/agent-core": "catalog:agent-core"
+  },
+  "devDependencies": {
+    "@felan-ai/agent-core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
 }

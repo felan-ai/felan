@@ -40,7 +40,8 @@ official reference described the corresponding implementation.
   [interactive/background tasks][claude-interactive],
   [checkpointing][claude-checkpoints], [hooks][claude-hooks],
   [MCP][claude-mcp], and [Chrome][claude-chrome].
-- **Pi:** Felan Code pins `@earendil-works/pi-*` `0.86.1`. Sources:
+- **Pi:** The reviewed Felan Code snapshot used `@earendil-works/pi-*` `0.84.2`.
+  This is a historical source baseline, not the current workspace pin. Sources:
   [Pi usage and core feature inventory][pi-overview],
   [extensions][pi-extensions], [providers][pi-providers], and
   [containerization][pi-containers].

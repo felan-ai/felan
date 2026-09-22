@@ -173,6 +173,9 @@ function resolveDisplayMode(value: unknown): ContextViewDisplayMode {
 export function collectContextReport(pi: ExtensionAPI | FelanExtensionAPI, ctx: ExtensionCommandContext, promptOptions: BuildSystemPromptOptions | undefined, latestSystemPrompt: string | undefined): ContextReport {
 	const usage = ctx.getContextUsage();
 	const branch = ctx.sessionManager.getBranch();
+	const projection = typeof ctx.sessionManager.buildSessionProjection === "function"
+		? ctx.sessionManager.buildSessionProjection()
+		: undefined;
 	const currentSystemPrompt = ctx.getSystemPrompt();
 	const systemPrompt = currentSystemPrompt.length > 0 ? currentSystemPrompt : latestSystemPrompt ?? "";
 	const activeToolNames = new Set(pi.getActiveTools());
@@ -192,10 +195,18 @@ export function collectContextReport(pi: ExtensionAPI | FelanExtensionAPI, ctx: 
 		other: 0,
 	};
 	const memory = { summary: 0, index: 0, schema: 0, recalls: 0 } satisfies MemoryBreakdown;
-	const memoryToolCallIds = findMemoryToolCallIds(branch);
+	const memoryToolCallIds = findMemoryToolCallIds(projection?.messages ?? branch.flatMap((entry) => (
+		entry.type === "message" ? [entry.message] : []
+	)));
 
-	for (const entry of getContextEntries(branch)) {
-		addEntryEstimate(entry, estimates, memory, memoryToolCallIds);
+	if (projection) {
+		for (const projected of projection.entries) {
+			addEntryEstimate(projected.sourceEntry, estimates, memory, memoryToolCallIds, projected.messages);
+		}
+	} else {
+		for (const entry of getContextEntries(branch)) {
+			addEntryEstimate(entry, estimates, memory, memoryToolCallIds);
+		}
 	}
 
 	const usedBreakdown = roundEstimates(estimates);
@@ -371,12 +382,26 @@ function isContextEntry(entry: SessionEntry): boolean {
 	return entry.type === "message" || entry.type === "branch_summary" || entry.type === "compaction" || entry.type === "custom_message";
 }
 
-function addEntryEstimate(entry: SessionEntry, estimates: UsedEstimates, memory: MemoryBreakdown, memoryToolCallIds: ReadonlySet<string>): void {
+function addEntryEstimate(
+	entry: SessionEntry,
+	estimates: UsedEstimates,
+	memory: MemoryBreakdown,
+	memoryToolCallIds: ReadonlySet<string>,
+	projectedMessages?: readonly SessionMessageEntry["message"][],
+): void {
 	switch (entry.type) {
 		case "message":
-			addMessageEstimate(entry.message, estimates, memory, memoryToolCallIds);
+			for (const message of projectedMessages ?? [entry.message]) {
+				addMessageEstimate(message, estimates, memory, memoryToolCallIds);
+			}
 			return;
 		case "custom_message":
+			if (projectedMessages) {
+				for (const message of projectedMessages) {
+					addMessageEstimate(message, estimates, memory, memoryToolCallIds);
+				}
+				return;
+			}
 			if (entry.customType === "felan-memory-context") {
 				addInitialMemoryEstimate(entry.content, estimates, memory);
 				return;
@@ -549,11 +574,11 @@ function sectionBetween(text: string, startMarker: string, endMarker: string): s
 	return text.slice(contentStart, end === -1 ? undefined : end);
 }
 
-function findMemoryToolCallIds(entries: readonly SessionEntry[]): ReadonlySet<string> {
+function findMemoryToolCallIds(messages: readonly SessionMessageEntry["message"][]): ReadonlySet<string> {
 	const ids = new Set<string>();
-	for (const entry of entries) {
-		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-		for (const part of entry.message.content) {
+	for (const message of messages) {
+		if (message.role !== "assistant") continue;
+		for (const part of message.content) {
 			if (isToolCallPart(part) && isMemoryToolCall(part.name, part.arguments)) ids.add(part.id);
 		}
 	}

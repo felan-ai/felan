@@ -213,6 +213,31 @@ describe('classifier-guided subagent routing', () => {
     expect(event.systemPromptOptions.sections.subagent_routing).toContain('This is an execution decision, not a catalog suggestion.');
   });
 
+  it('routes from projected context rather than superseded raw messages', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const evaluateProbabilities = vi.fn(async (_state: any, questions: Record<string, unknown>) => ({
+      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { probability: 0 }])),
+    }));
+    const host = createHost([{ id: 'reader', description: 'Read-only investigation', allowNesting: false }]);
+    const pi = createPi(evaluateProbabilities, handlers);
+    createSubagentsExtension(host)(pi);
+    const raw = { role: 'user', content: [{ type: 'text', text: 'superseded raw content' }] };
+    const projected = { role: 'user', content: [{ type: 'text', text: 'projected content' }] };
+    const ctx = context([raw]);
+    ctx.sessionManager.buildSessionProjection = () => ({
+      entries: [{ sourceEntry: ctx.sessionManager.buildContextEntries()[0], messages: [projected] }],
+      messages: [projected],
+      thinkingLevel: 'off',
+      model: null,
+    });
+
+    await handlers.get('before_agent_start')!(routingEvent({ prompt: 'request' }), ctx);
+
+    expect(evaluateProbabilities.mock.calls[0]![0].conversation).toEqual([
+      { role: 'user', text: 'projected content' },
+    ]);
+  });
+
   it('scores catalogs larger than one classifier request instead of dropping routing', async () => {
     const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
     const descriptors = Array.from({ length: 40 }, (_, index) => ({

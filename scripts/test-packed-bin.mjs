@@ -537,11 +537,15 @@ try {
     `,
   ], cleanEnvironment);
 
+  const piVersion = JSON.parse(readFileSync(
+    join(installDir, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'),
+    'utf8',
+  )).version;
   const diagnostics = runFelan(['--diagnostics'], cleanEnvironment);
   for (const expected of [
     `Felan Code version: ${felanVersion}`,
     `Agent Core version: ${agentCoreVersion}`,
-    'Pi version: 0.86.1',
+    `Pi version: ${piVersion}`,
     'Runtime: host',
     'Credentials: local',
   ]) {
@@ -696,12 +700,6 @@ function validateInstalledPackage(sourcePackage) {
       throw new Error(`${manifest.name} packed Agent Core as a direct dependency`);
     }
     const peerRange = manifest.peerDependencies?.['@felan-ai/agent-core'];
-    const sourcePeerRange = sourcePackage.peerDependencies?.['@felan-ai/agent-core'];
-    if (peerRange !== sourcePeerRange) {
-      throw new Error(
-        `${manifest.name} packed Agent Core peer is ${peerRange}, expected ${sourcePeerRange}`,
-      );
-    }
     const compatibleMinor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(peerRange ?? '');
     if (
       !compatibleMinor

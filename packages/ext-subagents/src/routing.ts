@@ -177,7 +177,7 @@ function buildState(
     request: prompt,
     image_count: imageCount,
     session_kind: ctx.sessionManager.getHeader()?.parentSession === undefined ? 'root' : 'child',
-    conversation: ctx.sessionManager.buildContextEntries().flatMap(conversationText),
+    conversation: buildProjectedConversation(ctx),
     available_agents: descriptors,
     active_children: records.map(({ agentId, type, status, description }) => ({
       id: agentId,
@@ -186,6 +186,22 @@ function buildState(
       description,
     })),
   };
+}
+
+function buildProjectedConversation(ctx: ExtensionContext): { role: string; text: string }[] {
+  if (typeof ctx.sessionManager.buildSessionProjection === 'function') {
+    return ctx.sessionManager.buildSessionProjection().entries.flatMap(({ sourceEntry, messages }) => {
+      if (sourceEntry.type === 'compaction' || sourceEntry.type === 'branch_summary') {
+        return sourceEntry.summary.trim() ? [{ role: 'summary', text: sourceEntry.summary }] : [];
+      }
+      return messages.flatMap((message) => {
+        if (message.role !== 'user' && message.role !== 'assistant') return [];
+        const text = contentText(message.content);
+        return text.trim() ? [{ role: message.role, text }] : [];
+      });
+    });
+  }
+  return ctx.sessionManager.buildContextEntries().flatMap(conversationText);
 }
 
 function buildQuestions(descriptors: readonly SubagentDescriptor[]): ClassifierProbabilityQuestions {

@@ -40,9 +40,9 @@ The Jev classifier client lives in @felan-ai/agent-core as original Felan
 MIT-licensed code. Direct HTTPS to the public TypeSafe and OpenRouter API
 hosts is an intentional I/O exception.
 
-This product uses Pi 0.86.1 from https://github.com/earendil-works/pi,
+This product uses Pi from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
-It also uses @earendil-works/pi-server 0.86.1 from the same project under the
+It also uses @earendil-works/pi-server from the same project under the
 MIT License.
 
 The local application uses @agentclientprotocol/sdk 1.4.0 from

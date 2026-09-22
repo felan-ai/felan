@@ -215,4 +215,24 @@ describe('@felan-ai/ext-context-view', () => {
     );
     expect(report.breakdown.messages).toBeGreaterThan(0);
   });
+
+  it('estimates the canonical projected context after context edits', () => {
+    const sourceEntry = {
+      type: 'message', id: 'user', parentId: null, timestamp: '1',
+      message: { role: 'user', content: 'the original content '.repeat(20), timestamp: 1 },
+    } as unknown as SessionEntry;
+    const ctx = context({ sessionManager: {
+      getBranch: () => [sourceEntry],
+      buildSessionProjection: () => ({
+        entries: [{ sourceEntry, messages: [{ role: 'user', content: 'short replacement', timestamp: 1 }] }],
+        messages: [{ role: 'user', content: 'short replacement', timestamp: 1 }],
+        thinkingLevel: 'off',
+        model: null,
+      }),
+    } as never });
+
+    const report = collectContextReport(pi(), ctx, undefined, undefined);
+
+    expect(report.breakdown.messages).toBeLessThan(20);
+  });
 });
