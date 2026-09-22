@@ -146,8 +146,10 @@ limits, policy options, and a fresh configuration that excludes ambient
 
 Before its first action, the agent retrieves the `core` skill or an appropriate
 specialized skill. Attaching to an existing browser requires
-`browser_authorize`. The local TUI asks for consent by default, discovers Chrome's bounded
-local `DevToolsActivePort` file, and makes one direct-CDP connection attempt.
+`browser_authorize` with a concise reason explaining why authenticated access is
+needed. The local TUI shows that reason beside the tool call, asks for consent
+by default, discovers Chrome's bounded local `DevToolsActivePort` file, and
+makes one direct-CDP connection attempt.
 If the file is unavailable, it opens `chrome://inspect/#remote-debugging` in
 Chrome and rediscovers only after you confirm setup is complete. It then binds
 a fresh pinned tab. The grant is session-scoped and can be inspected or revoked

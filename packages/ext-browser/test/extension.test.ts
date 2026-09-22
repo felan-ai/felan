@@ -141,11 +141,11 @@ describe('browser extension', () => {
     const authorize = harness.tools.get('browser_authorize');
     const browser = harness.tools.get('browser');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
-    await expect(authorize.execute('authorize-again', { operation: 'authorize', origin: 'https://example.com/path' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize-again', { operation: 'authorize', origin: 'https://example.com/path', reason: 'Continue the authenticated browser workflow.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { reused: true } });
-    await expect(authorize.execute('authorize-other', { operation: 'authorize', origin: 'https://example.org' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize-other', { operation: 'authorize', origin: 'https://example.org', reason: 'Continue the authenticated browser workflow.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { reused: true } });
     await expect(browser.execute('snapshot', { operation: 'run', args: ['snapshot', '-i'] }, undefined, undefined, harness.context))
       .resolves.toBeDefined();
@@ -161,6 +161,47 @@ describe('browser extension', () => {
     expect(lease.close).toHaveBeenCalledOnce();
   });
 
+  it.each([undefined, '', '   '])('rejects authorization without a user-facing reason: %j', async reason => {
+    const authorizationHost = createAuthorizationHost(createLease());
+    const harness = await createHarness({ authorizationHost });
+    const authorize = harness.tools.get('browser_authorize');
+
+    await expect(authorize.execute('missing-reason', {
+      operation: 'authorize',
+      origin: 'https://example.com',
+      ...(reason === undefined ? {} : { reason }),
+    }, undefined, undefined, harness.context)).rejects.toThrow('requires a concise non-empty reason');
+    expect(authorizationHost.authorize).not.toHaveBeenCalled();
+    expect(harness.runtime.calls).toHaveLength(0);
+  });
+
+  it('trims and truncates an overlong authorization reason instead of rejecting it', async () => {
+    const authorizationHost = createAuthorizationHost(createLease());
+    const harness = await createHarness({ authorizationHost });
+    const authorize = harness.tools.get('browser_authorize');
+    const prepared = authorize.prepareArguments({
+      operation: 'authorize',
+      origin: 'https://example.com',
+      reason: `  ${'x'.repeat(600)}  `,
+    });
+
+    expect(prepared.reason).toBe('x'.repeat(500));
+    await expect(authorize.execute('long-reason', prepared, undefined, undefined, harness.context))
+      .resolves.toMatchObject({ details: { state: 'authorized' } });
+    expect(authorizationHost.authorize).toHaveBeenCalledOnce();
+  });
+
+  it('keeps status and revoke independent of the authorization reason', async () => {
+    const lease = createLease();
+    const harness = await createHarness({ authorizationHost: createAuthorizationHost(lease) });
+    const authorize = harness.tools.get('browser_authorize');
+
+    await expect(authorize.execute('status', { operation: 'status' }, undefined, undefined, harness.context))
+      .resolves.toMatchObject({ details: { operation: 'status' } });
+    await expect(authorize.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
+      .resolves.toMatchObject({ details: { operation: 'revoke' } });
+  });
+
   it('keeps attached commands and private observations on one fresh daemon scope', async () => {
     const authorizationHost = createAuthorizationHost(createLease());
     const harness = await createHarness({ authorizationHost });
@@ -169,7 +210,7 @@ describe('browser extension', () => {
 
     await browser.execute('isolated-open', { operation: 'run', args: ['open', 'https://isolated.example'] }, undefined, undefined, harness.context);
     const isolatedOpen = harness.runtime.calls.find((call) => call.args[0] === 'open');
-    const authorized = await authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    const authorized = await authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     expect(authorized).toMatchObject({ details: { state: 'authorized' } });
     const opened = await browser.execute('attached-open', { operation: 'run', args: ['open', 'https://example.com/path'] }, undefined, undefined, harness.context);
     const snapshot = await browser.execute('snapshot', { operation: 'run', args: ['snapshot', '-i'] }, undefined, undefined, harness.context);
@@ -212,7 +253,7 @@ describe('browser extension', () => {
     });
     const authorize = harness.tools.get('browser_authorize');
     const browser = harness.tools.get('browser');
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     await expect(browser.execute('failed', { operation: 'run', args: ['snapshot'] }, undefined, undefined, harness.context))
       .rejects.toThrow('page command failed');
@@ -235,7 +276,7 @@ describe('browser extension', () => {
       },
     });
     const tool = harness.tools.get('browser_authorize');
-    await tool.execute('grant', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    await tool.execute('grant', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     await expect(tool.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'revoked' } });
     expect(remaining).toBeLessThan(0);
@@ -255,7 +296,7 @@ describe('browser extension', () => {
     } satisfies BrowserAuthorizationHost;
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, controller.signal, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, controller.signal, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     controller.abort();
     expect(lifetime?.aborted).toBe(false);
@@ -286,7 +327,7 @@ describe('browser extension', () => {
     const authorize = harness.tools.get('browser_authorize');
     const browser = harness.tools.get('browser');
 
-    await authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    await authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     await expect(browser.execute('snapshot', { operation: 'run', args: ['snapshot', '-i'] }, undefined, undefined, harness.context))
       .rejects.toThrow(/authorization|quarantined/u);
   });
@@ -302,7 +343,7 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'unavailable' } });
     expect(attachments).toMatchObject([{ ready: false }]);
     expect(harness.runtime.calls.some((call) => call.args[0] === 'open')).toBe(false);
@@ -316,7 +357,7 @@ describe('browser extension', () => {
     });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'unavailable' } });
     expect(harness.runtime.calls.some((call) => call.args[0] === 'open')).toBe(false);
   });
@@ -336,7 +377,7 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'unavailable' } });
     expect(attachments).toMatchObject([{ ready: false }]);
     expect(harness.runtime.calls).toHaveLength(callsBeforeAttachment);
@@ -364,7 +405,7 @@ describe('browser extension', () => {
     });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'unavailable' } });
     expect(attachments).toMatchObject([{ ready: false }]);
     expect(harness.runtime.calls.filter((call) => call.args.includes('--pin-tab'))).toHaveLength(1);
@@ -386,7 +427,7 @@ describe('browser extension', () => {
       },
     });
 
-    await expect(harness.tools.get('browser_authorize').execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(harness.tools.get('browser_authorize').execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'unavailable' } });
     expect(lease.close).toHaveBeenCalledOnce();
   });
@@ -407,7 +448,7 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: extraLease ? 'unavailable' : 'authorized' } });
     if (extraLease) {
       expect(attachments).toMatchObject([{ ready: false }, { ready: false }]);
@@ -438,7 +479,7 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
 
-    await authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    await authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     await expect(authorize.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'revoked' } });
     expect(attachments).toMatchObject([{ ready: true }, { ready: false }]);
@@ -462,7 +503,7 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     const attachmentCalls = harness.runtime.calls.filter((call) => call.args.includes('--pin-tab'));
     expect(attachmentCalls).toHaveLength(1);
@@ -489,10 +530,10 @@ describe('browser extension', () => {
     } satisfies BrowserAuthorizationHost;
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
-    const first = authorize.execute('first', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    const first = authorize.execute('first', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     const request = await hostEntered.promise;
     let joinedOutcome: unknown;
-    const second = authorize.execute('second', { operation: 'authorize', origin: 'https://example.com/path' }, controller.signal, undefined, harness.context)
+    const second = authorize.execute('second', { operation: 'authorize', origin: 'https://example.com/path', reason: 'Continue the authenticated browser workflow.' }, controller.signal, undefined, harness.context)
       .then((outcome: unknown) => { joinedOutcome = outcome; return outcome; });
     try {
       if (cancelJoined) {
@@ -533,7 +574,7 @@ describe('browser extension', () => {
       commands: { open: ({ session }) => { attachedSession = session; return undefined; } },
     });
     const authorize = harness.tools.get('browser_authorize');
-    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     const attachment = await hostAttached.promise;
     attachedSession!.targetId = 'changed-before-activation';
     releaseHost.resolve();
@@ -563,7 +604,7 @@ describe('browser extension', () => {
       },
     });
     const authorize = harness.tools.get('browser_authorize');
-    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, controller.signal, undefined, harness.context);
+    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, controller.signal, undefined, harness.context);
     await nativeEntered.promise;
     controller.abort();
     const nativeAborted = nativeSignal?.aborted;
@@ -594,7 +635,7 @@ describe('browser extension', () => {
     } satisfies BrowserAuthorizationHost;
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
-    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, controller.signal, undefined, harness.context);
+    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, controller.signal, undefined, harness.context);
     const request = await hostEntered.promise;
     controller.abort();
     releaseHost.resolve();
@@ -623,7 +664,7 @@ describe('browser extension', () => {
       },
     });
     const authorize = harness.tools.get('browser_authorize');
-    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     await nativeEntered.promise;
     const revocation = authorize.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context);
     try {
@@ -662,7 +703,7 @@ describe('browser extension', () => {
       },
     });
     const authorize = harness.tools.get('browser_authorize');
-    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     const probeSignal = await probeEntered.promise;
     try {
       await harness.emit('session_shutdown');
@@ -680,7 +721,7 @@ describe('browser extension', () => {
     expect(harness.runtime.calls.some((call) => call.args[0] === 'open' || call.args[0] === 'close')).toBe(false);
     const status = await authorize.execute('status', { operation: 'status' }, undefined, undefined, harness.context);
     expect(status.details.state).not.toBe('authorized');
-    await expect(authorize.execute('authorize-after-shutdown', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize-after-shutdown', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'cancelled' } });
     expect(authorizationHost.authorize).toHaveBeenCalledOnce();
   });
@@ -706,7 +747,7 @@ describe('browser extension', () => {
       },
     });
     const authorize = harness.tools.get('browser_authorize');
-    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    const pending = authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     const nativeSignal = await nativeEntered.promise;
     const shutdown = harness.emit('session_shutdown');
     try {
@@ -730,7 +771,7 @@ describe('browser extension', () => {
     expect(harness.runtime.calls.some((call) => ['get cdp-url', 'tab list', 'get url'].includes(commandKey(call.args)))).toBe(false);
     const status = await authorize.execute('status', { operation: 'status' }, undefined, undefined, harness.context);
     expect(status.details.state).not.toBe('authorized');
-    await expect(authorize.execute('authorize-after-shutdown', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize-after-shutdown', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'cancelled' } });
     expect(authorizationHost.authorize).toHaveBeenCalledOnce();
   });
@@ -742,7 +783,7 @@ describe('browser extension', () => {
     const browser = harness.tools.get('browser');
     const originalContext = harness.contextFor('session-1');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, originalContext))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, originalContext))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     const attachedScope = cliScope(harness.runtime.calls.find((call) => call.args.includes('--cdp')));
     harness.state.sessionId = 'session-2';
@@ -780,12 +821,12 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
     const firstContext = harness.contextFor('session-1');
-    const first = authorize.execute('first', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, firstContext);
+    const first = authorize.execute('first', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, firstContext);
     await firstAttached.promise;
     await expect(authorize.execute('revoke-first', { operation: 'revoke' }, undefined, undefined, firstContext))
       .resolves.toMatchObject({ details: { state: 'revoked' } });
     harness.state.sessionId = sessionId;
-    const second = await authorize.execute('second', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    const second = await authorize.execute('second', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     releaseFirstHost.resolve();
 
     await expect(authorizationHost.authorize.mock.results[0]!.value).resolves.toMatchObject({ status: 'authorized' });
@@ -834,12 +875,12 @@ describe('browser extension', () => {
       onProbe: async () => { probeEntered.resolve(); await releaseProbe.promise; },
     });
     const authorize = harness.tools.get('browser_authorize');
-    const first = authorize.execute('first', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context);
+    const first = authorize.execute('first', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context);
     const oldRequest = await firstHostEntered.promise;
     await expect(authorize.execute('revoke-first', { operation: 'revoke' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'revoked' } });
     let secondOutcome: unknown;
-    const second = authorize.execute('second', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context)
+    const second = authorize.execute('second', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context)
       .then((outcome: unknown) => { secondOutcome = outcome; return outcome; });
     await probeEntered.promise;
     const lateAttachment = oldRequest.attach(TEST_CONNECTION, extraLease);
@@ -871,7 +912,7 @@ describe('browser extension', () => {
     const authorize = harness.tools.get('browser_authorize');
     const browser = harness.tools.get('browser');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     await browser.execute('close', { operation: 'run', args: [command] }, undefined, undefined, harness.context);
     await expect(authorize.execute('status', { operation: 'status' }, undefined, undefined, harness.context))
@@ -903,7 +944,7 @@ describe('browser extension', () => {
     const authorize = harness.tools.get('browser_authorize');
     const browser = harness.tools.get('browser');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     if (operation === 'revoke') {
       await expect(authorize.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
@@ -929,7 +970,7 @@ describe('browser extension', () => {
       },
     });
     const authorize = harness.tools.get('browser_authorize');
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     await expect(authorize.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'unavailable' } });
@@ -953,7 +994,7 @@ describe('browser extension', () => {
     });
     const authorize = harness.tools.get('browser_authorize');
     const browser = harness.tools.get('browser');
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     const readFile = vi.spyOn(harness.runtime, 'readFile');
     resizeImageMock.mockClear();
@@ -974,7 +1015,7 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost: createAuthorizationHost(lease) });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     lease.controller.abort();
 
@@ -990,7 +1031,7 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost: createAuthorizationHost(lease) });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     await expect(authorize.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'revoked' } });
@@ -1027,7 +1068,7 @@ describe('browser extension', () => {
       },
     });
     const authorize = harness.tools.get('browser_authorize');
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'authorized' } });
     await expect(authorize.execute('failed-revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'unavailable' } });
@@ -1050,7 +1091,7 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost, failAttachment: true });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'unavailable' } });
     expect(harness.runtime.calls.filter((call) => call.args.includes('--pin-tab'))).toHaveLength(1);
     expect(harness.runtime.calls.filter((call) => call.args[0] === 'close')).toHaveLength(1);
@@ -1068,7 +1109,7 @@ describe('browser extension', () => {
     const harness = await createHarness({ authorizationHost });
     const authorize = harness.tools.get('browser_authorize');
 
-    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com' }, undefined, undefined, harness.context))
+    await expect(authorize.execute('authorize', { operation: 'authorize', origin: 'https://example.com', reason: 'Use the existing authenticated browser session for this task.' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'unavailable' } });
     expect(harness.runtime.calls.some((call) => call.args[0] === 'open')).toBe(false);
     expect(lease.close).toHaveBeenCalledOnce();

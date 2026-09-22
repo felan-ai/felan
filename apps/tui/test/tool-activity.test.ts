@@ -498,6 +498,37 @@ describe('tool activity rendering', () => {
     expect(output).not.toContain('private form value');
   });
 
+  it('shows the browser authorization reason beside the tool call', () => {
+    const harness = activityHarness([
+      assistant([
+        toolCall('authorize', 'browser_authorize', {
+          operation: 'authorize',
+          origin: 'https://example.com/private',
+          reason: 'Need the signed-in account to verify the private dashboard.\u001b]0;hidden\u0007',
+        }),
+      ], 10),
+      toolResult('authorize', 'browser_authorize', 'authorized', false, 20),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'authorize', theme, false);
+    expect(output).toContain('Requested browser authorization · Need the signed-in account to verify the private dashboard.');
+    expect(output).not.toContain('example.com');
+    expect(output).not.toContain('\u001b');
+    expect(output).not.toContain('\u0007');
+  });
+
+  it('shows a bounded authorization reason while the call is pending', () => {
+    const reason = 'x'.repeat(120);
+    const harness = activityHarness([
+      assistant([toolCall('authorize', 'browser_authorize', { operation: 'authorize', reason })], 10),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'authorize', theme, false);
+    expect(output).toContain('Requesting browser authorization · ');
+    expect(output).toContain(`${'x'.repeat(87)}…`);
+    expect(output).not.toContain('x'.repeat(88));
+  });
+
   it('shows the Codebase Memory command and its useful argument', () => {
     const harness = activityHarness([
       assistant([

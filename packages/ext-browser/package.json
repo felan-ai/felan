@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-browser",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Portable agent-browser tool integration for Felan",
   "license": "MIT",
   "type": "module",

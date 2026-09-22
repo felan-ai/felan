@@ -283,6 +283,7 @@ function callLabel(call: ToolActivityCall): string {
   if (isMemoryRecall(call)) return running ? 'Recalling memory' : 'Memory Recall';
   if (normalized === 'mcp') return mcpCallLabel(call, running);
   if (normalized.startsWith('mcp__')) return running ? 'Calling MCP tool' : 'Called MCP tool';
+  if (normalized === 'browser_authorize') return running ? 'Requesting browser authorization' : 'Requested browser authorization';
   if (normalized === 'read' || normalized === 'read_file') return running ? 'Reading' : 'Read';
   if (normalized === 'grep') return running ? 'Searching' : 'Searched';
   if (normalized === 'find') return running ? 'Finding files' : 'Found files';
@@ -358,6 +359,12 @@ function browserArgumentPreview(args: Record<string, unknown>): string | undefin
   return operation;
 }
 
+function browserAuthorizationArgumentPreview(args: Record<string, unknown>): string | undefined {
+  return firstString(args, ['reason'])
+    ? truncate(oneLine(firstString(args, ['reason'])!), 88)
+    : firstString(args, ['operation']);
+}
+
 function codebaseMemoryArgumentPreview(args: Record<string, unknown>): string | undefined {
   const command = firstString(args, ['command']);
   const commandArgs = asRecord(args.arguments);
@@ -385,6 +392,8 @@ function argumentPreview(call: ToolActivityCall): string | undefined {
     value = mcpArgumentPreview(args);
   } else if (normalized === 'browser') {
     value = browserArgumentPreview(args);
+  } else if (normalized === 'browser_authorize') {
+    value = browserAuthorizationArgumentPreview(args);
   } else if (normalized === 'codebase_memory') {
     value = codebaseMemoryArgumentPreview(args);
   } else if (normalized.startsWith('mcp__')) {

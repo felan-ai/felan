@@ -10,9 +10,12 @@ unavailable.
 The extension registers the ordinary `browser` tool and, when its host supplies
 authorization, a separate `browser_authorize` control-plane tool.
 
-`browser_authorize` supports `authorize`, `status`, and `revoke`. Authorization
-defaults to an interactive local consent choice and opens a fresh strict pinned
-tab in the existing Chrome session. The local TUI can persist `always-allow`
+`browser_authorize` supports `authorize`, `status`, and `revoke`. The
+`authorize` operation requires a concise, non-blank `reason` explaining the
+authenticated task; the local TUI displays that reason next to the tool call
+before asking for consent. Authorization defaults to an interactive local
+consent choice and opens a fresh strict pinned tab in the existing Chrome
+session. The local TUI can persist `always-allow`
 through browser settings; changing it back to `ask` restores the prompt for
 later authorizations. The host supplies a transient validated loopback CDP
 endpoint. After authorization, the attached browser accepts the native CLI

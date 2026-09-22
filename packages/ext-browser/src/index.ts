@@ -47,6 +47,19 @@ const BrowserParameters = Type.Object({
 
 type BrowserParams = Static<typeof BrowserParameters>;
 
+const MAX_AUTHORIZATION_REASON_CHARACTERS = 500;
+const BrowserAuthorizationParameters = Type.Object({
+  operation: StringEnum(['authorize', 'status', 'revoke'] as const),
+  origin: Type.Optional(Type.String({ maxLength: 2_048 })),
+  reason: Type.Optional(Type.String({
+    minLength: 1,
+    maxLength: MAX_AUTHORIZATION_REASON_CHARACTERS,
+    description: 'Concise explanation shown to the user for why existing authenticated browser access is needed. Required for operation authorize.',
+  })),
+}, { additionalProperties: false });
+
+type BrowserAuthorizationParams = Static<typeof BrowserAuthorizationParameters>;
+
 export const BROWSER_TOOL_NAME = 'browser';
 export const BROWSER_AUTHORIZATION_TOOL_NAME = 'browser_authorize';
 
@@ -94,7 +107,7 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
         'Call browser with operation "skill" and skill "core" before the first browser action; use full=true for the complete reference or request a specialized skill when needed.',
         'For operation "run", pass literal args such as ["open", "https://example.com"] or ["snapshot", "-i"], never a shell command string.',
         'Start run args with the agent-browser command and place permitted options after it; Felan supplies session isolation and output-policy options.',
-        'Use browser_authorize before reusing an existing authenticated Chrome session; direct CDP and auto-connect arguments are rejected by browser.',
+        'Use browser_authorize before reusing an existing authenticated Chrome session, and explain the authenticated task in its reason field; direct CDP and auto-connect arguments are rejected by browser.',
         'After browser_authorize succeeds, ordinary agent-browser commands are available for the trusted attached session; Felan-owned routing and output options are replaced automatically.',
         'browser_authorize owns the local consent prompt; after declined or failed authorization, report the result and wait for the user before requesting another browser connection.',
         'Run commands one at a time; nested agent-browser batch commands are unavailable through this tool.',
@@ -243,14 +256,15 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
       pi.registerTool({
         name: BROWSER_AUTHORIZATION_TOOL_NAME,
         label: 'Authorize Browser',
-        description: 'Request local-user authorization to reuse the existing authenticated Chrome session for HTTP(S) browsing in the current Felan session.',
-        promptSnippet: 'Authorize an existing authenticated Chrome session before using browser',
-        parameters: Type.Object({
-          operation: StringEnum(['authorize', 'status', 'revoke'] as const),
-          origin: Type.Optional(Type.String({ maxLength: 2_048 })),
-        }, { additionalProperties: false }),
+        description: 'Request local-user authorization to reuse the existing authenticated Chrome session for HTTP(S) browsing in the current Felan session. The authorize operation requires a concise reason that is shown to the user.',
+        promptSnippet: 'Authorize an existing authenticated Chrome session and explain why access is needed',
+        promptGuidelines: [
+          'For operation "authorize", provide a concise reason describing the authenticated browser task for the user.',
+        ],
+        parameters: BrowserAuthorizationParameters,
+        prepareArguments: prepareBrowserAuthorizationArguments,
         executionMode: 'sequential',
-        async execute(_toolCallId, params: { operation: 'authorize' | 'status' | 'revoke'; origin?: string }, signal, _onUpdate, ctx) {
+        async execute(_toolCallId, params: BrowserAuthorizationParams, signal, _onUpdate, ctx) {
           const scope = createBrowserSessionScope(pi.runtime, ctx.sessionManager.getSessionId());
           if (params.operation === 'status') {
             const outcome = await attachments.status(scope);
@@ -259,6 +273,9 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
           if (params.operation === 'revoke') {
             const outcome = await attachments.revoke(scope);
             return authorizationResult('revoke', outcome.state, outcome.message);
+          }
+          if (!validateAuthorizationReason(params.reason)) {
+            throw new Error('browser_authorize authorize operation requires a concise non-empty reason.');
           }
           const origin = validateAuthorizationOrigin(params.origin);
           if (!origin) throw new Error('browser_authorize requires an http or https origin.');
@@ -323,6 +340,22 @@ function validateAuthorizationOrigin(value: string | undefined): string | undefi
   } catch {
     return undefined;
   }
+}
+
+function prepareBrowserAuthorizationArguments(value: unknown): BrowserAuthorizationParams {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return value as BrowserAuthorizationParams;
+  }
+  const reason = (value as Record<string, unknown>).reason;
+  if (typeof reason !== 'string') return value as BrowserAuthorizationParams;
+  return {
+    ...value,
+    reason: reason.trim().slice(0, MAX_AUTHORIZATION_REASON_CHARACTERS),
+  } as BrowserAuthorizationParams;
+}
+
+function validateAuthorizationReason(value: string | undefined): boolean {
+  return Boolean(value?.trim());
 }
 
 function validateBrowserParams(params: BrowserParams): BrowserParams & { operation: 'run' | 'skill'; skill: string; args: readonly string[]; full: boolean } {
