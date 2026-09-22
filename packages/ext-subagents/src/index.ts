@@ -71,11 +71,7 @@ function formatSubagentCapability(descriptors: readonly SubagentDescriptor[]): s
 }
 
 function formatClassifierCapability(): string {
-  return [
-    genericSubagentGuidance[0],
-    'A request-specific subagent routing decision is appended to the system prompt for each user request. Follow that decision: delegate one concrete task to every listed agent type when its work becomes ready, or keep the request in the parent when none are listed. The decision does not launch agents automatically.',
-    ...genericSubagentGuidance.slice(1),
-  ].join(' ');
+  return genericSubagentGuidance.join(' ');
 }
 
 function registerAgent(pi: FelanExtensionAPI, host: SubagentHost, classifierRouting: boolean): void {
@@ -159,7 +155,7 @@ function registerList(pi: FelanExtensionAPI, host: SubagentHost): void {
       async () => {
         const limit = params.limit ?? DEFAULT_LIST_RECORDS;
         const result = await host.list({
-        includeDescendants: params.include_descendants ?? false,
+          includeDescendants: params.include_descendants ?? false,
           limit,
         });
         if (!result.ok) return result;

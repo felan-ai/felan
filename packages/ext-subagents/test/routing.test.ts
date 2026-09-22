@@ -79,13 +79,23 @@ describe('classifier-guided subagent routing', () => {
     expect(result).toBeUndefined();
     expect(event.systemPromptOptions.sections).toEqual({
       other_extension: 'Preserve this section',
-      subagent_routing: expect.stringMatching(/^## Subagent routing decision.*execution decision.*reader \(Read-only investigation\).*auditor \(Independent review\).*`Agent` tool for each listed type.*`subagent_type`/s),
+      subagent_routing: expect.any(String),
     });
+    const selectedGuidance = event.systemPromptOptions.sections.subagent_routing;
+    expect(selectedGuidance).toContain('selected the following required agent types');
+    expect(selectedGuidance).toContain('at least one concrete, non-overlapping task to every listed type');
+    expect(selectedGuidance).toContain('decide when to launch each one and which subtask to assign');
+    expect(selectedGuidance).toContain('matching the request and current state to its description');
+    expect(selectedGuidance).toContain('repeated use of a listed type for genuinely distinct scopes');
+    expect(selectedGuidance).toContain('reader (Read-only investigation)');
+    expect(selectedGuidance).toContain('auditor (Independent review)');
     expect(pi.registerCapability).toHaveBeenCalledWith({
       id: 'subagents',
-      instructions: expect.stringMatching(/routing decision is appended to the system prompt.*always run asynchronously/s),
+      instructions: expect.stringMatching(/Use child agents only for bounded work.*always run asynchronously/s),
     });
-    expect((pi.registerCapability as ReturnType<typeof vi.fn>).mock.calls[0]![0].instructions).not.toContain('Read-only investigation');
+    const capabilityInstructions = (pi.registerCapability as ReturnType<typeof vi.fn>).mock.calls[0]![0].instructions;
+    expect(capabilityInstructions).not.toContain('Read-only investigation');
+    expect(capabilityInstructions).not.toContain('routing decision');
     const agentTool = (pi.registerTool as ReturnType<typeof vi.fn>).mock.calls
       .map(([tool]) => tool)
       .find((tool) => tool.name === 'Agent');
@@ -210,7 +220,8 @@ describe('classifier-guided subagent routing', () => {
     });
     expect(result).toBeUndefined();
     expect(event.systemPromptOptions.sections.subagent_routing).toContain(`reader (${description})`);
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('This is an execution decision, not a catalog suggestion.');
+    expect(event.systemPromptOptions.sections.subagent_routing).toContain('every listed type before reporting completion');
+    expect(event.systemPromptOptions.sections.subagent_routing).toContain('decide when to launch each one and which subtask to assign');
   });
 
   it('routes from projected context rather than superseded raw messages', async () => {

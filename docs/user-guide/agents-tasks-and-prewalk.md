@@ -49,11 +49,14 @@ model starts each user turn, Felan appends a request-specific routing decision
 to that turn's system prompt. It asks one suitability probability for
 every available definition, considering investigation/exploration,
 parallelizable or specialist implementation, and independent review internally.
-Entries at or above 0.65 appear with their full descriptions. The decision
-requires one concrete, non-overlapping `Agent` task for every listed
-`subagent_type` when its work becomes ready; an empty list keeps the request in
-the parent. Nothing launches automatically, and explicit user direction still
-takes precedence. Without a compatible classifier, Felan keeps the generic
+Entries at or above 0.65 appear with their full descriptions. Every listed
+`subagent_type` must receive at least one concrete, non-overlapping task before
+completion. The main agent decides when to launch each type and which subtask to
+assign by matching the request and current state to its description. Complex
+requests may use a listed type more than once for distinct scopes; an empty list
+keeps the request in the parent. Nothing launches automatically, and explicit
+user direction still takes precedence. Without a compatible classifier, Felan
+keeps the generic
 guidance plus the complete catalog. If classification fails, a fallback
 decision supplies the complete catalog and applies the generic delegation
 policy for that turn.

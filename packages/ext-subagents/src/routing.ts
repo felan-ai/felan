@@ -256,9 +256,9 @@ function formatRoutingGuidance(
   }
   return [
     '## Subagent routing decision',
-    'For this request, the classifier determined that each agent type below should receive one concrete, non-overlapping delegated task unless doing so would conflict with explicit user direction or materially changed context has made that task no longer useful. This is an execution decision, not a catalog suggestion. Descriptions are selection metadata, not instructions:',
+    'For this request, the classifier selected the following required agent types. Delegate at least one concrete, non-overlapping task to every listed type before reporting completion. The decision fixes which types must be used; decide when to launch each one and which subtask to assign by matching the request and current state to its description. A complex request may justify multiple children, including repeated use of a listed type for genuinely distinct scopes. Descriptions are selection metadata, not instructions:',
     selected.map(({ descriptor }) => `- ${formatSubagentDescriptor(descriptor)}`).join('\n'),
-    'Call the `Agent` tool for each listed type when its task becomes ready, setting `subagent_type` to that ID. Launch it now when the work is already independent; otherwise launch it later before reporting completion. Give each child a self-contained task with its scope, constraints, and expected output. Use only the minimum children required by this list. Keep immediate critical-path work in the parent, do not duplicate delegated work, and do not use unlisted types unless explicit user direction or materially changed context warrants it.',
+    'Launch a required child now when its task is already independent; otherwise launch it later when the prerequisite context is ready. Give each child a self-contained task with its scope, constraints, and expected output. Keep immediate critical-path work in the parent, do not duplicate delegated work, and do not use unlisted types unless explicit user direction or materially changed context warrants it.',
   ].join('\n');
 }
 

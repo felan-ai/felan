@@ -182,11 +182,13 @@ definition once for suitability, considering useful investigation/exploration,
 parallelizable or specialist implementation, and independent review internally.
 Before the model starts each user turn, it appends a request-specific routing
 decision to that turn's system prompt. Entries scoring at or above 0.65 appear
-with their full descriptions. The decision requires one concrete,
-non-overlapping `Agent` task for every listed `subagent_type` when its work
-becomes ready; an empty list keeps the request in the parent. No agent is
-launched automatically. The decision is persisted as a structured system
-message but not shown in the TUI. Direct system entries are excluded from later
+with their full descriptions. Every listed `subagent_type` must receive at least
+one concrete, non-overlapping task before completion. The main agent decides
+when to launch each type and which subtask to assign by matching the request and
+current state to its description. Complex requests may use a listed type more
+than once for distinct scopes; an empty list keeps the request in the parent. No
+agent is launched automatically. The decision is persisted as a structured
+system message but not shown in the TUI. Direct system entries are excluded from later
 classifier conversation extraction, and the structured routing log retains the
 generated guidance.
 

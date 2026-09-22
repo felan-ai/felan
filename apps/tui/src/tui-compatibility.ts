@@ -31,6 +31,7 @@ interface RgbColor {
 interface InteractiveModeTerminalInternals {
   ui?: {
     terminal?: TerminalTitleWriter;
+    requestRender?(): void;
     queryTerminalColorScheme?(options: { timeoutMs: number }): Promise<'light' | 'dark' | undefined>;
     queryTerminalBackgroundColor?(options: { timeoutMs: number }): Promise<RgbColor | undefined>;
   };
@@ -39,6 +40,10 @@ interface InteractiveModeTerminalInternals {
     terminal?: TerminalWriter;
     mode?: string;
   };
+  getUserInput?(): Promise<string>;
+  handleEvent?(event: InteractiveModeEvent): Promise<void> | void;
+  showWorkingStatusIndicator?(): void;
+  clearStatusIndicator?(expectedKind?: string): void;
   setWorkingIndicator?(options?: WorkingIndicatorOptions): void;
   showError?(message: string): void;
   showStatus?(message: string): void;
@@ -55,6 +60,11 @@ interface WorkingIndicatorOptions {
   intervalMs?: number;
 }
 
+interface InteractiveModeEvent {
+  readonly type: string;
+  readonly [key: string]: unknown;
+}
+
 const FELAN_WORKING_FRAMES = ['⠐◉ ', '⠈◉ ', ' ◉⠁', ' ◉⠂', ' ◉⠄', '⠠◉ '];
 const FELAN_WORKING_INTERVAL_MS = 120;
 const installedTerminals = new WeakSet<object>();
@@ -63,6 +73,7 @@ const installedMessageFilters = new WeakSet<object>();
 const installedTerminalTitles = new WeakSet<object>();
 const installedWorkingIndicators = new WeakSet<object>();
 const installedThemeDetection = new WeakSet<object>();
+const installedPromptPreflightStatus = new WeakSet<object>();
 
 export function installFelanTuiCompatibility(
   mode: InteractiveMode,
@@ -73,6 +84,7 @@ export function installFelanTuiCompatibility(
   installPiMessageFilters(mode, internals);
   installFelanTerminalTitle(mode, internals);
   installFelanWorkingIndicator(mode, internals);
+  installPromptPreflightWorkingStatus(mode, internals);
   installFelanTerminalThemeDetection(internals);
   if (platform !== 'win32') return;
   const terminal = internals.renderer?.terminal;
@@ -108,6 +120,64 @@ export function installFelanTuiCompatibility(
     });
     return true;
   };
+}
+
+function installPromptPreflightWorkingStatus(
+  mode: InteractiveMode,
+  internals: InteractiveModeTerminalInternals,
+): void {
+  if (installedPromptPreflightStatus.has(mode)) return;
+  const getUserInput = internals.getUserInput;
+  const handleEvent = internals.handleEvent;
+  const showWorkingStatusIndicator = internals.showWorkingStatusIndicator;
+  const clearStatusIndicator = internals.clearStatusIndicator;
+  if (
+    typeof getUserInput !== 'function'
+    || typeof handleEvent !== 'function'
+    || typeof showWorkingStatusIndicator !== 'function'
+    || typeof clearStatusIndicator !== 'function'
+  ) return;
+  installedPromptPreflightStatus.add(mode);
+
+  // Pi starts its normal working state only after before_agent_start completes.
+  let awaitingTurn = false;
+  const clearPreflightStatus = () => {
+    if (!awaitingTurn) return;
+    awaitingTurn = false;
+    try {
+      Reflect.apply(clearStatusIndicator, mode, ['working']);
+      internals.ui?.requestRender?.();
+    } catch {
+      // Presentation compatibility must not block prompt handling.
+    }
+  };
+
+  internals.getUserInput = async () => {
+    clearPreflightStatus();
+    const input = await Reflect.apply(getUserInput, mode, []);
+    if (input.startsWith('/')) return input;
+    awaitingTurn = true;
+    try {
+      Reflect.apply(showWorkingStatusIndicator, mode, []);
+      internals.ui?.requestRender?.();
+    } catch {
+      clearPreflightStatus();
+    }
+    return input;
+  };
+
+  internals.handleEvent = async (event) => {
+    if (event.type === 'turn_start') awaitingTurn = false;
+    await Reflect.apply(handleEvent, mode, [event]);
+  };
+
+  const showError = internals.showError;
+  if (typeof showError === 'function') {
+    internals.showError = (message) => {
+      clearPreflightStatus();
+      Reflect.apply(showError, mode, [message]);
+    };
+  }
 }
 
 function installFelanTerminalTitle(

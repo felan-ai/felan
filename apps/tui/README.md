@@ -242,11 +242,13 @@ descriptive catalog is omitted. Before the model starts each user turn, a
 request-specific system-prompt routing decision scores every discovered catalog
 entry once for suitability across investigation/exploration, parallelizable or
 specialist implementation, and independent review. Scores at or above 0.65
-appear with full selected descriptions. The decision requires one concrete,
-non-overlapping `Agent` task for every listed `subagent_type` when its work
-becomes ready; an empty list keeps the request in the parent. Nothing launches
-automatically. A classifier failure supplies the full catalog and applies the
-generic policy for that turn without blocking the request.
+appear with full selected descriptions. Every listed type must receive at least
+one concrete, non-overlapping task before completion. The main agent decides
+when to launch each type and which subtask to assign by matching the request and
+current state to its description. Complex requests may use a listed type more
+than once for distinct scopes; an empty list keeps the request in the parent.
+Nothing launches automatically. A classifier failure supplies the full catalog
+and applies the generic policy for that turn without blocking the request.
 
 Codebase Memory is a default built-in. It provides structural code
 search, symbol reads, and bounded grep augmentation, backed by the

@@ -66,12 +66,15 @@ the extension appends a request-specific routing decision to that turn's system
 prompt. It asks one suitability probability for every catalog descriptor,
 considering investigation or exploration, parallelizable or specialist
 implementation, and independent review internally. Descriptors at or above the
-0.65 threshold appear with their full descriptions. The decision requires one
-concrete, non-overlapping `Agent` task for each listed type when its work becomes
-ready; an empty list explicitly keeps the request in the parent. Nothing
-launches automatically. A failed classification supplies the complete catalog
-and falls back to the generic delegation policy for that turn. The catalog is
-authoritative, so custom definitions participate without special IDs. The
+0.65 threshold appear with their full descriptions. Every listed type must
+receive at least one concrete, non-overlapping task before completion. The main
+agent decides when to launch each type and which subtask to assign by matching
+the request and current state to its description. Complex requests may use a
+listed type more than once for distinct scopes; an empty list explicitly keeps
+the request in the parent. Nothing launches automatically. A failed
+classification supplies the complete catalog and falls back to the generic
+delegation policy for that turn. The catalog is authoritative, so custom
+definitions participate without special IDs. The
 structured system-prompt section is persisted with the turn but not rendered in
 the TUI, and direct system entries are excluded from later classifier
 conversation extraction.

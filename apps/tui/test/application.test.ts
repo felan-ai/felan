@@ -225,6 +225,63 @@ describe('interactive application', () => {
     expect(errors).toEqual(['Compaction failed: Provider unavailable']);
   });
 
+  it('shows the normal working state while prompt preflight is pending', async () => {
+    const requestRender = vi.fn();
+    const showWorkingStatusIndicator = vi.fn();
+    const clearStatusIndicator = vi.fn();
+    const handleEvent = vi.fn(async () => {});
+    const showError = vi.fn();
+    const mode = {
+      ui: { requestRender },
+      getUserInput: async () => 'please inspect this',
+      handleEvent,
+      showWorkingStatusIndicator,
+      clearStatusIndicator,
+      showError,
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+
+    installFelanTuiCompatibility(mode, 'darwin');
+    const internals = mode as unknown as {
+      getUserInput(): Promise<string>;
+      handleEvent(event: unknown): Promise<void>;
+      showError(message: string): void;
+    };
+    await expect(internals.getUserInput()).resolves.toBe('please inspect this');
+
+    expect(showWorkingStatusIndicator).toHaveBeenCalledOnce();
+    expect(requestRender).toHaveBeenCalledOnce();
+
+    await internals.handleEvent({ type: 'turn_start' });
+    internals.showError('provider failed after turn start');
+    expect(handleEvent).toHaveBeenCalledWith({ type: 'turn_start' });
+    expect(clearStatusIndicator).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith('provider failed after turn start');
+  });
+
+  it('clears the preflight working state when prompt validation fails', async () => {
+    const clearStatusIndicator = vi.fn();
+    const showError = vi.fn();
+    const mode = {
+      ui: { requestRender: vi.fn() },
+      getUserInput: async () => 'please inspect this',
+      handleEvent: async () => {},
+      showWorkingStatusIndicator: vi.fn(),
+      clearStatusIndicator,
+      showError,
+    } as unknown as Parameters<typeof installFelanTuiCompatibility>[0];
+
+    installFelanTuiCompatibility(mode, 'darwin');
+    const internals = mode as unknown as {
+      getUserInput(): Promise<string>;
+      showError(message: string): void;
+    };
+    await internals.getUserInput();
+    internals.showError('preflight failed');
+
+    expect(clearStatusIndicator).toHaveBeenCalledWith('working');
+    expect(showError).toHaveBeenCalledWith('preflight failed');
+  });
+
   it('uses prefix-free terminal titles for every Pi title refresh', () => {
     const titles: string[] = [];
     let sessionName: string | undefined = 'Review auth regressions';
