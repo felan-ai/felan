@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-ask-user",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Portable Felan ask-user extension with a rich Pi TUI adapter",
   "license": "MIT",
   "type": "module",

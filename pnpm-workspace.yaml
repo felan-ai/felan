@@ -7,12 +7,12 @@ onlyBuiltDependencies:
 
 catalogs:
   pi:
-    '@earendil-works/pi-agent-core': 0.87.0
-    '@earendil-works/pi-ai': 0.87.0
-    '@earendil-works/pi-coding-agent': 0.87.0
-    '@earendil-works/pi-protocol': 0.87.0
-    '@earendil-works/pi-server': 0.87.0
-    '@earendil-works/pi-telemetry': 0.87.0
-    '@earendil-works/pi-tui': 0.87.0
+    '@earendil-works/pi-agent-core': 0.87.1
+    '@earendil-works/pi-ai': 0.87.1
+    '@earendil-works/pi-coding-agent': 0.87.1
+    '@earendil-works/pi-protocol': 0.87.1
+    '@earendil-works/pi-server': 0.87.1
+    '@earendil-works/pi-telemetry': 0.87.1
+    '@earendil-works/pi-tui': 0.87.1
   agent-core:
     '@felan-ai/agent-core': ^0.9.0
