@@ -1,6 +1,13 @@
 import type { ModelRuntime } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import { createLocalSavingsUsageHost, createLocalSubscriptionUsageHost } from '../src/powerline.js';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  createFileSubscriptionUsageStore,
+  createLocalSavingsUsageHost,
+  createLocalSubscriptionUsageHost,
+} from '../src/powerline.js';
 
 describe('local subscription usage host', () => {
   it('uses Felan ModelRuntime OAuth for Codex usage', async () => {
@@ -104,6 +111,85 @@ describe('local subscription usage host', () => {
       modelProvider: 'openai-codex',
       signal,
     })).resolves.toEqual({ ok: false, error: { code: 'HTTP_ERROR', httpStatus: 429 } });
+
+    fetchImplementation.mockResolvedValue(new Response('{}', { status: 429, headers: { 'Retry-After': '120' } }));
+    await expect(host.fetchUsage({
+      provider: 'codex',
+      modelProvider: 'openai-codex',
+      signal,
+    })).resolves.toEqual({ ok: false, error: { code: 'HTTP_ERROR', httpStatus: 429, retryAfterMs: 120_000 } });
+  });
+
+  it('lets only the refresh lease holder fetch until it releases the lease', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'felan-subscription-lease-'));
+    try {
+      const path = join(directory, 'agent', 'subscription-usage.json');
+      const fetchImplementation = vi.fn(async () => new Response('{}'));
+      const holder = createLocalSubscriptionUsageHost(
+        runtime({ provider: 'anthropic', token: 'a' }),
+        fetchImplementation,
+        path,
+      );
+      const follower = createLocalSubscriptionUsageHost(
+        runtime({ provider: 'anthropic', token: 'b' }),
+        fetchImplementation,
+        path,
+      );
+      const request = {
+        provider: 'anthropic' as const,
+        modelProvider: 'anthropic',
+        signal: new AbortController().signal,
+      };
+
+      await expect(holder.fetchUsage(request)).resolves.toEqual({ ok: true, data: {} });
+      await expect(follower.fetchUsage(request)).resolves.toEqual({
+        ok: false,
+        error: { code: 'REFRESH_DEFERRED' },
+      });
+      await expect(holder.fetchUsage(request)).resolves.toEqual({ ok: true, data: {} });
+      expect(fetchImplementation).toHaveBeenCalledTimes(2);
+
+      holder.releaseRefreshLease?.('anthropic');
+      await vi.waitFor(async () => {
+        await expect(follower.fetchUsage(request)).resolves.toEqual({ ok: true, data: {} });
+      });
+      follower.releaseRefreshLease?.('anthropic');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('persists subscription usage across store instances', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'felan-subscription-usage-'));
+    try {
+      const path = join(directory, 'agent', 'subscription-usage.json');
+      expect(createFileSubscriptionUsageStore(path).get('anthropic')).toBeUndefined();
+
+      createFileSubscriptionUsageStore(path).set('anthropic', {
+        rateLimitedCount: 1,
+        blockedUntil: 1_000,
+        snapshot: {
+          provider: 'anthropic',
+          displayName: 'Claude Plan',
+          windows: [{ label: '5h', usedPercent: 60 }],
+        },
+      });
+
+      expect(createFileSubscriptionUsageStore(path).get('anthropic')).toEqual({
+        rateLimitedCount: 1,
+        blockedUntil: 1_000,
+        snapshot: {
+          provider: 'anthropic',
+          displayName: 'Claude Plan',
+          windows: [{ label: '5h', usedPercent: 60 }],
+        },
+      });
+
+      await writeFile(path, 'not json');
+      expect(createFileSubscriptionUsageStore(path).get('anthropic')).toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

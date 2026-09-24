@@ -37,24 +37,77 @@ export interface SubscriptionUsageHostRequest {
   readonly signal: AbortSignal;
 }
 
+/** `REFRESH_DEFERRED` means another holder of the host's refresh lease updates the shared store. */
+export type SubscriptionUsageHostErrorCode = UsageErrorCode | 'REFRESH_DEFERRED';
+
 export type SubscriptionUsageHostResult =
   | { readonly ok: true; readonly data: unknown }
   | {
       readonly ok: false;
       readonly error: {
-        readonly code: UsageErrorCode;
+        readonly code: SubscriptionUsageHostErrorCode;
         readonly httpStatus?: number;
+        readonly retryAfterMs?: number;
       };
     };
 
 export interface SubscriptionUsageHost {
   fetchUsage(request: SubscriptionUsageHostRequest): Promise<SubscriptionUsageHostResult>;
+  /** Gives up this host's right to refresh the provider so another process can take over. */
+  releaseRefreshLease?(provider: SubscriptionProviderName): void;
 }
 
 export interface SubscriptionRefreshOptions {
   force?: boolean;
-  allowStaleCache?: boolean;
-  resetProvider?: boolean;
+}
+
+export interface SubscriptionUsageRecord {
+  readonly snapshot?: UsageSnapshot;
+  readonly error?: UsageError;
+  readonly blockedUntil?: number;
+  readonly rateLimitedCount: number;
+}
+
+/** Latest usage, error, and rate-limit backoff, shared across sessions and optionally persisted by the host. */
+export interface SubscriptionUsageStore {
+  get(provider: SubscriptionProviderName): SubscriptionUsageRecord | undefined;
+  set(provider: SubscriptionProviderName, record: SubscriptionUsageRecord): void;
+}
+
+/** Host-owned raw storage; values read back are validated before use. */
+export interface SubscriptionUsagePersistence {
+  read(): unknown;
+  write(value: unknown): void;
+}
+
+type SubscriptionUsageRecords = Partial<Record<SubscriptionProviderName, SubscriptionUsageRecord>>;
+
+export function createSubscriptionUsageStore(
+  persistence?: SubscriptionUsagePersistence,
+): SubscriptionUsageStore {
+  let records: SubscriptionUsageRecords = {};
+
+  function load(): SubscriptionUsageRecords {
+    if (!persistence) return records;
+    try {
+      records = parseUsageRecords(persistence.read());
+    } catch {
+      // Unreadable state falls back to the in-memory records.
+    }
+    return records;
+  }
+
+  return {
+    get: (provider) => load()[provider],
+    set(provider, record) {
+      records = { ...load(), [provider]: record };
+      try {
+        persistence?.write({ version: 1, providers: records });
+      } catch {
+        // Persistence is best effort; the in-memory records stay current.
+      }
+    },
+  };
 }
 
 export interface SubscriptionController {
@@ -90,7 +143,9 @@ interface AnthropicUsageResponse {
 }
 
 const API_TIMEOUT_MS = 5_000;
-const MIN_REFRESH_INTERVAL_MS = 10_000;
+const MIN_REFRESH_INTERVAL_MS = 30_000;
+const RATE_LIMIT_BASE_BACKOFF_MS = 60_000;
+const RATE_LIMIT_MAX_BACKOFF_MS = 30 * 60_000;
 
 const DISPLAY_NAMES: Record<SubscriptionProviderName, string> = {
   codex: 'Codex Plan',
@@ -101,11 +156,12 @@ const DISPLAY_NAMES: Record<SubscriptionProviderName, string> = {
 export function createSubscriptionController(
   host: SubscriptionUsageHost,
   onUpdate?: () => void,
+  store: SubscriptionUsageStore = createSubscriptionUsageStore(),
 ): SubscriptionController {
   const state: SubscriptionState = { loading: false };
-  const cache: Partial<Record<SubscriptionProviderName, UsageSnapshot>> = {};
-  const lastAttemptAt: Partial<Record<SubscriptionProviderName, number>> = {};
   const latestRequestSequence: Partial<Record<SubscriptionProviderName, number>> = {};
+  const lastAttemptAt: Partial<Record<SubscriptionProviderName, number>> = {};
+  const missingCredentials = new Set<SubscriptionProviderName>();
   const activeRequests = new Set<AbortController>();
   let inFlightProvider: SubscriptionProviderName | undefined;
   let inFlight: Promise<void> | undefined;
@@ -116,19 +172,16 @@ export function createSubscriptionController(
     onUpdate?.();
   }
 
-  function setCurrentProvider(
-    provider: SubscriptionProviderName,
-    options: SubscriptionRefreshOptions,
-  ): void {
-    const providerChanged = state.provider !== provider;
-    state.provider = provider;
-    if (providerChanged || options.resetProvider) {
-      const stale = options.allowStaleCache ? cache[provider] : undefined;
-      if (stale) state.usage = stale;
-      else delete state.usage;
-    } else if (!state.usage && cache[provider]) {
-      state.usage = cache[provider];
-    }
+  function showStoredUsage(provider: SubscriptionProviderName): void {
+    const usage = missingCredentials.has(provider)
+      ? emptySnapshot(provider, usageError('NO_CREDENTIALS'))
+      : usageFromRecord(provider, store.get(provider));
+    if (usage) state.usage = usage;
+    else delete state.usage;
+  }
+
+  function releaseLease(provider: SubscriptionProviderName): void {
+    host.releaseRefreshLease?.(provider);
   }
 
   async function refresh(
@@ -137,6 +190,7 @@ export function createSubscriptionController(
   ): Promise<void> {
     const provider = detectSubscriptionProvider(model);
     if (!provider) {
+      if (state.provider) releaseLease(state.provider);
       sequence += 1;
       abortActiveRequests();
       delete latestRequestSequence.codex;
@@ -153,8 +207,10 @@ export function createSubscriptionController(
     if (previousProvider && previousProvider !== provider) {
       abortActiveRequests();
       delete latestRequestSequence[previousProvider];
+      releaseLease(previousProvider);
     }
-    setCurrentProvider(provider, options);
+    state.provider = provider;
+    showStoredUsage(provider);
     if (inFlight && inFlightProvider === provider && inFlightSequence === sequence) {
       state.loading = true;
       notify();
@@ -167,7 +223,11 @@ export function createSubscriptionController(
 
     const now = Date.now();
     const previousAttempt = lastAttemptAt[provider];
-    if (!options.force && previousAttempt && now - previousAttempt < MIN_REFRESH_INTERVAL_MS) {
+    const throttled = !options.force
+      && previousAttempt !== undefined
+      && now - previousAttempt < MIN_REFRESH_INTERVAL_MS;
+    const blockedUntil = store.get(provider)?.blockedUntil;
+    if (throttled || (blockedUntil !== undefined && now < blockedUntil)) {
       state.loading = false;
       notify();
       return;
@@ -210,36 +270,39 @@ export function createSubscriptionController(
     controller: AbortController,
   ): Promise<void> {
     const result = await fetchHostUsage(host, provider, modelProvider, controller);
-    const fetched = result.ok
-      ? parseUsageSnapshot(provider, result.data)
-      : emptySnapshot(provider, usageError(result.error.code, result.error.httpStatus));
-    const displaySnapshot = withFallbackForFetchFailure(fetched, cache[provider]);
-    if (!fetched.error && latestRequestSequence[provider] === requestSequence) {
-      cache[provider] = displaySnapshot;
+    const errorCode = result.ok ? undefined : result.error.code;
+    if (errorCode === 'NO_CREDENTIALS') {
+      missingCredentials.add(provider);
+    } else if (errorCode !== 'REFRESH_DEFERRED') {
+      missingCredentials.delete(provider);
+      if (latestRequestSequence[provider] === requestSequence) {
+        store.set(provider, nextUsageRecord(provider, store.get(provider), result));
+      }
     }
     if (state.provider === provider && sequence === requestSequence) {
-      state.usage = displaySnapshot;
+      showStoredUsage(provider);
       state.lastRefreshAt = Date.now();
       notify();
     }
   }
 
   function clear(): void {
+    releaseLease('codex');
+    releaseLease('anthropic');
+    releaseLease('xai');
     sequence += 1;
     abortActiveRequests();
     delete state.provider;
     delete state.usage;
     state.loading = false;
     delete state.lastRefreshAt;
-    delete cache.codex;
-    delete cache.anthropic;
-    delete cache.xai;
-    delete lastAttemptAt.codex;
-    delete lastAttemptAt.anthropic;
-    delete lastAttemptAt.xai;
     delete latestRequestSequence.codex;
     delete latestRequestSequence.anthropic;
     delete latestRequestSequence.xai;
+    delete lastAttemptAt.codex;
+    delete lastAttemptAt.anthropic;
+    delete lastAttemptAt.xai;
+    missingCredentials.clear();
     inFlight = undefined;
     inFlightProvider = undefined;
     inFlightSequence = undefined;
@@ -296,6 +359,78 @@ async function fetchHostUsage(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+function rateLimitBackoffMs(rateLimitedCount: number, retryAfterMs: number | undefined): number {
+  const exponential = RATE_LIMIT_BASE_BACKOFF_MS * 2 ** Math.min(rateLimitedCount - 1, 5);
+  const requested = retryAfterMs !== undefined && Number.isFinite(retryAfterMs) ? retryAfterMs : 0;
+  return Math.min(RATE_LIMIT_MAX_BACKOFF_MS, Math.max(exponential, requested));
+}
+
+function parseUsageRecords(value: unknown): SubscriptionUsageRecords {
+  const providers = isRecord(value) && value.version === 1 && isRecord(value.providers) ? value.providers : {};
+  const records: SubscriptionUsageRecords = {};
+  for (const provider of Object.keys(DISPLAY_NAMES) as SubscriptionProviderName[]) {
+    const record = parseUsageRecord(provider, providers[provider]);
+    if (record) records[provider] = record;
+  }
+  return records;
+}
+
+function parseUsageRecord(
+  provider: SubscriptionProviderName,
+  value: unknown,
+): SubscriptionUsageRecord | undefined {
+  if (!isRecord(value)) return undefined;
+  const snapshotValue = parseStoredSnapshot(provider, value.snapshot);
+  const error = parseStoredError(value.error);
+  const blockedUntil = finiteNumber(value.blockedUntil);
+  const rateLimitedCount = finiteNumber(value.rateLimitedCount);
+  return {
+    rateLimitedCount: rateLimitedCount === undefined ? 0 : Math.max(0, Math.floor(rateLimitedCount)),
+    ...(snapshotValue ? { snapshot: snapshotValue } : {}),
+    ...(error ? { error } : {}),
+    ...(blockedUntil === undefined ? {} : { blockedUntil }),
+  };
+}
+
+function parseStoredError(value: unknown): UsageError | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.code !== 'FETCH_FAILED' && value.code !== 'HTTP_ERROR') return undefined;
+  const httpStatus = finiteNumber(value.httpStatus);
+  return usageError(value.code, httpStatus === undefined ? undefined : Math.floor(httpStatus));
+}
+
+function parseStoredSnapshot(provider: SubscriptionProviderName, value: unknown): UsageSnapshot | undefined {
+  if (!isRecord(value) || !Array.isArray(value.windows)) return undefined;
+  const windows: RateWindow[] = [];
+  for (const window of value.windows) {
+    if (!isRecord(window)) continue;
+    const label = getNonEmptyString(window.label);
+    const usedPercent = finiteNumber(window.usedPercent);
+    if (!label || usedPercent === undefined) continue;
+    const resetDescription = getNonEmptyString(window.resetDescription);
+    const resetAt = parseDate(getNonEmptyString(window.resetAt));
+    windows.push({
+      label,
+      usedPercent: clampPercent(usedPercent),
+      ...(resetDescription ? { resetDescription } : {}),
+      ...(resetAt ? { resetAt: resetAt.toISOString() } : {}),
+    });
+  }
+  if (!windows.length) return undefined;
+  const fiveHourUsage = finiteNumber(value.fiveHourUsage);
+  const lastSuccessAt = finiteNumber(value.lastSuccessAt);
+  return snapshot(provider, {
+    windows,
+    ...(typeof value.extraUsageEnabled === 'boolean' ? { extraUsageEnabled: value.extraUsageEnabled } : {}),
+    ...(fiveHourUsage === undefined ? {} : { fiveHourUsage }),
+    ...(lastSuccessAt === undefined ? {} : { lastSuccessAt }),
+  });
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function parseCodexUsage(data: unknown): UsageSnapshot {
@@ -445,16 +580,44 @@ function formatCredits(credits: number): string {
   return `$${(credits / 100).toFixed(2)}`;
 }
 
-function withFallbackForFetchFailure(
-  fetched: UsageSnapshot,
-  fallback: UsageSnapshot | undefined,
-): UsageSnapshot {
-  const now = Date.now();
-  if (!fetched.error) return { ...fetched, lastSuccessAt: now };
-  if (fetched.error.code !== 'NO_CREDENTIALS' && fallback?.windows.length) {
-    return { ...fallback, error: fetched.error };
+function nextUsageRecord(
+  provider: SubscriptionProviderName,
+  current: SubscriptionUsageRecord | undefined,
+  result: SubscriptionUsageHostResult,
+): SubscriptionUsageRecord {
+  if (result.ok) {
+    return {
+      rateLimitedCount: 0,
+      snapshot: { ...parseUsageSnapshot(provider, result.data), lastSuccessAt: Date.now() },
+    };
   }
-  return fetched;
+  const { code, httpStatus, retryAfterMs } = result.error;
+  if (code === 'REFRESH_DEFERRED') return current ?? { rateLimitedCount: 0 };
+  const failed: SubscriptionUsageRecord = {
+    rateLimitedCount: 0,
+    ...current,
+    error: usageError(code, httpStatus),
+  };
+  if (httpStatus !== 429) return failed;
+  const rateLimitedCount = failed.rateLimitedCount + 1;
+  return {
+    ...failed,
+    rateLimitedCount,
+    blockedUntil: Date.now() + rateLimitBackoffMs(rateLimitedCount, retryAfterMs),
+  };
+}
+
+function usageFromRecord(
+  provider: SubscriptionProviderName,
+  record: SubscriptionUsageRecord | undefined,
+): UsageSnapshot | undefined {
+  const now = Date.now();
+  const windows = record?.snapshot?.windows.filter(
+    (window) => !window.resetAt || Date.parse(window.resetAt) > now,
+  ) ?? [];
+  const usage = record?.snapshot ? { ...record.snapshot, windows } : undefined;
+  if (!record?.error) return usage;
+  return usage && windows.length ? { ...usage, error: record.error } : emptySnapshot(provider, record.error);
 }
 
 function snapshot(

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createSubscriptionController,
+  createSubscriptionUsageStore,
   detectSubscriptionProvider,
   formatReset,
   parseUsageSnapshot,
@@ -230,6 +231,195 @@ describe('subscription controller', () => {
     await refresh;
     expect(controller.state.provider).toBeUndefined();
     expect(controller.state.loading).toBe(false);
+  });
+
+  it('throttles unforced refreshes to one request per 30 seconds', async () => {
+    vi.useFakeTimers();
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({ ok: true, data: { five_hour: { utilization: 10 } } }),
+    };
+    const controller = createSubscriptionController(host);
+    const model = { provider: 'anthropic', id: 'claude-opus-4-6' };
+
+    await controller.refresh(model);
+    vi.advanceTimersByTime(29_999);
+    await controller.refresh(model);
+    expect(host.fetchUsage).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(1);
+    await controller.refresh(model);
+    expect(host.fetchUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it('backs off after HTTP 429, including forced refreshes, and honors Retry-After', async () => {
+    vi.useFakeTimers();
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn()
+        .mockResolvedValueOnce({ ok: true, data: { five_hour: { utilization: 10 } } })
+        .mockResolvedValueOnce({ ok: false, error: { code: 'HTTP_ERROR', httpStatus: 429 } })
+        .mockResolvedValueOnce({ ok: false, error: { code: 'HTTP_ERROR', httpStatus: 429, retryAfterMs: 300_000 } })
+        .mockResolvedValueOnce({ ok: true, data: { five_hour: { utilization: 12 } } }),
+    };
+    const controller = createSubscriptionController(host);
+    const model = { provider: 'anthropic', id: 'claude-opus-4-6' };
+
+    await controller.refresh(model);
+    await controller.refresh(model, { force: true });
+    expect(controller.state.usage).toMatchObject({
+      windows: [{ label: '5h', usedPercent: 10 }],
+      error: { httpStatus: 429 },
+    });
+
+    vi.advanceTimersByTime(59_999);
+    await controller.refresh(model, { force: true });
+    expect(host.fetchUsage).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(1);
+    await controller.refresh(model, { force: true });
+    expect(host.fetchUsage).toHaveBeenCalledTimes(3);
+
+    vi.advanceTimersByTime(299_999);
+    await controller.refresh(model, { force: true });
+    expect(host.fetchUsage).toHaveBeenCalledTimes(3);
+
+    vi.advanceTimersByTime(1);
+    await controller.refresh(model, { force: true });
+    expect(host.fetchUsage).toHaveBeenCalledTimes(4);
+    expect(controller.state.usage).toMatchObject({ windows: [{ usedPercent: 12 }] });
+    expect(controller.state.usage?.error).toBeUndefined();
+  });
+
+  it('restores the last successful usage from a shared store after clear', async () => {
+    const store = createSubscriptionUsageStore();
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn()
+        .mockResolvedValueOnce({ ok: true, data: { five_hour: { utilization: 10 } } })
+        .mockResolvedValueOnce({ ok: false, error: { code: 'HTTP_ERROR', httpStatus: 429 } }),
+    };
+    const model = { provider: 'anthropic', id: 'claude-opus-4-6' };
+    const first = createSubscriptionController(host, undefined, store);
+    await first.refresh(model);
+    first.clear();
+
+    const second = createSubscriptionController(host, undefined, store);
+    await second.refresh(model, { force: true });
+    expect(second.state.usage).toMatchObject({
+      windows: [{ label: '5h', usedPercent: 10 }],
+      error: { httpStatus: 429 },
+    });
+  });
+
+  it('reads validated usage from host persistence and writes updates back', async () => {
+    let persisted: unknown = {
+      version: 1,
+      providers: {
+        anthropic: {
+          rateLimitedCount: 0,
+          snapshot: { windows: [{ label: '5h', usedPercent: 60 }, { label: 7 }] },
+        },
+        unknown: { rateLimitedCount: 0 },
+      },
+    };
+    const store = createSubscriptionUsageStore({
+      read: () => persisted,
+      write: (value) => { persisted = value; },
+    });
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({ ok: false, error: { code: 'HTTP_ERROR', httpStatus: 429 } }),
+    };
+    const controller = createSubscriptionController(host, undefined, store);
+
+    await controller.refresh({ provider: 'anthropic', id: 'claude-opus-4-6' });
+
+    expect(controller.state.usage).toMatchObject({
+      displayName: 'Claude Plan',
+      windows: [{ label: '5h', usedPercent: 60 }],
+      error: { httpStatus: 429 },
+    });
+    expect(persisted).toMatchObject({
+      version: 1,
+      providers: {
+        anthropic: {
+          rateLimitedCount: 1,
+          blockedUntil: expect.any(Number),
+          error: { code: 'HTTP_ERROR', httpStatus: 429 },
+        },
+      },
+    });
+    expect(Object.keys((persisted as { providers: object }).providers)).toEqual(['anthropic']);
+  });
+
+  it('shows usage written by the lease holder when the host defers the refresh', async () => {
+    const store = createSubscriptionUsageStore();
+    const set = vi.spyOn(store, 'set');
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({ ok: false, error: { code: 'REFRESH_DEFERRED' } }),
+    };
+    const controller = createSubscriptionController(host, undefined, store);
+    const model = { provider: 'anthropic', id: 'claude-opus-4-6' };
+
+    await controller.refresh(model);
+    expect(controller.state.usage).toBeUndefined();
+    expect(controller.state.loading).toBe(false);
+
+    store.set('anthropic', {
+      rateLimitedCount: 0,
+      snapshot: { provider: 'anthropic', displayName: 'Claude Plan', windows: [{ label: '5h', usedPercent: 60 }] },
+    });
+    set.mockClear();
+    await controller.refresh(model);
+    expect(controller.state.usage).toMatchObject({ windows: [{ label: '5h', usedPercent: 60 }] });
+    expect(controller.state.usage?.error).toBeUndefined();
+
+    await controller.refresh(model, { force: true });
+    expect(host.fetchUsage).toHaveBeenCalledTimes(2);
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('keeps missing credentials local and releases leases on provider switch and clear', async () => {
+    const store = createSubscriptionUsageStore();
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({ ok: false, error: { code: 'NO_CREDENTIALS' } }),
+      releaseRefreshLease: vi.fn(),
+    };
+    const controller = createSubscriptionController(host, undefined, store);
+
+    await controller.refresh({ provider: 'anthropic', id: 'claude-opus-4-6' });
+    expect(controller.state.usage?.error?.code).toBe('NO_CREDENTIALS');
+    expect(store.get('anthropic')).toBeUndefined();
+
+    await controller.refresh({ provider: 'openai-codex', id: 'gpt-5.6-sol' });
+    expect(host.releaseRefreshLease).toHaveBeenCalledWith('anthropic');
+
+    controller.clear();
+    expect(host.releaseRefreshLease).toHaveBeenCalledWith('codex');
+  });
+
+  it('does not fall back to windows whose reset time has passed', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-06T10:00:00.000Z'));
+    const store = createSubscriptionUsageStore();
+    store.set('anthropic', {
+      rateLimitedCount: 0,
+      snapshot: {
+        provider: 'anthropic',
+        displayName: 'Claude Plan',
+        windows: [
+          { label: '5h', usedPercent: 60, resetAt: '2026-08-06T09:00:00.000Z' },
+          { label: 'Week', usedPercent: 24, resetAt: '2026-08-10T09:00:00.000Z' },
+        ],
+      },
+    });
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({ ok: false, error: { code: 'HTTP_ERROR', httpStatus: 429 } }),
+    };
+    const controller = createSubscriptionController(host, undefined, store);
+
+    await controller.refresh({ provider: 'anthropic', id: 'claude-opus-4-6' });
+
+    expect(controller.state.usage?.windows).toEqual([
+      { label: 'Week', usedPercent: 24, resetAt: '2026-08-10T09:00:00.000Z' },
+    ]);
   });
 
   it('clears usage for unsupported models', async () => {

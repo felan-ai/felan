@@ -30,7 +30,11 @@ import { createLocalMcpExtension } from './mcp/index.js';
 import { createLocalBrowserAuthorizationHost } from './browser/authorization-host.js';
 import { BROWSER_CONFIG, type BrowserAuthorizationPolicy } from '@felan-ai/ext-browser';
 import { HERDR_BLOCKED_EVENT } from './herdr.js';
-import { createLocalSavingsUsageHost, createLocalSubscriptionUsageHost } from './powerline.js';
+import {
+  createFileSubscriptionUsageStore,
+  createLocalSavingsUsageHost,
+  createLocalSubscriptionUsageHost,
+} from './powerline.js';
 import type { SavingsService } from './savings.js';
 import { createLocalInsightsHost } from './insights.js';
 import { createLocalOutputStyleExtension } from './output-style-instructions.js';
@@ -149,6 +153,7 @@ export function createLocalExtensionImporter(
     readonly get: () => BrowserAuthorizationPolicy;
     readonly persist: (policy: BrowserAuthorizationPolicy) => Promise<void>;
   },
+  subscriptionUsagePath?: string,
 ): ExtensionPackageImporter {
   let powerlineLoaded = false;
   let agentRailRenderer: AgentRailRenderer | undefined;
@@ -158,9 +163,13 @@ export function createLocalExtensionImporter(
         subscribe: (listener: () => void) => host.subscribeUsage(listener),
       }
     : undefined;
-  const powerline = createPowerlineExtension(createLocalSubscriptionUsageHost(modelRuntime), {
+  const subscriptionHost = createLocalSubscriptionUsageHost(modelRuntime, fetch, subscriptionUsagePath);
+  const powerline = createPowerlineExtension(subscriptionHost, {
     ...(savings === undefined ? {} : { savingsHost: createLocalSavingsUsageHost(savings) }),
     ...(additionalSessionUsageHost === undefined ? {} : { additionalSessionUsageHost }),
+    ...(subscriptionUsagePath === undefined
+      ? {}
+      : { subscriptionStore: createFileSubscriptionUsageStore(subscriptionUsagePath) }),
     footerRows: (width) => agentRailRenderer?.(width) ?? [],
   });
   const sessionTitle = createSessionTitleExtension(createLocalSessionTitleHost(modelRuntime));

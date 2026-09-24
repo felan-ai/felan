@@ -301,6 +301,7 @@ function normalizeCodexWindowLabel(label: string): string {
 }
 
 function formatSubscriptionError(error: { code: string; httpStatus?: number }): string {
+  if (error.code === 'HTTP_ERROR' && error.httpStatus === 429) return 'usage unavailable';
   if (error.code === 'HTTP_ERROR' && error.httpStatus) return `HTTP ${error.httpStatus}`;
   return 'fetch failed';
 }

@@ -6,6 +6,7 @@ import {
   type SubscriptionRefreshOptions,
   type SubscriptionState,
   type SubscriptionUsageHost,
+  type SubscriptionUsageStore,
 } from './subscription.js';
 import { createSavingsController, type SavingsController, type SavingsUsageHost } from './savings.js';
 import type { SessionUsageTotals } from './segments.js';
@@ -21,6 +22,7 @@ export interface PowerlineExtensionOptions {
   readonly footerRows?: FooterRowsRenderer;
   readonly savingsHost?: SavingsUsageHost;
   readonly additionalSessionUsageHost?: AdditionalSessionUsageHost;
+  readonly subscriptionStore?: SubscriptionUsageStore;
 }
 
 export function createPowerlineExtension(
@@ -38,7 +40,7 @@ export function createPowerlineExtension(
     const subscription = subscriptionHost && config.display.lines.some(
       (line) => line.segments.subscription?.enabled,
     )
-      ? createSubscriptionController(subscriptionHost, redraw)
+      ? createSubscriptionController(subscriptionHost, redraw, options.subscriptionStore)
       : undefined;
     const savings = options.savingsHost && config.display.lines.some((line) => line.segments.savings?.enabled)
       ? createSavingsController(options.savingsHost, redraw)
@@ -118,7 +120,7 @@ export function createPowerlineExtension(
       installFooter(ctx);
       subscribeAdditionalSessionUsage(ctx);
       startSubscriptionTimer(ctx);
-      refreshSubscription(ctx, { allowStaleCache: true });
+      refreshSubscription(ctx);
       startSavingsTimer();
       refreshSavings();
     });
@@ -149,7 +151,7 @@ export function createPowerlineExtension(
     pi.on('session_tree', redraw);
     pi.on('model_select', (_event, ctx) => {
       subscriptionContext = ctx;
-      refreshSubscription(ctx, { force: true, resetProvider: true });
+      refreshSubscription(ctx, { force: true });
       redraw();
     });
     pi.on('thinking_level_select', redraw);
@@ -175,6 +177,7 @@ export { formatTokens, renderSegments, sanitizePlainText } from './segments.js';
 export type { SessionUsageTotals } from './segments.js';
 export {
   createSubscriptionController,
+  createSubscriptionUsageStore,
   detectSubscriptionProvider,
   formatReset,
   normalizeTokens,
@@ -188,8 +191,12 @@ export type {
   SubscriptionRefreshOptions,
   SubscriptionState,
   SubscriptionUsageHost,
+  SubscriptionUsageHostErrorCode,
   SubscriptionUsageHostRequest,
   SubscriptionUsageHostResult,
+  SubscriptionUsagePersistence,
+  SubscriptionUsageRecord,
+  SubscriptionUsageStore,
   UsageError,
   UsageErrorCode,
   UsageSnapshot,

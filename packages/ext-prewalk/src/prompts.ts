@@ -8,6 +8,8 @@ export const MAX_AUTOMATIC_CONTINUATIONS = 3;
 
 export const CONTINUATION_INSTRUCTION = `Continue from the existing findings and task progress without repeating prior analysis. Take the next required tool action and follow the current phase guidance.`;
 
+const EXPLORATION_GUIDANCE = `Prewalk authorizes explore subagents during planning when they are needed. If the relevant surface is too broad to inspect efficiently yourself, launch Agent with subagent_type explore for bounded, disjoint, read-only questions, keep critical-path inspection in this session, and verify their findings before relying on them. Do not delegate small or sequential lookups.`;
+
 export const PLANNING_INSTRUCTION = `Explore the repository thoroughly and determine the complete work required for the user's request.
 
 Follow this order:
@@ -17,7 +19,9 @@ Follow this order:
 4. Use TaskUpdate to claim the first ready task by setting it in_progress.
 5. Start implementing immediately with one focused change. Work through ready tasks in dependency order, keep task statuses current, record verified results when completing them, and continue until the request is complete.
 
-Keep the implementation focused on the requested scope and revise the task graph when repository evidence changes the plan.`;
+Keep the implementation focused on the requested scope and revise the task graph when repository evidence changes the plan.
+
+${EXPLORATION_GUIDANCE}`;
 
 export const PLAN_REVIEW_PLANNING_INSTRUCTION = `Explore the repository thoroughly and determine the complete work required for the user's request without modifying the repository.
 
@@ -28,8 +32,12 @@ Follow this order:
 4. Use TaskUpdate to claim the first ready task by setting it in_progress.
 5. Call exit_plan_mode with the concise numbered plan as its plan argument. Call it as the only tool in the response and do not print the plan separately. The tool will present the plan and collect approval, feedback, or cancellation. Do not edit files or otherwise mutate the repository before approval.
 
-Keep the plan focused on the requested scope and revise the task graph when repository evidence changes the plan.`;
+Keep the plan focused on the requested scope and revise the task graph when repository evidence changes the plan.
+
+${EXPLORATION_GUIDANCE}`;
 
 export const PLAN_APPROVED_INSTRUCTION = `The user approved the plan supplied to exit_plan_mode. Continue from the claimed task and make one focused repository mutation that establishes the implementation direction. Keep the task graph current and proceed with the approved scope.`;
 
-export const VERIFICATION_INSTRUCTION = `Continue implementing the existing session task graph. Honor task dependencies, claim ready work with TaskUpdate, keep statuses current, and complete every remaining task with a verified result. Keep the changes limited to the requested scope, run the full relevant test module or suite, resolve failures, and continue until every task is complete.`;
+export const VERIFICATION_INSTRUCTION = `Continue implementing the existing session task graph. Honor task dependencies, claim ready work with TaskUpdate, keep statuses current, and complete every remaining task with a verified result. Keep the changes limited to the requested scope, run the full relevant test module or suite, resolve failures, and continue until every task is complete.
+
+Prewalk requires an independent review of the implementation. After every task is complete and verification passes, launch one Agent with subagent_type reviewer at the high tier. Ask it to compare the complete change with the user's request, the approved plan, and the task acceptance criteria, and to report incorrect or unverified behavior, fabricated results, skipped scope, security issues, and regressions. Give it the changed files, the diff command, and the verification commands you ran. Do not claim the work is complete while the review is pending; end with a short status that names the pending review. The review completion notice resumes the session so its findings can be resolved.`;

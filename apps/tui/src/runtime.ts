@@ -412,6 +412,7 @@ export function createLocalSessionRuntimeFactory(
         backgroundBashCoordinator,
         true,
         browserAuthorizationPolicy,
+        join(runtimeRequest.agentStorageRoot, 'subscription-usage.json'),
       ),
       modelRuntime: options.modelRuntime,
       settingsManager,

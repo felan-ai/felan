@@ -251,6 +251,21 @@ describe('powerline segments', () => {
       },
     }));
     expect(grokNoOAuth.text).toBe('Grok no OAuth');
+
+    const claudeRateLimited = renderSingle('subscription', { enabled: true }, context({
+      model: { provider: 'anthropic', id: 'claude-opus-4-6' },
+      subscription: {
+        provider: 'anthropic',
+        loading: false,
+        usage: {
+          provider: 'anthropic',
+          displayName: 'Claude Plan',
+          windows: [],
+          error: { code: 'HTTP_ERROR', message: 'HTTP 429', httpStatus: 429 },
+        },
+      },
+    }));
+    expect(claudeRateLimited.text).toBe('Claude usage unavailable');
   });
 
   it('renders context variants and threshold colors', () => {
