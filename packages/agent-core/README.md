@@ -147,10 +147,13 @@ session uses this prompt; consumers extend it with `appendSystemPrompt` and
 cannot replace it. During composition, Agent Core also reads at most one
 instruction file from the session cwd through `AgentRuntime`, with `AGENTS.md`
 taking precedence over `CLAUDE.md`. Missing, unreadable, and blank instruction
-files are nonfatal. The selected file is supplied through Pi's context-file
-interface, which renders it as path-labeled project instructions rather than a
-consumer prompt append. Inline extensions can contribute model-facing behavior
-during initialization:
+files are nonfatal. The selected file is delivered by Pi's context transform as
+a path-labelled, hidden user-role context message on each model
+request. It follows the system prompt and is not part of the system prompt or
+persisted conversation history. `getProjectInstructions(resourceLoader)` lets
+hosts inspect the selected path and content without adding it to Pi's prompt
+resources. Inline extensions can contribute model-facing behavior during
+initialization:
 
 ```ts
 const extension: FelanExtension = (pi) => {
@@ -164,9 +167,9 @@ const extension: FelanExtension = (pi) => {
 Capability IDs and instructions are validated, duplicate IDs report both
 extension sources, and contributions retain extension load and registration
 order across resource reloads. Agent Core renders enabled capabilities as one
-section after the base prompt. Consumer appends follow that section, then Pi
-adds cwd project instructions, explicit skills, and the current working
-directory.
+section after the base prompt. Consumer appends follow that section; Pi then
+adds explicit skills and the current working directory. The separate context
+transform supplies cwd project instructions after the leading system prompt.
 
 Tool definitions sent with the model request remain the authoritative tool
 inventory. The Felan-owned prompt intentionally does not render Pi's default
@@ -177,7 +180,7 @@ Applications may pass explicit `skills` or `skillPaths` into session
 composition. Agent Core exposes only those resources while ambient project,
 user, and package skill discovery remains disabled. Ambient system prompt,
 append prompt, and context discovery are also disabled; the selected cwd
-instruction file is the only built-in project-context input.
+instruction file is the only built-in project-instruction input.
 
 ## Package boundary
 

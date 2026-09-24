@@ -9,9 +9,11 @@ agents:
     - felan-grok-static
     - felan-grok-classified
 prompt: >-
-  Fix the retry scheduling implementation so the tests pass. Then report the
-  resulting retry delays for four attempts with a base delay of 100 and a
-  maximum delay of 250. Do not change the tests.
+  Use subagents for this task: delegate fixing the retry scheduling
+  implementation so the tests pass, and ask a different agent to independently
+  review the implementation. Then report the resulting retry delays for four
+  attempts with a base delay of 100 and a maximum delay of 250. Do not change
+  the tests.
 assert:
   - id: implementation-agent-used
     type: toolCalled

@@ -48,7 +48,7 @@ export function createSubagentsExtension(host: SubagentHost): FelanExtension {
 }
 
 const genericSubagentGuidance = [
-  'Use child agents only for bounded work that is independent, parallelizable, specialized, or benefits materially from a separate context or independent review. Keep trivial work and the immediate critical-path task in the parent.',
+  'Do not spawn child agents unless the user or applicable harness instructions explicitly request subagents, delegation, or parallel agent work. Multiple angles, thoroughness, or several parts do not count as a request. When requested, delegate only bounded, non-overlapping work; keep trivial work and the immediate critical-path task in the parent.',
   'Use the xhigh model tier selectively for unusually complex architecture, design, planning, difficult debugging, or high-stakes code review; do not use it for routine delegation.',
   'Definition model and thinking settings take precedence over per-call values; otherwise per-call values apply, then the parent settings.',
   'Child agents always run asynchronously. Give each child a self-contained task with a disjoint scope, constraints, and expected output. Do not duplicate delegated work or enter a child-owned scope. Continue non-overlapping parent work while children run; if no independent parent work remains, yield and rely on completion notices instead of polling. Cancel a child before taking over its unfinished scope.',

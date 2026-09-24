@@ -161,6 +161,48 @@ describe('@felan-ai/ext-context-view', () => {
     expect(report.breakdown.messages).toBeGreaterThan(0);
   });
 
+  it('counts transient cwd project instructions as Context Files, not system prompt or history', () => {
+    const without = collectContextReport(pi(), context(), undefined, undefined);
+    const withProjectInstructions = collectContextReport(
+      pi(),
+      context(),
+      undefined,
+      undefined,
+      '# Project instructions from "/workspace/AGENTS.md"\n\n<INSTRUCTIONS>\nUse two spaces.\n</INSTRUCTIONS>',
+    );
+
+    expect(withProjectInstructions.contextFileCount).toBe(without.contextFileCount + 1);
+    expect(withProjectInstructions.breakdown.contextFiles).toBeGreaterThan(0);
+    expect(withProjectInstructions.breakdown.contextFiles).toBeGreaterThan(without.breakdown.contextFiles);
+    expect(withProjectInstructions.breakdown.systemPrompt).toBe(without.breakdown.systemPrompt);
+    expect(withProjectInstructions.breakdown.messages).toBe(without.breakdown.messages);
+  });
+
+  it('tracks root project-instruction context when Pi builds the provider transcript', async () => {
+    const api = pi();
+    contextViewExtension(api);
+    const contextWithSystem = (api.on as ReturnType<typeof vi.fn>).mock.calls
+      .find(([event]) => event === 'context_with_system')?.[1] as ((event: unknown) => void) | undefined;
+    expect(contextWithSystem).toBeDefined();
+
+    contextWithSystem!({
+      messages: [{
+        role: 'custom',
+        customType: 'felan-project-instructions',
+        details: { contextText: 'AGENTS.md instruction text' },
+      }],
+    });
+
+    const command = (api.registerCommand as ReturnType<typeof vi.fn>).mock.calls[0]![1].handler as (
+      args: string,
+      ctx: ExtensionCommandContext,
+    ) => Promise<void>;
+    const ctx = context();
+    await command('', ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringMatching(/Context Files: [1-9][0-9]*/), 'info');
+  });
+
   it('does not count transcript system patches beside the effective prompt', () => {
     const entry = {
       type: 'message', id: 'system', parentId: null, timestamp: '1',
@@ -214,6 +256,53 @@ describe('@felan-ai/ext-context-view', () => {
       report.memory.summary + report.memory.index + report.memory.schema + report.memory.recalls,
     );
     expect(report.breakdown.messages).toBeGreaterThan(0);
+  });
+
+  it('attributes only active, tagged memory in the canonical projection', () => {
+    const original = 'Summary:\nold summary\n\nIndex:\nold index\n\nSchema:\nold schema';
+    const replacement = 'Summary:\nnew summary\n\nIndex:\nnew index\n\nSchema:\nnew schema';
+    const userText = `<memory>${original}</memory>`;
+    const sourceEntry = {
+      type: 'custom_message', id: 'memory', parentId: null, timestamp: '1',
+      customType: 'felan-memory-context', display: false, content: original,
+    } as unknown as SessionEntry;
+    const userEntry = {
+      type: 'message', id: 'user', parentId: 'memory', timestamp: '2',
+      message: { role: 'user', content: userText, timestamp: 2 },
+    } as unknown as SessionEntry;
+    const userMessage = (userEntry as Extract<SessionEntry, { type: 'message' }>).message;
+    const projectedMemory = { role: 'custom', customType: 'felan-memory-context', content: replacement };
+    const projection = (messages: unknown[]) => ({
+      entries: [
+        { sourceEntry, messages },
+        { sourceEntry: userEntry, messages: [userMessage] },
+      ],
+      messages: [...messages, userMessage],
+      thinkingLevel: 'off',
+      model: null,
+    });
+    const sessionManager = {
+      getBranch: () => [sourceEntry, userEntry],
+      buildSessionProjection: () => projection([projectedMemory]),
+    };
+    const ctx = context({ sessionManager: sessionManager as never });
+
+    const report = collectContextReport(pi(), ctx, undefined, undefined);
+    expect(report.memory).toEqual({
+      summary: Math.ceil('new summary'.length / 4),
+      index: Math.ceil('new index'.length / 4),
+      schema: Math.ceil('new schema'.length / 4),
+      recalls: 0,
+    });
+    expect(report.breakdown.memory).toBe(
+      report.memory.summary + report.memory.index + report.memory.schema,
+    );
+    expect(report.breakdown.messages).toBe(Math.ceil(userText.length / 4));
+
+    sessionManager.buildSessionProjection = () => projection([]);
+    const omitted = collectContextReport(pi(), ctx, undefined, undefined);
+    expect(omitted.memory).toEqual({ summary: 0, index: 0, schema: 0, recalls: 0 });
+    expect(omitted.breakdown.messages).toBe(report.breakdown.messages);
   });
 
   it('estimates the canonical projected context after context edits', () => {

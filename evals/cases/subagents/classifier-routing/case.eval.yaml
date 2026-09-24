@@ -1,6 +1,6 @@
 id: subagents-classifier-routing
 suite: subagents-routing
-description: Route a neutral multi-file investigation to the read-focused catalog agent.
+description: Keep a neutral multi-file investigation in the parent without user-requested delegation.
 timeoutMs: 900000
 workspace:
   fixture: fixtures/subagent-routing/v1/source
@@ -13,16 +13,11 @@ prompt: >-
   line containing the maximum batch size, the selected queue for an urgent
   item, and the retry delay. Do not edit files.
 assert:
-  - id: explored-with-read-focused-agent
+  - id: no-unrequested-child
     type: toolCalled
     name: Agent
-    min: 1
-    max: 1
-    argsContain:
-      - '"subagent_type":"explore"'
-    isError: false
-    when:
-      agent: felan-grok-classified
+    min: 0
+    max: 0
   - id: solved-task
     type: contains
     value: "17"

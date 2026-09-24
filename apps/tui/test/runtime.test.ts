@@ -441,19 +441,30 @@ describe('local Agent Core lifecycle', () => {
     expect(systemPrompt.startsWith(FELAN_BASE_SYSTEM_PROMPT)).toBe(true);
     expect(systemPrompt).not.toContain('Be concise and direct');
     expect(systemPrompt).toContain('Local application instructions');
-    expect(systemPrompt).toContain('Root project instructions');
+    expect(systemPrompt).not.toContain('Root project instructions');
     expect(systemPrompt).not.toContain('Ignored fallback instructions');
     expect(systemPrompt).not.toContain('Ignored project append');
     expect(systemPrompt).not.toContain('## Enabled capabilities');
+    expect(runtime.services.resourceLoader.getAgentsFiles().agentsFiles).toEqual([]);
     expect(systemPrompt.indexOf('Local application instructions')).toBeLessThan(
-      systemPrompt.indexOf('Root project instructions'),
-    );
-    expect(systemPrompt.indexOf('Root project instructions')).toBeLessThan(
       systemPrompt.indexOf('<available_skills>'),
     );
     expect(systemPrompt.indexOf('<available_skills>')).toBeLessThan(
       systemPrompt.indexOf('<cwd>'),
     );
+
+    const transformContext = runtime.session.agent.transformContext;
+    if (!transformContext) throw new Error('Expected Pi to install its context transform');
+    const transformed = await transformContext([{
+      role: 'user',
+      content: [{ type: 'text', text: 'Inspect the workspace' }],
+      timestamp: 1,
+    }]);
+    const providerMessages = await runtime.session.agent.convertToLlm(transformed);
+    expect(providerMessages[0]?.role).toBe('user');
+    expect(JSON.stringify(providerMessages[0])).toContain('Root project instructions');
+    expect(JSON.stringify(providerMessages[0])).toContain(join(cwd, 'AGENTS.md'));
+    expect(JSON.stringify(providerMessages)).not.toContain('Ignored fallback instructions');
 
     await runtime.dispose();
   });

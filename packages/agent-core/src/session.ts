@@ -27,7 +27,18 @@ import type { SavingsReporterProvider } from './savings.js';
 
 export type StreamFunction = AgentSession['agent']['streamFunction'];
 const PROJECT_INSTRUCTION_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const;
+export const PROJECT_INSTRUCTIONS_CUSTOM_TYPE = 'felan-project-instructions';
 const decoder = new TextDecoder();
+const projectInstructionsByLoader = new WeakMap<object, ProjectInstructionsFile>();
+
+export interface ProjectInstructionsFile {
+  readonly path: string;
+  readonly content: string;
+}
+
+export function getProjectInstructions(resourceLoader: object): ProjectInstructionsFile | undefined {
+  return projectInstructionsByLoader.get(resourceLoader);
+}
 
 export interface CreateAgentCoreSessionOptions {
   readonly runtime: AgentRuntime;
@@ -114,12 +125,13 @@ async function composeAgentCoreSession(
     options.extensionConfigOverrides,
     options.savings,
   );
+  const projectInstructions = await loadProjectInstructions(options.runtime);
   const extensionFactories = [
+    ...(projectInstructions === undefined ? [] : [createProjectInstructionsExtension(projectInstructions)]),
     ...featureExtensions,
     ...(options.inlineExtensions ?? []),
     createRuntimeToolsExtension(options.runtime),
   ];
-  const projectInstructions = await loadProjectInstructions(options.runtime);
   const resourceLoader = await createAgentCoreResourceLoaderWithContextFiles({
     cwd: options.runtime.cwd,
     agentDir,
@@ -128,11 +140,11 @@ async function composeAgentCoreSession(
     ...(options.skillPaths === undefined ? {} : { skillPaths: options.skillPaths }),
     ...(options.themePaths === undefined ? {} : { themePaths: options.themePaths }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
-    ...(projectInstructions === undefined ? {} : { contextFiles: [projectInstructions] }),
     ...(options.appendSystemPrompt === undefined
       ? {}
       : { appendSystemPrompt: options.appendSystemPrompt }),
   });
+  if (projectInstructions !== undefined) projectInstructionsByLoader.set(resourceLoader, projectInstructions);
   const result = await createAgentSession({
     cwd: options.runtime.cwd,
     agentDir,
@@ -171,10 +183,7 @@ async function composeAgentCoreSession(
   };
 }
 
-async function loadProjectInstructions(runtime: AgentRuntime): Promise<{
-  readonly path: string;
-  readonly content: string;
-} | undefined> {
+async function loadProjectInstructions(runtime: AgentRuntime): Promise<ProjectInstructionsFile | undefined> {
   for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
     try {
       const content = decoder.decode(await runtime.readFile(filename));
@@ -187,6 +196,41 @@ async function loadProjectInstructions(runtime: AgentRuntime): Promise<{
       continue;
     }
   }
+}
+
+function createProjectInstructionsExtension(file: ProjectInstructionsFile): InlineExtension {
+  const content = `# Project instructions from ${JSON.stringify(file.path)}\n\n<INSTRUCTIONS>\n${file.content}\n</INSTRUCTIONS>`;
+  const timestamp = Date.now();
+  return {
+    name: '@felan-ai/agent-core/project-instructions',
+    hidden: true,
+    factory: (pi) => {
+      pi.on('context', (event) => {
+        const messages = event.messages.filter((message) => (
+          message.role !== 'custom' || message.customType !== PROJECT_INSTRUCTIONS_CUSTOM_TYPE
+        ));
+        const existing = event.messages.find((message) => (
+          message.role === 'custom' && message.customType === PROJECT_INSTRUCTIONS_CUSTOM_TYPE
+        ));
+        if (existing && event.messages[0] === existing && messages.length === event.messages.length - 1) {
+          return;
+        }
+        return {
+          messages: [
+            {
+              role: 'custom',
+              customType: PROJECT_INSTRUCTIONS_CUSTOM_TYPE,
+              content,
+              details: { path: file.path, content: file.content, contextText: content },
+              display: false,
+              timestamp,
+            },
+            ...messages,
+          ],
+        };
+      });
+    },
+  };
 }
 
 function createRuntimeToolsExtension(runtime: AgentRuntime): InlineExtension {

@@ -69,7 +69,7 @@ describe('classifier-guided subagent routing', () => {
     const questions = evaluateProbabilities.mock.calls[0]![1] as Record<string, unknown>;
     expect(Object.keys(questions)).toEqual(['agent:0', 'agent:1']);
     expect(JSON.stringify(questions['agent:0'])).toContain('available_agents[0]');
-    expect(JSON.stringify(questions['agent:1'])).toMatch(/exploration.*parallelism.*review or verification/s);
+    expect(JSON.stringify(questions['agent:1'])).toContain('This is only a type-selection hint, not authorization to spawn');
     expect(evaluateProbabilities.mock.calls[0]![0]).toMatchObject({
       available_agents: [
         { id: 'reader', description: 'Read-only investigation' },
@@ -82,16 +82,15 @@ describe('classifier-guided subagent routing', () => {
       subagent_routing: expect.any(String),
     });
     const selectedGuidance = event.systemPromptOptions.sections.subagent_routing;
-    expect(selectedGuidance).toContain('selected the following required agent types');
-    expect(selectedGuidance).toContain('at least one concrete, non-overlapping task to every listed type');
-    expect(selectedGuidance).toContain('decide when to launch each one and which subtask to assign');
-    expect(selectedGuidance).toContain('matching the request and current state to its description');
-    expect(selectedGuidance).toContain('repeated use of a listed type for genuinely distinct scopes');
+    expect(selectedGuidance).toContain('possible fits only if the user or applicable harness instructions explicitly request');
+    expect(selectedGuidance).toContain('This selection is not authorization and does not require launching any child');
+    expect(selectedGuidance).toContain('Task complexity, multiple parts, thoroughness, or possible parallelism do not authorize spawning');
+    expect(selectedGuidance).not.toContain('required agent types');
     expect(selectedGuidance).toContain('reader (Read-only investigation)');
     expect(selectedGuidance).toContain('auditor (Independent review)');
     expect(pi.registerCapability).toHaveBeenCalledWith({
       id: 'subagents',
-      instructions: expect.stringMatching(/Use child agents only for bounded work.*always run asynchronously/s),
+      instructions: expect.stringMatching(/Do not spawn child agents unless the user or applicable harness instructions explicitly request.*always run asynchronously/s),
     });
     const capabilityInstructions = (pi.registerCapability as ReturnType<typeof vi.fn>).mock.calls[0]![0].instructions;
     expect(capabilityInstructions).not.toContain('Read-only investigation');
@@ -170,7 +169,7 @@ describe('classifier-guided subagent routing', () => {
 
     expect(result).toBeUndefined();
     expect(event.systemPromptOptions.sections.subagent_routing).toContain('custom-investigator (Investigate)');
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('could not decide routing');
+    expect(event.systemPromptOptions.sections.subagent_routing).toContain('could not decide which types fit');
   });
 
   it('uses the full active conversation, request, catalog descriptions, and child state', async () => {
@@ -220,8 +219,8 @@ describe('classifier-guided subagent routing', () => {
     });
     expect(result).toBeUndefined();
     expect(event.systemPromptOptions.sections.subagent_routing).toContain(`reader (${description})`);
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('every listed type before reporting completion');
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('decide when to launch each one and which subtask to assign');
+    expect(event.systemPromptOptions.sections.subagent_routing).toContain('This selection is not authorization');
+    expect(event.systemPromptOptions.sections.subagent_routing).toContain('only if the user or applicable harness instructions explicitly request');
   });
 
   it('routes from projected context rather than superseded raw messages', async () => {
@@ -267,8 +266,8 @@ describe('classifier-guided subagent routing', () => {
 
     expect(Object.keys(evaluateProbabilities.mock.calls[0]![1])).toHaveLength(40);
     expect(result).toBeUndefined();
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('Keep this request in the parent');
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('Do not call the `Agent` tool');
+    expect(event.systemPromptOptions.sections.subagent_routing).toContain('No child type was selected');
+    expect(event.systemPromptOptions.sections.subagent_routing).toContain('unless the user or applicable harness instructions explicitly request');
     expect(event.systemPromptOptions.sections.subagent_routing).not.toContain('Specialist 0');
   });
 
@@ -295,6 +294,25 @@ describe('classifier-guided subagent routing', () => {
     expect(guidance!.indexOf('- alpha (Alpha specialist)')).toBeLessThan(
       guidance!.indexOf('- zeta (Zeta specialist)'),
     );
+  });
+
+  it('treats classifier selections as conditional hints for explicitly requested delegation', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const evaluateProbabilities = vi.fn(async (_state: any, questions: Record<string, unknown>) => ({
+      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { probability: 0.9 }])),
+    }));
+    const pi = createPi(evaluateProbabilities, handlers);
+    createSubagentsExtension(createHost([
+      { id: 'reader', description: 'Read-only investigation', allowNesting: false },
+    ]))(pi);
+
+    const event = routingEvent({ prompt: 'Explore this complex multi-file repository thoroughly' });
+    await handlers.get('before_agent_start')!(event, context());
+
+    const guidance = event.systemPromptOptions.sections.subagent_routing;
+    expect(guidance).toContain('This selection is not authorization');
+    expect(guidance).toContain('Otherwise, keep the work in the parent');
+    expect(guidance).not.toContain('required agent types');
   });
 
   it('cancels an in-flight classification when the session shuts down', async () => {

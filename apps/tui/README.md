@@ -241,19 +241,14 @@ Set `FELAN_LOG_LEVEL=off` to disable them, or `debug`/`info`/`warn`/`error` to
 change the level.
 
 When `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available, the local host
-also enables classifier-guided subagent routing. The generic delegation and
-lifecycle capability remains persistently in the system prompt, but its full
-descriptive catalog is omitted. Before the model starts each user turn, a
-request-specific system-prompt routing decision scores every discovered catalog
-entry once for suitability across investigation/exploration, parallelizable or
-specialist implementation, and independent review. Scores at or above 0.65
-appear with full selected descriptions. Every listed type must receive at least
-one concrete, non-overlapping task before completion. The main agent decides
-when to launch each type and which subtask to assign by matching the request and
-current state to its description. Complex requests may use a listed type more
-than once for distinct scopes; an empty list keeps the request in the parent.
-Nothing launches automatically. A classifier failure supplies the full catalog
-and applies the generic policy for that turn without blocking the request.
+also enables classifier-guided subagent type selection. Felan's system prompt
+allows spawning only when the user or applicable harness instructions explicitly
+request subagents, delegation, or parallel agent work. Complexity, thoroughness,
+multiple parts, and potential parallelism do not authorize spawning. The
+classifier adds conditional hints for catalog types scoring at or above 0.65;
+these hints are not authorization and do not require launching a child. Without
+a classifier or when classification fails, the full catalog is supplied under
+the same explicit-request-only policy.
 
 Codebase Memory is a default built-in. It provides structural code
 search, symbol reads, and bounded grep augmentation, backed by the

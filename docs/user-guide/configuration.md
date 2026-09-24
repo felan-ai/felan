@@ -177,29 +177,25 @@ When `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available, the local host
 injects its optional provider-neutral classifier into root and child runtimes.
 The subagent extension then evaluates the full current prompt, active
 model-visible user/assistant conversation text, complete catalog definitions,
-and direct-child statuses before each user turn. It scores every catalog
-definition once for suitability, considering useful investigation/exploration,
-parallelizable or specialist implementation, and independent review internally.
-Before the model starts each user turn, it appends a request-specific routing
-decision to that turn's system prompt. Entries scoring at or above 0.65 appear
-with their full descriptions. Every listed `subagent_type` must receive at least
-one concrete, non-overlapping task before completion. The main agent decides
-when to launch each type and which subtask to assign by matching the request and
-current state to its description. Complex requests may use a listed type more
-than once for distinct scopes; an empty list keeps the request in the parent. No
-agent is launched automatically. The decision is persisted as a structured
-system message but not shown in the TUI. Direct system entries are excluded from later
-classifier conversation extraction, and the structured routing log retains the
-generated guidance.
+and direct-child statuses before each user turn. Felan's persistent system
+prompt permits spawning only when the user or applicable harness instructions
+explicitly request subagents, delegation, or parallel agent work. Task
+complexity, thoroughness, multiple parts, or potential parallelism do not
+authorize delegation. The classifier scores each catalog definition and adds
+conditional type hints for scores at or above 0.65. A score is not authorization
+and does not require launching a child; it only informs type selection after an
+explicit request. The decision is persisted as a structured system message but
+not shown in the TUI. Direct system entries are excluded from later classifier
+conversation extraction, and the structured routing log retains the generated
+guidance.
 
 The classifier state may leave the local process for the configured TypeSafe or
 OpenRouter endpoint. It contains prompt/session text and agent metadata, but not
 credentials. When classification succeeds, generic delegation and lifecycle
 guidance remains persistently in the system prompt, while the full descriptive
 catalog is omitted; valid type IDs remain in the `Agent` tool schema. If no
-classifier is available, the persistent generic guidance includes the complete
-catalog. If evaluation fails, a system-prompt fallback decision supplies that
-catalog and applies the generic delegation policy without blocking the request.
+classifier is available or evaluation fails, the complete catalog is supplied
+without changing the explicit-request-only policy.
 
 ## Project instructions and skills
 

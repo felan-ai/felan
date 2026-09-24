@@ -57,23 +57,22 @@ Terminal errors use stable codes: `model_request_failed`,
 `turn_limit_reached`. `host_unavailable` is reserved for an unavailable host
 or parent, and `internal_error` is reserved for unexpected runtime failures.
 
-The generic delegation and lifecycle capability remains persistently in the
-system prompt whenever the extension is enabled. Without a compatible
-probability classifier, it also includes the complete host catalog. With a
-classifier, the persistent guidance omits the descriptive catalog; valid type
+The explicit-request-only delegation policy and lifecycle capability remain
+persistently in the system prompt whenever the extension is enabled: do not
+spawn unless the user or applicable harness instructions explicitly request
+subagents, delegation, or parallel agent work. Task complexity, thoroughness,
+multiple parts, or potential parallelism do not count as authorization. Without
+a compatible probability classifier, it also includes the complete host
+catalog. With a classifier, the persistent guidance omits the descriptive catalog; valid type
 IDs remain in the `Agent` tool schema. Before the model starts each user turn,
-the extension appends a request-specific routing decision to that turn's system
-prompt. It asks one suitability probability for every catalog descriptor,
-considering investigation or exploration, parallelizable or specialist
-implementation, and independent review internally. Descriptors at or above the
-0.65 threshold appear with their full descriptions. Every listed type must
-receive at least one concrete, non-overlapping task before completion. The main
-agent decides when to launch each type and which subtask to assign by matching
-the request and current state to its description. Complex requests may use a
-listed type more than once for distinct scopes; an empty list explicitly keeps
-the request in the parent. Nothing launches automatically. A failed
-classification supplies the complete catalog and falls back to the generic
-delegation policy for that turn. The catalog is authoritative, so custom
+the extension appends conditional type-selection hints: it asks one suitability
+probability for each catalog descriptor, and descriptors at or above the 0.65
+threshold appear with their full descriptions. A classifier score is not
+authorization and never requires launching a child. Only if the user or
+applicable harness instructions explicitly request delegation may the agent
+use the hints to choose suitable types; otherwise, it keeps the work in the
+parent. A failed classification supplies the complete catalog but preserves
+the same explicit-request-only policy. The catalog is authoritative, so custom
 definitions participate without special IDs. The
 structured system-prompt section is persisted with the turn but not rendered in
 the TUI, and direct system entries are excluded from later classifier

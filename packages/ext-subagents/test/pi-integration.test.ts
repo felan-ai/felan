@@ -90,7 +90,8 @@ describe('Pi subagent-routing integration', () => {
       const routingSection = context.messages
         .find((message) => message.role === 'system')
         ?.sections?.subagent_routing;
-      expect(routingSection).toMatch(/Subagent routing decision.*required agent types.*every listed type.*decide when to launch each one and which subtask to assign.*explore \(Read-only investigation\)/s);
+      expect(routingSection).toMatch(/Subagent routing decision.*possible fits only if the user or applicable harness instructions explicitly request.*This selection is not authorization.*explore \(Read-only investigation\)/s);
+      expect(routingSection).not.toContain('required agent types');
     }
     const entries = sessionManager.getEntries();
     const routingEntries = entries.filter((entry) => (

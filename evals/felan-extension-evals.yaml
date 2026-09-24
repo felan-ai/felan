@@ -1293,9 +1293,9 @@ benchmarks:
       cases: ratioOfReducedSums
 
   subagents-routing:
-    revision: 3
-    label: Grok adherence to classifier-guided catalog routing
-    description: Compare static and classifier-derived subagent guidance on neutral exploration, implementation-and-review, and direct-answer tasks.
+    revision: 4
+    label: Grok adherence to explicit-request-only subagent routing
+    description: Verify classifier-guided type hints never authorize delegation for neutral tasks and support user-requested implementation and independent review.
     select:
       suites: [subagents-routing]
     arms:

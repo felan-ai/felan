@@ -17,6 +17,7 @@ import {
   createAgentCoreSession,
   createAgentCoreSessionRuntimeFactory,
   createRuntimeCodingTools,
+  getProjectInstructions,
 } from '../src/index.js';
 import { TestAgentRuntime } from './test-agent-runtime.js';
 
@@ -112,6 +113,7 @@ describe('Agent Core session composition', () => {
       .toContainEqual(expect.objectContaining({ path: '<inline:@felan-ai/test-inline>', hidden: true }));
     expect(wrappedInvocations).toBe(0);
     expect(result.extensionsResult.extensions.map((loaded) => loaded.path)).toEqual([
+      '<inline:@felan-ai/agent-core/project-instructions>',
       '<inline:@felan-ai/listed>',
       '<inline:@felan-ai/test-inline>',
       '<inline:@felan-ai/agent-core/runtime-tools>',
@@ -154,16 +156,8 @@ describe('Agent Core session composition', () => {
     expect(systemPrompt.indexOf('Capability instructions')).toBeLessThan(
       systemPrompt.indexOf('Child persona instructions'),
     );
-    expect(systemPrompt.indexOf('Child persona instructions')).toBeLessThan(
-      systemPrompt.indexOf('Project-specific instructions and guidelines:'),
-    );
-    expect(systemPrompt).toContain('<project_context>');
-    expect(systemPrompt).toContain(
-      `<project_instructions path="${join(cwd, 'AGENTS.md').replace(/\\/g, '/')}">`,
-    );
-    expect(systemPrompt.indexOf('Root project instructions')).toBeLessThan(
-      systemPrompt.indexOf('<cwd>'),
-    );
+    expect(systemPrompt).not.toContain('<project_context>');
+    expect(systemPrompt).not.toContain('Root project instructions');
 
     result.session.dispose();
   });
@@ -262,20 +256,63 @@ describe('Agent Core session composition', () => {
     );
 
     const claudeResult = await compose();
-    expect(claudeResult.session.systemPrompt).toContain(
-      `<project_instructions path="${join(cwd, 'CLAUDE.md').replace(/\\/g, '/')}">\n`
-      + '\nClaude fallback instructions\n',
-    );
+    expect(claudeResult.session.systemPrompt).not.toContain('Claude fallback instructions');
     claudeResult.session.dispose();
 
     await runtime.writeFile('AGENTS.md', new TextEncoder().encode('Agent instructions'));
     const agentResult = await compose();
-    expect(agentResult.session.systemPrompt).toContain(
-      `<project_instructions path="${join(cwd, 'AGENTS.md').replace(/\\/g, '/')}">\n`
-      + 'Agent instructions',
-    );
+    expect(agentResult.session.systemPrompt).not.toContain('Agent instructions');
     expect(agentResult.session.systemPrompt).not.toContain('Claude fallback instructions');
     agentResult.session.dispose();
+  });
+
+  it('delivers cwd instructions once as hidden user context, not in the system prompt', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const runtime = new TestAgentRuntime(cwd);
+    await runtime.writeFile('AGENTS.md', new TextEncoder().encode('Keep Pi package names unchanged.'));
+    const result = await createAgentCoreSession({
+      runtime,
+      extensionPackages: [],
+      importExtension: async () => ({}),
+      modelRuntime: await createModelRuntime(agentDir),
+      settingsManager: SettingsManager.inMemory(),
+      sessionManager: SessionManager.inMemory(cwd),
+      agentDir,
+    });
+
+    expect(result.session.systemPrompt).not.toContain('Keep Pi package names unchanged.');
+    expect(result.session.resourceLoader.getAgentsFiles().agentsFiles).toEqual([]);
+    expect(getProjectInstructions(result.session.resourceLoader)).toEqual({
+      path: join(cwd, 'AGENTS.md'),
+      content: 'Keep Pi package names unchanged.',
+    });
+
+    const transformContext = result.session.agent.transformContext;
+    if (!transformContext) throw new Error('Expected Pi to install its context transform');
+    const initial = [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'Inspect' }], timestamp: 1 }];
+    const transformed = await transformContext(initial);
+    const messages = await result.session.agent.convertToLlm(transformed);
+    const projectInstructions = messages.find(({ role, content }) => (
+      role === 'user'
+      && Array.isArray(content)
+      && content.some((part) => part.type === 'text' && part.text.includes('Keep Pi package names unchanged.'))
+    ));
+
+    expect(messages[0]?.role).toBe('user');
+    expect(projectInstructions).toBeDefined();
+    expect(JSON.stringify(projectInstructions)).toContain(join(cwd, 'AGENTS.md').replace(/\\/g, '/'));
+
+    const replayed = await transformContext(transformed);
+    const replayedMessages = await result.session.agent.convertToLlm(replayed);
+    expect(replayedMessages.filter(({ role, content }) => (
+      role === 'user'
+      && Array.isArray(content)
+      && content.some((part) => part.type === 'text' && part.text.includes('Keep Pi package names unchanged.'))
+    ))).toHaveLength(1);
+    result.session.dispose();
   });
 
   it('lets feature extensions override runtime-backed coding tools', async () => {

@@ -14,7 +14,7 @@ describe('@felan-ai/ext-context-view package boundary', () => {
       license: 'MIT',
       engines: { node: '>=22.19.0' },
       dependencies: { '@earendil-works/pi-tui': 'catalog:pi' },
-      peerDependencies: { '@felan-ai/agent-core': 'catalog:agent-core' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.9.2' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },

@@ -42,24 +42,16 @@ a child before taking over its unfinished scope. When using the shared task
 graph, each session claims only its own ready task; force recovery is reserved
 for an explicitly stale claim.
 
-When the local runtime has a classifier (configured by `TYPESAFE_API_KEY` or
-`OPENROUTER_API_KEY`), Felan keeps generic delegation and lifecycle guidance in
-the persistent system prompt but omits its full descriptive catalog. Before the
-model starts each user turn, Felan appends a request-specific routing decision
-to that turn's system prompt. It asks one suitability probability for
-every available definition, considering investigation/exploration,
-parallelizable or specialist implementation, and independent review internally.
-Entries at or above 0.65 appear with their full descriptions. Every listed
-`subagent_type` must receive at least one concrete, non-overlapping task before
-completion. The main agent decides when to launch each type and which subtask to
-assign by matching the request and current state to its description. Complex
-requests may use a listed type more than once for distinct scopes; an empty list
-keeps the request in the parent. Nothing launches automatically, and explicit
-user direction still takes precedence. Without a compatible classifier, Felan
-keeps the generic
-guidance plus the complete catalog. If classification fails, a fallback
-decision supplies the complete catalog and applies the generic delegation
-policy for that turn.
+Felan's persistent system prompt requires an explicit request from the user or
+applicable harness instructions before spawning a child. Task complexity,
+thoroughness, multiple parts, or potential parallelism do not authorize
+delegation. When a classifier is configured (`TYPESAFE_API_KEY` or
+`OPENROUTER_API_KEY`), it scores catalog definitions and adds conditional type
+hints for scores at or above 0.65. These hints neither authorize a child nor
+require launching one; they only help select a type after delegation was
+explicitly requested. Without a classifier, the system prompt includes the
+complete catalog under the same explicit-request-only policy. Classifier
+failure also supplies the full catalog without changing that policy.
 
 `max_turns` is a hard assistant-turn budget. The local host reserves the final
 budgeted turn for a tool-free synthesis response. If a child reaches the budget

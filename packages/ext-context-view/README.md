@@ -5,7 +5,9 @@ Local TUI context-window usage inspection for Felan.
 The extension registers `/context`. In the interactive TUI it renders a themed
 report inline by default, with an estimated token breakdown for the system
 prompt, built-in and extension tools, project context files, skills, memory,
-conversation messages, other context, and free space. Set
+conversation messages, other context, and free space. Root project instructions
+are counted under Context Files, not the system prompt or conversation
+messages. Set
 `extensionConfig.contextView.displayMode` to `overlay` for a centered overlay.
 In headless modes it emits the same report as a notification. The report
 includes the current model and counts of tools, context files, and skills.

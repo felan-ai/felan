@@ -49,7 +49,9 @@ For every root session the local host:
 1. chooses the working directory and agent directory;
 2. creates a host-path `AgentRuntime` and scoped session/agent storage;
 3. loads filtered Felan Code settings and the allowed built-in packages;
-4. selects explicit Agent Skills and the cwd-level `AGENTS.md`/`CLAUDE.md` file;
+4. selects explicit Agent Skills and the cwd-level `AGENTS.md`/`CLAUDE.md`
+   file, then delivers it as hidden user-role request context outside the system
+   prompt;
 5. binds local adapters such as OAuth storage, dependency onboarding, memory
    coordination, and TUI presentation; and
 6. creates the Pi session and rebinds the presentation for the active session.

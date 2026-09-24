@@ -12,8 +12,13 @@ directory:
 2. `CLAUDE.md`
 
 Missing, blank, and unreadable candidates are nonfatal. The selected file is
-rendered as path-labelled project context rather than as an application prompt
-append.
+delivered on each model request as a path-labelled, hidden user-role context
+message after the system prompt. It does not alter the system prompt or become
+a persisted conversation entry. Project instructions are repository input, not
+a replacement for system, developer, user, or authorization rules.
+This keeps repository instructions out of system-prompt rewrites; it does not
+prevent a provider or OAuth adapter from adding or rewriting system-level
+identity text, which requires separate review.
 
 ## Progressive nested instructions
 
@@ -34,9 +39,11 @@ instructions.
 Use `/progressive-context` to inspect what has been loaded.
 
 Use `/context` to inspect the assembled context-window estimate. The report
-breaks usage into the system prompt, tools, project context, skills, memory,
-messages, other context, and free space. It renders inline by default; configure
-`extensionConfig.contextView.displayMode` as `overlay` for a centered popup.
+breaks usage into the system prompt, tools, Context Files, skills, memory,
+messages, other context, and free space. Startup project-instruction messages
+are included under Context Files, not System Prompt or Messages. It renders
+inline by default; configure `extensionConfig.contextView.displayMode` as
+`overlay` for a centered popup.
 Estimates are based on the current prompt and session entries and are not
 provider billing measurements; immediately after compaction, the provider usage
 may remain unknown until the next model response.

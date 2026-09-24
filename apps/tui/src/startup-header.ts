@@ -2,6 +2,7 @@ import {
   VERSION as PI_VERSION,
   type InteractiveMode,
 } from '@earendil-works/pi-coding-agent';
+import { getProjectInstructions } from '@felan-ai/agent-core';
 import { isMemoryContextEntry } from '@felan-ai/ext-memory';
 import type { Component } from '@earendil-works/pi-tui';
 import { FELAN_VERSION } from './version.js';
@@ -129,7 +130,7 @@ function installMemoryContextIndicator(
       const resourceOptions = extensionState
         ? { ...(typeof options === 'object' && options !== null ? options : {}), extensions: [] }
         : options;
-      if (!session?.sessionManager.buildContextEntries().some(isMemoryContextEntry)) {
+      if (!session) {
         showLoadedResources.call(mode, resourceOptions);
         if (extensionState && shouldShowResourceListing(internals, options)) {
           renderExtensionState(internals, extensionState());
@@ -143,12 +144,19 @@ function installMemoryContextIndicator(
       const displayPath = memorySummaryPath?.().trim() || MEMORY_CONTEXT_DISPLAY_PATH;
       loader.getAgentsFiles = () => {
         const result = getAgentsFiles.call(loader);
-        if (result.agentsFiles.some(({ path }) => path === displayPath)) return result;
+        const rootInstructions = getProjectInstructions(loader);
+        const additions = [
+          ...(rootInstructions === undefined || result.agentsFiles.some(({ path }) => path === rootInstructions.path)
+            ? []
+            : [{ path: rootInstructions.path, content: '' }]),
+          ...(session.sessionManager.buildContextEntries().some(isMemoryContextEntry)
+            && !result.agentsFiles.some(({ path }) => path === displayPath)
+            ? [{ path: displayPath, content: '' }]
+            : []),
+        ];
+        if (additions.length === 0) return result;
         return {
-          agentsFiles: [
-            ...result.agentsFiles,
-            { path: displayPath, content: '' },
-          ],
+          agentsFiles: [...result.agentsFiles, ...additions],
         };
       };
       try {

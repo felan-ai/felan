@@ -13,13 +13,14 @@ classifier-only method arm that requires
 `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` and is not a savings claim until its
 quality gate passes.
 
-The `subagents-routing` benchmark includes a six-run Grok 4.6 pilot comparing
-static guidance with classifier-derived routing. It reuses the local Felan xAI
-subscription OAuth profile; the classified arm additionally requires
-`TYPESAFE_API_KEY`. The classified arm scores each catalog entry once and adds
-one request-specific routing decision to the current turn's system prompt. Run
-it serially with cleanup. The recorded pilot predates this authoritative
-system-prompt decision and does not validate the current guidance:
+The `subagents-routing` benchmark compares static and classifier-guided
+subagent behavior under an explicit-request-only policy. Its cases check that
+neutral investigation remains in the parent and that an explicit request can
+route implementation and review work. The historical six-run Grok pilot
+predates this policy and does not validate it. The benchmark reuses the local
+Felan xAI subscription OAuth profile; the classified arm additionally requires
+`TYPESAFE_API_KEY`. The classified arm scores catalog types and adds conditional
+type hints to the current turn's system prompt. Run it serially with cleanup:
 
 ```sh
 TYPESAFE_API_KEY=... pnpm eval:run --benchmark subagents-routing --concurrency 1 --cleanup

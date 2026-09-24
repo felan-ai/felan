@@ -2,6 +2,7 @@ import {
 	associateExtensionConfig,
 	DynamicBorder,
 	formatSkillsForPrompt,
+	PROJECT_INSTRUCTIONS_CUSTOM_TYPE,
 	type BuildSystemPromptOptions,
 	type ExtensionAPI,
 	type ExtensionCommandContext,
@@ -128,17 +129,35 @@ const CATEGORY_DEFINITIONS: CategoryDefinition[] = [
 const contextViewExtension: FelanExtension = (pi) => {
 	let latestPromptOptions: BuildSystemPromptOptions | undefined;
 	let latestSystemPrompt: string | undefined;
+	let latestProjectInstructions: string | undefined;
 	const displayMode = resolveDisplayMode(pi.config.displayMode);
 
 	pi.on("before_agent_start", (event) => {
 		latestPromptOptions = event.systemPromptOptions;
 		latestSystemPrompt = event.systemPrompt;
 	});
+	pi.on("context_with_system", (event) => {
+		const message = event.messages.find((entry) => (
+			entry.role === "custom" && entry.customType === PROJECT_INSTRUCTIONS_CUSTOM_TYPE
+		));
+		if (!message || message.role !== "custom" || typeof message.details !== "object" || message.details === null) {
+			latestProjectInstructions = undefined;
+			return;
+		}
+		const contextText = Reflect.get(message.details, "contextText");
+		latestProjectInstructions = typeof contextText === "string" ? contextText : undefined;
+	});
 
 	pi.registerCommand("context", {
 		description: "Show current context window usage",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			const report = collectContextReport(pi, ctx, latestPromptOptions ?? ctx.getSystemPromptOptions(), latestSystemPrompt);
+			const report = collectContextReport(
+				pi,
+				ctx,
+				latestPromptOptions ?? ctx.getSystemPromptOptions(),
+				latestSystemPrompt,
+				latestProjectInstructions,
+			);
 
 			if (!ctx.hasUI) {
 				ctx.ui.notify(formatCompactReport(report), "info");
@@ -170,7 +189,13 @@ function resolveDisplayMode(value: unknown): ContextViewDisplayMode {
 	return value === "overlay" ? "overlay" : DEFAULT_CONTEXT_VIEW_DISPLAY_MODE;
 }
 
-export function collectContextReport(pi: ExtensionAPI | FelanExtensionAPI, ctx: ExtensionCommandContext, promptOptions: BuildSystemPromptOptions | undefined, latestSystemPrompt: string | undefined): ContextReport {
+export function collectContextReport(
+	pi: ExtensionAPI | FelanExtensionAPI,
+	ctx: ExtensionCommandContext,
+	promptOptions: BuildSystemPromptOptions | undefined,
+	latestSystemPrompt: string | undefined,
+	projectInstructions?: string,
+): ContextReport {
 	const usage = ctx.getContextUsage();
 	const branch = ctx.sessionManager.getBranch();
 	const projection = typeof ctx.sessionManager.buildSessionProjection === "function"
@@ -188,7 +213,7 @@ export function collectContextReport(pi: ExtensionAPI | FelanExtensionAPI, ctx: 
 		systemPrompt: promptSections.systemPrompt,
 		systemTools: toolEstimates.systemTools,
 		extensions: toolEstimates.extensions,
-		contextFiles: promptSections.contextFiles,
+		contextFiles: promptSections.contextFiles + estimateTokens(projectInstructions ?? ""),
 		skills: promptSections.skills,
 		memory: 0,
 		messages: 0,
@@ -226,7 +251,7 @@ export function collectContextReport(pi: ExtensionAPI | FelanExtensionAPI, ctx: 
 		estimated: true,
 		systemToolCount: toolEstimates.systemToolCount,
 		extensionToolCount: toolEstimates.extensionToolCount,
-		contextFileCount: promptSections.contextFileCount,
+		contextFileCount: promptSections.contextFileCount + (projectInstructions === undefined ? 0 : 1),
 		skillCount: promptSections.skillCount,
 		memory,
 		extensionDetails: toolEstimates.extensionDetails,
@@ -398,7 +423,13 @@ function addEntryEstimate(
 		case "custom_message":
 			if (projectedMessages) {
 				for (const message of projectedMessages) {
-					addMessageEstimate(message, estimates, memory, memoryToolCallIds);
+					if (entry.customType === "felan-memory-context"
+						&& message.role === "custom"
+						&& message.customType === entry.customType) {
+						addInitialMemoryEstimate(message.content, estimates, memory);
+					} else {
+						addMessageEstimate(message, estimates, memory, memoryToolCallIds);
+					}
 				}
 				return;
 			}

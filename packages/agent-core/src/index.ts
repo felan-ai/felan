@@ -138,6 +138,11 @@ export type {
   AgentCoreSessionRuntimeOptionsFactory,
   CreateAgentCoreSessionOptions,
   StreamFunction,
+  ProjectInstructionsFile,
+} from './session.js';
+export {
+  getProjectInstructions,
+  PROJECT_INSTRUCTIONS_CUSTOM_TYPE,
 } from './session.js';
 export {
   AgentSession,
