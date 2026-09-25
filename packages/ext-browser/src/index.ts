@@ -26,17 +26,17 @@ const BrowserParameters = Type.Object({
     description: 'Retrieve version-matched skill instructions or run an agent-browser command.',
   }),
   args: Type.Optional(Type.Array(Type.String({ maxLength: 4_096 }), {
-    minItems: 1,
+    minItems: 0,
     maxItems: 128,
-    description: 'Literal agent-browser argv tokens for operation run; do not provide a shell command.',
+    description: 'Literal agent-browser argv tokens for operation run; ignored for operation skill. Do not provide a shell command.',
   })),
   skill: Type.Optional(Type.String({
     pattern: '^[a-z0-9][a-z0-9-]*$',
     maxLength: 64,
-    description: 'Skill name for operation skill, such as core, electron, slack, or dogfood.',
+    description: 'Skill name for operation skill, such as core, electron, slack, or dogfood. Ignored for operation run.',
   })),
   full: Type.Optional(Type.Boolean({
-    description: 'For operation skill, include the complete command reference and templates.',
+    description: 'For operation skill, include the complete command reference and templates. Ignored for operation run.',
   })),
   timeoutMs: Type.Optional(Type.Integer({
     minimum: 1_000,
@@ -361,16 +361,13 @@ function validateAuthorizationReason(value: string | undefined): boolean {
 function validateBrowserParams(params: BrowserParams): BrowserParams & { operation: 'run' | 'skill'; skill: string; args: readonly string[]; full: boolean } {
   if (params.operation === 'skill') {
     if (!params.skill) throw new Error('browser skill operation requires skill');
-    if (params.args) throw new Error('browser skill operation does not accept args');
     return { ...params, skill: params.skill, args: [], full: params.full ?? false };
   }
   if (!params.args || params.args.length === 0) throw new Error('browser run operation requires args');
-  if (params.skill) throw new Error('browser run operation does not accept skill');
-  if (params.full !== undefined) throw new Error('browser run operation does not accept full');
   const totalLength = params.args.reduce((total, arg) => total + arg.length, 0);
   if (totalLength > 16_384) throw new Error('browser args exceed the 16 KiB limit');
   if (params.args.some((arg) => arg.includes('\0'))) throw new Error('browser args cannot contain NUL bytes');
-  return { ...params, args: params.args, skill: '', full: params.full ?? false };
+  return { ...params, args: params.args, skill: '', full: false };
 }
 
 function supportsImageInput(model: Model<any> | undefined): boolean {

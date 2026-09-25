@@ -82,6 +82,52 @@ describe('browser extension', () => {
     ]));
   });
 
+  it.each([{ args: [] }, { args: [''] }, { args: ['--help'] }])('ignores unrelated run args for a skill request: $args', async ({ args }) => {
+    const harness = await createHarness();
+    const browser = harness.tools.get('browser');
+    expect(browser.parameters.properties.args.minItems).toBe(0);
+    const skill = await browser.execute('skill', {
+      operation: 'skill',
+      skill: 'core',
+      args,
+      full: true,
+      timeoutMs: 60_000,
+    }, undefined, undefined, harness.context);
+
+    expect(skill.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('# core skill from installed CLI') });
+    expect(harness.runtime.calls.find(call => call.args[0] === 'skills')?.args).toEqual([
+      'skills', 'get', 'core', '--full', '--max-output', '100000', '--config',
+      '/session/browser/controls/skills/agent-browser.json',
+    ]);
+  });
+
+  it('ignores unrelated skill fields for a run request', async () => {
+    const harness = await createHarness();
+    const opened = await harness.tools.get('browser').execute('open', {
+      operation: 'run',
+      args: ['open', 'https://example.com'],
+      skill: 'core',
+      full: true,
+    }, undefined, undefined, harness.context);
+
+    expect(opened.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('<untrusted_browser_content') });
+    expect(harness.runtime.calls.some(call => call.args[0] === 'skills')).toBe(false);
+    expect(harness.runtime.calls.find(call => call.args[0] === 'open')?.args).toEqual(expect.arrayContaining([
+      'open', 'https://example.com',
+    ]));
+  });
+
+  it('still requires a command for run requests', async () => {
+    const harness = await createHarness();
+    await expect(harness.tools.get('browser').execute('empty', {
+      operation: 'run',
+      args: [],
+      skill: 'core',
+      full: true,
+    }, undefined, undefined, harness.context)).rejects.toThrow('browser run operation requires args');
+    expect(harness.runtime.calls).toHaveLength(0);
+  });
+
   it('attaches a staged screenshot directly for image-capable models and closes on shutdown', async () => {
     const harness = await createHarness({ image: true });
     const tool = harness.tools.get('browser');

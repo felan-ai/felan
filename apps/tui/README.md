@@ -241,14 +241,14 @@ Set `FELAN_LOG_LEVEL=off` to disable them, or `debug`/`info`/`warn`/`error` to
 change the level.
 
 When `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available, the local host
-also enables classifier-guided subagent type selection. Felan's system prompt
-allows spawning only when the user or applicable harness instructions explicitly
-request subagents, delegation, or parallel agent work. Complexity, thoroughness,
-multiple parts, and potential parallelism do not authorize spawning. The
-classifier adds conditional hints for catalog types scoring at or above 0.65;
-these hints are not authorization and do not require launching a child. Without
-a classifier or when classification fails, the full catalog is supplied under
-the same explicit-request-only policy.
+also enables classifier guidance. For subagents, root sessions get a discovery
+routing section when a request needs broad discovery, except in one-shot
+print/JSON modes that cannot await child completion notices or small repositories.
+`Agent` calls without a pinned model get a classifier-selected tier. For Prewalk, the classifier
+recommends entry, sets planning exploration depth, may raise the implementation
+tier or thinking level, and checks completion when `Agent` is available.
+Without a classifier, or when a call fails, the model follows the persistent delegation
+and Prewalk guidance, and the configured defaults apply.
 
 Codebase Memory is a default built-in. It provides structural code
 search, symbol reads, and bounded grep augmentation, backed by the

@@ -37,6 +37,7 @@ const bundledDefinitions: readonly LocalSubagentDefinition[] = [
     descriptor: {
       id: 'reviewer',
       description: 'Code reviewer focused on correctness and regressions',
+      model: 'high',
       allowNesting: false,
     },
     prompt: 'You are a code-review subagent for Felan Code. Inspect the assigned work for correctness, security, and regressions without modifying files.',

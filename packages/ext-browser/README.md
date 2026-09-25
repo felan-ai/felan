@@ -31,7 +31,7 @@ The `browser` tool has two operations:
   specialized skill such as `electron`, `slack`, `dogfood`, or
   `vercel-sandbox` when appropriate. Skill content is retrieved at runtime so
   it remains matched to the installed CLI version rather than being copied
-  into Felan's prompt.
+  into Felan's prompt. Any `args` supplied with a skill request are ignored.
 - `run` accepts literal CLI argument tokens, for example
   `['open', 'https://example.com']`, `['snapshot', '-i']`, or
   `['fill', '@e3', 'value']`. The operation never accepts shell syntax. Felan owns
@@ -41,7 +41,8 @@ The `browser` tool has two operations:
   so ambient project/global `agent-browser` configuration and plugins are not loaded;
   permitted options must be passed explicitly or supplied by the host
   environment. Sessions are namespaced to the Felan session, CLI JSON output
-  is bounded, and page/CLI output is marked as untrusted data.
+  is bounded, and page/CLI output is marked as untrusted data. Any `skill` or
+  `full` fields supplied with a run request are ignored.
 
 Install, upgrade, repair, plugin, MCP/stream/dashboard server, chat,
 action-confirmation, raw skill, and cross-session close commands are not

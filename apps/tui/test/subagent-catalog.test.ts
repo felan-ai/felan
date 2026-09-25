@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 
 describe('explicit local Felan agent discovery', () => {
-  it('uses cheap model and thinking settings only for the bundled explore agent', async () => {
+  it('uses bundled model and thinking settings for explore and reviewer, leaving general unset', async () => {
     const root = await temporaryDirectory();
     const definitions = await discoverLocalSubagents(
       join(root, 'workspace'),
@@ -28,10 +28,10 @@ describe('explicit local Felan agent discovery', () => {
       model: 'low',
       thinking: 'off',
     });
-    for (const id of ['general', 'reviewer']) {
-      expect(descriptors[id]).not.toHaveProperty('model');
-      expect(descriptors[id]).not.toHaveProperty('thinking');
-    }
+    expect(descriptors.reviewer).toMatchObject({ model: 'high' });
+    expect(descriptors.reviewer).not.toHaveProperty('thinking');
+    expect(descriptors.general).not.toHaveProperty('model');
+    expect(descriptors.general).not.toHaveProperty('thinking');
   });
 
   it('loads shared and Felan definitions with project, user, then bundled precedence', async () => {
