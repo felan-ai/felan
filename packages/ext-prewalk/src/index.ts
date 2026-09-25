@@ -21,9 +21,23 @@ import {
 } from '@felan-ai/agent-core';
 import { Type } from 'typebox';
 import {
+  isChildSession,
+  createPrewalkClassifier,
+  strongerThinking,
+  strongerTier,
+  type ExplorationDepth,
+} from './classification.js';
+import {
+  COMPLETION_GAP_INSTRUCTION,
+  COMPLETION_MESSAGE_TYPE,
+  COMPLETION_REVIEW_INSTRUCTION,
   CONTINUATION_INSTRUCTION,
   CONTINUATION_MESSAGE_TYPE,
   CONTROL_MESSAGE_PREFIX,
+  ENTRY_GUIDANCE,
+  ENTRY_MESSAGE_TYPE,
+  EXPLORATION_DEPTH_GUIDANCE,
+  GATED_VERIFICATION_INSTRUCTION,
   IMPLEMENTATION_MESSAGE_TYPE,
   PLAN_APPROVED_INSTRUCTION,
   PLAN_APPROVED_MESSAGE_TYPE,
@@ -128,10 +142,41 @@ interface ContextBuildResult {
   anchor?: PhaseContextAnchor;
 }
 
+interface RunDetails {
+  request: string;
+  plan?: string;
+  tasks: string[];
+  depth?: ExplorationDepth;
+  classified: boolean;
+  completionGate: boolean;
+  completionChecks: number;
+  completionAccepted: boolean;
+  completionMessagePending: boolean;
+  reviewRequested: boolean;
+  reviewerCallIds: Set<string>;
+  reviewerAgentId?: string;
+  reviewerCompleted: boolean;
+}
+
+interface GuidanceOptions {
+  explorationDepth?: ExplorationDepth;
+  completionGate: boolean;
+  entryActive: boolean;
+  completionMessagePending: boolean;
+}
+
+interface PendingEntryClassification {
+  prompt: string;
+  controller: AbortController;
+  decision: Promise<boolean>;
+}
+
 const HEADLESS_TASK_MESSAGE_TYPE = 'pi-prewalk-task';
 const ENTER_PREWALK_TOOL = 'enter_prewalk';
 const EXIT_PLAN_MODE_TOOL = 'exit_plan_mode';
 const MAX_PLAN_LENGTH = 32_000;
+const MAX_RECORDED_TASKS = 20;
+const MAX_COMPLETION_CHECKS = 2;
 const IMPLEMENTATION_BASELINE_RATIO = 2 / 3;
 const EnterPrewalkParams = Type.Object({}, { additionalProperties: false });
 const ExitPlanModeParams = Type.Object({
@@ -159,6 +204,11 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   let phaseContextAnchor: PhaseContextAnchor | undefined;
   let implementationSavingsModels: ImplementationSavingsModels | undefined;
   let internalThinkingChange = false;
+  const classifier = createPrewalkClassifier(pi);
+  let pendingEntry: PendingEntryClassification | undefined;
+  let entryGuidanceActive = false;
+  let lastPrompt = '';
+  let runDetails: RunDetails | undefined;
 
   function refreshConfig(): void {
     config = pi.config as unknown as PrewalkConfig;
@@ -204,8 +254,88 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     plannerSnapshot = undefined;
     phaseContextAnchor = undefined;
     implementationSavingsModels = undefined;
+    runDetails = undefined;
+    entryGuidanceActive = false;
     exitRequested = false;
     updateStatus(ctx);
+  }
+
+  function entryClassificationEligible(ctx: ExtensionContext): boolean {
+    if (classifier === undefined || state.phase !== 'idle') return false;
+    refreshConfig();
+    const activeTools = pi.getActiveTools();
+    return config.entryApproval !== 'deny'
+      && activeTools.includes(ENTER_PREWALK_TOOL)
+      && validateArmingTools(activeTools).ok
+      && !isChildSession(ctx);
+  }
+
+  function startEntryClassification(prompt: string, ctx: ExtensionContext): PendingEntryClassification {
+    pendingEntry?.controller.abort('superseded');
+    const controller = new AbortController();
+    const classification = {
+      prompt,
+      controller,
+      decision: classifier!.needsPrewalk(prompt, ctx, controller.signal),
+    };
+    pendingEntry = classification;
+    return classification;
+  }
+
+  async function applyEntryGuidance(
+    prompt: string,
+    ctx: ExtensionContext,
+  ) {
+    entryGuidanceActive = false;
+    if (!entryClassificationEligible(ctx)) {
+      pendingEntry?.controller.abort('ineligible');
+      pendingEntry = undefined;
+      return;
+    }
+    const classification = pendingEntry?.prompt === prompt
+      ? pendingEntry
+      : startEntryClassification(prompt, ctx);
+    const needed = await classification.decision;
+    if (pendingEntry === classification) pendingEntry = undefined;
+    if (classification.controller.signal.aborted || !needed || state.phase !== 'idle') return;
+    entryGuidanceActive = true;
+    return { message: { customType: ENTRY_MESSAGE_TYPE, content: ENTRY_GUIDANCE, display: false } };
+  }
+
+  async function classifyExplorationDepth(ctx: ExtensionContext): Promise<void> {
+    const details = runDetails;
+    if (classifier === undefined || details === undefined || !details.classified) return;
+    const depth = await classifier.explorationDepth(details, ctx);
+    if (runDetails !== details || depth === undefined) return;
+    details.depth = depth;
+  }
+
+  async function checkCompletion(message: AssistantMessage, ctx: ExtensionContext): Promise<string | undefined> {
+    const details = runDetails;
+    if (
+      classifier === undefined
+      || details === undefined
+      || !details.completionGate
+      || details.completionAccepted
+      || exitRequested
+      || details.completionChecks >= MAX_COMPLETION_CHECKS
+      || !isTextOnlyCompletion(message)
+    ) return;
+    details.completionChecks += 1;
+    const verdict = await classifier.completion(details, assistantText(message), ctx);
+    if (state.phase !== 'implementing' || runDetails !== details || exitRequested) return;
+    details.completionAccepted = verdict === 'done';
+    const reviewNeeded = verdict !== 'done' && (verdict !== 'gap' || details.completionChecks >= MAX_COMPLETION_CHECKS);
+    if (reviewNeeded) {
+      details.completionChecks = MAX_COMPLETION_CHECKS;
+      details.reviewRequested = true;
+    }
+    const content = verdict === 'gap' && !reviewNeeded
+      ? COMPLETION_GAP_INSTRUCTION
+      : reviewNeeded
+        ? COMPLETION_REVIEW_INSTRUCTION
+        : undefined;
+    return content;
   }
 
   function failAutomation(ctx: ExtensionContext, message: string): void {
@@ -251,8 +381,21 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       thinkingLevel: pi.getThinkingLevel(),
     };
     phaseContextAnchor = undefined;
+    entryGuidanceActive = false;
     exitRequested = false;
     const activeTools = pi.getActiveTools();
+    runDetails = {
+      request: lastPrompt,
+      tasks: [],
+      classified: classifier !== undefined && !isChildSession(ctx),
+      completionGate: classifier !== undefined && !isChildSession(ctx),
+      completionChecks: 0,
+      completionAccepted: false,
+      completionMessagePending: false,
+      reviewRequested: false,
+      reviewerCallIds: new Set(),
+      reviewerCompleted: false,
+    };
     state = {
       phase: 'planning',
       run: createRunState({
@@ -280,7 +423,18 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     updateStatus(ctx);
 
     let target: PlannerModel;
+    let targetThinking = config.targetThinking;
     if (targetModel.kind === 'tier') {
+      let tier = targetModel.tier;
+      const details = runDetails;
+      if (classifier !== undefined && details?.classified) {
+        const profile = await classifier.implementationProfile(details, ctx);
+        if (state.phase !== 'handoff' || plannerSnapshot !== snapshot) return;
+        if (profile) {
+          tier = strongerTier(tier, profile.tier);
+          targetThinking = strongerThinking(targetThinking, profile.thinking);
+        }
+      }
       const availableModels = ctx.scopedModels.length > 0
         ? ctx.scopedModels.map(({ model }) => model)
         : ctx.modelRegistry.getAvailable();
@@ -288,7 +442,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       const providerModels = availableModels.filter((model) => (
         model.provider.toLowerCase() === plannerProvider
       ));
-      const selected = selectModelForTier(targetModel.tier, providerModels, {
+      const selected = selectModelForTier(tier, providerModels, {
         preferredModel: snapshot.model,
       });
       target = selected?.model ?? snapshot.model;
@@ -313,7 +467,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       }
     }
     const targetKey = formatModelReference(target);
-    const targetThinkingLevel = effectiveThinkingLevel(target, config.targetThinking);
+    const targetThinkingLevel = effectiveThinkingLevel(target, targetThinking);
     const modelAlreadyActive = sameModel(ctx.model, target);
     const plannerThinkingLevel = pi.getThinkingLevel();
 
@@ -602,6 +756,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       if (!approval.approved) return prewalkToolError(approval.reason);
 
       startRun(ctx, false);
+      await classifyExplorationDepth(ctx);
       const reviewText = effectivePlanReview(config) === 'ask'
         ? ` submit the plan through ${EXIT_PLAN_MODE_TOOL} for user review,`
         : '';
@@ -651,6 +806,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
           'Complete the required TaskCreate and in-progress TaskUpdate calls before presenting the Prewalk plan.',
         );
       }
+      if (runDetails) runDetails.plan = params.plan;
       const reviewRun = beginPlanReview(ctx);
       if (!reviewRun) {
         return prewalkToolError('Prewalk could not enter plan review from the current state.');
@@ -745,8 +901,10 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       if (!command) return;
 
       if (!ctx.hasUI) {
+        lastPrompt = command;
         beginRun(ctx);
         if (state.phase !== 'planning') return;
+        await classifyExplorationDepth(ctx);
         pi.sendMessage(
           {
             customType: HEADLESS_TASK_MESSAGE_TYPE,
@@ -769,12 +927,29 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     updateStatus(ctx);
   });
 
-  pi.on('before_agent_start', (_event, ctx) => {
-    beginRun(ctx);
+  // Pi awaits before_agent_start handlers sequentially, so the entry decision
+  // starts at input to overlap with other extensions' pre-start classifier calls.
+  pi.on('input', (event, ctx) => {
+    if (event.streamingBehavior !== undefined || !entryClassificationEligible(ctx)) return;
+    startEntryClassification(event.text, ctx);
+  });
+
+  pi.on('before_agent_start', async (event, ctx) => {
+    lastPrompt = event.prompt;
+    if (state.phase === 'armed') {
+      if (startRun(ctx)) await classifyExplorationDepth(ctx);
+      return;
+    }
+    return applyEntryGuidance(event.prompt, ctx);
   });
 
   pi.on('context', (event) => {
-    const result = buildContextMessages(event.messages, state, phaseContextAnchor);
+    const result = buildContextMessages(event.messages, state, phaseContextAnchor, {
+      ...(runDetails?.depth === undefined ? {} : { explorationDepth: runDetails.depth }),
+      completionGate: runDetails?.completionGate === true,
+      entryActive: entryGuidanceActive,
+      completionMessagePending: runDetails?.completionMessagePending === true,
+    });
     phaseContextAnchor = result.anchor;
     return { messages: result.messages as typeof event.messages };
   });
@@ -785,7 +960,16 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   });
 
   pi.on('tool_call', (event) => {
+    if (state.phase === 'implementing') {
+      if (event.toolName === 'Agent' && isRecord(event.input) && event.input.subagent_type === 'reviewer') {
+        runDetails?.reviewerCallIds.add(event.toolCallId);
+      }
+      return;
+    }
     if (state.phase !== 'planning' || !state.run) return;
+    if (event.toolName === 'TaskCreate' && runDetails && runDetails.tasks.length < MAX_RECORDED_TASKS) {
+      runDetails.tasks.push(describeTask(event.input));
+    }
 
     state = {
       phase: 'planning',
@@ -798,7 +982,16 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
 
   pi.on('turn_end', async (event, ctx) => {
     if (state.phase === 'implementing') {
+      for (const result of event.toolResults) {
+        const details = runDetails;
+        if (details === undefined || !details.reviewerCallIds.delete(result.toolCallId) || result.isError) continue;
+        if (!isRecord(result.details) || typeof result.details.agentId !== 'string') continue;
+        details.reviewRequested = true;
+        details.reviewerAgentId = result.details.agentId;
+        details.reviewerCompleted = false;
+      }
       if (event.message.role === 'assistant') {
+        if (runDetails) runDetails.completionMessagePending = false;
         await reportImplementationSavings(pi.savings, implementationSavingsModels, event.message);
       }
       return;
@@ -830,6 +1023,36 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
         },
         { deliverAs: 'followUp' },
       );
+    }
+  });
+
+  pi.on('agent_before_settle', async (event, ctx) => {
+    if (state.phase !== 'implementing' || event.outcome !== 'completed' || event.continue || event.context.pendingMessages.length > 0) return;
+    const finalMessage = event.context.contextMessages.slice().reverse().find((message) => message.role === 'assistant');
+    if (finalMessage?.role !== 'assistant') return;
+    const content = await checkCompletion(finalMessage, ctx);
+    if (content === undefined) return;
+    if (runDetails) runDetails.completionMessagePending = true;
+    return {
+      entries: [...event.entries, { type: 'custom_message' as const, customType: COMPLETION_MESSAGE_TYPE, content, display: false }],
+      continue: true,
+    };
+  });
+
+  pi.on('message_end', (event) => {
+    const details = runDetails;
+    if (state.phase !== 'implementing' || details?.reviewerAgentId === undefined) return;
+    const message = event.message;
+    if (message.role !== 'custom' || message.customType !== 'felan-subagent-completion') return;
+    if (!isRecord(message.details)) return;
+    const notices = Array.isArray(message.details.notices)
+      ? message.details.notices
+      : [message.details.notice];
+    if (notices.some((notice) => isRecord(notice)
+      && notice.agentId === details.reviewerAgentId
+      && notice.type === 'reviewer'
+      && notice.status === 'completed')) {
+      details.reviewerCompleted = true;
     }
   });
 
@@ -883,7 +1106,23 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   });
 
   pi.on('agent_settled', async (_event, ctx) => {
+    if (state.phase === 'idle') {
+      entryGuidanceActive = false;
+      return;
+    }
     if (state.phase === 'implementing' || state.phase === 'handoff') {
+      const details = runDetails;
+      if (state.phase === 'implementing' && details && !exitRequested) {
+        const reviewPending = details.reviewRequested && !details.reviewerCompleted;
+        const verificationPending = details.completionGate
+          ? !details.completionAccepted && !details.reviewerCompleted
+          : !details.reviewerCompleted;
+        if (reviewPending || verificationPending) {
+          updateStatus(ctx);
+          notify(ctx, reviewPending ? 'Prewalk is waiting for the reviewer completion.' : 'Prewalk verification is pending; continue the run or use /prewalk off.', 'warning');
+          return;
+        }
+      }
       if (config.restorePlanner && plannerSnapshot) {
         const snapshot = plannerSnapshot;
         const restored = await restorePlanner(ctx);
@@ -904,6 +1143,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   });
 
   pi.on('session_shutdown', async (_event, ctx) => {
+    pendingEntry?.controller.abort('session-shutdown');
     const targetIsActive = state.phase === 'handoff'
       || state.phase === 'implementing'
       || state.phase === 'restoring';
@@ -1017,14 +1257,30 @@ export const createPrewalkExtension = (): FelanExtension => registerPrewalk;
 function buildContextMessages(
   messages: readonly unknown[],
   state: PrewalkState,
-  currentAnchor?: PhaseContextAnchor,
+  currentAnchor: PhaseContextAnchor | undefined,
+  guidance: GuidanceOptions,
 ): ContextBuildResult {
   const { phase } = state;
   const successfulControls = successfulControlCallIds(messages);
+  const entryIndex = phase === 'idle' && guidance.entryActive
+    ? messages.reduce((lastIndex, message, index) => (
+      isRecord(message) && message.role === 'custom' && message.customType === ENTRY_MESSAGE_TYPE ? index : lastIndex
+    ), -1)
+    : -1;
+  const completionIndex = phase === 'implementing' && guidance.completionMessagePending
+    ? messages.reduce((lastIndex, message, index) => (
+      isRecord(message) && message.role === 'custom' && message.customType === COMPLETION_MESSAGE_TYPE ? index : lastIndex
+    ), -1)
+    : -1;
   const filtered: unknown[] = [];
-  for (const message of structuredClone(messages)) {
+  for (const [index, message] of structuredClone(messages).entries()) {
+    if (isRecord(message) && message.role === 'custom' && message.customType === COMPLETION_MESSAGE_TYPE) {
+      if (index === completionIndex) filtered.push(message);
+      continue;
+    }
     if (isControlMessage(message)) {
       if (phase === 'planning' && isCurrentContinuationMessage(message)) filtered.push(message);
+      if (index === entryIndex) filtered.push(message);
       continue;
     }
     if (isSuccessfulControlResult(message, successfulControls)) continue;
@@ -1034,16 +1290,19 @@ function buildContextMessages(
   const guidedPhase = phase === 'planning' || phase === 'implementing'
     ? phase
     : undefined;
+  const depthGuidance = guidance.explorationDepth === undefined
+    ? ''
+    : `\n\n${EXPLORATION_DEPTH_GUIDANCE[guidance.explorationDepth]}`;
   const instruction = guidedPhase === 'planning'
     ? state.run?.reviewRequired && !state.run.reviewApproved
-      ? { customType: PLAN_REVIEW_MESSAGE_TYPE, content: PLAN_REVIEW_PLANNING_INSTRUCTION }
+      ? { customType: PLAN_REVIEW_MESSAGE_TYPE, content: `${PLAN_REVIEW_PLANNING_INSTRUCTION}${depthGuidance}` }
       : state.run?.reviewApproved
         ? { customType: PLAN_APPROVED_MESSAGE_TYPE, content: PLAN_APPROVED_INSTRUCTION }
-        : { customType: PLANNING_MESSAGE_TYPE, content: PLANNING_INSTRUCTION }
+        : { customType: PLANNING_MESSAGE_TYPE, content: `${PLANNING_INSTRUCTION}${depthGuidance}` }
     : guidedPhase === 'implementing'
       ? {
           customType: IMPLEMENTATION_MESSAGE_TYPE,
-          content: VERIFICATION_INSTRUCTION,
+          content: guidance.completionGate ? GATED_VERIFICATION_INSTRUCTION : VERIFICATION_INSTRUCTION,
         }
       : undefined;
 
@@ -1110,6 +1369,19 @@ function isTextOnlyCompletion(message: unknown): boolean {
     && message.stopReason === 'stop'
     && Array.isArray(message.content)
     && !message.content.some((content) => isRecord(content) && content.type === 'toolCall');
+}
+
+function assistantText(message: AssistantMessage): string {
+  return message.content
+    .flatMap((part) => part.type === 'text' ? [part.text] : [])
+    .join('\n');
+}
+
+function describeTask(input: unknown): string {
+  if (!isRecord(input)) return '';
+  const title = typeof input.title === 'string' ? input.title : '';
+  const criteria = typeof input.acceptance_criteria === 'string' ? ` — ${input.acceptance_criteria}` : '';
+  return `${title}${criteria}`.slice(0, 500);
 }
 
 function isControlMessage(message: unknown): boolean {

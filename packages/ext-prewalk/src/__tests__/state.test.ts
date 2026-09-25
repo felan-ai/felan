@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COMPLETION_REVIEW_INSTRUCTION,
   CONTINUATION_INSTRUCTION,
+  EXPLORATION_DEPTH_GUIDANCE,
+  GATED_VERIFICATION_INSTRUCTION,
   MAX_AUTOMATIC_CONTINUATIONS,
   PLAN_REVIEW_PLANNING_INSTRUCTION,
   PLANNING_INSTRUCTION,
@@ -228,8 +231,11 @@ describe('phase prompts', () => {
     expect(CONTINUATION_INSTRUCTION).not.toContain(PLANNING_INSTRUCTION);
   });
 
-  it('requires repository exploration and dependency-aware Tasks', () => {
-    expect(PLANNING_INSTRUCTION).toContain('Explore the repository thoroughly');
+  it('builds on existing findings and requires dependency-aware Tasks', () => {
+    expect(PLANNING_INSTRUCTION).toContain('Build on findings already in the conversation');
+    expect(PLANNING_INSTRUCTION).not.toContain('Explore the repository thoroughly');
+    expect(PLANNING_INSTRUCTION).not.toMatch(/subagent|explore`/);
+    expect(PLAN_REVIEW_PLANNING_INSTRUCTION).not.toMatch(/subagent|explore`/);
     expect(PLANNING_INSTRUCTION).toContain('affected files and symbols');
     expect(PLANNING_INSTRUCTION).toContain('Use TaskCreate');
     expect(PLANNING_INSTRUCTION).toContain('no more than 9');
@@ -245,6 +251,20 @@ describe('phase prompts', () => {
     expect(VERIFICATION_INSTRUCTION).toContain('limited to the requested scope');
     expect(VERIFICATION_INSTRUCTION).toContain('full relevant test module or suite');
     expect(VERIFICATION_INSTRUCTION).toContain('verified result');
+  });
+
+  it('mandates one reviewer only without a completion gate', () => {
+    expect(VERIFICATION_INSTRUCTION).toContain('launch one Agent with subagent_type reviewer at the high tier');
+    expect(GATED_VERIFICATION_INSTRUCTION).toContain('existing session task graph');
+    expect(GATED_VERIFICATION_INSTRUCTION).toContain('automatic completion check');
+    expect(GATED_VERIFICATION_INSTRUCTION).not.toContain('subagent_type reviewer');
+    expect(COMPLETION_REVIEW_INSTRUCTION).toContain('launch one Agent with subagent_type reviewer at the high tier');
+  });
+
+  it('describes each exploration depth distinctly', () => {
+    expect(EXPLORATION_DEPTH_GUIDANCE.sufficient).toContain('do not re-explore');
+    expect(EXPLORATION_DEPTH_GUIDANCE.targeted).toContain('do not launch discovery subagents');
+    expect(EXPLORATION_DEPTH_GUIDANCE.deep).toContain('do not read the delegated scopes yourself');
   });
 
   it('keeps review concise, non-mutating, and explicitly approved', () => {

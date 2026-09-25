@@ -15,6 +15,8 @@ agents:
   include:
     - felan-no-prewalk
     - felan-prewalk
+    - felan-prewalk-tier-static
+    - felan-prewalk-classified
 prompt: |
   Complete the authenticated checkout flow for this Storzy application.
 
@@ -45,6 +47,20 @@ assert:
     isError: false
     when:
       agent: felan-prewalk
+  - id: tier-baseline-entered
+    type: toolCalled
+    name: enter_prewalk
+    min: 1
+    isError: false
+    when:
+      agent: felan-prewalk-tier-static
+  - id: classified-entered
+    type: toolCalled
+    name: enter_prewalk
+    min: 1
+    isError: false
+    when:
+      agent: felan-prewalk-classified
   - id: prewalk-disabled
     type: toolCalled
     name: enter_prewalk

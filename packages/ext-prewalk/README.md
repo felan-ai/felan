@@ -56,15 +56,15 @@ In modes without interactive input, `exit_plan_mode` auto-approves an `ask` revi
 
 ## Lifecycle
 
-1. The planner explores the relevant repository surface and determines the complete implementation scope.
+1. The planner builds on findings already in the conversation, inspects what is still missing, and determines the complete implementation scope.
 2. When the task tools are available, the planner creates a concise graph of at most nine outcome-oriented tasks with `TaskCreate`, includes concrete validation in their acceptance criteria, links them with `blocked_by` dependencies that encode the execution order, and claims the first ready task with `TaskUpdate`.
 3. When plan review is active, the planner passes a concise numbered plan to `exit_plan_mode`. The tool displays it and either records approval, returns feedback for another planning iteration, or cancels Prewalk.
 4. When both task tools are active, successful `TaskCreate` and `TaskUpdate`
    calls claiming `in_progress` work open the task gate. The planner then
    performs one focused successful `edit`, `write`, or `apply_patch`.
 5. At that turn boundary, Felan resolves a same-provider model in the configured target tier, or an exact target model. If the planner provider has no target-tier model, it keeps the planner model and applies the configured thinking level.
-6. The target model completes the existing session task graph and runs the relevant verification.
-7. Once the agent run has fully settled, Felan restores the planner model and thinking level.
+6. The target model completes the existing session task graph and runs the relevant verification. Without a classifier it launches one high-tier `reviewer` child and ends with a pending-review status; the review completion notice resumes the session. With a classifier, the completion check below decides whether more work or a review is needed. Prewalk does not check whether `Agent` is active; a host without it must enable the tool to satisfy reviewer requests.
+7. Once the work is verified and any required reviewer has returned, Felan restores the planner model and thinking level after the agent run settles. An unchecked or aborted implementation, or an outstanding review, keeps Prewalk active until the work resumes or the user exits it.
 
 When both task tools are active, successful `TaskCreate` and `TaskUpdate` calls claiming `in_progress` work are required before a successful mutation qualifies the turn for handoff. Failed or unrelated task calls do not open that gate. If the task tools are unavailable, a successful explicit mutation qualifies directly. Failed mutation calls never qualify. If the planner stops after prose or partial tool progress, Prewalk can append a compact hidden continuation that directs the next tool action without repeating the full planning instructions. It sends at most one continuation per no-progress stretch and three per run.
 
@@ -75,6 +75,51 @@ This follows the [Prewalk design described by Stencil](https://stencil.so/blog/p
 The extension also registers concise static `prewalk` capability guidance
 during initialization. Phase-specific planning and implementation instructions
 remain transient, stable-position context messages.
+
+## Classifier guidance
+
+When the host runtime provides a classifier, root-session Prewalk runs make four
+choice decisions. Each uses bounded state: the request, up to 24 recent
+conversation items, up to 40 recent tool calls with short inputs and error
+flags, the submitted plan, and recorded `TaskCreate` titles and acceptance
+criteria.
+
+- **Entry:** Classification starts on Pi's `input` event for idle turns when
+  `enter_prewalk` and a mutation tool are active and `entryApproval` is not
+  `deny`. If the request should use Prewalk, a hidden conversation message
+  tells the model to call `enter_prewalk` before exploring. It does not change
+  the system prompt; the message is removed from subsequent model context.
+  The tool stays available and entry approval is unchanged.
+- **Exploration depth:** When a run starts from `enter_prewalk` or `/prewalk`,
+  the classifier judges how much the session already covers. The result appends
+  one sentence to the planning guidance: `sufficient` (plan from existing
+  findings), `targeted` (inspect specific missing files), or `deep` (delegate
+  discovery to `explore` children and wait for their summaries).
+- **Implementation profile:** For tier targets, the classifier may raise the
+  configured tier and thinking level based on the plan and tasks. It never
+  lowers them. Exact model targets are unchanged.
+- **Completion:** Implementation guidance asks for a concise summary with the
+  verification results instead of a mandatory review. Once the agent run is
+  ready to settle, the classifier judges its final assistant response and
+  verification evidence, not an intermediate text-only turn. `done` lets the run
+  settle. `gap` queues a hidden `prewalk-completion-check` follow-up that asks
+  the implementer to finish and verify missing work. `unsure` queues one
+  follow-up requesting a single high-tier reviewer and stops further checks.
+  A second `gap` also requests that review instead of silently accepting
+  unfinished work. At most two checks run per Prewalk run. A failed completion
+  check also requests review rather than treating an unverified implementation
+  as done. A `done` decision is accepted only when session activity shows a
+  successful verification after the last successful mutation; the classifier
+  receives bounded tool outcome metadata, not raw command output. Prewalk
+  waits for the requested reviewer completion before restoring the planner.
+  If the classifier requests more work, the hidden message continues the same
+  run before settlement and is removed from model context after the next
+  assistant turn.
+
+A missing classifier leaves model judgment and the configured defaults in
+place; a failed entry, depth, or profile decision likewise adds no guidance or
+escalation. Decisions are logged under the
+`prewalk-classifier` component without request text.
 
 ## Thinking levels
 

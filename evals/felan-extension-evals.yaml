@@ -203,6 +203,101 @@ agents:
         felanTui:
           memoryProcessing: false
 
+  felan-prewalk-tier-static:
+    adapter: felan
+    label: Felan · Prewalk tier target without classifier
+    comparisonId: felan-prewalk-tier-static
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: true
+          promptHistory: false
+          sessionCompaction: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+          prewalk:
+            targetModel: low
+            targetThinking: medium
+            restorePlanner: true
+            entryApproval: allow
+        felanTui:
+          memoryProcessing: false
+
+  felan-prewalk-classified:
+    adapter: felan
+    label: Felan · Prewalk on with classifier guidance
+    comparisonId: felan-prewalk-classified
+    provider: openai-codex
+    model: gpt-5.6-sol
+    thinking: max
+    timeoutMs: 1800000
+    envAllowlist: [TYPESAFE_API_KEY]
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      settings:
+        builtinExtensions:
+          askUser: false
+          backgroundBash: false
+          browser: false
+          codebaseMemory: false
+          codex: true
+          context: true
+          contextView: false
+          felanApi: false
+          insights: false
+          markitdown: false
+          mcp: false
+          memory: false
+          outputStyle: false
+          powerline: false
+          prewalk: true
+          promptHistory: false
+          sessionCompaction: false
+          rtkOptimizer: false
+          subagents: false
+          tasks: true
+          webAccess: false
+        extensionConfig:
+          codex:
+            fast: true
+          prewalk:
+            targetModel: low
+            targetThinking: medium
+            restorePlanner: true
+            entryApproval: allow
+        felanTui:
+          memoryProcessing: false
+
   felan-no-memory:
     adapter: felan
     label: Felan · memory off
@@ -1293,9 +1388,9 @@ benchmarks:
       cases: ratioOfReducedSums
 
   subagents-routing:
-    revision: 4
-    label: Grok adherence to explicit-request-only subagent routing
-    description: Verify classifier-guided type hints never authorize delegation for neutral tasks and support user-requested implementation and independent review.
+    revision: 5
+    label: Grok subagent routing with discovery classification
+    description: Verify correct read-only answers with and without discovery classification; one-shot runs do not route to asynchronous children.
     select:
       suites: [subagents-routing]
     arms:
@@ -1370,6 +1465,28 @@ benchmarks:
       - metric: quality.passRate
         min: 0.8
     objective:
+      - metric: cost.total
+        goal: minimize
+    aggregation:
+      trials: median
+      cases: ratioOfReducedSums
+
+  prewalk-classifier:
+    revision: 1
+    label: Prewalk classifier guidance
+    description: Compare Prewalk with classifier entry, exploration-depth, implementation-profile, and completion decisions against the same Prewalk configuration without a classifier. Quality gates first; then cost, prompt tokens, and step duration.
+    select:
+      cases: [prewalk-checkout]
+    arms:
+      baseline: felan-prewalk-tier-static
+      candidate: felan-prewalk-classified
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 0.8
+    objective:
+      - metric: quality.passRate
+        goal: maximize
       - metric: cost.total
         goal: minimize
     aggregation:

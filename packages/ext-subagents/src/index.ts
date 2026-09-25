@@ -18,6 +18,7 @@ import type {
   SubagentSpawnRequest,
   SubagentThinking,
 } from './contracts.js';
+import { classifySubagentModelTier } from './model-tier.js';
 import { compactRecords, renderError, renderRecord, renderRecords } from './presentation.js';
 import { formatSubagentDescriptor, registerClassifierRouting } from './routing.js';
 
@@ -29,17 +30,12 @@ const DEFAULT_LIST_RECORDS = 20;
 
 export function createSubagentsExtension(host: SubagentHost): FelanExtension {
   return (pi) => {
-    const staticInstructions = formatSubagentCapability(host.descriptors);
-    const classifierRouting = registerClassifierRouting(
-      pi,
-      host,
-      `## Enabled capabilities\n\n### subagents\n\n${staticInstructions}`,
-    );
+    registerClassifierRouting(pi, host);
     pi.registerCapability({
       id: 'subagents',
-      instructions: classifierRouting ? formatClassifierCapability() : staticInstructions,
+      instructions: formatSubagentCapability(host.descriptors),
     });
-    registerAgent(pi, host, classifierRouting);
+    registerAgent(pi, host);
     registerList(pi, host);
     registerResult(pi, host);
     registerSteer(pi, host);
@@ -48,9 +44,9 @@ export function createSubagentsExtension(host: SubagentHost): FelanExtension {
 }
 
 const genericSubagentGuidance = [
-  'Do not spawn child agents unless the user or applicable harness instructions explicitly request subagents, delegation, or parallel agent work. Multiple angles, thoroughness, or several parts do not count as a request. When requested, delegate only bounded, non-overlapping work; keep trivial work and the immediate critical-path task in the parent.',
+  'Delegate only when a child lowers cost, protects correctness, or saves time: broad discovery across many unknown files on a cheaper model that returns a compact summary instead of the parent reading them; an independent review or completion check in a fresh context; or independent tasks with disjoint file scopes that can run in parallel. Keep small, sequential, known-location, and critical-path work in the parent. Never re-read a scope you delegated, delegate trivial lookups, or launch several reviewers when one suffices. Explicit user, routing, or Prewalk guidance takes precedence.',
   'Use the xhigh model tier selectively for unusually complex architecture, design, planning, difficult debugging, or high-stakes code review; do not use it for routine delegation.',
-  'Definition model and thinking settings take precedence over per-call values; otherwise per-call values apply, then the parent settings.',
+  'Child model selection follows definition model, classifier-selected tier when available, per-call model, then parent model. Thinking follows definition, per-call, then parent settings. If classification fails, per-call model or parent model applies.',
   'Child agents always run asynchronously. Give each child a self-contained task with a disjoint scope, constraints, and expected output. Do not duplicate delegated work or enter a child-owned scope. Continue non-overlapping parent work while children run; if no independent parent work remains, yield and rely on completion notices instead of polling. Cancel a child before taking over its unfinished scope.',
   'Treat max_turns as a hard assistant-turn budget and leave enough room for the child to return a final result.',
   'Completion notices surface finished work automatically; rely on them during normal execution. Use list_subagents and get_subagent_result for an immediate status check when current state is needed, steer_subagent to refine active work, and cancel_subagent when work is no longer needed. Integrate and verify child results before reporting completion. When using session tasks, create or claim only work you own, keep at most one active task per session, and never force-recover another session\'s active claim unless it is stale and you are explicitly taking ownership.',
@@ -70,11 +66,7 @@ function formatSubagentCapability(descriptors: readonly SubagentDescriptor[]): s
   ].join(' ');
 }
 
-function formatClassifierCapability(): string {
-  return genericSubagentGuidance.join(' ');
-}
-
-function registerAgent(pi: FelanExtensionAPI, host: SubagentHost, classifierRouting: boolean): void {
+function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
   const typeSchema = descriptorSchema(host.descriptors);
   const parameters = Type.Object({
     prompt: Type.String({ minLength: 1, description: 'Task for the child agent' }),
@@ -100,9 +92,7 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost, classifierRout
   pi.registerTool({
     name: 'Agent',
     label: 'Agent',
-    description: classifierRouting
-      ? 'Start a tracked asynchronous child agent and return its queued record after admission. The current turn system prompt supplies the routing decision and selected type descriptions; the subagent_type schema lists every valid type ID.'
-      : 'Start a tracked asynchronous child agent and return its queued record after admission. The subagents system capability supplies type descriptions; the subagent_type schema lists every valid type ID.',
+    description: 'Start a tracked asynchronous child agent and return its queued record after admission. The subagents system capability supplies type descriptions; the subagent_type schema lists every valid type ID.',
     promptSnippet: 'Queue a tracked asynchronous child agent',
     parameters,
     async execute(_id, params, signal, _update, ctx) {
@@ -112,7 +102,18 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost, classifierRout
       const validation = validateSpawn(host, descriptor, params);
       if (validation) return toolError(validation);
       const parentThinking = normalizeThinking(pi.getThinkingLevel());
-      const model = normalizeModel(descriptor.model ?? params.model, ctx);
+      const classifiedTier = descriptor.model === undefined ? await classifySubagentModelTier(pi, descriptor, {
+        prompt: params.prompt,
+        description: params.description,
+        subagent_type: type,
+      }, signal) : undefined;
+      let model = normalizeModel(descriptor.model ?? classifiedTier ?? params.model, ctx);
+      if (!model.ok && classifiedTier !== undefined) {
+        pi.runtime?.logger?.child({ component: 'subagent-model' })?.warn({
+          event: 'decision', outcome: 'unavailable_tier', type, tier: classifiedTier,
+        }, 'subagent classifier tier unavailable; using the call or parent model');
+        model = normalizeModel(params.model, ctx);
+      }
       if (!model.ok) return toolError(model.error);
       const thinking = descriptor.thinking
         ?? params.thinking

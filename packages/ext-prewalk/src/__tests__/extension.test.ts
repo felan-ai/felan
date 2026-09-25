@@ -12,6 +12,15 @@ import {
   PLAN_APPROVED_MESSAGE_TYPE,
   PLAN_REVIEW_MESSAGE_TYPE,
   PLANNING_MESSAGE_TYPE,
+  COMPLETION_GAP_INSTRUCTION,
+  COMPLETION_MESSAGE_TYPE,
+  COMPLETION_REVIEW_INSTRUCTION,
+  ENTRY_GUIDANCE,
+  ENTRY_MESSAGE_TYPE,
+  EXPLORATION_DEPTH_GUIDANCE,
+  GATED_VERIFICATION_INSTRUCTION,
+  PLANNING_INSTRUCTION,
+  VERIFICATION_INSTRUCTION,
 } from '../prompts.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => any;
@@ -100,6 +109,9 @@ function createHarness(
     planFeedback?: string;
     prewalkOptions?: { entryApproval?: string; planReview?: string };
     savings?: { report(measurement: unknown): Promise<void> };
+    classifier?: { evaluate: (state: any, questions: any, signal?: AbortSignal) => Promise<any> };
+    childSession?: boolean;
+    sessionMessages?: any[];
   } = {},
 ) {
   const handlers = new Map<string, Handler[]>();
@@ -219,6 +231,13 @@ function createHarness(
     scopedModels: (options.scopedModels ?? []).map((model) => ({ model })),
     isIdle: vi.fn(() => idle),
     waitForIdle,
+    sessionManager: {
+      getSessionId: () => 'root-session',
+      getHeader: () => options.childSession ? { parentSession: '/parent.jsonl' } : { id: 'root' },
+      buildContextEntries: () => (options.sessionMessages ?? []).map((message, index) => ({
+        type: 'message', id: `message-${index}`, parentId: null, timestamp: '', message,
+      })),
+    },
   } as unknown as ExtensionContext;
 
   async function emit(type: string, event: any = { type }) {
@@ -259,6 +278,7 @@ function createHarness(
     sendUserMessage,
     registeredFlags,
     ...(options.savings === undefined ? {} : { savings: options.savings }),
+    ...(options.classifier === undefined ? {} : { runtime: { classifier: options.classifier } }),
   } as unknown as FelanExtensionAPI;
 
   prewalkExtension(pi);
@@ -401,6 +421,34 @@ async function handoffPlanningRun(harness: ReturnType<typeof createHarness>) {
 async function contextMessages(harness: ReturnType<typeof createHarness>, messages: any[]) {
   const result = await harness.emit('context', { type: 'context', messages });
   return result.messages as any[];
+}
+
+async function beforeSettle(
+  harness: ReturnType<typeof createHarness>,
+  messages: any[] = [assistant('stop', [{ type: 'text', text: 'Done' }])],
+  outcome: 'completed' | 'error' | 'aborted' = 'completed',
+  options: { continue?: boolean; pendingMessages?: any[] } = {},
+) {
+  return harness.emit('agent_before_settle', {
+    type: 'agent_before_settle', outcome, entries: [], continue: options.continue ?? false,
+    context: { contextMessages: messages, pendingMessages: options.pendingMessages ?? [] },
+  });
+}
+
+async function resolveReviewer(harness: ReturnType<typeof createHarness>) {
+  await harness.emit('tool_call', {
+    type: 'tool_call', toolCallId: 'completed-review', toolName: 'Agent', input: { subagent_type: 'reviewer' },
+  });
+  await harness.emit('turn_end', {
+    type: 'turn_end', turnIndex: 9, message: assistant('toolUse'),
+    toolResults: [{ ...toolResult('completed-review', 'Agent'), details: { agentId: 'review-child' } }],
+  });
+  await harness.emit('message_end', {
+    type: 'message_end',
+    message: { role: 'custom', customType: 'felan-subagent-completion', details: {
+      notice: { agentId: 'review-child', type: 'reviewer', status: 'completed' },
+    } },
+  });
 }
 
 describe('savings reporting', () => {
@@ -746,6 +794,7 @@ describe('model entry', () => {
       message: assistant('toolUse'),
       toolResults: [...taskGraphResults('duplicate-task'), toolResult('mutation', 'edit')],
     });
+    await resolveReviewer(harness);
     await harness.emit('agent_settled', { type: 'agent_settled' });
 
     expect(harness.setThinkingLevel).toHaveBeenLastCalledWith('max', { updateDefault: false });
@@ -1330,6 +1379,7 @@ describe('planning handoff and context', () => {
     expect(secondImplementation.slice(0, firstImplementation.length)).toEqual(firstImplementation);
     expect(secondImplementation.at(-1)).toEqual(targetTurn);
 
+    await resolveReviewer(harness);
     await harness.emit('agent_settled', { type: 'agent_settled' });
     expect(await contextMessages(harness, secondImplementation)).toEqual([
       userMessage,
@@ -1553,6 +1603,7 @@ describe('model handoff and restoration', () => {
     );
 
     harness.setThinking('low');
+    await resolveReviewer(harness);
     await harness.emit('agent_settled', { type: 'agent_settled' });
     expect(harness.thinkingLevel).toBe('max');
   });
@@ -1568,6 +1619,7 @@ describe('model handoff and restoration', () => {
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(IMPLEMENTATION_MESSAGE_TYPE);
 
     harness.setThinking('low');
+    await resolveReviewer(harness);
     await harness.emit('agent_settled', { type: 'agent_settled' });
 
     expect(harness.setModel).toHaveBeenNthCalledWith(2, plannerModel, { updateDefault: false });
@@ -1615,6 +1667,7 @@ describe('model handoff and restoration', () => {
   it('deduplicates an exit command while planner restoration is in progress', async () => {
     const harness = createHarness();
     await qualifyHandoff(harness);
+    await resolveReviewer(harness);
     let finishRestoration!: (restored: boolean) => void;
     const pendingRestoration = new Promise<boolean>((resolve) => {
       finishRestoration = resolve;
@@ -1663,6 +1716,7 @@ describe('model handoff and restoration', () => {
   it('clears after one failed restoration without retrying', async () => {
     const harness = createHarness();
     await qualifyHandoff(harness);
+    await resolveReviewer(harness);
     harness.setModel.mockResolvedValueOnce(false);
 
     await harness.emit('agent_settled', { type: 'agent_settled' });
@@ -2035,6 +2089,7 @@ describe('model failures and manual control', () => {
   it('reapplies a manual selection that races planner restoration', async () => {
     const harness = createHarness();
     await qualifyHandoff(harness);
+    await resolveReviewer(harness);
     let finishRestoration!: () => void;
     const pendingRestoration = new Promise<void>((resolve) => {
       finishRestoration = resolve;
@@ -2068,6 +2123,7 @@ describe('model failures and manual control', () => {
   it('reapplies a manual thinking selection that races planner restoration', async () => {
     const harness = createHarness();
     await qualifyHandoff(harness);
+    await resolveReviewer(harness);
     let finishRestoration!: () => void;
     const pendingRestoration = new Promise<void>((resolve) => {
       finishRestoration = resolve;
@@ -2163,5 +2219,453 @@ describe('model failures and manual control', () => {
     expect(harness.setModel).toHaveBeenCalledWith(nonReasoningTarget, { updateDefault: false });
     expect(harness.setThinkingLevel).toHaveBeenCalledWith('off', { updateDefault: false });
     expect(harness.thinkingLevel).toBe('off');
+  });
+});
+
+function scriptedClassifier(choices: Record<string, Record<string, string> | Error>) {
+  return {
+    evaluate: vi.fn(async (_state: any, questions: Record<string, unknown>) => {
+      const key = Object.keys(questions).join(',');
+      const scripted = choices[key];
+      if (scripted === undefined) throw new Error(`unexpected classifier questions: ${key}`);
+      if (scripted instanceof Error) throw scripted;
+      return {
+        answers: Object.fromEntries(Object.entries(scripted).map(([id, choice]) => [id, { type: 'choice', choice }])),
+      };
+    }),
+  };
+}
+
+const entryTools = ['read', 'TaskCreate', 'TaskUpdate', 'edit', 'write', 'enter_prewalk'];
+
+function beforeStartEvent(prompt: string) {
+  return {
+    type: 'before_agent_start',
+    prompt,
+    systemPrompt: 'system',
+    systemPromptOptions: { sections: {} as Record<string, string> },
+  };
+}
+
+describe('classifier guidance', () => {
+  it('recommends Prewalk entry from an input-started classification', async () => {
+    const classifier = scriptedClassifier({ route: { route: 'prewalk' } });
+    const harness = createHarness({ classifier, activeTools: entryTools });
+
+    await harness.emit('input', { type: 'input', text: 'Build the billing feature', source: 'interactive' });
+    const event = beforeStartEvent('Build the billing feature');
+    const result = await harness.emit('before_agent_start', event);
+
+    expect(classifier.evaluate).toHaveBeenCalledTimes(1);
+    expect(classifier.evaluate.mock.calls[0]![0]).toMatchObject({ request: 'Build the billing feature' });
+    expect(event.systemPromptOptions.sections).toEqual({});
+    expect(result).toEqual({ message: { customType: ENTRY_MESSAGE_TYPE, content: ENTRY_GUIDANCE, display: false } });
+    const entry = { role: 'custom', ...result.message, timestamp: 2 };
+    const messages = await contextMessages(harness, [
+      { role: 'custom', customType: ENTRY_MESSAGE_TYPE, content: ENTRY_GUIDANCE, display: false, timestamp: 0 },
+      { role: 'user', content: 'Build the billing feature', timestamp: 1 },
+      entry,
+    ]);
+    expect(messages.filter((message) => message.customType === ENTRY_MESSAGE_TYPE)).toEqual([entry]);
+    await harness.emit('agent_settled');
+    const later = await contextMessages(harness, messages);
+    expect(later.some((message) => message.customType === ENTRY_MESSAGE_TYPE)).toBe(false);
+    expect(harness.tools.has('enter_prewalk')).toBe(true);
+  });
+
+  it('adds no entry guidance for regular requests, denied entry, child sessions, or failures', async () => {
+    const regular = createHarness({ classifier: scriptedClassifier({ route: { route: 'regular' } }), activeTools: entryTools });
+    const regularEvent = beforeStartEvent('Fix a typo');
+    expect(await regular.emit('before_agent_start', regularEvent)).toBeUndefined();
+    expect(regularEvent.systemPromptOptions.sections).toEqual({});
+
+    const deniedClassifier = scriptedClassifier({ route: { route: 'prewalk' } });
+    const denied = createHarness({ classifier: deniedClassifier, prewalkOptions: { entryApproval: 'deny' }, activeTools: entryTools });
+    await denied.emit('before_agent_start', beforeStartEvent('Build it'));
+    expect(deniedClassifier.evaluate).not.toHaveBeenCalled();
+
+    const childClassifier = scriptedClassifier({ route: { route: 'prewalk' } });
+    const child = createHarness({ classifier: childClassifier, childSession: true, activeTools: entryTools });
+    await child.emit('before_agent_start', beforeStartEvent('Build it'));
+    expect(childClassifier.evaluate).not.toHaveBeenCalled();
+
+    const failing = createHarness({ classifier: scriptedClassifier({ route: new Error('down') }), activeTools: entryTools });
+    const failingEvent = beforeStartEvent('Build it');
+    await expect(failing.emit('before_agent_start', failingEvent)).resolves.toBeUndefined();
+    expect(failingEvent.systemPromptOptions.sections).toEqual({});
+  });
+
+  it('appends the classified exploration depth to planning guidance once', async () => {
+    const classifier = scriptedClassifier({ route: { route: 'prewalk' }, depth: { depth: 'sufficient' } });
+    const harness = createHarness({ classifier, prewalkOptions: { entryApproval: 'allow' }, activeTools: entryTools });
+    const entry = await harness.emit('before_agent_start', beforeStartEvent('Implement the feature'));
+
+    await enterPrewalk(harness);
+
+    const messages = await contextMessages(harness, [
+      { role: 'user', content: 'Implement the feature', timestamp: 1 },
+      { role: 'custom', ...entry.message, timestamp: 2 },
+    ]);
+    expect(messages.some((message) => message.customType === ENTRY_MESSAGE_TYPE)).toBe(false);
+    const planning = messages.filter((message) => message.customType === PLANNING_MESSAGE_TYPE);
+    expect(planning).toHaveLength(1);
+    expect(planning[0].content).toBe(`${PLANNING_INSTRUCTION}\n\n${EXPLORATION_DEPTH_GUIDANCE.sufficient}`);
+    expect(classifier.evaluate.mock.calls[1]![0]).toMatchObject({ request: 'Implement the feature', tasks: [] });
+  });
+
+  it('preserves classified deep exploration without checking the Agent tool', async () => {
+    const harness = createHarness({ classifier: scriptedClassifier({ depth: { depth: 'deep' } }) });
+
+    await startPlanning(harness);
+
+    const messages = await contextMessages(harness, [{ role: 'user', content: 'Implement the feature', timestamp: 1 }]);
+    const planning = messages.find((message) => message.customType === PLANNING_MESSAGE_TYPE);
+    expect(planning.content).toContain(EXPLORATION_DEPTH_GUIDANCE.deep);
+  });
+
+  it('keeps the base planning guidance and mandatory reviewer without a classifier', async () => {
+    const harness = createHarness({ activeTools: [...entryTools, 'Agent'] });
+    await qualifyHandoff(harness);
+
+    const messages = await contextMessages(harness, [{ role: 'user', content: 'Implement the feature', timestamp: 1 }]);
+    const implementation = messages.find((message) => message.customType === IMPLEMENTATION_MESSAGE_TYPE);
+    expect(implementation.content).toBe(VERIFICATION_INSTRUCTION);
+  });
+
+  it('does not change verification guidance or completion gating based on Agent availability', async () => {
+    for (const classifier of [undefined, scriptedClassifier({
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'low', thinking: 'medium' },
+    })]) {
+      const harness = createHarness({ ...(classifier === undefined ? {} : { classifier }) });
+      await qualifyHandoff(harness);
+
+      const messages = await contextMessages(harness, [{ role: 'user', content: 'Implement the feature', timestamp: 1 }]);
+      expect(messages.find((message) => message.customType === IMPLEMENTATION_MESSAGE_TYPE).content)
+        .toBe(classifier === undefined ? VERIFICATION_INSTRUCTION : GATED_VERIFICATION_INSTRUCTION);
+      const completion = await beforeSettle(harness);
+      if (classifier !== undefined) {
+        expect(completion).toEqual({
+          entries: [{ type: 'custom_message', customType: COMPLETION_MESSAGE_TYPE, content: COMPLETION_REVIEW_INSTRUCTION, display: false }],
+          continue: true,
+        });
+      }
+      await harness.emit('agent_settled');
+      expect(harness.currentModel).toBe(targetModel);
+    }
+  });
+
+  it('escalates the implementation tier and thinking from the approved plan', async () => {
+    const classifier = scriptedClassifier({
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'high', thinking: 'high' },
+    });
+    const harness = createHarness({ classifier, activeTools: [...entryTools, 'Agent'] });
+
+    await qualifyHandoff(harness);
+
+    const profileState = classifier.evaluate.mock.calls[1]![0];
+    expect(profileState).toMatchObject({ request: 'Implement the feature' });
+    expect(profileState.tasks[0]).toContain('Implement the feature');
+    expect(profileState).not.toHaveProperty('session');
+    expect(harness.currentModel).not.toBe(targetModel);
+    expect(harness.thinkingLevel).toBe('high');
+    const messages = await contextMessages(harness, [{ role: 'user', content: 'Implement the feature', timestamp: 1 }]);
+    expect(messages.find((message) => message.customType === IMPLEMENTATION_MESSAGE_TYPE).content)
+      .toBe(GATED_VERIFICATION_INSTRUCTION);
+  });
+
+  it('never lowers the configured implementation target and falls back on failure', async () => {
+    const lower = createHarness({
+      classifier: scriptedClassifier({ depth: { depth: 'targeted' }, 'tier,thinking': { tier: 'low', thinking: 'low' } }),
+    });
+    await qualifyHandoff(lower);
+    expect(lower.currentModel).toBe(targetModel);
+    expect(lower.thinkingLevel).toBe('medium');
+
+    const failing = createHarness({
+      classifier: scriptedClassifier({ depth: { depth: 'targeted' }, 'tier,thinking': new Error('down') }),
+    });
+    await qualifyHandoff(failing);
+    expect(failing.currentModel).toBe(targetModel);
+    expect(failing.thinkingLevel).toBe('medium');
+  });
+
+  it('continues implementation when the completion check finds a gap', async () => {
+    const harness = createHarness({
+      activeTools: [...entryTools, 'Agent'],
+      classifier: scriptedClassifier({
+        depth: { depth: 'targeted' },
+        'tier,thinking': { tier: 'low', thinking: 'medium' },
+        verdict: { verdict: 'gap' },
+      }),
+    });
+    await qualifyHandoff(harness);
+
+    await harness.emit('turn_end', { type: 'turn_end', turnIndex: 1, message: assistant('stop', [{ type: 'text', text: 'Done' }]), toolResults: [] });
+    expect(harness.sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ customType: COMPLETION_MESSAGE_TYPE }), expect.anything());
+    const result = await beforeSettle(harness);
+
+    expect(result).toEqual({
+      entries: [{ type: 'custom_message', customType: COMPLETION_MESSAGE_TYPE, content: COMPLETION_GAP_INSTRUCTION, display: false }],
+      continue: true,
+    });
+    const history = [
+      { role: 'user', content: 'Implement the feature', timestamp: 1 },
+      { role: 'custom', customType: COMPLETION_MESSAGE_TYPE, content: COMPLETION_GAP_INSTRUCTION, display: false, timestamp: 2 },
+    ];
+    expect((await contextMessages(harness, history)).some((message) => message.customType === COMPLETION_MESSAGE_TYPE)).toBe(true);
+    await harness.emit('turn_end', { type: 'turn_end', turnIndex: 2, message: assistant('stop'), toolResults: [] });
+    expect((await contextMessages(harness, history)).some((message) => message.customType === COMPLETION_MESSAGE_TYPE)).toBe(false);
+    await harness.command.handler('off', harness.ctx);
+    expect((await contextMessages(harness, history)).some((message) => message.customType === COMPLETION_MESSAGE_TYPE)).toBe(false);
+  });
+
+  it('checks only the final assistant response after the entire agent run', async () => {
+    const classifier = scriptedClassifier({
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'low', thinking: 'medium' },
+      verdict: { verdict: 'done' },
+    });
+    const harness = createHarness({ classifier });
+    await qualifyHandoff(harness);
+    const first = assistant('stop', [{ type: 'text', text: 'I will verify this next.' }]);
+    const final = assistant('stop', [{ type: 'text', text: 'Verified and done.' }]);
+    await harness.emit('turn_end', { type: 'turn_end', turnIndex: 1, message: first, toolResults: [] });
+    await harness.emit('turn_end', { type: 'turn_end', turnIndex: 2, message: assistant('toolUse'), toolResults: [] });
+    await harness.emit('turn_end', { type: 'turn_end', turnIndex: 3, message: final, toolResults: [] });
+    expect(classifier.evaluate).toHaveBeenCalledTimes(2);
+    expect(await beforeSettle(harness, [first], 'completed', { continue: true })).toBeUndefined();
+    expect(await beforeSettle(harness, [first], 'completed', { pendingMessages: [{ role: 'custom', content: 'Continue' }] })).toBeUndefined();
+    expect(await beforeSettle(harness, [first, assistant('toolUse')])).toBeUndefined();
+    expect(classifier.evaluate).toHaveBeenCalledTimes(2);
+    expect(await beforeSettle(harness, [first, assistant('toolUse'), final])).toEqual({
+      entries: [{ type: 'custom_message', customType: COMPLETION_MESSAGE_TYPE, content: COMPLETION_REVIEW_INSTRUCTION, display: false }],
+      continue: true,
+    });
+    expect(classifier.evaluate).toHaveBeenCalledTimes(3);
+    expect(classifier.evaluate.mock.calls[2]![0].final_message).toBe('Verified and done.');
+  });
+
+  it('requests one review when completion is uncertain and then stops checking', async () => {
+    const classifier = scriptedClassifier({
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'low', thinking: 'medium' },
+      verdict: { verdict: 'unsure' },
+    });
+    const harness = createHarness({ classifier, activeTools: [...entryTools, 'Agent'] });
+    await qualifyHandoff(harness);
+
+    const review = await beforeSettle(harness);
+    expect(review).toEqual({
+      entries: [{ type: 'custom_message', customType: COMPLETION_MESSAGE_TYPE, content: COMPLETION_REVIEW_INSTRUCTION, display: false }],
+      continue: true,
+    });
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(classifier.evaluate).toHaveBeenCalledTimes(3);
+  });
+
+  it('requests one independent review when the completion classifier fails', async () => {
+    const classifier = scriptedClassifier({
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'low', thinking: 'medium' },
+      verdict: new Error('classifier unavailable'),
+    });
+    const harness = createHarness({ classifier, activeTools: [...entryTools, 'Agent'] });
+    await qualifyHandoff(harness);
+
+    expect(await beforeSettle(harness)).toEqual({
+      entries: [{ type: 'custom_message', customType: COMPLETION_MESSAGE_TYPE, content: COMPLETION_REVIEW_INSTRUCTION, display: false }],
+      continue: true,
+    });
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(classifier.evaluate).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not continue after an exit request races the completion classifier', async () => {
+    let finishVerdict!: () => void;
+    const verdictReady = new Promise<void>((resolve) => { finishVerdict = resolve; });
+    const classifier = {
+      evaluate: vi.fn(async (_state: any, questions: Record<string, unknown>) => {
+        if ('verdict' in questions) await verdictReady;
+        const answer = 'verdict' in questions ? { verdict: 'gap' }
+          : 'depth' in questions ? { depth: 'targeted' }
+            : { tier: 'low', thinking: 'medium' };
+        return { answers: Object.fromEntries(Object.entries(answer).map(([id, choice]) => [id, { type: 'choice', choice }])) };
+      }),
+    };
+    const harness = createHarness({ classifier });
+    await qualifyHandoff(harness);
+    harness.setIdle(false);
+
+    const checking = beforeSettle(harness);
+    await vi.waitFor(() => expect(classifier.evaluate).toHaveBeenCalledTimes(3));
+    await harness.command.handler('off', harness.ctx);
+    finishVerdict();
+
+    expect(await checking).toBeUndefined();
+    expect(harness.sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ customType: COMPLETION_MESSAGE_TYPE }), expect.anything());
+    harness.setIdle(true);
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(plannerModel);
+  });
+
+  it('settles without follow-up when done, caps gap checks, and skips tool turns', async () => {
+    const doneHarness = createHarness({
+      activeTools: [...entryTools, 'Agent'],
+      classifier: scriptedClassifier({
+        depth: { depth: 'targeted' },
+        'tier,thinking': { tier: 'low', thinking: 'medium' },
+        verdict: { verdict: 'done' },
+      }),
+      sessionMessages: [
+        { role: 'assistant', content: [{ type: 'toolCall', id: 'edit-1', name: 'edit', arguments: { path: 'src/feature.ts' } }] },
+        { role: 'toolResult', toolCallId: 'edit-1', toolName: 'edit', isError: false, content: [{ type: 'text', text: 'ok' }] },
+        { role: 'assistant', content: [{ type: 'toolCall', id: 'test-1', name: 'bash', arguments: { command: 'pnpm test' } }] },
+        { role: 'toolResult', toolCallId: 'test-1', toolName: 'bash', isError: false, content: [{ type: 'text', text: 'Exit: 0' }] },
+      ],
+    });
+    await qualifyHandoff(doneHarness);
+    await doneHarness.emit('turn_end', { type: 'turn_end', turnIndex: 1, message: assistant('toolUse', [{ type: 'toolCall', id: 'x', name: 'bash', arguments: {} }]), toolResults: [] });
+    await doneHarness.emit('turn_end', { type: 'turn_end', turnIndex: 2, message: assistant('stop', [{ type: 'text', text: 'Done' }]), toolResults: [] });
+    expect(await beforeSettle(doneHarness)).toBeUndefined();
+
+    const unverified = createHarness({
+      activeTools: [...entryTools, 'Agent'],
+      classifier: scriptedClassifier({
+        depth: { depth: 'targeted' },
+        'tier,thinking': { tier: 'low', thinking: 'medium' },
+        verdict: { verdict: 'done' },
+      }),
+    });
+    await qualifyHandoff(unverified);
+    await unverified.emit('turn_end', { type: 'turn_end', turnIndex: 1, message: assistant('stop'), toolResults: [] });
+    expect(await beforeSettle(unverified)).toEqual({
+      entries: [{ type: 'custom_message', customType: COMPLETION_MESSAGE_TYPE, content: COMPLETION_REVIEW_INSTRUCTION, display: false }],
+      continue: true,
+    });
+
+    const failedVerification = createHarness({
+      activeTools: [...entryTools, 'Agent'],
+      classifier: scriptedClassifier({
+        depth: { depth: 'targeted' },
+        'tier,thinking': { tier: 'low', thinking: 'medium' },
+        verdict: { verdict: 'done' },
+      }),
+      sessionMessages: [
+        { role: 'assistant', content: [{ type: 'toolCall', id: 'edit-2', name: 'edit', arguments: { path: 'src/feature.ts' } }] },
+        { role: 'toolResult', toolCallId: 'edit-2', toolName: 'edit', isError: false, content: [{ type: 'text', text: 'ok' }] },
+        { role: 'assistant', content: [{ type: 'toolCall', id: 'test-2', name: 'bash', arguments: { command: 'pnpm test' } }] },
+        { role: 'toolResult', toolCallId: 'test-2', toolName: 'bash', isError: false, content: [{ type: 'text', text: 'Exit: 1' }] },
+      ],
+    });
+    await qualifyHandoff(failedVerification);
+    await failedVerification.emit('turn_end', { type: 'turn_end', turnIndex: 1, message: assistant('stop'), toolResults: [] });
+    expect(await beforeSettle(failedVerification)).toEqual({
+      entries: [{ type: 'custom_message', customType: COMPLETION_MESSAGE_TYPE, content: COMPLETION_REVIEW_INSTRUCTION, display: false }],
+      continue: true,
+    });
+
+    const gapClassifier = scriptedClassifier({
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'low', thinking: 'medium' },
+      verdict: { verdict: 'gap' },
+    });
+    const gapHarness = createHarness({ classifier: gapClassifier, activeTools: [...entryTools, 'Agent'] });
+    await qualifyHandoff(gapHarness);
+    expect((await beforeSettle(gapHarness)).entries[0].content).toBe(COMPLETION_GAP_INSTRUCTION);
+    expect((await beforeSettle(gapHarness)).entries[0].content).toBe(COMPLETION_REVIEW_INSTRUCTION);
+    expect(await beforeSettle(gapHarness)).toBeUndefined();
+    expect(gapClassifier.evaluate).toHaveBeenCalledTimes(4);
+  });
+
+  it('holds the implementation model through an asynchronous reviewer completion', async () => {
+    const harness = createHarness({
+      activeTools: [...entryTools, 'Agent'],
+      classifier: scriptedClassifier({
+        depth: { depth: 'targeted' },
+        'tier,thinking': { tier: 'low', thinking: 'medium' },
+        verdict: { verdict: 'unsure' },
+      }),
+    });
+    await qualifyHandoff(harness);
+    const implementationModel = harness.currentModel;
+
+    await harness.emit('turn_end', {
+      type: 'turn_end', turnIndex: 1, message: assistant('stop'), toolResults: [],
+    });
+    expect((await beforeSettle(harness)).entries[0].content).toBe(COMPLETION_REVIEW_INSTRUCTION);
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(implementationModel);
+
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'review-1', toolName: 'Agent', input: { subagent_type: 'reviewer' },
+    });
+    await harness.emit('turn_end', {
+      type: 'turn_end', turnIndex: 2, message: assistant('toolUse'),
+      toolResults: [{ ...toolResult('review-1', 'Agent'), details: { agentId: 'child-1' } }],
+    });
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(implementationModel);
+
+    await harness.emit('message_end', {
+      type: 'message_end',
+      message: {
+        role: 'custom', customType: 'felan-subagent-completion',
+        details: { notice: { agentId: 'child-1', type: 'reviewer', status: 'completed' } },
+      },
+    });
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(plannerModel);
+  });
+
+  it('keeps verification pending after an abnormal final turn', async () => {
+    const harness = createHarness({
+      activeTools: [...entryTools, 'Agent'],
+      classifier: scriptedClassifier({
+        depth: { depth: 'targeted' },
+        'tier,thinking': { tier: 'low', thinking: 'medium' },
+      }),
+    });
+    await qualifyHandoff(harness);
+    const implementationModel = harness.currentModel;
+
+    await harness.emit('turn_end', {
+      type: 'turn_end', turnIndex: 1,
+      message: { ...assistant('error'), stopReason: 'error' }, toolResults: [],
+    });
+    expect(await beforeSettle(harness, [assistant('error')], 'error')).toBeUndefined();
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(implementationModel);
+    const messages = await contextMessages(harness, [{ role: 'user', content: 'Resume verification', timestamp: 1 }]);
+    expect(messages.find((message) => message.customType === IMPLEMENTATION_MESSAGE_TYPE).content)
+      .toBe(GATED_VERIFICATION_INSTRUCTION);
+  });
+
+  it('waits for the mandatory reviewer when the classifier is unavailable', async () => {
+    const harness = createHarness({ activeTools: [...entryTools, 'Agent'] });
+    await qualifyHandoff(harness);
+    const implementationModel = harness.currentModel;
+
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(implementationModel);
+    await harness.emit('tool_call', {
+      type: 'tool_call', toolCallId: 'review-2', toolName: 'Agent', input: { subagent_type: 'reviewer' },
+    });
+    await harness.emit('turn_end', {
+      type: 'turn_end', turnIndex: 2, message: assistant('toolUse'),
+      toolResults: [{ ...toolResult('review-2', 'Agent'), details: { agentId: 'child-2' } }],
+    });
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(implementationModel);
+    await harness.emit('message_end', {
+      type: 'message_end',
+      message: {
+        role: 'custom', customType: 'felan-subagent-completion',
+        details: { notice: { agentId: 'child-2', type: 'reviewer', status: 'completed' } },
+      },
+    });
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(plannerModel);
   });
 });

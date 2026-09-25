@@ -175,27 +175,21 @@ not loaded. Use project instructions for repository-specific guidance instead.
 
 When `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available, the local host
 injects its optional provider-neutral classifier into root and child runtimes.
-The subagent extension then evaluates the full current prompt, active
-model-visible user/assistant conversation text, complete catalog definitions,
-and direct-child statuses before each user turn. Felan's persistent system
-prompt permits spawning only when the user or applicable harness instructions
-explicitly request subagents, delegation, or parallel agent work. Task
-complexity, thoroughness, multiple parts, or potential parallelism do not
-authorize delegation. The classifier scores each catalog definition and adds
-conditional type hints for scores at or above 0.65. A score is not authorization
-and does not require launching a child; it only informs type selection after an
-explicit request. The decision is persisted as a structured system message but
-not shown in the TUI. Direct system entries are excluded from later classifier
-conversation extraction, and the structured routing log retains the generated
-guidance.
+Only root sessions use it for routing. Before each user turn, the subagent
+extension asks whether the request needs broad discovery that the conversation
+does not already cover; at 0.65 or higher it adds guidance to delegate that
+discovery to `explore` children. It also picks the model tier for `Agent` calls
+whose definition does not pin a model. Prewalk uses the classifier to recommend
+entry, set planning exploration depth, raise the implementation tier or thinking
+level, and check completion. Every decision is optional: without a classifier,
+or when a call fails, the model follows the persistent guidance and the
+configured defaults apply.
 
 The classifier state may leave the local process for the configured TypeSafe or
-OpenRouter endpoint. It contains prompt/session text and agent metadata, but not
-credentials. When classification succeeds, generic delegation and lifecycle
-guidance remains persistently in the system prompt, while the full descriptive
-catalog is omitted; valid type IDs remain in the `Agent` tool schema. If no
-classifier is available or evaluation fails, the complete catalog is supplied
-without changing the explicit-request-only policy.
+OpenRouter endpoint. It contains prompt and bounded session text, tool names
+with short inputs, and agent metadata, but not credentials. Decisions are logged
+at debug level under the `subagent-routing`, `subagent-model`, and
+`prewalk-classifier` components without the request text.
 
 ## Project instructions and skills
 

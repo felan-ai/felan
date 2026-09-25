@@ -1,0 +1,25 @@
+id: subagents-classifier-broad-discovery
+suite: subagents-routing
+description: Compare correct, read-only discovery of two independent unknown flows with and without classifier guidance.
+timeoutMs: 900000
+workspace:
+  fixture: fixtures/subagent-routing/v1/source
+agents:
+  include:
+    - felan-grok-static
+    - felan-grok-classified
+prompt: >-
+  Without assuming which files contain the answers, trace how a JSON batch with
+  an urgent item reaches its queue and how an order retry policy becomes a
+  schedule. Report the exported entry-point function for each flow, the queue
+  name for urgent items, the batch size limit, the dispatch retry delay in
+  milliseconds, and the four delays produced by a retry policy with 4 attempts,
+  baseDelayMs 100, and maxDelayMs 250. Do not edit files.
+assert:
+  - { id: batch-entry, type: contains, value: receiveBatch }
+  - { id: retry-entry, type: contains, value: planRetries }
+  - { id: urgent-queue, type: contains, value: priority }
+  - { id: batch-limit, type: contains, value: "17" }
+  - { id: dispatch-delay, type: contains, value: "240" }
+  - { id: retry-delays, type: contains, value: "0, 100, 200, 300" }
+  - { id: no-files-edited, type: workspaceDiff, changedFiles: [] }

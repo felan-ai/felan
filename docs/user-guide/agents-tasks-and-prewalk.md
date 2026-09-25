@@ -42,16 +42,25 @@ a child before taking over its unfinished scope. When using the shared task
 graph, each session claims only its own ready task; force recovery is reserved
 for an explicitly stale claim.
 
-Felan's persistent system prompt requires an explicit request from the user or
-applicable harness instructions before spawning a child. Task complexity,
-thoroughness, multiple parts, or potential parallelism do not authorize
-delegation. When a classifier is configured (`TYPESAFE_API_KEY` or
-`OPENROUTER_API_KEY`), it scores catalog definitions and adds conditional type
-hints for scores at or above 0.65. These hints neither authorize a child nor
-require launching one; they only help select a type after delegation was
-explicitly requested. Without a classifier, the system prompt includes the
-complete catalog under the same explicit-request-only policy. Classifier
-failure also supplies the full catalog without changing that policy.
+Felan's persistent system prompt describes when a child pays off: broad
+discovery across many unknown files on a cheaper model that returns a compact
+summary instead of the parent reading them, an independent review or completion
+check in a fresh context, or independent tasks with disjoint file scopes that
+can run in parallel. Small, sequential, known-location, and critical-path work
+stays in the parent. The prompt also rules out re-reading a delegated scope,
+delegating trivial lookups, and launching several reviewers when one suffices.
+Without a classifier, the main model applies that guidance itself.
+
+When a classifier is configured (`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY`),
+root sessions ask it one question per user turn: does this request need broad
+discovery that the conversation does not already cover? At a probability of
+0.65 or higher, a routing section directs the model to delegate that discovery
+to `explore` children and wait for their summaries instead of reading the same
+scope. Small repositories and one-shot print/JSON modes skip discovery
+classification because it would add overhead or return before a child finished.
+Otherwise, and when classification fails, no section is added. The
+classifier also chooses the model tier for each `Agent` call whose definition
+does not pin a model. Child sessions never run routing classification.
 
 `max_turns` is a hard assistant-turn budget. The local host reserves the final
 budgeted turn for a tool-free synthesis response. If a child reaches the budget
@@ -77,14 +86,17 @@ parent delivery failures.
 
 ### Bundled agent types
 
-- `general` — implementation and investigation using the inherited model and
-  thinking unless the call selects otherwise.
+- `general` — implementation and investigation; a classifier may choose its
+  model tier, otherwise the call or parent supplies the model. Thinking comes
+  from the call or parent.
 - `explore` — low-tier, thinking-off, read-focused exploration.
-- `reviewer` — correctness and regression review using the inherited model and
-  thinking.
+- `reviewer` — correctness and regression review on the `high` model tier with
+  inherited thinking.
 
-Definition settings take precedence over tool-call model/thinking selections;
-unspecified values fall back to the call and then the parent.
+Definition model settings take precedence over classifier-selected tiers and
+tool-call model selections; otherwise a classifier tier is used when available,
+followed by the tool-call model and parent model. Definition thinking takes
+precedence over tool-call thinking, then the parent thinking.
 
 ### Custom definitions
 
@@ -168,6 +180,32 @@ The optional `xhigh` model tier is intended for unusually complex architecture,
 design, planning, difficult debugging, or high-stakes code review. It is
 available to subagents and explicit Prewalk configuration, but is not a routine
 default. This model tier is separate from the `xhigh` thinking level.
+
+With a classifier, Prewalk makes four small decisions in root sessions:
+
+- **Entry:** before each idle user turn, it judges whether the request needs
+  Prewalk and, if so, adds a hidden conversation message telling the model to
+  call `enter_prewalk` before exploring. The system prompt, tool, and
+  `entryApproval` policy are unchanged.
+- **Exploration depth:** when a run starts, it judges what the conversation and
+  prior tool activity already cover. Planning guidance then says to plan from
+  existing findings, inspect the specific missing files, or delegate broad
+  discovery to `explore` children.
+- **Implementation profile:** at handoff to a tier target, it may raise the
+  configured tier and thinking level for a harder plan. It never lowers them.
+- **Completion:** when the implementer's agent run is ready to settle, it
+  judges the final response and evidence. If the work is done, the run settles.
+  If there is a gap, a hidden follow-up asks the
+  implementer to finish and verify it. If the result is uncertain, the follow-up
+  asks for one high-tier reviewer. A `done` decision still requires successful
+  verification after the last edit. At most two checks run per Prewalk run; if
+  the second check still finds a gap, review is required. Prewalk retains the
+  implementation model while verification or the reviewer is outstanding.
+
+Without a classifier, the model decides entry and exploration itself, the
+configured target applies, and implementation guidance always requests one
+high-tier reviewer after verification. Prewalk does not check whether `Agent`
+is available; the host must enable it for reviewer requests.
 
 The `extensionConfig.prewalk.entryApproval` setting accepts `ask`, `allow`, or
 `deny`. `ask` is the default; cloud or other unattended hosts can choose

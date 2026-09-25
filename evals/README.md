@@ -13,16 +13,22 @@ classifier-only method arm that requires
 `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` and is not a savings claim until its
 quality gate passes.
 
-The `subagents-routing` benchmark compares static and classifier-guided
-subagent behavior under an explicit-request-only policy. Its cases check that
-neutral investigation remains in the parent and that an explicit request can
-route implementation and review work. The historical six-run Grok pilot
-predates this policy and does not validate it. The benchmark reuses the local
-Felan xAI subscription OAuth profile; the classified arm additionally requires
-`TYPESAFE_API_KEY`. The classified arm scores catalog types and adds conditional
-type hints to the current turn's system prompt. Run it serially with cleanup:
+The `subagents-routing` benchmark compares subagent routing with and without
+the discovery classifier in one-shot JSON mode. Its cases check that small or
+known-surface investigation stays in the parent and that two independent
+unknown flows are answered correctly. One-shot mode exits when the parent
+settles, so it cannot wait for asynchronous child completions. The explicit
+implementation/review case remains as a diagnostic under the `subagents` suite,
+but is not part of this quality benchmark until headless sessions can await
+completion notices. The historical
+six-run Grok pilot predates this policy and does not validate it. The benchmark
+reuses the local Felan xAI subscription OAuth profile; the classified arm
+additionally requires `TYPESAFE_API_KEY`. Discovery classification is skipped
+in one-shot runs to avoid returning a pending-child status as a final answer.
+Run it serially with cleanup:
 
 ```sh
+pnpm eval:build-source
 TYPESAFE_API_KEY=... pnpm eval:run --benchmark subagents-routing --concurrency 1 --cleanup
 ```
 
@@ -30,10 +36,36 @@ Each Grok arm opts into a `subagent-routing.jsonl` run artifact copied from the
 structured host log before cleanup. The corresponding `events-summary.json`
 also includes those records under `subagentRouting`, so a routing failure can be
 attributed to classifier selection, fallback, or model non-adherence without
-retaining OAuth files. The trace includes exact generated guidance and catalog
-descriptions; enable capture only for controlled eval catalogs without secrets.
+retaining OAuth files. The trace includes the decision probability, classifier
+metadata, and generated section name; enable capture only for controlled eval
+catalogs without secrets.
 
-Do not run this provider-backed benchmark without explicit authorization.
+The September 24 runs, including the initial headless-mode failure and the
+quality-passing rerun, are documented in
+[`results/2026-09-routing-guidance/README.md`](results/2026-09-routing-guidance/README.md).
+Neither run measured savings from actual delegation.
+
+The `prewalk-classifier` benchmark runs the verified `prewalk-checkout` case
+against two identical Prewalk configurations with a `low` tier target and
+subagents disabled (one-shot JSON runs cannot await asynchronous review).
+Only the candidate receives `TYPESAFE_API_KEY`, enabling entry,
+exploration-depth, implementation-profile, and completion decisions. In this
+one-shot lane `Agent` is disabled: a completion verdict requiring review cannot
+finish the run, so an end-to-end review comparison still needs a
+persistent-session benchmark.
+Both arms use the same model, thinking level, fixture commit, and verifier.
+Use three serial trials and require quality before comparing cost. The harness
+objectives cover quality and cost; also report prompt/output tokens and step
+duration from the run results. Token reduction alone is not a savings claim.
+After explicit authorization and credential setup, build the current source
+image and run:
+
+```sh
+pnpm eval:build-source
+TYPESAFE_API_KEY=... pnpm eval:run --benchmark prewalk-classifier --concurrency 1 --cleanup
+```
+
+Do not run these provider-backed benchmarks without explicit authorization.
 
 The `output-style-concise` benchmark also uses the unreleased structured
 `jevJudge` integration during local validation. It requires a host-side

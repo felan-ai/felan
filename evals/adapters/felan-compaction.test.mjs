@@ -124,11 +124,10 @@ try {
     component: 'subagent-routing',
     event: 'decision',
     outcome: 'classified',
-    guidanceVariant: 'selected',
-    selectedAgents: ['explore', 'reviewer'],
-    guidancePlacement: 'system-prompt-section',
+    threshold: 0.65,
+    probability: 0.8,
+    discovery: true,
     guidanceSection: 'subagent_routing',
-    guidance: '## Subagent routing decision',
   };
   await writeFile(join(routingLogDir, 'felan.jsonl'), [
     JSON.stringify({ component: 'other', event: 'ignored' }),

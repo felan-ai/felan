@@ -5,340 +5,269 @@ import {
   type LogRecord,
 } from '@felan-ai/agent-core';
 import { createSubagentsExtension, type SubagentHost } from '../src/index.js';
+import { DISCOVERY_GUIDANCE } from '../src/routing.js';
 
-describe('classifier-guided subagent routing', () => {
-  it('keeps the static capability when probability judgments are unavailable', () => {
-    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
-    const registerCapability = vi.fn();
-    const logs: LogRecord[] = [];
-    const pi = {
-      runtime: {
-        classifier: { evaluate: vi.fn() },
-        logger: recordingLogger(logs),
-      },
-      registerCapability,
-      registerTool: vi.fn(),
-      on: (event: string, handler: any) => { handlers.set(event, handler); },
-      getThinkingLevel: () => 'medium',
-    } as unknown as FelanExtensionAPI;
+const catalog = [
+  { id: 'explore', description: 'Read-only investigation', allowNesting: false },
+  { id: 'reviewer', description: 'Independent review', allowNesting: false },
+];
 
-    createSubagentsExtension(createHost([
-      { id: 'reader', description: 'Read-only investigation', allowNesting: false },
-    ]))(pi);
+describe('capability guidance', () => {
+  it('always lists the catalog and describes when delegation pays off', () => {
+    const pi = createPi(vi.fn(), new Map());
+    createSubagentsExtension(createHost(catalog))(pi);
 
-    expect(registerCapability).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'subagents',
-      instructions: expect.stringContaining('reader (Read-only investigation)'),
-    }));
-    expect(handlers.has('before_agent_start')).toBe(false);
-    expect(logs.find(({ msg }) => msg === 'subagent routing configured')).toMatchObject({
-      fields: {
-        component: 'subagent-routing',
-        event: 'configuration',
-        mode: 'static',
-        reason: 'probability-classifier-unavailable',
-        catalog: ['reader'],
-        guidance: expect.stringContaining('reader (Read-only investigation)'),
-      },
-    });
-  });
-
-  it('scores every catalog entry once and appends one authoritative system-prompt decision', async () => {
-    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
-    const logs: LogRecord[] = [];
-    const evaluateProbabilities = vi.fn(async (_state: any, questions: Record<string, unknown>) => ({
-      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, {
-        probability: id === 'agent:0' ? 0.9 : 0.7,
-      }])),
-      metadata: { provider: 'typesafe', model: 'jev-latest', elapsedMs: 12 },
-    }));
-    const host = createHost([
-      { id: 'reader', description: 'Read-only investigation', allowNesting: false },
-      { id: 'auditor', description: 'Independent review', allowNesting: false },
-    ]);
-    const pi = createPi(evaluateProbabilities, handlers, logs);
-    createSubagentsExtension(host)(pi);
-
-    const event = routingEvent({
-      prompt: 'Understand and then verify the parser',
-    });
-    event.systemPromptOptions.sections.other_extension = 'Preserve this section';
-    const result = await handlers.get('before_agent_start')!(event, context());
-
-    expect(evaluateProbabilities).toHaveBeenCalledTimes(1);
-    const questions = evaluateProbabilities.mock.calls[0]![1] as Record<string, unknown>;
-    expect(Object.keys(questions)).toEqual(['agent:0', 'agent:1']);
-    expect(JSON.stringify(questions['agent:0'])).toContain('available_agents[0]');
-    expect(JSON.stringify(questions['agent:1'])).toContain('This is only a type-selection hint, not authorization to spawn');
-    expect(evaluateProbabilities.mock.calls[0]![0]).toMatchObject({
-      available_agents: [
-        { id: 'reader', description: 'Read-only investigation' },
-        { id: 'auditor', description: 'Independent review' },
-      ],
-    });
-    expect(result).toBeUndefined();
-    expect(event.systemPromptOptions.sections).toEqual({
-      other_extension: 'Preserve this section',
-      subagent_routing: expect.any(String),
-    });
-    const selectedGuidance = event.systemPromptOptions.sections.subagent_routing;
-    expect(selectedGuidance).toContain('possible fits only if the user or applicable harness instructions explicitly request');
-    expect(selectedGuidance).toContain('This selection is not authorization and does not require launching any child');
-    expect(selectedGuidance).toContain('Task complexity, multiple parts, thoroughness, or possible parallelism do not authorize spawning');
-    expect(selectedGuidance).not.toContain('required agent types');
-    expect(selectedGuidance).toContain('reader (Read-only investigation)');
-    expect(selectedGuidance).toContain('auditor (Independent review)');
-    expect(pi.registerCapability).toHaveBeenCalledWith({
-      id: 'subagents',
-      instructions: expect.stringMatching(/Do not spawn child agents unless the user or applicable harness instructions explicitly request.*always run asynchronously/s),
-    });
-    const capabilityInstructions = (pi.registerCapability as ReturnType<typeof vi.fn>).mock.calls[0]![0].instructions;
-    expect(capabilityInstructions).not.toContain('Read-only investigation');
-    expect(capabilityInstructions).not.toContain('routing decision');
+    const instructions = (pi.registerCapability as ReturnType<typeof vi.fn>).mock.calls[0]![0].instructions as string;
+    expect(instructions).toContain('explore (Read-only investigation)');
+    expect(instructions).toContain('reviewer (Independent review)');
+    expect(instructions).toContain('cheaper model');
+    expect(instructions).toContain('fresh context');
+    expect(instructions).toContain('disjoint file scopes');
+    expect(instructions).toContain('Never re-read a scope you delegated');
+    expect(instructions).not.toContain('explicitly request');
     const agentTool = (pi.registerTool as ReturnType<typeof vi.fn>).mock.calls
       .map(([tool]) => tool)
       .find((tool) => tool.name === 'Agent');
-    expect(agentTool.description).toContain('current turn system prompt supplies the routing decision');
-    expect(agentTool.description).not.toContain('Read-only investigation');
-    const decisionLog = logs.find(({ msg }) => msg === 'subagent routing decision');
-    expect(decisionLog).toMatchObject({
+    expect(agentTool.description).toContain('subagents system capability supplies type descriptions');
+  });
+});
+
+describe('classifier discovery routing', () => {
+  it('registers no routing handlers without probability judgments', () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const logs: LogRecord[] = [];
+    const pi = {
+      runtime: { classifier: { evaluate: vi.fn() }, logger: recordingLogger(logs) },
+      registerCapability: vi.fn(),
+      registerTool: vi.fn(),
+      on: (event: string, handler: any) => { handlers.set(event, handler); },
+    } as unknown as FelanExtensionAPI;
+    createSubagentsExtension(createHost(catalog))(pi);
+
+    expect(handlers.has('before_agent_start')).toBe(false);
+    expect(handlers.has('input')).toBe(false);
+    expect(logs.find(({ msg }) => msg === 'subagent routing configured')?.fields).toMatchObject({
+      mode: 'static',
+      reason: 'probability-classifier-unavailable',
+    });
+  });
+
+  it('registers no routing handlers without an explore agent', () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const logs: LogRecord[] = [];
+    createSubagentsExtension(createHost([catalog[1]]))(createPi(vi.fn(), handlers, logs));
+
+    expect(handlers.has('before_agent_start')).toBe(false);
+    expect(logs.find(({ msg }) => msg === 'subagent routing configured')?.fields).toMatchObject({
+      reason: 'discovery-agent-unavailable',
+    });
+  });
+
+  it('adds the discovery section when broad discovery is likely', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const logs: LogRecord[] = [];
+    const evaluateProbabilities = vi.fn(async () => ({
+      answers: { broad_discovery: { probability: 0.8 } },
+      metadata: { provider: 'typesafe', model: 'jev-latest', elapsedMs: 12 },
+    }));
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers, logs));
+
+    const event = routingEvent({ prompt: 'Map how authentication flows through every service' });
+    event.systemPromptOptions.sections.other_extension = 'Preserve this section';
+    await handlers.get('before_agent_start')!(event, context([
+      { role: 'user', content: 'earlier question' },
+      { role: 'assistant', content: [{ type: 'text', text: 'earlier answer' }] },
+    ]));
+
+    expect(evaluateProbabilities).toHaveBeenCalledTimes(1);
+    const [state, questions] = evaluateProbabilities.mock.calls[0]! as unknown as [any, Record<string, { instructions: string }>];
+    expect(Object.keys(questions)).toEqual(['broad_discovery']);
+    expect(questions.broad_discovery!.instructions).toContain('not already covered by `conversation`');
+    expect(state).toMatchObject({
+      request: 'Map how authentication flows through every service',
+      conversation: [
+        { role: 'user', text: 'earlier question' },
+        { role: 'assistant', text: 'earlier answer' },
+      ],
+      discovery_agent: { id: 'explore' },
+      active_children: [{ id: 'child', type: 'explore', status: 'running', description: 'active' }],
+    });
+    expect(event.systemPromptOptions.sections).toEqual({
+      other_extension: 'Preserve this section',
+      subagent_routing: DISCOVERY_GUIDANCE,
+    });
+    expect(DISCOVERY_GUIDANCE).toContain('do not read the delegated scopes yourself');
+    const decision = logs.find(({ msg }) => msg === 'subagent routing decision');
+    expect(decision).toMatchObject({
       level: 'debug',
       fields: {
         component: 'subagent-routing',
-        event: 'decision',
-        sessionId: 'root-session',
-        attempt: 1,
         outcome: 'classified',
-        guidanceVariant: 'selected',
         threshold: 0.65,
-        scores: [
-          { agentType: 'reader', probability: 0.9 },
-          { agentType: 'auditor', probability: 0.7 },
-        ],
-        selectedAgents: ['reader', 'auditor'],
-        classifier: { provider: 'typesafe', model: 'jev-latest', elapsedMs: 12 },
-        guidancePlacement: 'system-prompt-section',
+        probability: 0.8,
+        discovery: true,
         guidanceSection: 'subagent_routing',
-        guidance: expect.stringContaining('- reader (Read-only investigation)'),
+        classifier: { provider: 'typesafe', model: 'jev-latest', elapsedMs: 12 },
       },
     });
-    expect(JSON.stringify(decisionLog)).not.toContain('Understand and then verify the parser');
+    expect(JSON.stringify(decision)).not.toContain('authentication');
   });
 
-  it('falls back to a full-catalog system-prompt decision when classification fails', async () => {
+  it('adds no section below the threshold', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const evaluateProbabilities = vi.fn(async () => ({ answers: { broad_discovery: { probability: 0.4 } } }));
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers));
+
+    const event = routingEvent({ prompt: 'Read target.txt' });
+    await handlers.get('before_agent_start')!(event, context());
+
+    expect(event.systemPromptOptions.sections).toEqual({});
+  });
+
+  it('bounds projected conversation while preserving recent findings', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const evaluateProbabilities = vi.fn(async () => ({ answers: { broad_discovery: { probability: 0.2 } } }));
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers));
+    const messages = Array.from({ length: 30 }, (_, index) => ({
+      role: 'user',
+      content: `finding-${index}-${'x'.repeat(1_300)}`,
+    }));
+
+    await handlers.get('before_agent_start')!(routingEvent({ prompt: 'Use prior findings' }), context(messages));
+
+    const [state] = evaluateProbabilities.mock.calls[0]! as unknown as [any];
+    expect(state.conversation).toHaveLength(24);
+    expect(state.conversation[0].text).toContain('finding-6-');
+    expect(state.conversation.at(-1).text).toContain('finding-29-');
+    expect(state.conversation.every(({ text }: { text: string }) => text.length <= 1_200)).toBe(true);
+  });
+
+  it('adds no section and warns when classification fails', async () => {
     const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
     const logs: LogRecord[] = [];
     const evaluateProbabilities = vi.fn(async () => { throw new Error('classifier unavailable'); });
-    const pi = createPi(evaluateProbabilities, handlers, logs);
-    createSubagentsExtension(createHost([
-      { id: 'custom-investigator', description: 'Investigate', allowNesting: false },
-    ]))(pi);
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers, logs));
 
     const event = routingEvent({ prompt: 'Inspect this' });
     await expect(handlers.get('before_agent_start')!(event, context())).resolves.toBeUndefined();
-    expect(event.systemPromptOptions.sections).toEqual({
-      subagent_routing: expect.stringMatching(/^## Subagent routing decision.*could not decide.*custom-investigator \(Investigate\).*`Agent` tool/s),
-    });
-    expect(logs.find(({ msg }) => msg === 'subagent routing fallback')).toMatchObject({
+
+    expect(event.systemPromptOptions.sections).toEqual({});
+    expect(logs.find(({ msg }) => msg === 'subagent routing failed')).toMatchObject({
       level: 'warn',
-      fields: {
-        component: 'subagent-routing',
-        event: 'decision',
-        outcome: 'fallback',
-        guidanceVariant: 'catalog-fallback',
-        error: { name: 'Error', message: 'classifier unavailable' },
-        guidancePlacement: 'system-prompt-section',
-        guidanceSection: 'subagent_routing',
-        guidance: expect.stringContaining('custom-investigator (Investigate)'),
-      },
+      fields: { outcome: 'failed', error: { message: 'classifier unavailable' } },
     });
   });
 
-  it('falls back when the classifier omits a catalog judgment', async () => {
-    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
-    const evaluateProbabilities = vi.fn(async () => ({
-      answers: {},
-    }));
-    const pi = createPi(evaluateProbabilities, handlers);
-    createSubagentsExtension(createHost([
-      { id: 'custom-investigator', description: 'Investigate', allowNesting: false },
-    ]))(pi);
-
-    const event = routingEvent({ prompt: 'Inspect this' });
-    const result = await handlers.get('before_agent_start')!(event, context());
-
-    expect(result).toBeUndefined();
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('custom-investigator (Investigate)');
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('could not decide which types fit');
-  });
-
-  it('uses the full active conversation, request, catalog descriptions, and child state', async () => {
-    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
-    const evaluateProbabilities = vi.fn(async (_state: any, questions: Record<string, unknown>) => ({
-      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, {
-        probability: id === 'agent:0' ? 0.9 : 0,
-      }])),
-    }));
-    const description = `Read-only investigation ${'detail '.repeat(100)}`.trim();
-    const request = `Current request ${'requirement '.repeat(500)}`.trim();
-    const earlier = `Earlier requirement ${'context '.repeat(100)}`.trim();
-    const host = createHost([{ id: 'reader', description, allowNesting: false }]);
-    const pi = createPi(evaluateProbabilities, handlers);
-    createSubagentsExtension(host)(pi);
-    const messages = [{ role: 'user', content: [{ type: 'text', text: earlier }] }];
-
-    const event = routingEvent({
-      prompt: request,
-      images: [{ type: 'image' }, { type: 'image' }],
-    });
-    const result = await handlers.get('before_agent_start')!(event, context(messages, true, [{
-      type: 'custom_message',
-      id: 'routing-message',
-      parentId: 'message-0',
-      timestamp: '',
-      customType: 'felan-subagent-routing',
-      content: 'stale routing guidance',
-      display: true,
-    }, {
-      type: 'custom_message',
-      id: 'other-extension-message',
-      parentId: 'routing-message',
-      timestamp: '',
-      customType: 'other-extension',
-      content: 'private extension-generated context',
-      display: true,
-    }]));
-
-    expect(evaluateProbabilities.mock.calls[0]![0]).toMatchObject({
-      request,
-      image_count: 2,
-      session_kind: 'child',
-      conversation: [{ role: 'user', text: earlier }],
-      available_agents: [{ id: 'reader', description }],
-      active_children: [{ type: 'reader', status: 'running' }],
-    });
-    expect(result).toBeUndefined();
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain(`reader (${description})`);
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('This selection is not authorization');
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('only if the user or applicable harness instructions explicitly request');
-  });
-
-  it('routes from projected context rather than superseded raw messages', async () => {
-    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
-    const evaluateProbabilities = vi.fn(async (_state: any, questions: Record<string, unknown>) => ({
-      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { probability: 0 }])),
-    }));
-    const host = createHost([{ id: 'reader', description: 'Read-only investigation', allowNesting: false }]);
-    const pi = createPi(evaluateProbabilities, handlers);
-    createSubagentsExtension(host)(pi);
-    const raw = { role: 'user', content: [{ type: 'text', text: 'superseded raw content' }] };
-    const projected = { role: 'user', content: [{ type: 'text', text: 'projected content' }] };
-    const ctx = context([raw]);
-    ctx.sessionManager.buildSessionProjection = () => ({
-      entries: [{ sourceEntry: ctx.sessionManager.buildContextEntries()[0], messages: [projected] }],
-      messages: [projected],
-      thinkingLevel: 'off',
-      model: null,
-    });
-
-    await handlers.get('before_agent_start')!(routingEvent({ prompt: 'request' }), ctx);
-
-    expect(evaluateProbabilities.mock.calls[0]![0].conversation).toEqual([
-      { role: 'user', text: 'projected content' },
-    ]);
-  });
-
-  it('scores catalogs larger than one classifier request instead of dropping routing', async () => {
-    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
-    const descriptors = Array.from({ length: 40 }, (_, index) => ({
-      id: `specialist-${index}`,
-      description: `Specialist ${index}`,
-      allowNesting: false,
-    }));
-    const evaluateProbabilities = vi.fn(async (_state: any, questions: Record<string, unknown>) => ({
-      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { probability: 0 }])),
-    }));
-    const pi = createPi(evaluateProbabilities, handlers);
-    createSubagentsExtension(createHost(descriptors))(pi);
-
-    const event = routingEvent({ prompt: 'Coordinate specialists' });
-    const result = await handlers.get('before_agent_start')!(event, context());
-
-    expect(Object.keys(evaluateProbabilities.mock.calls[0]![1])).toHaveLength(40);
-    expect(result).toBeUndefined();
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('No child type was selected');
-    expect(event.systemPromptOptions.sections.subagent_routing).toContain('unless the user or applicable harness instructions explicitly request');
-    expect(event.systemPromptOptions.sections.subagent_routing).not.toContain('Specialist 0');
-  });
-
-  it('orders equal-probability recommendations by code point', async () => {
-    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
-    const evaluateProbabilities = vi.fn(async (_state: any, questions: Record<string, unknown>) => ({
-      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { probability: 0.8 }])),
-    }));
-    const pi = createPi(evaluateProbabilities, handlers);
-    createSubagentsExtension(createHost([
-      { id: 'zeta', description: 'Zeta specialist', allowNesting: false },
-      { id: 'alpha', description: 'Alpha specialist', allowNesting: false },
-    ]))(pi);
-
-    const event = routingEvent({ prompt: 'Use both specialists' });
-    const result = await handlers.get('before_agent_start')!(
-      event,
-      context(),
-    );
-
-    expect(result).toBeUndefined();
-    const guidance = event.systemPromptOptions.sections.subagent_routing;
-    expect(guidance).toBeDefined();
-    expect(guidance!.indexOf('- alpha (Alpha specialist)')).toBeLessThan(
-      guidance!.indexOf('- zeta (Zeta specialist)'),
-    );
-  });
-
-  it('treats classifier selections as conditional hints for explicitly requested delegation', async () => {
-    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
-    const evaluateProbabilities = vi.fn(async (_state: any, questions: Record<string, unknown>) => ({
-      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { probability: 0.9 }])),
-    }));
-    const pi = createPi(evaluateProbabilities, handlers);
-    createSubagentsExtension(createHost([
-      { id: 'reader', description: 'Read-only investigation', allowNesting: false },
-    ]))(pi);
-
-    const event = routingEvent({ prompt: 'Explore this complex multi-file repository thoroughly' });
-    await handlers.get('before_agent_start')!(event, context());
-
-    const guidance = event.systemPromptOptions.sections.subagent_routing;
-    expect(guidance).toContain('This selection is not authorization');
-    expect(guidance).toContain('Otherwise, keep the work in the parent');
-    expect(guidance).not.toContain('required agent types');
-  });
-
-  it('cancels an in-flight classification when the session shuts down', async () => {
+  it('rejects out-of-range answers as failures', async () => {
     const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
     const logs: LogRecord[] = [];
-    let aborted = false;
-    const evaluateProbabilities = vi.fn(async (_state: any, _questions: any, signal: AbortSignal) => {
-      await new Promise<void>((resolve) => signal.addEventListener('abort', () => {
-        aborted = true;
-        resolve();
-      }, { once: true }));
-      return { answers: {} };
-    });
+    const evaluateProbabilities = vi.fn(async () => ({ answers: { broad_discovery: { probability: 2 } } }));
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers, logs));
+
+    const event = routingEvent({ prompt: 'Inspect this' });
+    await handlers.get('before_agent_start')!(event, context());
+
+    expect(event.systemPromptOptions.sections).toEqual({});
+    expect(logs.some(({ msg }) => msg === 'subagent routing failed')).toBe(true);
+  });
+
+  it('does not classify child sessions', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const evaluateProbabilities = vi.fn();
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers));
+
+    handlers.get('input')!({ type: 'input', text: 'Task', source: 'interactive' }, context([], true));
+    const event = routingEvent({ prompt: 'Task' });
+    await handlers.get('before_agent_start')!(event, context([], true));
+
+    expect(evaluateProbabilities).not.toHaveBeenCalled();
+    expect(event.systemPromptOptions.sections).toEqual({});
+  });
+
+  it('does not recommend asynchronous discovery in one-shot mode', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const evaluateProbabilities = vi.fn();
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers));
+    const ctx = { ...context(), mode: 'json' };
+
+    handlers.get('input')!({ type: 'input', text: 'Survey', source: 'interactive' }, ctx);
+    const event = routingEvent({ prompt: 'Survey' });
+    await handlers.get('before_agent_start')!(event, ctx);
+
+    expect(evaluateProbabilities).not.toHaveBeenCalled();
+    expect(event.systemPromptOptions.sections).toEqual({});
+  });
+
+  it('skips discovery in a small repository before calling the classifier', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const logs: LogRecord[] = [];
+    const evaluateProbabilities = vi.fn();
     const pi = createPi(evaluateProbabilities, handlers, logs);
-    createSubagentsExtension(createHost([{ id: 'reader', description: 'Read-only investigation', allowNesting: false }]))(pi);
-    const pending = handlers.get('before_agent_start')!(routingEvent({ prompt: 'Inspect' }), context());
-    await Promise.resolve();
-    handlers.get('session_shutdown')!({}, context());
-    await pending;
-    expect(aborted).toBe(true);
-    expect(logs.find(({ msg }) => msg === 'subagent routing cancelled')).toMatchObject({
-      fields: {
-        outcome: 'cancelled',
-        reason: 'session-shutdown',
-      },
+    const listFiles = vi.fn(async () => ['package.json', 'src/main.ts', 'test/main.test.ts']);
+    (pi.runtime as any).listFiles = listFiles;
+    createSubagentsExtension(createHost(catalog))(pi);
+
+    const event = routingEvent({ prompt: 'Trace the entire repository' });
+    await handlers.get('before_agent_start')!(event, context());
+
+    expect(listFiles).toHaveBeenCalledWith('.', expect.objectContaining({ recursive: true, limit: 20 }));
+    expect(evaluateProbabilities).not.toHaveBeenCalled();
+    expect(event.systemPromptOptions.sections).toEqual({});
+    expect(logs.find(({ msg }) => msg === 'subagent routing decision')?.fields).toMatchObject({
+      outcome: 'skipped', reason: 'small-repository', discovery: false,
     });
+  });
+
+  it('starts classification at input and reuses it for the matching prompt', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const evaluateProbabilities = vi.fn(async () => ({ answers: { broad_discovery: { probability: 0.9 } } }));
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers));
+
+    handlers.get('input')!({ type: 'input', text: 'Survey the repository', source: 'interactive' }, context());
+    await Promise.resolve();
+    expect(evaluateProbabilities).toHaveBeenCalledTimes(1);
+
+    const event = routingEvent({ prompt: 'Survey the repository' });
+    await handlers.get('before_agent_start')!(event, context());
+
+    expect(evaluateProbabilities).toHaveBeenCalledTimes(1);
+    expect(event.systemPromptOptions.sections.subagent_routing).toBe(DISCOVERY_GUIDANCE);
+  });
+
+  it('reclassifies when the started prompt was transformed and ignores steering input', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    const evaluateProbabilities = vi.fn(async (state: any, _questions: unknown, signal: AbortSignal) => {
+      expect(signal.aborted).toBe(false);
+      return { answers: { broad_discovery: { probability: state.request === 'expanded' ? 0.9 : 0.1 } } };
+    });
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers));
+
+    handlers.get('input')!({ type: 'input', text: 'steer', source: 'interactive', streamingBehavior: 'steer' }, context());
+    await Promise.resolve();
+    expect(evaluateProbabilities).not.toHaveBeenCalled();
+
+    handlers.get('input')!({ type: 'input', text: '/skill:x', source: 'interactive' }, context());
+    const event = routingEvent({ prompt: 'expanded' });
+    await handlers.get('before_agent_start')!(event, context());
+
+    expect(evaluateProbabilities).toHaveBeenCalledTimes(2);
+    expect(event.systemPromptOptions.sections.subagent_routing).toBe(DISCOVERY_GUIDANCE);
+  });
+
+  it('aborts pending classification on shutdown', async () => {
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<any> | any>();
+    let observed: AbortSignal | undefined;
+    const evaluateProbabilities = vi.fn(async (_state: unknown, _questions: unknown, signal: AbortSignal) => {
+      observed = signal;
+      return new Promise<never>(() => {});
+    });
+    createSubagentsExtension(createHost(catalog))(createPi(evaluateProbabilities, handlers));
+
+    handlers.get('input')!({ type: 'input', text: 'Survey', source: 'interactive' }, context());
+    await vi.waitFor(() => expect(observed).toBeDefined());
+    handlers.get('session_shutdown')!({}, context());
+
+    expect(observed!.aborted).toBe(true);
   });
 });
 
@@ -380,28 +309,25 @@ function createHost(descriptors: any[]): SubagentHost {
     policy: { maxPromptBytes: 10_000, maxDescriptionBytes: 1_000, maxSteerBytes: 1_000 },
     attachParent: vi.fn(() => () => {}),
     spawn: vi.fn(),
-    list: vi.fn(async () => ({ ok: true, value: [{ agentId: 'child', type: 'reader', status: 'running', description: 'active' }] })),
+    list: vi.fn(async () => ({ ok: true, value: [{ agentId: 'child', type: 'explore', status: 'running', description: 'active' }] })),
     getResult: vi.fn(),
     steer: vi.fn(),
     cancel: vi.fn(),
   } as unknown as SubagentHost;
 }
 
-function context(messages: unknown[] = [], child = false, extraEntries: unknown[] = []): any {
+function context(messages: unknown[] = [], child = false): any {
   return {
     sessionManager: {
       getSessionId: () => 'root-session',
       getHeader: () => child ? { parentSession: '/parent/session.jsonl' } : { id: 'root' },
-      buildContextEntries: () => [
-        ...messages.map((message, index) => ({
-          type: 'message',
-          id: `message-${index}`,
-          parentId: index === 0 ? null : `message-${index - 1}`,
-          timestamp: '',
-          message,
-        })),
-        ...extraEntries,
-      ],
+      buildContextEntries: () => messages.map((message, index) => ({
+        type: 'message',
+        id: `message-${index}`,
+        parentId: index === 0 ? null : `message-${index - 1}`,
+        timestamp: '',
+        message,
+      })),
     },
   };
 }

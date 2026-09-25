@@ -1,9 +1,10 @@
 import type {
   ExtensionContext,
   FelanExtensionAPI,
+  LogRecord,
   ToolDefinition,
 } from '@felan-ai/agent-core';
-import { FELAN_THINKING_LEVELS } from '@felan-ai/agent-core';
+import { createLogger, FELAN_THINKING_LEVELS } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createSubagentsExtension,
@@ -326,6 +327,160 @@ describe('@felan-ai/ext-subagents', () => {
     expect(harness.host.spawn).not.toHaveBeenCalled();
   });
 
+  it('uses the classifier tier when the descriptor has no model', async () => {
+    const anthropicOpus = { provider: 'anthropic', id: 'claude-opus-4-6' } as any;
+    const evaluate = vi.fn(async () => ({
+      answers: { model_tier: { choice: 'high' } },
+      metadata: { provider: 'typesafe', model: 'jev-latest' },
+    }));
+    const harness = createHarness({
+      descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
+      parentModel: { provider: 'openai-codex', id: 'gpt-5.6-sol' },
+      models: [anthropicOpus],
+      runtime: { classifier: { evaluate } },
+    });
+
+    const result = await execute(harness, 'Agent', {
+      prompt: 'Investigate a hard concurrency bug',
+      description: 'debug',
+      subagent_type: 'general',
+    });
+
+    expect(evaluate).toHaveBeenCalledTimes(1);
+    const [state, questions] = evaluate.mock.calls[0]! as unknown as [any, Record<string, { criteria: Record<string, string> }>];
+    expect(state).toMatchObject({
+      prompt: 'Investigate a hard concurrency bug',
+      description: 'debug',
+      subagent_type: 'general',
+      agent_description: 'General purpose',
+    });
+    expect(Object.keys(questions.model_tier!.criteria)).toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(harness.host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'anthropic/claude-opus-4-6' }),
+      undefined,
+    );
+    expect(resultText(result)).toContain('status: running');
+  });
+
+  it('does not call the classifier when the descriptor has a model', async () => {
+    const anthropicOpus = { provider: 'anthropic', id: 'claude-opus-4-6' } as any;
+    const evaluate = vi.fn();
+    const harness = createHarness({
+      descriptor: {
+        id: 'reviewer',
+        description: 'Review changes',
+        model: 'high',
+        allowNesting: false,
+      },
+      models: [anthropicOpus],
+      runtime: { classifier: { evaluate } },
+    });
+
+    await execute(harness, 'Agent', {
+      prompt: 'Review',
+      description: 'review',
+      subagent_type: 'reviewer',
+    });
+
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(harness.host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'anthropic/claude-opus-4-6' }),
+      undefined,
+    );
+  });
+
+  it('lets the classifier tier override params.model', async () => {
+    const anthropicOpus = { provider: 'anthropic', id: 'claude-opus-4-6' } as any;
+    const openaiLow = { provider: 'openai-codex', id: 'gpt-5.6-luna' } as any;
+    const evaluate = vi.fn(async () => ({
+      answers: { model_tier: { choice: 'high' } },
+    }));
+    const harness = createHarness({
+      descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
+      models: [anthropicOpus, openaiLow],
+      runtime: { classifier: { evaluate } },
+    });
+
+    await execute(harness, 'Agent', {
+      prompt: 'Task',
+      description: 'task',
+      subagent_type: 'general',
+      model: 'low',
+    });
+
+    expect(harness.host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'anthropic/claude-opus-4-6' }),
+      undefined,
+    );
+  });
+
+  it('falls back to the requested model if the classified tier is unavailable', async () => {
+    const evaluate = vi.fn(async () => ({ answers: { model_tier: { choice: 'xhigh' } } }));
+    const harness = createHarness({
+      descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
+      parentModel: { provider: 'openai-codex', id: 'gpt-5.6-sol' },
+      models: [],
+      runtime: { classifier: { evaluate } },
+    });
+
+    const result = await execute(harness, 'Agent', {
+      prompt: 'Task', description: 'task', subagent_type: 'general', model: 'inherit',
+    });
+
+    expect(resultText(result)).toContain('status: running');
+    expect(harness.host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'openai-codex/gpt-5.6-sol' }),
+      undefined,
+    );
+  });
+
+  it('falls back to params.model and logs a warn when the classifier fails', async () => {
+    const logs: LogRecord[] = [];
+    const evaluate = vi.fn(async () => { throw new Error('classifier unavailable'); });
+    const harness = createHarness({
+      descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
+      runtime: {
+        classifier: { evaluate },
+        logger: createLogger({ level: 'debug', destination: { write: (record) => { logs.push(record); } } }),
+      },
+    });
+
+    await execute(harness, 'Agent', {
+      prompt: 'Task',
+      description: 'task',
+      subagent_type: 'general',
+      model: 'inherit',
+    });
+
+    expect(harness.host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'provider/model' }),
+      undefined,
+    );
+    const warning = logs.find((record) => record.level === 'warn');
+    expect(warning?.fields).toMatchObject({ component: 'subagent-model', outcome: 'failed' });
+    expect(JSON.stringify(warning)).not.toContain('Task');
+  });
+
+  it('falls back to params.model when the classifier returns an invalid choice', async () => {
+    const evaluate = vi.fn(async () => ({ answers: { model_tier: { choice: 'urgent' } } }));
+    const harness = createHarness({
+      descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
+      runtime: { classifier: { evaluate } },
+    });
+
+    await execute(harness, 'Agent', {
+      prompt: 'Task',
+      description: 'task',
+      subagent_type: 'general',
+      model: 'inherit',
+    });
+
+    expect(harness.host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'provider/model' }),
+      undefined,
+    );
+  });
+
   it('maps list, result, steer, and cancel requests to the host', async () => {
     const harness = createHarness();
     await execute(harness, 'list_subagents', { include_descendants: true, limit: 5 });
@@ -419,6 +574,7 @@ function createHarness(options: {
   parentModel?: any;
   models?: any[];
   scopedModels?: any[];
+  runtime?: Record<string, unknown>;
 } = {}) {
   const tools = new Map<string, ToolDefinition<any, any, any>>();
   const capabilities: Array<{ id: string; instructions: string }> = [];
@@ -448,6 +604,7 @@ function createHarness(options: {
     cancel: vi.fn(async () => ({ ok: true as const, value: record })),
   };
   const pi = {
+    ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
     registerCapability: (capability: { id: string; instructions: string }) => capabilities.push(capability),
     registerTool: (tool: ToolDefinition<any, any, any>) => tools.set(tool.name, tool),
     getThinkingLevel: () => options.parentThinking ?? 'medium',

@@ -246,7 +246,7 @@ routing section when a request needs broad discovery, except in one-shot
 print/JSON modes that cannot await child completion notices or small repositories.
 `Agent` calls without a pinned model get a classifier-selected tier. For Prewalk, the classifier
 recommends entry, sets planning exploration depth, may raise the implementation
-tier or thinking level, and checks completion when `Agent` is available.
+tier or thinking level, and checks completion at the agent-run boundary.
 Without a classifier, or when a call fails, the model follows the persistent delegation
 and Prewalk guidance, and the configured defaults apply.
 

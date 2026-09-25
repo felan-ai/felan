@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 describe('Pi subagent-routing integration', () => {
-  it('persists one authoritative system-prompt decision across a tool turn without a custom message', async () => {
+  it('does not inject discovery guidance in a one-shot print run', async () => {
     const root = await mkdtemp(join(tmpdir(), 'felan-subagent-routing-'));
     temporaryPaths.push(root);
     const cwd = join(root, 'workspace');
@@ -90,8 +90,7 @@ describe('Pi subagent-routing integration', () => {
       const routingSection = context.messages
         .find((message) => message.role === 'system')
         ?.sections?.subagent_routing;
-      expect(routingSection).toMatch(/Subagent routing decision.*possible fits only if the user or applicable harness instructions explicitly request.*This selection is not authorization.*explore \(Read-only investigation\)/s);
-      expect(routingSection).not.toContain('required agent types');
+      expect(routingSection).toBeUndefined();
     }
     const entries = sessionManager.getEntries();
     const routingEntries = entries.filter((entry) => (
@@ -103,16 +102,7 @@ describe('Pi subagent-routing integration', () => {
       && entry.message.role === 'system'
       && entry.message.sections?.subagent_routing !== undefined
     ));
-    expect(routingSystemEntries).toHaveLength(1);
-    expect(routingSystemEntries[0]).toMatchObject({
-      type: 'message',
-      message: {
-        role: 'system',
-        sections: {
-          subagent_routing: expect.stringMatching(/Subagent routing decision.*explore \(Read-only investigation\)/s),
-        },
-      },
-    });
+    expect(routingSystemEntries).toHaveLength(0);
     expect(sessionManager.buildContextEntries()).not.toContainEqual(expect.objectContaining({
       type: 'custom_message',
       customType: 'felan-subagent-routing',

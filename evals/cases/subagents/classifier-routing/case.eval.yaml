@@ -1,6 +1,6 @@
 id: subagents-classifier-routing
 suite: subagents-routing
-description: Keep a neutral multi-file investigation in the parent without user-requested delegation.
+description: Keep a small, known-surface multi-file investigation in the parent; it does not need broad discovery.
 timeoutMs: 900000
 workspace:
   fixture: fixtures/subagent-routing/v1/source

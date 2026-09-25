@@ -1,6 +1,6 @@
 id: subagents-classifier-verification
-suite: subagents-routing
-description: Route a neutral coding task to an implementation agent and an independent reviewer.
+suite: subagents
+description: Exercise explicit implementation and review delegation (currently diagnostic in one-shot mode, which cannot await completion notices).
 timeoutMs: 900000
 workspace:
   fixture: fixtures/subagent-routing/v1/source

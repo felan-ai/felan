@@ -57,42 +57,48 @@ Terminal errors use stable codes: `model_request_failed`,
 `turn_limit_reached`. `host_unavailable` is reserved for an unavailable host
 or parent, and `internal_error` is reserved for unexpected runtime failures.
 
-The explicit-request-only delegation policy and lifecycle capability remain
-persistently in the system prompt whenever the extension is enabled: do not
-spawn unless the user or applicable harness instructions explicitly request
-subagents, delegation, or parallel agent work. Task complexity, thoroughness,
-multiple parts, or potential parallelism do not count as authorization. Without
-a compatible probability classifier, it also includes the complete host
-catalog. With a classifier, the persistent guidance omits the descriptive catalog; valid type
-IDs remain in the `Agent` tool schema. Before the model starts each user turn,
-the extension appends conditional type-selection hints: it asks one suitability
-probability for each catalog descriptor, and descriptors at or above the 0.65
-threshold appear with their full descriptions. A classifier score is not
-authorization and never requires launching a child. Only if the user or
-applicable harness instructions explicitly request delegation may the agent
-use the hints to choose suitable types; otherwise, it keeps the work in the
-parent. A failed classification supplies the complete catalog but preserves
-the same explicit-request-only policy. The catalog is authoritative, so custom
-definitions participate without special IDs. The
-structured system-prompt section is persisted with the turn but not rendered in
-the TUI, and direct system entries are excluded from later classifier
-conversation extraction.
+The persistent capability guidance, including the complete host catalog, stays
+in the system prompt whenever the extension is enabled. It describes when a child
+pays off: broad discovery across many unknown files on a cheaper model that
+returns a compact summary, an independent review or completion check in a fresh
+context, or independent tasks with disjoint file scopes that can run in
+parallel. It keeps small, sequential, known-location, and critical-path work in
+the parent, and rules out re-reading a delegated scope, trivial delegation, and
+reviewer fan-out. Without a classifier, the model applies that guidance itself.
 
-Classifier state contains the full current prompt, image count, active
-model-visible user/assistant conversation text, root/child session kind,
-complete descriptors, and direct-child statuses. The extension does not clip
-those fields with its own per-field limits. Hosts using Jev may send that state
-to TypeSafe or OpenRouter; credentials remain host-owned and are never persisted
-in session records. An oversized or failed classification keeps the generic
-guidance, appends a full-catalog fallback decision for that turn, and never
-blocks the user request.
+With a compatible probability classifier and an `explore` definition, root
+sessions ask one `broad_discovery` question per user turn. Classification
+starts on Pi's `input` event and is awaited in `before_agent_start`, so it
+overlaps with other extensions' pre-start work. A transformed or expanded prompt
+is classified again. A bounded file listing skips discovery classification
+for a repository with fewer than 20 files, since delegating that surface
+would add overhead. At a probability of 0.65 or higher, the `subagent_routing`
+system-prompt section directs the model to delegate discovery to `explore`
+children and wait for their summaries rather than reading those scopes itself.
+Below the threshold, or when classification fails, no section is added and the
+user request is never blocked. Child sessions never classify. One-shot print
+and JSON modes do not classify discovery: they exit when the parent first
+settles and cannot deliver a child's later completion into that run.
 
-Routing writes structured debug records through `AgentRuntime.logger`. Each
-record identifies whether the turn was classified, cancelled, or fell back;
-includes one probability per agent, selected IDs, classifier metadata, and the
-exact generated routing guidance; and omits the request and conversation state.
-Local TUI records use the
-`subagent-routing` component in `storage('agent')/logs/felan.jsonl`.
+With a classifier that supports choice questions, each `Agent` call whose
+definition does not pin a model classifies the child task into the `low`,
+`medium`, `high`, or `xhigh` tier. Model precedence is definition, then
+classifier tier, then the call's `model`, then the parent. Thinking precedence
+is unchanged. A failed classification or unavailable classified tier falls back
+to the call's model or parent; an unavailable tier is logged as a warning.
+
+Classifier state contains the current prompt, image count, up to 24 recent
+model-visible user/assistant conversation items (at most 1,200 characters
+each), the `explore` descriptor, and direct-child
+statuses for routing; and the child prompt, description, and type for tier
+selection. Hosts using Jev may send that state to TypeSafe or OpenRouter;
+credentials remain host-owned and are never persisted in session records.
+
+Decisions are logged at debug level through `AgentRuntime.logger` under the
+`subagent-routing` and `subagent-model` components; failures are logged at warn.
+Records include probabilities or choices and classifier metadata but omit the
+request and conversation. Local TUI records are written to
+`storage('agent')/logs/felan.jsonl`.
 
 Ambient Pi agent and extension discovery is outside this package and remains
 disabled by Felan applications.
