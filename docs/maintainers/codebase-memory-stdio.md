@@ -3,7 +3,7 @@
 ## Decision
 
 Felan uses one lazy, root-session-scoped stdio MCP frontend for the reviewed
-Codebase Memory 0.10.8 binary. The root agent and all descendant subagents share
+Codebase Memory 0.11.0 binary. The root agent and all descendant subagents share
 one multiplexed newline-delimited JSON-RPC connection. Reference-counted
 session leases keep it alive while any descendant is active and close it after
 the last consumer shuts down. It does not delete the deterministic shared

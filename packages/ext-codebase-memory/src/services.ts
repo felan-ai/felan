@@ -86,7 +86,7 @@ export class ProjectService {
 
   async #accountCacheOnce(): Promise<void> {
     try {
-      const listed = await this.client.call('list_projects', {});
+      const listed = await this.client.call('list_projects', { format: 'json', detail: 'stats' });
       const projects = arrayProperty(listed.data, 'projects');
       const bytes = projects.reduce<number>((sum, project) => {
         const bytes = asRecord(project).size_bytes;
@@ -127,7 +127,7 @@ export class ProjectService {
   async project(signal?: AbortSignal, timeoutMs?: number): Promise<string> {
     if (this.#project) return this.#project;
     const root = this.configuredRoot ?? (await this.gitRoot(signal, timeoutMs)) ?? this.runtime.cwd;
-    const listed = await this.client.call('list_projects', {}, {
+    const listed = await this.client.call('list_projects', { format: 'json' }, {
       ...(signal === undefined ? {} : { signal }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     });
@@ -157,7 +157,7 @@ export class SymbolService {
       format: 'json',
       limit: 10,
     }, signal === undefined ? {} : { signal });
-    const candidates = searchCandidates(search.data);
+    const candidates = searchCandidates(search.data).filter(isReadableSymbolCandidate);
     const matches = candidates.filter((item) => {
       const candidate = asRecord(item);
       const qualifiedName = typeof candidate.qualified_name === 'string' ? candidate.qualified_name : '';
@@ -178,7 +178,13 @@ export class SymbolService {
     const selected = matches[0];
     const qualifiedName = asRecord(selected).qualified_name;
     if (typeof qualifiedName !== 'string') return { project, candidates, error: 'No matching symbol found' };
-    const snippet = await this.client.call('get_code_snippet', { project, qualified_name: qualifiedName }, signal === undefined ? {} : { signal });
+    const snippet = await this.client.call('get_code_snippet', {
+      project,
+      qualified_name: qualifiedName,
+      source_mode: 'full',
+      max_lines: 220,
+      format: 'json',
+    }, signal === undefined ? {} : { signal });
     return { project, symbol: selected, snippet: boundSnippet(snippet.data, params.max_symbol_lines) };
   }
 
@@ -197,7 +203,7 @@ export class SymbolService {
       limit: params.limit ?? 20,
       format: 'json',
     }, signal === undefined ? {} : { signal });
-    const candidates = searchCandidates(search.data);
+    const candidates = searchCandidates(search.data).filter(isReadableSymbolCandidate);
     const readLimit = clampInt(params.read_limit, 1, 12, 6);
     const selectedCandidates = candidates.slice(0, readLimit);
     const readableCandidates = selectedCandidates.flatMap((candidate) => {
@@ -205,7 +211,13 @@ export class SymbolService {
       return typeof qualifiedName === 'string' ? [{ candidate, qualifiedName }] : [];
     });
     const symbols = await Promise.all(readableCandidates.map(async ({ qualifiedName }) => {
-      const snippet = await this.client.call('get_code_snippet', { project, qualified_name: qualifiedName }, signal === undefined ? {} : { signal });
+      const snippet = await this.client.call('get_code_snippet', {
+        project,
+        qualified_name: qualifiedName,
+        source_mode: 'full',
+        max_lines: 220,
+        format: 'json',
+      }, signal === undefined ? {} : { signal });
       return { snippet: boundSnippet(snippet.data, params.max_symbol_lines, 120) };
     }));
     return {
@@ -247,6 +259,11 @@ function searchGroupedCandidates(record: Record<string, unknown>, columns: reado
       return { ...candidate, file, qualified_name: `${prefix}.${candidate.name}` };
     });
   });
+}
+
+function isReadableSymbolCandidate(value: unknown): boolean {
+  const label = asRecord(value).label;
+  return label !== 'File' && label !== 'Folder' && label !== 'Module';
 }
 
 function projectName(path: string): string {

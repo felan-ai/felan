@@ -38,10 +38,22 @@ describe('Codebase Memory real binary', () => {
     const repositories = join(workspace, 'repos');
     const firstRepository = join(repositories, 'repo-a');
     const secondRepository = join(repositories, 'repo-b');
-    await mkdir(firstRepository, { recursive: true });
-    await mkdir(secondRepository, { recursive: true });
-    await writeFile(join(firstRepository, 'answer.ts'), 'export function answer() { return 42; }\n');
-    await writeFile(join(secondRepository, 'other.ts'), 'export function other() { return 84; }\n');
+    await Promise.all([
+      mkdir(join(firstRepository, 'service', 'private_build'), { recursive: true }),
+      mkdir(join(secondRepository, 'package', 'synced_assets'), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(firstRepository, 'answer.ts'), 'export function answer() { return 42; }\n'),
+      writeFile(join(secondRepository, 'other.ts'), 'export function other() { return 84; }\n'),
+      writeFile(join(firstRepository, '.gitignore'), 'root_ignored.ts\n'),
+      writeFile(join(firstRepository, 'service', '.gitignore'), 'private_build/\n'),
+      writeFile(join(firstRepository, 'root_ignored.ts'), 'export const rootIgnored = "CBM_ROOT_IGNORE_CONTROL_A";\n'),
+      writeFile(join(firstRepository, 'service', 'private_build', 'leak.ts'), 'export const leak = "CBM_NESTED_IGNORE_LEAK_A";\n'),
+      writeFile(join(secondRepository, '.gitignore'), 'root_ignored.ts\n'),
+      writeFile(join(secondRepository, 'package', '.gitignore'), 'synced_assets/\n'),
+      writeFile(join(secondRepository, 'root_ignored.ts'), 'export const rootIgnored = "CBM_ROOT_IGNORE_CONTROL_B";\n'),
+      writeFile(join(secondRepository, 'package', 'synced_assets', 'leak.ts'), 'export const leak = "CBM_NESTED_IGNORE_LEAK_B";\n'),
+    ]);
     for (const repository of [firstRepository, secondRepository]) {
       await runGit(repository, ['init', '-q']);
       await runGit(repository, ['add', '.']);
@@ -66,6 +78,26 @@ describe('Codebase Memory real binary', () => {
         ['codebase-memory', undefined],
       ]);
     }, { timeout: 120_000 });
+
+    const nestedIgnoreSearch = await executeTool(harness.tools[3]!, {
+      pattern: 'CBM_NESTED_IGNORE_LEAK',
+      regex: false,
+    });
+    const nestedIgnoreText = textOf(nestedIgnoreSearch);
+    const nestedIgnorePayload = JSON.parse(nestedIgnoreText) as { total_grep_matches: number; total_results: number };
+    expect(nestedIgnorePayload).toMatchObject({ total_grep_matches: 0, total_results: 0 });
+    expect(nestedIgnoreText).not.toContain('CBM_NESTED_IGNORE_LEAK_A');
+    expect(nestedIgnoreText).not.toContain('CBM_NESTED_IGNORE_LEAK_B');
+
+    const rootIgnoreSearch = await executeTool(harness.tools[3]!, {
+      pattern: 'CBM_ROOT_IGNORE_CONTROL',
+      regex: false,
+    });
+    const rootIgnoreText = textOf(rootIgnoreSearch);
+    const rootIgnorePayload = JSON.parse(rootIgnoreText) as { total_grep_matches: number; total_results: number };
+    expect(rootIgnorePayload).toMatchObject({ total_grep_matches: 0, total_results: 0 });
+    expect(rootIgnoreText).not.toContain('CBM_ROOT_IGNORE_CONTROL_A');
+    expect(rootIgnoreText).not.toContain('CBM_ROOT_IGNORE_CONTROL_B');
 
     const secondRuntime = new HostAgentRuntime(workspace, {
       sessionStorageRoot: join(root, 'second-session'),
@@ -167,10 +199,14 @@ async function readSymbol(tool: ToolDefinition, name: string): Promise<string> {
 async function readSymbolPayload(tool: ToolDefinition, params: Record<string, unknown>) {
   const result = await executeTool(tool, params);
   const content = result.content[0];
-  return JSON.parse(content?.type === 'text' ? content.text : 'null') as {
+  const payload = JSON.parse(content?.type === 'text' ? content.text : 'null') as {
     symbol: { qualified_name: string };
     snippet: { source: string };
   };
+  if (typeof payload?.snippet?.source !== 'string') {
+    throw new Error(`Unexpected read_symbol payload: ${JSON.stringify(payload)}`);
+  }
+  return payload;
 }
 
 function executeTool(tool: ToolDefinition, params: Record<string, unknown>) {

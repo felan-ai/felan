@@ -16,8 +16,8 @@ describe('@felan-ai/ext-codebase-memory package boundary', () => {
     });
     expect(notice).toContain('pi-cbm 1.2.1');
     expect(notice).toContain('921a749d5cea74bda8f647542627ef9518fec272');
-    expect(notice).toContain('codebase-memory-mcp 0.10.8');
-    expect(notice).toContain('46ae198fc11cda80e817acbc5f5908d7c2de7032');
+    expect(notice).toContain('codebase-memory-mcp 0.11.0');
+    expect(notice).toContain('8972ea69c6ad94b1ef1d4ffbf0a92d78d2db1798');
   });
 
   it('routes production I/O through AgentRuntime and explicitly covers both grep command tools', async () => {
@@ -37,8 +37,10 @@ describe('@felan-ai/ext-codebase-memory package boundary', () => {
 
     const installer = await readFile(join(packageRoot, 'src', 'installer.ts'), 'utf8');
     expect(installer).toContain('--skip-config');
-    expect(installer).toContain('46ae198fc11cda80e817acbc5f5908d7c2de7032');
-    expect(installer).toContain('2fdd4d6563fc8e540bb32e233c5fdef22ecf05d7ebd5a80657cd4fec953b3475');
+    expect(installer).toContain('8972ea69c6ad94b1ef1d4ffbf0a92d78d2db1798');
+    expect(installer).toContain('13049c7cc51bc508d68b8ecb8a9fd9574ecb7c6f2c9dd5a19bf7d4c187321145');
+    expect(installer).toContain('HOME: installerHome');
+    expect(installer).toContain('CBM_CACHE_DIR:');
     expect(installer).not.toMatch(/settings\.json|mcp\.json|AGENTS\.md/u);
   });
 });

@@ -18,9 +18,9 @@ ARG RIPGREP_VERSION=14.1.1-1+b4
 # version equality). Bump CBM_VERSION and CBM_INSTALLER_{COMMIT,SHA256} together
 # from packages/ext-codebase-memory/src/{client,installer}.ts when re-benchmarking
 # a newer release, then rebuild this image.
-ARG CBM_VERSION=0.10.8
-ARG CBM_INSTALLER_COMMIT=46ae198fc11cda80e817acbc5f5908d7c2de7032
-ARG CBM_INSTALLER_SHA256=2fdd4d6563fc8e540bb32e233c5fdef22ecf05d7ebd5a80657cd4fec953b3475
+ARG CBM_VERSION=0.11.0
+ARG CBM_INSTALLER_COMMIT=8972ea69c6ad94b1ef1d4ffbf0a92d78d2db1798
+ARG CBM_INSTALLER_SHA256=13049c7cc51bc508d68b8ecb8a9fd9574ecb7c6f2c9dd5a19bf7d4c187321145
 
 LABEL org.felan.evals.runtime="felan-v1"
 LABEL org.felan.evals.rtk-version="${RTK_VERSION}"
@@ -76,10 +76,12 @@ RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
     --output /tmp/install-cbm.sh \
   && printf '%s  %s\n' "${CBM_INSTALLER_SHA256}" /tmp/install-cbm.sh \
     | sha256sum --check --strict - \
-  && CBM_DOWNLOAD_URL="https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CBM_VERSION}" \
+  && mkdir -p /tmp/cbm-installer-home \
+  && HOME=/tmp/cbm-installer-home CBM_CACHE_DIR=/tmp/cbm-installer-cache \
+    CBM_DOWNLOAD_URL="https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CBM_VERSION}" \
     /bin/bash /tmp/install-cbm.sh --dir /usr/local/bin --skip-config \
   && test "$(codebase-memory-mcp --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" = "${CBM_VERSION}" \
-  && rm -f /tmp/install-cbm.sh /usr/local/bin/install.sh
+  && rm -rf /tmp/install-cbm.sh /tmp/cbm-installer-home /tmp/cbm-installer-cache /usr/local/bin/install.sh
 
 ENV PATH="/opt/markitdown/bin:${PATH}" \
     SHELL=/bin/bash

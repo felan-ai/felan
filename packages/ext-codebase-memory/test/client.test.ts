@@ -24,7 +24,7 @@ describe('CbmClient stdio transport', () => {
         return result(envelope({ projects: [] }));
       }
     })('daytona', true, undefined, '/agent-storage', '/work/.felan');
-    const client = new CbmClient(runtime, { command: 'codebase-memory-mcp', version: '0.10.8', source: 'path' });
+    const client = new CbmClient(runtime, { command: 'codebase-memory-mcp', version: '0.11.0', source: 'path' });
 
     await client.call('list_projects', {});
 
@@ -36,7 +36,7 @@ describe('CbmClient stdio transport', () => {
   it('initializes once, reuses one frontend, and closes it cleanly', async () => {
     const { workspace, session, agent, script } = await fixture();
     const runtime = new HostAgentRuntime(workspace, { sessionStorageRoot: session, agentStorageRoot: agent });
-    const client = new CbmClient(runtime, { command: script, version: '0.10.8', source: 'managed' });
+    const client = new CbmClient(runtime, { command: script, version: '0.11.0', source: 'managed' });
 
     await expect(client.call('list_projects', {})).resolves.toMatchObject({
       data: { projects: [{ name: 'fixture' }] },
@@ -56,7 +56,7 @@ describe('CbmClient stdio transport', () => {
       mkdir(childWorkspace, { recursive: true }),
       mkdir(otherSession, { recursive: true }),
     ]);
-    const invocation = { command: script, version: '0.10.8', source: 'managed' } as const;
+    const invocation = { command: script, version: '0.11.0', source: 'managed' } as const;
     const rootLease = await acquireCbmClient(
       new HostAgentRuntime(workspace, { sessionStorageRoot: session, agentStorageRoot: agent }),
       invocation,
@@ -90,7 +90,7 @@ describe('CbmClient stdio transport', () => {
   it('waits for a closing frontend before reacquiring the same root session', async () => {
     const { workspace, session, agent, script } = await fixture(150);
     const runtime = new HostAgentRuntime(workspace, { sessionStorageRoot: session, agentStorageRoot: agent });
-    const invocation = { command: script, version: '0.10.8', source: 'managed' } as const;
+    const invocation = { command: script, version: '0.11.0', source: 'managed' } as const;
     const firstLease = await acquireCbmClient(runtime, invocation);
     await firstLease.client.call('list_projects', {});
     const releasing = firstLease.release();
@@ -144,7 +144,7 @@ describe('CbmClient stdio transport', () => {
         },
       },
     } as AgentRuntime;
-    const client = new CbmClient(runtime, { command: script, version: '0.10.8', source: 'managed' });
+    const client = new CbmClient(runtime, { command: script, version: '0.11.0', source: 'managed' });
     const call = client.call('list_projects', {});
     await ensureStarted.promise;
 

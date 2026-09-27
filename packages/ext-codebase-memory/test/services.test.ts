@@ -3,7 +3,7 @@ import { CbmClient } from '../src/client.js';
 import { ProjectService } from '../src/services.js';
 import { envelope, MemoryRuntime, result } from './test-runtime.js';
 
-const invocation = { command: 'codebase-memory-mcp', version: '0.10.8', source: 'managed' } as const;
+const invocation = { command: 'codebase-memory-mcp', version: '0.11.0', source: 'managed' } as const;
 
 describe('ProjectService index coordination', () => {
   it('deduplicates indexing for services that share one frontend', async () => {

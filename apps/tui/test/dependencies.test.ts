@@ -39,6 +39,10 @@ describe('local runtime dependency onboarding', () => {
       extension: 'backgroundBash',
       unavailableChoice: 'Disable background processes',
     });
+    expect(localRuntimeDependencies.find(({ id }) => id === 'codebase-memory')).toMatchObject({
+      revision: 2,
+      installConfirmation: expect.stringContaining('Codebase Memory 0.11.0'),
+    });
   });
 
   it('installs only after confirmation and remembers the RTK compaction-only choice', async () => {
@@ -99,6 +103,7 @@ describe('local runtime dependency onboarding', () => {
       return dependency({
         id,
         extension: id === 'agent-browser' ? 'browser' : id === 'codebase-memory' ? 'codebaseMemory' : id === 'markitdown' ? 'markitdown' : 'rtkOptimizer',
+        ...(id === 'codebase-memory' ? { revision: 2 } : {}),
         install,
       });
     });
@@ -115,7 +120,7 @@ describe('local runtime dependency onboarding', () => {
     const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
     expect(settings.felanTui.onboarding.extensions).toEqual({
       browser: 1,
-      codebaseMemory: 1,
+      codebaseMemory: 2,
       markitdown: 1,
       rtkOptimizer: 1,
     });
@@ -261,6 +266,35 @@ describe('local runtime dependency onboarding', () => {
     await changedHarness.emit('session_start', { reason: 'startup' });
     expect(changedCheck).toHaveBeenCalledOnce();
     expect(changedHarness.custom).toHaveBeenCalledOnce();
+  });
+
+  it('reopens a previous Codebase Memory decision and installs the reviewed update', async () => {
+    const fixture = await createFixture();
+    await setOnboarding(fixture.agentDir, 'codebaseMemory', 1);
+    const check = vi.fn(async (): Promise<RuntimeDependencyStatus> => ({
+      available: false,
+      reason: 'Installed codebase-memory-mcp 0.10.8 is incompatible; reviewed version 0.11.0 is required.',
+    }));
+    const install = vi.fn(async (): Promise<RuntimeDependencyStatus> => ({ available: true, version: '0.11.0' }));
+    const codebaseMemory = dependency({
+      id: 'codebase-memory',
+      extension: 'codebaseMemory',
+      revision: 2,
+      check,
+      install,
+    });
+    const harness = await createHarness(fixture, [codebaseMemory], { checkedIndexes: [0] });
+
+    await harness.emit('session_start', { reason: 'startup' });
+
+    expect(check).toHaveBeenCalledOnce();
+    expect(install).toHaveBeenCalledOnce();
+    expect(harness.notifications).toContainEqual([
+      'codebase-memory installed (0.11.0). Restart Felan Code to load the extension.',
+      'info',
+    ]);
+    const settings = JSON.parse(await readFile(join(fixture.agentDir, 'settings.json'), 'utf8'));
+    expect(settings.felanTui.onboarding.extensions.codebaseMemory).toBe(2);
   });
 
   it('leaves onboarding pending when installation fails or the user defers', async () => {

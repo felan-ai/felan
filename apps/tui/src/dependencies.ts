@@ -124,7 +124,7 @@ export const localRuntimeDependencies: readonly LocalRuntimeDependency[] = [
   },
   {
     id: 'codebase-memory',
-    revision: 1,
+    revision: 2,
     label: 'Codebase Memory',
     extension: 'codebaseMemory',
     purpose: 'structural code indexing, symbol reads, and bounded grep augmentation',

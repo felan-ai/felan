@@ -4,7 +4,13 @@ import {
   type FelanExtension,
 } from '@felan-ai/agent-core';
 import { type CodebaseMemoryTelemetry } from './cache.js';
-import { acquireCbmClient, detectCbm, type CbmClientLease, type CbmDetection } from './client.js';
+import {
+  acquireCbmClient,
+  CODEBASE_MEMORY_VERSION,
+  detectCbm,
+  type CbmClientLease,
+  type CbmDetection,
+} from './client.js';
 import { CODEBASE_MEMORY_CONFIG } from './config.js';
 import { registerGrepAugmentation } from './grep-augmentation.js';
 import { installManagedCbm } from './installer.js';
@@ -70,7 +76,7 @@ export function createCodebaseMemoryExtension(options: CodebaseMemoryExtensionOp
           return;
         }
         if (action === 'install') {
-          if (!await ctx.ui.confirm('Install Codebase Memory', 'Download the pinned reviewed installer and Codebase Memory 0.10.8 binary into Felan agent storage?')) return;
+          if (!await ctx.ui.confirm('Install Codebase Memory', `Download the pinned reviewed installer and Codebase Memory ${CODEBASE_MEMORY_VERSION} binary into Felan agent storage?`)) return;
           detection = await installManagedCbm(pi.runtime, () => ctx.ui.setStatus('codebase-memory', 'cbm: install'));
           ctx.ui.setStatus('codebase-memory', undefined);
           ctx.ui.notify(detectionMessage(detection), detection.available ? 'info' : 'error');

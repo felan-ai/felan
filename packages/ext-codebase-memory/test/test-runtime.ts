@@ -18,7 +18,7 @@ export class MemoryRuntime implements AgentRuntime {
   readonly privateRuntime = {
     ensureDirectory: async (_namespace: string) => codebaseMemoryRuntimeDirectory(this.storageRoot).root,
   };
-  version = '0.10.8';
+  version = '0.11.0';
   gitTopLevel: string | undefined = '/work/repo';
 
   constructor(

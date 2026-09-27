@@ -12,7 +12,7 @@ function fixture() {
     if (command.includes('index_repository')) return result(envelope({ project: 'fixture', status: 'indexed' }));
     return result(envelope({ source: 'raw upstream source', metadata: { untouched: true } }));
   });
-  const client = new CbmClient(runtime, { command: 'codebase-memory-mcp', version: '0.10.8', source: 'managed' });
+  const client = new CbmClient(runtime, { command: 'codebase-memory-mcp', version: '0.11.0', source: 'managed' });
   const projects = new ProjectService(runtime, client, undefined, vi.fn());
   return {
     runtime,

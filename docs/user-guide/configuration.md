@@ -533,7 +533,7 @@ and refreshes only after `/codebase-memory refresh` or a model
 host should index an aggregate such as `/work/repos` instead of its Git root.
 Daemon coordination is derived from the agent-storage root and uses a bounded
 owner-private temporary path on POSIX so Unix socket paths remain portable. The
-exact reviewed 0.10.8 executable is required. Use `/dependencies` or
+exact reviewed 0.11.0 executable is required. Use `/dependencies` or
 `/codebase-memory install` for an explicit local install.
 Known fatal daemon-coordination failures are recovered by participating current
 sessions through a bounded graceful daemon stop and one index retry. Restart

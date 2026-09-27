@@ -4,6 +4,7 @@ import codebaseMemoryExtension, {
   CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS,
   createCodebaseMemoryExtension,
 } from '../src/index.js';
+import { detectCbm } from '../src/client.js';
 import { RAW_COMMANDS } from '../src/raw-catalog.js';
 import { codebaseMemoryRuntimeDirectory } from '../src/runtime-path.js';
 import { envelope, MemoryRuntime, result } from './test-runtime.js';
@@ -27,7 +28,7 @@ describe('Codebase Memory extension', () => {
     // The single proxy tool erases the per-command schemas, so its description is
     // the only place the model can learn field names before calling.
     expect(description).toContain('search_code(pattern, project?, file_pattern?, path_filter?');
-    expect(description).toContain('get_code_snippet(qualified_name, project?, include_neighbors?)');
+    expect(description).toContain('get_code_snippet(qualified_name, project?, include_neighbors?, source_mode?');
     for (const command of RAW_COMMANDS) expect(description).toContain(`${command}(`);
   });
 
@@ -86,11 +87,15 @@ describe('Codebase Memory extension', () => {
 
   it('rejects an unreviewed binary version', async () => {
     const runtime = new MemoryRuntime('host', true);
-    runtime.version = '0.10.2';
+    runtime.version = '0.10.8';
     const harness = await createHarness(runtime);
 
     expect(harness.tools).toEqual([]);
     expect(harness.capabilities).toEqual([]);
+    await expect(detectCbm(runtime)).resolves.toEqual({
+      available: false,
+      reason: 'Installed codebase-memory-mcp 0.10.8 is incompatible; reviewed version 0.11.0 is required.',
+    });
   });
 
   it('auto-indexes a non-git working directory when path is valid', async () => {
@@ -512,9 +517,12 @@ describe('Codebase Memory extension', () => {
       }
       if (command.includes('search_graph')) {
         return result(envelope({
-          total: 1,
+          total: 2,
           cols: ['qn', 'label', 'file', 'lines', 'rank'],
-          rows: [['fixture.src.answer.answer', 'Function', 'src/answer.ts', '1-3', 1]],
+          rows: [
+            ['fixture.src.answer.answer', 'Function', 'src/answer.ts', '1-3', 1],
+            ['fixture.src.answer', 'Module', 'src/answer.ts', '1-4', 2],
+          ],
         }));
       }
       if (command.includes('get_code_snippet')) return result(envelope({ source: 'export function answer() { return 42; }' }));

@@ -3,8 +3,8 @@ import type { AgentRuntime, ExecResult } from '@felan-ai/agent-core';
 import { CODEBASE_MEMORY_VERSION, detectCbm, type CbmDetection } from './client.js';
 import { joinRuntimePath } from './runtime-path.js';
 
-const INSTALLER_COMMIT = '46ae198fc11cda80e817acbc5f5908d7c2de7032';
-const INSTALLER_SHA256 = '2fdd4d6563fc8e540bb32e233c5fdef22ecf05d7ebd5a80657cd4fec953b3475';
+const INSTALLER_COMMIT = '8972ea69c6ad94b1ef1d4ffbf0a92d78d2db1798';
+const INSTALLER_SHA256 = '13049c7cc51bc508d68b8ecb8a9fd9574ecb7c6f2c9dd5a19bf7d4c187321145';
 const INSTALLER_URL = `https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/${INSTALLER_COMMIT}/install.sh`;
 const RELEASE_URL = `https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CODEBASE_MEMORY_VERSION}`;
 
@@ -13,10 +13,14 @@ export async function installManagedCbm(
   onStatus: (message: string) => void = () => {},
 ): Promise<CbmDetection> {
   const session = runtime.storage('session');
-  const relative = `codebase-memory/install-${randomUUID()}.sh`;
+  const installId = randomUUID();
+  const relative = `codebase-memory/install-${installId}.sh`;
+  const installerHomeRelative = `codebase-memory/install-home-${installId}`;
   const script = joinRuntimePath(session.root, relative);
+  const installerHome = joinRuntimePath(session.root, installerHomeRelative);
   const binDir = joinRuntimePath(runtime.storage('agent').root, 'codebase-memory/bin');
   await session.mkdir('codebase-memory', { recursive: true });
+  await session.mkdir(installerHomeRelative, { recursive: true });
   await runtime.storage('agent').mkdir('codebase-memory/bin', { recursive: true });
   try {
     onStatus('Downloading the pinned Codebase Memory installer...');
@@ -32,7 +36,11 @@ export async function installManagedCbm(
     onStatus(`Installing Codebase Memory ${CODEBASE_MEMORY_VERSION} in Felan agent storage...`);
     const installed = await runtime.shell(`/bin/bash '${script.replaceAll("'", `'"'"'`)}' --dir '${binDir.replaceAll("'", `'"'"'`)}' --skip-config`, {
       cwd: runtime.cwd,
-      env: { CBM_DOWNLOAD_URL: RELEASE_URL },
+      env: {
+        CBM_CACHE_DIR: joinRuntimePath(installerHome, 'cache'),
+        CBM_DOWNLOAD_URL: RELEASE_URL,
+        HOME: installerHome,
+      },
       maxOutputBytes: 5 * 1024 * 1024,
       shellFlavor: 'posix',
       timeout: 180_000,
@@ -42,7 +50,10 @@ export async function installManagedCbm(
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : String(error));
   } finally {
-    await session.remove(relative).catch(() => {});
+    await Promise.allSettled([
+      session.remove(relative),
+      session.remove(installerHomeRelative, { recursive: true }),
+    ]);
   }
 }
 

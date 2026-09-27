@@ -6,7 +6,7 @@ import {
 } from './runtime-path.js';
 import { RecoveryCoordinator, runStdioCommand } from './recovery.js';
 
-export const CODEBASE_MEMORY_VERSION = '0.10.8';
+export const CODEBASE_MEMORY_VERSION = '0.11.0';
 export const QUERY_TIMEOUT_MS = 60_000;
 export const INDEX_TIMEOUT_MS = 20 * 60_000;
 export const MAX_OUTPUT_BYTES = 5 * 1024 * 1024;
@@ -160,7 +160,7 @@ export class CbmClient {
   }
 
   async measureCacheBytes(): Promise<number> {
-    const listed = await this.call('list_projects', {});
+    const listed = await this.call('list_projects', { format: 'json', detail: 'stats' });
     const projects = Array.isArray(asRecord(listed.data).projects)
       ? asRecord(listed.data).projects as unknown[]
       : [];
@@ -427,6 +427,7 @@ export async function detectCbm(runtime: AgentRuntime): Promise<CbmDetection> {
     },
     { command: 'codebase-memory-mcp', source: 'path' },
   ];
+  const incompatibleVersions = new Set<string>();
   for (const candidate of candidates) {
     let result: ExecResult;
     try {
@@ -441,10 +442,14 @@ export async function detectCbm(runtime: AgentRuntime): Promise<CbmDetection> {
     if (result.code !== 0 || result.killed) continue;
     const version = `${result.stdout}\n${result.stderr}`.match(/\b(\d+\.\d+\.\d+)\b/u)?.[1];
     if (version && isCompatibleVersion(version)) return { available: true, invocation: { ...candidate, version } };
+    if (version) incompatibleVersions.add(version);
   }
+  const detected = [...incompatibleVersions];
   return {
     available: false,
-    reason: `Compatible codebase-memory-mcp ${CODEBASE_MEMORY_VERSION} is not installed.`,
+    reason: detected.length > 0
+      ? `Installed codebase-memory-mcp ${detected.join(', ')} is incompatible; reviewed version ${CODEBASE_MEMORY_VERSION} is required.`
+      : `Compatible codebase-memory-mcp ${CODEBASE_MEMORY_VERSION} is not installed.`,
   };
 }
 

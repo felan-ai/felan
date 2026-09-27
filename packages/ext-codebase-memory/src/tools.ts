@@ -173,7 +173,11 @@ export function registerTools(
         }
         const input = params as Record<string, unknown>;
         const project = await projects.project(signal);
-        return toolResult((await client.call('search_code', { ...input, project }, signal === undefined ? {} : { signal })).data);
+        return toolResult((await client.call('search_code', {
+          ...input,
+          project,
+          format: 'json',
+        }, signal === undefined ? {} : { signal })).data);
       },
       renderCall(params, theme) {
         const input = params as Record<string, unknown>;

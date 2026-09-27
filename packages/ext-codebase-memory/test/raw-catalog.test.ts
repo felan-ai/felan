@@ -78,7 +78,7 @@ describe('raw command catalog', () => {
     ['check_index_coverage', { scope_offset: -1 }],
     ['detect_changes', { direction: 'sideways' }],
     ['search_code', { pattern: 'main', limit: 0 }],
-    ['list_projects', { limit: 101 }],
+    ['list_projects', { limit: 501 }],
     ['list_projects', { offset: 0.5 }],
   ])('validates upstream field constraints for %s', (command, args) => {
     expect(() => validateRawArguments(command as string, args)).toThrow('Invalid arguments');
