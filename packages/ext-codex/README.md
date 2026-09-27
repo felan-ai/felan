@@ -26,6 +26,18 @@ Pi includes GPT-6 Astra in its built-in OpenAI and OpenAI Codex catalogs.
 The existing GPT policy enables this extension's structured tools and native
 Responses controls without a custom `models.json` entry.
 
+For GPT-6 Astra, Sol, and Luna using `openai-codex-responses`, changing the
+thinking level between turns keeps the initial request-level reasoning effort
+and appends a native `configuration_update` before the next user message. The
+updates are retained across session resume and forks; after Pi compaction,
+the new context establishes its own effort baseline. Changes made during a
+tool run are recorded when that run settles, so requests in the same run are
+not guaranteed to retain their cached prefix. This does not apply to standard
+`openai-responses`, other GPT models, or Anthropic. Automatic server truncation
+and compaction cannot be combined with native updates; Pi's existing local
+compaction remains available. Actual cache hits also depend on provider cache
+eligibility and can be checked using response usage cached-token counts.
+
 The extension excludes restart-durable jobs, web access, image generation,
 Code Mode/Responses Lite, prompt replacement, native Responses compaction,
 voice, and UI widgets.

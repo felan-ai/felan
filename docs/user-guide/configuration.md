@@ -409,6 +409,16 @@ timing. Set it to `false` to use Pi's standard timing. Manual and
 overflow-recovery compaction are unchanged. Pi continues to generate the
 compaction summary; this is not OpenAI native Responses compaction.
 
+On GPT-6 Astra, Sol, and Luna with the `openai-codex-responses` API, changing
+thinking level between turns appends a `configuration_update` while leaving the
+initial request-level reasoning effort unchanged. This can preserve the prompt
+cache across a level change, including after resuming a session. It does not
+apply to standard `openai-responses`, other models, or Anthropic. Changes during
+an active tool run are recorded after the run settles; requests before then
+may use the new request-level effort and miss the cache. Pi compaction starts
+a new prefix, and automatic server compaction or truncation is incompatible
+with these updates. Verify actual reuse from the provider's cached-token usage.
+
 GPT models keep Felan Code's ordinary `read` and `bash` tools. Codex mode replaces
 only `edit` and `write` with `apply_patch`; process sessions and image reading
 are not provider-specific.

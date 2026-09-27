@@ -15,6 +15,11 @@ The narrow nullable strictness compatibility behavior is adapted from
 f16fee563f71849cc2b9a94be2b6f70e12fca804,
 https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/f16fee563f71849cc2b9a94be2b6f70e12fca804/packages/pi-codex-conversion.
 
+GPT-6 append-only reasoning updates and request rewriting are adapted from
+@howaboua/pi-codex-conversion 3.0.39 at npm gitHead
+61b493cf76cdd8e4789dd08d3a0ecee6c1c7c6eb,
+https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/61b493cf76cdd8e4789dd08d3a0ecee6c1c7c6eb/packages/pi-codex-conversion.
+
 Copyright (c) 2026 Umberto B.
 Licensed under the MIT License included in this package.
 
@@ -22,7 +27,8 @@ Adapted portions include structured tool schemas and output conventions, patch p
 model activation policy, OpenAI request options, cached WebSocket transport
 selection, and local TUI tool labels. Felan applies patches through AgentRuntime
 and uses Pi's native OpenAI Codex transport for connection reuse and
-cached continuation.
+cached continuation. It retains scoped reasoning updates as session entries
+and rewrites them into native Codex Responses input items.
 
 This package uses @earendil-works/pi-tui from
 https://github.com/earendil-works/pi, licensed under the MIT License.

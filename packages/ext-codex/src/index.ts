@@ -7,6 +7,7 @@ import {
 import { CODEX_CONFIG, DEFAULT_CODEX_CONFIG } from './config.js';
 import { registerPostAgentRunCompaction } from './compaction.js';
 import { supportsCodexModel } from './model-policy.js';
+import { registerReasoningUpdates } from './reasoning-updates.js';
 import { applyCodexRequestOptions } from './request-options.js';
 import { CODEX_TOOL_NAMES, createCodexTools, registerPatchResultEvent } from './tools.js';
 
@@ -15,6 +16,7 @@ const CODEX_TOOL_NAME_SET: ReadonlySet<string> = new Set(CODEX_TOOL_NAMES);
 const codexExtension: FelanExtension = async (pi) => {
   const config = { ...DEFAULT_CODEX_CONFIG, ...pi.config } as import('./config.js').CodexConfig;
   registerPostAgentRunCompaction(pi, config);
+  const reasoningUpdates = registerReasoningUpdates(pi);
   for (const tool of createCodexTools(pi.runtime)) pi.registerTool(tool);
   registerPatchResultEvent(pi);
 
@@ -39,9 +41,11 @@ const codexExtension: FelanExtension = async (pi) => {
 
   pi.on('session_start', (_event, ctx) => synchronizeTools(ctx.model));
   pi.on('model_select', (event) => synchronizeTools(event.model));
-  pi.on('before_provider_request', (event, ctx) => (
-    applyCodexRequestOptions(event.payload, ctx, config)
-  ));
+  pi.on('context', (event, ctx) => ({ messages: reasoningUpdates.project(event.messages, ctx) }));
+  pi.on('before_provider_request', (event, ctx) => {
+    const configured = applyCodexRequestOptions(event.payload, ctx, config);
+    return reasoningUpdates.rewrite(configured, ctx.model);
+  });
 };
 
 export { CODEX_CONFIG, DEFAULT_CODEX_CONFIG, validateCodexConfig } from './config.js';
