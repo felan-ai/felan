@@ -41,7 +41,7 @@ export const DEFAULT_RTK_OPTIMIZER_CONFIG: RtkOptimizerConfig = {
   enabled: true,
   mode: 'rewrite',
   guardWhenRtkMissing: true,
-  showRewriteNotifications: true,
+  showRewriteNotifications: false,
   outputCompaction: {
     enabled: true,
     stripAnsi: true,

@@ -14,7 +14,7 @@ export const RTK_OPTIMIZER_CONFIG = defineExtensionConfig({
     enabled: configField.boolean({ default: true, description: 'Enable RTK command rewriting and compaction' }),
     mode: configField.enum(RTK_MODES, { default: 'rewrite', description: 'Rewrite commands or only suggest rewrites' }),
     guardWhenRtkMissing: configField.boolean({ default: true, description: 'Bypass RTK when the executable is unavailable' }),
-    showRewriteNotifications: configField.boolean({ default: true, description: 'Show rewrite notifications' }),
+    showRewriteNotifications: configField.boolean({ default: false, description: 'Show rewrite notifications' }),
     compactionEnabled: configField.boolean({ default: true, description: 'Enable output compaction' }),
     stripAnsi: configField.boolean({ default: true, description: 'Strip ANSI sequences from command output' }),
     readCompaction: configField.boolean({ default: false, description: 'Enable lossy read compaction' }),

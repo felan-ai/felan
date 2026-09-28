@@ -18,10 +18,22 @@ describe('RTK optimizer extension', () => {
     const codex = { toolName: 'exec_command', input: { cmd: 'pnpm test' } };
     await harness.emit('tool_call', codex);
     expect(codex.input.cmd).toBe('rtk pnpm test');
+    expect(harness.notifications).toEqual([]);
     expect(runtime.execCalls.filter((call) => call.args[0] === 'rewrite').map((call) => call.args[1])).toEqual([
       'git status',
       'pnpm test',
     ]);
+  });
+
+  it('shows rewrite notifications only when explicitly enabled', async () => {
+    const harness = await createHarness(rtkRuntime(), true, { showRewriteNotifications: true });
+    await harness.emit('session_start', { reason: 'startup' });
+    const event = { toolName: 'bash', input: { command: 'git status' } };
+
+    await harness.emit('tool_call', event);
+
+    expect(event.input.command).toBe('rtk git status');
+    expect(harness.notifications).toEqual([['RTK rewrite: git status -> rtk git status', 'info']]);
   });
 
   it('preserves Codex envelopes and carries commands across write_stdin sessions', async () => {

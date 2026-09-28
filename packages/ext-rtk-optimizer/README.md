@@ -59,7 +59,7 @@ not overwritten.
   "enabled": true,
   "mode": "rewrite",
   "guardWhenRtkMissing": true,
-  "showRewriteNotifications": true,
+  "showRewriteNotifications": false,
   "compactionEnabled": true,
   "stripAnsi": true,
   "readCompaction": false,
@@ -79,8 +79,9 @@ not overwritten.
 }
 ```
 
-`mode` is `rewrite` or `suggest`. `sourceCodeFiltering` is `none`, `minimal`,
-or `aggressive`. `truncate.maxChars` accepts 1,000–200,000 and
+Rewrites are silent by default; set `showRewriteNotifications` to `true` to
+show them in the TUI. `mode` is `rewrite` or `suggest`. `sourceCodeFiltering` is
+`none`, `minimal`, or `aggressive`. `truncate.maxChars` accepts 1,000–200,000 and
 `smartTruncate.maxLines` accepts 40–4,000.
 
 ## Command
