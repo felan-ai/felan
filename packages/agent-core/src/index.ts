@@ -49,20 +49,8 @@ export type {
   SavingsTokenUsage,
 } from './savings.js';
 export { AGENT_CORE_VERSION } from './version.js';
-export { createJevClassifier } from './jev/classifier.js';
-export type {
-  Classifier,
-  ClassifierAnswer,
-  ClassifierAnswers,
-  ClassifierEvaluationMetadata,
-  ClassifierQuestion,
-  ClassifierQuestions,
-  ClassifierProbabilityAnswer,
-  ClassifierProbabilityAnswers,
-  ClassifierProbabilityQuestion,
-  ClassifierProbabilityQuestions,
-  ClassifierUsage,
-} from './classifier.js';
+export * from './classifier/index.js';
+export * from './dynamic-thinking/index.js';
 export {
   MODEL_TIERS,
   formatModelReference,

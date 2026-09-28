@@ -192,6 +192,98 @@ describe('Codex extension activation', () => {
     expect(sessionBranches.get(ctx)).toHaveLength(2);
   });
 
+  it('applies a queued user follow-up effort at its safe turn boundary', async () => {
+    const harness = createHarness();
+    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    await codexExtension(harness.pi);
+    const oldAssistant = {
+      role: 'assistant', content: 'Previous answer', timestamp: 1,
+      api: ctx.model!.api, provider: ctx.model!.provider, model: ctx.model!.id,
+    };
+    persistMessage(ctx, oldAssistant);
+    ctx.isIdle = () => false;
+
+    await harness.emit('turn_end', { message: { role: 'assistant' }, toolResults: [] }, ctx);
+    await harness.emit('turn_start', { turnIndex: 1 }, ctx);
+    const user = { role: 'user', content: 'Follow up', timestamp: 2 };
+    persistMessage(ctx, user);
+    await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
+    const [projection] = await harness.emit('context', { messages: [user] }, ctx) as [
+      { messages: Array<{ role: string; content: string }> },
+    ];
+    expect(projection.messages.map(({ role }) => role)).toEqual(['custom', 'user']);
+    const [request] = await harness.emit('before_provider_request', {
+      payload: {
+        model: 'gpt-6-astra', reasoning: { effort: 'high' },
+        input: projection.messages.map(({ content }) => ({ role: 'user', content })),
+      },
+    }, ctx);
+    expect(request).toMatchObject({
+      reasoning: { effort: 'low' },
+      input: [{ type: 'configuration_update', reasoning: { effort: 'high' } }, { role: 'user', content: 'Follow up' }],
+    });
+    expect(sessionBranches.get(ctx)?.at(-1)).toMatchObject({ type: 'custom' });
+
+    const resumed = createHarness();
+    await codexExtension(resumed.pi);
+    const [replayed] = await resumed.emit('context', { messages: [oldAssistant, user] }, ctx) as [
+      { messages: Array<{ role: string }> },
+    ];
+    expect(replayed.messages.map(({ role }) => role)).toEqual(['assistant', 'custom', 'user']);
+  });
+
+  it('does not flush a streaming change between tool continuations', async () => {
+    const harness = createHarness();
+    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    await codexExtension(harness.pi);
+    persistAnswer(ctx);
+    ctx.isIdle = () => false;
+    await harness.emit('turn_start', { turnIndex: 1 }, ctx);
+    await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
+    const result = { role: 'toolResult', content: 'Build completed', timestamp: 2 };
+    persistMessage(ctx, result);
+
+    const [projection] = await harness.emit('context', { messages: [result] }, ctx) as [
+      { messages: Array<{ role: string }> },
+    ];
+    expect(projection.messages).toEqual([result]);
+    expect(sessionBranches.get(ctx)?.some((entry) => entry.type === 'custom')).toBe(false);
+
+    ctx.isIdle = () => true;
+    await harness.emit('agent_settled', {}, ctx);
+    expect(sessionBranches.get(ctx)?.at(-1)?.type).toBe('custom');
+  });
+
+  it('reconciles a delayed thinking event before a new user request is rewritten', async () => {
+    const harness = createHarness();
+    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    await codexExtension(harness.pi);
+    persistAnswer(ctx);
+    harness.setLevel('low');
+    await harness.emit('before_agent_start', { prompt: 'Continue' }, ctx);
+    const user = { role: 'user', content: 'Continue', timestamp: 2 };
+    persistMessage(ctx, user);
+    ctx.isIdle = () => false;
+    harness.setLevel('high');
+
+    const [projection] = await harness.emit('context', { messages: [user] }, ctx) as [
+      { messages: Array<{ role: string; content: string }> },
+    ];
+    expect(projection.messages.map(({ role }) => role)).toEqual(['custom', 'user']);
+    const [request] = await harness.emit('before_provider_request', {
+      payload: {
+        model: 'gpt-6-astra', reasoning: { effort: 'high' },
+        input: projection.messages.map(({ content }) => ({ role: 'user', content })),
+      },
+    }, ctx);
+    expect(request).toMatchObject({
+      reasoning: { effort: 'low' },
+      input: [{ type: 'configuration_update', reasoning: { effort: 'high' } }, { role: 'user', content: 'Continue' }],
+    });
+    await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
+    expect(sessionBranches.get(ctx)?.filter((entry) => entry.type === 'custom')).toHaveLength(1);
+  });
+
   it('drops a queued change when switching sessions or models during a run', async () => {
     const harness = createHarness();
     const oldSession = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
@@ -837,6 +929,7 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
     registerTool,
     registerProvider,
     unregisterProvider,
+    setLevel(level: string) { thinkingLevel = level; },
     async emit(name: string, event: unknown, ctx: ExtensionContext) {
       const results: unknown[] = [];
       activeContext = ctx;

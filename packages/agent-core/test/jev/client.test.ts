@@ -3,14 +3,14 @@ import {
   JevClientError,
   createJevClient,
   type JevFetch,
-} from '../../src/jev/client.js';
+} from '../../src/classifier/jev/client.js';
 import {
   OPENROUTER_DECISIONS_URL,
   OPENROUTER_MODEL,
   TYPESAFE_MODEL,
   TYPESAFE_SYSTEMONE_URL,
-} from '../../src/jev/credentials.js';
-import { createJevClassifierWithOptions } from '../../src/jev/classifier.js';
+} from '../../src/classifier/jev/credentials.js';
+import { createJevClassifierWithOptions } from '../../src/classifier/jev/classifier.js';
 import * as agentCore from '../../src/index.js';
 
 const questions = {

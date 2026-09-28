@@ -27,6 +27,7 @@ export interface FelanSettings {
   readonly builtinExtensions?: BuiltinExtensionSettings;
   readonly outputStyle?: OutputStyle;
   readonly felanSubagents?: LocalSubagentSettings;
+  readonly felanThinking?: { readonly dynamic?: boolean };
   readonly felanTui?: FelanTuiSettings;
   readonly piExtensions?: PiExtensionSettings;
   readonly extensionConfig?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
@@ -197,6 +198,15 @@ export function createLocalSettingsManager(cwd: string, agentDir: string): Setti
 
 export function getFelanSettings(settingsManager: SettingsManager): FelanSettings {
   return settingsManager.getGlobalSettings() as FelanSettings;
+}
+
+export function getDynamicThinkingEnabled(settingsManager: SettingsManager): boolean {
+  const raw = (settingsManager.getGlobalSettings() as Record<string, unknown>).felanThinking;
+  if (raw === undefined) return true;
+  if (!isRecord(raw)) throw new Error('felanThinking must be an object');
+  if (raw.dynamic === undefined) return true;
+  if (typeof raw.dynamic !== 'boolean') throw new Error('felanThinking.dynamic must be a boolean');
+  return raw.dynamic;
 }
 
 export function getBrowserAuthorizationPolicy(settingsManager: SettingsManager): BrowserAuthorizationPolicy {

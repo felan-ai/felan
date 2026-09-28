@@ -15,6 +15,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { loadFelanSessionExtensions, type ExtensionPackageImporter } from './extensions.js';
+import { createDynamicThinkingSession, DYNAMIC_THINKING_PRODUCER } from './dynamic-thinking/session.js';
 import { installModelSelectionPersistenceScope } from './model-selection.js';
 import {
   createAgentCoreResourceLoaderWithContextFiles,
@@ -23,7 +24,7 @@ import {
 import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
 import type { ExtensionConfigOverride } from './extension-config.js';
-import type { SavingsReporterProvider } from './savings.js';
+import type { SavingsReporter, SavingsReporterProvider } from './savings.js';
 
 export type StreamFunction = AgentSession['agent']['streamFunction'];
 const PROJECT_INSTRUCTION_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const;
@@ -53,6 +54,7 @@ export interface CreateAgentCoreSessionOptions {
   readonly agentDir?: string;
   readonly model?: CreateAgentSessionOptions['model'];
   readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
+  readonly dynamicThinking?: boolean;
   readonly scopedModels?: CreateAgentSessionOptions['scopedModels'];
   readonly sessionStartEvent?: SessionStartEvent;
   readonly inlineExtensions?: readonly InlineExtension[];
@@ -126,10 +128,16 @@ async function composeAgentCoreSession(
     options.savings,
   );
   const projectInstructions = await loadProjectInstructions(options.runtime);
+  const dynamicThinking = options.dynamicThinking && options.runtime.classifier
+    ? createDynamicThinkingSession(options.runtime,
+      featureExtensions.some((extension) => typeof extension !== 'function' && extension.name === '@felan-ai/ext-codex'),
+      optionalDynamicThinkingReporter(options.savings))
+    : undefined;
   const extensionFactories = [
     ...(projectInstructions === undefined ? [] : [createProjectInstructionsExtension(projectInstructions)]),
     ...featureExtensions,
     ...(options.inlineExtensions ?? []),
+    ...(dynamicThinking === undefined ? [] : [dynamicThinking]),
     createRuntimeToolsExtension(options.runtime),
   ];
   const resourceLoader = await createAgentCoreResourceLoaderWithContextFiles({
@@ -181,6 +189,14 @@ async function composeAgentCoreSession(
       diagnostics: [],
     },
   };
+}
+
+function optionalDynamicThinkingReporter(provider: SavingsReporterProvider | undefined): SavingsReporter | undefined {
+  try {
+    return provider?.createReporter(DYNAMIC_THINKING_PRODUCER);
+  } catch {
+    return undefined;
+  }
 }
 
 async function loadProjectInstructions(runtime: AgentRuntime): Promise<ProjectInstructionsFile | undefined> {

@@ -7,6 +7,28 @@ import { SavingsService, createModelPriceSource, formatSavingsReport } from '../
 import { TestAgentRuntime } from '../../../packages/agent-core/test/test-agent-runtime.js';
 
 describe('SavingsService', () => {
+  it('persists benchmark-calibrated thinking savings net of classifier cost', async () => {
+    const service = new SavingsService({
+      runtime: new TestAgentRuntime(), rootSessionId: 'session-a', projectKey: 'project-a',
+    });
+    await service.createReporter('@felan-ai/agent-core/dynamic-thinking').report({
+      category: 'output-optimization', operation: 'dynamic-thinking',
+      baseline: { model: { provider: 'openai-codex', id: 'gpt-6-astra' },
+        tokens: { input: 50, output: 1_020, cacheRead: 100, cacheWrite: 0 }, costUsd: 0.081 },
+      actual: { model: { provider: 'openai-codex', id: 'gpt-6-astra' },
+        tokens: { input: 50, output: 1_000, cacheRead: 100, cacheWrite: 0 }, costUsd: 0.0802 },
+      basis: { kind: 'estimated-baseline', method: 'high-effort-reasoning-5pct-heuristic-v1' },
+    });
+    const report = await service.query({ producerId: '@felan-ai/agent-core/dynamic-thinking' });
+    expect(report.calls).toBe(1);
+    expect(report.savedCostUsd).toBeCloseTo(0.0008);
+    expect(report.buckets[0]).toMatchObject({
+      producerId: '@felan-ai/agent-core/dynamic-thinking',
+      baseline: { priceSource: 'producer-reported', tokens: { output: 1_020, cacheRead: 100 } },
+      actual: { priceSource: 'producer-reported', tokens: { output: 1_000, cacheRead: 100 } },
+    });
+  });
+
   it('prices parent-model repricing measurements and reports the USD delta', async () => {
     const service = new SavingsService({
       runtime: new TestAgentRuntime(),

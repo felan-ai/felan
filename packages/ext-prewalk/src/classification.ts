@@ -7,6 +7,7 @@ import {
   type FelanExtensionAPI,
   type FelanThinkingLevel,
   type ModelTier,
+  collectClassifierSessionEvidence,
 } from '@felan-ai/agent-core';
 
 export type ExplorationDepth = 'sufficient' | 'targeted' | 'deep';
@@ -187,39 +188,14 @@ interface SessionSnapshot {
 }
 
 function snapshotSession(ctx: ExtensionContext): SessionSnapshot {
-  const conversation: SessionSnapshot['conversation'] = [];
-  const activity: SessionSnapshot['tool_activity'] = [];
-  const activityByCallId = new Map<string, SessionSnapshot['tool_activity'][number]>();
-  for (const message of sessionMessages(ctx)) {
-    if (!isRecord(message)) continue;
-    if (message.role === 'summary') {
-      conversation.push({ role: 'summary', text: truncate(String(message.text), MAX_CONVERSATION_TEXT) });
-      continue;
-    }
-    if (message.role === 'toolResult' && typeof message.toolCallId === 'string') {
-      const entry = activityByCallId.get(message.toolCallId);
-      if (entry) {
-        const exitCode = exitCodeFromResult(message);
-        entry.result = message.isError === true || (exitCode !== undefined && exitCode !== 0) ? 'failed' : 'ok';
-        if (exitCode !== undefined) entry.exit_code = exitCode;
-        const details = message.details;
-        if (isRecord(details) && isRecord(details.task) && typeof details.task.status === 'string') {
-          entry.task_status = details.task.status;
-        }
-      }
-      continue;
-    }
-    if (message.role !== 'user' && message.role !== 'assistant') continue;
-    const text = contentText(message.content);
-    if (text.trim()) conversation.push({ role: message.role, text: truncate(text, MAX_CONVERSATION_TEXT) });
-    if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
-    for (const part of message.content) {
-      if (!isRecord(part) || part.type !== 'toolCall' || typeof part.name !== 'string') continue;
-      const entry = { tool: part.name, input: summarizeInput(part.arguments) };
-      activity.push(entry);
-      if (typeof part.id === 'string') activityByCallId.set(part.id, entry);
-    }
-  }
+  const evidence = collectClassifierSessionEvidence(ctx.sessionManager, {
+    maxConversationItems: MAX_CONVERSATION_ITEMS,
+    maxToolActivities: 4_096,
+    maxTextBytes: MAX_CONVERSATION_TEXT,
+    maxToolInputBytes: MAX_TOOL_INPUT,
+    maxTotalBytes: 256 * 1_024,
+  });
+  const activity = evidence.tool_activity;
   const lastMutation = activity.map(({ tool, result }) => (
     ['edit', 'write', 'apply_patch'].includes(tool) && result === 'ok'
   )).lastIndexOf(true);
@@ -228,54 +204,11 @@ function snapshotSession(ctx: ExtensionContext): SessionSnapshot {
   ));
   const latestVerification = new Map(verification.map(({ input, result }) => [input, result]));
   return {
-    conversation: conversation.slice(-MAX_CONVERSATION_ITEMS),
+    conversation: [...evidence.conversation],
     tool_activity: activity.slice(-MAX_TOOL_ACTIVITY),
     verification_after_last_mutation: lastMutation >= 0 && verification.some(({ result }) => result === 'ok'),
     failed_verification: [...latestVerification.values()].some((result) => result === 'failed'),
   };
-}
-
-function exitCodeFromResult(message: Record<string, unknown>): number | undefined {
-  const details = message.details;
-  if (isRecord(details) && typeof details.exitCode === 'number') return details.exitCode;
-  const text = contentText(message.content);
-  const match = /(?:Exit(?: code)?):\s*(\d+)/i.exec(text);
-  return match ? Number(match[1]) : undefined;
-}
-
-function sessionMessages(ctx: ExtensionContext): unknown[] {
-  const manager = ctx.sessionManager;
-  if (typeof manager.buildSessionProjection === 'function') {
-    return manager.buildSessionProjection().entries.flatMap(({ sourceEntry, messages }): unknown[] => (
-      sourceEntry.type === 'compaction' || sourceEntry.type === 'branch_summary'
-        ? [{ role: 'summary', text: sourceEntry.summary }]
-        : messages
-    ));
-  }
-  return manager.buildContextEntries().flatMap((entry): unknown[] => {
-    if (entry.type === 'compaction' || entry.type === 'branch_summary') return [{ role: 'summary', text: entry.summary }];
-    return entry.type === 'message' ? [entry.message] : [];
-  });
-}
-
-function summarizeInput(input: unknown): string {
-  if (!isRecord(input)) return '';
-  for (const key of ['path', 'file_path', 'command', 'pattern', 'query', 'description', 'title']) {
-    const value = input[key];
-    if (typeof value === 'string') return truncate(value, MAX_TOOL_INPUT);
-  }
-  return truncate(JSON.stringify(input), MAX_TOOL_INPUT);
-}
-
-function contentText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((part): part is { type: 'text'; text: string } => (
-      isRecord(part) && part.type === 'text' && typeof part.text === 'string'
-    ))
-    .map((part) => part.text)
-    .join('\n');
 }
 
 function truncate(text: string, limit: number): string {
@@ -284,8 +217,4 @@ function truncate(text: string, limit: number): string {
 
 function errorFields(error: unknown): { name: string; message: string } {
   return error instanceof Error ? { name: error.name, message: error.message } : { name: 'Error', message: String(error) };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }

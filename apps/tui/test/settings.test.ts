@@ -13,6 +13,7 @@ import { initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agen
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createLocalSettingsManager,
+  getDynamicThinkingEnabled,
   getBrowserAuthorizationPolicy,
   getFelanSettings,
   getLocalOutputStyle,
@@ -39,6 +40,22 @@ afterEach(async () => {
 });
 
 describe('local settings', () => {
+  it('defaults dynamic thinking on and accepts an explicit disable switch', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    const path = join(agentDir, 'settings.json');
+    const read = () => getDynamicThinkingEnabled(createLocalSettingsManager(root, agentDir));
+
+    expect(read()).toBe(true);
+    await writeFile(path, JSON.stringify({ felanThinking: { dynamic: false } }));
+    expect(read()).toBe(false);
+    await writeFile(path, JSON.stringify({ felanThinking: { dynamic: true } }));
+    expect(read()).toBe(true);
+    await writeFile(path, JSON.stringify({ felanThinking: { dynamic: 'false' } }));
+    expect(read).toThrow('felanThinking.dynamic must be a boolean');
+  });
+
   it('preserves terminal and model settings while filtering executable resources', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

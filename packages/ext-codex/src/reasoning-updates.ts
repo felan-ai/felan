@@ -129,6 +129,7 @@ export function registerReasoningUpdates(pi: FelanExtensionAPI): {
   const secret = randomBytes(32);
   const carriers = new Map<string, ReasoningUpdate>();
   let pending: PendingUpdates | undefined;
+  let observedLevel: ThinkingLevel | undefined;
 
   const flush = (ctx: ExtensionContext): void => {
     const queued = pending;
@@ -173,18 +174,39 @@ export function registerReasoningUpdates(pi: FelanExtensionAPI): {
     }
   };
 
-  pi.on('thinking_level_select', (event, ctx) => record(ctx, event.previousLevel));
-  pi.on('before_agent_start', (_event, ctx) => record(ctx));
-  pi.on('agent_settled', (_event, ctx) => flush(ctx));
-  pi.on('session_start', () => { pending = undefined; carriers.clear(); });
-  pi.on('session_shutdown', () => { pending = undefined; carriers.clear(); });
-  pi.on('model_select', () => { pending = undefined; });
-  pi.on('session_compact', () => { pending = undefined; });
+  pi.on('thinking_level_select', (event, ctx) => {
+    record(ctx, event.previousLevel);
+    observedLevel = event.level;
+  });
+  pi.on('before_agent_start', (_event, ctx) => {
+    observedLevel = pi.getThinkingLevel();
+    record(ctx);
+  });
+  pi.on('agent_settled', (_event, ctx) => { flush(ctx); observedLevel = pi.getThinkingLevel(); });
+  pi.on('session_start', () => { pending = undefined; observedLevel = undefined; carriers.clear(); });
+  pi.on('session_shutdown', () => { pending = undefined; observedLevel = undefined; carriers.clear(); });
+  pi.on('model_select', () => { pending = undefined; observedLevel = pi.getThinkingLevel(); });
+  pi.on('session_compact', () => { pending = undefined; observedLevel = pi.getThinkingLevel(); });
 
   return {
     project(messages, ctx) {
       const model = ctx.model;
       if (!supportsReasoningUpdates(model)) return [...messages];
+      const currentLevel = pi.getThinkingLevel();
+      if (pending === undefined && observedLevel !== undefined && currentLevel !== observedLevel) {
+        record(ctx, observedLevel);
+        observedLevel = currentLevel;
+      }
+      if (pending) {
+        const entries = activeEntries(ctx);
+        const assistant = entries.reduce((last, entry, index) => (
+          entry.type === 'message' && entry.message.role === 'assistant' ? index : last
+        ), -1);
+        const user = entries.reduce((last, entry, index) => (
+          entry.type === 'message' && entry.message.role === 'user' ? index : last
+        ), -1);
+        if (assistant >= 0 && user > assistant) flush(ctx);
+      }
       const lane = laneForModel(model);
       const positions = new Map<string, number[]>();
       messages.forEach((message, index) => {
@@ -196,6 +218,7 @@ export function registerReasoningUpdates(pi: FelanExtensionAPI): {
       const insertions = new Map<number, typeof messages[number][]>();
       let waiting: typeof messages[number][] = [];
       let lastMatched = -1;
+      let lastUserIndex: number | undefined;
       const insertWaiting = (index: number) => {
         if (waiting.length === 0) return;
         insertions.set(index, [...(insertions.get(index) ?? []), ...waiting]);
@@ -211,12 +234,15 @@ export function registerReasoningUpdates(pi: FelanExtensionAPI): {
             role: 'custom', customType: UPDATE_TYPE, content: marker, details: update,
             timestamp: Date.parse(entry.timestamp),
           } as unknown as typeof messages[number]);
+          if (lastUserIndex !== undefined) insertWaiting(lastUserIndex);
         } else if (entry.type === 'message') {
           const index = positions.get(messageKey(entry.message))?.shift();
           if (index !== undefined) {
             insertWaiting(index);
             lastMatched = index;
           }
+          if (entry.message.role === 'user') lastUserIndex = index;
+          else if (entry.message.role === 'assistant' || entry.message.role === 'toolResult') lastUserIndex = undefined;
         }
       }
       insertWaiting(lastMatched + 1);

@@ -187,9 +187,61 @@ configured defaults apply.
 
 The classifier state may leave the local process for the configured TypeSafe or
 OpenRouter endpoint. It contains prompt and bounded session text, tool names
-with short inputs, and agent metadata, but not credentials. Decisions are logged
+with short inputs, and agent metadata. Recognized credential patterns are
+redacted from shared session evidence, but arbitrary secrets in prompts or
+unrecognized text cannot be detected reliably; do not include credentials in
+classifier-bound requests. Decisions are logged
 at debug level under the `subagent-routing`, `subagent-model`, and
 `prewalk-classifier` components without the request text.
+
+### Dynamic thinking level
+
+When a classifier is available, Felan selects reasoning effort when a new agent
+run starts on cache-safe models. It considers the new request and bounded recent
+session evidence using OpenAI's or Anthropic's published effort-level guidance.
+It does not reclassify tool continuations or follow-ups queued within a run.
+Only supported `low`, `medium`, `high`, `xhigh`, and `max`
+levels are candidates. Failed, uncertain, aborted, or unavailable classification
+keeps the current level, and automatic changes do not update your saved default.
+
+To disable dynamic thinking while retaining the classifier for other features,
+set this in `$FELAN_AGENT_DIR/settings.json`:
+
+```json
+{ "felanThinking": { "dynamic": false } }
+```
+
+The setting defaults to enabled and takes effect when a runtime is created or
+recreated. An explicit thinking-level selection overrides automation for the
+rest of that session; the headless `--thinking` option and explicit child-agent
+thinking also bypass it. This includes Prewalk's session-local planning and
+implementation thinking choices.
+
+Only GPT-6 Astra, Sol, and Luna using `openai-codex-responses` with the Codex
+extension enabled, and Anthropic models marked for mid-conversation effort by
+the installed Pi adapter, qualify. Codex uses history `configuration_update`
+items. Eligible Claude models use per-message `output_config` while retaining a
+fixed request-level effort. Standard `openai-responses`, older Claude models,
+and other providers keep their existing thinking behavior. Prompt caching
+still depends on the provider's eligibility, prefix, and retention; check
+cached-token usage rather than assuming savings. Classification itself adds
+latency and may incur a separate provider charge. The shared Agent Core evidence
+builder caps text and excludes image data, raw thinking, and tool-result bodies;
+recognized secret patterns are redacted on a best-effort basis only.
+
+Savings accounting uses the same per-token price at every effort level. Only
+an automatic `high` → `low` or `high` → `medium` change on a supported model
+with observed reasoning-token usage on its first assistant response yields a
+possible estimated saving only after the run settles without tool failures.
+It compares the actual billable output with a 5% heuristic estimate of
+additional `high` reasoning tokens, anchored to one public benchmark; when available, it
+includes the classifier's cost. No measurement is emitted for unchanged effort,
+other effort transitions, failed or aborted responses, or an estimate that
+does not exceed the known classifier cost. If the classifier cost is unavailable,
+the estimate excludes that overhead. Details and quality limitations: [dynamic
+thinking estimate](../benchmarks/dynamic-thinking-effort.md). This extrapolation
+is not validated for every model or effort pair and does not prove savings or
+equal task quality.
 
 ## Project instructions and skills
 
@@ -410,13 +462,14 @@ overflow-recovery compaction are unchanged. Pi continues to generate the
 compaction summary; this is not OpenAI native Responses compaction.
 
 On GPT-6 Astra, Sol, and Luna with the `openai-codex-responses` API, changing
-thinking level between turns appends a `configuration_update` while leaving the
+thinking level between turns persists a `configuration_update` that appears
+before the next user message in the provider request, while leaving the
 initial request-level reasoning effort unchanged. This can preserve the prompt
 cache across a level change, including after resuming a session. It does not
-apply to standard `openai-responses`, other models, or Anthropic. Changes during
-an active tool run are recorded after the run settles; requests before then
-may use the new request-level effort and miss the cache. Pi compaction starts
-a new prefix, and automatic server compaction or truncation is incompatible
+apply to standard `openai-responses`, other models, or Anthropic. A queued user
+follow-up can receive an update at its next safe turn boundary. Changes during
+a tool continuation remain deferred until a new user turn or the run settles.
+Pi compaction starts a new prefix, and automatic server compaction or truncation is incompatible
 with these updates. Verify actual reuse from the provider's cached-token usage.
 
 GPT models keep Felan Code's ordinary `read` and `bash` tools. Codex mode replaces

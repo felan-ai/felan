@@ -426,6 +426,46 @@ describe('Agent Core session composition', () => {
     result.session.dispose();
   });
 
+  it('composes dynamic thinking only when enabled and a classifier is available', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    const modelRuntime = await createModelRuntime(join(root, 'agent-dir'));
+    const classifier = { evaluate: vi.fn() };
+    const createReporter = vi.fn().mockReturnValue({ report: vi.fn() });
+    for (const [enabled, available, expected] of [
+      [true, true, true], [false, true, false], [true, false, false],
+    ] as const) {
+      const runtime = Object.assign(new TestAgentRuntime(cwd), available ? { classifier } : {});
+      const result = await createAgentCoreSession({
+        runtime, ...(enabled ? { dynamicThinking: true } : {}),
+        savings: { createReporter },
+        extensionPackages: [], importExtension: async () => ({}),
+        modelRuntime, settingsManager: SettingsManager.inMemory(), sessionManager: SessionManager.inMemory(cwd),
+      });
+      expect(result.extensionsResult.extensions.some((extension) => (
+        extension.path === '<inline:@felan-ai/agent-core/dynamic-thinking>'
+      ))).toBe(expected);
+      expect(createReporter).toHaveBeenCalledTimes(expected ? 1 : 0);
+      if (expected) expect(createReporter).toHaveBeenCalledWith('@felan-ai/agent-core/dynamic-thinking');
+      createReporter.mockClear();
+      result.session.dispose();
+    }
+    expect(classifier.evaluate).not.toHaveBeenCalled();
+
+    const result = await createAgentCoreSession({
+      runtime: Object.assign(new TestAgentRuntime(cwd), { classifier }),
+      dynamicThinking: true,
+      savings: { createReporter: () => { throw new Error('Savings reporter unavailable'); } },
+      extensionPackages: [], importExtension: async () => ({}),
+      modelRuntime, settingsManager: SettingsManager.inMemory(), sessionManager: SessionManager.inMemory(cwd),
+    });
+    expect(result.extensionsResult.extensions.some((extension) => (
+      extension.path === '<inline:@felan-ai/agent-core/dynamic-thinking>'
+    ))).toBe(true);
+    result.session.dispose();
+  });
+
   it('disposes partial Pi sessions when the stream wrapper throws', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

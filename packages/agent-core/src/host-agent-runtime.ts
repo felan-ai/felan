@@ -37,7 +37,7 @@ import type {
   ExecResult,
 } from './runtime.js';
 import { fileListingGlobMatcher, normalizeFileListingPath } from './file-listing.js';
-import type { Classifier } from './classifier.js';
+import type { Classifier } from './classifier/index.js';
 import { createSilentLogger, type Logger } from './logger.js';
 
 export type HostShellOptions = AgentRuntimeShellOptions;
@@ -164,11 +164,11 @@ export class HostAgentRuntime implements AgentRuntime {
     const resolvedPath = this.#pathAccess === 'host'
       ? resolveHostPath(this.#cwd, path)
       : await resolveReadablePath(
-          this.#cwd,
-          this.#sessionStorageRoot,
-          this.#agentStorageRoot,
-          path,
-        );
+        this.#cwd,
+        this.#sessionStorageRoot,
+        this.#agentStorageRoot,
+        path,
+      );
     const content = options?.maxBytes === undefined
       ? await readFile(resolvedPath)
       : await readBoundedFile(resolvedPath, options.maxBytes);
@@ -189,11 +189,11 @@ export class HostAgentRuntime implements AgentRuntime {
     const resolvedPath = this.#pathAccess === 'host'
       ? resolveHostPath(this.#cwd, path)
       : await resolveReadablePath(
-          this.#cwd,
-          this.#sessionStorageRoot,
-          this.#agentStorageRoot,
-          path,
-        );
+        this.#cwd,
+        this.#sessionStorageRoot,
+        this.#agentStorageRoot,
+        path,
+      );
     return listHostFiles(resolvedPath, options);
   }
 
@@ -445,7 +445,7 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
 
   protected abstract sendSignal(signal: NodeJS.Signals): void | Promise<void>;
 
-  protected onDispose(): void {}
+  protected onDispose(): void { }
 
   async #terminate(signal: AgentRuntimeTerminationSignal): Promise<void> {
     if (!this.output.running) return;
@@ -850,7 +850,7 @@ function isIgnoredListingPath(
 class BoundedPathHeap {
   readonly #entries: string[] = [];
 
-  constructor(private readonly limit: number) {}
+  constructor(private readonly limit: number) { }
 
   push(entry: string): void {
     if (this.#entries.length >= this.limit) {

@@ -3,7 +3,7 @@ import type {
   ClassifierAnswers,
   ClassifierProbabilityAnswers,
   ClassifierEvaluationMetadata,
-} from '../classifier.js';
+} from '../types.js';
 import {
   JevClientError,
   createJevClient,

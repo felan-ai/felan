@@ -83,6 +83,8 @@ choice decisions. Each uses bounded state: the request, up to 24 recent
 conversation items, up to 40 recent tool calls with short inputs and error
 flags, the submitted plan, and recorded `TaskCreate` titles and acceptance
 criteria.
+Conversation and tool summaries use Agent Core's shared bounded classifier
+session evidence; Prewalk retains its own task and verification judgments.
 
 - **Entry:** Classification starts on Pi's `input` event for idle turns when
   `enter_prewalk` and a mutation tool are active and `entryApproval` is not

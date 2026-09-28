@@ -89,6 +89,7 @@ export interface CreateLocalSubagentHostOptions {
   readonly settings?: LocalSubagentSettings;
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly classifier?: Classifier;
+  readonly dynamicThinking?: boolean;
   readonly savings?: SavingsReporterProvider;
   readonly backgroundBashCoordinator?: BackgroundBashCoordinator;
   readonly backgroundBashCoordinatorOwner?: boolean;
@@ -329,7 +330,7 @@ export class LocalSubagentManager {
   attachParent(sessionId: string, port: SubagentParentPort): () => void {
     this.#ports.set(sessionId, port);
     const replay = setTimeout(() => {
-      this.#deliverPending(sessionId).catch(() => {});
+      this.#deliverPending(sessionId).catch(() => { });
     }, 0);
     replay.unref();
     return () => {
@@ -666,7 +667,7 @@ export class LocalSubagentManager {
     this.#closed = true;
     for (const timer of this.#deliveryTimers.values()) clearTimeout(timer);
     this.#deliveryTimers.clear();
-    await this.#serializeControl(async () => {});
+    await this.#serializeControl(async () => { });
     for (const child of this.#latestChildren()) {
       if (!isTerminal(child.record.status)) await this.#cancelTree(child.record.agentId, 'Local host exited');
     }
@@ -707,7 +708,7 @@ export class LocalSubagentManager {
         if (job.child.record.status !== 'queued') continue;
         await this.#beginRun(job);
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   async #beginRun(job: Job): Promise<void> {
@@ -742,7 +743,7 @@ export class LocalSubagentManager {
             `Subagent timed out after ${child.request.timeoutSeconds} seconds`,
             'timed_out',
             'timed_out',
-          ).catch(() => {});
+          ).catch(() => { });
         }, child.request.timeoutSeconds * 1_000);
         timeout.unref();
       }
@@ -847,7 +848,7 @@ export class LocalSubagentManager {
       if (savingsMeasurement && this.#savingsReporter) {
         try {
           await this.#savingsReporter.report(savingsMeasurement);
-        } catch {}
+        } catch { }
       }
       try {
         if (child.deliveryId) await this.#deliver(child, child.deliveryId);
@@ -871,7 +872,7 @@ export class LocalSubagentManager {
 
   #cancelControl(job: Job): void {
     if (!job.control || job.cancelPromise) return;
-    job.cancelPromise = job.control.cancel().catch(() => {});
+    job.cancelPromise = job.control.cancel().catch(() => { });
   }
 
   async #runAgentCore(
@@ -928,6 +929,9 @@ export class LocalSubagentManager {
     );
     const created = await createAgentCoreSession({
       runtime,
+      ...(!this.#options.dynamicThinking || input.request.thinking !== undefined ? {} : {
+        dynamicThinking: true,
+      }),
       ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
       importExtension: createLocalSubagentExtensionImporter(
@@ -983,16 +987,16 @@ export class LocalSubagentManager {
         ) {
           if (turns >= input.request.maxTurns) {
             turnLimitReached = true;
-            cancel().catch(() => {});
+            cancel().catch(() => { });
           } else if (turns >= input.request.maxTurns - 1 && !synthesisRequested) {
             synthesisRequested = true;
             created.session.setActiveToolsByName([]);
-            created.session.steer(SYNTHESIS_PROMPT).catch(() => {});
+            created.session.steer(SYNTHESIS_PROMPT).catch(() => { });
           }
         }
       });
       const abort = () => {
-        cancel().catch(() => {});
+        cancel().catch(() => { });
       };
       input.signal.addEventListener('abort', abort, { once: true });
       try {
@@ -1177,7 +1181,7 @@ export class LocalSubagentManager {
         const child = this.#latest(agentId);
         if (child) {
           if (waitForCleanup) await this.#deliver(child, cancellation.deliveryId);
-          else void this.#deliver(child, cancellation.deliveryId).catch(() => {});
+          else void this.#deliver(child, cancellation.deliveryId).catch(() => { });
         }
       } finally {
         this.#drain();
@@ -1233,7 +1237,7 @@ export class LocalSubagentManager {
     const delay = Math.min(5_000, 100 * (2 ** Math.min(nextAttempt - 1, 5)));
     const retry = setTimeout(() => {
       this.#deliveryTimers.delete(deliveryId);
-      this.#deliver(child, deliveryId).catch(() => {});
+      this.#deliver(child, deliveryId).catch(() => { });
     }, delay);
     retry.unref();
     this.#deliveryTimers.set(deliveryId, retry);
@@ -1310,7 +1314,7 @@ export class LocalSubagentManager {
 
   async #persist(): Promise<void> {
     const snapshot = [...this.#children.values()].map(toStored);
-    this.#save = this.#save.catch(() => {}).then(() => this.#store.save(snapshot));
+    this.#save = this.#save.catch(() => { }).then(() => this.#store.save(snapshot));
     await this.#save;
   }
 

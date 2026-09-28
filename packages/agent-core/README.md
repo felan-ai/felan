@@ -2,7 +2,7 @@
 
 Portable Felan agent contracts and the Node.js host runtime.
 
-`@felan-ai/agent-core` is the feature-neutral composition layer between a
+`@felan-ai/agent-core` is the portable composition layer between a
 Felan host and the pinned Pi packages. It is intended for applications and
 portable extensions, not as a complete end-user CLI.
 
@@ -61,6 +61,31 @@ The provider-neutral classifier supports the existing structured Choice
 judgment and an additive probability-of-yes judgment for independently scoring
 multiple conditions. Jev implements the latter with its Noul primitive; Agent
 Core does not expose Jev transport types through this contract.
+
+`collectClassifierSessionEvidence` converts the active Pi session projection
+into bounded conversation and correlated tool-call metadata for classifiers.
+It handles branch/compaction summaries, omits images, raw thinking and tool
+result bodies, and redacts recognizable credential patterns. It is not a
+guarantee that arbitrary secrets in user text are detected. Feature packages
+choose their own classifier questions and any additional state.
+
+Session composition accepts an optional `dynamicThinking` capability. When the
+runtime has a classifier, it selects a supported effort on `before_agent_start`,
+not queued follow-ups or tool continuations, without persisting the user's
+default. Codex requests are classified only when the Codex extension is loaded;
+eligible Anthropic models use Pi's mid-conversation effort support.
+Explicit thinking changes take precedence for the remainder of the session.
+Absent the option or the classifier, composition does not enable this feature.
+
+With an optional savings reporter, Agent Core reports a heuristic
+API-equivalent estimate for any supported model's automatic `high` → `low` or
+`high` → `medium` change when the run settles without tool failures and its
+first assistant response includes reasoning-token usage. It estimates 5%
+extra reasoning output at `high`, keeps observed input, cache and visible-output
+usage unchanged, and subtracts reported classifier
+cost. No change, a return to `high`, other models/levels, missing usage, or a
+failed response produces no measurement. The unvalidated cross-model
+assumption and quality caveats are in [the public benchmark notes](../../docs/benchmarks/dynamic-thinking-effort.md).
 
 Host runtimes expose optional persistent process operations for extensions that
 need incremental output and stdin. `startShell()` keeps process ownership in

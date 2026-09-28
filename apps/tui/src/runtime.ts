@@ -43,6 +43,7 @@ import {
 import { createLocalAgentLogger } from './logger.js';
 import {
   createLocalSettingsManager,
+  getDynamicThinkingEnabled,
   getFelanSettings,
   getLocalOutputStyle,
   getLocalToolDisplayMode,
@@ -226,6 +227,7 @@ export function createLocalSessionRuntimeFactory(
     ]);
     const settingsManager = createLocalSettingsManager(cwd, options.agentDir);
     const felanSettings = getFelanSettings(settingsManager);
+    const dynamicThinkingEnabled = getDynamicThinkingEnabled(settingsManager);
     const extensionPackages = options.extensionPackages
       ?? resolveBuiltinExtensionPackages(felanSettings.builtinExtensions);
     const memoryEnabled = extensionPackages.includes(memoryExtensionPackage);
@@ -357,6 +359,7 @@ export function createLocalSessionRuntimeFactory(
       backgroundBashCoordinator,
       backgroundBashCoordinatorOwner: false,
       ...(runtime.classifier === undefined ? {} : { classifier: runtime.classifier }),
+      dynamicThinking: dynamicThinkingEnabled,
       ...(options.inlineExtensions === undefined
         ? {}
         : { inlineExtensions: options.inlineExtensions }),
@@ -395,6 +398,9 @@ export function createLocalSessionRuntimeFactory(
 
     return {
       runtime,
+      ...(!dynamicThinkingEnabled || options.thinkingLevel !== undefined ? {} : {
+        dynamicThinking: true,
+      }),
       ...(wrapStreamFunction === undefined ? {} : { wrapStreamFunction }),
       extensionPackages,
       ...(options.extensionPaths === undefined ? {} : { extensionPaths: options.extensionPaths }),
@@ -585,7 +591,7 @@ export async function createLocalFelanRuntime(
     });
     return installLocalSubagentLifecycle(runtime, ownsMemoryCoordinator ? memoryCoordinator : undefined);
   } catch (error) {
-    if (ownsMemoryCoordinator) await memoryCoordinator.dispose().catch(() => {});
+    if (ownsMemoryCoordinator) await memoryCoordinator.dispose().catch(() => { });
     throw error;
   }
 }

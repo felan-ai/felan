@@ -2,7 +2,7 @@ import type {
   ExecOptions as PiExecOptions,
   ExecResult as PiExecResult,
 } from '@earendil-works/pi-coding-agent';
-import type { Classifier } from './classifier.js';
+import type { Classifier } from './classifier/index.js';
 import type { Logger } from './logger.js';
 
 export type ExecOptions = PiExecOptions;

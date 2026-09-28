@@ -46,8 +46,9 @@ include only measurements reported by supported optimization producers.
 
 Current producers are RTK/post-tool compaction, Prewalk implementation routing,
 MarkItDown document reads, concise output style, and local `explore` subagent
-routing. MarkItDown and concise use `estimated-baseline` ratios from current
-repeated benchmark artifacts; they do not replay an unoptimized request. Explore routing
+routing, plus [dynamic-thinking effort](../benchmarks/dynamic-thinking-effort.md)
+for supported high-to-lower effort responses with observed reasoning
+tokens. MarkItDown and concise use `estimated-baseline` ratios from repeated
 benchmark artifacts; they do not replay an unoptimized request. Explore routing
 reprices observed child usage at the parent model and does not claim fewer
 tokens. Explanatory/custom output styles and unsuccessful subagents do not

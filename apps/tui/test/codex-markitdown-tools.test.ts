@@ -92,6 +92,7 @@ function createHarness(processSupport: boolean) {
       if (!activeTools.includes(tool.name)) activeTools.push(tool.name);
     },
     getActiveTools: () => [...activeTools],
+    getThinkingLevel: () => 'medium',
     setActiveTools: (names: string[]) => activeTools.splice(0, activeTools.length, ...names),
     events: {
       emit: (channel: string, data: unknown) => {

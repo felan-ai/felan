@@ -6,6 +6,7 @@ import {
   AGENT_CORE_VERSION,
   HostAgentRuntime,
   SessionManager,
+  createAssistantMessageEventStream,
   associateExtensionConfig,
   configField,
   createAgentSessionRuntime,
@@ -51,6 +52,155 @@ afterEach(async () => {
 });
 
 describe('local Agent Core lifecycle', () => {
+  it('reloads the dynamic-thinking setting without disabling the classifier', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const settingsPath = join(agentDir, 'settings.json');
+    await writeFile(settingsPath, JSON.stringify({ felanThinking: { dynamic: false } }));
+    const evaluate = vi.fn();
+    const classifier = { evaluate };
+    const runtime = await createLocalFelanRuntime({
+      cwd, agentDir, homeDir: root, extensionPackages: [],
+      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, { ...request, classifier }),
+    });
+    const hasDynamicThinking = () => runtime.session.resourceLoader.getExtensions().extensions.some((extension) => (
+      extension.path === '<inline:@felan-ai/agent-core/dynamic-thinking>'
+    ));
+    expect(hasDynamicThinking()).toBe(false);
+
+    await writeFile(settingsPath, JSON.stringify({ felanThinking: { dynamic: true } }));
+    await runtime.newSession();
+    expect(hasDynamicThinking()).toBe(true);
+    expect(evaluate).not.toHaveBeenCalled();
+    await runtime.dispose();
+  });
+
+  it('selects effort before an eligible root user turn without a provider call', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const model = modelRuntime.getModel('anthropic', 'claude-opus-5-5');
+    expect(model).toBeDefined();
+    vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+    const evaluate = vi.fn().mockResolvedValue({ answers: { effort: { type: 'choice', choice: 'low' } } });
+    const runtime = await createLocalFelanRuntime({
+      cwd, agentDir, homeDir: root, modelRuntime, model: model!, extensionPackages: [],
+      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
+        ...request, classifier: { evaluate },
+      }),
+    });
+    runtime.session.agent.streamFunction = (activeModel) => {
+      const response = { ...completedAssistantMessage('Done'), api: activeModel.api,
+        provider: activeModel.provider, model: activeModel.id };
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({ type: 'start', partial: { ...response, content: [], stopReason: 'pending' } });
+        stream.push({ type: 'done', reason: 'stop', message: response });
+      });
+      return stream;
+    };
+    await runtime.session.bindExtensions({ mode: 'print' });
+    const defaultThinking = runtime.session.settingsManager.getDefaultThinkingLevel();
+    await runtime.session.prompt('Summarize this simply');
+
+    expect(evaluate.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('effort')))
+      .toEqual([['effort']]);
+    expect(runtime.session.thinkingLevel).toBe('low');
+    expect(runtime.session.settingsManager.getDefaultThinkingLevel()).toBe(defaultThinking);
+
+    runtime.session.setThinkingLevel('max');
+    await runtime.session.prompt('Now investigate deeply');
+    expect(evaluate.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('effort')))
+      .toEqual([['effort']]);
+    expect(runtime.session.thinkingLevel).toBe('max');
+    await runtime.dispose();
+  });
+
+  it('records a cache-safe Codex effort change before the next user turn', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const model = modelRuntime.getModel('openai-codex', 'gpt-6-sol');
+    expect(model).toBeDefined();
+    vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+    const effortChoices = ['low', 'high'];
+    const evaluate = vi.fn().mockImplementation(async (_state, questions: Record<string, unknown>) => ({
+      answers: questions.effort
+        ? { effort: { type: 'choice', choice: effortChoices.shift() } }
+        : { route: { type: 'choice', choice: 'regular' } },
+    }));
+    const runtime = await createLocalFelanRuntime({
+      cwd, agentDir, homeDir: root, modelRuntime, model: model!,
+      extensionPackages: [builtinExtensionPackages.codex],
+      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
+        ...request, classifier: { evaluate },
+      }),
+    });
+    runtime.session.agent.streamFunction = (activeModel) => {
+      const response = { ...completedAssistantMessage('Done'), api: activeModel.api,
+        provider: activeModel.provider, model: activeModel.id };
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({ type: 'start', partial: { ...response, content: [], stopReason: 'pending' } });
+        stream.push({ type: 'done', reason: 'stop', message: response });
+      });
+      return stream;
+    };
+    await runtime.session.bindExtensions({ mode: 'print' });
+    await runtime.session.prompt('Describe the file briefly');
+    await runtime.session.prompt('Investigate a concurrency bug');
+
+    expect(effortChoices).toEqual([]);
+    expect(runtime.session.sessionManager.getBranch().filter((entry) => (
+      entry.type === 'custom' && entry.customType === 'codex-reasoning-update'
+    ))).toMatchObject([{ data: { initialEffort: 'low', effort: 'high' } }]);
+    await runtime.dispose();
+  });
+
+  it('does not select Codex effort when the Codex extension is disabled', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ builtinExtensions: { codex: false } }));
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const model = modelRuntime.getModel('openai-codex', 'gpt-6-sol');
+    expect(model).toBeDefined();
+    vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+    const evaluate = vi.fn().mockResolvedValue({ answers: { effort: { type: 'choice', choice: 'low' } } });
+    const runtime = await createLocalFelanRuntime({
+      cwd, agentDir, homeDir: root, modelRuntime, model: model!,
+      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
+        ...request, classifier: { evaluate },
+      }),
+    });
+    expect(runtime.session.model?.api).toBe('openai-codex-responses');
+    expect(runtime.session.resourceLoader.getExtensions().extensions.map(({ path }) => path))
+      .not.toContain('<inline:@felan-ai/ext-codex>');
+    runtime.session.agent.streamFunction = (activeModel) => {
+      const response = { ...completedAssistantMessage('Done'), api: activeModel.api,
+        provider: activeModel.provider, model: activeModel.id };
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({ type: 'start', partial: { ...response, content: [], stopReason: 'pending' } });
+        stream.push({ type: 'done', reason: 'stop', message: response });
+      });
+      return stream;
+    };
+    await runtime.session.bindExtensions({ mode: 'print' });
+    const original = runtime.session.thinkingLevel;
+    await runtime.session.prompt('Summarize the file');
+    expect(evaluate.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'effort'))).toEqual([]);
+    expect(runtime.session.thinkingLevel).toBe(original);
+    await runtime.dispose();
+  });
+
   it.each([true, false])('reloads memory enablement after starting at %s', async (memoryEnabled) => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -649,6 +799,7 @@ describe('local Agent Core lifecycle', () => {
     const sessionManager = SessionManager.inMemory(cwd);
     sessionManager.appendMessage({ role: 'user', content: 'previous prompt', timestamp: Date.now() });
     sessionManager.appendMessage(completedAssistantMessage('previous response'));
+    const classifier = { evaluate: vi.fn() };
 
     const runtime = await createLocalFelanRuntime({
       cwd,
@@ -658,10 +809,14 @@ describe('local Agent Core lifecycle', () => {
       sessionManager,
       model: model!,
       thinkingLevel: 'high',
+      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, { ...request, classifier }),
     });
 
     expect(runtime.session.model).toBe(model);
     expect(runtime.session.thinkingLevel).toBe('high');
+    expect(runtime.session.resourceLoader.getExtensions().extensions.some((extension) => (
+      extension.path === '<inline:@felan-ai/agent-core/dynamic-thinking>'
+    ))).toBe(false);
     await runtime.dispose();
   });
 
