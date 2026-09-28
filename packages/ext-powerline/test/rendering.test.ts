@@ -114,6 +114,18 @@ describe('powerline segments', () => {
     expect(rendered.text).toBe('(provider-x) model-x • high');
   });
 
+  it('renders a sanitized Felan version and omits it when the host has none', () => {
+    expect(renderSingle('version', { enabled: true }, context({ felanVersion: '0.26.14\n\u001b[31m' })))
+      .toMatchObject({ name: 'version', colorKey: 'version', text: 'Felan 0.26.14' });
+    const hostless = context();
+    expect(renderSegments({ segments: { version: { enabled: true } } }, {
+      ctx: hostless.ctx,
+      footerData: hostless.footerData,
+      subscription: hostless.subscription,
+      symbols: getSymbols('text'),
+    })).toEqual([]);
+  });
+
   it('totals session tokens, cache usage, and cost', () => {
     const rendered = renderSingle('session', { enabled: true, type: 'breakdown' }, context({
       entries: [
@@ -344,6 +356,7 @@ function renderSingle(
 ): RenderedSegment {
   const rendered = renderSegments({ segments: { [name]: config } }, {
     ctx: value.ctx,
+    ...(value.felanVersion === undefined ? {} : { felanVersion: value.felanVersion }),
     footerData: value.footerData,
     ...(gitDetails === undefined ? {} : { gitDetails }),
     subscription: value.subscription,
@@ -366,12 +379,14 @@ function context(options: {
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   branch?: string | null;
   statuses?: ReadonlyMap<string, string>;
+  felanVersion?: string;
   subscription?: SubscriptionState;
   savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } };
   additionalSessionUsage?: Parameters<typeof renderSegments>[1]['additionalSessionUsage'];
 } = {}): {
   ctx: ExtensionContext;
   footerData: FooterDataLike;
+  felanVersion?: string;
   subscription: SubscriptionState;
   savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } };
   additionalSessionUsage?: Parameters<typeof renderSegments>[1]['additionalSessionUsage'];
@@ -392,6 +407,7 @@ function context(options: {
   return {
     ctx,
     footerData,
+    felanVersion: options.felanVersion,
     subscription: options.subscription ?? { loading: false },
     savings: options.savings,
     additionalSessionUsage: options.additionalSessionUsage,

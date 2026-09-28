@@ -29,6 +29,7 @@ export interface PowerlineFooterOptions {
   footerData: FooterDataLike;
   theme: Parameters<typeof getThemePalette>[0];
   config: PowerlineConfig;
+  felanVersion?: string;
   subscription: SubscriptionState;
   savings?: SavingsState | (() => SavingsState);
   additionalSessionUsage?: SessionUsageTotals | (() => SessionUsageTotals);
@@ -74,6 +75,7 @@ export class PowerlineFooter implements Component {
       const gitDetails = this.gitCache.get();
       const segments = renderSegments(line, {
         ctx: this.options.ctx,
+        ...(this.options.felanVersion === undefined ? {} : { felanVersion: this.options.felanVersion }),
         footerData: this.options.footerData,
         ...(gitDetails === undefined ? {} : { gitDetails }),
         subscription: this.options.subscription,

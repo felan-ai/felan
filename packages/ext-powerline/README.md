@@ -15,6 +15,7 @@ The footer displays:
 - estimated API-equivalent Felan savings for the configured recent-day period
 - context-window usage
 - statuses published by other Pi extensions
+- the Felan version when enabled by the host application
 
 Rendering is ANSI-width-aware and supports left/right alignment, wrapping,
 `minimal`, `powerline`, and `capsule` styles, plus text and Powerline Unicode
@@ -36,6 +37,10 @@ maintain a second palette or color compatibility setting.
 All configuration is supplied through the declarative `powerline` extension
 settings. The settings include scalar display fields and ordered `lines` with
 supported segment objects. Theme selection and colors belong to Pi.
+
+The optional `version` segment displays the Felan version supplied by the host.
+It is not enabled by the package default; hostless consumers omit it when no
+version is provided. Felan's local TUI supplies its current application version.
 
 The `subscription` segment supports Codex, Claude, and Grok SuperGrok / X Premium
 OAuth plans. Codex and Grok values show remaining percentage; Claude values show

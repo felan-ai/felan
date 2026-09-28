@@ -13,14 +13,20 @@ describe('powerline configuration', () => {
       source: 'settings.json.extensionConfig.powerline',
       values: {
         padding: 2,
-        lines: [{ segments: { directory: { enabled: true, style: 'basename' } } }],
+        lines: [{ segments: {
+          directory: { enabled: true, style: 'basename' },
+          version: { enabled: true, align: 'right' },
+        } }],
       },
     }]);
     const config = powerlineConfigFromSettings(resolved.get('powerline')!);
     expect(config).toMatchObject({
       display: { padding: 2 },
     });
-    expect(config.display.lines).toEqual([{ segments: { directory: { enabled: true, style: 'basename' } } }]);
+    expect(config.display.lines).toEqual([{ segments: {
+      directory: { enabled: true, style: 'basename' },
+      version: { enabled: true, align: 'right' },
+    } }]);
   });
 
   it('uses the quiet default style and customized layout when no overrides are supplied', () => {

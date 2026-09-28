@@ -18,6 +18,7 @@ import {
   OUTPUT_STYLE_CONFIG,
 } from '@felan-ai/ext-output-style';
 import { createPowerlineExtension, POWERLINE_CONFIG } from '@felan-ai/ext-powerline';
+import { FELAN_VERSION } from './version.js';
 import { createSessionTitleExtension, type SessionTitleHost, type SessionTitleSkip } from '@felan-ai/ext-session-title';
 import { createInsightsExtension } from '@felan-ai/ext-insights';
 import { createBackgroundBashExtension, type BackgroundBashCoordinator } from '@felan-ai/ext-background-bash';
@@ -165,6 +166,7 @@ export function createLocalExtensionImporter(
     : undefined;
   const subscriptionHost = createLocalSubscriptionUsageHost(modelRuntime, fetch, subscriptionUsagePath);
   const powerline = createPowerlineExtension(subscriptionHost, {
+    felanVersion: FELAN_VERSION,
     ...(savings === undefined ? {} : { savingsHost: createLocalSavingsUsageHost(savings) }),
     ...(additionalSessionUsageHost === undefined ? {} : { additionalSessionUsageHost }),
     ...(subscriptionUsagePath === undefined

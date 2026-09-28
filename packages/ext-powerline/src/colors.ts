@@ -24,6 +24,7 @@ const ROLE_COLORS: Record<ThemeColorKey, { fg: Parameters<PiTheme['getFgAnsi']>[
   savings: { fg: 'accent', bg: 'customMessageBg' },
   context: { fg: 'muted', bg: 'customMessageBg' },
   status: { fg: 'muted', bg: 'customMessageBg' },
+  version: { fg: 'muted', bg: 'customMessageBg' },
   warning: { fg: 'warning', bg: 'toolPendingBg' },
   critical: { fg: 'error', bg: 'toolErrorBg' },
   muted: { fg: 'muted', bg: 'customMessageBg' },

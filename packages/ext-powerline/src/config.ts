@@ -6,7 +6,7 @@ export type DirectoryStyle = 'full' | 'fish' | 'basename';
 export type SessionDisplayType = 'cost' | 'tokens' | 'both' | 'breakdown';
 export type ContextDisplayStyle = 'text' | 'bar' | 'blocks' | 'blocks-line' | 'dots';
 export type SegmentAlignment = 'left' | 'right';
-export type SegmentName = 'directory' | 'git' | 'model' | 'session' | 'subscription' | 'savings' | 'context' | 'status';
+export type SegmentName = 'directory' | 'git' | 'model' | 'session' | 'subscription' | 'savings' | 'context' | 'status' | 'version';
 export type ThemeColorKey = SegmentName | 'warning' | 'critical' | 'muted' | 'extensionStatus1' | 'extensionStatus2' | 'extensionStatus3' | 'extensionStatus4';
 
 export interface SegmentConfig {
@@ -85,7 +85,7 @@ const DIRECTORY_STYLES = new Set<DirectoryStyle>(['full', 'fish', 'basename']);
 const SESSION_TYPES = new Set<SessionDisplayType>(['cost', 'tokens', 'both', 'breakdown']);
 const CONTEXT_STYLES = new Set<ContextDisplayStyle>(['text', 'bar', 'blocks', 'blocks-line', 'dots']);
 const ALIGNMENTS = new Set<SegmentAlignment>(['left', 'right']);
-const SEGMENT_NAMES = new Set<SegmentName>(['directory', 'git', 'model', 'session', 'subscription', 'savings', 'context', 'status']);
+const SEGMENT_NAMES = new Set<SegmentName>(['directory', 'git', 'model', 'session', 'subscription', 'savings', 'context', 'status', 'version']);
 const BOOLEAN_SEGMENT_FIELDS = [
   'showSha',
   'showWorkingTree',

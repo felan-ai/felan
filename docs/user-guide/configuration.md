@@ -532,14 +532,18 @@ options. The complete shape is:
   "autoWrap": true,
   "padding": 1,
   "lines": [
-    { "segments": { "directory": { "enabled": true, "style": "fish" } } }
+    { "segments": { "directory": { "enabled": true, "style": "fish" } } },
+    { "segments": { "status": { "enabled": true }, "version": { "enabled": true, "align": "right" } } }
   ]
 }
 ```
 
-`lines` contains ordered display lines. Each line contains supported
-`directory`, `git`, `model`, `session`, `subscription`, `savings`, `context`, and
-`status` segments with their documented segment fields. The default layout adds
+`lines` replaces the default layout, so preserve any default segments you want
+when adding a custom line. Each line contains supported
+`directory`, `git`, `model`, `session`, `subscription`, `savings`, `context`,
+`status`, and optional `version` segments with their documented segment fields.
+The version segment displays the local Felan version and is not enabled in the
+default layout. The default layout adds
 `{ "savings": { "enabled": true, "align": "right", "periodDays": 7 } }` after
 Git on the first line. It shows estimated API-equivalent savings across all
 retained local measurements for seven inclusive UTC calendar days as

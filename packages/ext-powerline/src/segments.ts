@@ -20,6 +20,7 @@ export interface FooterDataLike {
 
 export interface SegmentRenderContext {
   ctx: ExtensionContext;
+  felanVersion?: string;
   footerData: FooterDataLike;
   gitDetails?: GitDetails;
   subscription: SubscriptionState;
@@ -90,6 +91,9 @@ function renderSegment(
     case 'savings': return renderSavings(config, context);
     case 'context': return renderContext(config, context);
     case 'status': return renderStatus(context);
+    case 'version': return context.felanVersion
+      ? { name: 'version', colorKey: 'version', text: `Felan ${sanitizePlainText(context.felanVersion)}` }
+      : undefined;
   }
 }
 

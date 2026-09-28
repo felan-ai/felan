@@ -19,6 +19,7 @@ export interface AdditionalSessionUsageHost {
 }
 
 export interface PowerlineExtensionOptions {
+  readonly felanVersion?: string;
   readonly footerRows?: FooterRowsRenderer;
   readonly savingsHost?: SavingsUsageHost;
   readonly additionalSessionUsageHost?: AdditionalSessionUsageHost;
@@ -58,6 +59,7 @@ export function createPowerlineExtension(
         footer = new PowerlineFooter({
           pi,
           ctx,
+          ...(options.felanVersion === undefined ? {} : { felanVersion: options.felanVersion }),
           tui,
           footerData,
           theme,
