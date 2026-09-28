@@ -11,7 +11,7 @@
     "list": "node scripts/source-cli.mjs list",
     "run": "node scripts/source-cli.mjs run",
     "view": "harness-evals view --config felan-extension-evals.yaml --latest --open",
-    "test": "bun adapters/felan-compaction.test.mjs && node scripts/source-image.test.mjs",
+    "test": "bun adapters/felan-compaction.test.mjs && node scripts/source-image.test.mjs && node cases/memory/processing/verifier/verify.test.mjs && node fixtures/memory-processing/v1/source/.eval-setup/worker-evidence.test.mjs",
     "build:runtime": "node scripts/build-runtime.mjs",
     "build:source": "node scripts/build-source-image.mjs --allow-current-source"
   },

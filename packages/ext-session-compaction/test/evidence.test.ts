@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mergeContinuity, renderContinuity } from '../src/internal/continuity.js';
 import { extractEvidence } from '../src/internal/evidence.js';
 import { prepareEvidenceSpan } from '../src/internal/prepared-span.js';
+import { renderSplitTurnPrefix } from '../src/internal/split-prefix.js';
 
 function span(messages: readonly Record<string, unknown>[], previousSummary?: string) {
   return prepareEvidenceSpan({
@@ -22,6 +23,35 @@ function span(messages: readonly Record<string, unknown>[], previousSummary?: st
 }
 
 describe('bounded session compaction evidence', () => {
+  it('preserves source-tagged text, tool status, and split-turn context through shared extraction', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: 'Correct the old rule.' },
+        { type: 'text', text: 'Use staging, not production.' }] },
+      { role: 'assistant', content: [{ type: 'thinking', thinking: 'Verify the correction.' },
+        { type: 'toolCall', id: 'check-1', name: 'bash', arguments: { command: 'pnpm test' } }] },
+      { role: 'toolResult', toolName: 'bash', toolCallId: 'check-1', isError: true,
+        content: [{ type: 'text', text: 'One test failed.' }] },
+    ];
+    const prepared = prepareEvidenceSpan({
+      preparation: { firstKeptEntryId: 'keep-1', messagesToSummarize: [], turnPrefixMessages: messages },
+      branchEntries: messages.map((message, index) => ({ type: 'message', id: `entry-${index + 1}`,
+        parentId: index === 0 ? null : `entry-${index}`, timestamp: new Date(index).toISOString(), message })) as never,
+    } as never);
+    const result = extractEvidence(prepared);
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: 'entry:entry-1', kind: 'request', text: 'Correct the old rule.' }),
+      expect.objectContaining({ sourceId: 'entry:entry-1', kind: 'request', text: 'Use staging, not production.' }),
+      expect.objectContaining({ sourceId: 'entry:entry-2', kind: 'report', text: 'Reasoning: Verify the correction.' }),
+      expect.objectContaining({ sourceId: 'entry:entry-2', kind: 'tool-call', toolName: 'bash' }),
+      expect.objectContaining({ sourceId: 'entry:entry-3', kind: 'error', status: 'failed',
+        text: expect.stringContaining('One test failed.') }),
+    ]));
+    const prefix = renderSplitTurnPrefix(prepared, result, 8_192, messages.length);
+    expect(prefix).toContain('Correct the old rule.');
+    expect(prefix).toContain('Use staging, not production.');
+    expect(prefix).toContain('One test failed.');
+  });
+
   it('extracts structured patch, command, task, and RTK evidence deterministically', () => {
     const messages = [
       { role: 'user', content: 'Fix login and always run tests before committing.' },

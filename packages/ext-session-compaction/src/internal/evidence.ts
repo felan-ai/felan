@@ -1,3 +1,4 @@
+import { extractTranscriptTextParts } from '@felan-ai/agent-core';
 import {
   DEFAULT_EXTRACTION_BOUNDS,
   emptyOmission,
@@ -521,11 +522,8 @@ function sortJson(value: unknown, depth = 0): unknown {
   return Object.fromEntries(Object.keys(value).sort().slice(0, 32).map((key) => [key, sortJson(value[key], depth + 1)]));
 }
 
-function textContent(value: unknown): string[] {
-  if (typeof value === 'string') return [value];
-  return arrayValue(value).filter(isRecord)
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text as string);
+function textContent(value: unknown): readonly string[] {
+  return extractTranscriptTextParts(value).text;
 }
 
 function taskStatus(value: unknown): EvidenceStatus | undefined {

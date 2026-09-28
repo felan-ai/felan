@@ -1,4 +1,4 @@
-import type { FelanExtensionAPI } from '@felan-ai/agent-core';
+import { extractTranscriptTextParts, type FelanExtensionAPI } from '@felan-ai/agent-core';
 import { Type, type Static } from 'typebox';
 
 const MAX_QUERY = 512;
@@ -121,11 +121,7 @@ function messageText(message: Record<string, unknown>): string {
 function textValue(value: unknown): string {
   if (typeof value === 'string') return clean(value);
   if (!Array.isArray(value)) return '';
-  return value.filter(isRecord)
-    .filter((part) => part.type === 'text' && typeof part.text === 'string')
-    .map((part) => part.text as string)
-    .join('\n')
-    .trim();
+  return extractTranscriptTextParts(value).text.join('\n').trim();
 }
 
 function search(entries: readonly RecallEntry[], query: string): RecallHit[] {

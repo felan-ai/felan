@@ -50,8 +50,10 @@ their own evidence.
 
 The portable `@felan-ai/ext-memory` package owns the artifact schema,
 validation, hydration, root checkpoint contracts, checkpoint-input compaction,
-and reader/root extension behavior. It does not choose a project scope,
-schedule a worker, call a model, or publish files.
+bounded candidate extraction, classifier question/answer policy, and
+reader/root extension behavior. It does not choose a project scope, obtain
+credentials, read host transcript files, schedule or run a worker, call a
+provider, or publish files.
 
 The local TUI owns the coordinator, automatic evidence/time gates, startup
 recovery, retries, shutdown cancellation, model selection, retained sessions,
@@ -80,6 +82,9 @@ host materializes bounded active-branch evidence
         |
         v
 staging/.dreaming/input + staged .memory filesystem
+        |
+        v
+optional session-chunked classifier evidence triage
         |
         v
 disposable memory worker edits staged Markdown
@@ -117,19 +122,46 @@ visible lineage and records the prior cursor for downstream reconciliation.
 ### 3. Dreamer worker
 
 The worker is one disposable headless Pi session over immutable staged input and
-staged Markdown. It has only `read`, `ls`, `edit`, `write`, and
+staged Markdown. It has only `read`, `ls`, `grep`, `edit`, `write`, and
 `remove_memory_page`; no normal Felan extensions, skills, repository context,
-credentials, or process execution. The removal tool can delete only individual
+credentials, or shell access. Grep can invoke only `rg` over staged input and
+wiki files, not arbitrary commands or runtime-private files. The removal tool can delete only individual
 non-index Markdown pages under the staged `.memory/pages` directory. Its only
 execution failsafe is a one-hour wall-clock timeout. It returns a concise summary
 only after editing the staged filesystem.
 
-The worker uses medium thinking with an authenticated, text-capable low-tier
-model from the active root session's configured model scope, preferring its
-provider and model family. An unrestricted root scope uses the authenticated
-available catalog. The worker does not silently escalate automatic memory work
-to a more expensive tier. With no eligible low-tier model, processing remains
-pending.
+When a classifier is available, the portable policy groups contiguous transcript
+entries by session and provider-advertised request capacity. It asks one Choice
+question per entry: `inspect` (potential durable evidence, uncertainty or mixed
+context) or `noise` (wholly transient). Direct user entries and interactive
+user answers cannot become noise. Oversized or unfittable entries remain
+inspectable. The host losslessly splits each original redacted JSONL into
+read-only `inspect.jsonl` and `noise.jsonl`, preserving IDs, content, order and
+provenance; a compact versioned `decisions.json` identifies the split sources.
+Agent Core's shared pure parser extracts text and original entry/role/tool
+metadata for both memory and session compaction. When every inspect record is
+text-only, the host stages a read-only `inspect.txt` view with full text and
+source IDs; mixed/non-text records remain in inspect JSONL instead of being
+silently omitted. The worker reads the view when available, otherwise the
+inspect JSONL, and can grep noise or read original
+transcripts when context is needed. No classifier-generated facts become sources.
+The run records aggregate triage counts and provider usage, not raw answers.
+Jev packs questions against its documented request window. Missing capacity,
+failure, abort, or a map with no noise falls back to a full-transcript audit.
+
+Triage cannot edit the wiki or decide summary placement. The worker verifies
+inspect originals, reconciles corrections across chunks and
+sessions, audits the entire prior wiki, then decides final retention and
+citations. The classifier never directly publishes memory.
+
+The worker uses an authenticated, text-capable low-tier model from the active
+root session's configured model scope, preferring its provider and model family.
+It uses medium thinking with or without triage: a low-thinking guided worker
+missed a supported incident in a provider-backed evaluation. An unrestricted
+root scope uses the
+authenticated available catalog. The worker does not silently escalate
+automatic memory work to a more expensive tier. With no eligible low-tier
+model, processing remains pending.
 
 ### 4. Validation and publication
 
@@ -150,6 +182,49 @@ preserves supported contradictions and never invents facts, links, or source IDs
 Publication uses a fenced single-writer lease. Model, validation, cancellation,
 timeout, or publication failures leave evidence pending for a retry rather than
 partially replacing canonical memory.
+
+### Evaluating classifier guidance
+
+`apps/tui/test/fixtures/memory-classification.json` provides two target sessions,
+an existing wiki with a transient claim, and expected durable release and
+incident facts. `pnpm --filter @felan-ai/ext-memory test -- test/triage.test.ts` checks
+portable candidate selection and decisions; `pnpm --filter @felan-ai/felan test -- test/memory-dreamer.test.ts test/memory-comparison.test.ts`
+checks coordinator publication in both
+modes using the same source sessions and prior wiki. A scripted worker derives
+the reference wiki from original transcript entries or decision references;
+missing facts, source IDs, summary choices, or stale-page removal fail the
+checks. It is **not** evidence that a live classifier and worker produce that
+wiki or save money.
+The comparison also adds 30 stale prior pages. Both modes must discard them, preserve verified
+facts and citations, and publish the same result. The scripted model provides
+no real provider usage: tokens, cost, and latency remain unknown.
+
+`evals/cases/memory/processing` runs a real worker against a versioned noisy
+session exceeding Jev's request window, with and without chunked Jev triage.
+Quality gates check later corrections, the supported incident, citations and
+stale cleanup before comparing worker and classifier usage. See
+`evals/results/2026-09-memory-processing-chunked/README.md` documents the
+earlier reference-map design: three paired runs passed after quality remediation,
+but guided runs initially lost an incident and used more measured tokens and
+worker cost. The paired current-source results for the split-source design are
+in `evals/results/2026-09-memory-processing-inspect-noise/README.md`: three
+paired runs passed the fixture's quality checks, but combined token use was
+only 0.69% lower, latency was higher, and classifier USD cost was not reported.
+No net savings are claimed.
+
+For a provider-backed comparison, start from the same verified transcripts and
+prior wiki in isolated project stores for classifier-enabled and
+classifier-disabled runs. Pin the same authenticated low-tier worker model and
+model scope, recording the thinking level each arm actually used.
+Grade correctness first: retained direct-user decisions, supported incidents,
+removal of stale claims, summary usefulness, citation accuracy, and absence of
+invented facts. Record classifier `evaluate` metadata (`usage`, `elapsedMs`) via
+an evaluation wrapper and worker usage from retained memory-run diagnostics;
+measure total tokens, cache usage, USD cost and end-to-end elapsed time per arm.
+Treat absent usage metadata as unknown, not zero. Report total cost and latency,
+not worker-token reduction alone. Provider evaluation requires explicit
+authorization; no cost or quality improvement is claimed from the offline
+fixture.
 
 ## Reading policy
 

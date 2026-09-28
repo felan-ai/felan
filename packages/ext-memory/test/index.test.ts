@@ -310,6 +310,18 @@ describe('@felan-ai/ext-memory', () => {
     expect(dreamerInstructions).toContain('preserving supported knowledge and source provenance');
     expect(dreamerInstructions).not.toContain('link-free');
     expect(dreamerInstructions).not.toContain('entries drawn only from the manifest');
+
+    const guidedInstructions = createMemoryDreamerInstructions({
+      memoryPath: '.memory', inputPath: '.dreaming/input', classified: true,
+    });
+    expect(dreamerInstructions).toContain('Read manifest.json and every listed transcript');
+    expect(guidedInstructions).toContain('Read manifest.json and decisions.json');
+    expect(guidedInstructions).not.toContain('every listed transcript');
+    expect(guidedInstructions).toContain('use inspectViewPath if present');
+    expect(guidedInstructions).toContain('noise.jsonl files remain searchable with grep');
+    expect(guidedInstructions).toContain('avoid losing supported facts');
+    expect(guidedInstructions).toContain('Preserve relevant existing source entries');
+    expect(guidedInstructions).toContain('Add new source entries only for target session IDs');
   });
 });
 

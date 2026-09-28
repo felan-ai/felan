@@ -21,6 +21,9 @@ export function createJevClassifierWithOptions(
   const client = createJevClient(options);
   if (!client.resolveTransport()) return undefined;
   return {
+    canEvaluate(state, questions) {
+      return client.canEvaluate(state, questions);
+    },
     async evaluate(state, questions, signal) {
       const started = Date.now();
       const result = await client.evaluate(state, questions, signal === undefined ? {} : { signal });

@@ -45,8 +45,13 @@ the persisted metadata-only diagnostic retains the bounded reason and error
 details for troubleshooting.
 
 The split-turn narrative is mandatory, while lower-priority tool records may be
-omitted by the central extraction bounds. Summary output uses Pi's prepared
-reserve-token budget and the selected model's limits; prompt fit uses the model
+omitted by the central extraction bounds. Compaction reads Pi's prepared
+messages through Agent Core's shared lossless text-block reader, then
+then applies its own status extraction, evidence ranking, deduplication and
+bounded selection. Its compacted evidence is not a lossless transcript and
+must not replace the original source used for cross-session memory. Summary
+output uses Pi's prepared reserve-token budget and the selected model's limits;
+prompt fit uses the model
 context window. Classifier output is not rejected merely for exceeding an
 extension-defined byte size. If required evidence or a model request cannot fit
 safely, the extension returns no custom result before acceptance and native Pi

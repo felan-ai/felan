@@ -384,6 +384,35 @@ agents:
         felanTui:
           memoryProcessing: false
 
+  felan-memory-processing-disabled:
+    adapter: felan
+    label: Memory processing · full audit
+    comparisonId: memory-processing-full-audit
+    provider: openai-codex
+    model: gpt-6-luna
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    timeoutMs: 900000
+    config:
+      useCurrentConfig: false
+      memoryProcessingMode: disabled
+
+  felan-memory-processing-enabled:
+    adapter: felan
+    label: Memory processing · chunked Jev triage
+    comparisonId: memory-processing-chunked-jev
+    provider: openai-codex
+    model: gpt-6-luna
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    envAllowlist: [TYPESAFE_API_KEY]
+    timeoutMs: 900000
+    config:
+      useCurrentConfig: false
+      memoryProcessingMode: enabled
+
   felan-no-output-style:
     adapter: felan
     label: Felan · output style off

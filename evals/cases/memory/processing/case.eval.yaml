@@ -1,0 +1,25 @@
+id: memory-processing-chunked-triage
+suite: memory-processing
+description: Compare actual memory worker publication and usage with and without session-chunked Jev triage.
+timeoutMs: 900000
+workspace:
+  fixture: fixtures/memory-processing/v1/source
+agents:
+  include:
+    - felan-memory-processing-disabled
+    - felan-memory-processing-enabled
+prompt: Run the versioned memory-processing scenario with the configured mode.
+assert:
+  - id: runner-exited
+    type: exitCode
+    equals: 0
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /workspace
+  assetsDir: cases/memory/processing/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.json
+  rewardFormat: json
+  network:
+    mode: none

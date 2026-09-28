@@ -8,6 +8,10 @@ import type { MemoryHost, MemoryRole } from './contracts.js';
 import { formatMemoryPromptContext } from './schema.js';
 
 export * from './checkpoint.js';
+export * from './classification.js';
+export * from './inspect-view.js';
+export * from './triage.js';
+export * from './partition.js';
 export * from './contracts.js';
 export * from './dreamer.js';
 export * from './hydration.js';

@@ -18,6 +18,7 @@ import {
   SessionManager,
   type AgentSession,
   type Api,
+  type Classifier,
   type Model,
 } from '@felan-ai/agent-core';
 import {
@@ -89,6 +90,7 @@ export interface LocalMemoryCoordinatorOptions {
   readonly dreamRunner?: LocalMemoryDreamRunner;
   readonly selectedModel?: Model<Api>;
   readonly scopedModels?: readonly Model<Api>[];
+  readonly classifier?: Classifier;
   readonly leaseOptions?: LocalMemoryLeaseOptions;
   readonly retryDelaysMs?: readonly [number, number];
   readonly monitorIntervalMs?: number;
@@ -117,6 +119,7 @@ export class LocalMemoryCoordinator {
   #enabled: boolean;
   #selectedModel: Model<Api> | undefined;
   #scopedModels: readonly Model<Api>[] | undefined;
+  #classifier: Classifier | undefined;
   #disposed = false;
   #monitor: ReturnType<typeof setInterval> | undefined;
   #monitoring: Promise<void> | undefined;
@@ -128,6 +131,7 @@ export class LocalMemoryCoordinator {
     this.#enabled = options.enabled !== false;
     this.#selectedModel = options.selectedModel;
     this.#scopedModels = options.scopedModels === undefined ? undefined : [...options.scopedModels];
+    this.#classifier = options.classifier;
     this.#dreamRunner = options.dreamRunner ?? createDefaultLocalMemoryDreamRunner();
     if (this.#enabled) this.#startMonitor();
   }
@@ -146,8 +150,13 @@ export class LocalMemoryCoordinator {
     return () => this.#statusListeners.delete(listener);
   }
 
-  setModelSelection(model: Model<Api> | undefined, scopedModels: readonly Model<Api>[] | undefined): void {
+  setModelSelection(
+    model: Model<Api> | undefined,
+    scopedModels: readonly Model<Api>[] | undefined,
+    classifier?: Classifier,
+  ): void {
     this.#scopedModels = scopedModels === undefined ? undefined : [...scopedModels];
+    this.#classifier = classifier;
     this.setSelectedModel(model);
   }
 
@@ -676,6 +685,7 @@ export class LocalMemoryCoordinator {
         modelRuntime: this.#options.modelRuntime,
         ...(this.#selectedModel === undefined ? {} : { selectedModel: this.#selectedModel }),
         ...(this.#scopedModels === undefined ? {} : { scopedModels: this.#scopedModels }),
+        ...(this.#classifier === undefined ? {} : { classifier: this.#classifier }),
         sessionDirectory: join(
           this.#options.sessionDir ?? join(this.#options.agentDir, 'sessions'),
           'memory',

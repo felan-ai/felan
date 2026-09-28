@@ -52,6 +52,27 @@ afterEach(async () => {
 });
 
 describe('local Agent Core lifecycle', () => {
+  it('passes the effective custom runtime classifier to the memory coordinator', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const classifier = { evaluate: async () => ({ answers: {} }) };
+    const memoryCoordinator = new LocalMemoryCoordinator({ agentDir, modelRuntime, enabled: false, recover: false });
+    const modelSelection = vi.spyOn(memoryCoordinator, 'setModelSelection');
+    const runtime = await createLocalFelanRuntime({
+      cwd, agentDir, homeDir: root, modelRuntime, memoryCoordinator,
+      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, { ...request, classifier }),
+    });
+    try {
+      expect(modelSelection).toHaveBeenCalledWith(runtime.session.model, undefined, classifier);
+    } finally {
+      await runtime.dispose();
+      await memoryCoordinator.dispose();
+    }
+  });
+
   it('reloads the dynamic-thinking setting without disabling the classifier', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

@@ -6,12 +6,30 @@ This is the home for Felan extension tests and benchmarks, powered by
 
 Portable extension behavior belongs here when it can be exercised without
 Felan Cloud: enabled/disabled effects, output quality, cost, tokens, latency,
-and portable lifecycle contracts. The catalog contains 25 cases across
+and portable lifecycle contracts. The catalog contains cases across
 Codebase Memory, MarkItDown, Memory, Output Style, Prewalk, RTK, Session
 Compaction, Subagents, Tasks, and Web Access. Session compaction also has a
 classifier-only method arm that requires
 `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` and is not a savings claim until its
 quality gate passes.
+
+The `memory-processing-chunked-triage` case runs the actual local memory
+worker on identical isolated sessions and prior wiki, with Jev triage enabled
+or disabled. It requires an authenticated `openai-codex/gpt-6-luna` worker in
+both arms and `TYPESAFE_API_KEY` only for the enabled arm. Run it serially after
+`pnpm eval:build-source` and grade retained facts, later corrections and
+citations before comparing **combined** classifier-plus-worker usage. See
+[`results/2026-09-memory-processing-chunked/README.md`](results/2026-09-memory-processing-chunked/README.md):
+three paired checks of the previous decision-map design passed after remediation,
+but the classifier added measured tokens and its USD cost was unavailable.
+The current inspect/noise split has its own three-pair quality and usage report
+in [`results/2026-09-memory-processing-inspect-noise/README.md`](results/2026-09-memory-processing-inspect-noise/README.md).
+All six final arms passed quality checks, but those runs predate the new
+worker-readable inspect view. The [offline format comparison](results/2026-09-memory-inspect-text-view/README.md)
+covers view/JSONL quality parity and byte size; provider-backed cost and latency for the view remain
+unmeasured. No net savings are established:
+classifier USD cost was unavailable and enabled latency increased. Do not
+run provider-backed cases without explicit authorization.
 
 The `subagents-routing` benchmark compares subagent routing with and without
 the discovery classifier in one-shot JSON mode. Its cases check that small or

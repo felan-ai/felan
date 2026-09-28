@@ -67,6 +67,7 @@ export class JevClientError extends Error {
 export interface CreateJevClientOptions extends JevCredentialSources {
   readonly fetch?: JevFetch;
   readonly timeoutMs?: number;
+  readonly maxQuestionsPerRequest?: number;
 }
 
 export interface JevEvaluateOptions {
@@ -75,20 +76,33 @@ export interface JevEvaluateOptions {
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_TIMEOUT_MS = 60_000;
-const MAX_STATE_BYTES = 64 * 1_024;
-const MAX_REQUEST_BYTES = 128 * 1_024;
+const MAX_COMBINED_INPUT_BYTES = 64_000;
+const MAX_STATE_AND_QUESTION_BYTES = 32_000;
 const MAX_RESPONSE_BYTES = 256 * 1_024;
-const MAX_QUESTIONS = 256;
 const MAX_INSTRUCTIONS_BYTES = 4_096;
 const PINNED_HOSTS = new Set(['api.typesafe.ai', 'openrouter.ai']);
 
 export function createJevClient(options: CreateJevClientOptions = {}) {
   const timeoutMs = normalizeTimeout(options.timeoutMs);
+  const maxQuestionsPerRequest = options.maxQuestionsPerRequest;
+  if (maxQuestionsPerRequest !== undefined && (!Number.isSafeInteger(maxQuestionsPerRequest) || maxQuestionsPerRequest < 1)) {
+    throw new JevClientError('invalid_request', 'Jev max questions per request must be a positive safe integer');
+  }
   const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
 
   return {
     resolveTransport(): ReturnType<typeof resolveJevTransport> {
       return resolveTransport(options);
+    },
+    canEvaluate(state: unknown, questions: JevQuestions): boolean {
+      try {
+        const transport = resolveTransport(options);
+        if (!transport) return false;
+        partitionQuestions(transport.model, state, questionEntries(questions), maxQuestionsPerRequest);
+        return true;
+      } catch {
+        return false;
+      }
     },
     async evaluate(
       state: unknown,
@@ -98,7 +112,7 @@ export function createJevClient(options: CreateJevClientOptions = {}) {
       const transport = resolveTransport(options);
       if (!transport) throw new JevClientError('unavailable', 'Jev credentials are unavailable');
       const entries = questionEntries(questions);
-      const batches = partitionQuestions(transport.model, state, entries);
+      const batches = partitionQuestions(transport.model, state, entries, maxQuestionsPerRequest);
       const answers: Record<string, JevAnswer> = {};
       let requests = 0;
       let usage: Omit<JevUsage, 'requests'> | undefined;
@@ -139,7 +153,7 @@ async function requestAnswers(
     throw new JevClientError('invalid_request', 'Jev endpoint is not pinned');
   }
   const body = JSON.stringify({ model: transport.model, state, questions });
-  if (Buffer.byteLength(body, 'utf8') > MAX_REQUEST_BYTES) {
+  if (Buffer.byteLength(body, 'utf8') > MAX_COMBINED_INPUT_BYTES) {
     throw new JevClientError('invalid_request', 'Jev request exceeds the size budget');
   }
 
@@ -187,7 +201,6 @@ async function requestAnswers(
 function questionEntries(questions: JevQuestions): Array<readonly [string, JevQuestion]> {
   const entries = Object.entries(questions);
   if (entries.length === 0) throw new JevClientError('invalid_request', 'Jev questions are required');
-  if (entries.length > MAX_QUESTIONS) throw new JevClientError('invalid_request', 'Jev question count exceeds the budget');
   for (const [name, question] of entries) {
     if (!name.trim() || name.length > 128) throw new JevClientError('invalid_request', 'Jev question id is invalid');
     validateQuestion(question);
@@ -213,27 +226,32 @@ function partitionQuestions(
   model: string,
   state: unknown,
   entries: Array<readonly [string, JevQuestion]>,
+  maxQuestionsPerRequest?: number,
 ): JevQuestions[] {
   const stateBytes = Buffer.byteLength(JSON.stringify(state), 'utf8');
-  if (stateBytes === 0 || stateBytes > MAX_STATE_BYTES) {
+  if (stateBytes === 0 || stateBytes > MAX_STATE_AND_QUESTION_BYTES) {
     throw new JevClientError('invalid_request', 'Jev state exceeds the size budget');
   }
   const overhead = Buffer.byteLength(JSON.stringify({ model, state, questions: {} }), 'utf8');
   const batches: JevQuestions[] = [];
   let current: Record<string, JevQuestion> = {};
   let currentBytes = overhead;
+  let currentCount = 0;
   for (const [name, question] of entries) {
     const added = Buffer.byteLength(JSON.stringify({ [name]: question }), 'utf8') + 1;
-    if (overhead + added > MAX_REQUEST_BYTES) {
+    if (overhead + added > MAX_STATE_AND_QUESTION_BYTES) {
       throw new JevClientError('invalid_request', 'Jev question exceeds the size budget');
     }
-    if (Object.keys(current).length > 0 && currentBytes + added > MAX_REQUEST_BYTES) {
+    if (currentCount > 0 && (currentBytes + added > MAX_COMBINED_INPUT_BYTES
+      || (maxQuestionsPerRequest !== undefined && currentCount >= maxQuestionsPerRequest))) {
       batches.push(current);
       current = {};
       currentBytes = overhead;
+      currentCount = 0;
     }
     current[name] = question;
     currentBytes += added;
+    currentCount += 1;
   }
   batches.push(current);
   return batches;

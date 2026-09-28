@@ -15,6 +15,11 @@ export const felanCompactionAdapter = {
   getInstallRecipe: (input) => felanAdapter.getInstallRecipe(input),
   async prepareStep(input) {
     const plan = await felanAdapter.prepareStep(input);
+    const memoryMode = input.agent.config?.memoryProcessingMode;
+    if (memoryMode === 'enabled' || memoryMode === 'disabled') {
+      return { ...plan, argv: ['node', '/workspace/.eval-setup/run.mjs', memoryMode, input.agent.model], parser: 'text',
+        envNames: plan.envNames.filter((name) => memoryMode === 'enabled' || name !== 'TYPESAFE_API_KEY') };
+    }
     const captureRoutingTrace = input.agent.config?.captureSubagentRoutingTrace === true;
     const metadata = {
       ...(plan.metadata ?? {}),

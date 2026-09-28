@@ -14,6 +14,7 @@ import {
   createAgentSessionRuntime,
   type AgentSessionServices,
   type Api,
+  type Classifier,
   type CreateAgentSessionOptions,
   type CreateAgentCoreSessionOptions,
   type CreateAgentSessionRuntimeFactory,
@@ -115,6 +116,7 @@ export interface CreateLocalSessionRuntimeFactoryOptions {
   readonly onSessionModel?: (
     model: AgentSession['model'],
     scopedModels: readonly Model<Api>[] | undefined,
+    classifier: Classifier | undefined,
   ) => void;
   readonly onMemoryEnabled?: (enabled: boolean) => void;
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
@@ -214,6 +216,7 @@ export function createLocalSessionRuntimeFactory(
     extensionConfigWarnings: readonly string[];
     memoryEnabled: boolean;
     modelScopeConfigured: boolean;
+    classifier: Classifier | undefined;
   }>();
   const createCoreRuntime = createAgentCoreSessionRuntimeFactory(async ({ cwd, sessionManager }) => {
     const runtimeRequest = createLocalAgentRuntimeFactoryRequest(
@@ -394,6 +397,7 @@ export function createLocalSessionRuntimeFactory(
       extensionConfigWarnings: extensionConfigSettings.warnings,
       memoryEnabled,
       modelScopeConfigured,
+      classifier: runtime.classifier,
     });
 
     return {
@@ -474,11 +478,13 @@ export function createLocalSessionRuntimeFactory(
         extensionConfigWarnings,
         memoryEnabled,
         modelScopeConfigured,
+        classifier,
       } = sessionState;
       setupHost = host;
       options.onSessionModel?.(
         result.session.model,
         modelScopeConfigured ? modelScope.scopedModels.map(({ model }) => model) : undefined,
+        classifier,
       );
       options.onMemoryEnabled?.(memoryEnabled);
       toolActivityState.attach(result.session);
@@ -576,7 +582,7 @@ export async function createLocalFelanRuntime(
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
     memoryCoordinator,
-    onSessionModel: (model, scopedModels) => memoryCoordinator.setModelSelection(model, scopedModels),
+    onSessionModel: (model, scopedModels, classifier) => memoryCoordinator.setModelSelection(model, scopedModels, classifier),
     ...(ownsMemoryCoordinator ? {
       onMemoryEnabled: (enabled: boolean) => {
         if (memoryCoordinator.isEnabled() !== enabled) memoryCoordinator.setEnabled(enabled);

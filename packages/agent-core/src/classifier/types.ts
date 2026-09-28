@@ -42,6 +42,7 @@ export interface ClassifierEvaluationMetadata {
 }
 
 export interface Classifier {
+  canEvaluate?(state: unknown, questions: ClassifierQuestions): boolean;
   evaluate(
     state: unknown,
     questions: ClassifierQuestions,

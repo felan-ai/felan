@@ -39,17 +39,21 @@ describe('LocalMemoryCoordinator', () => {
     const sessionFile = await writeSession(cwd, 'session-1');
     const selectedModel = { provider: 'openai-codex', id: 'gpt-5.6-sol' } as Model<Api>;
     const lowTierModel = { provider: 'openai-codex', id: 'gpt-5.6-luna' } as Model<Api>;
+    const classifier = { evaluate: async () => ({ answers: {} }) };
     let observedModel: Model<Api> | undefined;
     let observedScope: readonly Model<Api>[] | undefined;
+    let observedClassifier: typeof classifier | undefined;
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'),
       modelRuntime: {} as ModelRuntime,
       recover: false,
       selectedModel,
       scopedModels: [selectedModel, lowTierModel],
+      classifier,
       dreamRunner: async (input) => {
         observedModel = input.selectedModel;
         observedScope = input.scopedModels;
+        observedClassifier = input.classifier;
         return updatedArtifact();
       },
     });
@@ -59,6 +63,7 @@ describe('LocalMemoryCoordinator', () => {
     await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
     expect(observedModel).toBe(selectedModel);
     expect(observedScope).toEqual([selectedModel, lowTierModel]);
+    expect(observedClassifier).toBe(classifier);
     await coordinator.dispose();
   });
 

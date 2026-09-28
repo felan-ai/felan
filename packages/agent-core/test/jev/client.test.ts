@@ -110,6 +110,12 @@ describe('Jev client', () => {
       typesafeApiKey: 'ts-secret',
       fetch,
     });
+    expect(classifier?.canEvaluate?.('short', {
+      keep: { type: 'choice', instructions: 'Keep this?', criteria: { yes: 'Keep', no: 'Discard' } },
+    })).toBe(true);
+    expect(classifier?.canEvaluate?.('x'.repeat(31_000), {
+      keep: { type: 'choice', instructions: 'y'.repeat(2_000), criteria: { yes: 'Keep', no: 'Discard' } },
+    })).toBe(false);
     await expect(classifier?.evaluate('state', {
       keep: {
         type: 'choice',
@@ -160,16 +166,38 @@ describe('Jev client', () => {
     expect(result.usage?.requests).toBe(fetch.mock.calls.length);
   });
 
-  it('rejects question sets and state above the local safety envelope', async () => {
-    const client = createJevClient({ typesafeApiKey: 'ts-secret', fetch: mockFetch({ answers: {} }) });
-    const tooMany = Object.fromEntries(Array.from({ length: 257 }, (_, index) => [
-      `question-${index}`,
-      { type: 'noul' as const, instructions: 'Question?' },
+  it('packs large question sets by request size without a total count cutoff', async () => {
+    const fetch = vi.fn<JevFetch>(async (_url, init) => {
+      const body = JSON.parse(String(init.body));
+      expect(Buffer.byteLength(String(init.body), 'utf8')).toBeLessThanOrEqual(64_000);
+      return new Response(JSON.stringify({ answers: Object.fromEntries(
+        Object.keys(body.questions).map((id) => [id, { noul: 0.75 }]),
+      ) }), { status: 200 });
+    });
+    const client = createJevClient({ typesafeApiKey: 'ts-secret', fetch });
+    const manyQuestions = Object.fromEntries(Array.from({ length: 300 }, (_, index) => [
+      `question-${index}`, { type: 'noul' as const, instructions: `Question ${index}?` },
     ]));
-    await expect(client.evaluate('state', tooMany)).rejects.toMatchObject({ code: 'invalid_request' });
+    const result = await client.evaluate('state', manyQuestions);
+    expect(Object.keys(result.answers)).toHaveLength(300);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    const overridden = createJevClient({ typesafeApiKey: 'ts-secret', fetch, maxQuestionsPerRequest: 37 });
+    expect(Object.keys((await overridden.evaluate('state', manyQuestions)).answers)).toHaveLength(300);
+    expect(fetch).toHaveBeenCalledTimes(1 + Math.ceil(300 / 37));
+    expect(() => createJevClient({ maxQuestionsPerRequest: 0 })).toThrow('positive safe integer');
+  });
+
+  it('rejects state above the local safety envelope', async () => {
+    const client = createJevClient({ typesafeApiKey: 'ts-secret', fetch: mockFetch({ answers: {} }) });
     await expect(client.evaluate('x'.repeat(64 * 1_024 + 1), {
       keep: { type: 'noul', instructions: 'Keep?' },
     })).rejects.toMatchObject({ code: 'invalid_request' });
+    const nearStateLimit = 'x'.repeat(31_000);
+    const longQuestion = { keep: { type: 'noul' as const, instructions: 'y'.repeat(2_000) } };
+    expect(client.canEvaluate(nearStateLimit, longQuestion)).toBe(false);
+    await expect(client.evaluate(nearStateLimit, longQuestion)).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(client.canEvaluate('short', longQuestion)).toBe(true);
   });
 
   it('maps provider-neutral probability judgments to Jev Noul answers', async () => {

@@ -35,6 +35,14 @@ export interface MemoryRunMetadata {
   readonly outputFingerprint?: string;
   readonly model?: { readonly provider: string; readonly id: string; readonly thinking?: string };
   readonly usage?: MemoryRunUsage;
+  readonly triage?: {
+    readonly counts: { readonly inspect: number; readonly noise: number; readonly uncertain: number };
+    readonly requests?: number;
+    readonly inputTokens?: number;
+    readonly outputTokens?: number;
+    readonly costUsd?: number;
+    readonly elapsedMs?: number;
+  };
   readonly error?: string;
 }
 

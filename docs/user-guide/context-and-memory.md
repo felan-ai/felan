@@ -184,11 +184,19 @@ available.
 
 ### Processing memory
 
-The local host owns scheduling and model work. It uses medium thinking with an
-authenticated low-tier model from the active session's configured model scope,
-preferring that session's provider and model family. It does not silently
-escalate to a more expensive tier. If no eligible model is available, evidence
-remains pending rather than blocking startup.
+The local host owns scheduling and model work. With an available classifier, it
+supplies provider-sized session chunks to the portable classifier policy,
+which routes entries to `inspect` or `noise`. The worker reads a source-labelled
+text view of inspect entries when every record is representable without loss;
+otherwise it reads the original inspect JSONL. It can grep deferred noise for missing context;
+original transcripts remain available. A low-tier wiki worker verifies originals,
+reconciles later corrections across sessions, audits existing memory and
+decides final retention and summary placement. It uses medium thinking with
+or without triage. In either case the
+worker stays within the active session's configured authenticated model scope,
+preferring its provider and model family. It does not silently escalate to a
+more expensive tier. If no eligible model is available, evidence remains
+pending rather than blocking startup.
 Automatic processing waits for five accepted checkpoint updates and 24 hours
 since the latest successful publication. Updates from the same root session
 count; identical cursors do not.

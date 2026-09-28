@@ -114,6 +114,8 @@ export {
 } from './resource-loader.js';
 export type { CreateAgentCoreResourceLoaderOptions } from './resource-loader.js';
 export { createRuntimeCodingTools } from './tools.js';
+export { extractTranscriptEvidenceEntry, extractTranscriptTextParts } from './transcript-evidence.js';
+export type { TranscriptEvidenceEntry, TranscriptTextParts } from './transcript-evidence.js';
 export type { RuntimeCodingToolsOptions } from './tools.js';
 export {
   createAgentCoreSession,

@@ -186,11 +186,14 @@ or when a call fails, the model follows the persistent guidance and the
 configured defaults apply.
 
 The classifier state may leave the local process for the configured TypeSafe or
-OpenRouter endpoint. It contains prompt and bounded session text, tool names
-with short inputs, and agent metadata. Recognized credential patterns are
-redacted from shared session evidence, but arbitrary secrets in prompts or
-unrecognized text cannot be detected reliably; do not include credentials in
-classifier-bound requests. Decisions are logged
+OpenRouter endpoint. Routing state contains prompt and bounded session text,
+tool names with short inputs, and agent metadata. Memory triage sends bounded,
+redacted excerpts from staged target transcripts, not the existing wiki, to
+that endpoint. It keeps oversized excerpts in the inspect source and
+falls back to a full worker audit on classifier failure. Recognized credential
+patterns are redacted from shared evidence, but arbitrary secrets in prompts,
+transcripts, or wiki text cannot be detected reliably; do not include
+credentials in classifier-bound requests. Routing decisions are logged
 at debug level under the `subagent-routing`, `subagent-model`, and
 `prewalk-classifier` components without the request text.
 

@@ -52,15 +52,36 @@ to that request.
 
 Local Felan's host-owned coordinator runs dreaming as a disposable headless Pi
 session over staged `.dreaming/input` and `.memory` directories. The dreamer
-uses only read/list/edit/write file tools plus a scoped tool that removes
+uses read/list/grep/edit/write file tools plus a scoped tool that removes
 individual non-index Markdown pages under staged `.memory/pages`. It has no
-normal extensions, skills, repository access, or process execution, and returns
+normal extensions, skills, repository access, or shell execution. Grep can
+launch only `rg` over staged inputs and wiki files; arbitrary commands remain denied. It returns
 a summary only after editing the staged Markdown artifact. The host validates
 and publishes that filesystem output; failed or cancelled work remains pending.
-The local worker uses medium thinking with an authenticated low-tier model from
-the root session's configured model scope, preferring its provider and model
-family. It does not silently escalate to a more expensive tier; evidence remains
-pending when no eligible model is available.
+With an optional runtime classifier, the portable extension groups contiguous
+session evidence into provider-sized chunks and asks whether each entry needs
+inspection or is wholly transient noise. The host supplies and calls the
+classifier, stages read-only inspect and noise JSONL for each session, and
+writes a compact map of the staged paths. For text-only inspect records the host
+also stages a worker-readable `inspect.txt` view with session/entry IDs, role,
+tool name and complete text. Mixed or unsupported blocks remain in the original
+inspect JSONL instead of being silently shortened. The worker reads the view
+when available, otherwise the JSONL source,
+may grep noise for context, organizes the wiki, and preserves original entry IDs
+and source provenance. Original transcripts remain staged and available for
+verification or a full-audit fallback. Oversized or uncertain items are
+inspected; missing or unusable classification uses the original full-audit
+workflow. Triage does not decide final wiki retention or summary placement.
+The classifier packs questions by session against `canEvaluate` capacity;
+oversized entries, missing answers and interactive user answers remain safe
+for inspection. The worker reconciles inspect evidence across chunks
+and sessions, audits the prior wiki independently, and uses medium thinking.
+It selects that model from the
+root session's configured model scope, preferring its provider and model
+family, without escalating; evidence remains pending when no eligible model
+is available. Classifier-bound transcript excerpts may leave the
+local process; recognized credential patterns are redacted, but unknown
+secrets may remain.
 It does not impose separate turn, tool-call, or per-file I/O budgets; its only
 execution failsafe is a one-hour wall-clock timeout. Hosts can pass a replayable
 async JSONL line source to `materializeMemoryInputDelta` to validate checkpoint
@@ -96,9 +117,11 @@ pnpm --filter @felan-ai/ext-memory test
 ## Package boundary and requirements
 
 The package owns the portable memory schema, validation, hydration, checkpoint
-contracts, checkpoint-delta projection, and root/reader extension behavior. The
-host owns project scoping, canonical storage, transcript I/O, scheduling, model
-calls, staging, locking, validation publication, and retry policy. It requires a compatible
+contracts, checkpoint-delta projection, bounded candidate extraction and
+classifier-decision policy, and root/reader extension behavior. The host owns
+project scoping, canonical storage, transcript I/O, classifier credentials and
+calls, scheduling, model/session execution, staging, locking, validation
+publication, and retry policy. It requires a compatible
 `@felan-ai/agent-core` peer and remains independent of TUI, Supabase, and cloud
 application modules.
 

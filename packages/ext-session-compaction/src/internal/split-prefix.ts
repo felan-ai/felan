@@ -1,3 +1,4 @@
+import { extractTranscriptTextParts } from '@felan-ai/agent-core';
 import { sanitizeText, stableIdentifier, utf8Bytes } from './bounds.js';
 import type { EvidenceBundle, EvidenceItem, PreparedSource, PreparedSpan } from './contracts.js';
 
@@ -181,12 +182,8 @@ function joinedBytes(candidates: readonly PrefixCandidate[]): number {
   return candidates.reduce((sum, candidate) => sum + utf8Bytes(candidate.text), 0) + (candidates.length - 1) * 2;
 }
 
-function textContent(value: unknown): string[] {
-  if (typeof value === 'string') return [value];
-  return arrayValue(value)
-    .filter(isRecord)
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text as string);
+function textContent(value: unknown): readonly string[] {
+  return extractTranscriptTextParts(value).text;
 }
 
 function arrayValue(value: unknown): unknown[] {
