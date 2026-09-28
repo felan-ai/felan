@@ -50,7 +50,7 @@ describe('registered Background Bash tools with live host PTYs', () => {
   ])('returns large $mode output through the registered tools', async ({ params, background }) => {
     await withLiveTools(async ({ owner }) => {
       const result = await call(owner, 'bash', {
-        command: nodeCommand("process.stdout.write('old line\\n'.repeat(40000) + 'last-one\\nlast-two 🌍\\n'); process.exitCode = 7;"),
+        command: nodeCommand("process.stdout.write('old line\\n'.repeat(40000) + 'last-one\\nlast-two 🌍\\n', () => { process.exitCode = 7; });"),
         timeout: 10,
         ...params,
       });
