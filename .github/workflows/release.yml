@@ -31,6 +31,8 @@ jobs:
         run: pnpm select:release-packages
       - run: pnpm install --frozen-lockfile
       - if: steps.release.outputs.has_packages == 'true'
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - if: steps.release.outputs.has_packages == 'true'
         run: pnpm verify
       - if: steps.release.outputs.has_packages == 'true'
         run: npm install --global npm@11.19.0
