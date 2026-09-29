@@ -10,6 +10,18 @@ import {
   type CreateJevClientOptions,
   type JevAnswers,
 } from './client.js';
+import { createJevPreflight } from './preflight.js';
+import type { Logger } from '../../logger.js';
+
+const preflights = new WeakMap<Classifier, ReturnType<typeof createJevPreflight>>();
+const jevClassifiers = new WeakSet<Classifier>();
+
+export function attachJevPreflight(classifier: Classifier, logger: Logger) {
+  if (!jevClassifiers.has(classifier)) return undefined;
+  const preflight = createJevPreflight(logger);
+  preflights.set(classifier, preflight);
+  return preflight;
+}
 
 export function createJevClassifier(): Classifier | undefined {
   return createJevClassifierWithOptions({});
@@ -20,31 +32,43 @@ export function createJevClassifierWithOptions(
 ): Classifier | undefined {
   const client = createJevClient(options);
   if (!client.resolveTransport()) return undefined;
-  return {
+  const classifier: Classifier = {
     canEvaluate(state, questions) {
       return client.canEvaluate(state, questions);
     },
     async evaluate(state, questions, signal) {
       const started = Date.now();
-      const result = await client.evaluate(state, questions, signal === undefined ? {} : { signal });
+      const run = (activeSignal?: AbortSignal) => client.evaluate(
+        state, questions, activeSignal === undefined ? {} : { signal: activeSignal },
+      );
+      const preflight = preflights.get(classifier);
+      const result = preflight
+        ? await preflight.evaluate(Object.keys(questions).join(','), run, signal)
+        : await run(signal);
       return { answers: classifierAnswers(result.answers), metadata: evaluationMetadata(result, started) };
     },
     async evaluateProbabilities(state, questions, signal) {
       const started = Date.now();
-      const result = await client.evaluate(
+      const run = (activeSignal?: AbortSignal) => client.evaluate(
         state,
         Object.fromEntries(Object.entries(questions).map(([id, question]) => [id, {
           type: 'noul' as const,
           instructions: question.instructions,
         }])),
-        signal === undefined ? {} : { signal },
+        activeSignal === undefined ? {} : { signal: activeSignal },
       );
+      const preflight = preflights.get(classifier);
+      const result = preflight
+        ? await preflight.evaluate(Object.keys(questions).join(','), run, signal)
+        : await run(signal);
       return {
         answers: classifierProbabilityAnswers(result.answers),
         metadata: evaluationMetadata(result, started),
       };
     },
   };
+  jevClassifiers.add(classifier);
+  return classifier;
 }
 
 function evaluationMetadata(

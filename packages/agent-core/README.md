@@ -62,7 +62,9 @@ judgment and an additive probability-of-yes judgment for independently scoring
 multiple conditions. Jev implements the latter with its Noul primitive; Agent
 Core does not expose Jev transport types through this contract.
 
-`collectClassifierSessionEvidence` converts the active Pi session projection
+In root sessions, Agent Core coordinates one short initial-turn wait inside its
+Jev classifier; later decisions and other classifier implementations retain
+their normal timing. `collectClassifierSessionEvidence` converts the active Pi session projection
 into bounded conversation and correlated tool-call metadata for classifiers.
 It handles branch/compaction summaries, omits images, raw thinking and tool
 result bodies, and redacts recognizable credential patterns. It is not a
@@ -70,7 +72,8 @@ guarantee that arbitrary secrets in user text are detected. Feature packages
 choose their own classifier questions and any additional state.
 
 Session composition accepts an optional `dynamicThinking` capability. When the
-runtime has a classifier, it selects a supported effort on `before_agent_start`,
+runtime has a classifier, it starts eligible effort selection at `input` and
+applies it on `before_agent_start`,
 not queued follow-ups or tool continuations, without persisting the user's
 default. Codex requests are classified only when the Codex extension is loaded;
 eligible Anthropic models use Pi's mid-conversation effort support.

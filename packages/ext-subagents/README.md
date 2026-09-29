@@ -69,7 +69,8 @@ reviewer fan-out. Without a classifier, the model applies that guidance itself.
 With a compatible probability classifier and an `explore` definition, root
 sessions ask one `broad_discovery` question per user turn. Classification
 starts on Pi's `input` event and is awaited in `before_agent_start`, so it
-overlaps with other extensions' pre-start work. A transformed or expanded prompt
+overlaps with other extensions' pre-start work. Jev's shared root-turn
+preflight may expire without adding a discovery section. A transformed prompt
 is classified again. A bounded file listing skips discovery classification
 for a repository with fewer than 20 files, since delegating that surface
 would add overhead. At a probability of 0.65 or higher, the `subagent_routing`

@@ -25,6 +25,8 @@ to do.
 
 - [Architecture](concepts/architecture.md) — ownership from the local host,
   through extensions, to Agent Core and Pi.
+- [Classifier decisions and response latency](concepts/classifier-lifecycle.md)
+  — which decisions gate the first response and which run later.
 - [Runtime and security](concepts/runtime-and-security.md) — permissions,
   trusted boundaries, credentials, and untrusted content.
 - [Efficient execution and savings](concepts/efficient-execution.md) —

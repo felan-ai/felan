@@ -15,6 +15,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { loadFelanSessionExtensions, type ExtensionPackageImporter } from './extensions.js';
+import { attachJevPreflight } from './classifier/jev/classifier.js';
 import { createDynamicThinkingSession, DYNAMIC_THINKING_PRODUCER } from './dynamic-thinking/session.js';
 import { installModelSelectionPersistenceScope } from './model-selection.js';
 import {
@@ -117,6 +118,9 @@ async function composeAgentCoreSession(
   options: CreateAgentCoreSessionOptions,
 ): Promise<AgentCoreSessionComposition> {
   const agentDir = options.agentDir ?? options.runtime.cwd;
+  const preflight = options.sessionManager.getHeader()?.parentSession === undefined && options.runtime.classifier
+    ? attachJevPreflight(options.runtime.classifier, options.runtime.logger)
+    : undefined;
   const modelSelectionScope = installModelSelectionPersistenceScope(options.settingsManager);
   const featureExtensions = await loadFelanSessionExtensions(
     options.extensionPackages,
@@ -134,6 +138,25 @@ async function composeAgentCoreSession(
       optionalDynamicThinkingReporter(options.savings))
     : undefined;
   const extensionFactories = [
+    ...(preflight === undefined ? [] : [{
+      name: '@felan-ai/agent-core/classifier-preflight',
+      hidden: true,
+      factory: (pi) => {
+        let inputStarted = false;
+        pi.on('input', (event) => {
+          if (event.streamingBehavior !== undefined) return;
+          inputStarted = true;
+          preflight.startNextTurn();
+        });
+        pi.on('before_agent_start', () => {
+          if (!inputStarted) preflight.startNextTurn();
+          inputStarted = false;
+        });
+        pi.on('turn_start', () => preflight.finishPreflight());
+        pi.on('agent_settled', () => preflight.dispose());
+        pi.on('session_shutdown', () => preflight.dispose());
+      },
+    } satisfies InlineExtension]),
     ...(projectInstructions === undefined ? [] : [createProjectInstructionsExtension(projectInstructions)]),
     ...featureExtensions,
     ...(options.inlineExtensions ?? []),

@@ -175,6 +175,10 @@ not loaded. Use project instructions for repository-specific guidance instead.
 
 When `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available, the local host
 injects its optional provider-neutral classifier into root and child runtimes.
+In Jev-backed root turns, entry, discovery, and eligible dynamic-thinking
+classification share one 2-second preflight budget; a late decision falls back
+to the existing guidance or current thinking level. Later workflow decisions
+are outside this budget; see [classifier lifecycle](../concepts/classifier-lifecycle.md).
 Only root sessions use it for routing. Before each user turn, the subagent
 extension asks whether the request needs broad discovery that the conversation
 does not already cover; at 0.65 or higher it adds guidance to delegate that

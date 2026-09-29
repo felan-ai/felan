@@ -88,7 +88,9 @@ session evidence; Prewalk retains its own task and verification judgments.
 
 - **Entry:** Classification starts on Pi's `input` event for idle turns when
   `enter_prewalk` and a mutation tool are active and `entryApproval` is not
-  `deny`. If the request should use Prewalk, a hidden conversation message
+  `deny`. Jev's shared root-turn preflight may expire before the answer; in
+  that case no entry guidance is added. If the request should use Prewalk, a
+  hidden conversation message
   tells the model to call `enter_prewalk` before exploring. It does not change
   the system prompt; the message is removed from subsequent model context.
   The tool stays available and entry approval is unchanged.

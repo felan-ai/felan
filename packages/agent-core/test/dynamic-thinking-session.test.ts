@@ -60,6 +60,31 @@ function harness(
 }
 
 describe('dynamic thinking session lifecycle', () => {
+  it('starts on input and applies only a matching timely result', async () => {
+    const { emit, evaluate, getLevel } = harness(['low']);
+    await emit('input', { text: 'Simple edit', source: 'interactive' });
+    expect(evaluate).toHaveBeenCalledOnce();
+    await emit('before_agent_start', { prompt: 'Simple edit' });
+    expect(evaluate).toHaveBeenCalledOnce();
+    expect(getLevel()).toBe('low');
+  });
+
+  it('aborts an input-started decision when the prompt changes', async () => {
+    const { emit, evaluate, getLevel } = harness(['high']);
+    let oldSignal: AbortSignal | undefined;
+    let release!: (value: unknown) => void;
+    evaluate.mockImplementationOnce((_state, _questions, signal) => {
+      oldSignal = signal;
+      return new Promise((resolve) => { release = resolve; });
+    });
+    await emit('input', { text: '/skill:task', source: 'interactive' });
+    await emit('before_agent_start', { prompt: 'Expanded task' });
+    expect(oldSignal?.aborted).toBe(true);
+    expect(evaluate).toHaveBeenCalledTimes(2);
+    release({ answers: { effort: { type: 'choice', choice: 'low' } } });
+    expect(getLevel()).toBe('high');
+  });
+
   it('skips Codex decisions without the reasoning-update extension', async () => {
     const { emit, evaluate, getLevel } = harness(['low'], false);
     await emit('before_agent_start', { prompt: 'Summarize the file' });

@@ -10,7 +10,8 @@ import {
   TYPESAFE_MODEL,
   TYPESAFE_SYSTEMONE_URL,
 } from '../../src/classifier/jev/credentials.js';
-import { createJevClassifierWithOptions } from '../../src/classifier/jev/classifier.js';
+import { attachJevPreflight, createJevClassifierWithOptions } from '../../src/classifier/jev/classifier.js';
+import { createLogger, type LogRecord } from '../../src/logger.js';
 import * as agentCore from '../../src/index.js';
 
 const questions = {
@@ -215,6 +216,33 @@ describe('Jev client', () => {
       type: 'noul',
       instructions: 'Should independent exploration be delegated?',
     });
+  });
+
+  it('shares preflight timing across the same classifier methods without affecting later calls', async () => {
+    vi.useFakeTimers();
+    try {
+      const records: LogRecord[] = [];
+      const fetch = vi.fn<JevFetch>(() => new Promise(() => {}));
+      const classifier = createJevClassifierWithOptions({ typesafeApiKey: 'ts-secret', fetch });
+      const preflight = attachJevPreflight(classifier!, createLogger({ level: 'debug',
+        destination: { write: (record) => { records.push(record); } } }));
+      expect(preflight).toBeDefined();
+      preflight!.startNextTurn();
+      const choice = classifier!.evaluate('state', { route: { type: 'choice', instructions: 'Route?',
+        criteria: { yes: 'yes', no: 'no' } } });
+      const choiceFailure = expect(choice).rejects.toMatchObject({ code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(1_500);
+      const probability = classifier!.evaluateProbabilities!('state', { discover: { instructions: 'Explore?' } });
+      const probabilityFailure = expect(probability).rejects.toMatchObject({ code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(500);
+      await Promise.all([choiceFailure, probabilityFailure]);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      preflight!.finishPreflight();
+      expect(records.filter((record) => record.fields.outcome === 'expired')).toHaveLength(2);
+      preflight!.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
