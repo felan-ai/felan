@@ -12,6 +12,7 @@ import {
   createAgentSessionRuntime,
   defineExtensionConfig,
   getSupportedThinkingLevels,
+  getCurrentTools,
   type FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import { InteractiveMode } from '@earendil-works/pi-coding-agent';
@@ -52,6 +53,54 @@ afterEach(async () => {
 });
 
 describe('local Agent Core lifecycle', () => {
+  it.each(['on', 'only'] as const)('keeps code mode %s through Codex tool synchronization', async (mode) => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      codemode: { mode },
+      builtinExtensions: Object.fromEntries(Object.keys(builtinExtensionPackages).map((name) => [name, name === 'codex'])),
+    }));
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const codex = modelRuntime.getModel('openai-codex', 'gpt-6-sol')!;
+    const ordinary = modelRuntime.getModel('anthropic', 'claude-opus-5-5')!;
+    vi.spyOn(modelRuntime, 'checkAuth').mockResolvedValue({ type: 'api_key' });
+    vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+    const runtime = await createLocalFelanRuntime({
+      cwd, agentDir, homeDir: root, modelRuntime, model: codex,
+      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, request),
+    });
+    try {
+      const declarations: string[][] = [];
+      runtime.session.agent.streamFunction = (activeModel, context) => {
+        declarations.push(getCurrentTools(context.messages).map((tool) => tool.name));
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => stream.push({ type: 'done', reason: 'stop', message: {
+          ...completedAssistantMessage('Done'), api: activeModel.api,
+          provider: activeModel.provider, model: activeModel.id,
+        } }));
+        return stream;
+      };
+      await runtime.session.bindExtensions({ mode: 'print' });
+      expect(runtime.session.getActiveToolNames()).toContain('codemode');
+      expect(runtime.session.getActiveToolNames()).toContain('apply_patch');
+      expect(runtime.session.getActiveToolNames()).not.toContain('write');
+      await runtime.session.prompt('Inspect');
+      expect(declarations.at(-1)).toContain('codemode');
+      expect(declarations.at(-1)!.includes('apply_patch')).toBe(mode === 'on');
+      await runtime.session.setModel(ordinary);
+      expect(runtime.session.getActiveToolNames()).toContain('codemode');
+      expect(runtime.session.getActiveToolNames()).not.toContain('apply_patch');
+      expect(runtime.session.getActiveToolNames()).toContain('write');
+      await runtime.session.prompt('Inspect again');
+      expect(declarations.at(-1)).toContain('codemode');
+      expect(declarations.at(-1)!.includes('write')).toBe(mode === 'on');
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it('passes the effective custom runtime classifier to the memory coordinator', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

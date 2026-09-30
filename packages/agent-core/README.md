@@ -149,6 +149,13 @@ resource, skill, tool, and context-inspection symbols needed to compose Felan ap
 consumers import those symbols from `@felan-ai/agent-core` without declaring
 Pi packages directly.
 
+The composition surface re-exports Pi's `createCodemodeExtension` and
+`CodemodeExtensionOptions`. Registration alone leaves `codemode` inactive;
+the host must activate it and owns its configuration and lifecycle. Agent Core
+does not enable it automatically. Felan's local host supports `codemode.mode`
+values `off`, `on`, and `only`, defaults to `off`, and disables the sandbox's
+extra model helpers with `models: false`.
+
 Agent Core also exposes shared `xhigh`, `high`, `medium`, and `low` model tiers for
 extensions that need model-strength selection:
 

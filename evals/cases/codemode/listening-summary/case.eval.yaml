@@ -1,0 +1,22 @@
+id: codemode-listening-summary
+suite: codemode
+description: Deterministic listening-summary comparison of direct tools and code mode.
+timeoutMs: 300000
+workspace:
+  fixture: fixtures/codemode/v1/source
+agents:
+  include: [felan-codemode-direct, felan-codemode-on, felan-codemode-only]
+prompt: |
+  Run the listening-summary deterministic scenario. Follow its supplied task contract.
+  Return JSON only; use only the scenario's tools and permitted files.
+verifier:
+  command: node
+  args: [/tests/verify.mjs]
+  cwd: /workspace
+  assetsDir: cases/codemode/listening-summary/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.txt
+  rewardFormat: text
+  timeoutMs: 10000
+  network:
+    mode: none

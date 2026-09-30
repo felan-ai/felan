@@ -11,7 +11,15 @@ import {
   type Focusable,
   type SettingItem,
 } from '@earendil-works/pi-tui';
-import { getClassifierModelSetting, getFelanSettings, setExtensionConfigValue } from './settings.js';
+import {
+  getClassifierModelSetting,
+  getFelanSettings,
+  getLocalCodemodeMode,
+  LOCAL_CODEMODE_MODES,
+  setExtensionConfigValue,
+  setLocalCodemodeMode,
+  type LocalCodemodeMode,
+} from './settings.js';
 import { createClassifierModelSettings } from './classifier-settings.js';
 
 interface SettingsModeInternals {
@@ -46,6 +54,9 @@ export function installFelanSettingsCommand(
     const state = loadExtensionSettingsState(options);
     internals.showSelector((done) => {
       let classifierPicker: ReturnType<typeof createClassifierModelSettings> | undefined;
+      let persistedCodemode = getLocalCodemodeMode(options.settingsManager);
+      let codemodeRevision = 0;
+      let pendingCodemodeWrite = Promise.resolve();
       const items: SettingItem[] = [
         {
           id: 'native-settings',
@@ -53,6 +64,13 @@ export function installFelanSettingsCommand(
           description: 'Open the standard Felan Code runtime settings selector',
           currentValue: 'open',
           submenu: () => showNativeSettings(internals, mode, nativeSettings),
+        },
+        {
+          id: 'codemode',
+          label: 'Code mode',
+          description: 'Native Pi code mode for the next new root session/restart; on keeps direct tools, only hides callable direct tools',
+          currentValue: persistedCodemode,
+          values: [...LOCAL_CODEMODE_MODES],
         },
         ...(options.modelRuntime === undefined ? [] : [{
           id: 'classifier-model',
@@ -89,7 +107,19 @@ export function installFelanSettingsCommand(
         items,
         Math.min(items.length, 12),
         getSettingsListTheme(),
-        () => {},
+        (id, value) => {
+          if (id !== 'codemode') return;
+          const revision = ++codemodeRevision;
+          pendingCodemodeWrite = pendingCodemodeWrite.then(async () => {
+            await setLocalCodemodeMode(options.agentDir, value as LocalCodemodeMode);
+            persistedCodemode = value as LocalCodemodeMode;
+            await options.settingsManager.reload().catch(() => {});
+          }).catch(() => {
+            if (codemodeRevision !== revision) return;
+            list.updateValue('codemode', `${persistedCodemode} (save failed)`);
+            internals.ui?.requestRender();
+          });
+        },
         done,
         { enableSearch: true },
       );

@@ -26,7 +26,8 @@ sources.
 
 ## Settings
 
-All built-ins are enabled unless their key is explicitly `false`. The example
+Built-ins controlled by `builtinExtensions` are enabled unless their key is
+explicitly `false`. Native code mode is separately opt-in. The example
 below shows available Felan-specific settings and intentionally disables the
 browser and Powerline extensions:
 
@@ -74,6 +75,9 @@ browser and Powerline extensions:
   "felanClassifier": {
     "model": "auto"
   },
+  "codemode": {
+    "mode": "off"
+  },
   "felanTui": {
     "toolDisplay": "grouped"
   },
@@ -88,7 +92,8 @@ browser and Powerline extensions:
 
 Defaults:
 
-- every built-in is enabled;
+- every `builtinExtensions` entry is enabled;
+- native code mode is `off`;
 - memory processing follows `builtinExtensions.memory` and changes apply when
   Felan Code next constructs a root session;
 - response output style is `concise`;
@@ -98,6 +103,42 @@ Defaults:
 - tool display is `grouped`;
 - local memory processing is enabled; and
 - `piExtensions.user` and `piExtensions.project` are `false`.
+
+### Code mode
+
+Select **Code mode** in `/settings`, or set `codemode.mode` to `off`, `on`, or
+`only` in `settings.json`:
+
+```json
+{ "codemode": { "mode": "on" } }
+```
+
+- `off` (default) does not register Felan's native Pi code-mode extension.
+- `on` activates `codemode` alongside direct tools for programmatic batching,
+  filtering, and computation.
+- `only` activates `codemode` and hides callable direct-tool declarations from
+  model requests. Those tools remain callable from scripts. Pi's model-only
+  tools remain directly available and cannot be called from scripts.
+
+Changes apply when Felan constructs a new root runtime, including restart or
+resume. Interactive, headless, and ACP roots use the setting; subagents inherit
+their root's mode even if the saved setting changes later. Inspection profiles
+still restrict nested calls, and tool-free synthesis does not reactivate code
+mode. Memory dream sessions retain their separate restricted tool set.
+
+Felan uses Pi's `createCodemodeExtension({ mode, models: false })`.
+`models: false` removes the sandbox's `models.*` catalog and classifier helpers;
+it does not change the session model or disable ordinary tool calling. Enabled
+Felan model tools remain available through their normal policy-governed paths.
+Nested calls use the normal validation, tool hooks, cancellation, and audit
+pipeline; code mode does not isolate tools from the host's permissions.
+
+The configuration keeps Pi's object shape and preserves other native fields,
+such as `codemode.inlineBudget`. Avoid loading a second code-mode factory through
+an explicit Pi extension when using the built-in integration. `off` controls
+Felan's integration, not separately loaded extensions.
+
+### Runtime resources and session behavior
 
 When `piExtensions.user` is `true`, interactive root TUI sessions load
 `~/.pi/agent/extensions`. When `piExtensions.project` is `true`, they load

@@ -133,3 +133,13 @@ pnpm eval:view
 Source-image builds are local development actions and do not make model calls.
 Benchmark runs may use paid or subscription providers and require explicit
 authorization. Keep run artifacts, credentials, and caches out of Git.
+
+## Native Pi code-mode diagnostic
+
+The opt-in [code-mode benchmark](cases/codemode/README.md) compares direct tools,
+optional Pi code mode, and code-mode-only exposure on five verified synthetic
+tasks, including three Pit-inspired music workflows. Use the framework for
+scheduling, repeated attempts, isolation, usage parsing and reporting, with the
+recorded current-source image and explicitly authorized authentication. It does
+not enable code mode in the shipped TUI. See the case guide for commands,
+grading, limitations and the retained legacy diagnostic evidence.

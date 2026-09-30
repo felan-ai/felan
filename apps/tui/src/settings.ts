@@ -25,6 +25,7 @@ import type { LocalSubagentSettings } from './subagents/host.js';
 import { withLocalFileLock } from './lock.js';
 
 export interface FelanSettings {
+  readonly codemode?: { readonly mode?: LocalCodemodeMode; readonly inlineBudget?: number };
   readonly builtinExtensions?: BuiltinExtensionSettings;
   readonly outputStyle?: OutputStyle;
   readonly felanSubagents?: LocalSubagentSettings;
@@ -34,6 +35,9 @@ export interface FelanSettings {
   readonly piExtensions?: PiExtensionSettings;
   readonly extensionConfig?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 }
+
+export const LOCAL_CODEMODE_MODES = ['off', 'on', 'only'] as const;
+export type LocalCodemodeMode = typeof LOCAL_CODEMODE_MODES[number];
 
 export interface PiExtensionSettings {
   readonly user?: boolean;
@@ -200,6 +204,28 @@ export function createLocalSettingsManager(cwd: string, agentDir: string): Setti
 
 export function getFelanSettings(settingsManager: SettingsManager): FelanSettings {
   return settingsManager.getGlobalSettings() as FelanSettings;
+}
+
+export function getLocalCodemodeMode(settingsManager: SettingsManager): LocalCodemodeMode {
+  const raw = (settingsManager.getGlobalSettings() as Record<string, unknown>).codemode;
+  if (raw === undefined) return 'off';
+  if (!isRecord(raw)) throw new Error('codemode must be an object');
+  return parseLocalCodemodeMode(raw.mode);
+}
+
+function parseLocalCodemodeMode(value: unknown): LocalCodemodeMode {
+  if (value === undefined) return 'off';
+  if (value === 'off' || value === 'on' || value === 'only') return value;
+  throw new Error('codemode.mode must be "off", "on", or "only"');
+}
+
+export async function setLocalCodemodeMode(agentDir: string, mode: LocalCodemodeMode): Promise<void> {
+  const validated = parseLocalCodemodeMode(mode);
+  await updateGlobalFelanSettings(agentDir, (settings) => {
+    const current = settings.codemode;
+    if (current !== undefined && !isRecord(current)) throw new Error('codemode must be an object');
+    settings.codemode = { ...(current ?? {}), mode: validated };
+  });
 }
 
 export function getClassifierModelSetting(settingsManager: SettingsManager): string {

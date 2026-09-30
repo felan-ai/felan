@@ -15,6 +15,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createLocalSettingsManager,
   getDynamicThinkingEnabled,
+  getLocalCodemodeMode,
   getBrowserAuthorizationPolicy,
   getFelanSettings,
   getLocalOutputStyle,
@@ -25,6 +26,7 @@ import {
   setDependencyOnboardingDecision,
   resolveExtensionConfigSettings,
   setExtensionConfigValue,
+  setLocalCodemodeMode,
 } from '../src/settings.js';
 import {
   formatExtensionSettingDisplayValue,
@@ -41,6 +43,67 @@ afterEach(async () => {
 });
 
 describe('local settings', () => {
+  it('defaults code mode off and validates the native-shaped configuration', () => {
+    for (const settings of [{}, { codemode: {} }, { codemode: { inlineBudget: 0 } }]) {
+      expect(getLocalCodemodeMode(settingsWith(settings))).toBe('off');
+    }
+    for (const mode of ['off', 'on', 'only'] as const) {
+      expect(getLocalCodemodeMode(settingsWith({ codemode: { mode } }))).toBe(mode);
+    }
+    for (const codemode of [null, [], 'on', true]) {
+      expect(() => getLocalCodemodeMode(settingsWith({ codemode }))).toThrow('codemode must be an object');
+    }
+    for (const mode of [null, true, 'invalid', 'ON']) {
+      expect(() => getLocalCodemodeMode(settingsWith({ codemode: { mode } })))
+        .toThrow('codemode.mode must be "off", "on", or "only"');
+    }
+  });
+
+  it('persists code mode without overwriting native budgets or unrelated settings', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir);
+    const path = join(agentDir, 'settings.json');
+    await writeFile(path, JSON.stringify({ codemode: { inlineBudget: 128 }, defaultModel: 'test-model' }));
+    await setLocalCodemodeMode(agentDir, 'only');
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+      codemode: { inlineBudget: 128, mode: 'only' }, defaultModel: 'test-model',
+    });
+    expect(getLocalCodemodeMode(createLocalSettingsManager(root, agentDir))).toBe('only');
+    await setLocalCodemodeMode(agentDir, 'off');
+    expect(getLocalCodemodeMode(createLocalSettingsManager(root, agentDir))).toBe('off');
+    await writeFile(path, JSON.stringify({ codemode: 'on' }));
+    await expect(setLocalCodemodeMode(agentDir, 'on')).rejects.toThrow('codemode must be an object');
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ codemode: 'on' });
+  });
+
+  it('cycles and saves the code-mode selector in selection order', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    const manager = createLocalSettingsManager(root, agentDir);
+    const harness = createExtensionSettingsHarness([], agentDir, manager);
+    harness.current().handleInput?.('code');
+    expect(harness.current().render(140).join('\n')).toContain('Code mode');
+    harness.current().handleInput?.('\r');
+    harness.current().handleInput?.('\r');
+    await vi.waitFor(() => expect(getLocalCodemodeMode(manager)).toBe('only'));
+    harness.open();
+    harness.current().handleInput?.('code');
+    expect(harness.current().render(140).join('\n')).toContain('only');
+    harness.current().handleInput?.('\r');
+    await vi.waitFor(() => expect(getLocalCodemodeMode(manager)).toBe('off'));
+  });
+
+  it('shows the last saved code mode when persistence fails', async () => {
+    const root = await temporaryDirectory();
+    const invalidAgentDir = join(root, 'not-a-directory');
+    await writeFile(invalidAgentDir, 'file');
+    const harness = createExtensionSettingsHarness([], invalidAgentDir);
+    harness.current().handleInput?.('code');
+    harness.current().handleInput?.('\r');
+    await vi.waitFor(() => expect(harness.current().render(140).join('\n')).toContain('off (save failed)'));
+  });
+
   it('defaults dynamic thinking on and accepts an explicit disable switch', async () => {
     const root = await temporaryDirectory();
     const agentDir = join(root, '.felan');

@@ -1,0 +1,48 @@
+version: 1
+adapters:
+  felan:
+    module: ./adapters/felan-codemode.mjs
+tests:
+  - cases/codemode/**/*.eval.yaml
+artifactRoot: .harness-evals/runs
+outputRoot: .harness-evals/output
+workspace:
+  mode: copy
+  containerPath: /workspace
+docker:
+  repoPath: /workspace
+  home: /tmp/felan-home
+  pullOnRefresh: false
+agents:
+  felan-codemode-direct:
+    adapter: felan
+    label: Felan runtime · code mode off
+    comparisonId: felan-config-codemode-off
+    provider: openai-codex
+    model: gpt-6.1-sol
+    thinking: xhigh
+    timeoutMs: 900000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      settings:
+        codemode:
+          mode: off
+      useCurrentConfig: false
+  felan-codemode-on:
+    extends: felan-codemode-direct
+    label: Felan runtime · optional code mode
+    comparisonId: felan-config-codemode-on
+    config:
+      settings:
+        codemode:
+          mode: on
+  felan-codemode-only:
+    extends: felan-codemode-direct
+    label: Felan runtime · code mode only
+    comparisonId: felan-config-codemode-only
+    config:
+      settings:
+        codemode:
+          mode: only

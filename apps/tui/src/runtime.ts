@@ -29,6 +29,7 @@ import {
   type AgentSessionRuntime,
 } from '@earendil-works/pi-coding-agent';
 import { createLocalCodexStreamFunctionWrapper } from './codex.js';
+import { createLocalCodemodeExtension } from './codemode.js';
 import { createLocalClassifier } from './classifier.js';
 import {
   createLocalDependencyExtension,
@@ -45,6 +46,7 @@ import { createLocalAgentLogger } from './logger.js';
 import {
   createLocalSettingsManager,
   getDynamicThinkingEnabled,
+  getLocalCodemodeMode,
   getClassifierModelSetting,
   getFelanSettings,
   getLocalOutputStyle,
@@ -232,6 +234,11 @@ export function createLocalSessionRuntimeFactory(
     const settingsManager = createLocalSettingsManager(cwd, options.agentDir);
     const felanSettings = getFelanSettings(settingsManager);
     const dynamicThinkingEnabled = getDynamicThinkingEnabled(settingsManager);
+    const codemodeExtension = createLocalCodemodeExtension(getLocalCodemodeMode(settingsManager));
+    const inlineExtensions = [
+      ...(codemodeExtension === undefined ? [] : [codemodeExtension]),
+      ...(options.inlineExtensions ?? []),
+    ];
     const extensionPackages = options.extensionPackages
       ?? resolveBuiltinExtensionPackages(felanSettings.builtinExtensions);
     const memoryEnabled = extensionPackages.includes(memoryExtensionPackage);
@@ -366,9 +373,7 @@ export function createLocalSessionRuntimeFactory(
       backgroundBashCoordinatorOwner: false,
       ...(runtime.classifier === undefined ? {} : { classifier: runtime.classifier }),
       dynamicThinking: dynamicThinkingEnabled,
-      ...(options.inlineExtensions === undefined
-        ? {}
-        : { inlineExtensions: options.inlineExtensions }),
+      inlineExtensions,
       ...(options.subagentUiContext === undefined
         ? {}
         : { extensionUiContext: options.subagentUiContext }),
@@ -445,7 +450,7 @@ export function createLocalSessionRuntimeFactory(
         createThinkingGroupExtension(),
         createToolActivityExtension(toolActivityState),
         ...(memoryControlExtension === undefined ? [] : [memoryControlExtension]),
-        ...(options.inlineExtensions ?? []),
+        ...inlineExtensions,
       ],
       ...(appendSystemPrompt === undefined ? {} : { appendSystemPrompt: [appendSystemPrompt] }),
       ...(modelScope.scopedModels.length === 0 ? {} : { scopedModels: modelScope.scopedModels }),

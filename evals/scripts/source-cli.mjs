@@ -11,7 +11,9 @@ const { image } = JSON.parse(readFileSync(provenancePath, 'utf8'));
 if (typeof image !== 'string' || !/^felan-evals-source:[a-f0-9]{24}$/u.test(image)) {
   throw new Error('source-image.json has invalid image metadata');
 }
-const result = spawnSync('pnpm', ['exec', 'harness-evals', ...process.argv.slice(2), '--config', 'felan-extension-evals.yaml', '--image', image], {
+const args = process.argv.slice(2);
+const config = args.some(arg => arg === '--config' || arg.startsWith('--config=')) ? [] : ['--config', 'felan-extension-evals.yaml'];
+const result = spawnSync('pnpm', ['exec', 'harness-evals', ...args, ...config, '--image', image], {
   cwd: evalsRoot,
   stdio: 'inherit',
 });

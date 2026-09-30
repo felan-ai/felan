@@ -21,6 +21,7 @@ import * as piProviders from '@earendil-works/pi-ai/providers/all';
 import * as piCodingAgent from '@earendil-works/pi-coding-agent';
 import type {
   BuildSystemPromptOptions as PiBuildSystemPromptOptions,
+  CodemodeExtensionOptions as PiCodemodeExtensionOptions,
   ExtensionCommandContext as PiExtensionCommandContext,
   ResourceDiagnostic as PiResourceDiagnostic,
   ResourceLoader as PiResourceLoader,
@@ -41,6 +42,7 @@ import type {
   AssistantMessageEvent,
   AssistantMessageEventStream,
   BuildSystemPromptOptions,
+  CodemodeExtensionOptions,
   Context,
   Credential,
   CredentialInfo,
@@ -77,6 +79,7 @@ describe('Agent Core Pi exports', () => {
       'SessionManager',
       'SettingsManager',
       'createAgentSessionRuntime',
+      'createCodemodeExtension',
       'defineTool',
       'formatSkillsForPrompt',
       'getAgentDir',
@@ -113,6 +116,7 @@ describe('Agent Core Pi exports', () => {
     expectTypeOf<AssistantMessageEvent>().toEqualTypeOf<PiAssistantMessageEvent>();
     expectTypeOf<AssistantMessageEventStream>().toEqualTypeOf<PiAssistantMessageEventStream>();
     expectTypeOf<BuildSystemPromptOptions>().toEqualTypeOf<PiBuildSystemPromptOptions>();
+    expectTypeOf<CodemodeExtensionOptions>().toEqualTypeOf<PiCodemodeExtensionOptions>();
     expectTypeOf<Context>().toEqualTypeOf<PiContext>();
     expectTypeOf<Credential>().toEqualTypeOf<PiCredential>();
     expectTypeOf<CredentialInfo>().toEqualTypeOf<PiCredentialInfo>();
