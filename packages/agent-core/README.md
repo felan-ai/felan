@@ -223,6 +223,19 @@ user, and package skill discovery remains disabled. Ambient system prompt,
 append prompt, and context discovery are also disabled; the selected cwd
 instruction file is the only built-in project-instruction input.
 
+## Extension settings
+
+Extensions declare configuration with `defineExtensionConfig` and `configField`.
+Defaulted fields retain their defaults through resolution. Use
+`configField.optionalEnum(['normal', 'fast'], { description: 'Request priority' })`
+when omission has meaning: the resolved configuration omits the key until an
+explicit choice is supplied. Optional enum properties are optional in
+`InferExtensionConfig`, and explicit invalid values, including `null`, are
+rejected. Hosts can display an unset value without saving a synthetic default.
+
+Fields may carry a `deprecated` message. Deprecated fields remain valid for
+configuration and CLI compatibility; Felan's `/settings` hides them.
+
 ## Package boundary
 
 Agent Core owns `AgentRuntime`, `HostAgentRuntime`, the Felan base prompt, cwd

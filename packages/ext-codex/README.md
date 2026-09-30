@@ -10,6 +10,37 @@ ordinary editing tools. File operations use the current `AgentRuntime`.
 The local TUI presents patch calls with friendly action labels while headless
 modes continue to expose the stable tool name and raw results.
 
+For eligible Responses requests, `extensionConfig.codex.priority` accepts
+`normal`, `fast`, or `ultrafast`:
+
+```json
+{
+  "extensionConfig": {
+    "codex": { "priority": "ultrafast" }
+  }
+}
+```
+
+The `fast` boolean is deprecated and hidden from `/settings`; existing config
+files and CLI options remain supported. Explicit priority overrides it. Omit `priority` to
+retain `fast: true` (priority processing) or `fast: false` (no tier override).
+With neither configured, no premium tier is requested. `normal` explicitly
+requests the standard `default` tier, even when `fast` is true.
+
+Ultrafast currently applies to the exact `gpt-6-astra` model ID on eligible
+OpenAI and Codex Responses routes. Other eligible GPT models fall back to fast
+(`priority`). Pi does not expose service-tier capability metadata, so this
+model rule is maintained in the extension rather than fetched from a catalog.
+Account, plan, workspace and endpoint eligibility still apply; rejected
+requests are not automatically retried at another tier.
+
+Fast and Ultrafast consume premium usage. The commonly cited 2x/8x figures
+are not universal billing multipliers or guaranteed task-speed increases.
+Consult [OpenAI's speed documentation](https://learn.chatgpt.com/docs/agent-configuration/speed)
+and API pricing for your authentication method. Pi's native cost estimates
+do not currently include Ultrafast-specific pricing. Priority selection does
+not change the model's reasoning effort or transport.
+
 `postAgentRunCompaction` is enabled by default. It makes eligible GPT runs defer
 Pi's automatic threshold compaction until the current agent run settles, which
 preserves the pre-0.84.4 timing while allowing the completed tool loop to

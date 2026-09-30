@@ -49,7 +49,7 @@ const codexExtension: FelanExtension = async (pi) => {
 };
 
 export { CODEX_CONFIG, DEFAULT_CODEX_CONFIG, validateCodexConfig } from './config.js';
-export type { CodexConfig, CodexVerbosity } from './config.js';
+export type { CodexConfig, CodexPriority, CodexVerbosity } from './config.js';
 export { supportsCodexModel, supportsCodexResponsesRequest } from './model-policy.js';
 export { registerPostAgentRunCompaction } from './compaction.js';
 export { applyCodexRequestOptions } from './request-options.js';

@@ -20,6 +20,21 @@ const REASONING_MODELS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna
 ));
 
 describe('Codex extension activation', () => {
+  it('resolves ultrafast and fallback afresh after model selection through the provider hook', async () => {
+    const harness = createHarness(true, { priority: 'ultrafast', fast: false });
+    await codexExtension(harness.pi);
+    for (const [id, serviceTier] of [
+      ['gpt-6-astra', 'ultrafast'], ['gpt-6-sol', 'priority'], ['gpt-6-astra', 'ultrafast'],
+    ] as const) {
+      const ctx = context('openai-codex', id, 'openai-codex-responses');
+      await harness.emit('model_select', { model: ctx.model }, ctx);
+      const [request] = await harness.emit('before_provider_request', {
+        payload: { model: id, reasoning: { effort: 'high' } },
+      }, ctx);
+      expect(request).toMatchObject({ service_tier: serviceTier, reasoning: { effort: 'high' } });
+    }
+  });
+
   it('replaces only ordinary coding tools and preserves unrelated tools for eligible models', async () => {
     const harness = createHarness();
     await codexExtension(harness.pi);

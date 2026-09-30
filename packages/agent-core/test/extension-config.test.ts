@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   configField,
   defineExtensionConfig,
   getExtensionConfigCliOptions,
+  type InferExtensionConfig,
   parseExtensionConfigCliValue,
   resolveExtensionConfigs,
 } from '../src/index.js';
@@ -18,6 +19,58 @@ const definition = defineExtensionConfig({
 });
 
 describe('declarative extension configuration', () => {
+  it('retains deprecated settings for configuration and CLI compatibility', () => {
+    const deprecatedDefinition = defineExtensionConfig({
+      id: 'deprecated-example',
+      title: 'Deprecated Example',
+      fields: {
+        fast: configField.boolean({ default: false, description: 'Legacy setting', deprecated: 'Use priority instead' }),
+      },
+    });
+    expect(deprecatedDefinition.fields.fast.deprecated).toBe('Use priority instead');
+    expect(resolveExtensionConfigs([deprecatedDefinition], [{
+      extensionId: 'deprecated-example', values: { fast: true }, source: 'settings',
+    }]).get('deprecated-example')).toEqual({ fast: true });
+    const [option] = getExtensionConfigCliOptions([deprecatedDefinition]);
+    expect(option!.name).toBe('deprecated-example-fast');
+    expect(parseExtensionConfigCliValue(option!, true)).toBe(true);
+  });
+
+  it('leaves optional enums absent until explicitly configured', () => {
+    const optionalDefinition = defineExtensionConfig({
+      id: 'optional-example',
+      title: 'Optional Example',
+      fields: {
+        fast: configField.boolean({ default: false, description: 'Legacy fast mode' }),
+        priority: configField.optionalEnum(['normal', 'fast', 'ultrafast'], {
+          description: 'Explicit service priority',
+        }),
+      },
+    });
+
+    expectTypeOf<InferExtensionConfig<typeof optionalDefinition>>().toEqualTypeOf<Readonly<{
+      fast: boolean;
+      priority?: 'normal' | 'fast' | 'ultrafast';
+    }>>();
+
+    expect(resolveExtensionConfigs([optionalDefinition]).get('optional-example'))
+      .toEqual({ fast: false });
+    expect(resolveExtensionConfigs([optionalDefinition], [{
+      extensionId: 'optional-example', values: { fast: true }, source: 'settings',
+    }]).get('optional-example')).toEqual({ fast: true });
+    expect(resolveExtensionConfigs([optionalDefinition], [{
+      extensionId: 'optional-example', values: { fast: true, priority: 'normal' }, source: 'settings',
+    }]).get('optional-example')).toEqual({ fast: true, priority: 'normal' });
+
+    const option = getExtensionConfigCliOptions([optionalDefinition])
+      .find((candidate) => candidate.name === 'optional-example-priority')!;
+    expect(parseExtensionConfigCliValue(option, 'ultrafast')).toBe('ultrafast');
+    expect(() => parseExtensionConfigCliValue(option, 'legacy')).toThrow('must be one of');
+    expect(() => resolveExtensionConfigs([optionalDefinition], [{
+      extensionId: 'optional-example', values: { priority: null }, source: 'settings',
+    }])).toThrow('must be a string');
+  });
+
   it('resolves defaults and ordered overrides', () => {
     const resolved = resolveExtensionConfigs([definition], [
       { extensionId: 'example', values: { mode: 'fast', limit: 4 }, source: 'settings' },

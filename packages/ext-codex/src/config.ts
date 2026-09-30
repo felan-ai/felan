@@ -1,9 +1,12 @@
 import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 
 export type CodexVerbosity = 'low' | 'medium' | 'high';
+export type CodexPriority = 'normal' | 'fast' | 'ultrafast';
 
 export interface CodexConfig {
+  /** @deprecated Use priority instead. */
   readonly fast: boolean;
+  readonly priority?: CodexPriority;
   readonly verbosity: CodexVerbosity;
   readonly forceCachedWebSockets: boolean;
   readonly postAgentRunCompaction: boolean;
@@ -20,7 +23,14 @@ export const CODEX_CONFIG = defineExtensionConfig({
   id: 'codex',
   title: 'Codex tools',
   fields: {
-    fast: configField.boolean({ default: false, description: 'Request priority service tier' }),
+    fast: configField.boolean({
+      default: false,
+      description: 'Legacy fast mode; use priority instead',
+      deprecated: 'Use priority instead',
+    }),
+    priority: configField.optionalEnum(['normal', 'fast', 'ultrafast'], {
+      description: 'Service priority; overrides fast when set. Unsupported ultrafast models use fast.',
+    }),
     verbosity: configField.enum(['low', 'medium', 'high'], { default: 'low', description: 'Codex response verbosity' }),
     forceCachedWebSockets: configField.boolean({ default: true, description: 'Prefer cached WebSocket transport' }),
     postAgentRunCompaction: configField.boolean({
@@ -34,6 +44,10 @@ export function validateCodexConfig(value: unknown, source = 'settings.json.exte
   if (!isRecord(value)) throw new Error(`${source} must contain a JSON object`);
   if (value.fast !== undefined && typeof value.fast !== 'boolean') {
     throw new Error(`${source}.fast must be a boolean`);
+  }
+  if (value.priority !== undefined
+    && value.priority !== 'normal' && value.priority !== 'fast' && value.priority !== 'ultrafast') {
+    throw new Error(`${source}.priority must be normal, fast, or ultrafast`);
   }
   if (value.forceCachedWebSockets !== undefined && typeof value.forceCachedWebSockets !== 'boolean') {
     throw new Error(`${source}.forceCachedWebSockets must be a boolean`);
@@ -51,6 +65,7 @@ export function validateCodexConfig(value: unknown, source = 'settings.json.exte
   }
   return {
     fast: value.fast ?? DEFAULT_CODEX_CONFIG.fast,
+    ...(value.priority === undefined ? {} : { priority: value.priority }),
     verbosity: value.verbosity ?? DEFAULT_CODEX_CONFIG.verbosity,
     forceCachedWebSockets: value.forceCachedWebSockets
       ?? DEFAULT_CODEX_CONFIG.forceCachedWebSockets,

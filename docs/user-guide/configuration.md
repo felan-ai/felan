@@ -64,7 +64,7 @@ browser and Powerline extensions:
     "contextView": { "displayMode": "inline" },
     "codebaseMemory": { "maxCacheBytes": 0 },
     "promptHistory": { "displayMode": "inline" },
-    "codex": { "fast": false, "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
+    "codex": { "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
     "sessionCompaction": { "method": "classifier", "model": "inherit" }
   },
   "felanSubagents": {
@@ -530,7 +530,6 @@ file. Set `builtinExtensions.outputStyle` to `false` to disable the extension.
 
 ```json
 {
-  "fast": false,
   "verbosity": "low",
   "forceCachedWebSockets": true,
   "postAgentRunCompaction": true
@@ -539,6 +538,23 @@ file. Set `builtinExtensions.outputStyle` to `false` to disable the extension.
 
 `verbosity` may be `low`, `medium`, or `high`. These controls apply only to
 eligible GPT models on the exact `openai` or `openai-codex` provider.
+
+Optionally add `"priority": "normal"`, `"fast"`, or `"ultrafast"` to this
+Codex configuration. Explicit priority overrides `fast`; omitting it preserves
+the existing boolean behavior. The `fast` boolean is deprecated and hidden from
+`/settings`, but remains supported in existing config files and CLI options.
+With both omitted, no premium tier is requested.
+`normal` requests the standard tier even if `fast` is true. `ultrafast` requests
+Ultrafast for the exact `gpt-6-astra` ID on eligible Responses routes and falls
+back to fast for other eligible GPT models. This capability rule is maintained
+in the extension because Pi does not expose service-tier metadata.
+Account and workspace access requirements still apply; entitlement errors are
+not automatically retried. Neither reasoning effort nor transport changes.
+Fast and Ultrafast use premium quota/pricing; 2x/8x are not universal billing
+rates or guaranteed task-speed improvements. See
+[OpenAI's speed documentation](https://learn.chatgpt.com/docs/agent-configuration/speed).
+Pi's cost estimates do not currently account for Ultrafast-specific pricing.
+
 `postAgentRunCompaction` defaults to `true`, making automatic threshold
 compaction wait until the active GPT run settles and preserving the pre-0.84.4
 timing. Set it to `false` to use Pi's standard timing. Manual and

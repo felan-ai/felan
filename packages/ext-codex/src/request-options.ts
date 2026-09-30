@@ -1,6 +1,7 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import type { CodexConfig } from './config.js';
 import { supportsCodexResponsesRequest } from './model-policy.js';
+import { resolveCodexServiceTier } from './service-tier.js';
 
 export function applyCodexRequestOptions(
   payload: unknown,
@@ -10,9 +11,10 @@ export function applyCodexRequestOptions(
   if (!supportsCodexResponsesRequest(ctx.model) || !isRecord(payload)) return undefined;
   const normalizedPayload = normalizeCodexFunctionToolStrictness(payload) ?? payload;
   const text = isRecord(normalizedPayload.text) ? normalizedPayload.text : {};
+  const serviceTier = resolveCodexServiceTier(ctx.model, config);
   return {
     ...normalizedPayload,
-    ...(config.fast ? { service_tier: 'priority' } : {}),
+    ...(serviceTier === undefined ? {} : { service_tier: serviceTier }),
     text: { ...text, verbosity: config.verbosity },
   };
 }

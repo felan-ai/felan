@@ -211,7 +211,7 @@ function createExtensionSettingItems(
   values: ExtensionSettingValues,
 ): SettingItem[] {
   const currentValues = values.get(definition.id);
-  return Object.entries(definition.fields).map(([field, config]) => {
+  return Object.entries(definition.fields).filter(([, config]) => config.deprecated === undefined).map(([field, config]) => {
     const currentValue = (): unknown => currentValues?.has(field) ? currentValues.get(field) : config.default;
     const value = currentValue();
     const selectableValues = config.values?.map(String)
@@ -303,6 +303,7 @@ export function formatExtensionSettingDisplayValue(
   field: ExtensionConfigField,
   value: unknown,
 ): string {
+  if (field.optional && value === undefined) return 'not set';
   if (field.sensitive === true) return hasConfiguredValue(value) ? 'configured' : 'not set';
   return field.type === 'json' ? JSON.stringify(value) ?? 'null' : String(value);
 }

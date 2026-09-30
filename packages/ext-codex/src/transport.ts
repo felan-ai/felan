@@ -7,9 +7,10 @@ import type {
 } from '@felan-ai/agent-core';
 import type { CodexConfig } from './config.js';
 import { supportsCodexModel, supportsCodexResponsesRequest } from './model-policy.js';
+import { type CodexServiceTier, resolveCodexServiceTier } from './service-tier.js';
 
 interface CodexNativeStreamOptions extends SimpleStreamOptions {
-  readonly serviceTier?: 'priority';
+  readonly serviceTier?: CodexServiceTier;
   readonly textVerbosity?: CodexConfig['verbosity'];
 }
 
@@ -34,11 +35,12 @@ export function resolveCodexStreamOptions(
     : options?.transport;
   const responses = supportsCodexResponsesRequest(model);
   if (!responses && transport === options?.transport) return options;
+  const serviceTier = resolveCodexServiceTier(model, config);
 
   const prepared: CodexNativeStreamOptions = {
     ...options,
     ...(transport === undefined ? {} : { transport }),
-    ...(responses && config.fast ? { serviceTier: 'priority' } : {}),
+    ...(serviceTier === undefined ? {} : { serviceTier }),
     ...(responses && model.api === 'openai-codex-responses'
       ? { textVerbosity: config.verbosity }
       : {}),

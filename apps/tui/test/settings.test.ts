@@ -8,6 +8,7 @@ import {
   type SettingsManager,
 } from '@felan-ai/agent-core';
 import { OUTPUT_STYLE_CONFIG } from '@felan-ai/ext-output-style';
+import { CODEX_CONFIG } from '@felan-ai/ext-codex';
 import type { Component, Focusable } from '@earendil-works/pi-tui';
 import { initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -464,6 +465,59 @@ describe('local settings', () => {
     const settingResults = settingSearch.render(100).join('\n');
     expect(settingResults).toContain('Rewrite mode');
     expect(settingResults).not.toContain('OpenAI API key');
+  });
+
+  it('hides deprecated Codex fast without changing its stored value', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    const path = join(agentDir, 'settings.json');
+    await writeFile(path, JSON.stringify({ extensionConfig: { codex: { fast: true } } }));
+    const manager = createLocalSettingsManager(root, agentDir);
+    const harness = createExtensionSettingsHarness([CODEX_CONFIG], agentDir, manager);
+    harness.current().handleInput?.('codex');
+    harness.current().handleInput?.('\r');
+    const rendered = harness.current().render(100).join('\n');
+    expect(rendered).toContain('priority');
+    expect(rendered).not.toContain('Legacy fast mode');
+    expect(rendered).not.toMatch(/\bfast\s+true\b/);
+    expect(JSON.parse(await readFile(path, 'utf8')).extensionConfig.codex).toEqual({ fast: true });
+
+    harness.current().handleInput?.('\r');
+    await vi.waitFor(async () => {
+      expect(JSON.parse(await readFile(path, 'utf8')).extensionConfig.codex)
+        .toEqual({ fast: true, priority: 'normal' });
+    });
+  });
+
+  it('leaves optional enums unset on viewing and persists only a selected choice', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    const path = join(agentDir, 'settings.json');
+    await writeFile(path, '{}\n');
+    const manager = createLocalSettingsManager(root, agentDir);
+    const definition = defineExtensionConfig({
+      id: 'codex',
+      title: 'Codex',
+      fields: {
+        priority: configField.optionalEnum(['normal', 'fast', 'ultrafast'], {
+          description: 'Service priority; omit to use the fast setting',
+        }),
+      },
+    });
+    const harness = createExtensionSettingsHarness([definition], agentDir, manager);
+    harness.current().handleInput?.('codex');
+    harness.current().handleInput?.('\r');
+    expect(harness.current().render(100).join('\n')).toContain('not set');
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({});
+
+    harness.current().handleInput?.('\r');
+    expect(harness.current().render(100).join('\n')).toContain('normal');
+    await vi.waitFor(async () => {
+      expect(JSON.parse(await readFile(path, 'utf8')).extensionConfig.codex)
+        .toEqual({ priority: 'normal' });
+    });
   });
 
   it('cycles and persists enum values from an extension submenu', async () => {

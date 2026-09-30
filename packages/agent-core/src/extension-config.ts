@@ -18,6 +18,7 @@ export interface ExtensionConfigFieldOptions<T> {
   readonly description: string;
   readonly cliName?: string | false;
   readonly sensitive?: boolean;
+  readonly deprecated?: string;
   readonly validate?: (value: unknown) => string | undefined;
 }
 
@@ -25,6 +26,7 @@ export interface ExtensionConfigField<T = unknown>
   extends ExtensionConfigFieldOptions<T> {
   readonly type: 'boolean' | 'json' | 'number' | 'string';
   readonly values?: readonly T[];
+  readonly optional?: boolean;
 }
 
 export type ExtensionConfigFields = Readonly<Record<string, ExtensionConfigField<unknown>>>;
@@ -40,7 +42,11 @@ export type ExtensionConfigFieldValue<TField> = TField extends ExtensionConfigFi
   : never;
 
 export type InferExtensionConfig<TDefinition extends ExtensionConfigDefinition> = Readonly<{
-  [TKey in keyof TDefinition['fields']]: ExtensionConfigFieldValue<TDefinition['fields'][TKey]>;
+  [TKey in keyof TDefinition['fields'] as TDefinition['fields'][TKey] extends { readonly optional: true }
+    ? never : TKey]: ExtensionConfigFieldValue<TDefinition['fields'][TKey]>;
+} & {
+  [TKey in keyof TDefinition['fields'] as TDefinition['fields'][TKey] extends { readonly optional: true }
+    ? TKey : never]?: ExtensionConfigFieldValue<TDefinition['fields'][TKey]>;
 }>;
 
 export interface ExtensionConfigOverride {
@@ -75,6 +81,15 @@ export const configField = {
   ): ExtensionConfigField<TValues[number]> {
     return createField('string', options, values);
   },
+  optionalEnum<const TValues extends readonly [string, ...string[]]>(
+    values: TValues,
+    options: Omit<ExtensionConfigFieldOptions<TValues[number]>, 'default'>,
+  ): ExtensionConfigField<TValues[number] | undefined> & { readonly optional: true } {
+    return Object.freeze({
+      ...createField<TValues[number] | undefined>('string', { ...options, default: undefined }, values),
+      optional: true,
+    });
+  },
   json<const TValue>(options: ExtensionConfigFieldOptions<TValue>): ExtensionConfigField<TValue> {
     return createField('json', options);
   },
@@ -88,7 +103,7 @@ export function defineExtensionConfig<const TFields extends ExtensionConfigField
     name,
     Object.freeze({
       ...field,
-      default: cloneExtensionConfigValue(field.default),
+      default: field.optional && field.default === undefined ? undefined : cloneExtensionConfigValue(field.default),
       ...(field.values === undefined ? {} : { values: Object.freeze([...field.values]) }),
     }),
   ])) as TFields;
@@ -149,6 +164,7 @@ export function resolveExtensionConfigs(
   for (const definition of definitions) {
     const values: Record<string, ExtensionConfigValue> = {};
     for (const [name, field] of Object.entries(definition.fields)) {
+      if (field.optional && field.default === undefined) continue;
       validateFieldValue(definition, name, field, field.default, `default for ${definition.id}.${name}`);
       values[name] = cloneExtensionConfigValue(field.default);
     }
@@ -270,7 +286,9 @@ function validateDefinition(definition: ExtensionConfigDefinition): void {
     if (field.values && field.values.length === 0) {
       throw new Error(`Extension configuration field ${definition.id}.${name} must not have empty values`);
     }
-    validateFieldValue(definition, name, field, field.default, `default for ${definition.id}.${name}`);
+    if (!(field.optional && field.default === undefined)) {
+      validateFieldValue(definition, name, field, field.default, `default for ${definition.id}.${name}`);
+    }
   }
 }
 
