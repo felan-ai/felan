@@ -316,13 +316,13 @@ describe('verified session compaction', () => {
 
   it('uses the classifier transcript by default without a summary-model request', async () => {
     const complete = vi.fn();
-    const evaluate = vi.fn(async () => ({ answers: {} }));
-    const handlers = install(complete, {}, [], [], { evaluate });
+    const classify = vi.fn(async () => ({ answers: {} }));
+    const handlers = install(complete, {}, [], [], { classify });
     await expect(handlers.before({
       preparation: prepared(), branchEntries: branch(), reason: 'manual', willRetry: false,
       signal: new AbortController().signal,
     })).resolves.toMatchObject({ compaction: { details: { method: 'classifier' } } });
-    expect(evaluate).not.toHaveBeenCalled();
+    expect(classify).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
   });
 
@@ -449,7 +449,7 @@ describe('verified session compaction', () => {
 
   it('prunes successful tool observations with an injected classifier', async () => {
     const complete = vi.fn();
-    const evaluate = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
+    const classify = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
       answers: Object.fromEntries(
         Object.keys(questions).map((name) => [name, {
           type: 'choice' as const,
@@ -459,7 +459,7 @@ describe('verified session compaction', () => {
         }]),
       ),
     }));
-    const handlers = install(complete, { method: 'classifier' }, [], [], { evaluate });
+    const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
     const result = await handlers.before({
       preparation: {
         ...prepared(),
@@ -487,22 +487,22 @@ describe('verified session compaction', () => {
 
   it('does not call the runtime classifier in summary mode', async () => {
     const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
-    const evaluate = vi.fn(async () => ({ answers: {} }));
-    const handlers = install(complete, { method: 'summary' }, [], [], { evaluate });
+    const classify = vi.fn(async () => ({ answers: {} }));
+    const handlers = install(complete, { method: 'summary' }, [], [], { classify });
 
     const result = await handlers.before({
       preparation: prepared(), branchEntries: branch(), reason: 'manual', willRetry: false,
       signal: new AbortController().signal,
     });
 
-    expect(evaluate).not.toHaveBeenCalled();
+    expect(classify).not.toHaveBeenCalled();
     expect(complete).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ compaction: { details: { method: 'summary' } } });
   });
 
   it('accepts a classifier transcript larger than 24 KiB', async () => {
     const complete = vi.fn();
-    const evaluate = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
+    const classify = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
       answers: Object.fromEntries(Object.keys(questions).map((id) => [id, {
         type: 'choice' as const,
         choice: 'outcome_only',
@@ -510,7 +510,7 @@ describe('verified session compaction', () => {
         confidence: 0.9,
       }])),
     }));
-    const handlers = install(complete, { method: 'classifier' }, [], [], { evaluate });
+    const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
     const messages = [{ role: 'user', content: 'Review the results.' }];
     for (let index = 0; index < 100; index += 1) {
       messages.push(
@@ -531,8 +531,8 @@ describe('verified session compaction', () => {
 
   it('falls back to native compaction when the classifier fails', async () => {
     const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
-    const evaluate = vi.fn().mockRejectedValue(new Error('classifier unavailable'));
-    const handlers = install(complete, { method: 'classifier' }, [], [], { evaluate });
+    const classify = vi.fn().mockRejectedValue(new Error('classifier unavailable'));
+    const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
     const evidence = `CLASSIFIER_FAILURE_OUTPUT ${'x'.repeat(120)}`;
 
     const result = await handlers.before({
@@ -548,7 +548,7 @@ describe('verified session compaction', () => {
       signal: new AbortController().signal,
     });
 
-    expect(evaluate).toHaveBeenCalledOnce();
+    expect(classify).toHaveBeenCalledOnce();
     expect(complete).not.toHaveBeenCalled();
     expect(result).toBeUndefined();
     expect(handlers.diagnostics[0]).toMatchObject({ reason: 'model-request-failed' });
@@ -556,8 +556,8 @@ describe('verified session compaction', () => {
 
   it('logs classifier debug without putting it on the compaction entry', async () => {
     const complete = vi.fn();
-    const evaluate = vi.fn(async () => ({ answers: {} }));
-    const handlers = install(complete, { method: 'classifier' }, [], [], { evaluate });
+    const classify = vi.fn(async () => ({ answers: {} }));
+    const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
     const result = await handlers.before({
       preparation: prepared(), branchEntries: branch(), reason: 'manual', willRetry: false,
       signal: new AbortController().signal,
@@ -583,7 +583,7 @@ function install(
   config: Record<string, unknown> = {},
   available: readonly Record<string, unknown>[] = [],
   scopedModels: readonly Record<string, unknown>[] = [],
-  classifier?: { evaluate: (...args: any[]) => Promise<unknown> },
+  classifier?: { classify: (...args: any[]) => Promise<unknown> },
 ) {
   const registered = new Map<string, (...args: any[]) => any>();
   const diagnostics: unknown[] = [];

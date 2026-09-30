@@ -62,9 +62,9 @@ describe('Codex extension activation', () => {
     });
   });
 
-  it('preserves the original GPT-6 Codex effort when thinking changes between turns', async () => {
+  it.each(['gpt-6-astra', 'gpt-6.1-sol'])('preserves the original %s Codex effort when thinking changes between turns', async (id) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context('openai-codex', id, 'openai-codex-responses');
     await codexExtension(harness.pi);
 
     const oldUser = { role: 'user', content: 'Draft a plan.', timestamp: 1 };
@@ -86,7 +86,7 @@ describe('Codex extension activation', () => {
     }));
     const [request] = await harness.emit('before_provider_request', {
       payload: {
-        model: 'gpt-6-astra',
+        model: id,
         reasoning: { effort: 'high', summary: 'auto' },
         input,
       },
@@ -118,7 +118,7 @@ describe('Codex extension activation', () => {
     });
   });
 
-  it.each(['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'])(
+  it.each(['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna'])(
     'records a cache-preserving change for %s on Codex Responses', async (id) => {
       const harness = createHarness();
       const ctx = context('openai-codex', id, 'openai-codex-responses');
@@ -135,9 +135,9 @@ describe('Codex extension activation', () => {
     },
   );
 
-  it('supports the openai provider when its API is Codex Responses', async () => {
+  it.each(['gpt-6-astra', 'gpt-6.1-sol'])('supports the openai provider for %s when its API is Codex Responses', async (id) => {
     const harness = createHarness();
-    const ctx = context('openai', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context('openai', id, 'openai-codex-responses');
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);

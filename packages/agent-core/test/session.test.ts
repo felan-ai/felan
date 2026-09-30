@@ -434,7 +434,7 @@ describe('Agent Core session composition', () => {
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     const modelRuntime = await createModelRuntime(join(root, 'agent-dir'));
-    const classifier = { evaluate: vi.fn() };
+    const classifier = { classify: vi.fn() };
     const createReporter = vi.fn().mockReturnValue({ report: vi.fn() });
     for (const [enabled, available, expected] of [
       [true, true, true], [false, true, false], [true, false, false],
@@ -454,7 +454,7 @@ describe('Agent Core session composition', () => {
       createReporter.mockClear();
       result.session.dispose();
     }
-    expect(classifier.evaluate).not.toHaveBeenCalled();
+    expect(classifier.classify).not.toHaveBeenCalled();
 
     const result = await createAgentCoreSession({
       runtime: Object.assign(new TestAgentRuntime(cwd), { classifier }),

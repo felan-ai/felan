@@ -70,6 +70,9 @@ browser and Powerline extensions:
     "concurrency": 4,
     "maxDepth": 3
   },
+  "felanClassifier": {
+    "model": "auto"
+  },
   "felanTui": {
     "toolDisplay": "grouped"
   },
@@ -88,6 +91,7 @@ Defaults:
 - memory processing follows `builtinExtensions.memory` and changes apply when
   Felan Code next constructs a root session;
 - response output style is `concise`;
+- classifier model selection is `auto`;
 - subagent concurrency is `4` and maximum nesting depth is `3`;
 - editor horizontal padding is `1`;
 - tool display is `grouped`;
@@ -116,12 +120,12 @@ default for future sessions; Ctrl+S changes only the current session.
 `builtinExtensions.sessionCompaction` controls verified session compaction and
 active-lineage `session_recall`. It is enabled by default. Disable it to use
 Pi's native compactor and remove the recall tool. `extensionConfig.sessionCompaction.method`
-defaults to `classifier` and retains a selective transcript when
-`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` makes a runtime classifier available.
+defaults to `classifier` and retains a selective transcript when an
+authenticated classifier model is available through Pi's runtime.
 Without that capability it uses the verified summary method automatically. Set
 the method to `summary` to disable classifier compaction even when a classifier
 is available. Classifier mode sends bounded compaction evidence to the selected
-TypeSafe or OpenRouter endpoint and does not make a summary-model request.
+classifier provider and does not make a summary-model request.
 `FELAN_LOG_LEVEL` controls the host logger (default `debug`); session-compaction
 and subagent-routing classifier traces go to
 `storage('agent')/logs/felan.jsonl`. Subagent routing records the generated
@@ -171,11 +175,44 @@ unexpected read error stops session construction.
 Project `APPEND_SYSTEM.md`, Pi `SYSTEM.md`, and other ambient prompt files are
 not loaded. Use project instructions for repository-specific guidance instead.
 
+### Classifier model
+
+Select **Classifier model** in `/settings`, or set the global value directly:
+
+```json
+{
+  "felanClassifier": { "model": "openrouter/typesafe/jev-1.13" }
+}
+```
+
+The value is `auto` (also used when omitted) or an exact `provider/model-id`.
+Auto considers only authenticated classifier models from Pi's catalog. It
+prefers direct TypeSafe `jev-latest`, then OpenRouter `typesafe/jev-1.13`, then
+other Jev routes, then the first remaining available classifier in catalog
+order. This can include configured local or other provider classifier models;
+it does not probe models with inference requests.
+
+Pi owns credential resolution using Felan's auth store, `models.json`, runtime
+keys, and provider environment variables. For example, TypeSafe can use
+`TYPESAFE_API_KEY` and OpenRouter can use a stored API key or
+`OPENROUTER_API_KEY`. The classifier is separate from the main coding model.
+
+An unavailable explicit choice warns and uses Auto without rewriting the saved
+setting. No authenticated classifier, or failed catalog discovery, leaves
+normal feature fallbacks in place. Changes apply when the next root runtime is
+created, for example with a new session or restart; children inherit their
+root's selection. The picker supports search, Escape to cancel, and save-failure
+feedback without changing unrelated settings.
+
+Token usage comes from Pi. USD estimates use catalog pricing; absent pricing
+is unknown, not proof of free inference. Changing providers can change judgment
+quality and data destinations, so validate the selected model on your workflow.
+
 ### Classifier-guided subagents
 
-When `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available, the local host
+When an authenticated classifier model is available, the local host
 injects its optional provider-neutral classifier into root and child runtimes.
-In Jev-backed root turns, entry, discovery, and eligible dynamic-thinking
+In managed Pi-backed root turns, entry, discovery, and eligible dynamic-thinking
 classification share one 2-second preflight budget; a late decision falls back
 to the existing guidance or current thinking level. Later workflow decisions
 are outside this budget; see [classifier lifecycle](../concepts/classifier-lifecycle.md).
@@ -189,8 +226,8 @@ level, and check completion. Every decision is optional: without a classifier,
 or when a call fails, the model follows the persistent guidance and the
 configured defaults apply.
 
-The classifier state may leave the local process for the configured TypeSafe or
-OpenRouter endpoint. Routing state contains prompt and bounded session text,
+The classifier state may leave the local process for the selected provider's
+configured endpoint. Routing state contains prompt and bounded session text,
 tool names with short inputs, and agent metadata. Memory triage sends bounded,
 redacted excerpts from staged target transcripts, not the existing wiki, to
 that endpoint. It keeps oversized excerpts in the inspect source and

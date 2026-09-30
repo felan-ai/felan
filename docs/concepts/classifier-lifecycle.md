@@ -1,7 +1,9 @@
 # Classifier decisions and response latency
 
-The local host can inject an optional provider-neutral classifier when
-`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available. Features own their
+The local host selects an authenticated classifier from Pi's catalog using
+global `felanClassifier.model` (`auto` by default) and injects the optional
+provider-neutral capability. Pi resolves credentials from the host's auth
+store, provider configuration, and environment. Features own their
 individual decisions; they do not run as one classifier pass. This matters for
 the time between submitting a request and receiving the first model response.
 
@@ -13,19 +15,20 @@ the time between submitting a request and receiving the first model response.
 | Subagent discovery | An eligible root-session `input` starts classification; `before_agent_start` waits before adding discovery guidance. | Child sessions, one-shot print/JSON modes, and repositories with fewer than 20 files skip it. Failure adds no routing guidance. |
 | Dynamic thinking | For a supported model, an eligible `input` starts classification; `before_agent_start` applies the result if the prompt and model still match. | Manual thinking overrides, unsupported models, and unavailable or uncertain decisions retain the current effort. Tool continuations are not classified again. |
 
-In a root Agent Core session using Jev, eligible calls start on `input` and share a **2-second
+In a root Agent Core session using its managed Pi-backed classifier, eligible calls start on `input` and share a **2-second
 total preflight deadline**, not a separate wait for each decision. A direct
 agent start without an `input` begins that budget at its first classification.
 Pi awaits `before_agent_start` handlers sequentially, but a call still pending
 at its handler can use only the *remaining* budget. Late answers are ignored;
 Prewalk and subagent routing add no optional guidance, and dynamic thinking
 keeps the current level. The persistent system prompt and explicit tools remain
-available. Custom classifier implementations without Jev's preflight retain
+available. Custom classifier implementations without the managed preflight retain
 their own timing.
 The model's own first-token latency comes after this gate.
 
-Jev's default timeout remains 20 seconds **per classifier request** (configurable
-up to 60 seconds) for calls outside this initial preflight. Debug logs under
+The bridge passes a 20-second timeout **per classifier request** to Pi and
+disables automatic transport retries, preserving the prior request behavior.
+This timeout applies to calls outside the initial preflight too. Debug logs under
 `classifier-preflight` record decision names, outcomes, decision elapsed time,
 and time from preflight start to the first `turn_start`, without request text.
 `turn_start` is not a first-token timestamp. The shared deadline limits
@@ -35,6 +38,13 @@ first-response bound. No live latency improvement or first-response percentile
 has been measured for this change.
 
 ## Other decision points
+
+The same `classify` operation handles choice, boolean-probability, and score
+questions. Model selection happens when the local root runtime is constructed;
+settings changes apply to the next new root session/restart. Children inherit
+the root classifier and memory receives the effective runtime capability.
+An unavailable explicit model warns and uses Auto; no available model retains
+normal feature fallbacks. See [classifier configuration](../user-guide/configuration.md#classifier-model).
 
 - `Agent` model-tier selection runs when an unpinned child is launched, not as
   part of the initial pre-model gate.

@@ -1,4 +1,6 @@
 export { runLocalFelan, runLocalFelanHeadless } from './application.js';
+export { createLocalClassifier, selectLocalClassifierModel } from './classifier.js';
+export type { LocalClassifierModel, LocalClassifierSelection } from './classifier.js';
 export { openLocalSessionManager, selectLocalSessionManager } from './resume.js';
 export type { RunLocalFelanHeadlessOptions, RunLocalFelanOptions } from './application.js';
 export { runCli } from './cli-main.js';
@@ -43,6 +45,8 @@ export type {
 export {
   createLocalSettingsManager,
   getFelanSettings,
+  getClassifierModelSetting,
+  setClassifierModelSetting,
   getLocalOutputStyle,
 } from './settings.js';
 export type { FelanSettings } from './settings.js';

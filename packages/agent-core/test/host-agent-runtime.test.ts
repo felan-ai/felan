@@ -226,7 +226,7 @@ describe('HostAgentRuntime', () => {
     const workspace = await createTemporaryDirectory('workspace');
     const storageRoot = await createTemporaryDirectory('storage');
     const classifier: Classifier = {
-      evaluate: async () => ({ answers: {} }),
+      classify: async () => ({ answers: {} }),
     };
     const runtime = new HostAgentRuntime(workspace, {
       sessionStorageRoot: join(storageRoot, 'session'),

@@ -61,7 +61,7 @@ and publishes that filesystem output; failed or cancelled work remains pending.
 With an optional runtime classifier, the portable extension groups contiguous
 session evidence into provider-sized chunks and asks whether each entry needs
 inspection or is wholly transient noise. The host supplies and calls the
-classifier, stages read-only inspect and noise JSONL for each session, and
+classifier through its unified `classify` operation, stages read-only inspect and noise JSONL for each session, and
 writes a compact map of the staged paths. For text-only inspect records the host
 also stages a worker-readable `inspect.txt` view with session/entry IDs, role,
 tool name and complete text. Mixed or unsupported blocks remain in the original

@@ -43,8 +43,10 @@ to do.
   extension placement, superseded by ADR 0016.
 - [ADR 0015](decisions/0015-agent-core-structured-logger.md) — why Agent Core
   owns a small structured logger and hosts own destinations.
-- [ADR 0016](decisions/0016-jev-classifier-in-agent-core.md) — why the Jev
-  client lives in Agent Core behind a provider-neutral runtime capability.
+- [ADR 0016](decisions/0016-jev-classifier-in-agent-core.md) — historical owned
+  Jev client placement, superseded by ADR 0018.
+- [ADR 0018](decisions/0018-use-pi-classifier-runtime.md) — why native Pi
+  classifiers sit behind Felan's portable capability and host-owned selection.
 - [ADR 0017](decisions/0017-session-compaction-methods.md) — why session
   compaction exposes mutually exclusive summary and classifier methods.
 - [Extension catalog](reference/extension-catalog.md) — every first-party

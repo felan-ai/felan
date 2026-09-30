@@ -53,7 +53,7 @@ describe('memory decision comparison fixture', () => {
       coordinator = new LocalMemoryCoordinator({
         agentDir, modelRuntime, recover: false,
         ...(guided ? { classifier: { canEvaluate: (state: unknown) => Buffer.byteLength(JSON.stringify(state)) < 32_000,
-          evaluate: async (state: unknown, questions: Record<string, unknown>) => {
+          classify: async (state: unknown, questions: Record<string, unknown>) => {
           classifierCalls += 1;
           const data = state as { items: Array<{ content: string }> };
           const items = data.items;

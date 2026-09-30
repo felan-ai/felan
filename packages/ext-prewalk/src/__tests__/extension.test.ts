@@ -109,7 +109,7 @@ function createHarness(
     planFeedback?: string;
     prewalkOptions?: { entryApproval?: string; planReview?: string };
     savings?: { report(measurement: unknown): Promise<void> };
-    classifier?: { evaluate: (state: any, questions: any, signal?: AbortSignal) => Promise<any> };
+    classifier?: { classify: (state: any, questions: any, signal?: AbortSignal) => Promise<any> };
     childSession?: boolean;
     sessionMessages?: any[];
   } = {},
@@ -2224,7 +2224,7 @@ describe('model failures and manual control', () => {
 
 function scriptedClassifier(choices: Record<string, Record<string, string> | Error>) {
   return {
-    evaluate: vi.fn(async (_state: any, questions: Record<string, unknown>) => {
+    classify: vi.fn(async (_state: any, questions: Record<string, unknown>) => {
       const key = Object.keys(questions).join(',');
       const scripted = choices[key];
       if (scripted === undefined) throw new Error(`unexpected classifier questions: ${key}`);
@@ -2256,8 +2256,8 @@ describe('classifier guidance', () => {
     const event = beforeStartEvent('Build the billing feature');
     const result = await harness.emit('before_agent_start', event);
 
-    expect(classifier.evaluate).toHaveBeenCalledTimes(1);
-    expect(classifier.evaluate.mock.calls[0]![0]).toMatchObject({ request: 'Build the billing feature' });
+    expect(classifier.classify).toHaveBeenCalledTimes(1);
+    expect(classifier.classify.mock.calls[0]![0]).toMatchObject({ request: 'Build the billing feature' });
     expect(event.systemPromptOptions.sections).toEqual({});
     expect(result).toEqual({ message: { customType: ENTRY_MESSAGE_TYPE, content: ENTRY_GUIDANCE, display: false } });
     const entry = { role: 'custom', ...result.message, timestamp: 2 };
@@ -2282,12 +2282,12 @@ describe('classifier guidance', () => {
     const deniedClassifier = scriptedClassifier({ route: { route: 'prewalk' } });
     const denied = createHarness({ classifier: deniedClassifier, prewalkOptions: { entryApproval: 'deny' }, activeTools: entryTools });
     await denied.emit('before_agent_start', beforeStartEvent('Build it'));
-    expect(deniedClassifier.evaluate).not.toHaveBeenCalled();
+    expect(deniedClassifier.classify).not.toHaveBeenCalled();
 
     const childClassifier = scriptedClassifier({ route: { route: 'prewalk' } });
     const child = createHarness({ classifier: childClassifier, childSession: true, activeTools: entryTools });
     await child.emit('before_agent_start', beforeStartEvent('Build it'));
-    expect(childClassifier.evaluate).not.toHaveBeenCalled();
+    expect(childClassifier.classify).not.toHaveBeenCalled();
 
     const failing = createHarness({ classifier: scriptedClassifier({ route: new Error('down') }), activeTools: entryTools });
     const failingEvent = beforeStartEvent('Build it');
@@ -2310,7 +2310,7 @@ describe('classifier guidance', () => {
     const planning = messages.filter((message) => message.customType === PLANNING_MESSAGE_TYPE);
     expect(planning).toHaveLength(1);
     expect(planning[0].content).toBe(`${PLANNING_INSTRUCTION}\n\n${EXPLORATION_DEPTH_GUIDANCE.sufficient}`);
-    expect(classifier.evaluate.mock.calls[1]![0]).toMatchObject({ request: 'Implement the feature', tasks: [] });
+    expect(classifier.classify.mock.calls[1]![0]).toMatchObject({ request: 'Implement the feature', tasks: [] });
   });
 
   it('preserves classified deep exploration without checking the Agent tool', async () => {
@@ -2364,7 +2364,7 @@ describe('classifier guidance', () => {
 
     await qualifyHandoff(harness);
 
-    const profileState = classifier.evaluate.mock.calls[1]![0];
+    const profileState = classifier.classify.mock.calls[1]![0];
     expect(profileState).toMatchObject({ request: 'Implement the feature' });
     expect(profileState.tasks[0]).toContain('Implement the feature');
     expect(profileState).not.toHaveProperty('session');
@@ -2434,17 +2434,17 @@ describe('classifier guidance', () => {
     await harness.emit('turn_end', { type: 'turn_end', turnIndex: 1, message: first, toolResults: [] });
     await harness.emit('turn_end', { type: 'turn_end', turnIndex: 2, message: assistant('toolUse'), toolResults: [] });
     await harness.emit('turn_end', { type: 'turn_end', turnIndex: 3, message: final, toolResults: [] });
-    expect(classifier.evaluate).toHaveBeenCalledTimes(2);
+    expect(classifier.classify).toHaveBeenCalledTimes(2);
     expect(await beforeSettle(harness, [first], 'completed', { continue: true })).toBeUndefined();
     expect(await beforeSettle(harness, [first], 'completed', { pendingMessages: [{ role: 'custom', content: 'Continue' }] })).toBeUndefined();
     expect(await beforeSettle(harness, [first, assistant('toolUse')])).toBeUndefined();
-    expect(classifier.evaluate).toHaveBeenCalledTimes(2);
+    expect(classifier.classify).toHaveBeenCalledTimes(2);
     expect(await beforeSettle(harness, [first, assistant('toolUse'), final])).toEqual({
       entries: [{ type: 'custom_message', customType: COMPLETION_MESSAGE_TYPE, content: COMPLETION_REVIEW_INSTRUCTION, display: false }],
       continue: true,
     });
-    expect(classifier.evaluate).toHaveBeenCalledTimes(3);
-    expect(classifier.evaluate.mock.calls[2]![0].final_message).toBe('Verified and done.');
+    expect(classifier.classify).toHaveBeenCalledTimes(3);
+    expect(classifier.classify.mock.calls[2]![0].final_message).toBe('Verified and done.');
   });
 
   it('requests one review when completion is uncertain and then stops checking', async () => {
@@ -2462,7 +2462,7 @@ describe('classifier guidance', () => {
       continue: true,
     });
     expect(await beforeSettle(harness)).toBeUndefined();
-    expect(classifier.evaluate).toHaveBeenCalledTimes(3);
+    expect(classifier.classify).toHaveBeenCalledTimes(3);
   });
 
   it('requests one independent review when the completion classifier fails', async () => {
@@ -2479,14 +2479,14 @@ describe('classifier guidance', () => {
       continue: true,
     });
     expect(await beforeSettle(harness)).toBeUndefined();
-    expect(classifier.evaluate).toHaveBeenCalledTimes(3);
+    expect(classifier.classify).toHaveBeenCalledTimes(3);
   });
 
   it('does not continue after an exit request races the completion classifier', async () => {
     let finishVerdict!: () => void;
     const verdictReady = new Promise<void>((resolve) => { finishVerdict = resolve; });
     const classifier = {
-      evaluate: vi.fn(async (_state: any, questions: Record<string, unknown>) => {
+      classify: vi.fn(async (_state: any, questions: Record<string, unknown>) => {
         if ('verdict' in questions) await verdictReady;
         const answer = 'verdict' in questions ? { verdict: 'gap' }
           : 'depth' in questions ? { depth: 'targeted' }
@@ -2499,7 +2499,7 @@ describe('classifier guidance', () => {
     harness.setIdle(false);
 
     const checking = beforeSettle(harness);
-    await vi.waitFor(() => expect(classifier.evaluate).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(classifier.classify).toHaveBeenCalledTimes(3));
     await harness.command.handler('off', harness.ctx);
     finishVerdict();
 
@@ -2576,7 +2576,7 @@ describe('classifier guidance', () => {
     expect((await beforeSettle(gapHarness)).entries[0].content).toBe(COMPLETION_GAP_INSTRUCTION);
     expect((await beforeSettle(gapHarness)).entries[0].content).toBe(COMPLETION_REVIEW_INSTRUCTION);
     expect(await beforeSettle(gapHarness)).toBeUndefined();
-    expect(gapClassifier.evaluate).toHaveBeenCalledTimes(4);
+    expect(gapClassifier.classify).toHaveBeenCalledTimes(4);
   });
 
   it('holds the implementation model through an asynchronous reviewer completion', async () => {

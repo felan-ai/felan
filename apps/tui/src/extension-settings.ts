@@ -1,5 +1,5 @@
 import { validateExtensionConfigValue } from '@felan-ai/agent-core';
-import type { ExtensionConfigDefinition, ExtensionConfigField, ExtensionConfigValue, SettingsManager } from '@felan-ai/agent-core';
+import type { ExtensionConfigDefinition, ExtensionConfigField, ExtensionConfigValue, ModelRuntime, SettingsManager } from '@felan-ai/agent-core';
 import { getSettingsListTheme } from '@earendil-works/pi-coding-agent';
 import {
   Container,
@@ -11,7 +11,8 @@ import {
   type Focusable,
   type SettingItem,
 } from '@earendil-works/pi-tui';
-import { getFelanSettings, setExtensionConfigValue } from './settings.js';
+import { getClassifierModelSetting, getFelanSettings, setExtensionConfigValue } from './settings.js';
+import { createClassifierModelSettings } from './classifier-settings.js';
 
 interface SettingsModeInternals {
   editor: Focusable;
@@ -29,6 +30,7 @@ export interface InstallFelanSettingsOptions {
   readonly agentDir: string;
   readonly settingsManager: SettingsManager;
   readonly definitions: readonly ExtensionConfigDefinition[];
+  readonly modelRuntime?: Pick<ModelRuntime, 'getAvailableOfType'>;
 }
 
 export function installFelanSettingsCommand(
@@ -43,6 +45,7 @@ export function installFelanSettingsCommand(
   internals.showSettingsSelector = () => {
     const state = loadExtensionSettingsState(options);
     internals.showSelector((done) => {
+      let classifierPicker: ReturnType<typeof createClassifierModelSettings> | undefined;
       const items: SettingItem[] = [
         {
           id: 'native-settings',
@@ -51,6 +54,19 @@ export function installFelanSettingsCommand(
           currentValue: 'open',
           submenu: () => showNativeSettings(internals, mode, nativeSettings),
         },
+        ...(options.modelRuntime === undefined ? [] : [{
+          id: 'classifier-model',
+          label: 'Classifier model',
+          description: 'Choose Auto or an authenticated classifier for the next new root session/restart',
+          currentValue: getClassifierModelSetting(options.settingsManager),
+          submenu: (_currentValue: string, close: (selected?: string) => void) => {
+            classifierPicker?.dispose();
+            classifierPicker = createClassifierModelSettings({
+              agentDir: options.agentDir, settingsManager: options.settingsManager, modelRuntime: options.modelRuntime!,
+            }, close, () => internals.ui?.requestRender());
+            return classifierPicker;
+          },
+        }]),
         ...options.definitions.map((definition) => {
           const fieldCount = Object.keys(definition.fields).length;
           return {
@@ -77,7 +93,7 @@ export function installFelanSettingsCommand(
         done,
         { enableSearch: true },
       );
-      return { component: list, focus: list as unknown as Focusable };
+      return { component: list, focus: list as unknown as Focusable, dispose: () => classifierPicker?.dispose() };
     });
   };
 }

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import {
   SettingsManager,
+  parseModelReference,
   resolveExtensionConfigs,
   validateExtensionConfigValue,
   type ExtensionConfigDefinition,
@@ -28,6 +29,7 @@ export interface FelanSettings {
   readonly outputStyle?: OutputStyle;
   readonly felanSubagents?: LocalSubagentSettings;
   readonly felanThinking?: { readonly dynamic?: boolean };
+  readonly felanClassifier?: { readonly model?: string };
   readonly felanTui?: FelanTuiSettings;
   readonly piExtensions?: PiExtensionSettings;
   readonly extensionConfig?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
@@ -198,6 +200,34 @@ export function createLocalSettingsManager(cwd: string, agentDir: string): Setti
 
 export function getFelanSettings(settingsManager: SettingsManager): FelanSettings {
   return settingsManager.getGlobalSettings() as FelanSettings;
+}
+
+export function getClassifierModelSetting(settingsManager: SettingsManager): string {
+  const raw = (settingsManager.getGlobalSettings() as Record<string, unknown>).felanClassifier;
+  if (raw === undefined) return 'auto';
+  if (!isRecord(raw)) throw new Error('felanClassifier must be an object');
+  return parseClassifierModelSetting(raw.model);
+}
+
+export function parseClassifierModelSetting(value: unknown): string {
+  if (value === undefined) return 'auto';
+  if (typeof value !== 'string' || /[\x00-\x1f\x7f]/u.test(value)) {
+    throw new Error('felanClassifier.model must be "auto" or an exact provider/model-id');
+  }
+  const normalized = value.trim();
+  if (normalized === 'auto') return normalized;
+  const reference = parseModelReference(normalized);
+  if (!reference) throw new Error('felanClassifier.model must be "auto" or an exact provider/model-id');
+  return `${reference.provider}/${reference.id}`;
+}
+
+export async function setClassifierModelSetting(agentDir: string, model: string): Promise<void> {
+  const normalized = parseClassifierModelSetting(model);
+  await updateGlobalFelanSettings(agentDir, settings => {
+    const current = settings.felanClassifier;
+    if (current !== undefined && !isRecord(current)) throw new Error('felanClassifier must be an object');
+    settings.felanClassifier = { ...(current ?? {}), model: normalized };
+  });
 }
 
 export function getDynamicThinkingEnabled(settingsManager: SettingsManager): boolean {

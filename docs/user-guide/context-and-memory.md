@@ -97,16 +97,16 @@ native summarization and remove the tool.
 runtime exposes a classifier, session compaction may drop or shorten every
 eligible bulky successful tool result and returns the retained transcript
 without a summary-model call. Agent Core batches the complete question set as
-needed for the provider. The Agent Core Jev client judges each candidate
+needed for the provider. The Pi-backed runtime classifier judges each candidate
 against the surrounding evidence and the compaction trigger; the local host
-exposes it when `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available. It does
+exposes it when the selected catalog model has usable authentication. It does
 not own Pi's cut point or persistence. Set the method to `summary` to disable classifier
 compaction; the same summary fallback is selected automatically when the runtime
 has no classifier. Pi's reserve/tail settings and model metadata govern
 compaction capacity; Felan's remaining bounds protect untrusted extraction,
 requests, diagnostics, and recall rather than imposing a result-size ceiling.
 See
-[ADR 0016](../decisions/0016-jev-classifier-in-agent-core.md).
+[ADR 0018](../decisions/0018-use-pi-classifier-runtime.md).
 
 Memory is intentionally selective. It prioritizes durable user-authored
 preferences, decisions, corrections, important facts, and rationale not recorded

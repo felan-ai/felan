@@ -39,7 +39,7 @@ describe('LocalMemoryCoordinator', () => {
     const sessionFile = await writeSession(cwd, 'session-1');
     const selectedModel = { provider: 'openai-codex', id: 'gpt-5.6-sol' } as Model<Api>;
     const lowTierModel = { provider: 'openai-codex', id: 'gpt-5.6-luna' } as Model<Api>;
-    const classifier = { evaluate: async () => ({ answers: {} }) };
+    const classifier = { classify: async () => ({ answers: {} }) };
     let observedModel: Model<Api> | undefined;
     let observedScope: readonly Model<Api>[] | undefined;
     let observedClassifier: typeof classifier | undefined;

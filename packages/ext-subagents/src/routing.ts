@@ -1,7 +1,7 @@
 import type {
   Classifier,
   ClassifierEvaluationMetadata,
-  ClassifierProbabilityQuestions,
+  ClassifierQuestions,
   AgentRuntime,
   ExtensionContext,
   FelanExtensionAPI,
@@ -38,9 +38,11 @@ interface PendingClassification {
   decision: Promise<RoutingDecision>;
 }
 
-const DISCOVERY_QUESTIONS: ClassifierProbabilityQuestions = {
+const DISCOVERY_QUESTIONS: ClassifierQuestions = {
   [DISCOVERY_QUESTION]: {
+    type: 'bool',
     instructions: 'Given `request`, `conversation`, and `active_children`, does answering or completing `request` require broad discovery across many files or locations that are unknown and not already covered by `conversation` or by an active child? Answer yes only when a wide, largely unexplored surface must be read, so a cheaper read-only `discovery_agent` returning a compact summary would replace substantial reading by the parent. Answer no when the conversation already holds the needed facts, the request names or implies a few specific files, the task is small or conversational, or an active child already covers the discovery.',
+    criteria: { true: 'Broad discovery is required', false: 'Broad discovery is not required' },
   },
 };
 
@@ -51,14 +53,13 @@ export const DISCOVERY_GUIDANCE = [
 
 export function registerClassifierRouting(pi: FelanExtensionAPI, host: SubagentHost): void {
   const classifier = pi.runtime?.classifier;
-  const evaluateProbabilities = classifier?.evaluateProbabilities;
   const logger = pi.runtime?.logger?.child({ component: 'subagent-routing' });
   const discoveryAgent = host.descriptors.find(({ id }) => id === DISCOVERY_AGENT_TYPE);
-  if (classifier === undefined || typeof evaluateProbabilities !== 'function' || discoveryAgent === undefined) {
+  if (classifier === undefined || typeof classifier.classify !== 'function' || discoveryAgent === undefined) {
     logger?.debug({
       event: 'configuration',
       mode: 'static',
-      reason: discoveryAgent === undefined ? 'discovery-agent-unavailable' : 'probability-classifier-unavailable',
+      reason: discoveryAgent === undefined ? 'discovery-agent-unavailable' : 'classifier-unavailable',
     }, 'subagent routing configured');
     return;
   }
@@ -74,7 +75,6 @@ export function registerClassifierRouting(pi: FelanExtensionAPI, host: SubagentH
       controller,
       decision: classifyDiscovery(
         classifier,
-        evaluateProbabilities,
         host,
         discoveryAgent,
         prompt,
@@ -145,7 +145,6 @@ function isOneShotSession(ctx: ExtensionContext): boolean {
 
 async function classifyDiscovery(
   classifier: Classifier,
-  evaluateProbabilities: NonNullable<Classifier['evaluateProbabilities']>,
   host: SubagentHost,
   discoveryAgent: SubagentDescriptor,
   prompt: string,
@@ -172,8 +171,9 @@ async function classifyDiscovery(
   const activeChildren = await host.list({ includeDescendants: false });
   if (!activeChildren.ok) throw new Error(activeChildren.error.message);
   const state = buildState(prompt, imageCount, ctx, discoveryAgent, activeChildren.value);
-  const result = await evaluateProbabilities.call(classifier, state, DISCOVERY_QUESTIONS, signal);
-  const probability = result.answers[DISCOVERY_QUESTION]?.probability;
+  const result = await classifier.classify(state, DISCOVERY_QUESTIONS, signal);
+  const answer = result.answers[DISCOVERY_QUESTION];
+  const probability = answer?.type === 'bool' ? answer.probability : undefined;
   if (typeof probability !== 'number' || !Number.isFinite(probability) || probability < 0 || probability > 1) {
     throw new Error('Classifier returned an incomplete discovery answer');
   }

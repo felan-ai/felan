@@ -2,7 +2,7 @@ import {
   FELAN_THINKING_LEVELS,
   MODEL_TIERS,
   type Classifier,
-  type ClassifierQuestions,
+  type ClassifierChoiceQuestion,
   type ExtensionContext,
   type FelanExtensionAPI,
   type FelanThinkingLevel,
@@ -40,7 +40,7 @@ const MAX_TOOL_INPUT = 160;
 const MAX_PLAN_TEXT = 6_000;
 const MAX_FINAL_MESSAGE = 3_000;
 
-const ENTRY_QUESTIONS: ClassifierQuestions = {
+const ENTRY_QUESTIONS: Readonly<Record<string, ClassifierChoiceQuestion>> = {
   route: {
     type: 'choice',
     instructions: 'Given `request` and `session`, should this request run through Prewalk, a plan-then-implement workflow in which a stronger model explores and records a task graph before a cheaper model implements and verifies it?',
@@ -51,7 +51,7 @@ const ENTRY_QUESTIONS: ClassifierQuestions = {
   },
 };
 
-const DEPTH_QUESTIONS: ClassifierQuestions = {
+const DEPTH_QUESTIONS: Readonly<Record<string, ClassifierChoiceQuestion>> = {
   depth: {
     type: 'choice',
     instructions: 'Given `request` and `session` (prior conversation and tool activity), how much repository exploration does planning `request` still need?',
@@ -63,7 +63,7 @@ const DEPTH_QUESTIONS: ClassifierQuestions = {
   },
 };
 
-const IMPLEMENTATION_QUESTIONS: ClassifierQuestions = {
+const IMPLEMENTATION_QUESTIONS: Readonly<Record<string, ClassifierChoiceQuestion>> = {
   tier: {
     type: 'choice',
     instructions: 'Given `request`, the approved `plan`, and `tasks`, which model tier does implementing and verifying this plan need? The plan already fixes the approach.',
@@ -84,7 +84,7 @@ const IMPLEMENTATION_QUESTIONS: ClassifierQuestions = {
   },
 };
 
-const COMPLETION_QUESTIONS: ClassifierQuestions = {
+const COMPLETION_QUESTIONS: Readonly<Record<string, ClassifierChoiceQuestion>> = {
   verdict: {
     type: 'choice',
     instructions: 'Given `request`, the approved `plan`, `tasks`, `session` tool activity, and the implementer\'s `final_message`, is the requested work complete and verified? Judge from evidence in the activity (edits, commands, errors), not from claims in `final_message` alone.',
@@ -104,16 +104,17 @@ export function createPrewalkClassifier(pi: FelanExtensionAPI): PrewalkClassifie
   async function ask(
     decision: string,
     state: unknown,
-    questions: ClassifierQuestions,
+    questions: Readonly<Record<string, ClassifierChoiceQuestion>>,
     ctx: ExtensionContext,
     signal?: AbortSignal,
   ): Promise<Record<string, string> | undefined> {
     const sessionId = ctx.sessionManager.getSessionId();
     try {
-      const result = await (classifier as Classifier).evaluate(state, questions, signal);
+      const result = await (classifier as Classifier).classify(state, questions, signal);
       const choices: Record<string, string> = {};
       for (const [id, question] of Object.entries(questions)) {
-        const choice = result.answers[id]?.choice;
+        const answer = result.answers[id];
+        const choice = answer?.type === 'choice' ? answer.choice : undefined;
         if (choice === undefined || !Object.hasOwn(question.criteria, choice)) {
           throw new Error(`Classifier returned no valid ${id} choice`);
         }

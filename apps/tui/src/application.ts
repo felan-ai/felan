@@ -237,6 +237,7 @@ async function runLocalFelanSession(options: RunLocalFelanOptions): Promise<stri
       agentDir: runtime.services.agentDir,
       settingsManager: runtime.services.settingsManager,
       definitions: await loadLocalExtensionConfigDefinitions(),
+      modelRuntime: runtime.services.modelRuntime,
     });
     installFelanCwdCommand(mode, {
       getCwd: () => runtime.cwd,

@@ -52,18 +52,19 @@ symlink escapes, and cannot remove its root. Workspace path access excludes
 agent storage, while host path access lets ordinary operations inspect both
 storage scopes. Storage handles also support `appendFile` for host log files.
 Every runtime has a structured `logger`; hosts inject the destination. Runtimes
-may also expose an optional `classifier` capability. The Jev classifier client
-is an internal implementation detail; the public provider-specific surface is
-the high-level `createJevClassifier` factory. Hosts own credential discovery
-and decide whether to inject it.
+may also expose an optional `classifier` capability. Its single
+`classify(state, questions, signal)` operation supports discriminated `choice`,
+`bool`, and `score` questions and answers. `canEvaluate` is an optional admission
+helper for bounded evidence packing, not a second inference operation.
+`createPiClassifier(modelRuntime, model)` delegates requests to Pi's native
+`classify`; hosts select an authenticated catalog model and own credentials.
+The bridge validates JSON-object state and answers, packs complete question
+sets against the existing byte budgets, and maps native usage metadata. Unknown
+catalog pricing is not reported as verified free inference. There is no owned
+HTTP client or environment-key discovery in Agent Core.
 
-The provider-neutral classifier supports the existing structured Choice
-judgment and an additive probability-of-yes judgment for independently scoring
-multiple conditions. Jev implements the latter with its Noul primitive; Agent
-Core does not expose Jev transport types through this contract.
-
-In root sessions, Agent Core coordinates one short initial-turn wait inside its
-Jev classifier; later decisions and other classifier implementations retain
+In root sessions, Agent Core coordinates one shared 2-second initial-turn wait
+inside its managed Pi-backed classifier; later decisions and custom implementations retain
 their normal timing. `collectClassifierSessionEvidence` converts the active Pi session projection
 into bounded conversation and correlated tool-call metadata for classifiers.
 It handles branch/compaction summaries, omits images, raw thinking and tool
@@ -86,7 +87,8 @@ API-equivalent estimate for any supported model's automatic `high` → `low` or
 first assistant response includes reasoning-token usage. It estimates 5%
 extra reasoning output at `high`, keeps observed input, cache and visible-output
 usage unchanged, and subtracts reported classifier
-cost. No change, a return to `high`, other models/levels, missing usage, or a
+cost. Missing classifier pricing leaves that overhead unknown; estimates are
+not a complete bill. No change, a return to `high`, other models/levels, missing usage, or a
 failed response produces no measurement. The unvalidated cross-model
 assumption and quality caveats are in [the public benchmark notes](../../docs/benchmarks/dynamic-thinking-effort.md).
 

@@ -11,7 +11,7 @@ const { LocalMemoryCoordinator } = await import(`${base}/felan/dist/memory/coord
 const { createDefaultLocalMemoryDreamRunner } = await import(`${base}/felan/dist/memory/dreamer.js`);
 const { createLocalModelRuntime } = await import(`${base}/felan/dist/runtime.js`);
 const { localMemoryProjectDirectory, resolveLocalMemoryProject } = await import(`${base}/felan/dist/memory/project.js`);
-const { createJevClassifier } = await import(`${base}/agent-core/dist/index.js`);
+const { createPiClassifier } = await import(`${base}/agent-core/dist/index.js`);
 const { digestActiveBranch, hydrateMemoryDirectory, readMemoryDirectory, renderMemoryInspectView } = await import(`${base}/ext-memory/dist/index.js`);
 
 const workspace = '/workspace';
@@ -26,8 +26,11 @@ await chmod(join(agentDir, 'auth.json'), 0o600);
 const modelRuntime = await createLocalModelRuntime(agentDir);
 const model = modelRuntime.getAvailableSnapshot().find((entry) => entry.provider === 'openai-codex' && entry.id === modelId);
 if (!model) throw new Error('The pinned worker model is not available in the isolated authenticated scope');
-const classifier = mode === 'enabled' ? createJevClassifier() : undefined;
-if (mode === 'enabled' && !classifier) throw new Error('Jev credentials are unavailable');
+const classifierModel = mode === 'enabled'
+  ? (await modelRuntime.getAvailableOfType('classifier', 'typesafe')).find(entry => entry.id === 'jev-latest')
+  : undefined;
+const classifier = classifierModel ? createPiClassifier(modelRuntime, classifierModel) : undefined;
+if (mode === 'enabled' && !classifier) throw new Error('The pinned Jev classifier is unavailable');
 const scenario = memoryProcessingScenario();
 const project = await resolveLocalMemoryProject(cwd);
 const projectDirectory = localMemoryProjectDirectory(agentDir, project);

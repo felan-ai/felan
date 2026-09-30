@@ -143,7 +143,7 @@ export async function pruneEvidence(
   if (asked.length > 0) {
     questions = Object.fromEntries(asked.map((group) => [group.id, questionFor(group.id)]));
     try {
-      const evaluation = await classifier.evaluate(state, questions, context.signal);
+      const evaluation = await classifier.classify(state, questions, context.signal);
       answers = evaluation.answers;
       classifierMetadata = evaluation.metadata;
       for (const group of asked) {

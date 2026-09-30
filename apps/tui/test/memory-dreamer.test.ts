@@ -199,7 +199,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     const input = await classifiedInputFor(stagingDirectory);
     const session = fakeSession();
     let captured: Parameters<LocalMemoryDreamSessionFactory>[0] | undefined;
-    const evaluate = vi.fn(async (state: unknown, questions: Record<string, unknown>) => ({
+    const classify = vi.fn(async (state: unknown, questions: Record<string, unknown>) => ({
       answers: Object.fromEntries(Object.keys(questions).map((key, index) => [key, {
         type: 'choice', choice: (state as { items: Array<{ provenance: string }> }).items[index]?.provenance === 'user'
           ? 'inspect' : 'noise', confidence: 0.95,
@@ -210,9 +210,9 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
       return { session: session.session };
     } });
 
-    await runner({ ...input, classifier: { canEvaluate: () => true, evaluate } });
+    await runner({ ...input, classifier: { canEvaluate: () => true, classify } });
 
-    expect(evaluate).toHaveBeenCalled();
+    expect(classify).toHaveBeenCalled();
     expect(captured?.thinkingLevel).toBe('medium');
     expect(captured?.appendSystemPrompt?.[0]).toContain('Read manifest.json and decisions.json');
     expect(captured?.appendSystemPrompt?.[0]).not.toContain('every listed transcript');
@@ -272,7 +272,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
       }],
     });
     await writeFile(join(input.inputDirectory, 'manifest.json'), JSON.stringify(manifest));
-    const evaluate = vi.fn(async (state: unknown, questions: Record<string, unknown>) => ({
+    const classify = vi.fn(async (state: unknown, questions: Record<string, unknown>) => ({
       answers: Object.fromEntries(Object.keys(questions).map((key, index) => [key, {
         type: 'choice' as const,
         choice: (state as { items: Array<{ provenance: string }> }).items[index]!.provenance === 'user' ? 'inspect' : 'noise',
@@ -284,7 +284,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     await createDefaultLocalMemoryDreamRunner({ createSession: async (options) => {
       captured = options;
       return { session: session.session };
-    } })({ ...input, manifest, classifier: { canEvaluate: (state) => JSON.stringify(state).length < 12_000, evaluate } });
+    } })({ ...input, manifest, classifier: { canEvaluate: (state) => JSON.stringify(state).length < 12_000, classify } });
 
     const map = JSON.parse(await readFile(join(input.inputDirectory, 'decisions.json'), 'utf8')) as {
       sessions: Array<{ inspectPath: string; noisePath: string }>;
@@ -295,7 +295,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     expect(inspect.trim().split('\n')).toHaveLength(150);
     expect(noise.trim().split('\n')).toHaveLength(150);
     expect(noise).toContain('entry-299');
-    expect(evaluate).toHaveBeenCalled();
+    expect(classify).toHaveBeenCalled();
     expect(captured?.thinkingLevel).toBe('medium');
   });
 
@@ -314,7 +314,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     });
     const session = fakeSession();
     await createDefaultLocalMemoryDreamRunner({ createSession: async () => ({ session: session.session }) })({
-      ...input, manifest, classifier: { canEvaluate: () => true, evaluate: async (state, questions) => ({
+      ...input, manifest, classifier: { canEvaluate: () => true, classify: async (state, questions) => ({
         answers: Object.fromEntries(Object.keys(questions).map((key, index) => [key, {
           type: 'choice' as const, choice: (state as { items: Array<{ content: string }> }).items[index]!.content === 'Routine status'
             ? 'noise' : 'inspect', confidence: 0.99,
@@ -349,7 +349,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     await createDefaultLocalMemoryDreamRunner({ createSession: async (options) => {
       captured = options;
       return { session: session.session };
-    } })({ ...input, manifest, classifier: { canEvaluate: () => true, evaluate: async (state: unknown, questions: Record<string, unknown>) => {
+    } })({ ...input, manifest, classifier: { canEvaluate: () => true, classify: async (state: unknown, questions: Record<string, unknown>) => {
       const items = (state as { items: Array<{ provenance: string; content: string }> }).items;
       return { answers: Object.fromEntries(Object.keys(questions).map((key, index) => [key, {
         type: 'choice' as const, choice: items[index]?.provenance === 'user' ? 'inspect'
@@ -365,7 +365,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
   });
 
   it('keeps the medium-thinking full-audit worker when classification fails or is unusable', async () => {
-    for (const evaluate of [
+    for (const classify of [
       async () => { throw new Error('provider offline'); },
       async () => ({ answers: { item_0: { type: 'choice' as const, choice: 'noise', confidence: 0.2 } } }),
     ]) {
@@ -375,7 +375,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
       await createDefaultLocalMemoryDreamRunner({ createSession: async (options) => {
         captured = options;
         return { session: session.session };
-      } })({ ...input, classifier: { canEvaluate: () => true, evaluate } as Classifier });
+      } })({ ...input, classifier: { canEvaluate: () => true, classify } as Classifier });
       expect(captured?.thinkingLevel).toBe('medium');
       expect(captured?.appendSystemPrompt?.[0]).toContain('every listed transcript');
       expect(session.promptText).toContain('Read .dreaming/input/manifest.json and every transcript');
@@ -389,7 +389,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     const session = fakeSession();
     await createDefaultLocalMemoryDreamRunner({ createSession: async () => ({ session: session.session }) })({
       ...input,
-      classifier: { canEvaluate: () => true, evaluate: async (_state, questions) => ({
+      classifier: { canEvaluate: () => true, classify: async (_state, questions) => ({
         answers: Object.fromEntries(Object.keys(questions).map((key, index) => [key, {
           type: 'choice' as const, choice: index === 0 ? 'inspect' : 'noise', confidence: 0.99,
         }])),
@@ -438,7 +438,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
       } },
     }) });
 
-    await runner({ ...input, manifest, classifier: { canEvaluate: () => true, evaluate: async (state, questions) => ({
+    await runner({ ...input, manifest, classifier: { canEvaluate: () => true, classify: async (state, questions) => ({
       answers: Object.fromEntries(Object.keys(questions).map((key, index) => [key, {
         type: 'choice' as const, choice: (state as { items: Array<{ provenance: string }> }).items[index]!.provenance === 'user'
           ? 'inspect' : 'noise', confidence: 0.99,
@@ -458,7 +458,7 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     const runner = createDefaultLocalMemoryDreamRunner({ createSession });
     await expect(runner({ ...input, signal: abort.signal, classifier: {
       canEvaluate: () => true,
-      evaluate: async () => {
+      classify: async () => {
         abort.abort();
         return { answers: {} };
       },

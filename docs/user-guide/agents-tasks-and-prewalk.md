@@ -51,7 +51,8 @@ stays in the parent. The prompt also rules out re-reading a delegated scope,
 delegating trivial lookups, and launching several reviewers when one suffices.
 Without a classifier, the main model applies that guidance itself.
 
-When a classifier is configured (`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY`),
+When an authenticated classifier is selected through
+[`felanClassifier.model`](configuration.md#classifier-model),
 root sessions ask it one question per user turn: does this request need broad
 discovery that the conversation does not already cover? At a probability of
 0.65 or higher, a routing section directs the model to delegate that discovery

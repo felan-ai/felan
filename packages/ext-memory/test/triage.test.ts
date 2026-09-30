@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ClassifierAnswer } from '@felan-ai/agent-core';
 import {
   collectMemoryCandidates, createMemoryInputManifest, createMemorySnapshot, partitionMemoryTranscript, renderMemoryInspectView, triageMemoryCandidates,
   type MemoryCandidate,
@@ -36,7 +37,7 @@ describe('memory evidence triage', () => {
     expect(candidates.find(({ provenance }) => provenance === 'wiki')?.content).not.toContain('session:older');
     const triage = await triageMemoryCandidates({
       canEvaluate: () => true,
-      evaluate: async (_state, questions) => ({ answers: Object.fromEntries(Object.keys(questions).map((key) => [key, {
+      classify: async (_state, questions) => ({ answers: Object.fromEntries(Object.keys(questions).map((key) => [key, {
         type: 'choice' as const, choice: 'noise', confidence: 0.99,
       }])) }),
     }, candidates);
@@ -56,7 +57,7 @@ describe('memory evidence triage', () => {
     const groups: string[][] = [];
     const classifier = {
       canEvaluate: (state: unknown) => JSON.stringify(state).length < 3_000,
-      evaluate: vi.fn(async (state: unknown, questions: Record<string, unknown>) => {
+      classify: vi.fn(async (state: unknown, questions: Record<string, unknown>) => {
         const items = (state as { items: Array<{ id: string }> }).items;
         groups.push(items.map(({ id }) => id));
         expect(Object.keys(questions)).toHaveLength(items.length);
@@ -82,7 +83,7 @@ describe('memory evidence triage', () => {
       { ...candidate('old', 'wiki'), reference: { path: 'summary.md', block: 0 } }];
     const decisions = await triageMemoryCandidates({
       canEvaluate: () => true,
-      evaluate: async (_state, questions) => ({ answers: Object.fromEntries(Object.keys(questions).map((key) => [key, {
+      classify: async (_state, questions) => ({ answers: Object.fromEntries(Object.keys(questions).map((key) => [key, {
         type: 'choice' as const, choice: 'noise', confidence: 0.99,
       }])) }),
     }, inputs);
@@ -112,16 +113,16 @@ describe('memory evidence triage', () => {
       { path: 'index.md', content: '# Memory index\n' },
     ], '.memory'));
     expect(candidates.map(({ hasNonTextContent }) => hasNonTextContent)).toEqual([true, undefined]);
-    const evaluate = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
+    const classify = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
       answers: Object.fromEntries(Object.keys(questions).map((key) => [key, {
         type: 'choice' as const, choice: 'noise', confidence: 0.99,
       }])),
     }));
-    const triage = await triageMemoryCandidates({ canEvaluate: () => true, evaluate }, candidates);
+    const triage = await triageMemoryCandidates({ canEvaluate: () => true, classify }, candidates);
     expect(triage?.decisions.map(({ decision, uncertain }) => ({ decision, uncertain })))
       .toEqual([{ decision: 'inspect', uncertain: true }, { decision: 'noise', uncertain: undefined }]);
-    expect(evaluate).toHaveBeenCalledTimes(1);
-    expect(evaluate.mock.calls[0]?.[0]).toMatchObject({ items: [{ id: candidates[1]?.id }] });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(classify.mock.calls[0]?.[0]).toMatchObject({ items: [{ id: candidates[1]?.id }] });
     const partition = partitionMemoryTranscript(transcript, path, triage!.decisions);
     expect(partition.inspect).toBe(`${JSON.stringify(records[0])}\n`);
     expect(partition.noise).toBe(`${JSON.stringify(records[1])}\n`);
@@ -130,18 +131,33 @@ describe('memory evidence triage', () => {
 
   it('falls back on missing provider capacity, failure, duplicate id, or abort', async () => {
     const item = candidate('item', 'user');
-    expect(await triageMemoryCandidates({ evaluate: vi.fn() }, [item])).toBeUndefined();
-    expect(await triageMemoryCandidates({ canEvaluate: () => true, evaluate: async () => { throw Error('offline'); } }, [item])).toBeUndefined();
-    expect(await triageMemoryCandidates({ canEvaluate: () => true, evaluate: vi.fn() }, [item, item])).toBeUndefined();
+    expect(await triageMemoryCandidates({ classify: vi.fn() }, [item])).toBeUndefined();
+    expect(await triageMemoryCandidates({ canEvaluate: () => true, classify: async () => { throw Error('offline'); } }, [item])).toBeUndefined();
+    expect(await triageMemoryCandidates({ canEvaluate: () => true, classify: vi.fn() }, [item, item])).toBeUndefined();
     const signal = AbortSignal.abort();
-    expect(await triageMemoryCandidates({ canEvaluate: () => true, evaluate: vi.fn() }, [item], signal)).toBeUndefined();
+    expect(await triageMemoryCandidates({ canEvaluate: () => true, classify: vi.fn() }, [item], signal)).toBeUndefined();
+  });
+
+  it.each<ClassifierAnswer>([
+    { type: 'bool', probability: 0.99 },
+    { type: 'score', score: 1, confidence: 0.99 },
+    { type: 'choice', choice: 'unknown', confidence: 0.99 },
+  ])('inspects unexpected $type answers without losing source identity', async (answer) => {
+    const item = candidate('item', 'toolResult');
+    const result = await triageMemoryCandidates({
+      canEvaluate: () => true,
+      classify: async () => ({ answers: { item_0: answer } }),
+    }, [item]);
+    expect(result?.decisions).toEqual([
+      { id: item.id, reference: item.reference, decision: 'inspect', uncertain: true },
+    ]);
   });
 
   it('reviews uncertain noise and entries that cannot fit one provider request', async () => {
     const inputs = [candidate('uncertain', 'toolResult'), candidate('too-wide', 'assistant')];
     const result = await triageMemoryCandidates({
       canEvaluate: (state: unknown) => !JSON.stringify(state).includes('too-wide'),
-      evaluate: async (_state, questions) => ({
+      classify: async (_state, questions) => ({
         answers: Object.fromEntries(Object.keys(questions).map((key) => [key, {
           type: 'choice' as const, choice: 'noise', confidence: 0.2,
         }])),

@@ -223,8 +223,8 @@ sessions. Binary-backed features can remain inactive until their dependency is
 installed or the feature is disabled through `/dependencies`.
 
 Session compaction is also enabled by default. Its default `classifier` method
-drops or shortens eligible bulky successful tool results when
-`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` makes a runtime classifier available.
+drops or shortens eligible bulky successful tool results when Pi's catalog has
+an authenticated classifier model available.
 Without a classifier it uses the verified summary method automatically; set
 `extensionConfig.sessionCompaction.method` to `summary` to disable classifier
 compaction explicitly. Summary mode uses the active model by default or the
@@ -242,13 +242,24 @@ complete its method, the warning is concise and native Pi compaction takes over.
 
 Agent Core batches the complete classifier question set as needed; the local
 host exposes the Agent Core classifier through the runtime. Bounded compaction
-evidence is sent to the selected TypeSafe or OpenRouter endpoint. Debug logs
+evidence is sent to the selected classifier provider's endpoint. Debug logs
 default to
 `storage('agent')/logs/felan.jsonl`.
 Set `FELAN_LOG_LEVEL=off` to disable them, or `debug`/`info`/`warn`/`error` to
 change the level.
 
-When `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` is available, the local host
+Select **Classifier model** in `/settings` or set `felanClassifier.model` to
+`auto` (the default) or an exact reference such as
+`openrouter/typesafe/jev-1.13`. Auto prefers direct TypeSafe Jev, then the existing
+OpenRouter Jev, then other Jev routes, then the first remaining authenticated
+classifier in catalog order. An unavailable explicit choice warns and uses
+Auto without overwriting the setting; no available classifier retains normal
+fallbacks. Changes apply to the next new root session/restart. Pi owns the
+auth store/catalog/transport; Agent Core keeps one `classify` operation and the
+shared 2-second root preflight. Native token usage is reported, but missing
+catalog pricing is not verified free inference.
+
+When an authenticated classifier is available, the local host
 also enables classifier guidance. For subagents, root sessions get a discovery
 routing section when a request needs broad discovery, except in one-shot
 print/JSON modes that cannot await child completion notices or small repositories.

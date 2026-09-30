@@ -21,10 +21,10 @@ function harness(
     thinkingLevelMap: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
   } as Model<Api>;
   const manager = SessionManager.inMemory('/workspace');
-  const evaluate = vi.fn().mockImplementation(async () => ({
+  const classify = vi.fn().mockImplementation(async () => ({
     answers: { effort: { type: 'choice', choice: choices.shift() } },
   }));
-  const runtime = Object.assign(new TestAgentRuntime('/workspace'), { classifier: { evaluate } as Classifier });
+  const runtime = Object.assign(new TestAgentRuntime('/workspace'), { classifier: { classify } as Classifier });
   const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => unknown>>();
   let level = initialLevel;
   const context = { model, sessionManager: manager } as unknown as ExtensionContext;
@@ -56,80 +56,80 @@ function harness(
   const settle = (outcome: 'completed' | 'error' | 'aborted' = 'completed') => emit('agent_before_settle', {
     outcome, continue: false, context: { pendingMessages: [] },
   });
-  return { manager, emit, evaluate, getLevel: () => level, setLevel, assistant, settle };
+  return { manager, emit, classify, getLevel: () => level, setLevel, assistant, settle };
 }
 
 describe('dynamic thinking session lifecycle', () => {
   it('starts on input and applies only a matching timely result', async () => {
-    const { emit, evaluate, getLevel } = harness(['low']);
+    const { emit, classify, getLevel } = harness(['low']);
     await emit('input', { text: 'Simple edit', source: 'interactive' });
-    expect(evaluate).toHaveBeenCalledOnce();
+    expect(classify).toHaveBeenCalledOnce();
     await emit('before_agent_start', { prompt: 'Simple edit' });
-    expect(evaluate).toHaveBeenCalledOnce();
+    expect(classify).toHaveBeenCalledOnce();
     expect(getLevel()).toBe('low');
   });
 
   it('aborts an input-started decision when the prompt changes', async () => {
-    const { emit, evaluate, getLevel } = harness(['high']);
+    const { emit, classify, getLevel } = harness(['high']);
     let oldSignal: AbortSignal | undefined;
     let release!: (value: unknown) => void;
-    evaluate.mockImplementationOnce((_state, _questions, signal) => {
+    classify.mockImplementationOnce((_state, _questions, signal) => {
       oldSignal = signal;
       return new Promise((resolve) => { release = resolve; });
     });
     await emit('input', { text: '/skill:task', source: 'interactive' });
     await emit('before_agent_start', { prompt: 'Expanded task' });
     expect(oldSignal?.aborted).toBe(true);
-    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(classify).toHaveBeenCalledTimes(2);
     release({ answers: { effort: { type: 'choice', choice: 'low' } } });
     expect(getLevel()).toBe('high');
   });
 
   it('skips Codex decisions without the reasoning-update extension', async () => {
-    const { emit, evaluate, getLevel } = harness(['low'], false);
+    const { emit, classify, getLevel } = harness(['low'], false);
     await emit('before_agent_start', { prompt: 'Summarize the file' });
-    expect(evaluate).not.toHaveBeenCalled();
+    expect(classify).not.toHaveBeenCalled();
     expect(getLevel()).toBe('medium');
   });
 
   it('classifies only at agent start, not queued messages or tool continuations', async () => {
-    const { manager, emit, evaluate, getLevel } = harness(['low', 'high']);
+    const { manager, emit, classify, getLevel } = harness(['low', 'high']);
     await emit('before_agent_start', { prompt: 'Simple edit' });
     expect(getLevel()).toBe('low');
     manager.appendMessage({ role: 'user', content: [{ type: 'text', text: 'Simple edit' }], timestamp: 1 });
     manager.appendMessage({ role: 'user', content: [{ type: 'text', text: 'Now debug the race' }], timestamp: 2 });
     await emit('turn_start', { turnIndex: 1 });
     expect(getLevel()).toBe('low');
-    expect(evaluate).toHaveBeenCalledOnce();
+    expect(classify).toHaveBeenCalledOnce();
     await emit('before_agent_start', { prompt: 'New independent request' });
     expect(getLevel()).toBe('high');
-    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(classify).toHaveBeenCalledTimes(2);
   });
 
   it('keeps an explicit thinking selection authoritative for subsequent turns', async () => {
-    const { emit, evaluate, getLevel, setLevel } = harness(['low']);
+    const { emit, classify, getLevel, setLevel } = harness(['low']);
     setLevel('max');
     await emit('before_agent_start', { prompt: 'Do something' });
     expect(getLevel()).toBe('max');
-    expect(evaluate).not.toHaveBeenCalled();
+    expect(classify).not.toHaveBeenCalled();
   });
 
   it('does not apply a result after shutdown', async () => {
-    const { emit, evaluate, getLevel } = harness(['high']);
+    const { emit, classify, getLevel } = harness(['high']);
     let release!: (value: unknown) => void;
-    evaluate.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    classify.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const pending = emit('before_agent_start', { prompt: 'Fresh request' });
     await emit('session_shutdown', {});
     release({ answers: { effort: { type: 'choice', choice: 'high' } } });
     await pending;
     expect(getLevel()).toBe('medium');
-    expect(evaluate).toHaveBeenCalledOnce();
+    expect(classify).toHaveBeenCalledOnce();
   });
 
   it('reports only the first successful high-to-medium Astra response, net of classifier cost', async () => {
     const report = vi.fn().mockResolvedValue(undefined);
-    const { emit, evaluate, assistant } = harness(['medium'], true, { report }, 'high');
-    evaluate.mockResolvedValueOnce({
+    const { emit, classify, assistant } = harness(['medium'], true, { report }, 'high');
+    classify.mockResolvedValueOnce({
       answers: { effort: { type: 'choice', choice: 'medium' } },
       metadata: { usage: { requests: 1, costUsd: 0.0002 } },
     });
@@ -212,8 +212,8 @@ describe('dynamic thinking session lifecycle', () => {
 
   it('skips a downgrade whose classifier cost exceeds estimated output savings', async () => {
     const report = vi.fn().mockResolvedValue(undefined);
-    const { emit, evaluate, assistant, settle } = harness(['medium'], true, { report }, 'high');
-    evaluate.mockResolvedValueOnce({
+    const { emit, classify, assistant, settle } = harness(['medium'], true, { report }, 'high');
+    classify.mockResolvedValueOnce({
       answers: { effort: { type: 'choice', choice: 'medium' } },
       metadata: { usage: { requests: 1, costUsd: 0.002 } },
     });

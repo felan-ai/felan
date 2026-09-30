@@ -8,7 +8,7 @@ import {
 } from '../classifier/index.js';
 import type { FelanThinkingLevel } from '../thinking.js';
 
-const CODEX_MODELS = new Set(['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']);
+const CODEX_MODELS = new Set(['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna']);
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export function supportsDynamicThinking(model: Model<Api> | undefined): model is Model<Api> {
@@ -71,7 +71,7 @@ export async function evaluateDynamicThinkingLevel(
   try {
     const state = { request: sanitizeClassifierText(request, 4_096), session };
     if (!state.request) return undefined;
-    const { answers, metadata } = await classifier.evaluate(state, { effort: question }, signal);
+    const { answers, metadata } = await classifier.classify(state, { effort: question }, signal);
     if (signal?.aborted) return undefined;
     const answer = answers.effort;
     if (answer?.type !== 'choice' || !candidates.includes(answer.choice as typeof LEVELS[number])

@@ -79,7 +79,7 @@ remain transient, stable-position context messages.
 ## Classifier guidance
 
 When the host runtime provides a classifier, root-session Prewalk runs make four
-choice decisions. Each uses bounded state: the request, up to 24 recent
+choice decisions through its unified `classify` operation. Each uses bounded state: the request, up to 24 recent
 conversation items, up to 40 recent tool calls with short inputs and error
 flags, the submitted plan, and recorded `TaskCreate` titles and acceptance
 criteria.
@@ -88,7 +88,7 @@ session evidence; Prewalk retains its own task and verification judgments.
 
 - **Entry:** Classification starts on Pi's `input` event for idle turns when
   `enter_prewalk` and a mutation tool are active and `entryApproval` is not
-  `deny`. Jev's shared root-turn preflight may expire before the answer; in
+  `deny`. Agent Core's managed shared root-turn preflight may expire before the answer; in
   that case no entry guidance is added. If the request should use Prewalk, a
   hidden conversation message
   tells the model to call `enter_prewalk` before exploring. It does not change

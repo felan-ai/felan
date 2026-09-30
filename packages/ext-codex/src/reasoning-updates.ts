@@ -28,7 +28,7 @@ interface PendingUpdates {
 export function supportsReasoningUpdates(model: Model<Api> | undefined): model is Model<Api> {
   return (model?.provider === 'openai' || model?.provider === 'openai-codex')
     && model.api === 'openai-codex-responses'
-    && (model.id === 'gpt-6-astra' || model.id === 'gpt-6-sol' || model.id === 'gpt-6-luna');
+    && (model.id === 'gpt-6-astra' || model.id === 'gpt-6-sol' || model.id === 'gpt-6.1-sol' || model.id === 'gpt-6-luna');
 }
 
 function isEffort(value: unknown): value is string {

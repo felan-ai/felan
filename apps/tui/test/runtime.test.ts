@@ -58,7 +58,7 @@ describe('local Agent Core lifecycle', () => {
     const agentDir = join(root, 'agent');
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
     const modelRuntime = await createLocalModelRuntime(agentDir);
-    const classifier = { evaluate: async () => ({ answers: {} }) };
+    const classifier = { classify: async () => ({ answers: {} }) };
     const memoryCoordinator = new LocalMemoryCoordinator({ agentDir, modelRuntime, enabled: false, recover: false });
     const modelSelection = vi.spyOn(memoryCoordinator, 'setModelSelection');
     const runtime = await createLocalFelanRuntime({
@@ -80,8 +80,8 @@ describe('local Agent Core lifecycle', () => {
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
     const settingsPath = join(agentDir, 'settings.json');
     await writeFile(settingsPath, JSON.stringify({ felanThinking: { dynamic: false } }));
-    const evaluate = vi.fn();
-    const classifier = { evaluate };
+    const classify = vi.fn();
+    const classifier = { classify };
     const runtime = await createLocalFelanRuntime({
       cwd, agentDir, homeDir: root, extensionPackages: [],
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, { ...request, classifier }),
@@ -94,7 +94,7 @@ describe('local Agent Core lifecycle', () => {
     await writeFile(settingsPath, JSON.stringify({ felanThinking: { dynamic: true } }));
     await runtime.newSession();
     expect(hasDynamicThinking()).toBe(true);
-    expect(evaluate).not.toHaveBeenCalled();
+    expect(classify).not.toHaveBeenCalled();
     await runtime.dispose();
   });
 
@@ -107,11 +107,11 @@ describe('local Agent Core lifecycle', () => {
     const model = modelRuntime.getModel('anthropic', 'claude-opus-5-5');
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
-    const evaluate = vi.fn().mockResolvedValue({ answers: { effort: { type: 'choice', choice: 'low' } } });
+    const classify = vi.fn().mockResolvedValue({ answers: { effort: { type: 'choice', choice: 'low' } } });
     const runtime = await createLocalFelanRuntime({
       cwd, agentDir, homeDir: root, modelRuntime, model: model!, extensionPackages: [],
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
-        ...request, classifier: { evaluate },
+        ...request, classifier: { classify },
       }),
     });
     runtime.session.agent.streamFunction = (activeModel) => {
@@ -128,14 +128,14 @@ describe('local Agent Core lifecycle', () => {
     const defaultThinking = runtime.session.settingsManager.getDefaultThinkingLevel();
     await runtime.session.prompt('Summarize this simply');
 
-    expect(evaluate.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('effort')))
+    expect(classify.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('effort')))
       .toEqual([['effort']]);
     expect(runtime.session.thinkingLevel).toBe('low');
     expect(runtime.session.settingsManager.getDefaultThinkingLevel()).toBe(defaultThinking);
 
     runtime.session.setThinkingLevel('max');
     await runtime.session.prompt('Now investigate deeply');
-    expect(evaluate.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('effort')))
+    expect(classify.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('effort')))
       .toEqual([['effort']]);
     expect(runtime.session.thinkingLevel).toBe('max');
     await runtime.dispose();
@@ -151,7 +151,7 @@ describe('local Agent Core lifecycle', () => {
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
     const effortChoices = ['low', 'high'];
-    const evaluate = vi.fn().mockImplementation(async (_state, questions: Record<string, unknown>) => ({
+    const classify = vi.fn().mockImplementation(async (_state, questions: Record<string, unknown>) => ({
       answers: questions.effort
         ? { effort: { type: 'choice', choice: effortChoices.shift() } }
         : { route: { type: 'choice', choice: 'regular' } },
@@ -160,7 +160,7 @@ describe('local Agent Core lifecycle', () => {
       cwd, agentDir, homeDir: root, modelRuntime, model: model!,
       extensionPackages: [builtinExtensionPackages.codex],
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
-        ...request, classifier: { evaluate },
+        ...request, classifier: { classify },
       }),
     });
     runtime.session.agent.streamFunction = (activeModel) => {
@@ -194,11 +194,11 @@ describe('local Agent Core lifecycle', () => {
     const model = modelRuntime.getModel('openai-codex', 'gpt-6-sol');
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
-    const evaluate = vi.fn().mockResolvedValue({ answers: { effort: { type: 'choice', choice: 'low' } } });
+    const classify = vi.fn().mockResolvedValue({ answers: { effort: { type: 'choice', choice: 'low' } } });
     const runtime = await createLocalFelanRuntime({
       cwd, agentDir, homeDir: root, modelRuntime, model: model!,
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
-        ...request, classifier: { evaluate },
+        ...request, classifier: { classify },
       }),
     });
     expect(runtime.session.model?.api).toBe('openai-codex-responses');
@@ -217,7 +217,7 @@ describe('local Agent Core lifecycle', () => {
     await runtime.session.bindExtensions({ mode: 'print' });
     const original = runtime.session.thinkingLevel;
     await runtime.session.prompt('Summarize the file');
-    expect(evaluate.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'effort'))).toEqual([]);
+    expect(classify.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'effort'))).toEqual([]);
     expect(runtime.session.thinkingLevel).toBe(original);
     await runtime.dispose();
   });
@@ -829,7 +829,7 @@ describe('local Agent Core lifecycle', () => {
     const sessionManager = SessionManager.inMemory(cwd);
     sessionManager.appendMessage({ role: 'user', content: 'previous prompt', timestamp: Date.now() });
     sessionManager.appendMessage(completedAssistantMessage('previous response'));
-    const classifier = { evaluate: vi.fn() };
+    const classifier = { classify: vi.fn() };
 
     const runtime = await createLocalFelanRuntime({
       cwd,

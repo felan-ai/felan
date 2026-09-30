@@ -63,8 +63,9 @@ safeguards do not prove semantic completeness.
 The extension does not add a fixed summary-result, prompt-byte, summary-token,
 or wall-clock ceiling. Pi owns compaction reserve/tail preparation, the active
 model owns context and output capacity, and the central evidence bounds keep
-untrusted extraction and protected continuity finite. Jev transport batching
-and its request/response safety envelope belong to Agent Core.
+untrusted extraction and protected continuity finite. The runtime's unified
+`classify` operation and bounded admission/question batching belong to Agent
+Core; model selection, credentials and native Pi transport belong to the host.
 
 The package also provides bounded `session_recall` over the current
 `SessionManager.getBranch()` lineage. It never reads session files directly,

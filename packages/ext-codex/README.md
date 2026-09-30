@@ -26,7 +26,7 @@ Pi includes GPT-6 Astra in its built-in OpenAI and OpenAI Codex catalogs.
 The existing GPT policy enables this extension's structured tools and native
 Responses controls without a custom `models.json` entry.
 
-For GPT-6 Astra, Sol, and Luna using `openai-codex-responses`, changing the
+For GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using `openai-codex-responses`, changing the
 thinking level between turns keeps the initial request-level reasoning effort
 and projects a native `configuration_update` before the next user message in
 the provider request. Updates are retained across session resume and forks;

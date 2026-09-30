@@ -7,7 +7,6 @@ import {
   HostAgentRuntime,
   ModelRuntime,
   SessionManager,
-  createJevClassifier,
   type AgentSession,
   bindFelanExtension,
   createAgentCoreSessionRuntimeFactory,
@@ -30,6 +29,7 @@ import {
   type AgentSessionRuntime,
 } from '@earendil-works/pi-coding-agent';
 import { createLocalCodexStreamFunctionWrapper } from './codex.js';
+import { createLocalClassifier } from './classifier.js';
 import {
   createLocalDependencyExtension,
   localDependencyExtensionName,
@@ -45,6 +45,7 @@ import { createLocalAgentLogger } from './logger.js';
 import {
   createLocalSettingsManager,
   getDynamicThinkingEnabled,
+  getClassifierModelSetting,
   getFelanSettings,
   getLocalOutputStyle,
   getLocalToolDisplayMode,
@@ -213,7 +214,7 @@ export function createLocalSessionRuntimeFactory(
     modelScope: Awaited<ReturnType<typeof resolveModelScopeWithDiagnostics>>;
     shutdownState: LocalSubagentShutdownState;
     toolActivityState: ToolActivityState;
-    extensionConfigWarnings: readonly string[];
+    configurationWarnings: readonly string[];
     memoryEnabled: boolean;
     modelScopeConfigured: boolean;
     classifier: Classifier | undefined;
@@ -280,13 +281,15 @@ export function createLocalSessionRuntimeFactory(
     const subagentSettings = options.subagentSettings ?? felanSettings.felanSubagents;
     const appendSystemPrompt = await loadLocalAppendSystemPrompt(options.agentDir);
     const logger = createLocalAgentLogger(runtimeRequest.agentStorageRoot);
-    const classifier = createJevClassifier();
-    const runtime = options.runtimeFactory?.(runtimeRequest)
-      ?? new HostAgentRuntime(cwd, {
-        ...runtimeRequest,
-        logger,
-        ...(classifier === undefined ? {} : { classifier }),
-      });
+    const customRuntime = options.runtimeFactory?.(runtimeRequest);
+    const classifierSelection = customRuntime === undefined
+      ? await createLocalClassifier(options.modelRuntime, getClassifierModelSetting(settingsManager))
+      : { warnings: [], classifier: undefined };
+    const runtime = customRuntime ?? new HostAgentRuntime(cwd, {
+      ...runtimeRequest,
+      logger,
+      ...(classifierSelection.classifier === undefined ? {} : { classifier: classifierSelection.classifier }),
+    });
     const backgroundBashCoordinator = new BackgroundBashCoordinator(runtime);
     const savings = new SavingsService({
       runtime,
@@ -394,7 +397,7 @@ export function createLocalSessionRuntimeFactory(
       modelScope,
       shutdownState,
       toolActivityState,
-      extensionConfigWarnings: extensionConfigSettings.warnings,
+      configurationWarnings: [...extensionConfigSettings.warnings, ...classifierSelection.warnings],
       memoryEnabled,
       modelScopeConfigured,
       classifier: runtime.classifier,
@@ -475,7 +478,7 @@ export function createLocalSessionRuntimeFactory(
         modelScope,
         shutdownState,
         toolActivityState,
-        extensionConfigWarnings,
+        configurationWarnings,
         memoryEnabled,
         modelScopeConfigured,
         classifier,
@@ -500,7 +503,7 @@ export function createLocalSessionRuntimeFactory(
           { type: 'info', message: `Agent Core version: ${AGENT_CORE_VERSION}` },
           ...result.diagnostics,
           ...modelScope.diagnostics,
-          ...extensionConfigWarnings.map((message) => ({
+          ...configurationWarnings.map((message) => ({
             type: 'warning' as const,
             message,
           })),

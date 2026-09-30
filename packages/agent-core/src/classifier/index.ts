@@ -1,16 +1,18 @@
-export { createJevClassifier } from './jev/classifier.js';
+export { createPiClassifier } from './pi-classifier.js';
 export { collectClassifierSessionEvidence, sanitizeClassifierText } from './session-evidence.js';
 export type { ClassifierSessionEvidence, ClassifierSessionEvidenceLimits } from './session-evidence.js';
 export type {
   Classifier,
   ClassifierAnswer,
   ClassifierAnswers,
+  ClassifierBoolAnswer,
+  ClassifierBoolQuestion,
+  ClassifierChoiceAnswer,
+  ClassifierChoiceQuestion,
   ClassifierEvaluationMetadata,
   ClassifierQuestion,
   ClassifierQuestions,
-  ClassifierProbabilityAnswer,
-  ClassifierProbabilityAnswers,
-  ClassifierProbabilityQuestion,
-  ClassifierProbabilityQuestions,
+  ClassifierScoreAnswer,
+  ClassifierScoreQuestion,
   ClassifierUsage,
 } from './types.js';

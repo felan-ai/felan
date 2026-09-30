@@ -329,15 +329,15 @@ describe('@felan-ai/ext-subagents', () => {
 
   it('uses the classifier tier when the descriptor has no model', async () => {
     const anthropicOpus = { provider: 'anthropic', id: 'claude-opus-4-6' } as any;
-    const evaluate = vi.fn(async () => ({
-      answers: { model_tier: { choice: 'high' } },
+    const classify = vi.fn(async () => ({
+      answers: { model_tier: { type: 'choice', choice: 'high' } },
       metadata: { provider: 'typesafe', model: 'jev-latest' },
     }));
     const harness = createHarness({
       descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
       parentModel: { provider: 'openai-codex', id: 'gpt-5.6-sol' },
       models: [anthropicOpus],
-      runtime: { classifier: { evaluate } },
+      runtime: { classifier: { classify } },
     });
 
     const result = await execute(harness, 'Agent', {
@@ -346,8 +346,8 @@ describe('@felan-ai/ext-subagents', () => {
       subagent_type: 'general',
     });
 
-    expect(evaluate).toHaveBeenCalledTimes(1);
-    const [state, questions] = evaluate.mock.calls[0]! as unknown as [any, Record<string, { criteria: Record<string, string> }>];
+    expect(classify).toHaveBeenCalledTimes(1);
+    const [state, questions] = classify.mock.calls[0]! as unknown as [any, Record<string, { criteria: Record<string, string> }>];
     expect(state).toMatchObject({
       prompt: 'Investigate a hard concurrency bug',
       description: 'debug',
@@ -364,7 +364,7 @@ describe('@felan-ai/ext-subagents', () => {
 
   it('does not call the classifier when the descriptor has a model', async () => {
     const anthropicOpus = { provider: 'anthropic', id: 'claude-opus-4-6' } as any;
-    const evaluate = vi.fn();
+    const classify = vi.fn();
     const harness = createHarness({
       descriptor: {
         id: 'reviewer',
@@ -373,7 +373,7 @@ describe('@felan-ai/ext-subagents', () => {
         allowNesting: false,
       },
       models: [anthropicOpus],
-      runtime: { classifier: { evaluate } },
+      runtime: { classifier: { classify } },
     });
 
     await execute(harness, 'Agent', {
@@ -382,7 +382,7 @@ describe('@felan-ai/ext-subagents', () => {
       subagent_type: 'reviewer',
     });
 
-    expect(evaluate).not.toHaveBeenCalled();
+    expect(classify).not.toHaveBeenCalled();
     expect(harness.host.spawn).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'anthropic/claude-opus-4-6' }),
       undefined,
@@ -392,13 +392,13 @@ describe('@felan-ai/ext-subagents', () => {
   it('lets the classifier tier override params.model', async () => {
     const anthropicOpus = { provider: 'anthropic', id: 'claude-opus-4-6' } as any;
     const openaiLow = { provider: 'openai-codex', id: 'gpt-5.6-luna' } as any;
-    const evaluate = vi.fn(async () => ({
-      answers: { model_tier: { choice: 'high' } },
+    const classify = vi.fn(async () => ({
+      answers: { model_tier: { type: 'choice', choice: 'high' } },
     }));
     const harness = createHarness({
       descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
       models: [anthropicOpus, openaiLow],
-      runtime: { classifier: { evaluate } },
+      runtime: { classifier: { classify } },
     });
 
     await execute(harness, 'Agent', {
@@ -415,12 +415,12 @@ describe('@felan-ai/ext-subagents', () => {
   });
 
   it('falls back to the requested model if the classified tier is unavailable', async () => {
-    const evaluate = vi.fn(async () => ({ answers: { model_tier: { choice: 'xhigh' } } }));
+    const classify = vi.fn(async () => ({ answers: { model_tier: { type: 'choice', choice: 'xhigh' } } }));
     const harness = createHarness({
       descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
       parentModel: { provider: 'openai-codex', id: 'gpt-5.6-sol' },
       models: [],
-      runtime: { classifier: { evaluate } },
+      runtime: { classifier: { classify } },
     });
 
     const result = await execute(harness, 'Agent', {
@@ -436,11 +436,11 @@ describe('@felan-ai/ext-subagents', () => {
 
   it('falls back to params.model and logs a warn when the classifier fails', async () => {
     const logs: LogRecord[] = [];
-    const evaluate = vi.fn(async () => { throw new Error('classifier unavailable'); });
+    const classify = vi.fn(async () => { throw new Error('classifier unavailable'); });
     const harness = createHarness({
       descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
       runtime: {
-        classifier: { evaluate },
+        classifier: { classify },
         logger: createLogger({ level: 'debug', destination: { write: (record) => { logs.push(record); } } }),
       },
     });
@@ -462,10 +462,10 @@ describe('@felan-ai/ext-subagents', () => {
   });
 
   it('falls back to params.model when the classifier returns an invalid choice', async () => {
-    const evaluate = vi.fn(async () => ({ answers: { model_tier: { choice: 'urgent' } } }));
+    const classify = vi.fn(async () => ({ answers: { model_tier: { type: 'choice', choice: 'urgent' } } }));
     const harness = createHarness({
       descriptor: { id: 'general', description: 'General purpose', allowNesting: true },
-      runtime: { classifier: { evaluate } },
+      runtime: { classifier: { classify } },
     });
 
     await execute(harness, 'Agent', {

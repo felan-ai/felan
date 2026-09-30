@@ -1,8 +1,9 @@
 # ADR 0016: Jev classifier in Agent Core
 
-> Status: Accepted
+> Status: Superseded
 > Date: 2026-09-19
 > Deciders: Felan maintainers
+> Superseded-by: [ADR 0018](0018-use-pi-classifier-runtime.md)
 > Related: [ADR 0005](0005-own-verified-session-compaction-in-an-extension.md),
 > [ADR 0014](0014-own-jev-classifier-service.md)
 

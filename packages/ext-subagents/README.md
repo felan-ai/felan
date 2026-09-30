@@ -66,10 +66,10 @@ parallel. It keeps small, sequential, known-location, and critical-path work in
 the parent, and rules out re-reading a delegated scope, trivial delegation, and
 reviewer fan-out. Without a classifier, the model applies that guidance itself.
 
-With a compatible probability classifier and an `explore` definition, root
+With a runtime classifier and an `explore` definition, root
 sessions ask one `broad_discovery` question per user turn. Classification
 starts on Pi's `input` event and is awaited in `before_agent_start`, so it
-overlaps with other extensions' pre-start work. Jev's shared root-turn
+overlaps with other extensions' pre-start work. Agent Core's managed shared root-turn
 preflight may expire without adding a discovery section. A transformed prompt
 is classified again. A bounded file listing skips discovery classification
 for a repository with fewer than 20 files, since delegating that surface
@@ -92,7 +92,9 @@ Classifier state contains the current prompt, image count, up to 24 recent
 model-visible user/assistant conversation items (at most 1,200 characters
 each), the `explore` descriptor, and direct-child
 statuses for routing; and the child prompt, description, and type for tier
-selection. Hosts using Jev may send that state to TypeSafe or OpenRouter;
+selection. The unified `classify` operation handles both the bool discovery
+question and choice tier selection. Hosts may send that state to the selected
+classifier provider's configured endpoint;
 credentials remain host-owned and are never persisted in session records.
 
 Decisions are logged at debug level through `AgentRuntime.logger` under the

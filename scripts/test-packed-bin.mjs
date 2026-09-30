@@ -92,10 +92,17 @@ try {
       const packageNames = ${JSON.stringify(packageNames)};
       await Promise.all(packageNames.map((name) => import(name)));
       const agentCore = await import('@felan-ai/agent-core');
-      if (typeof agentCore.createJevClassifier !== 'function' || typeof agentCore.createLogger !== 'function') throw new Error('agent-core is missing classifier or logger exports');
-      for (const name of ['JEV_PROVIDERS', 'JevClientError', 'createJevClient', 'OPENROUTER_DECISIONS_URL', 'TYPESAFE_SYSTEMONE_URL', 'resolveJevTransport']) {
+      if (typeof agentCore.createPiClassifier !== 'function' || typeof agentCore.createLogger !== 'function') throw new Error('agent-core is missing classifier or logger exports');
+      for (const name of ['createJevClassifier', 'JEV_PROVIDERS', 'JevClientError', 'createJevClient', 'OPENROUTER_DECISIONS_URL', 'TYPESAFE_SYSTEMONE_URL', 'resolveJevTransport']) {
         if (name in agentCore) throw new Error('agent-core exposes low-level Jev API: ' + name);
       }
+      const classifier = agentCore.createPiClassifier({ classify: async (model, context) => ({
+        api: model.api, provider: model.provider, model: model.id, stopReason: 'stop', timestamp: Date.now(),
+        answers: Object.fromEntries(Object.keys(context.questions).map(id => [id, { type: 'bool', probability: 0.8 }])),
+      }) }, { type: 'classifier', provider: 'test', api: 'typesafe-system-one', id: 'test-classifier', cost: { input: 0, output: 0 } });
+      if (typeof classifier.classify !== 'function' || 'evaluate' in classifier || 'evaluateProbabilities' in classifier) throw new Error('agent-core has an invalid classifier contract');
+      const classifierResult = await classifier.classify({}, { ready: { type: 'bool', instructions: 'Ready?', criteria: { true: 'Yes', false: 'No' } } });
+      if (classifierResult.answers.ready?.probability !== 0.8) throw new Error('packed classifier did not delegate to the model runtime');
       const app = await import('@felan-ai/felan');
       for (const packageName of app.localExtensionPackages) {
         const extension = await app.importLocalExtension(packageName);

@@ -31,8 +31,7 @@ export async function classifySubagentModelTier(
   signal: AbortSignal | undefined,
 ): Promise<ModelTier | undefined> {
   const classifier = pi.runtime?.classifier;
-  const evaluate = classifier?.evaluate;
-  if (classifier === undefined || typeof evaluate !== 'function') return undefined;
+  if (classifier === undefined || typeof classifier.classify !== 'function') return undefined;
   const logger = pi.runtime?.logger?.child({ component: 'subagent-model' });
   if (signal?.aborted) return undefined;
 
@@ -44,9 +43,10 @@ export async function classifySubagentModelTier(
   };
 
   try {
-    const result = await evaluate.call(classifier, state, TIER_QUESTIONS, signal);
+    const result = await classifier.classify(state, TIER_QUESTIONS, signal);
     if (signal?.aborted) return undefined;
-    const choice = result.answers[TIER_QUESTION]?.choice;
+    const answer = result.answers[TIER_QUESTION];
+    const choice = answer?.type === 'choice' ? answer.choice : undefined;
     if (!isModelTier(choice)) {
       logger?.warn({
         event: 'decision',

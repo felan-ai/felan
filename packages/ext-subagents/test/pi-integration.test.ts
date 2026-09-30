@@ -50,9 +50,8 @@ describe('Pi subagent-routing integration', () => {
       agentStorageRoot: join(root, 'agent-storage'),
       agentDir,
       classifier: {
-        evaluate: async () => ({ answers: {} }),
-        evaluateProbabilities: async (_state, questions) => ({
-          answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { probability: 0.9 }])),
+        classify: async (_state, questions) => ({
+          answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { type: 'bool' as const, probability: 0.9 }])),
         }),
       },
     });

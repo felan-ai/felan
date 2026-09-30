@@ -1,31 +1,46 @@
-export interface ClassifierQuestion {
+export interface ClassifierChoiceQuestion {
   readonly type: 'choice';
   readonly instructions: string;
   readonly criteria: Readonly<Record<string, string>>;
 }
 
+export interface ClassifierBoolQuestion {
+  readonly type: 'bool';
+  readonly instructions: string;
+  readonly criteria: { readonly true: string; readonly false: string };
+}
+
+export interface ClassifierScoreQuestion {
+  readonly type: 'score';
+  readonly instructions: string;
+  readonly criteria: readonly string[];
+}
+
+export type ClassifierQuestion = ClassifierChoiceQuestion | ClassifierBoolQuestion | ClassifierScoreQuestion;
+
 export type ClassifierQuestions = Readonly<Record<string, ClassifierQuestion>>;
 
-export interface ClassifierAnswer {
+export interface ClassifierChoiceAnswer {
   readonly type: 'choice';
   readonly choice: string;
   readonly probabilities?: Readonly<Record<string, number>>;
   readonly confidence?: number;
 }
 
-export type ClassifierAnswers = Readonly<Record<string, ClassifierAnswer>>;
-
-export interface ClassifierProbabilityQuestion {
-  readonly instructions: string;
-}
-
-export type ClassifierProbabilityQuestions = Readonly<Record<string, ClassifierProbabilityQuestion>>;
-
-export interface ClassifierProbabilityAnswer {
+export interface ClassifierBoolAnswer {
+  readonly type: 'bool';
   readonly probability: number;
 }
 
-export type ClassifierProbabilityAnswers = Readonly<Record<string, ClassifierProbabilityAnswer>>;
+export interface ClassifierScoreAnswer {
+  readonly type: 'score';
+  readonly score: number;
+  readonly confidence?: number;
+}
+
+export type ClassifierAnswer = ClassifierChoiceAnswer | ClassifierBoolAnswer | ClassifierScoreAnswer;
+
+export type ClassifierAnswers = Readonly<Record<string, ClassifierAnswer>>;
 
 export interface ClassifierUsage {
   readonly requests: number;
@@ -43,20 +58,12 @@ export interface ClassifierEvaluationMetadata {
 
 export interface Classifier {
   canEvaluate?(state: unknown, questions: ClassifierQuestions): boolean;
-  evaluate(
+  classify(
     state: unknown,
     questions: ClassifierQuestions,
     signal?: AbortSignal,
   ): Promise<{
     readonly answers: ClassifierAnswers;
-    readonly metadata?: ClassifierEvaluationMetadata;
-  }>;
-  evaluateProbabilities?(
-    state: unknown,
-    questions: ClassifierProbabilityQuestions,
-    signal?: AbortSignal,
-  ): Promise<{
-    readonly answers: ClassifierProbabilityAnswers;
     readonly metadata?: ClassifierEvaluationMetadata;
   }>;
 }

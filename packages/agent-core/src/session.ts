@@ -15,7 +15,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { loadFelanSessionExtensions, type ExtensionPackageImporter } from './extensions.js';
-import { attachJevPreflight } from './classifier/jev/classifier.js';
+import { attachClassifierPreflight } from './classifier/pi-classifier.js';
 import { createDynamicThinkingSession, DYNAMIC_THINKING_PRODUCER } from './dynamic-thinking/session.js';
 import { installModelSelectionPersistenceScope } from './model-selection.js';
 import {
@@ -119,7 +119,7 @@ async function composeAgentCoreSession(
 ): Promise<AgentCoreSessionComposition> {
   const agentDir = options.agentDir ?? options.runtime.cwd;
   const preflight = options.sessionManager.getHeader()?.parentSession === undefined && options.runtime.classifier
-    ? attachJevPreflight(options.runtime.classifier, options.runtime.logger)
+    ? attachClassifierPreflight(options.runtime.classifier, options.runtime.logger)
     : undefined;
   const modelSelectionScope = installModelSelectionPersistenceScope(options.settingsManager);
   const featureExtensions = await loadFelanSessionExtensions(

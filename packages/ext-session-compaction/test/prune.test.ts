@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ClassifierAnswer } from '@felan-ai/agent-core';
 import { pruneEvidence } from '../src/prune.js';
 import type { CompactionClassifierChoiceAnswer } from '../src/classifier.js';
 import type { EvidenceBundle, EvidenceItem, PreparedSpan } from '../src/internal/contracts.js';
@@ -14,16 +15,16 @@ describe('Jev evidence prune', () => {
       item('err', { kind: 'error', status: 'failed', text: bulky('bash failed'), sourceId: 'hist-3', toolCallId: 'call-2', toolName: 'bash' }),
       item('prefix', { kind: 'observation', status: 'observed', text: bulky('prefix-output'), sourceId: 'prefix-1', toolCallId: 'call-3', toolName: 'grep' }),
     ]);
-    const evaluate = vi.fn(async (_state: unknown, _questions: Record<string, unknown>) => ({
+    const classify = vi.fn(async (_state: unknown, _questions: Record<string, unknown>) => ({
       answers: {
         e1: choice('obsolete', { exact_contents: 0.05, outcome_only: 0.1, obsolete: 0.85 }, 0.8),
       },
     }));
-    const result = await pruneEvidence(evidence, span(['prefix-1']), { evaluate }, { trigger: 'manual' });
+    const result = await pruneEvidence(evidence, span(['prefix-1']), { classify }, { trigger: 'manual' });
 
     expect(result.report).toMatchObject({ status: 'ran', kept: 0, shortened: 0, dropped: 1, asked: 1 });
     expect(result.evidence.items.map((entry) => entry.id)).toEqual(['req', 'err', 'prefix']);
-    expect(evaluate.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+    expect(classify.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
       trigger: expect.stringContaining('Manual compaction'),
       goal: ['Fix login'],
       history: expect.arrayContaining([
@@ -32,7 +33,7 @@ describe('Jev evidence prune', () => {
       ]),
       current_turn: [expect.objectContaining({ kind: 'observation' })],
     }));
-    expect(evaluate.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+    expect(classify.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
       e1: expect.objectContaining({
         type: 'choice',
         instructions: expect.stringContaining('History item e1'),
@@ -45,7 +46,7 @@ describe('Jev evidence prune', () => {
       item('obs', { kind: 'observation', status: 'observed', text: bulky('n'.repeat(400)), sourceId: 'hist-1', toolCallId: 'call-1', toolName: 'grep' }),
     ]);
     const result = await pruneEvidence(evidence, span(), {
-      evaluate: async () => ({
+      classify: async () => ({
         answers: {
           e1: choice('outcome_only', { exact_contents: 0.1, outcome_only: 0.8, obsolete: 0.1 }, 0.7),
         },
@@ -60,7 +61,7 @@ describe('Jev evidence prune', () => {
       item('obs', { kind: 'observation', status: 'observed', text: bulky('keep-me'), sourceId: 'hist-1', toolCallId: 'call-1' }),
     ]);
     const result = await pruneEvidence(evidence, span(), {
-      evaluate: async () => ({
+      classify: async () => ({
         answers: {
           e1: choice('outcome_only', { exact_contents: 0.4, outcome_only: 0.45, obsolete: 0.15 }, 0.5),
         },
@@ -76,7 +77,7 @@ describe('Jev evidence prune', () => {
       item('test', { kind: 'test', status: 'succeeded', text: bulky('✓ 42 passed'), sourceId: 'hist-2', toolCallId: 'call-2', toolName: 'bash' }),
     ]);
     const result = await pruneEvidence(evidence, span(), {
-      evaluate: async () => ({
+      classify: async () => ({
         answers: {
           e1: choice('obsolete', { exact_contents: 0.02, outcome_only: 0.08, obsolete: 0.9 }, 0.9),
           e2: choice('obsolete', { exact_contents: 0.02, outcome_only: 0.08, obsolete: 0.9 }, 0.9),
@@ -92,10 +93,10 @@ describe('Jev evidence prune', () => {
       item('req', { kind: 'request', status: 'requested', text: 'Fix login', sourceId: 'user-1' }),
       item('obs', { kind: 'observation', status: 'observed', text: 'tiny', sourceId: 'hist-1', toolCallId: 'call-1' }),
     ]);
-    const evaluate = async () => {
+    const classify = async () => {
       throw new Error('classifier should not run');
     };
-    const result = await pruneEvidence(evidence, span(), { evaluate }, { trigger: 'manual' });
+    const result = await pruneEvidence(evidence, span(), { classify }, { trigger: 'manual' });
     expect(result.report).toEqual({ status: 'skipped', reason: 'no-candidates' });
     expect(result.evidence.items).toEqual(evidence.items);
   });
@@ -105,12 +106,30 @@ describe('Jev evidence prune', () => {
       item('obs', { kind: 'observation', status: 'observed', text: bulky('keep-me'), sourceId: 'hist-1', toolCallId: 'call-1' }),
     ]);
     const result = await pruneEvidence(evidence, span(), {
-      evaluate: async () => ({ answers: {} }),
+      classify: async () => ({ answers: {} }),
     }, { trigger: 'manual' });
     expect(result.report).toMatchObject({ status: 'ran', kept: 1, asked: 1 });
     expect(result.evidence.items[0]?.text).toContain('keep-me');
     expect(result.report.status === 'ran' && result.report.decisions[0]).toMatchObject({
       id: 'e1', action: 'keep', reason: 'missing',
+    });
+  });
+
+  it.each<ClassifierAnswer>([
+    { type: 'bool', probability: 0.99 },
+    { type: 'score', score: 1, confidence: 0.99 },
+    { type: 'choice', choice: 'unknown', confidence: 0.99 },
+  ])('keeps original evidence for unexpected $type answers', async (answer) => {
+    const evidence = bundle([
+      item('obs', { kind: 'observation', status: 'observed', text: bulky('keep-me'), sourceId: 'hist-1', toolCallId: 'call-1' }),
+    ]);
+    const result = await pruneEvidence(evidence, span(), {
+      classify: async () => ({ answers: { e1: answer } }),
+    }, { trigger: 'manual' });
+    expect(result.evidence).toEqual(evidence);
+    expect(result.report).toMatchObject({
+      status: 'ran', kept: 1, shortened: 0, dropped: 0,
+      decisions: [{ id: 'e1', action: 'keep', reason: 'missing' }],
     });
   });
 
@@ -125,19 +144,19 @@ describe('Jev evidence prune', () => {
         toolName: 'grep',
       })),
     );
-    const evaluate = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
+    const classify = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
       answers: Object.fromEntries(
         Object.keys(questions).map((id) => [id, choice('exact_contents', { exact_contents: 0.9, outcome_only: 0.05, obsolete: 0.05 }, 0.8)]),
       ),
     }));
-    const result = await pruneEvidence(evidence, span(), { evaluate }, { trigger: 'overflow' });
+    const result = await pruneEvidence(evidence, span(), { classify }, { trigger: 'overflow' });
     expect(result.report.status).toBe('ran');
     if (result.report.status !== 'ran') return;
     expect(result.report.asked).toBeGreaterThan(0);
     expect(result.report.asked).toBe(80);
     expect(result.report.kept + result.report.shortened + result.report.dropped).toBe(80);
     expect(result.report.shortened).toBe(0);
-    expect(Object.keys(evaluate.mock.calls[0]?.[1] ?? {})).toHaveLength(result.report.asked);
+    expect(Object.keys(classify.mock.calls[0]?.[1] ?? {})).toHaveLength(result.report.asked);
     expect(result.debug.bulky).toBe(80);
     expect(result.debug.leftover).toBe(0);
     expect(result.debug.questions).toBeDefined();
@@ -152,11 +171,11 @@ describe('Jev evidence prune', () => {
       item('obs', { kind: 'observation', status: 'observed', text: bulky('old-search'), sourceId: 'hist-1', toolCallId: 'call-1', toolName: 'grep' }),
       item('prefix', { kind: 'observation', status: 'observed', text: bulky('current-output'), sourceId: 'prefix-1', toolCallId: 'call-2', toolName: 'grep' }),
     ]);
-    const evaluate = vi.fn(async (_state: unknown, _questions: Record<string, unknown>) => ({
+    const classify = vi.fn(async (_state: unknown, _questions: Record<string, unknown>) => ({
       answers: { e1: choice('obsolete', { exact_contents: 0.05, outcome_only: 0.1, obsolete: 0.85 }, 0.8) },
     }));
-    await pruneEvidence(evidence, span(['prefix-1']), { evaluate }, { trigger: 'overflow' });
-    expect(evaluate.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+    await pruneEvidence(evidence, span(['prefix-1']), { classify }, { trigger: 'overflow' });
+    expect(classify.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
       trigger: expect.stringContaining('unfinished task in current_turn'),
     }));
   });

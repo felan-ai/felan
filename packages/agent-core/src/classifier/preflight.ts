@@ -1,9 +1,9 @@
-import type { Logger } from '../../logger.js';
-import { JevClientError } from './client.js';
+import type { Logger } from '../logger.js';
+import { ClassifierError } from './error.js';
 
 const WAIT_MS = 2_000;
 
-export function createJevPreflight(logger: Logger) {
+export function createClassifierPreflight(logger: Logger) {
   const log = logger.child({ component: 'classifier-preflight' });
   let enabled = false;
   let turn: { controller: AbortController; timeout: ReturnType<typeof setTimeout>; started: number } | undefined;
@@ -31,7 +31,7 @@ export function createJevPreflight(logger: Logger) {
       enabled = false;
       clear();
     },
-    async evaluate<T>(decision: string, work: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    async run<T>(decision: string, work: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
       if (!enabled) return work(signal ?? new AbortController().signal);
       if (!turn) {
         const controller = new AbortController();
@@ -42,8 +42,8 @@ export function createJevPreflight(logger: Logger) {
       const combined = signal ? AbortSignal.any([current.controller.signal, signal]) : current.controller.signal;
       let onAbort!: () => void;
       const aborted = new Promise<never>((_resolve, reject) => {
-        onAbort = () => reject(new JevClientError(signal?.aborted ? 'aborted' : 'timeout',
-          signal?.aborted ? 'Jev request was aborted' : 'Jev preflight expired'));
+        onAbort = () => reject(new ClassifierError(signal?.aborted ? 'aborted' : 'timeout',
+          signal?.aborted ? 'Classifier request was aborted' : 'Classifier preflight expired'));
         if (combined.aborted) onAbort();
         else combined.addEventListener('abort', onAbort, { once: true });
       });
