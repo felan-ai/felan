@@ -10,6 +10,15 @@ import codexExtension from '../src/index.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 
+const RESPONSES_APIS = [
+  ['openai-codex', 'openai-codex-responses'],
+  ['openai', 'openai-codex-responses'],
+  ['openai', 'openai-responses'],
+] as const;
+const REASONING_MODELS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna'].flatMap((id) => (
+  RESPONSES_APIS.map(([provider, api]) => ({ provider, api, id }))
+));
+
 describe('Codex extension activation', () => {
   it('replaces only ordinary coding tools and preserves unrelated tools for eligible models', async () => {
     const harness = createHarness();
@@ -62,9 +71,9 @@ describe('Codex extension activation', () => {
     });
   });
 
-  it.each(['gpt-6-astra', 'gpt-6.1-sol'])('preserves the original %s Codex effort when thinking changes between turns', async (id) => {
+  it.each(REASONING_MODELS)('preserves the original $provider/$api/$id effort when thinking changes between turns', async ({ provider, api, id }) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', id, 'openai-codex-responses');
+    const ctx = context(provider, id, api);
     await codexExtension(harness.pi);
 
     const oldUser = { role: 'user', content: 'Draft a plan.', timestamp: 1 };
@@ -103,9 +112,9 @@ describe('Codex extension activation', () => {
     });
   });
 
-  it('uses the new request-level effort before the first response in a model lane', async () => {
+  it.each(RESPONSES_APIS)('uses the new request-level effort before the first response in a model lane on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
 
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
@@ -118,10 +127,10 @@ describe('Codex extension activation', () => {
     });
   });
 
-  it.each(['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna'])(
-    'records a cache-preserving change for %s on Codex Responses', async (id) => {
+  it.each(REASONING_MODELS)(
+    'records a cache-preserving change for $provider/$api/$id', async ({ provider, api, id }) => {
       const harness = createHarness();
-      const ctx = context('openai-codex', id, 'openai-codex-responses');
+      const ctx = context(provider, id, api);
       await codexExtension(harness.pi);
 
       persistAnswer(ctx);
@@ -147,10 +156,10 @@ describe('Codex extension activation', () => {
     }));
   });
 
-  it.each(['gpt-6-sol', 'gpt-6-luna'])(
-    'preserves %s effort when moving from none to high', async (id) => {
+  it.each(REASONING_MODELS.filter(({ id }) => id === 'gpt-6-sol' || id === 'gpt-6-luna'))(
+    'preserves $provider/$api/$id effort when moving from none to high', async ({ provider, api, id }) => {
       const harness = createHarness();
-      const ctx = context('openai-codex', id, 'openai-codex-responses');
+      const ctx = context(provider, id, api);
       await codexExtension(harness.pi);
 
       persistAnswer(ctx);
@@ -164,22 +173,26 @@ describe('Codex extension activation', () => {
   );
 
   it.each([
-    ['openai', 'gpt-6-astra', 'openai-responses'],
+    ['openai', 'gpt-5.4', 'openai-responses'],
+    ['openai', 'gpt-6-astra', 'openai-completions'],
+    ['openai-codex', 'gpt-6-astra', 'openai-responses'],
+    ['custom', 'gpt-6-astra', 'openai-responses'],
     ['openai-codex', 'gpt-5.4', 'openai-codex-responses'],
     ['anthropic', 'claude-opus-5', 'anthropic-messages'],
   ] as const)('does not record Codex reasoning updates for %s/%s', async (provider, id, api) => {
     const harness = createHarness();
     const ctx = context(provider, id, api);
     await codexExtension(harness.pi);
+    persistAnswer(ctx);
 
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
 
-    expect(sessionBranches.get(ctx)).toEqual([]);
+    expect(sessionBranches.get(ctx)?.some((entry) => entry.type === 'custom')).toBe(false);
   });
 
-  it('defers a selector change made during streaming until the run settles', async () => {
+  it.each(RESPONSES_APIS)('defers a selector change made during streaming until the run settles on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     ctx.isIdle = () => false;
     await codexExtension(harness.pi);
     persistAnswer(ctx);
@@ -192,9 +205,9 @@ describe('Codex extension activation', () => {
     expect(sessionBranches.get(ctx)).toHaveLength(2);
   });
 
-  it('applies a queued user follow-up effort at its safe turn boundary', async () => {
+  it.each(RESPONSES_APIS)('applies a queued user follow-up effort at its safe turn boundary on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     const oldAssistant = {
       role: 'assistant', content: 'Previous answer', timestamp: 1,
@@ -232,9 +245,9 @@ describe('Codex extension activation', () => {
     expect(replayed.messages.map(({ role }) => role)).toEqual(['assistant', 'custom', 'user']);
   });
 
-  it('does not flush a streaming change between tool continuations', async () => {
+  it.each(RESPONSES_APIS)('does not flush a streaming change between tool continuations on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     ctx.isIdle = () => false;
@@ -254,9 +267,9 @@ describe('Codex extension activation', () => {
     expect(sessionBranches.get(ctx)?.at(-1)?.type).toBe('custom');
   });
 
-  it('reconciles a delayed thinking event before a new user request is rewritten', async () => {
+  it.each(RESPONSES_APIS)('reconciles a delayed thinking event before a new user request is rewritten on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     harness.setLevel('low');
@@ -284,34 +297,34 @@ describe('Codex extension activation', () => {
     expect(sessionBranches.get(ctx)?.filter((entry) => entry.type === 'custom')).toHaveLength(1);
   });
 
-  it('drops a queued change when switching sessions or models during a run', async () => {
+  it.each(RESPONSES_APIS)('drops a queued change when switching sessions or models during a run on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const oldSession = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const oldSession = context(provider, 'gpt-6-astra', api);
     oldSession.isIdle = () => false;
     await codexExtension(harness.pi);
     persistAnswer(oldSession);
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, oldSession);
 
-    const nextSession = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const nextSession = context(provider, 'gpt-6-astra', api);
     await harness.emit('session_start', {}, nextSession);
     await harness.emit('agent_settled', {}, nextSession);
     expect(sessionBranches.get(nextSession)).toEqual([]);
 
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, oldSession);
-    oldSession.model = model('openai-codex', 'gpt-6-sol', 'openai-codex-responses');
+    oldSession.model = model(provider, 'gpt-6-sol', api);
     await harness.emit('model_select', { model: oldSession.model }, oldSession);
     await harness.emit('agent_settled', {}, oldSession);
     expect(sessionBranches.get(oldSession)).toHaveLength(1);
   });
 
-  it('does not inject an update from another model lane after a switch', async () => {
+  it.each(RESPONSES_APIS)('does not inject an update from another model lane after a switch on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
 
-    ctx.model = model('openai-codex', 'gpt-6-sol', 'openai-codex-responses');
+    ctx.model = model(provider, 'gpt-6-sol', api);
     const nextUser = { role: 'user', content: 'Hello', timestamp: 1 };
     persistMessage(ctx, nextUser);
     const [projection] = await harness.emit('context', { messages: [nextUser] }, ctx) as [
@@ -327,8 +340,33 @@ describe('Codex extension activation', () => {
     });
   });
 
-  it('replays a persisted update after a session is resumed, but not on a fork before it', async () => {
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+  it.each(RESPONSES_APIS.flatMap(([provider, api]) => (
+    RESPONSES_APIS.filter(([nextProvider, nextApi]) => nextProvider !== provider || nextApi !== api)
+      .map(([nextProvider, nextApi]) => ({ provider, api, nextProvider, nextApi }))
+  )))('isolates $provider/$api updates from $nextProvider/$nextApi', async ({ provider, api, nextProvider, nextApi }) => {
+    const harness = createHarness();
+    const ctx = context(provider, 'gpt-6-astra', api);
+    await codexExtension(harness.pi);
+    persistAnswer(ctx);
+    await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
+
+    ctx.model = model(nextProvider, 'gpt-6-astra', nextApi);
+    const user = { role: 'user', content: 'Continue', timestamp: 2 };
+    persistMessage(ctx, user);
+    const [projection] = await harness.emit('context', { messages: [user] }, ctx) as [
+      { messages: Array<{ role: string; content: string }> },
+    ];
+    expect(projection.messages).toEqual([user]);
+    const [request] = await harness.emit('before_provider_request', {
+      payload: { reasoning: { effort: 'high' }, input: [{ role: 'user', content: user.content }] },
+    }, ctx);
+    expect(request).toMatchObject({
+      reasoning: { effort: 'high' }, input: [{ role: 'user', content: user.content }],
+    });
+  });
+
+  it.each(RESPONSES_APIS)('replays a persisted update after a session is resumed, but not on a fork before it on %s/%s', async (provider, api) => {
+    const ctx = context(provider, 'gpt-6-astra', api);
     const oldUser = { role: 'user', content: 'First turn', timestamp: 1 };
     const oldAssistant = {
       role: 'assistant', content: 'First answer', timestamp: 2,
@@ -368,7 +406,7 @@ describe('Codex extension activation', () => {
       ],
     });
 
-    const fork = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const fork = context(provider, 'gpt-6-astra', api);
     sessionBranches.set(fork, sessionBranches.get(ctx)!.slice(0, 2));
     const [forkProjection] = await resumed.emit('context', { messages: [oldUser, oldAssistant] }, fork) as [
       { messages: Array<{ role: string }> },
@@ -376,9 +414,9 @@ describe('Codex extension activation', () => {
     expect(forkProjection?.messages ?? [oldUser, oldAssistant]).toEqual([oldUser, oldAssistant]);
   });
 
-  it('records the current effort before a new turn if it differs from the resumed lane', async () => {
+  it.each(RESPONSES_APIS)('records the current effort before a new turn if it differs from the resumed lane on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
@@ -394,10 +432,12 @@ describe('Codex extension activation', () => {
     });
   });
 
-  it.each(['manual', 'threshold', 'overflow'] as const)(
-    'retires updates after %s compaction and starts a new effort baseline', async (reason) => {
+  it.each(RESPONSES_APIS.flatMap(([provider, api]) => (
+    (['manual', 'threshold', 'overflow'] as const).map((reason) => ({ provider, api, reason }))
+  )))(
+    'retires updates after $reason compaction on $provider/$api and starts a new effort baseline', async ({ reason, provider, api }) => {
       const harness = createHarness();
-      const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+      const ctx = context(provider, 'gpt-6-astra', api);
       await codexExtension(harness.pi);
       persistAnswer(ctx);
       await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
@@ -423,9 +463,9 @@ describe('Codex extension activation', () => {
     },
   );
 
-  it('does not send adjacent updates or incompatible automatic history changes', async () => {
+  it.each(RESPONSES_APIS)('does not send adjacent updates or incompatible automatic history changes on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'medium' }, ctx);
@@ -452,9 +492,9 @@ describe('Codex extension activation', () => {
     }, ctx)).rejects.toThrow(/truncation|compaction/iu);
   });
 
-  it('rewrites Pi Responses input_text carriers without exposing the marker', async () => {
+  it.each(RESPONSES_APIS)('rewrites Pi Responses input_text carriers without exposing the marker on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
@@ -476,9 +516,9 @@ describe('Codex extension activation', () => {
     ]);
   });
 
-  it('coalesces native replay updates next to newly projected updates', async () => {
+  it.each(RESPONSES_APIS)('coalesces native replay updates next to newly projected updates on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'medium' }, ctx);
@@ -502,9 +542,9 @@ describe('Codex extension activation', () => {
     expect(request.reasoning.effort).toBe('low');
   });
 
-  it('rejects a carrier in an unsupported Responses input shape', async () => {
+  it.each(RESPONSES_APIS)('rejects a carrier in an unsupported Responses input shape on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
@@ -523,9 +563,9 @@ describe('Codex extension activation', () => {
     }, ctx)).rejects.toThrow(/reasoning update carrier/iu);
   });
 
-  it('rejects a malformed persisted Codex update rather than sending it as user content', async () => {
+  it.each(RESPONSES_APIS)('rejects a malformed persisted Codex update rather than sending it as user content on %s/%s', async (provider, api) => {
     const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra', 'openai-codex-responses');
+    const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     sessionBranches.get(ctx)!.push({
       type: 'custom', id: 'bad-update', parentId: null, customType: 'codex-reasoning-update',

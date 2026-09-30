@@ -13,7 +13,8 @@ const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export function supportsDynamicThinking(model: Model<Api> | undefined): model is Model<Api> {
   if (!model?.reasoning) return false;
-  if (model.api === 'openai-codex-responses') {
+  if (model.api === 'openai-codex-responses'
+    || (model.provider === 'openai' && model.api === 'openai-responses')) {
     return (model.provider === 'openai-codex' || model.provider === 'openai') && CODEX_MODELS.has(model.id);
   }
   return model.provider === 'anthropic' && model.api === 'anthropic-messages'

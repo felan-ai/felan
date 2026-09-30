@@ -9,7 +9,10 @@ const astra = {
 describe('dynamic-thinking high-effort estimate', () => {
   it('uses the same explicitly heuristic uplift for supported models and high-to-lower selections', () => {
     const usage = { output: 1_000, reasoning: 400 };
-    for (const model of [astra, { ...astra, id: 'gpt-6-sol' }, { ...astra, id: 'gpt-6-luna' }, {
+    const officialModels = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna'].map((id) => ({
+      ...astra, provider: 'openai', api: 'openai-responses' as const, id,
+    }));
+    for (const model of [astra, { ...astra, id: 'gpt-6-sol' }, { ...astra, id: 'gpt-6-luna' }, ...officialModels, {
       ...astra, api: 'anthropic-messages' as const, provider: 'anthropic', id: 'claude-opus-5-5',
       compat: { supportsMidConvoEffort: true },
     }]) {

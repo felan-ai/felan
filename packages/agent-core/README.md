@@ -86,7 +86,8 @@ Session composition accepts an optional `dynamicThinking` capability. When the
 runtime has a classifier, it starts eligible effort selection at `input` and
 applies it on `before_agent_start`,
 not queued follow-ups or tool continuations, without persisting the user's
-default. Codex requests are classified only when the Codex extension is loaded;
+default. Eligible GPT-6 requests on official OpenAI or Codex Responses are
+classified only when the Codex extension is loaded;
 eligible Anthropic models use Pi's mid-conversation effort support.
 Explicit thinking changes take precedence for the remainder of the session.
 Absent the option or the classifier, composition does not enable this feature.

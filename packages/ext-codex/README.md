@@ -26,19 +26,25 @@ Pi includes GPT-6 Astra in its built-in OpenAI and OpenAI Codex catalogs.
 The existing GPT policy enables this extension's structured tools and native
 Responses controls without a custom `models.json` entry.
 
-For GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using `openai-codex-responses`, changing the
-thinking level between turns keeps the initial request-level reasoning effort
+For GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using `openai-responses` on `openai`
+or `openai-codex-responses` on either eligible provider, changing the thinking
+level between turns keeps the initial request-level reasoning effort
 and projects a native `configuration_update` before the next user message in
 the provider request. Updates are retained across session resume and forks;
 after Pi compaction,
 the new context establishes its own effort baseline. A queued user follow-up
 receives its change before its next response; a tool-only continuation does
 not. Changes without another user turn are recorded when the run settles.
-This does not apply to standard `openai-responses`, other GPT models, or
-Anthropic. Automatic server truncation
+These updates require standard, single-agent Responses requests; pro mode,
+server-side multi-agent mode, Chat Completions, other GPT models, and Anthropic
+are not supported. Automatic server truncation
 and compaction cannot be combined with native updates; Pi's existing local
 compaction remains available. Actual cache hits also depend on provider cache
 eligibility and can be checked using response usage cached-token counts.
+
+Reasoning updates do not change provider transport. `forceCachedWebSockets`
+still applies only to `openai-codex` / `openai-codex-responses`; the official
+OpenAI API continues to use Pi's native transport.
 
 The extension excludes restart-durable jobs, web access, image generation,
 Code Mode/Responses Lite, prompt replacement, native Responses compaction,

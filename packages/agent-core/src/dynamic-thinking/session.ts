@@ -29,7 +29,8 @@ export function createDynamicThinkingSession(
     firstAssistant?: AssistantMessage;
     failed?: boolean;
   } | undefined;
-  const canClassify = (api: string) => api !== 'openai-codex-responses' || codexEffortUpdatesAvailable;
+  const canClassify = (api: string) => (api !== 'openai-codex-responses' && api !== 'openai-responses')
+    || codexEffortUpdatesAvailable;
   let pending: { prompt: string; model: Model<Api>; original: FelanThinkingLevel;
     controller: AbortController; decision: ReturnType<typeof evaluateDynamicThinkingLevel> } | undefined;
 

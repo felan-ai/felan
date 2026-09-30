@@ -141,13 +141,13 @@ describe('local Agent Core lifecycle', () => {
     await runtime.dispose();
   });
 
-  it('records a cache-safe Codex effort change before the next user turn', async () => {
+  it.each(['openai-codex', 'openai'] as const)('records a cache-safe %s effort change before the next user turn', async (provider) => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent');
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
     const modelRuntime = await createLocalModelRuntime(agentDir);
-    const model = modelRuntime.getModel('openai-codex', 'gpt-6-sol');
+    const model = modelRuntime.getModel(provider, 'gpt-6-sol');
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
     const effortChoices = ['low', 'high'];
@@ -184,14 +184,116 @@ describe('local Agent Core lifecycle', () => {
     await runtime.dispose();
   });
 
-  it('does not select Codex effort when the Codex extension is disabled', async () => {
+  it('preserves official OpenAI request prefixes through native Responses dispatch', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    const modelRuntime = await createLocalModelRuntime(agentDir);
+    const model = modelRuntime.getModel('openai', 'gpt-6-sol');
+    expect(model?.api).toBe('openai-responses');
+    vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+    const effortChoices = ['low', 'high', 'high'];
+    const classify = vi.fn().mockImplementation(async (_state, questions: Record<string, unknown>) => ({
+      answers: questions.effort
+        ? { effort: { type: 'choice', choice: effortChoices.shift() } }
+        : { route: { type: 'choice', choice: 'regular' } },
+    }));
+    const requests: Array<{
+      input: Array<{ role?: string; type?: string; reasoning?: { effort: string } }>;
+      reasoning?: { effort: string };
+      prompt_cache_key?: string;
+      prompt_cache_retention?: string;
+      prompt_cache_options?: { ttl: string };
+    }> = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const request = new Request(input, init);
+      expect(request.url).toBe('https://api.openai.com/v1/responses');
+      requests.push(await request.json());
+      const item = {
+        type: 'message', role: 'assistant', id: `msg_${requests.length}`, status: 'completed',
+        content: [{ type: 'output_text', text: 'Done', annotations: [] }],
+      };
+      const events = [
+        { type: 'response.output_item.done', output_index: 0, item },
+        { type: 'response.completed', response: {
+          id: `resp_${requests.length}`, status: 'completed', output: [item],
+          usage: { input_tokens: 1, output_tokens: 1, input_tokens_details: { cached_tokens: 0 } },
+        } },
+      ];
+      return new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''), {
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    const runtime = await createLocalFelanRuntime({
+      cwd, agentDir, homeDir: root, modelRuntime, model: model!,
+      extensionPackages: [builtinExtensionPackages.codex],
+      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
+        ...request, classifier: { classify },
+      }),
+    });
+    try {
+      runtime.session.agent.streamFunction = (activeModel, context, options) => modelRuntime.streamSimple(
+        activeModel, context, { ...options, apiKey: 'sk-test-only', fetch, cacheRetention: 'long' },
+      );
+      await runtime.session.bindExtensions({ mode: 'print' });
+      const defaultThinking = runtime.session.settingsManager.getDefaultThinkingLevel();
+      await runtime.session.prompt('Describe the file briefly');
+      await runtime.session.prompt('Investigate a concurrency bug');
+      await runtime.session.prompt('Continue the investigation');
+      expect(effortChoices).toEqual([]);
+      expect(runtime.session.settingsManager.getDefaultThinkingLevel()).toBe(defaultThinking);
+
+      runtime.session.setThinkingLevel('medium');
+      await runtime.session.prompt('Summarize the findings');
+
+      expect(fetch).toHaveBeenCalledTimes(4);
+      expect(classify.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'effort'))).toHaveLength(3);
+      const [first, second, third, fourth] = requests;
+      expect(first!.input.some((item) => item.type === 'configuration_update')).toBe(false);
+      expect(first!.prompt_cache_options).toEqual({ ttl: '30m' });
+      for (const [index, payload] of requests.entries()) {
+        expect(payload).toMatchObject({
+          reasoning: { effort: 'low' },
+          prompt_cache_key: first!.prompt_cache_key,
+        });
+        expect(payload.prompt_cache_options).toEqual(first!.prompt_cache_options);
+        expect(payload.prompt_cache_retention).toBe(first!.prompt_cache_retention);
+        expect(payload.prompt_cache_key).toBe(runtime.session.sessionManager.getSessionId());
+        expect(JSON.stringify(payload)).not.toContain('<codex-reasoning-update:');
+        if (index > 0) {
+          const previous = requests[index - 1]!;
+          expect(payload.input.slice(0, previous.input.length)).toEqual(previous.input);
+        }
+      }
+      expect(second!.input.slice(-2)).toMatchObject([
+        { type: 'configuration_update', reasoning: { effort: 'high' } }, { role: 'user' },
+      ]);
+      expect(third!.input.filter((item) => item.type === 'configuration_update')).toEqual([
+        { type: 'configuration_update', reasoning: { effort: 'high' } },
+      ]);
+      expect(fourth!.input.slice(-2)).toMatchObject([
+        { type: 'configuration_update', reasoning: { effort: 'medium' } }, { role: 'user' },
+      ]);
+      expect(runtime.session.sessionManager.getBranch().filter((entry) => (
+        entry.type === 'custom' && entry.customType === 'codex-reasoning-update'
+      ))).toMatchObject([
+        { data: { initialEffort: 'low', effort: 'high' } },
+        { data: { initialEffort: 'low', effort: 'medium' } },
+      ]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it.each(['openai-codex', 'openai'] as const)('does not select %s effort when the Codex extension is disabled', async (provider) => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent');
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
     await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ builtinExtensions: { codex: false } }));
     const modelRuntime = await createLocalModelRuntime(agentDir);
-    const model = modelRuntime.getModel('openai-codex', 'gpt-6-sol');
+    const model = modelRuntime.getModel(provider, 'gpt-6-sol');
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
     const classify = vi.fn().mockResolvedValue({ answers: { effort: { type: 'choice', choice: 'low' } } });
@@ -201,7 +303,7 @@ describe('local Agent Core lifecycle', () => {
         ...request, classifier: { classify },
       }),
     });
-    expect(runtime.session.model?.api).toBe('openai-codex-responses');
+    expect(runtime.session.model?.api).toBe(provider === 'openai' ? 'openai-responses' : 'openai-codex-responses');
     expect(runtime.session.resourceLoader.getExtensions().extensions.map(({ path }) => path))
       .not.toContain('<inline:@felan-ai/ext-codex>');
     runtime.session.agent.streamFunction = (activeModel) => {

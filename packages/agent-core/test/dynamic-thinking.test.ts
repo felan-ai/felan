@@ -43,7 +43,7 @@ describe('dynamic thinking selection', () => {
   it('does not classify an unsupported provider or accept an invalid answer', async () => {
     const unsupported = classifier('low');
     expect(await selectDynamicThinkingLevel(
-      unsupported, model('openai', 'openai-responses', 'gpt-6-sol'), 'Help', evidence, 'high',
+      unsupported, model('custom', 'openai-responses', 'gpt-6-sol'), 'Help', evidence, 'high',
     )).toBeUndefined();
     expect(unsupported.classify).not.toHaveBeenCalled();
 
@@ -66,10 +66,26 @@ describe('dynamic thinking selection', () => {
     },
   );
 
-  it('keeps GPT-6.1 Sol ineligible on standard OpenAI Responses', async () => {
+  it.each(['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna'])(
+    'classifies %s effort on official OpenAI Responses', async (id) => {
+      const effort = classifier('low');
+      expect(await selectDynamicThinkingLevel(
+        effort, model('openai', 'openai-responses', id),
+        'Give a concise answer', evidence, 'high',
+      )).toBe('low');
+      expect(effort.classify).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    ['openai', 'openai-responses', 'gpt-5.4'],
+    ['openai', 'openai-completions', 'gpt-6-astra'],
+    ['openai-codex', 'openai-responses', 'gpt-6-astra'],
+    ['OpenAI', 'openai-responses', 'gpt-6-astra'],
+  ] as const)('keeps %s/%s/%s ineligible', async (provider, api, id) => {
     const effort = classifier('low');
     expect(await selectDynamicThinkingLevel(
-      effort, model('openai', 'openai-responses', 'gpt-6.1-sol'),
+      effort, model(provider, api, id),
       'Give a concise answer', evidence, 'high',
     )).toBeUndefined();
     expect(effort.classify).not.toHaveBeenCalled();

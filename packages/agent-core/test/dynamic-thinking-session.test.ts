@@ -11,6 +11,12 @@ import {
 import { createDynamicThinkingSession } from '../src/dynamic-thinking/session.js';
 import { TestAgentRuntime } from './test-agent-runtime.js';
 
+const RESPONSES_APIS = [
+  ['openai-codex', 'openai-codex-responses'],
+  ['openai', 'openai-codex-responses'],
+  ['openai', 'openai-responses'],
+] as const;
+
 function harness(
   choices: string[], codexEffortUpdatesAvailable = true, reporter?: SavingsReporter,
   initialLevel = 'medium',
@@ -56,12 +62,13 @@ function harness(
   const settle = (outcome: 'completed' | 'error' | 'aborted' = 'completed') => emit('agent_before_settle', {
     outcome, continue: false, context: { pendingMessages: [] },
   });
-  return { manager, emit, classify, getLevel: () => level, setLevel, assistant, settle };
+  return { model, manager, emit, classify, getLevel: () => level, setLevel, assistant, settle };
 }
 
 describe('dynamic thinking session lifecycle', () => {
-  it('starts on input and applies only a matching timely result', async () => {
-    const { emit, classify, getLevel } = harness(['low']);
+  it.each(RESPONSES_APIS)('starts on input and applies only a matching timely result on %s/%s', async (provider, api) => {
+    const { emit, classify, getLevel, model } = harness(['low']);
+    Object.assign(model, { provider, api });
     await emit('input', { text: 'Simple edit', source: 'interactive' });
     expect(classify).toHaveBeenCalledOnce();
     await emit('before_agent_start', { prompt: 'Simple edit' });
@@ -85,8 +92,10 @@ describe('dynamic thinking session lifecycle', () => {
     expect(getLevel()).toBe('high');
   });
 
-  it('skips Codex decisions without the reasoning-update extension', async () => {
-    const { emit, classify, getLevel } = harness(['low'], false);
+  it.each(RESPONSES_APIS)('skips %s/%s decisions without the reasoning-update extension', async (provider, api) => {
+    const { emit, classify, getLevel, model } = harness(['low'], false);
+    Object.assign(model, { provider, api });
+    await emit('input', { text: 'Summarize the file', source: 'interactive' });
     await emit('before_agent_start', { prompt: 'Summarize the file' });
     expect(classify).not.toHaveBeenCalled();
     expect(getLevel()).toBe('medium');
@@ -106,16 +115,18 @@ describe('dynamic thinking session lifecycle', () => {
     expect(classify).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps an explicit thinking selection authoritative for subsequent turns', async () => {
-    const { emit, classify, getLevel, setLevel } = harness(['low']);
+  it.each(RESPONSES_APIS)('keeps an explicit thinking selection authoritative on %s/%s', async (provider, api) => {
+    const { emit, classify, getLevel, setLevel, model } = harness(['low']);
+    Object.assign(model, { provider, api });
     setLevel('max');
     await emit('before_agent_start', { prompt: 'Do something' });
     expect(getLevel()).toBe('max');
     expect(classify).not.toHaveBeenCalled();
   });
 
-  it('does not apply a result after shutdown', async () => {
-    const { emit, classify, getLevel } = harness(['high']);
+  it.each(RESPONSES_APIS)('does not apply a result after shutdown on %s/%s', async (provider, api) => {
+    const { emit, classify, getLevel, model } = harness(['high']);
+    Object.assign(model, { provider, api });
     let release!: (value: unknown) => void;
     classify.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const pending = emit('before_agent_start', { prompt: 'Fresh request' });
@@ -126,9 +137,10 @@ describe('dynamic thinking session lifecycle', () => {
     expect(classify).toHaveBeenCalledOnce();
   });
 
-  it('reports only the first successful high-to-medium Astra response, net of classifier cost', async () => {
+  it.each(RESPONSES_APIS)('reports only the first successful high-to-medium Astra response on %s/%s, net of classifier cost', async (provider, api) => {
     const report = vi.fn().mockResolvedValue(undefined);
-    const { emit, classify, assistant } = harness(['medium'], true, { report }, 'high');
+    const { emit, classify, assistant, model } = harness(['medium'], true, { report }, 'high');
+    Object.assign(model, { provider, api });
     classify.mockResolvedValueOnce({
       answers: { effort: { type: 'choice', choice: 'medium' } },
       metadata: { usage: { requests: 1, costUsd: 0.0002 } },
@@ -142,12 +154,12 @@ describe('dynamic thinking session lifecycle', () => {
     expect(report).toHaveBeenCalledWith({
       category: 'output-optimization', operation: 'dynamic-thinking',
       baseline: {
-        model: { provider: 'openai-codex', id: 'gpt-6-astra' },
+        model: { provider, id: 'gpt-6-astra' },
         tokens: { input: 50, output: 1_020, cacheRead: 0, cacheWrite: 0 },
         costUsd: expect.any(Number),
       },
       actual: {
-        model: { provider: 'openai-codex', id: 'gpt-6-astra' },
+        model: { provider, id: 'gpt-6-astra' },
         tokens: { input: 50, output: 1_000, cacheRead: 0, cacheWrite: 0 },
         costUsd: expect.any(Number),
       },

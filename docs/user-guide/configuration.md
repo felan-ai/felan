@@ -300,12 +300,13 @@ rest of that session; the headless `--thinking` option and explicit child-agent
 thinking also bypass it. This includes Prewalk's session-local planning and
 implementation thinking choices.
 
-Only GPT-6 Astra, Sol, and Luna using `openai-codex-responses` with the Codex
-extension enabled, and Anthropic models marked for mid-conversation effort by
-the installed Pi adapter, qualify. Codex uses history `configuration_update`
+Only GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using official OpenAI
+`openai-responses` or `openai-codex-responses` with the Codex extension enabled,
+and Anthropic models marked for mid-conversation effort by the installed Pi
+adapter, qualify. Eligible GPT models use history `configuration_update`
 items. Eligible Claude models use per-message `output_config` while retaining a
-fixed request-level effort. Standard `openai-responses`, older Claude models,
-and other providers keep their existing thinking behavior. Prompt caching
+fixed request-level effort. Other GPT models, Chat Completions, older Claude
+models, and other providers keep their existing thinking behavior. Prompt caching
 still depends on the provider's eligibility, prefix, and retention; check
 cached-token usage rather than assuming savings. Classification itself adds
 latency and may incur a separate provider charge. The shared Agent Core evidence
@@ -544,16 +545,22 @@ timing. Set it to `false` to use Pi's standard timing. Manual and
 overflow-recovery compaction are unchanged. Pi continues to generate the
 compaction summary; this is not OpenAI native Responses compaction.
 
-On GPT-6 Astra, Sol, and Luna with the `openai-codex-responses` API, changing
-thinking level between turns persists a `configuration_update` that appears
+On GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol with `openai-responses` on `openai`
+or `openai-codex-responses` on either eligible provider, changing thinking
+level between turns persists a `configuration_update` that appears
 before the next user message in the provider request, while leaving the
 initial request-level reasoning effort unchanged. This can preserve the prompt
-cache across a level change, including after resuming a session. It does not
-apply to standard `openai-responses`, other models, or Anthropic. A queued user
+cache across a level change, including after resuming a session. These updates
+require standard, single-agent Responses requests; pro mode, server-side
+multi-agent mode, Chat Completions, other models, and Anthropic are not supported. A queued user
 follow-up can receive an update at its next safe turn boundary. Changes during
 a tool continuation remain deferred until a new user turn or the run settles.
 Pi compaction starts a new prefix, and automatic server compaction or truncation is incompatible
 with these updates. Verify actual reuse from the provider's cached-token usage.
+
+`forceCachedWebSockets` still applies only to `openai-codex` /
+`openai-codex-responses`. Reasoning updates on the official OpenAI API do not
+change its native Pi transport.
 
 GPT models keep Felan Code's ordinary `read` and `bash` tools. Codex mode replaces
 only `edit` and `write` with `apply_patch`; process sessions and image reading
