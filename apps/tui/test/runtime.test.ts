@@ -581,6 +581,12 @@ describe('local Agent Core lifecycle', () => {
     }));
     await writeFile(join(agentDir, 'APPEND_SYSTEM.md'), 'Local application instructions');
     await writeFile(join(cwd, '.pi', 'APPEND_SYSTEM.md'), 'Ignored project append');
+    await writeFile(join(cwd, '.pi', 'mcp.json'), JSON.stringify({
+      mcpServers: { untrusted: { command: 'should-not-run' } },
+    }));
+    await writeFile(join(agentDir, 'mcp.json'), JSON.stringify({
+      mcpServers: { untrusted: { command: 'should-not-run' } },
+    }));
     await writeFile(join(cwd, 'AGENTS.md'), 'Root project instructions');
     await writeFile(join(cwd, 'CLAUDE.md'), 'Ignored fallback instructions');
     await writeFile(join(projectSkills, 'project-skill', 'SKILL.md'), skill('project-skill'));
@@ -608,6 +614,9 @@ describe('local Agent Core lifecycle', () => {
       'user-skill',
     ]);
     expect(runtime.session.agent.state.tools.map(({ name }) => name)).not.toContain('Agent');
+    for (const nativeTool of ['mcp', 'codemode', 'tool_search']) {
+      expect(runtime.session.agent.state.tools.map(({ name }) => name)).not.toContain(nativeTool);
+    }
     const systemPrompt = runtime.session.systemPrompt;
     expect(systemPrompt.startsWith(FELAN_BASE_SYSTEM_PROMPT)).toBe(true);
     expect(systemPrompt).not.toContain('Be concise and direct');

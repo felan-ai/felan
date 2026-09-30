@@ -195,7 +195,7 @@ async function createHarness(
     return results;
   };
   const execute = async (name: string, params: Record<string, unknown>) => {
-    return tools.get(name)!.execute('call', params, undefined, undefined, ctx);
+    return tools.get(name)!.execute('call', params, undefined, undefined, ctx as Parameters<ToolDefinition['execute']>[4]);
   };
   const shutdown = async () => {
     await emit('session_shutdown', { reason: 'exit' });

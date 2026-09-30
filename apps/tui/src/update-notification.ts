@@ -29,22 +29,16 @@ export function showFelanUpdateNotification(mode: InteractiveMode, version: stri
   // Adapt its components so Felan retains the active theme and border styling.
   container.addChild = (component) => {
     const text = Reflect.get(component, 'text');
-    if (typeof text === 'string') {
-      if (text.includes('Changelog:')) return;
+    const build = Reflect.get(component, 'build');
+    const currentText = typeof build === 'function' ? build.call(component) : text;
+    if (typeof currentText === 'string' && currentText.includes('Changelog:')) return;
 
+    if (typeof build === 'function') {
+      Reflect.set(component, 'build', () => adaptUpdateInstruction(build.call(component), version));
+    } else if (typeof text === 'string') {
       const setText = Reflect.get(component, 'setText');
-      const instructionPrefix = `New version ${version} is available. Run `;
-      const instructionStart = text.indexOf(instructionPrefix);
-      if (typeof setText === 'function' && instructionStart >= 0) {
-        const actionStart = instructionStart + instructionPrefix.length;
-        const styledAction = text.slice(actionStart).replace(
-          /(\x1b\[[0-9;]*m)[^\x1b]+(?=\x1b\[[0-9;]*m$)/u,
-          '$1felan update',
-        );
-        const instruction = text.slice(0, instructionStart)
-          + `New version ${version} is available. Exit all Felan Code sessions, then run `
-          + styledAction;
-        setText.call(component as TextComponent, instruction);
+      if (typeof setText === 'function') {
+        setText.call(component as TextComponent, adaptUpdateInstruction(text, version));
       }
     }
     addChild.call(container, component);
@@ -56,4 +50,19 @@ export function showFelanUpdateNotification(mode: InteractiveMode, version: stri
     if (ownAddChild) Object.defineProperty(container, 'addChild', ownAddChild);
     else Reflect.deleteProperty(container, 'addChild');
   }
+}
+
+function adaptUpdateInstruction(text: string, version: string): string {
+  const instructionPrefix = `New version ${version} is available. Run `;
+  const instructionStart = text.indexOf(instructionPrefix);
+  if (instructionStart < 0) return text;
+
+  const actionStart = instructionStart + instructionPrefix.length;
+  const styledAction = text.slice(actionStart).replace(
+    /(\x1b\[[0-9;]*m)[^\x1b]+(?=\x1b\[[0-9;]*m$)/u,
+    '$1felan update',
+  );
+  return text.slice(0, instructionStart)
+    + `New version ${version} is available. Exit all Felan Code sessions, then run `
+    + styledAction;
 }

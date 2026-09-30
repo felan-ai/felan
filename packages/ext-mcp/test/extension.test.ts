@@ -446,7 +446,7 @@ function createHarness(
       params,
       signal,
       undefined,
-      context,
+      context as Parameters<ToolDefinition['execute']>[4],
     ),
   };
 }

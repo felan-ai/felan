@@ -9,6 +9,7 @@ import {
   createLocalModelRuntime,
   getLocalAgentDir,
 } from '../runtime.js';
+import { createLocalSettingsManager } from '../settings.js';
 import { sanitizeAcpErrorMessage } from './session-updates.js';
 
 const MAX_AUTH_METHODS = 128;
@@ -123,9 +124,10 @@ export async function runLocalFelanAcpLogin(
 
   try {
     controller.signal.throwIfAborted();
+    const agentDir = options.agentDir ?? getLocalAgentDir();
     const modelRuntime = await waitForCancellation(
       createRuntime(
-        options.agentDir ?? getLocalAgentDir(),
+        agentDir,
         controller.signal,
       ),
       controller.signal,
@@ -166,10 +168,19 @@ export async function runLocalFelanAcpLogin(
         if (interactionActive) notifyAuthEvent(terminal, event, secrets, interactionBudget);
       },
     };
-    await waitForCancellation(
-      modelRuntime.login(selected.providerId, selected.authType, interaction),
-      controller.signal,
-    );
+    let login: ReturnType<ModelRuntime['login']>;
+    if (selected.providerId === 'openai' && selected.authType === 'oauth') {
+      const settings = createLocalSettingsManager(process.cwd(), agentDir);
+      const deviceId = settings.getOrCreateDeviceId();
+      await waitForCancellation(settings.flush(), controller.signal);
+      if (settings.drainErrors().length > 0) throw new Error('Could not save the installation device ID');
+      login = modelRuntime.login(selected.providerId, selected.authType, interaction, {
+        getDeviceId: () => deviceId,
+      });
+    } else {
+      login = modelRuntime.login(selected.providerId, selected.authType, interaction);
+    }
+    await waitForCancellation(login, controller.signal);
     controller.signal.throwIfAborted();
     terminal.writeLine(`Authentication saved for ${selected.providerName}.`);
     return 0;

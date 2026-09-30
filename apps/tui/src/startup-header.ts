@@ -1,10 +1,10 @@
 import {
-  VERSION as PI_VERSION,
+  getSelectListTheme,
   type InteractiveMode,
 } from '@earendil-works/pi-coding-agent';
 import { getProjectInstructions } from '@felan-ai/agent-core';
 import { isMemoryContextEntry } from '@felan-ai/ext-memory';
-import type { Component } from '@earendil-works/pi-tui';
+import { sliceByColumn, type Component } from '@earendil-works/pi-tui';
 import { FELAN_VERSION } from './version.js';
 import type { LocalExtensionStartupState } from './dependencies.js';
 
@@ -14,8 +14,7 @@ const FELAN_TAGLINE = '   get the job done · waste less';
 const MEMORY_CONTEXT_DISPLAY_PATH = 'Project memory';
 
 interface ExpandableStartupHeader extends Component {
-  getCollapsedText(): string;
-  getExpandedText(): string;
+  build: () => string;
   setExpanded(expanded: boolean): void;
 }
 
@@ -55,8 +54,8 @@ export function installFelanStartupHeader(
     readonly extensionState?: () => LocalExtensionStartupState;
   } = {},
 ): void {
-  // Pi 0.85.0 has no pre-render header hook. Intercepting this assignment keeps
-  // its own expandable component and keybinding behavior without showing it first.
+  // Pi has no pre-render header hook. Intercepting this assignment keeps its
+  // expandable component and keybindings without showing the Pi logo first.
   const internals = mode as unknown as InteractiveModeHeaderInternals;
   const descriptor = Object.getOwnPropertyDescriptor(internals, 'builtInHeader');
   if (!descriptor || !('value' in descriptor) || !descriptor.configurable) {
@@ -86,16 +85,15 @@ export function installFelanStartupHeader(
 
 export function rewritePiStartupHeader(text: string): string {
   const lines = text.split('\n');
-  const logo = (lines[0] ?? '')
-    .replace('pi', '◉  Felan Code')
-    .replace(`v${PI_VERSION}`, `v${FELAN_VERSION}`);
+  const logo = getSelectListTheme().selectedText(`◉  Felan Code v${FELAN_VERSION}`);
   const upstreamOnboarding = lines.find((line) => line.includes(PI_ONBOARDING));
   const tagline = upstreamOnboarding?.replace(PI_ONBOARDING, FELAN_TAGLINE) ?? FELAN_TAGLINE;
-  const instructions = lines.slice(1).filter((line) => (
-    line.trim().length > 0
-    && !line.includes(PI_ONBOARDING)
-    && !line.includes(PI_RESOURCE_HINT)
-  ));
+  const instructions = [sliceByColumn(lines[1] ?? '', 5, Number.MAX_SAFE_INTEGER), ...lines.slice(2)]
+    .filter((line) => (
+      line.trim().length > 0
+      && !line.includes(PI_ONBOARDING)
+      && !line.includes(PI_RESOURCE_HINT)
+    ));
   return [logo, tagline, ...(instructions.length === 0 ? [] : ['', ...instructions])]
     .filter((line, index) => index > 0 || line.length > 0)
     .join('\n');
@@ -103,16 +101,13 @@ export function rewritePiStartupHeader(text: string): string {
 
 function isExpandableStartupHeader(component: Component | undefined): component is ExpandableStartupHeader {
   return component !== undefined
-    && typeof Reflect.get(component, 'getCollapsedText') === 'function'
-    && typeof Reflect.get(component, 'getExpandedText') === 'function'
+    && typeof Reflect.get(component, 'build') === 'function'
     && typeof Reflect.get(component, 'setExpanded') === 'function';
 }
 
 function rewriteExpandableStartupHeader(header: ExpandableStartupHeader): void {
-  const getCollapsedText = header.getCollapsedText.bind(header);
-  const getExpandedText = header.getExpandedText.bind(header);
-  header.getCollapsedText = () => rewritePiStartupHeader(getCollapsedText());
-  header.getExpandedText = () => rewritePiStartupHeader(getExpandedText());
+  const build = header.build.bind(header);
+  header.build = () => rewritePiStartupHeader(build());
 }
 
 function installMemoryContextIndicator(

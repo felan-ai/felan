@@ -561,7 +561,7 @@ describe('@felan-ai/ext-subagents', () => {
       { prompt: 'Work', description: 'work', subagent_type: 'general-purpose' },
       undefined,
       undefined,
-      { model: { provider: 'provider', id: 'model' } } as ExtensionContext,
+      { model: { provider: 'provider', id: 'model' } } as Parameters<ToolDefinition['execute']>[4],
     );
     expect(resultText(result)).toContain('unknown_agent_type');
     expect(harness.host.spawn).not.toHaveBeenCalled();
@@ -626,7 +626,7 @@ async function execute(
   params: Record<string, unknown>,
 ) {
   const tool = harness.tools.get(name)!;
-  return tool.execute('call', params, undefined, undefined, harness.context);
+  return tool.execute('call', params, undefined, undefined, harness.context as Parameters<ToolDefinition['execute']>[4]);
 }
 
 function resultText(result: { content: Array<{ type: string; text?: string }> }): string | undefined {

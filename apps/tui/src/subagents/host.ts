@@ -1005,7 +1005,7 @@ export class LocalSubagentManager {
           return sessionFileOutcome(created.session.sessionFile);
         }
         await input.onReady({
-          steer: (message) => created.session.steer(message),
+          steer: async (message) => { await created.session.steer(message); },
           cancel,
         });
         if (input.signal.aborted) {

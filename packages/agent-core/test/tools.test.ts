@@ -1,13 +1,13 @@
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { AgentRuntime } from '../src/runtime.js';
 import { describe, expect, it } from 'vitest';
 import { createRuntimeCodingTools } from '../src/index.js';
 import { TestAgentRuntime } from './test-agent-runtime.js';
 
-const context = {} as ExtensionContext;
+const context = {} as Parameters<ToolDefinition['execute']>[4];
 
 describe('runtime-backed coding tools', () => {
   it('routes file reads and writes through AgentRuntime instead of the host filesystem', async () => {

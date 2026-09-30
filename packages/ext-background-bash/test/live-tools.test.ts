@@ -343,7 +343,9 @@ async function createClient(
       const controller = new AbortController();
       controllers.add(controller);
       const callSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-      const result = Promise.resolve().then(() => tool.execute(`live-${++callId}`, params, callSignal, undefined, ctx));
+      const result = Promise.resolve().then(() => tool.execute(
+        `live-${++callId}`, params, callSignal, undefined, ctx as Parameters<ToolDefinition['execute']>[4],
+      ));
       pending.add(result);
       const finish = () => {
         pending.delete(result);

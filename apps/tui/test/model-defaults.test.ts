@@ -8,7 +8,7 @@ import {
 describe('Felan model defaults', () => {
   it('covers every built-in provider', () => {
     expect(Object.keys(FELAN_DEFAULT_MODEL_PER_PROVIDER).sort()).toEqual(
-      builtinProviders().map(({ id }) => id).sort(),
+      builtinProviders().filter((provider) => provider.getModels().length > 0).map(({ id }) => id).sort(),
     );
   });
 

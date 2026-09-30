@@ -77,7 +77,9 @@ for (const required of [
 const piPackageNames = [
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-ai',
+  '@earendil-works/pi-codemode',
   '@earendil-works/pi-coding-agent',
+  '@earendil-works/pi-mcp',
   '@earendil-works/pi-protocol',
   '@earendil-works/pi-server',
   '@earendil-works/pi-telemetry',

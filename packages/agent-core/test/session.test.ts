@@ -128,6 +128,9 @@ describe('Agent Core session composition', () => {
       'ls',
       'app-tool',
     ]));
+    for (const nativeTool of ['codemode', 'tool_search', 'mcp']) {
+      expect(result.session.agent.state.tools.map((tool) => tool.name)).not.toContain(nativeTool);
+    }
 
     await result.session.bindExtensions({ mode: 'print' });
     expect(order).toEqual([

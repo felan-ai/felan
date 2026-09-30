@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-powerline",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "description": "Terminal powerline extension for Felan",
   "license": "MIT",
   "type": "module",

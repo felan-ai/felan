@@ -133,6 +133,40 @@ describe('finite ACP terminal login', () => {
     expect(output).toContain('[REDACTED_SECRET]');
   });
 
+  it('persists the installation device ID required by OpenAI ChatGPT OAuth', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'felan-acp-chatgpt-'));
+    temporaryPaths.push(root);
+    const deviceIds: string[] = [];
+    const login = vi.fn(async (_providerId, _type, _interaction, options) => {
+      deviceIds.push(options.getDeviceId());
+      return { type: 'oauth' as const, access: 'access', refresh: 'refresh', expires: Date.now() + 60_000 };
+    });
+    const terminal = new TestLoginTerminal([0, 0], []);
+    const options = {
+      agentDir: root,
+      terminal,
+      signalSource: new EventEmitter(),
+      createModelRuntime: async () => modelRuntime({
+        provider: {
+          id: 'openai',
+          name: 'OpenAI',
+          auth: { oauth: { name: 'ChatGPT', login: vi.fn(), refresh: vi.fn(), toAuth: vi.fn() } },
+        },
+        login,
+      }),
+    };
+
+    expect(await runLocalFelanAcpLogin(options)).toBe(0);
+    expect(await runLocalFelanAcpLogin(options)).toBe(0);
+    expect(deviceIds).toHaveLength(2);
+    expect(deviceIds[0]).toMatch(/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/iu);
+    expect(deviceIds[1]).toBe(deviceIds[0]);
+    expect(JSON.parse(await readFile(join(root, 'settings.json'), 'utf8')).deviceId).toBe(deviceIds[0]);
+    expect(login).toHaveBeenCalledWith('openai', 'oauth', expect.any(Object), {
+      getDeviceId: expect.any(Function),
+    });
+  });
+
   it('redacts a rejected credential from login failures', async () => {
     const secret = 'unstructured credential value';
     const terminal = new TestLoginTerminal([0], [secret]);

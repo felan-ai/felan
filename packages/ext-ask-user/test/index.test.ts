@@ -1,5 +1,4 @@
 import type {
-  ExtensionContext,
   FelanExtensionAPI,
   ToolDefinition,
 } from '@felan-ai/agent-core';
@@ -254,7 +253,7 @@ function createHarness(host: AskUserHost) {
     hasUI: false,
     ui: {},
     sessionManager: { getSessionId: () => 'session-1' },
-  } as unknown as ExtensionContext;
+  } as unknown as Parameters<ToolDefinition['execute']>[4];
   return {
     capabilities,
     get tool() {

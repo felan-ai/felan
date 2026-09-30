@@ -1,19 +1,30 @@
+import { fileURLToPath } from 'node:url';
 import type { InteractiveMode } from '@earendil-works/pi-coding-agent';
-import { VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
+import { getSelectListTheme, initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
 import { MEMORY_CONTEXT_CUSTOM_TYPE } from '@felan-ai/ext-memory';
-import type { Component } from '@earendil-works/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { stripTerminalSequences, type Component } from '@earendil-works/pi-tui';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FELAN_VERSION } from '../src/version.js';
 import {
   installFelanStartupHeader,
   rewritePiStartupHeader,
 } from '../src/startup-header.js';
 
+beforeEach(() => {
+  vi.stubEnv('PI_CODING_AGENT_DIR', fileURLToPath(new URL('../src', import.meta.url)));
+  initTheme('felan-dark', false);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  initTheme('dark', false);
+});
+
 describe('Felan startup header', () => {
   it('rewrites the built-in collapsed and expanded text before it can render', () => {
     const mode = testMode();
     installFelanStartupHeader(mode);
-    const header = new FakeExpandableHeader();
+    const header = new FakeThemedHeader();
 
     modeInternals(mode).builtInHeader = header;
 
@@ -38,6 +49,29 @@ describe('Felan startup header', () => {
     ].join('\n'));
     expect(header.renderedText).not.toContain('Pi can explain');
     expect(header.renderedText).not.toContain('extend Pi');
+  });
+
+  it('uses the active Felan accent and refreshes it after changing themes', () => {
+    const mode = testMode();
+    installFelanStartupHeader(mode);
+    const header = new FakeThemedHeader();
+    modeInternals(mode).builtInHeader = header;
+    const title = `◉  Felan Code v${FELAN_VERSION}`;
+    const darkTitle = header.render()[0].split('\n')[0];
+
+    expect(darkTitle).toBe(getSelectListTheme().selectedText(title));
+    expect(darkTitle).toContain('\x1b[');
+
+    initTheme('felan-light', false);
+    header.invalidate();
+    const lightTitle = header.render()[0].split('\n')[0];
+
+    expect(lightTitle).toBe(getSelectListTheme().selectedText(title));
+    expect(lightTitle).not.toBe(darkTitle);
+    expect(stripTerminalSequences(lightTitle)).toBe(title);
+
+    header.setExpanded(true);
+    expect(header.render()[0].split('\n')[0]).toBe(lightTitle);
   });
 
   it('preserves a quiet startup header without introducing replacement text', () => {
@@ -110,7 +144,7 @@ describe('Felan startup header', () => {
   it('preserves Pi verbose startup expansion when installing the adapter', () => {
     const mode = testMode();
     installFelanStartupHeader(mode, { expanded: true });
-    const header = new FakeExpandableHeader();
+    const header = new FakeThemedHeader();
 
     modeInternals(mode).builtInHeader = header;
 
@@ -119,16 +153,16 @@ describe('Felan startup header', () => {
     expect(header.renderedText).not.toContain('Pi can explain');
   });
 
-  it('rewrites only the upstream logo and onboarding paragraph', () => {
+  it('replaces Pi’s two-line logo while preserving its keybinding hints', () => {
     const source = [
-      `pi v${PI_VERSION}`,
-      'escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',
+      `▀▀█  v${PI_VERSION}`,
+      '█▀ █ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',
       'Press ctrl+o to show full startup help and loaded resources.',
       '',
       'Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.',
     ].join('\n');
 
-    expect(rewritePiStartupHeader(source)).toBe([
+    expect(stripTerminalSequences(rewritePiStartupHeader(source))).toBe([
       `◉  Felan Code v${FELAN_VERSION}`,
       '   get the job done · waste less',
       '',
@@ -256,41 +290,34 @@ function resourceSession(memoryLoaded: boolean, contextPath: string, sessionId =
   };
 }
 
-class FakeExpandableHeader implements Component {
-  renderedText = '';
+class FakeThemedHeader implements Component {
+  private expanded = false;
+  build = () => this.expanded ? this.expandedText : this.collapsedText;
   private readonly collapsedText = [
-    `pi v${PI_VERSION}`,
-    'escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',
+    `\x1b[31m▀▀█\x1b[0m  \x1b[2mv${PI_VERSION}\x1b[0m`,
+    '\x1b[34m█▀\x1b[0m \x1b[33m█\x1b[0m \x1b[2mescape\x1b[0m interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more',
     'Press ctrl+o to show full startup help and loaded resources.',
     '',
     'Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.',
   ].join('\n');
   private readonly expandedText = [
-    `pi v${PI_VERSION}`,
-    'escape to interrupt',
+    `\x1b[31m▀▀█\x1b[0m  \x1b[2mv${PI_VERSION}\x1b[0m`,
+    '\x1b[34m█▀\x1b[0m \x1b[33m█\x1b[0m escape to interrupt',
     'ctrl+c to clear',
     'ctrl+c twice to exit',
     'Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.',
   ].join('\n');
 
-  constructor() {
-    this.setExpanded(false);
-  }
-
-  getCollapsedText(): string {
-    return this.collapsedText;
-  }
-
-  getExpandedText(): string {
-    return this.expandedText;
+  get renderedText(): string {
+    return stripTerminalSequences(this.build());
   }
 
   setExpanded(expanded: boolean): void {
-    this.renderedText = expanded ? this.getExpandedText() : this.getCollapsedText();
+    this.expanded = expanded;
   }
 
   render(): string[] {
-    return this.renderedText.length === 0 ? [] : [this.renderedText];
+    return [this.build()];
   }
 
   invalidate(): void {}

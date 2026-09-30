@@ -27,6 +27,12 @@ describe('Agent Core resource loading', () => {
     const userExtensions = join(agentDir, 'extensions');
     await mkdir(projectExtensions, { recursive: true });
     await mkdir(userExtensions, { recursive: true });
+    await writeFile(join(cwd, '.pi', 'mcp.json'), JSON.stringify({
+      mcpServers: { project: { command: 'should-not-run' } },
+    }));
+    await writeFile(join(agentDir, 'mcp.json'), JSON.stringify({
+      mcpServers: { global: { command: 'should-not-run' } },
+    }));
     const ambientSource = 'globalThis.ambientFelanExtension = true; export default () => {};';
     await writeFile(join(projectExtensions, 'project.js'), ambientSource);
     await writeFile(join(userExtensions, 'user.js'), ambientSource);

@@ -101,6 +101,7 @@ function replaceDefaults(
 
 function assertBuiltinProviderCoverage(): void {
   const missing = builtinProviders()
+    .filter((provider) => provider.getModels().length > 0)
     .map(({ id }) => id)
     .filter((providerId) => !(providerId in FELAN_DEFAULT_MODEL_PER_PROVIDER));
   if (missing.length > 0) {

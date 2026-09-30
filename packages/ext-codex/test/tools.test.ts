@@ -8,7 +8,6 @@ import {
   type AgentRuntimeProcessReadOptions,
   type AgentRuntimeProcessSnapshot,
   type Api,
-  type ExtensionContext,
   type Model,
   type ToolDefinition,
 } from '@felan-ai/agent-core';
@@ -317,22 +316,22 @@ function runtimeWithoutTerminals(host: HostAgentRuntime): AgentRuntime {
   };
 }
 
-function imageContext(): ExtensionContext {
+function imageContext(): Parameters<ToolDefinition['execute']>[4] {
   return { model: {
     provider: 'openai-codex',
     id: 'gpt-5.3-codex',
     api: 'openai-codex-responses',
     input: ['text', 'image'],
-  } as Model<Api> } as ExtensionContext;
+  } as Model<Api> } as Parameters<ToolDefinition['execute']>[4];
 }
 
-function textContext(): ExtensionContext {
+function textContext(): Parameters<ToolDefinition['execute']>[4] {
   return { model: {
     provider: 'openai',
     id: 'gpt-5.4',
     api: 'openai-responses',
     input: ['text'],
-  } as Model<Api> } as ExtensionContext;
+  } as Model<Api> } as Parameters<ToolDefinition['execute']>[4];
 }
 
 async function text(runtime: HostAgentRuntime, path: string): Promise<string> {
