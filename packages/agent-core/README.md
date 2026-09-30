@@ -63,6 +63,16 @@ sets against the existing byte budgets, and maps native usage metadata. Unknown
 catalog pricing is not reported as verified free inference. There is no owned
 HTTP client or environment-key discovery in Agent Core.
 
+`validateClassifierRequest` and `validateClassifierAnswers` expose boundary
+checks to portable consumers, including custom classifier hosts. The explicit
+request validator requires JSON-object state and rejects functions, circular
+references, nonfinite numbers, accessors, and non-JSON objects. The existing
+bridge retains its JSON serialization behavior for programmatic callers.
+Reserved property names remain ordinary question IDs.
+The public Pi composition surface also exports `ImageApi`, `ImageModel`,
+`AssistantImages`, `ImagesContext`, and `ImagesOptions`; image feature behavior
+belongs in extensions, not `AgentRuntime`.
+
 In root sessions, Agent Core coordinates one shared 2-second initial-turn wait
 inside its managed Pi-backed classifier; later decisions and custom implementations retain
 their normal timing. `collectClassifierSessionEvidence` converts the active Pi session projection

@@ -1,5 +1,6 @@
 export const packagePaths = [
   'packages/agent-core',
+  'packages/ext-model-tools',
   'packages/ext-memory',
   'packages/ext-output-style',
   'packages/ext-subagents',

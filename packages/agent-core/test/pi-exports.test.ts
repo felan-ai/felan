@@ -8,6 +8,11 @@ import type {
   Credential as PiCredential,
   CredentialInfo as PiCredentialInfo,
   CredentialStore as PiCredentialStore,
+  ImageApi as PiImageApi,
+  ImageModel as PiImageModel,
+  AssistantImages as PiAssistantImages,
+  ImagesContext as PiImagesContext,
+  ImagesOptions as PiImagesOptions,
   Model as PiModel,
   SimpleStreamOptions as PiSimpleStreamOptions,
   TranscriptContext as PiTranscriptContext,
@@ -41,6 +46,11 @@ import type {
   CredentialInfo,
   CredentialStore,
   ExtensionCommandContext,
+  ImageApi,
+  ImageModel,
+  AssistantImages,
+  ImagesContext,
+  ImagesOptions,
   Model,
   ResourceDiagnostic,
   ResourceLoader,
@@ -109,6 +119,11 @@ describe('Agent Core Pi exports', () => {
     expectTypeOf<CredentialStore>().toEqualTypeOf<PiCredentialStore>();
     expectTypeOf<ExtensionCommandContext>().toEqualTypeOf<PiExtensionCommandContext>();
     expectTypeOf<Model<Api>>().toEqualTypeOf<PiModel<PiApi>>();
+    expectTypeOf<ImageApi>().toEqualTypeOf<PiImageApi>();
+    expectTypeOf<ImageModel<ImageApi>>().toEqualTypeOf<PiImageModel<PiImageApi>>();
+    expectTypeOf<AssistantImages>().toEqualTypeOf<PiAssistantImages>();
+    expectTypeOf<ImagesContext>().toEqualTypeOf<PiImagesContext>();
+    expectTypeOf<ImagesOptions>().toEqualTypeOf<PiImagesOptions>();
     expectTypeOf<ResourceDiagnostic>().toEqualTypeOf<PiResourceDiagnostic>();
     expectTypeOf<ResourceLoader>().toEqualTypeOf<PiResourceLoader>();
     expectTypeOf<SessionContext>().toEqualTypeOf<PiSessionContext>();

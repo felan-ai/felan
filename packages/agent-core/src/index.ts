@@ -199,6 +199,7 @@ export {
 } from '@earendil-works/pi-ai';
 export type {
   Api,
+  AssistantImages,
   AssistantMessage,
   AssistantMessageEvent,
   AssistantMessageEventStream,
@@ -206,6 +207,10 @@ export type {
   Credential,
   CredentialInfo,
   CredentialStore,
+  ImageApi,
+  ImageModel,
+  ImagesContext,
+  ImagesOptions,
   Model,
   ModelCost,
   ModelCostRates,

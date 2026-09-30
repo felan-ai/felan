@@ -1,4 +1,5 @@
 export { createPiClassifier } from './pi-classifier.js';
+export { validateClassifierRequest, validateClassifierAnswers } from './validation.js';
 export { collectClassifierSessionEvidence, sanitizeClassifierText } from './session-evidence.js';
 export type { ClassifierSessionEvidence, ClassifierSessionEvidenceLimits } from './session-evidence.js';
 export type {

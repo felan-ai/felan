@@ -55,6 +55,11 @@ published by a partially successful attempt. Releases require no Git tag.
 
 ## Bootstrap a new npm package
 
+`@felan-ai/ext-model-tools` is a new package with intended version `0.1.0`.
+Before its first CI release, a maintainer must complete the manual `0.0.0`
+bootstrap and trusted-publisher setup below. Local build, test, pack, and smoke
+verification do not publish it or establish that trust relationship.
+
 npm requires a package to exist before it can receive a trusted-publisher
 configuration. Establish a new package with a manually published `0.0.0`
 bootstrap, then publish its intended initial version through GitHub Actions.

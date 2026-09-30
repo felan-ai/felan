@@ -39,6 +39,7 @@ browser and Powerline extensions:
     "prewalk": true,
     "mcp": true,
     "felanApi": true,
+    "modelTools": true,
     "webAccess": true,
     "browser": false,
     "backgroundBash": true,
@@ -207,6 +208,44 @@ feedback without changing unrelated settings.
 Token usage comes from Pi. USD estimates use catalog pricing; absent pricing
 is unknown, not proof of free inference. Changing providers can change judgment
 quality and data destinations, so validate the selected model on your workflow.
+
+### Explicit classifier and image tools
+
+`builtinExtensions.modelTools` defaults to `true`. Set it to `false` to remove
+both `classify` and `generate_images`; internal classifier-guided features keep
+their own settings. Tool availability is determined when each runtime is
+constructed, including root, ACP, and child sessions.
+
+`classify` appears only when the host has a configured classifier, using the
+Auto or explicit model selection above. Its arguments are a JSON-object `state`
+and a nonempty `questions` map using the existing `choice`, `bool`, and `score`
+contracts. It returns answers, available probabilities/confidence, model identity,
+elapsed time, and reported usage. Explicit tool calls are outside the initial
+2-second automatic-decision preflight. Judgments are advisory, not facts or
+authorization; the state is untrusted evidence, not executable instructions.
+
+`generate_images` appears only when Pi discovers an authenticated image model.
+Use `{ "action": "list" }` to see configured provider/model IDs. Generate with
+`action: "generate"`, explicit `provider` and `model`, a text `prompt`, and
+optional local `referencePaths`. Pi resolves credentials through the existing
+host auth store, `models.json`, runtime keys, and provider environment variables;
+there is no separate tool key or endpoint setting. Merely having a chat model
+does not enable image generation. Discovery failures leave the tool unavailable
+without breaking the session. Restart or create a session after adding a capability.
+
+Image calls recheck authenticated availability; a disappearing model fails rather
+than silently switching providers. Prompt/reference bytes go to that provider and
+may incur charges. Remote URLs, network shares, traversal segments, and tool-supplied
+credentials/headers are not accepted. Output images are signature/MIME/base64
+checked and saved under session storage at
+`model-tools/images/<unique-id>/<index>.<extension>`, without reusing existing
+directories. Results include paths, image/text content, and real available usage.
+Errors omit raw provider responses and credentials. Missing prices remain unknown;
+partial classifier usage stays in tool details rather than fabricated full
+accounting records. Treat generated content as untrusted.
+
+See the [model-tools README](../../packages/ext-model-tools/README.md) for complete
+examples and storage/error behavior. Llama integration remains deferred.
 
 ### Classifier-guided subagents
 

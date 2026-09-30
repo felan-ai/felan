@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.26.17",
+  "version": "0.26.18",
   "description": "Felan Code: an open-source, model-portable coding agent built for cost-efficient, verifiable software work",
   "keywords": [
     "ai",
@@ -61,6 +61,7 @@
     "@felan-ai/ext-markitdown": "workspace:*",
     "@felan-ai/ext-mcp": "workspace:*",
     "@felan-ai/ext-memory": "workspace:*",
+    "@felan-ai/ext-model-tools": "workspace:*",
     "@felan-ai/ext-output-style": "workspace:*",
     "@felan-ai/ext-powerline": "workspace:*",
     "@felan-ai/ext-prewalk": "workspace:*",

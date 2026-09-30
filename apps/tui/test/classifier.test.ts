@@ -129,7 +129,9 @@ describe('native classifier runtime integration', () => {
     const native = await ModelRuntime.create({ authPath: join(agentDir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
     const direct = native.getModelOfType('classifier', 'typesafe', 'jev-latest')!;
     const router = native.getModelOfType('classifier', 'openrouter', 'typesafe/jev-1.13')!;
-    const available = vi.spyOn(native, 'getAvailableOfType').mockResolvedValue([direct, router]);
+    const available = vi.spyOn(native, 'getAvailableOfType').mockImplementation(async type => (
+      type === 'classifier' ? [direct, router] : []
+    ) as never);
     const classify = vi.spyOn(native, 'classify').mockImplementation(async (model, context) => ({
       api: model.api, provider: model.provider, model: model.id, timestamp: 1, stopReason: 'stop',
       answers: Object.fromEntries(Object.keys(context.questions).map(id => [id, { type: 'bool' as const, probability: 0.7 }])),
@@ -151,7 +153,7 @@ describe('native classifier runtime integration', () => {
       expect(childHost.mock.calls.at(-1)?.[0].classifier).toBe(selection.mock.calls.at(-1)![2]);
       await selection.mock.calls.at(-1)![2]!.classify({}, question);
       expect(classify.mock.calls.at(-1)?.[0]).toBe(router);
-      expect(available).toHaveBeenCalledTimes(2);
+      expect(available.mock.calls).toEqual([['classifier'], ['image'], ['classifier'], ['image']]);
       expect(getClassifierModelSetting(runtime.services.settingsManager)).toBe('openrouter/typesafe/jev-1.13');
     } finally {
       await runtime.dispose();

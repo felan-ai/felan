@@ -1,13 +1,13 @@
 {
-  "name": "@felan-ai/agent-core",
-  "version": "0.10.1",
-  "description": "Portable Felan agent contracts and composition",
+  "name": "@felan-ai/ext-model-tools",
+  "version": "0.1.0",
+  "description": "Portable classifier and image generation tools for Felan",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felan-ai/felan.git",
-    "directory": "packages/agent-core"
+    "directory": "packages/ext-model-tools"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -31,10 +31,13 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "catalog:pi",
-    "@earendil-works/pi-coding-agent": "catalog:pi",
-    "@earendil-works/pi-server": "catalog:pi",
-    "@lydell/node-pty": "1.2.0-beta.14"
+    "typebox": "1.1.38"
+  },
+  "peerDependencies": {
+    "@felan-ai/agent-core": "catalog:agent-core"
+  },
+  "devDependencies": {
+    "@felan-ai/agent-core": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

@@ -101,6 +101,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-prewalk',
       '@felan-ai/ext-mcp',
       '@felan-ai/ext-felan-api',
+      '@felan-ai/ext-model-tools',
       '@felan-ai/ext-web-access',
       '@felan-ai/ext-browser',
       '@felan-ai/ext-background-bash',
@@ -170,6 +171,16 @@ describe('local extension importer', () => {
     });
 
     await expect(importer('@felan-ai/ext-mcp')).resolves.toMatchObject({
+      default: expect.any(Function),
+    });
+  });
+
+  it('creates the authenticated model-tools extension without invoking the generic importer', async () => {
+    const importer = createLocalExtensionImporter(testSubagentHost(), testModelRuntime(), async () => {
+      throw new Error('The generic importer must not load the model-tools extension');
+    });
+
+    await expect(importer('@felan-ai/ext-model-tools')).resolves.toMatchObject({
       default: expect.any(Function),
     });
   });
@@ -361,6 +372,7 @@ describe('local extension importer', () => {
       codebaseMemory: false,
       memory: false,
       felanApi: false,
+      modelTools: false,
       powerline: false,
       outputStyle: false,
       contextView: false,
@@ -378,6 +390,16 @@ describe('local extension importer', () => {
     );
     expect(() => resolveBuiltinExtensionPackages({ prewalk: 'yes' })).toThrow(
       'Built-in extension prewalk must be a boolean',
+    );
+  });
+
+  it('enables model tools by default and honors explicit disablement', () => {
+    expect(resolveBuiltinExtensionPackages(undefined)).toContain('@felan-ai/ext-model-tools');
+    expect(resolveBuiltinExtensionPackages({})).toContain('@felan-ai/ext-model-tools');
+    expect(resolveBuiltinExtensionPackages({ modelTools: true })).toContain('@felan-ai/ext-model-tools');
+    expect(resolveBuiltinExtensionPackages({ modelTools: false })).not.toContain('@felan-ai/ext-model-tools');
+    expect(() => resolveBuiltinExtensionPackages({ modelTools: 'yes' })).toThrow(
+      'Built-in extension modelTools must be a boolean',
     );
   });
 });

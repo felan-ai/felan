@@ -571,6 +571,7 @@ describe('local Agent Core lifecycle', () => {
         rtkOptimizer: false,
         memory: false,
         felanApi: false,
+        modelTools: false,
         powerline: false,
         outputStyle: false,
         promptHistory: false,

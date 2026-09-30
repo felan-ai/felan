@@ -103,7 +103,57 @@ try {
       if (typeof classifier.classify !== 'function' || 'evaluate' in classifier || 'evaluateProbabilities' in classifier) throw new Error('agent-core has an invalid classifier contract');
       const classifierResult = await classifier.classify({}, { ready: { type: 'bool', instructions: 'Ready?', criteria: { true: 'Yes', false: 'No' } } });
       if (classifierResult.answers.ready?.probability !== 0.8) throw new Error('packed classifier did not delegate to the model runtime');
+      {
+        const { createModelToolsExtension } = await import('@felan-ai/ext-model-tools');
+        const imageModel = { type: 'image', provider: 'test', api: 'openai-images', id: 'test-image', name: 'Offline image',
+          baseUrl: 'https://not-used.invalid', input: ['text', 'image'], output: ['image'],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+        const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT1sAAAAASUVORK5CYII=';
+        const imageRuntime = {
+          getAvailableOfType: async (type) => {
+            if (type !== 'image') throw new Error('Unexpected model discovery type');
+            return [imageModel];
+          },
+          generateImages: async (selected, context) => {
+            if (selected !== imageModel || context.input[0]?.text !== 'Offline packed image') throw new Error('Invalid packed image dispatch');
+            return { api: selected.api, provider: selected.provider, model: selected.id, stopReason: 'stop', timestamp: 0,
+              output: [{ type: 'image', mimeType: 'image/png', data: imageData }] };
+          },
+        };
+        for (const hasClassifier of [false, true]) {
+          for (const hasImages of [false, true]) {
+            const registered = [];
+            await createModelToolsExtension(hasImages ? imageRuntime : undefined)({
+              runtime: hasClassifier ? { classifier } : {}, registerTool: tool => registered.push(tool.name),
+            });
+            const expected = [...(hasClassifier ? ['classify'] : []), ...(hasImages ? ['generate_images'] : [])];
+            if (JSON.stringify(registered) !== JSON.stringify(expected)) throw new Error('Packed model tool capability mismatch');
+          }
+        }
+        const { mkdir, readFile } = await import('node:fs/promises');
+        await mkdir(process.env.FELAN_AGENT_DIR + '/model-tool-smoke', { recursive: true });
+        await mkdir(process.env.FELAN_AGENT_DIR + '/storage', { recursive: true });
+        const artifactRuntime = new agentCore.HostAgentRuntime(process.env.PACKED_SMOKE_WORKSPACE, {
+          sessionStorageRoot: process.env.FELAN_AGENT_DIR + '/model-tool-smoke',
+          agentStorageRoot: process.env.FELAN_AGENT_DIR + '/storage', classifier,
+        });
+        const modelTools = new Map();
+        await createModelToolsExtension(imageRuntime)({ runtime: artifactRuntime, registerTool: tool => modelTools.set(tool.name, tool) });
+        const judged = await modelTools.get('classify').execute('packed-classify', {
+          state: { evidence: 'Offline packed test' }, questions: { ready: { type: 'bool', instructions: 'Ready?', criteria: { true: 'Yes', false: 'No' } } },
+        });
+        if (judged.details.answers.ready?.probability !== 0.8) throw new Error('Packed classify tool failed');
+        const listed = await modelTools.get('generate_images').execute('packed-list', { action: 'list' });
+        if (listed.details.models[0]?.model !== imageModel.id) throw new Error('Packed image listing failed');
+        const generated = await modelTools.get('generate_images').execute('packed-generate', {
+          action: 'generate', provider: imageModel.provider, model: imageModel.id, prompt: 'Offline packed image',
+        });
+        const imagePath = generated.details.artifacts[0]?.path;
+        if (!imagePath || (await readFile(imagePath)).toString('base64') !== imageData) throw new Error('Packed image artifact was not preserved');
+        if ('usage' in generated) throw new Error('Packed image tool invented absent accounting usage');
+      }
       const app = await import('@felan-ai/felan');
+      if (!app.localExtensionPackages.includes('@felan-ai/ext-model-tools')) throw new Error('Packed application omitted model tools');
       for (const packageName of app.localExtensionPackages) {
         const extension = await app.importLocalExtension(packageName);
         if (packageName === '@felan-ai/ext-subagents') {
@@ -114,6 +164,8 @@ try {
           if (typeof extension.createMcpExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (packageName === '@felan-ai/ext-memory') {
           if (typeof extension.createMemoryExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
+        } else if (packageName === '@felan-ai/ext-model-tools') {
+          if (typeof extension.createModelToolsExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (packageName === '@felan-ai/ext-session-title') {
           if (typeof extension.createSessionTitleExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
         } else if (packageName === '@felan-ai/ext-session-compaction') {

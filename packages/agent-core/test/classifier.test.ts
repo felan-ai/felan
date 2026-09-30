@@ -109,6 +109,18 @@ describe('Pi-backed classifier', () => {
     expect(service.classify).not.toHaveBeenCalled();
   });
 
+  it('preserves bridge serialization while enforcing JSON at the explicit tool boundary', async () => {
+    const service = backend();
+    const classifier = core.createPiClassifier(service, model);
+    const state = { when: new Date(0), optional: undefined };
+    expect(classifier.canEvaluate?.(state, questions)).toBe(true);
+    await classifier.classify(state, questions);
+    expect(service.classify.mock.calls[0]?.[1].state).toEqual({ when: '1970-01-01T00:00:00.000Z' });
+    for (const invalid of [state, { fn: () => true }, { number: NaN }]) {
+      expect(() => core.validateClassifierRequest(invalid, questions)).toThrow('JSON data');
+    }
+  });
+
   it('batches by existing byte budgets without dropping questions or imposing a count cutoff', async () => {
     const service = backend();
     const classifier = core.createPiClassifier(service, model);
@@ -172,6 +184,26 @@ describe('Pi-backed classifier', () => {
       await Promise.all([first, second, third]);
       expect(service.classify.mock.calls.every(([, , options]) => options?.signal?.aborted)).toBe(true);
       preflight.finishPreflight();
+      preflight.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not impose the automatic preflight deadline on explicit calls after turn_start', async () => {
+    vi.useFakeTimers();
+    try {
+      const service = backend();
+      const response = await service.classify(model, { state: {}, questions: { discover: questions.discover } });
+      service.classify.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve(response), 3_000)));
+      const classifier = core.createPiClassifier(service, model);
+      const preflight = attachClassifierPreflight(classifier, core.createSilentLogger())!;
+      preflight.startNextTurn();
+      preflight.finishPreflight();
+      const result = classifier.classify({}, { discover: questions.discover });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect((await result).answers.discover).toEqual({ type: 'bool', probability: 0.8 });
+      expect(service.classify.mock.lastCall?.[2]?.signal?.aborted).toBe(false);
       preflight.dispose();
     } finally {
       vi.useRealTimers();

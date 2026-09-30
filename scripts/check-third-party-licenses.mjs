@@ -242,6 +242,10 @@ const tasksNotice = readFileSync(resolve(root, 'packages/ext-tasks/NOTICE'), 'ut
 if (!tasksNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-tasks/NOTICE is missing TypeBox 1.1.38');
 }
+const modelToolsNotice = readFileSync(resolve(root, 'packages/ext-model-tools/NOTICE'), 'utf8');
+if (!modelToolsNotice.includes('TypeBox 1.1.38')) {
+  errors.push('packages/ext-model-tools/NOTICE is missing TypeBox 1.1.38');
+}
 const sessionCompactionNotice = readFileSync(resolve(root, 'packages/ext-session-compaction/NOTICE'), 'utf8');
 for (const requiredNotice of [
   'pi-smart-compact 9.6.2',
@@ -298,6 +302,7 @@ for (const requiredNotice of [
   '@felan-ai/ext-codebase-memory',
   'codebase-memory-mcp 0.11.0',
   '@felan-ai/ext-session-compaction',
+  '@felan-ai/ext-model-tools',
 ]) {
   if (!tuiNotice.includes(requiredNotice)) {
     errors.push(`apps/tui/NOTICE is missing ${requiredNotice}`);

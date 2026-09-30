@@ -12,6 +12,7 @@ import {
 import { ASK_USER_CONFIG, createAskUserExtension, type AskUserConfig } from '@felan-ai/ext-ask-user';
 import { createTuiAskUserHost } from '@felan-ai/ext-ask-user/tui';
 import { createMemoryExtension, type MemoryHost, type MemoryRole } from '@felan-ai/ext-memory';
+import { createModelToolsExtension } from '@felan-ai/ext-model-tools';
 import {
   DEFAULT_OUTPUT_STYLE,
   type OutputStyle,
@@ -51,6 +52,7 @@ export const felanApiExtensionPackage = '@felan-ai/ext-felan-api';
 export const powerlineExtensionPackage = '@felan-ai/ext-powerline';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const memoryExtensionPackage = '@felan-ai/ext-memory';
+export const modelToolsExtensionPackage = '@felan-ai/ext-model-tools';
 export const outputStyleExtensionPackage = '@felan-ai/ext-output-style';
 export const insightsExtensionPackage = '@felan-ai/ext-insights';
 export const promptHistoryExtensionPackage = '@felan-ai/ext-prompt-history';
@@ -63,6 +65,7 @@ export const builtinExtensionPackages = {
   prewalk: '@felan-ai/ext-prewalk',
   mcp: mcpExtensionPackage,
   felanApi: felanApiExtensionPackage,
+  modelTools: modelToolsExtensionPackage,
   webAccess: '@felan-ai/ext-web-access',
   browser: '@felan-ai/ext-browser',
   backgroundBash: '@felan-ai/ext-background-bash',
@@ -195,6 +198,9 @@ export function createLocalExtensionImporter(
     }
     if (packageName === mcpExtensionPackage) {
       return { default: createLocalMcpExtension() };
+    }
+    if (packageName === modelToolsExtensionPackage) {
+      return { default: createModelToolsExtension(modelRuntime) };
     }
     if (packageName === builtinExtensionPackages.browser) {
       const { createBrowserExtension } = await import('@felan-ai/ext-browser');

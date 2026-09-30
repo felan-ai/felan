@@ -6,6 +6,16 @@ const MAX_COMBINED_INPUT_BYTES = 64_000;
 const MAX_STATE_AND_QUESTION_BYTES = 32_000;
 const MAX_INSTRUCTIONS_BYTES = 4_096;
 
+export function validateClassifierRequest(state: unknown, questions: ClassifierQuestions): void {
+  try {
+    assertJson(state);
+    assertJson(questions);
+  } catch {
+    throw new ClassifierError('invalid_request', 'Classifier request must contain JSON data');
+  }
+  prepareClassifierRequest('', state, questions);
+}
+
 export function prepareClassifierRequest(model: string, state: unknown, questions: ClassifierQuestions) {
   let serialized: string;
   try {
@@ -111,4 +121,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isUnit(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function assertJson(value: unknown, ancestors = new Set<object>()): void {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+  if (typeof value === 'number' && Number.isFinite(value)) return;
+  if (typeof value !== 'object' || ancestors.has(value)) throw new Error('Invalid JSON');
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) throw new Error('Invalid JSON');
+  ancestors.add(value);
+  const keys = Reflect.ownKeys(value);
+  if (Array.isArray(value) && keys.length !== value.length + 1) throw new Error('Invalid JSON');
+  for (const key of keys) {
+    if (Array.isArray(value) && key === 'length') continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    if (typeof key !== 'string' || !descriptor.enumerable || !('value' in descriptor)) throw new Error('Invalid JSON');
+    assertJson(descriptor.value, ancestors);
+  }
+  ancestors.delete(value);
 }
