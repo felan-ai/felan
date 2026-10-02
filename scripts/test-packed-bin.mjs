@@ -509,7 +509,7 @@ try {
       const ptySessionStorage = process.env.PACKED_SMOKE_WORKSPACE + '/.pty-session';
       const ptyAgentStorage = process.env.PACKED_SMOKE_WORKSPACE + '/.pty-agent';
       const explicitExtensionPath = process.env.PACKED_SMOKE_WORKSPACE + '/packed-extension.mjs';
-      await fs.writeFile(explicitExtensionPath, 'export default (pi) => pi.registerCommand("packed-extension", { description: "packed extension" });');
+      await fs.writeFile(explicitExtensionPath, 'export default (pi) => pi.registerCommand("packed-extension", { description: "packed extension", handler: async () => {} });');
       await Promise.all([
         fs.mkdir(ptySessionStorage, { recursive: true }),
         fs.mkdir(ptyAgentStorage, { recursive: true }),

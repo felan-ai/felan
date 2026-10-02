@@ -63,7 +63,7 @@ describe('Agent Core resource loading', () => {
     await writeFile(join(projectExtensions, 'ambient.mjs'),
       'globalThis.ambientFelanExtension = true; export default () => {};');
     await writeFile(explicit,
-      'globalThis.explicitFelanExtension = true; export default (pi) => pi.registerCommand("explicit", { description: "explicit" });');
+      'globalThis.explicitFelanExtension = true; export default (pi) => pi.registerCommand("explicit", { description: "explicit", handler: async () => {} });');
 
     const loader = await createAgentCoreResourceLoader({
       cwd,

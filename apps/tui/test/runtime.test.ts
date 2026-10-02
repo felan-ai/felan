@@ -808,7 +808,7 @@ describe('local Agent Core lifecycle', () => {
     const extensionPath = join(root, 'extension.mjs');
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
     await writeFile(extensionPath,
-      'export default (pi) => pi.registerCommand("root-extension", { description: "root extension" });');
+      'export default (pi) => pi.registerCommand("root-extension", { description: "root extension", handler: async () => {} });');
 
     const runtime = await createLocalFelanRuntime({ cwd, agentDir, extensionPaths: [extensionPath] });
     expect(runtime.services.resourceLoader.getExtensions().extensions.map((extension) => extension.path))
@@ -829,7 +829,7 @@ describe('local Agent Core lifecycle', () => {
       piExtensions: { user: true, project: true },
     }));
     await writeFile(join(userDir, 'home.js'),
-      'export default (pi) => pi.registerCommand("home-ext", { description: "home" });');
+      'export default (pi) => pi.registerCommand("home-ext", { description: "home", handler: async () => {} });');
 
     const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir });
     expect(runtime.services.resourceLoader.getExtensions().extensions.map((extension) => extension.path))

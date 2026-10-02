@@ -90,12 +90,6 @@ PDF passage extraction through `fetch_content`.
 
 ## Remote MCP
 
-Pi 0.99 includes a separate native MCP extension. Felan does not load it:
-enabling it would permit stdio commands and authentication options outside
-Felan's host-owned OAuth and project-trust policy. Codemode and tool search are
-also not enabled by the Pi upgrade. Use the Felan gateway described below;
-expanding native support requires an explicit security and configuration design.
-
 The local host merges:
 
 - `$FELAN_AGENT_DIR/mcp.json`; and

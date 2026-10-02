@@ -172,7 +172,7 @@ describe('Agent Core session composition', () => {
     const explicit = join(root, 'explicit-extension.mjs');
     await mkdir(cwd, { recursive: true });
     await writeFile(explicit,
-      'export default (pi) => pi.registerCommand("explicit", { description: "explicit" });');
+      'export default (pi) => pi.registerCommand("explicit", { description: "explicit", handler: async () => {} });');
 
     const result = await createAgentCoreSession({
       runtime: new TestAgentRuntime(cwd),

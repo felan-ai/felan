@@ -709,9 +709,9 @@ describe('interactive application', () => {
       piExtensions: { user: true, project: true },
     }));
     await writeFile(join(userDir, 'home.js'),
-      'export default (pi) => pi.registerCommand("home-ext", { description: "home" });');
+      'export default (pi) => pi.registerCommand("home-ext", { description: "home", handler: async () => {} });');
     await writeFile(join(projectDir, 'project.js'),
-      'export default (pi) => pi.registerCommand("project-ext", { description: "project" });');
+      'export default (pi) => pi.registerCommand("project-ext", { description: "project", handler: async () => {} });');
     createFelanProjectTrustStore(agentDir).set(targetCwd, true);
     interactive.restartCwd = targetCwd;
 
@@ -735,7 +735,7 @@ describe('interactive application', () => {
       piExtensions: { project: true },
     }));
     await writeFile(join(projectDir, 'project.js'),
-      'export default (pi) => pi.registerCommand("project-ext", { description: "project" });');
+      'export default (pi) => pi.registerCommand("project-ext", { description: "project", handler: async () => {} });');
     createFelanProjectTrustStore(agentDir).set(cwd, false);
 
     await runLocalFelan({ cwd, agentDir, homeDir });

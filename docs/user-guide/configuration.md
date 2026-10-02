@@ -127,7 +127,7 @@ still restrict nested calls, and tool-free synthesis does not reactivate code
 mode. Memory dream sessions retain their separate restricted tool set.
 
 Felan uses Pi's `createCodemodeExtension({ mode, models: false })`.
-`models: false` removes the sandbox's `models.*` catalog and classifier helpers;
+`models: false` removes the sandbox's `models.*` catalog, classifier, and image-generation helpers;
 it does not change the session model or disable ordinary tool calling. Enabled
 Felan model tools remain available through their normal policy-governed paths.
 Nested calls use the normal validation, tool hooks, cancellation, and audit

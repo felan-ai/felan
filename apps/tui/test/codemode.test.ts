@@ -68,8 +68,8 @@ describe('local codemode composition', () => {
         if (mode === 'only') expect(declaration.description).toContain('### `read`');
         if (mode === 'on') {
           const read = getCurrentTools(contexts[0]!.messages).find((tool) => tool.name === 'read')!;
-          expect(read.description).toContain('codemode tool declaration:');
-          expect(read.description).toContain('read(args:');
+          expect(read.description).toContain('tools.read(args)');
+          expect(read.description).toContain('resolves to a string');
         }
       }
     },
@@ -250,6 +250,47 @@ describe('native codemode offline execution', () => {
     const session = await fixture.nativeSession('only');
     await session.prompt('Inspect globals');
     expect(textContent(scriptResult(session).content)).toContain('{"models":"undefined","tools":"object"}');
+  });
+
+  it.each(['on', 'only'] as const)('supports tool discovery and reports misspelled members in mode %s', async (mode) => {
+    const fixture = await harness(mode);
+    fixture.respond(`
+      text({ read: "read" in tools, missing: "missing_fixture" in tools });
+      try { tools.Read; } catch (error) { text(error.message); }
+    `);
+    const session = await fixture.nativeSession(mode);
+    await session.prompt('Discover callable tools');
+
+    const result = scriptResult(session);
+    expect(result.isError).toBe(false);
+    expect(textContent(result.content)).toContain('{"read":true,"missing":false}');
+    expect(textContent(result.content)).toContain('tools.Read');
+    expect(textContent(result.content)).toContain('tools.read');
+    expect(result.nestedCalls).toBeUndefined();
+  });
+
+  it('returns valid images with their signature-derived MIME type', async () => {
+    const fixture = await harness('only');
+    const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/gT0AAAAASUVORK5CYII=';
+    fixture.respond(`image({ type: "image", data: ${JSON.stringify(data)}, mimeType: "image/jpeg" });`);
+    const session = await fixture.nativeSession('only');
+    await session.prompt('Return an image');
+
+    const result = scriptResult(session);
+    expect(result.isError).toBe(false);
+    expect(result.content).toContainEqual({ type: 'image', data, mimeType: 'image/png' });
+  });
+
+  it.each(['not-base64!', 'aGVsbG8='])('rejects invalid image data %s', async (data) => {
+    const fixture = await harness('only');
+    fixture.respond(`image({ type: "image", data: ${JSON.stringify(data)}, mimeType: "image/png" });`);
+    const session = await fixture.nativeSession('only');
+    await session.prompt('Reject an invalid image');
+
+    const result = scriptResult(session);
+    expect(result.isError).toBe(true);
+    expect(result.content.some((part) => part.type === 'image')).toBe(false);
+    expect(textContent(result.content)).toContain('TypeError');
   });
 
   it.each(['on', 'only'] as const)('cannot bypass inspection filtering in mode %s', async (mode) => {
