@@ -154,8 +154,8 @@ interface RunDetails {
   completionMessagePending: boolean;
   reviewRequested: boolean;
   reviewerCallIds: Set<string>;
-  reviewerAgentId?: string;
-  reviewerCompleted: boolean;
+  reviewers: Map<string, 'pending' | 'completed' | 'cancelled' | 'failed'>;
+  reviewReassessmentPending: boolean;
 }
 
 interface GuidanceOptions {
@@ -318,15 +318,18 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       || !details.completionGate
       || details.completionAccepted
       || exitRequested
-      || details.completionChecks >= MAX_COMPLETION_CHECKS
+      || [...details.reviewers.values()].includes('pending')
+      || (details.completionChecks >= MAX_COMPLETION_CHECKS && !details.reviewReassessmentPending)
       || !isTextOnlyCompletion(message)
     ) return;
+    details.reviewReassessmentPending = false;
     details.completionChecks += 1;
     const verdict = await classifier.completion(details, assistantText(message), ctx);
     if (state.phase !== 'implementing' || runDetails !== details || exitRequested) return;
     details.completionAccepted = verdict === 'done';
     const reviewNeeded = verdict !== 'done' && (verdict !== 'gap' || details.completionChecks >= MAX_COMPLETION_CHECKS);
     if (reviewNeeded) {
+      if (details.reviewRequested) return;
       details.completionChecks = MAX_COMPLETION_CHECKS;
       details.reviewRequested = true;
     }
@@ -394,7 +397,8 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       completionMessagePending: false,
       reviewRequested: false,
       reviewerCallIds: new Set(),
-      reviewerCompleted: false,
+      reviewers: new Map(),
+      reviewReassessmentPending: false,
     };
     state = {
       phase: 'planning',
@@ -930,6 +934,10 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   // Pi awaits before_agent_start handlers sequentially, so the entry decision
   // starts at input to overlap with other extensions' pre-start classifier calls.
   pi.on('input', (event, ctx) => {
+    if ((event.source === 'interactive' || event.source === 'rpc') && state.phase === 'implementing'
+      && runDetails?.reviewRequested && !runDetails.completionAccepted) {
+      runDetails.reviewReassessmentPending = true;
+    }
     if (event.streamingBehavior !== undefined || !entryClassificationEligible(ctx)) return;
     startEntryClassification(event.text, ctx);
   });
@@ -987,8 +995,8 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
         if (details === undefined || !details.reviewerCallIds.delete(result.toolCallId) || result.isError) continue;
         if (!isRecord(result.details) || typeof result.details.agentId !== 'string') continue;
         details.reviewRequested = true;
-        details.reviewerAgentId = result.details.agentId;
-        details.reviewerCompleted = false;
+        details.reviewers.set(result.details.agentId, 'pending');
+        details.completionAccepted = false;
       }
       if (event.message.role === 'assistant') {
         if (runDetails) runDetails.completionMessagePending = false;
@@ -1041,18 +1049,19 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
 
   pi.on('message_end', (event) => {
     const details = runDetails;
-    if (state.phase !== 'implementing' || details?.reviewerAgentId === undefined) return;
+    if (state.phase !== 'implementing' || details === undefined) return;
     const message = event.message;
     if (message.role !== 'custom' || message.customType !== 'felan-subagent-completion') return;
     if (!isRecord(message.details)) return;
     const notices = Array.isArray(message.details.notices)
       ? message.details.notices
       : [message.details.notice];
-    if (notices.some((notice) => isRecord(notice)
-      && notice.agentId === details.reviewerAgentId
-      && notice.type === 'reviewer'
-      && notice.status === 'completed')) {
-      details.reviewerCompleted = true;
+    for (const notice of notices) {
+      if (!isRecord(notice) || typeof notice.agentId !== 'string'
+        || details.reviewers.get(notice.agentId) !== 'pending' || notice.type !== 'reviewer') continue;
+      if (notice.status !== 'completed' && notice.status !== 'cancelled' && notice.status !== 'failed') continue;
+      details.reviewers.set(notice.agentId, notice.status);
+      details.reviewReassessmentPending = true;
     }
   });
 
@@ -1113,13 +1122,20 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     if (state.phase === 'implementing' || state.phase === 'handoff') {
       const details = runDetails;
       if (state.phase === 'implementing' && details && !exitRequested) {
-        const reviewPending = details.reviewRequested && !details.reviewerCompleted;
+        const reviewerStatuses = [...details.reviewers.values()];
+        const reviewPending = reviewerStatuses.includes('pending');
         const verificationPending = details.completionGate
-          ? !details.completionAccepted && !details.reviewerCompleted
-          : !details.reviewerCompleted;
+          ? !details.completionAccepted
+          : !reviewerStatuses.includes('completed');
         if (reviewPending || verificationPending) {
           updateStatus(ctx);
-          notify(ctx, reviewPending ? 'Prewalk is waiting for the reviewer completion.' : 'Prewalk verification is pending; continue the run or use /prewalk off.', 'warning');
+          const unsuccessfulReview = reviewerStatuses.includes('cancelled') || reviewerStatuses.includes('failed');
+          const message = reviewPending
+            ? 'Prewalk is waiting for the reviewer completion.'
+            : unsuccessfulReview
+              ? 'Prewalk review ended without a result; verification is pending. Continue verification or use /prewalk off.'
+              : 'Prewalk verification is pending; continue the run or use /prewalk off.';
+          notify(ctx, message, 'warning');
           return;
         }
       }

@@ -199,13 +199,21 @@ With a classifier, Prewalk makes four small decisions in root sessions:
   If there is a gap, a hidden follow-up asks the
   implementer to finish and verify it. If the result is uncertain, the follow-up
   asks for one high-tier reviewer. A `done` decision still requires successful
-  verification after the last edit. At most two checks run per Prewalk run; if
-  the second check still finds a gap, review is required. Prewalk retains the
-  implementation model while verification or the reviewer is outstanding.
+  verification after the last edit. At most two checks run before requesting
+  review, subject to the user's review restrictions. Prewalk waits only for
+  actual pending reviewers, then reassesses the next normal final response.
+  Cancelled or failed reviewers do not count as successful verification and
+  are never automatically replaced. If reassessment is inconclusive, Prewalk
+  reports pending verification rather than waiting for a finished reviewer.
+  Explicit user continuation permits another check; `/prewalk off` exits.
+  Prewalk retains the implementation model while verification or a reviewer
+  is outstanding.
 
 Without a classifier, the model decides entry and exploration itself, the
-configured target applies, and implementation guidance always requests one
-high-tier reviewer after verification. Prewalk does not check whether `Agent`
+configured target applies, and implementation guidance requests one
+high-tier reviewer after verification unless the user prohibits it. A cancelled
+or failed review leaves verification pending without an automatic replacement.
+Prewalk does not check whether `Agent`
 is available; the host must enable it for reviewer requests.
 
 The `extensionConfig.prewalk.entryApproval` setting accepts `ask`, `allow`, or

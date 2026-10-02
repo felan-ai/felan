@@ -38,7 +38,7 @@ const REVIEWER_REQUEST = `launch one Agent with subagent_type reviewer at the hi
 
 export const VERIFICATION_INSTRUCTION = `${IMPLEMENTATION_BASE}
 
-Prewalk requires an independent review of the implementation. After every task is complete and verification passes, ${REVIEWER_REQUEST}`;
+Prewalk requires an independent review of the implementation unless the user prohibits it. Honor the user's review restrictions; never replace a cancelled or failed reviewer automatically. If review is prohibited or ends without a result, report the verification status and pause for input or an explicit /prewalk off. Otherwise, after every task is complete and verification passes, ${REVIEWER_REQUEST}`;
 
 export const GATED_VERIFICATION_INSTRUCTION = `${IMPLEMENTATION_BASE}
 
@@ -48,7 +48,7 @@ export const COMPLETION_MESSAGE_TYPE = 'prewalk-completion-check';
 
 export const COMPLETION_GAP_INSTRUCTION = `The automatic completion check found that the request is not fully satisfied. Compare the result with the user's request, the approved plan, and every task's acceptance criteria; complete any missing or unverified work, run the relevant verification after the last change, and finish with a concise summary of the changes and verification results.`;
 
-export const COMPLETION_REVIEW_INSTRUCTION = `The automatic completion check could not confirm that the work is complete. To decide, ${REVIEWER_REQUEST}`;
+export const COMPLETION_REVIEW_INSTRUCTION = `The automatic completion check could not confirm that the work is complete. Honor the user's review restrictions: if another reviewer is prohibited, report the missing verification evidence and pause for input instead. Never replace a cancelled or failed reviewer automatically. Otherwise, to decide, ${REVIEWER_REQUEST}`;
 
 export const ENTRY_MESSAGE_TYPE = `${CONTROL_MESSAGE_PREFIX}entry`;
 

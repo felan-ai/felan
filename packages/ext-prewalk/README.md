@@ -108,14 +108,21 @@ session evidence; Prewalk retains its own task and verification judgments.
   verification evidence, not an intermediate text-only turn. `done` lets the run
   settle. `gap` queues a hidden `prewalk-completion-check` follow-up that asks
   the implementer to finish and verify missing work. `unsure` queues one
-  follow-up requesting a single high-tier reviewer and stops further checks.
+  follow-up requesting a single high-tier reviewer, subject to the user's
+  review restrictions, and stops automatic checks until that review ends.
   A second `gap` also requests that review instead of silently accepting
-  unfinished work. At most two checks run per Prewalk run. A failed completion
+  unfinished work. At most two checks run before requesting review. A failed completion
   check also requests review rather than treating an unverified implementation
   as done. A `done` decision is accepted only when session activity shows a
   successful verification after the last successful mutation; the classifier
   receives bounded tool outcome metadata, not raw command output. Prewalk
-  waits for the requested reviewer completion before restoring the planner.
+  waits only for actual pending reviewers. Completed, cancelled, and failed
+  reviewers are terminal; after they finish, the next normal final response
+  receives a fresh completion check. Cancellation or failure is not proof of
+  verification and never automatically requests a replacement reviewer.
+  Inconclusive reassessment leaves verification pending, not reviewer waiting;
+  an explicit user continuation permits another check, or `/prewalk off` exits.
+  Successful review alone does not bypass the classifier's verification check.
   If the classifier requests more work, the hidden message continues the same
   run before settlement and is removed from model context after the next
   assistant turn.

@@ -435,7 +435,10 @@ async function beforeSettle(
   });
 }
 
-async function resolveReviewer(harness: ReturnType<typeof createHarness>) {
+async function resolveReviewer(
+  harness: ReturnType<typeof createHarness>,
+  status: 'completed' | 'cancelled' | 'failed' = 'completed',
+) {
   await harness.emit('tool_call', {
     type: 'tool_call', toolCallId: 'completed-review', toolName: 'Agent', input: { subagent_type: 'reviewer' },
   });
@@ -446,7 +449,7 @@ async function resolveReviewer(harness: ReturnType<typeof createHarness>) {
   await harness.emit('message_end', {
     type: 'message_end',
     message: { role: 'custom', customType: 'felan-subagent-completion', details: {
-      notice: { agentId: 'review-child', type: 'reviewer', status: 'completed' },
+      notice: { agentId: 'review-child', type: 'reviewer', status },
     } },
   });
 }
@@ -2248,6 +2251,13 @@ function beforeStartEvent(prompt: string) {
 }
 
 describe('classifier guidance', () => {
+  const verifiedMessages = [
+    { role: 'assistant', content: [{ type: 'toolCall', id: 'edit-verified', name: 'edit', arguments: { path: 'src/feature.ts' } }] },
+    toolResult('edit-verified', 'edit'),
+    { role: 'assistant', content: [{ type: 'toolCall', id: 'test-verified', name: 'bash', arguments: { command: 'pnpm test' } }] },
+    { ...toolResult('test-verified', 'bash'), content: [{ type: 'text', text: 'Exit: 0' }] },
+  ];
+
   it('recommends Prewalk entry from an input-started classification', async () => {
     const classifier = scriptedClassifier({ route: { route: 'prewalk' } });
     const harness = createHarness({ classifier, activeTools: entryTools });
@@ -2579,14 +2589,17 @@ describe('classifier guidance', () => {
     expect(gapClassifier.classify).toHaveBeenCalledTimes(4);
   });
 
-  it('holds the implementation model through an asynchronous reviewer completion', async () => {
+  it.each(['completed', 'cancelled', 'failed'] as const)('reassesses completion after a reviewer is %s', async (status) => {
+    const completion = { verdict: 'unsure' };
+    const classifier = scriptedClassifier({
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'low', thinking: 'medium' },
+      verdict: completion,
+    });
     const harness = createHarness({
       activeTools: [...entryTools, 'Agent'],
-      classifier: scriptedClassifier({
-        depth: { depth: 'targeted' },
-        'tier,thinking': { tier: 'low', thinking: 'medium' },
-        verdict: { verdict: 'unsure' },
-      }),
+      classifier,
+      sessionMessages: verifiedMessages,
     });
     await qualifyHandoff(harness);
     const implementationModel = harness.currentModel;
@@ -2612,11 +2625,118 @@ describe('classifier guidance', () => {
       type: 'message_end',
       message: {
         role: 'custom', customType: 'felan-subagent-completion',
-        details: { notice: { agentId: 'child-1', type: 'reviewer', status: 'completed' } },
+        details: { notice: { agentId: 'child-1', type: 'reviewer', status } },
       },
     });
     await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(implementationModel);
+    expect(harness.ui.notify.mock.lastCall?.[0]).not.toContain('waiting for the reviewer completion');
+    completion.verdict = 'done';
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(classifier.classify).toHaveBeenCalledTimes(4);
+    await harness.emit('agent_settled');
     expect(harness.currentModel).toBe(plannerModel);
+  });
+
+  it.each(['gap', 'unsure', 'error'] as const)('pauses after a cancelled review when reassessment returns %s without requesting another reviewer', async (verdict) => {
+    const choices: Record<string, Record<string, string> | Error> = {
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'low', thinking: 'medium' },
+      verdict: { verdict: 'unsure' },
+    };
+    const classifier = scriptedClassifier(choices);
+    const harness = createHarness({ classifier, activeTools: [...entryTools, 'Agent'] });
+    await qualifyHandoff(harness);
+    expect((await beforeSettle(harness)).entries[0].content).toBe(COMPLETION_REVIEW_INSTRUCTION);
+    await resolveReviewer(harness, 'cancelled');
+    choices.verdict = verdict === 'error' ? new Error('Classifier unavailable') : { verdict };
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(classifier.classify).toHaveBeenCalledTimes(4);
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(targetModel);
+    expect(harness.ui.notify.mock.lastCall).toEqual([
+      'Prewalk review ended without a result; verification is pending. Continue verification or use /prewalk off.', 'warning',
+    ]);
+  });
+
+  it.each(['interactive', 'rpc'] as const)('allows explicit %s verification continuation after an inconclusive cancelled review', async (source) => {
+    const completion = { verdict: 'unsure' };
+    const classifier = scriptedClassifier({
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'low', thinking: 'medium' },
+      verdict: completion,
+    });
+    const harness = createHarness({ classifier, activeTools: [...entryTools, 'Agent'], sessionMessages: verifiedMessages });
+    await qualifyHandoff(harness);
+    await beforeSettle(harness);
+    await resolveReviewer(harness, 'cancelled');
+    expect(await beforeSettle(harness)).toBeUndefined();
+    await harness.emit('input', { source: 'extension', text: 'Continue' });
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(classifier.classify).toHaveBeenCalledTimes(4);
+    completion.verdict = 'done';
+    await harness.emit('input', { source, text: 'Verify the requested change without another reviewer' });
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(classifier.classify).toHaveBeenCalledTimes(5);
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(plannerModel);
+  });
+
+  it('waits for all tracked reviewers and ignores unrelated or duplicate terminal notices', async () => {
+    const classifier = scriptedClassifier({
+      depth: { depth: 'targeted' },
+      'tier,thinking': { tier: 'low', thinking: 'medium' },
+      verdict: { verdict: 'done' },
+    });
+    const harness = createHarness({ classifier, activeTools: [...entryTools, 'Agent'], sessionMessages: verifiedMessages });
+    await qualifyHandoff(harness);
+    for (const id of ['one', 'two']) {
+      await harness.emit('tool_call', { toolCallId: id, toolName: 'Agent', input: { subagent_type: 'reviewer' } });
+      await harness.emit('turn_end', {
+        message: assistant('toolUse'), toolResults: [toolResult(id, 'Agent', false, { agentId: id })],
+      });
+    }
+    const notice = (agentId: string, status: string, type = 'reviewer') => ({ agentId, status, type });
+    await harness.emit('message_end', { message: {
+      role: 'custom', customType: 'felan-subagent-completion', details: { notices: [
+        notice('one', 'cancelled'), notice('other-run', 'completed'), notice('two', 'completed', 'general'),
+      ] },
+    } });
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(classifier.classify).toHaveBeenCalledTimes(2);
+    await harness.emit('agent_settled');
+    expect(harness.ui.notify.mock.lastCall?.[0]).toBe('Prewalk is waiting for the reviewer completion.');
+    await harness.emit('message_end', { message: {
+      role: 'custom', customType: 'felan-subagent-completion', details: { notice: notice('two', 'failed') },
+    } });
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(classifier.classify).toHaveBeenCalledTimes(3);
+    await harness.emit('message_end', { message: {
+      role: 'custom', customType: 'felan-subagent-completion', details: { notice: notice('two', 'failed') },
+    } });
+    expect(await beforeSettle(harness)).toBeUndefined();
+    expect(classifier.classify).toHaveBeenCalledTimes(3);
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(plannerModel);
+  });
+
+  it.each(['cancelled', 'failed'] as const)('does not accept a %s reviewer as verification without a classifier', async (status) => {
+    const harness = createHarness({ activeTools: [...entryTools, 'Agent'] });
+    await qualifyHandoff(harness);
+    await resolveReviewer(harness, status);
+    expect(await beforeSettle(harness)).toBeUndefined();
+    await harness.emit('agent_settled');
+    expect(harness.currentModel).toBe(targetModel);
+    expect(harness.ui.notify.mock.lastCall?.[0]).toContain('review ended without a result; verification is pending');
+    await harness.command.handler('off', harness.ctx);
+    expect(harness.currentModel).toBe(plannerModel);
+  });
+
+  it('makes user review restrictions explicit in review guidance', () => {
+    expect(COMPLETION_REVIEW_INSTRUCTION).toContain('if another reviewer is prohibited');
+    expect(COMPLETION_REVIEW_INSTRUCTION).toContain('Never replace a cancelled or failed reviewer automatically');
+    expect(VERIFICATION_INSTRUCTION).toContain('unless the user prohibits it');
   });
 
   it('keeps verification pending after an abnormal final turn', async () => {
