@@ -14,6 +14,7 @@ import {
   getSupportedThinkingLevels,
   getCurrentTools,
   type FelanExtensionAPI,
+  type ClassifierQuestions,
 } from '@felan-ai/agent-core';
 import { InteractiveMode } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -156,7 +157,7 @@ describe('local Agent Core lifecycle', () => {
     const model = modelRuntime.getModel('anthropic', 'claude-opus-5-5');
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
-    const classify = vi.fn().mockResolvedValue({ answers: { effort: { type: 'choice', choice: 'low' } } });
+    const classify = vi.fn().mockImplementation(async (_state, questions: ClassifierQuestions) => effortAnswers(questions, ['low']));
     const runtime = await createLocalFelanRuntime({
       cwd, agentDir, homeDir: root, modelRuntime, model: model!, extensionPackages: [],
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
@@ -177,15 +178,15 @@ describe('local Agent Core lifecycle', () => {
     const defaultThinking = runtime.session.settingsManager.getDefaultThinkingLevel();
     await runtime.session.prompt('Summarize this simply');
 
-    expect(classify.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('effort')))
-      .toEqual([['effort']]);
+    expect(classify.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('thinking:effort')))
+      .toEqual([expect.arrayContaining(['thinking:effort'])]);
     expect(runtime.session.thinkingLevel).toBe('low');
     expect(runtime.session.settingsManager.getDefaultThinkingLevel()).toBe(defaultThinking);
 
     runtime.session.setThinkingLevel('max');
     await runtime.session.prompt('Now investigate deeply');
-    expect(classify.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('effort')))
-      .toEqual([['effort']]);
+    expect(classify.mock.calls.map(([, questions]) => Object.keys(questions)).filter((ids) => ids.includes('thinking:effort')))
+      .toEqual([expect.arrayContaining(['thinking:effort'])]);
     expect(runtime.session.thinkingLevel).toBe('max');
     await runtime.dispose();
   });
@@ -200,11 +201,8 @@ describe('local Agent Core lifecycle', () => {
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
     const effortChoices = ['low', 'high'];
-    const classify = vi.fn().mockImplementation(async (_state, questions: Record<string, unknown>) => ({
-      answers: questions.effort
-        ? { effort: { type: 'choice', choice: effortChoices.shift() } }
-        : { route: { type: 'choice', choice: 'regular' } },
-    }));
+    const classify = vi.fn().mockImplementation(async (_state, questions: ClassifierQuestions) =>
+      effortAnswers(questions, effortChoices));
     const runtime = await createLocalFelanRuntime({
       cwd, agentDir, homeDir: root, modelRuntime, model: model!,
       extensionPackages: [builtinExtensionPackages.codex],
@@ -243,11 +241,8 @@ describe('local Agent Core lifecycle', () => {
     expect(model?.api).toBe('openai-responses');
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
     const effortChoices = ['low', 'high', 'high'];
-    const classify = vi.fn().mockImplementation(async (_state, questions: Record<string, unknown>) => ({
-      answers: questions.effort
-        ? { effort: { type: 'choice', choice: effortChoices.shift() } }
-        : { route: { type: 'choice', choice: 'regular' } },
-    }));
+    const classify = vi.fn().mockImplementation(async (_state, questions: ClassifierQuestions) =>
+      effortAnswers(questions, effortChoices));
     const requests: Array<{
       input: Array<{ role?: string; type?: string; reasoning?: { effort: string } }>;
       reasoning?: { effort: string };
@@ -297,7 +292,7 @@ describe('local Agent Core lifecycle', () => {
       await runtime.session.prompt('Summarize the findings');
 
       expect(fetch).toHaveBeenCalledTimes(4);
-      expect(classify.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'effort'))).toHaveLength(3);
+      expect(classify.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'thinking:effort'))).toHaveLength(3);
       const [first, second, third, fourth] = requests;
       expect(first!.input.some((item) => item.type === 'configuration_update')).toBe(false);
       expect(first!.prompt_cache_options).toEqual({ ttl: '30m' });
@@ -345,7 +340,7 @@ describe('local Agent Core lifecycle', () => {
     const model = modelRuntime.getModel(provider, 'gpt-6-sol');
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
-    const classify = vi.fn().mockResolvedValue({ answers: { effort: { type: 'choice', choice: 'low' } } });
+    const classify = vi.fn().mockImplementation(async (_state, questions: ClassifierQuestions) => effortAnswers(questions, ['low']));
     const runtime = await createLocalFelanRuntime({
       cwd, agentDir, homeDir: root, modelRuntime, model: model!,
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
@@ -368,7 +363,7 @@ describe('local Agent Core lifecycle', () => {
     await runtime.session.bindExtensions({ mode: 'print' });
     const original = runtime.session.thinkingLevel;
     await runtime.session.prompt('Summarize the file');
-    expect(classify.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'effort'))).toEqual([]);
+    expect(classify.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'thinking:effort'))).toEqual([]);
     expect(runtime.session.thinkingLevel).toBe(original);
     await runtime.dispose();
   });
@@ -1418,4 +1413,12 @@ function completedAssistantMessage(text: string) {
 
 function skill(name: string): string {
   return `---\nname: ${name}\ndescription: ${name}\n---\n`;
+}
+
+function effortAnswers(questions: ClassifierQuestions, choices: string[]) {
+  return { answers: Object.fromEntries(Object.entries(questions).map(([id, question]) => [id,
+    question.type === 'choice' ? { type: 'choice', choice: id === 'thinking:effort' ? choices.shift()
+      : id === 'prewalk:route' ? 'regular' : Object.keys(question.criteria)[0] }
+      : question.type === 'bool' ? { type: 'bool', probability: 0 } : { type: 'score', score: 0 },
+  ])) };
 }

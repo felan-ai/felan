@@ -1,0 +1,120 @@
+version: 1
+adapters:
+  felan:
+    module: ./adapters/felan-turn-classification.mjs
+tests:
+  - cases/turn-classification/**/*.eval.yaml
+artifactRoot: .harness-evals/runs
+outputRoot: .harness-evals/output
+workspace:
+  mode: copy
+  containerPath: /workspace
+docker:
+  repoPath: /workspace
+  home: /tmp/felan-home
+  pullOnRefresh: false
+agents:
+  turn-classification-disabled:
+    adapter: felan
+    comparisonId: turn-classification-disabled-v1
+    provider: openai-codex
+    model: gpt-6.1-sol
+    timeoutMs: 1800000
+    auth:
+      type: oauth
+    useCurrentConfig: false
+    config:
+      useCurrentConfig: false
+      turnClassificationMode: disabled
+  turn-classification-shared:
+    extends: turn-classification-disabled
+    comparisonId: turn-classification-shared-v1
+    env: [TYPESAFE_API_KEY]
+    config:
+      turnClassificationMode: shared
+  turn-classification-separated:
+    extends: turn-classification-shared
+    comparisonId: turn-classification-separated-v1
+    config:
+      turnClassificationMode: separated
+  turn-classification-luna-disabled:
+    extends: turn-classification-disabled
+    comparisonId: turn-classification-luna-disabled-v1
+    model: gpt-6-luna
+  turn-classification-luna-shared:
+    extends: turn-classification-shared
+    comparisonId: turn-classification-luna-shared-v1
+    model: gpt-6-luna
+  turn-classification-luna-separated:
+    extends: turn-classification-separated
+    comparisonId: turn-classification-luna-separated-v1
+    model: gpt-6-luna
+benchmarks:
+  turn-classification:
+    revision: 1
+    label: Shared preflight versus classifier disabled
+    select:
+      suites: [turn-classification]
+    arms:
+      baseline: turn-classification-disabled
+      candidate: turn-classification-shared
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 1
+    objective:
+      - metric: quality.passRate
+        goal: maximize
+      - metric: cost.total
+        goal: minimize
+  turn-classification-transport:
+    revision: 1
+    label: Shared preflight versus separated producer transport
+    select:
+      suites: [turn-classification]
+    arms:
+      baseline: turn-classification-separated
+      candidate: turn-classification-shared
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 1
+    objective:
+      - metric: quality.passRate
+        goal: maximize
+      - metric: cost.total
+        goal: minimize
+  turn-classification-luna:
+    revision: 1
+    label: Luna shared preflight versus classifier disabled
+    select:
+      suites: [turn-classification]
+    arms:
+      baseline: turn-classification-luna-disabled
+      candidate: turn-classification-luna-shared
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 1
+    objective:
+      - metric: quality.passRate
+        goal: maximize
+      - metric: cost.total
+        goal: minimize
+  turn-classification-luna-transport:
+    revision: 1
+    label: Luna shared preflight versus separated producer transport
+    select:
+      suites: [turn-classification]
+    arms:
+      baseline: turn-classification-luna-separated
+      candidate: turn-classification-luna-shared
+    trials: 3
+    qualityGates:
+      - metric: quality.passRate
+        min: 1
+    objective:
+      - metric: quality.passRate
+        goal: maximize
+      - metric: cost.total
+        goal: minimize

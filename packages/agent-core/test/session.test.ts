@@ -113,6 +113,7 @@ describe('Agent Core session composition', () => {
       .toContainEqual(expect.objectContaining({ path: '<inline:@felan-ai/test-inline>', hidden: true }));
     expect(wrappedInvocations).toBe(0);
     expect(result.extensionsResult.extensions.map((loaded) => loaded.path)).toEqual([
+      '<inline:@felan-ai/agent-core/selection-automation>',
       '<inline:@felan-ai/agent-core/project-instructions>',
       '<inline:@felan-ai/listed>',
       '<inline:@felan-ai/test-inline>',
@@ -189,11 +190,13 @@ describe('Agent Core session composition', () => {
 
     expect(result.extensionsResult.extensions.map((extension) => extension.path)).toEqual([
       explicit,
+      '<inline:@felan-ai/agent-core/selection-automation>',
       '<inline:@felan-ai/agent-core/runtime-tools>',
     ]);
     expect(result.extensionsResult.extensions[0]?.commands.has('explicit')).toBe(true);
     expect(result.session.resourceLoader.getExtensions().extensions.map((extension) => extension.path)).toEqual([
       explicit,
+      '<inline:@felan-ai/agent-core/selection-automation>',
       '<inline:@felan-ai/agent-core/runtime-tools>',
     ]);
     result.session.dispose();
@@ -467,6 +470,39 @@ describe('Agent Core session composition', () => {
       extension.path === '<inline:@felan-ai/agent-core/dynamic-thinking>'
     ))).toBe(true);
     result.session.dispose();
+  });
+
+  it('binds a session-owned classification registry only to roots with a classifier', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    const modelRuntime = await createModelRuntime(join(root, 'agent-dir'));
+    const classifier = { classify: vi.fn() };
+    const registries: unknown[] = [];
+    for (const child of [false, false, true]) {
+      const manager = SessionManager.inMemory(cwd);
+      if (child) {
+        const header = manager.getHeader()!;
+        vi.spyOn(manager, 'getHeader').mockReturnValue({ ...header, parentSession: 'parent' });
+      }
+      const result = await createAgentCoreSession({
+        runtime: Object.assign(new TestAgentRuntime(cwd), { classifier }),
+        extensionPackages: ['@felan-ai/test-contribution'],
+        importExtension: async () => ({ default: ((pi) => {
+          registries.push(pi.turnClassification);
+          pi.turnClassification?.register({ id: 'test', prepare: () => ({ questions: {
+            needed: { type: 'bool', instructions: 'Is work needed?', criteria: { true: 'yes', false: 'no' } },
+          } }) });
+        }) satisfies FelanExtension }),
+        modelRuntime, settingsManager: SettingsManager.inMemory(), sessionManager: manager,
+      });
+      result.session.dispose();
+    }
+    expect(registries[0]).toBeDefined();
+    expect(registries[1]).toBeDefined();
+    expect(registries[0]).not.toBe(registries[1]);
+    expect(registries[2]).toBeUndefined();
+    expect(classifier.classify).not.toHaveBeenCalled();
   });
 
   it('disposes partial Pi sessions when the stream wrapper throws', async () => {

@@ -1,8 +1,8 @@
 # @felan-ai/ext-prewalk
 
-Same-session Prewalk for Felan's complex repository work: the current model explores and plans the work in the session task graph, optionally submits that plan for user review, then makes one focused mutation after approval. Felan switches the next model request to the `low` model tier at exact `medium` thinking by default, which finishes and verifies the task with the full conversation and tool history intact. Tier resolution stays on the planner's provider and prefers that provider's matching model family. If the planner provider has no model in the target tier, Prewalk keeps the planner model and only applies the configured implementation thinking level. An explicit `provider/model-id` target may still cross providers.
+Same-session Prewalk for Felan's complex repository work: approved entry establishes a capable same-provider high-effort planner, which explores and plans the work in the session task graph, optionally submits that plan for user review, then makes one focused mutation after approval. Felan switches the next model request to the `low` model tier at exact `medium` thinking by default, which finishes and verifies the task with the full conversation and tool history intact. Tier resolution stays on the planner's provider and prefers that provider's matching model family. If the planner provider has no model in the target tier, Prewalk keeps the planner model and only applies the configured implementation thinking level. An explicit `provider/model-id` target may still cross providers.
 
-After the run settles, Prewalk restores the original planner model and thinking level by default. All of these automated changes are scoped to the active session and do not change the user's or project's default model or thinking preference.
+After the run settles, Prewalk restores the original pre-entry model and thinking level by default. All of these automated changes are scoped to the active session and do not change the user's or project's default model or thinking preference.
 
 When a savings reporter is available, Prewalk reports each implementation turn as a `model-routing` saving. The observed target-model usage is the actual outcome; the estimated planner-model baseline uses two thirds of each observed input, output, and cache token class (rounded to whole tokens). The host prices both outcomes and records the dollar difference as estimated savings. Planning turns, same-model handoffs, and failed or aborted turns are not reported. Savings reporting is optional and never interrupts the Prewalk lifecycle.
 
@@ -10,7 +10,7 @@ For complex repository work that benefits from substantial exploration, coordina
 
 ## Requirements
 
-- An authenticated planner model. A same-provider model in the configured target tier is used when available; otherwise Prewalk keeps the planner model and reduces thinking. An explicit target requires that exact authenticated model
+- An authenticated, scoped high/xhigh planner model on the current provider supporting high effort or above. A same-provider model in the configured target tier is used when available; otherwise Prewalk keeps the planner model and applies the configured implementation effort. An explicit target requires that exact authenticated model
 - At least one explicit mutation tool: Pi's `edit` or `write`, or the Codex extension's `apply_patch`
 
 Prewalk refuses to arm when no explicit mutation tool is active. Shell tools such as `bash` and Codex `exec_command` do not qualify because they are also used for exploration and verification. When both `TaskCreate` and `TaskUpdate` are active, handoff also waits for successful task creation and an in-progress task claim; if those tools are unavailable, mutation-only handoff remains available. Prewalk does not inspect `TaskList`, `TaskGet`, todo, or Beads activity.
@@ -26,7 +26,7 @@ Prewalk refuses to arm when no explicit mutation tool is active. Shell tools suc
 /prewalk cancel  Alias for exit
 ```
 
-`status`, `exit`, `off`, and `cancel` are handled locally and do not make a provider request. In TUI mode, an inline task is submitted as a user message. In JSON and print modes, it is submitted as a visible custom message and the command waits for the run to become idle. Exiting during planning cancels the pending handoff immediately. Exiting while the target model is actively running defers planner restoration until that run settles; it does not abort the current provider request or the underlying task. A manual model selection cancels Prewalk and keeps the model selected by the user.
+`status`, `exit`, `off`, and `cancel` are handled locally and do not make a provider request. In TUI mode, an inline task is submitted as a user message. In JSON and print modes, it is submitted as a visible custom message and the command waits for the run to become idle. Exiting during active inference defers original-selection restoration until the run settles; exiting while idle restores immediately. Exit does not trigger an implementation handoff, and it does not abort the current provider request or the underlying task. A manual model selection cancels Prewalk and keeps the model selected by the user.
 
 ## Model entry tool
 
@@ -56,7 +56,7 @@ In modes without interactive input, `exit_plan_mode` auto-approves an `ask` revi
 
 ## Lifecycle
 
-1. The planner builds on findings already in the conversation, inspects what is still missing, and determines the complete implementation scope.
+1. Approved entry establishes a capable high-effort planner before planning inference. It builds on findings already in the conversation, inspects what is still missing, and determines the complete implementation scope.
 2. When the task tools are available, the planner creates a concise graph of at most nine outcome-oriented tasks with `TaskCreate`, includes concrete validation in their acceptance criteria, links them with `blocked_by` dependencies that encode the execution order, and claims the first ready task with `TaskUpdate`.
 3. When plan review is active, the planner passes a concise numbered plan to `exit_plan_mode`. The tool displays it and either records approval, returns feedback for another planning iteration, or cancels Prewalk.
 4. When both task tools are active, successful `TaskCreate` and `TaskUpdate`
@@ -64,7 +64,7 @@ In modes without interactive input, `exit_plan_mode` auto-approves an `ask` revi
    performs one focused successful `edit`, `write`, or `apply_patch`.
 5. At that turn boundary, Felan resolves a same-provider model in the configured target tier, or an exact target model. If the planner provider has no target-tier model, it keeps the planner model and applies the configured thinking level.
 6. The target model completes the existing session task graph and runs the relevant verification. Without a classifier it launches one high-tier `reviewer` child and ends with a pending-review status; the review completion notice resumes the session. With a classifier, the completion check below decides whether more work or a review is needed. Prewalk does not check whether `Agent` is active; a host without it must enable the tool to satisfy reviewer requests.
-7. Once the work is verified and any required reviewer has returned, Felan restores the planner model and thinking level after the agent run settles. An unchecked or aborted implementation, or an outstanding review, keeps Prewalk active until the work resumes or the user exits it.
+7. Once the work is verified and any required reviewer has returned, Felan restores the original pre-entry model and thinking level after the agent run settles. An unchecked or aborted implementation, or an outstanding review, keeps Prewalk active until the work resumes or the user exits it.
 
 When both task tools are active, successful `TaskCreate` and `TaskUpdate` calls claiming `in_progress` work are required before a successful mutation qualifies the turn for handoff. Failed or unrelated task calls do not open that gate. If the task tools are unavailable, a successful explicit mutation qualifies directly. Failed mutation calls never qualify. If the planner stops after prose or partial tool progress, Prewalk can append a compact hidden continuation that directs the next tool action without repeating the full planning instructions. It sends at most one continuation per no-progress stretch and three per run.
 
@@ -78,8 +78,8 @@ remain transient, stable-position context messages.
 
 ## Classifier guidance
 
-When the host runtime provides a classifier, root-session Prewalk runs make four
-choice decisions through its unified `classify` operation. Each uses bounded state: the request, up to 24 recent
+When the host runtime provides a classifier, root-session Prewalk contributes entry and conditional planner-profile questions
+to the shared root pass, with separate later workflow decisions. Each uses bounded state: the request, up to 24 recent
 conversation items, up to 40 recent tool calls with short inputs and error
 flags, the submitted plan, and recorded `TaskCreate` titles and acceptance
 criteria.
@@ -88,20 +88,25 @@ session evidence; Prewalk retains its own task and verification judgments.
 
 - **Entry:** Classification starts on Pi's `input` event for idle turns when
   `enter_prewalk` and a mutation tool are active and `entryApproval` is not
-  `deny`. Agent Core's managed shared root-turn preflight may expire before the answer; in
+  `deny`. Agent Core's registered shared root-turn preflight may expire before the answer; in
   that case no entry guidance is added. If the request should use Prewalk, a
   hidden conversation message
   tells the model to call `enter_prewalk` before exploring. It does not change
   the system prompt; the message is removed from subsequent model context.
   The tool stays available and entry approval is unchanged.
+- **Planner profile:** Conditional on entry, choose among authenticated, scoped
+  same-provider high/xhigh model profiles with supported high/xhigh/max effort.
+  Approved entry validates the selection again; absent an answer, it uses a
+  deterministic capable profile. Missing capabilities refuse entry explicitly.
 - **Exploration depth:** When a run starts from `enter_prewalk` or `/prewalk`,
   the classifier judges how much the session already covers. The result appends
   one sentence to the planning guidance: `sufficient` (plan from existing
   findings), `targeted` (inspect specific missing files), or `deep` (delegate
   discovery to `explore` children and wait for their summaries).
-- **Implementation profile:** For tier targets, the classifier may raise the
-  configured tier and thinking level based on the plan and tasks. It never
-  lowers them. Exact model targets are unchanged.
+- **Implementation advice:** For tier targets, the classifier can recommend
+  requirements from the approved plan and tasks. A stronger recommendation is
+  reported, but targetModel/targetThinking remain authoritative. Exact model
+  targets retain their existing path.
 - **Completion:** Implementation guidance asks for a concise summary with the
   verification results instead of a mandatory review. Once the agent run is
   ready to settle, the classifier judges its final assistant response and
@@ -116,33 +121,38 @@ session evidence; Prewalk retains its own task and verification judgments.
   as done. A `done` decision is accepted only when session activity shows a
   successful verification after the last successful mutation; the classifier
   receives bounded tool outcome metadata, not raw command output. Prewalk
-  waits only for actual pending reviewers. Completed, cancelled, and failed
-  reviewers are terminal; after they finish, the next normal final response
-  receives a fresh completion check. Cancellation or failure is not proof of
-  verification and never automatically requests a replacement reviewer.
-  Inconclusive reassessment leaves verification pending, not reviewer waiting;
-  an explicit user continuation permits another check, or `/prewalk off` exits.
-  Successful review alone does not bypass the classifier's verification check.
+  waits only for actual pending reviewers. A successful reviewer is terminal,
+  but review completion alone is not proof of verification: the next normal
+  final response receives a fresh completion check. If that post-review check
+  is inconclusive or fails, Prewalk exits at settlement with a warning that
+  automatic verification could not confirm completion; this is not a success
+  claim. A cancelled or failed review is not proof of verification and never
+  automatically requests a replacement reviewer; Prewalk remains available
+  for explicit verification or `/prewalk off`.
   If the classifier requests more work, the hidden message continues the same
   run before settlement and is removed from model context after the next
   assistant turn.
 
-A missing classifier leaves model judgment and the configured defaults in
-place; a failed entry, depth, or profile decision likewise adds no guidance or
-escalation. Decisions are logged under the
-`prewalk-classifier` component without request text.
+A missing classifier leaves model judgment, capable static planning and the
+configured implementation target in place. Failed entry/depth decisions add no
+optional guidance; implementation advice never escalates the configured target.
+Entry/profile answers are logged in the shared `turn-classification` record;
+later decisions use `prewalk-classifier`, without request text.
 
 ## Thinking levels
 
-The planner keeps its current thinking level while exploring. The implementation
+Planning uses a capable high-effort profile; static fallback preserves higher
+current effort when supported. Temporary selection ownership prevents ordinary
+dynamic thinking from competing with active planning or implementation. The implementation
 handoff requests exact `medium` thinking by default, rather than carrying a
 planner's potentially expensive `max` effort to the cheaper target. The request
 is clamped by Pi to the target model's supported levels, so a non-reasoning
 model receives `off`. Configure another target level when the task needs a
 different quality/cost balance. A same-model target with a different effective
 level is still a real effort handoff; only matching model and effective effort
-are a no-op. After the run settles, Prewalk restores the planner model before
-restoring its exact original thinking level.
+are a no-op. After the run settles, Prewalk restores the original pre-entry model before its original thinking
+level. Internal automated changes do not permanently pin dynamic thinking; manual
+model/effort choices remain authoritative.
 
 ## Subagents
 

@@ -1,4 +1,6 @@
 import { builtinProviders } from '@felan-ai/agent-core';
+import { findPackageJSON } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 export const FELAN_DEFAULT_MODEL_PER_PROVIDER = {
   'amazon-bedrock': 'us.anthropic.claude-opus-5',
@@ -48,18 +50,18 @@ interface PiModelResolverModule {
   readonly defaultModelPerProvider?: Record<string, string>;
 }
 
-let resolverPromise: Promise<Record<string, string>> | undefined;
+let resolverPromise: Promise<ReadonlyArray<Record<string, string>>> | undefined;
 let activeLeases = 0;
-let restoreEntries: ReadonlyArray<readonly [string, string]> | undefined;
+let restoreEntries: ReadonlyArray<{ target: Record<string, string>; entries: ReadonlyArray<readonly [string, string]> }> | undefined;
 
 export async function acquireFelanModelDefaults(): Promise<() => void> {
-  // Pi uses one unexported map for both startup and post-login selection. Its
-  // exact version is pinned, and the coverage tests guard this internal seam.
+  // Peer resolution can load distinct Pi copies for Core startup and TUI login.
+  // Their pinned model maps must receive and release the same defaults together.
   const defaults = await loadPiModelDefaults();
   if (activeLeases === 0) {
     assertBuiltinProviderCoverage();
-    restoreEntries = Object.entries(defaults);
-    replaceDefaults(defaults, Object.entries(FELAN_DEFAULT_MODEL_PER_PROVIDER));
+    restoreEntries = defaults.map(target => ({ target, entries: Object.entries(target) }));
+    for (const target of defaults) replaceDefaults(target, Object.entries(FELAN_DEFAULT_MODEL_PER_PROVIDER));
   }
   activeLeases += 1;
 
@@ -72,19 +74,24 @@ export async function acquireFelanModelDefaults(): Promise<() => void> {
 
     const entries = restoreEntries;
     restoreEntries = undefined;
-    if (entries) replaceDefaults(defaults, entries);
+    for (const original of entries ?? []) replaceDefaults(original.target, original.entries);
   };
 }
 
-function loadPiModelDefaults(): Promise<Record<string, string>> {
+function loadPiModelDefaults(): Promise<ReadonlyArray<Record<string, string>>> {
   resolverPromise ??= (async () => {
-    const piEntry = import.meta.resolve('@earendil-works/pi-coding-agent');
-    const resolverUrl = new URL('./core/model-resolver.js', piEntry);
-    const resolver = await import(resolverUrl.href) as PiModelResolverModule;
-    if (!resolver.defaultModelPerProvider) {
-      throw new Error('The installed Pi version does not expose its default model map');
-    }
-    return resolver.defaultModelPerProvider;
+    const bases = [import.meta.url, import.meta.resolve('@felan-ai/agent-core')];
+    const targets = await Promise.all(bases.map(async base => {
+      const manifest = findPackageJSON('@earendil-works/pi-coding-agent', base);
+      if (!manifest) throw new Error('The installed Pi package cannot be resolved');
+      const resolverUrl = new URL('./dist/core/model-resolver.js', pathToFileURL(manifest));
+      const resolver = await import(resolverUrl.href) as PiModelResolverModule;
+      if (!resolver.defaultModelPerProvider) {
+        throw new Error('The installed Pi version does not expose its default model map');
+      }
+      return resolver.defaultModelPerProvider;
+    }));
+    return [...new Set(targets)];
   })();
   return resolverPromise;
 }

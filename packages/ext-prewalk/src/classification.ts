@@ -27,7 +27,6 @@ export interface RunContext {
 }
 
 export interface PrewalkClassifier {
-  needsPrewalk(request: string, ctx: ExtensionContext, signal?: AbortSignal): Promise<boolean>;
   explorationDepth(run: RunContext, ctx: ExtensionContext): Promise<ExplorationDepth | undefined>;
   implementationProfile(run: RunContext, ctx: ExtensionContext): Promise<ImplementationProfile | undefined>;
   completion(run: RunContext, finalMessage: string, ctx: ExtensionContext): Promise<CompletionVerdict | undefined>;
@@ -40,7 +39,7 @@ const MAX_TOOL_INPUT = 160;
 const MAX_PLAN_TEXT = 6_000;
 const MAX_FINAL_MESSAGE = 3_000;
 
-const ENTRY_QUESTIONS: Readonly<Record<string, ClassifierChoiceQuestion>> = {
+export const ENTRY_QUESTIONS: Readonly<Record<string, ClassifierChoiceQuestion>> = {
   route: {
     type: 'choice',
     instructions: 'Given `request` and `session`, should this request run through Prewalk, a plan-then-implement workflow in which a stronger model explores and records a task graph before a cheaper model implements and verifies it?',
@@ -130,10 +129,6 @@ export function createPrewalkClassifier(pi: FelanExtensionAPI): PrewalkClassifie
   }
 
   return {
-    async needsPrewalk(request, ctx, signal) {
-      const choices = await ask('entry', { request, session: snapshotSession(ctx) }, ENTRY_QUESTIONS, ctx, signal);
-      return choices?.route === 'prewalk';
-    },
     async explorationDepth(run, ctx) {
       const choices = await ask('exploration-depth', runState(run, ctx), DEPTH_QUESTIONS, ctx);
       return choices?.depth as ExplorationDepth | undefined;

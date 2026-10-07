@@ -66,12 +66,12 @@ parallel. It keeps small, sequential, known-location, and critical-path work in
 the parent, and rules out re-reading a delegated scope, trivial delegation, and
 reviewer fan-out. Without a classifier, the model applies that guidance itself.
 
-With a runtime classifier and an `explore` definition, root
-sessions ask one `broad_discovery` question per user turn. Classification
-starts on Pi's `input` event and is awaited in `before_agent_start`, so it
-overlaps with other extensions' pre-start work. Agent Core's managed shared root-turn
-preflight may expire without adding a discovery section. A transformed prompt
-is classified again. A bounded file listing skips discovery classification
+With a composed root classifier registry and an `explore` definition, the
+`subagents` contribution adds a `broad_discovery` question to the shared entry
+pass. It consumes the shared result in `before_agent_start`; there is no separate
+per-input inference call. The shared budget may expire without guidance. Prompt
+expansion cancels the earlier pass and builds a new shared snapshot. Without the
+registry, static guidance remains available. A bounded file listing skips discovery classification
 for a repository with fewer than 20 files, since delegating that surface
 would add overhead. At a probability of 0.65 or higher, the `subagent_routing`
 system-prompt section directs the model to delegate discovery to `explore`
@@ -89,11 +89,11 @@ is unchanged. A failed classification or unavailable classified tier falls back
 to the call's model or parent; an unavailable tier is logged as a warning.
 
 Classifier state contains the current prompt, image count, up to 24 recent
-model-visible user/assistant conversation items (at most 1,200 characters
-each), the `explore` descriptor, and direct-child
+model-visible conversation items including summaries (at most 1,200 UTF-8
+bytes per excerpt, under the shared total evidence budget), the `explore` descriptor, and direct-child
 statuses for routing; and the child prompt, description, and type for tier
-selection. The unified `classify` operation handles both the bool discovery
-question and choice tier selection. Hosts may send that state to the selected
+selection. The same `classify` contract supports the shared bool discovery contribution
+and the separate launch-time choice tier selection. Hosts may send that state to the selected
 classifier provider's configured endpoint;
 credentials remain host-owned and are never persisted in session records.
 

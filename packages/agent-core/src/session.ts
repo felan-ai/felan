@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   createAgentSession,
   type AgentSession,
@@ -15,7 +16,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { loadFelanSessionExtensions, type ExtensionPackageImporter } from './extensions.js';
-import { attachClassifierPreflight } from './classifier/pi-classifier.js';
+import { createTurnClassificationRegistry } from './classifier/turn-classification.js';
 import { createDynamicThinkingSession, DYNAMIC_THINKING_PRODUCER } from './dynamic-thinking/session.js';
 import { installModelSelectionPersistenceScope } from './model-selection.js';
 import {
@@ -118,10 +119,10 @@ async function composeAgentCoreSession(
   options: CreateAgentCoreSessionOptions,
 ): Promise<AgentCoreSessionComposition> {
   const agentDir = options.agentDir ?? options.runtime.cwd;
-  const preflight = options.sessionManager.getHeader()?.parentSession === undefined && options.runtime.classifier
-    ? attachClassifierPreflight(options.runtime.classifier, options.runtime.logger)
-    : undefined;
   const modelSelectionScope = installModelSelectionPersistenceScope(options.settingsManager);
+  const turnClassification = options.sessionManager.getHeader()?.parentSession === undefined && options.runtime.classifier
+    ? createTurnClassificationRegistry(options.runtime.classifier, options.runtime.logger, () => modelSelectionScope.owner !== undefined)
+    : undefined;
   const featureExtensions = await loadFelanSessionExtensions(
     options.extensionPackages,
     options.importExtension,
@@ -130,31 +131,47 @@ async function composeAgentCoreSession(
     modelSelectionScope,
     options.extensionConfigOverrides,
     options.savings,
+    turnClassification,
   );
   const projectInstructions = await loadProjectInstructions(options.runtime);
   const dynamicThinking = options.dynamicThinking && options.runtime.classifier
     ? createDynamicThinkingSession(options.runtime,
       featureExtensions.some((extension) => typeof extension !== 'function' && extension.name === '@felan-ai/ext-codex'),
-      optionalDynamicThinkingReporter(options.savings))
+      optionalDynamicThinkingReporter(options.savings), { selectionScope: modelSelectionScope, ...(turnClassification ? { turnClassification } : {}) })
     : undefined;
   const extensionFactories = [
-    ...(preflight === undefined ? [] : [{
-      name: '@felan-ai/agent-core/classifier-preflight',
+    {
+      name: '@felan-ai/agent-core/selection-automation',
       hidden: true,
       factory: (pi) => {
-        let inputStarted = false;
-        pi.on('input', (event) => {
+        modelSelectionScope.reset();
+        const manualSelection = () => {
+          if (!modelSelectionScope.isAutomated()) {
+            modelSelectionScope.clearOwnership();
+            turnClassification?.finish();
+          }
+        };
+        pi.on('model_select', manualSelection);
+        pi.on('thinking_level_select', manualSelection);
+        modelSelectionScope.onManualThinkingSelection(manualSelection);
+        pi.on('session_shutdown', () => modelSelectionScope.reset());
+      },
+    } satisfies InlineExtension,
+    ...(turnClassification === undefined ? [] : [{
+      name: '@felan-ai/agent-core/turn-classification',
+      hidden: true,
+      factory: (pi) => {
+        turnClassification.reset();
+        pi.on('input', (event, ctx) => {
           if (event.streamingBehavior !== undefined) return;
-          inputStarted = true;
-          preflight.startNextTurn();
+          turnClassification.start({ prompt: event.text, imageCount: event.images?.length ?? 0 }, ctx);
         });
-        pi.on('before_agent_start', () => {
-          if (!inputStarted) preflight.startNextTurn();
-          inputStarted = false;
+        pi.on('before_agent_start', (event, ctx) => {
+          turnClassification.start({ prompt: event.prompt, imageCount: event.images?.length ?? 0 }, ctx);
         });
-        pi.on('turn_start', () => preflight.finishPreflight());
-        pi.on('agent_settled', () => preflight.dispose());
-        pi.on('session_shutdown', () => preflight.dispose());
+        pi.on('turn_start', () => turnClassification.finish());
+        pi.on('agent_settled', () => turnClassification.finish());
+        pi.on('session_shutdown', () => turnClassification.dispose());
       },
     } satisfies InlineExtension]),
     ...(projectInstructions === undefined ? [] : [createProjectInstructionsExtension(projectInstructions)]),
@@ -192,6 +209,21 @@ async function composeAgentCoreSession(
       ? {}
       : { sessionStartEvent: options.sessionStartEvent }),
   });
+  const modelSwitch = new AsyncLocalStorage<boolean>();
+  const session = result.session;
+  const setModel = session.setModel.bind(session);
+  const cycleModel = session.cycleModel.bind(session);
+  const setThinkingLevel = session.setThinkingLevel.bind(session);
+  session.setModel = (...args) => modelSwitch.run(true, () => setModel(...args));
+  session.cycleModel = (...args) => modelSwitch.run(true, () => cycleModel(...args));
+  // Pi emits thinking_level_select only for changes; explicit no-ops still
+  // override automation, unlike the implicit effort clamp inside model switches.
+  session.setThinkingLevel = (...args) => {
+    setThinkingLevel(...args);
+    if (!modelSwitch.getStore() && !modelSelectionScope.isAutomated()) {
+      modelSelectionScope.notifyManualThinkingSelection();
+    }
+  };
   try {
     if (options.wrapStreamFunction) {
       result.session.agent.streamFunction = options.wrapStreamFunction(result.session.agent.streamFunction);

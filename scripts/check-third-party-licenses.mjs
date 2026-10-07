@@ -66,8 +66,8 @@ if (!apachePackages.has('@agentclientprotocol/sdk@1.4.0')) {
 for (const required of [
   '@agentclientprotocol/sdk@1.4.0',
   '@lydell/node-pty@1.2.0-beta.14',
-  '@modelcontextprotocol/client@2.0.0',
-  '@modelcontextprotocol/core@2.0.0',
+  '@modelcontextprotocol/client@2.2.0',
+  '@modelcontextprotocol/core@2.2.0',
   '@napi-rs/keyring@1.3.0',
   'open@11.0.0',
   'typebox@1.1.38',
@@ -113,7 +113,7 @@ for (const requiredNotice of [
   'pi-ask-user 0.14.0',
   '@howaboua/pi-codex-conversion 3.0.15',
   '@howaboua/pi-codex-conversion 3.0.26',
-  '@modelcontextprotocol/client 2.0.0',
+  '@modelcontextprotocol/client 2.2.0',
   '@napi-rs/keyring 1.3.0',
   'open 11.0.0',
   'pi-rtk-optimizer 0.9.0',
@@ -267,7 +267,7 @@ for (const requiredNotice of [
   'linkedom 0.16.11',
   'Turndown 7.2.0',
   'TypeBox 1.1.38',
-  'undici 8.10.0',
+  'undici 8.11.2',
 ]) {
   if (!webAccessNotice.includes(requiredNotice)) {
     errors.push(`packages/ext-web-access/NOTICE is missing ${requiredNotice}`);
@@ -280,7 +280,7 @@ for (const requiredNotice of [
   'pi-mcp-adapter 2.26.0',
   '5ee81b47b571b3c4ac2e68a03812c64e3f95cb98',
   '1bf36719cec478a163bb52e3390182963aab9f85',
-  '@modelcontextprotocol/client 2.0.0',
+  '@modelcontextprotocol/client 2.2.0',
   'TypeBox 1.1.38',
 ]) {
   if (!mcpNotice.includes(requiredNotice)) {

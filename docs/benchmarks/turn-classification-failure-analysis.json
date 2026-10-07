@@ -1,0 +1,1146 @@
+{
+  "schemaVersion": 1,
+  "image": "felan-evals-source:1e725bd8e4f3d1497f7ca7d8",
+  "trialCount": 96,
+  "passed": 65,
+  "failed": 31,
+  "qualityByCase": {
+    "discovery": {
+      "passed": 17,
+      "total": 24
+    },
+    "implementation": {
+      "passed": 0,
+      "total": 24
+    }
+  },
+  "qualityByArm": {
+    "turn-classification-disabled": {
+      "passed": 9,
+      "total": 12
+    },
+    "turn-classification-luna-disabled": {
+      "passed": 8,
+      "total": 12
+    },
+    "turn-classification-luna-separated": {
+      "passed": 7,
+      "total": 12
+    },
+    "turn-classification-luna-shared": {
+      "passed": 14,
+      "total": 24
+    },
+    "turn-classification-separated": {
+      "passed": 9,
+      "total": 12
+    },
+    "turn-classification-shared": {
+      "passed": 18,
+      "total": 24
+    }
+  },
+  "method": "Read-only regrade of retained workspace/project trees and .eval-output/result.json with the current network-free metadata/business verifier. Original run results/rewards and projects were not modified; no provider calls were made.",
+  "limitations": [
+    "Five driver-status failures lack saved root/child failure details: the v1 driver wrote only status=failed and deleted its private config/session storage. Their cause cannot be reconstructed from retained results.",
+    "Classifier/coding-agent subscription USD costs are unknown; this artifact is not a savings comparison."
+  ],
+  "failures": [
+    {
+      "runId": "turn-classification-discovery-turn-classification-luna-disabled-2026-10-07T06-36-14-776Z-1",
+      "case": "discovery",
+      "arm": "turn-classification-luna-disabled",
+      "artifact": "evals/.harness-evals/runs/turn-classification-discovery-turn-classification-luna-disabled-2026-10-07T06-36-14-776Z-1",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.discovery-findings",
+          "category": "business",
+          "assertion": "business: discovery findings are incomplete or incorrect",
+          "expected": {
+            "tax105": 10,
+            "vipDiscount1000": 100,
+            "availableA": 9,
+            "shippingUS": 500,
+            "currency": "USD",
+            "eventName": "order-created"
+          },
+          "actual": {
+            "tax105": 10,
+            "vipDiscount1000": 100,
+            "availableA": 9,
+            "shippingUS": {},
+            "currency": "USD",
+            "eventName": "order-created"
+          }
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-discovery-turn-classification-luna-separated-2026-10-07T06-36-14-775Z-0",
+      "case": "discovery",
+      "arm": "turn-classification-luna-separated",
+      "artifact": "evals/.harness-evals/runs/turn-classification-discovery-turn-classification-luna-separated-2026-10-07T06-36-14-775Z-0",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "inference.planning.effort",
+          "category": "phase-profile",
+          "expected": [
+            "high",
+            "xhigh"
+          ],
+          "actual": "max",
+          "assertion": "Planning effort is outside the pinned fixture profile."
+        }
+      ],
+      "observedPrewalkInference": [
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        }
+      ]
+    },
+    {
+      "runId": "turn-classification-discovery-turn-classification-luna-separated-2026-10-07T06-36-14-776Z-1",
+      "case": "discovery",
+      "arm": "turn-classification-luna-separated",
+      "artifact": "evals/.harness-evals/runs/turn-classification-discovery-turn-classification-luna-separated-2026-10-07T06-36-14-776Z-1",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.discovery-findings",
+          "category": "business",
+          "assertion": "business: discovery findings are incomplete or incorrect",
+          "expected": {
+            "tax105": 10,
+            "vipDiscount1000": 100,
+            "availableA": 9,
+            "shippingUS": 500,
+            "currency": "USD",
+            "eventName": "order-created"
+          },
+          "actual": {
+            "tax105": 10,
+            "vipDiscount1000": 100,
+            "availableA": 9,
+            "shippingUS": "[redacted]",
+            "currency": "USD",
+            "eventName": "order-created"
+          }
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-discovery-turn-classification-luna-shared-2026-10-07T06-36-59-490Z-4",
+      "case": "discovery",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-discovery-turn-classification-luna-shared-2026-10-07T06-36-59-490Z-4",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "inference.planning.effort",
+          "category": "phase-profile",
+          "expected": [
+            "high",
+            "xhigh"
+          ],
+          "actual": "max",
+          "assertion": "Planning effort is outside the pinned fixture profile."
+        }
+      ],
+      "observedPrewalkInference": [
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        }
+      ]
+    },
+    {
+      "runId": "turn-classification-discovery-turn-classification-luna-shared-2026-10-07T06-37-07-849Z-5",
+      "case": "discovery",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-discovery-turn-classification-luna-shared-2026-10-07T06-37-07-849Z-5",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "inference.planning.effort",
+          "category": "phase-profile",
+          "expected": [
+            "high",
+            "xhigh"
+          ],
+          "actual": "max",
+          "assertion": "Planning effort is outside the pinned fixture profile."
+        }
+      ],
+      "observedPrewalkInference": [
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        }
+      ]
+    },
+    {
+      "runId": "turn-classification-discovery-turn-classification-luna-shared-2026-10-07T06-37-18-265Z-4",
+      "case": "discovery",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-discovery-turn-classification-luna-shared-2026-10-07T06-37-18-265Z-4",
+      "driverStatus": "failed",
+      "checks": [
+        {
+          "check": "driver.status",
+          "category": "execution",
+          "assertion": "Driver returned failed (process exit 1); the stored v1 result records no root-versus-child failure cause."
+        }
+      ],
+      "observedPrewalkInference": [
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        }
+      ]
+    },
+    {
+      "runId": "turn-classification-discovery-turn-classification-luna-shared-2026-10-07T06-37-19-413Z-5",
+      "case": "discovery",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-discovery-turn-classification-luna-shared-2026-10-07T06-37-19-413Z-5",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "inference.planning.effort",
+          "category": "phase-profile",
+          "expected": [
+            "high",
+            "xhigh"
+          ],
+          "actual": "max",
+          "assertion": "Planning effort is outside the pinned fixture profile."
+        }
+      ],
+      "observedPrewalkInference": [
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "max"
+        }
+      ]
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-disabled-2026-10-07T06-37-38-286Z-6",
+      "case": "implementation",
+      "arm": "turn-classification-disabled",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-disabled-2026-10-07T06-37-38-286Z-6",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-disabled-2026-10-07T06-38-57-108Z-7",
+      "case": "implementation",
+      "arm": "turn-classification-disabled",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-disabled-2026-10-07T06-38-57-108Z-7",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-disabled-2026-10-07T06-39-01-261Z-8",
+      "case": "implementation",
+      "arm": "turn-classification-disabled",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-disabled-2026-10-07T06-39-01-261Z-8",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.order-quote",
+          "category": "business",
+          "assertion": "business: order quote calculation mismatch",
+          "expected": {
+            "subtotal": 5000,
+            "discount": 0,
+            "tax": 500,
+            "shipping": 0,
+            "total": 5500
+          },
+          "actual": {
+            "subtotal": 5000,
+            "discount": 0,
+            "tax": 500,
+            "shipping": 500,
+            "total": 6000
+          }
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-disabled-2026-10-07T06-37-08-336Z-6",
+      "case": "implementation",
+      "arm": "turn-classification-luna-disabled",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-disabled-2026-10-07T06-37-08-336Z-6",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-disabled-2026-10-07T06-38-26-784Z-7",
+      "case": "implementation",
+      "arm": "turn-classification-luna-disabled",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-disabled-2026-10-07T06-38-26-784Z-7",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-disabled-2026-10-07T06-39-09-142Z-8",
+      "case": "implementation",
+      "arm": "turn-classification-luna-disabled",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-disabled-2026-10-07T06-39-09-142Z-8",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-separated-2026-10-07T06-37-24-992Z-6",
+      "case": "implementation",
+      "arm": "turn-classification-luna-separated",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-separated-2026-10-07T06-37-24-992Z-6",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-separated-2026-10-07T06-39-58-537Z-7",
+      "case": "implementation",
+      "arm": "turn-classification-luna-separated",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-separated-2026-10-07T06-39-58-537Z-7",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-separated-2026-10-07T06-40-56-441Z-8",
+      "case": "implementation",
+      "arm": "turn-classification-luna-separated",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-separated-2026-10-07T06-40-56-441Z-8",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-41-14-149Z-9",
+      "case": "implementation",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-41-14-149Z-9",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-41-26-076Z-10",
+      "case": "implementation",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-41-26-076Z-10",
+      "driverStatus": "failed",
+      "checks": [
+        {
+          "check": "driver.status",
+          "category": "execution",
+          "assertion": "Driver returned failed (process exit 1); the stored v1 result records no root-versus-child failure cause."
+        },
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": [
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        }
+      ]
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-41-29-428Z-11",
+      "case": "implementation",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-41-29-428Z-11",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-41-30-440Z-9",
+      "case": "implementation",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-41-30-440Z-9",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-42-06-150Z-10",
+      "case": "implementation",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-42-06-150Z-10",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-43-54-357Z-11",
+      "case": "implementation",
+      "arm": "turn-classification-luna-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-luna-shared-2026-10-07T06-43-54-357Z-11",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-separated-2026-10-07T06-37-47-860Z-6",
+      "case": "implementation",
+      "arm": "turn-classification-separated",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-separated-2026-10-07T06-37-47-860Z-6",
+      "driverStatus": "failed",
+      "checks": [
+        {
+          "check": "driver.status",
+          "category": "execution",
+          "assertion": "Driver returned failed (process exit 1); the stored v1 result records no root-versus-child failure cause."
+        },
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": [
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        }
+      ]
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-separated-2026-10-07T06-37-51-677Z-7",
+      "case": "implementation",
+      "arm": "turn-classification-separated",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-separated-2026-10-07T06-37-51-677Z-7",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-separated-2026-10-07T06-38-39-556Z-8",
+      "case": "implementation",
+      "arm": "turn-classification-separated",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-separated-2026-10-07T06-38-39-556Z-8",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-shared-2026-10-07T06-38-57-996Z-9",
+      "case": "implementation",
+      "arm": "turn-classification-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-shared-2026-10-07T06-38-57-996Z-9",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-shared-2026-10-07T06-40-26-881Z-9",
+      "case": "implementation",
+      "arm": "turn-classification-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-shared-2026-10-07T06-40-26-881Z-9",
+      "driverStatus": "failed",
+      "checks": [
+        {
+          "check": "driver.status",
+          "category": "execution",
+          "assertion": "Driver returned failed (process exit 1); the stored v1 result records no root-versus-child failure cause."
+        },
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": [
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        }
+      ]
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-shared-2026-10-07T06-40-45-787Z-10",
+      "case": "implementation",
+      "arm": "turn-classification-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-shared-2026-10-07T06-40-45-787Z-10",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-shared-2026-10-07T06-42-05-018Z-10",
+      "case": "implementation",
+      "arm": "turn-classification-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-shared-2026-10-07T06-42-05-018Z-10",
+      "driverStatus": "failed",
+      "checks": [
+        {
+          "check": "driver.status",
+          "category": "execution",
+          "assertion": "Driver returned failed (process exit 1); the stored v1 result records no root-versus-child failure cause."
+        },
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": [
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh"
+        }
+      ]
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-shared-2026-10-07T06-42-18-836Z-11",
+      "case": "implementation",
+      "arm": "turn-classification-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-shared-2026-10-07T06-42-18-836Z-11",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    },
+    {
+      "runId": "turn-classification-implementation-turn-classification-shared-2026-10-07T06-42-20-098Z-11",
+      "case": "implementation",
+      "arm": "turn-classification-shared",
+      "artifact": "evals/.harness-evals/runs/turn-classification-implementation-turn-classification-shared-2026-10-07T06-42-20-098Z-11",
+      "driverStatus": "completed",
+      "checks": [
+        {
+          "check": "business.protected-file",
+          "category": "scope",
+          "expected": "unchanged protected files",
+          "actual": [
+            "checks.mjs"
+          ],
+          "assertion": "The run modified a protected fixture file."
+        }
+      ],
+      "observedPrewalkInference": []
+    }
+  ]
+}

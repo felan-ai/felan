@@ -11,7 +11,7 @@ describe('@felan-ai/ext-mcp package boundary', () => {
       name: '@felan-ai/ext-mcp',
       license: 'MIT',
       dependencies: {
-        '@modelcontextprotocol/client': '2.0.0',
+        '@modelcontextprotocol/client': '2.2.0',
         typebox: '1.1.38',
       },
       peerDependencies: { '@felan-ai/agent-core': 'catalog:agent-core' },

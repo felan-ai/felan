@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { turnClassificationPlan, felanTurnClassificationAdapter } from './felan-turn-classification.mjs';
+const provenance={image:'image',imageId:'sha256:x',source:{commit:'abc',dirty:true},digest:'hash',packages:[]};
+const input={testCase:{id:'turn-classification-routine'},agent:{provider:'openai-codex',model:'gpt-6.1-sol',config:{turnClassificationMode:'disabled'}}};
+const plan=turnClassificationPlan(input,{envNames:['FELAN_AGENT_DIR','TYPESAFE_API_KEY','OPENROUTER_API_KEY'],envValues:{FELAN_AGENT_DIR:'/auth'}},provenance);
+assert.deepEqual(plan.argv.slice(0,5),['node','/workspace/.eval-setup/run.mjs','routine','disabled','gpt-6.1-sol']);
+assert.ok(!plan.argv.includes('--thinking'));assert.deepEqual(plan.envNames,['FELAN_AGENT_DIR']);assert.equal(plan.envValues.FELAN_AGENT_DIR,'/auth');
+assert.throws(()=>turnClassificationPlan(input,plan,{}));
+assert.throws(()=>turnClassificationPlan({...input,agent:{...input.agent,model:'gpt-unknown'}},plan,provenance));
+const usage={inputTokens:10,outputTokens:2,costUsd:null};
+const events=await felanTurnClassificationAdapter.parseEvents({plan,stderr:'',stdout:JSON.stringify({schemaVersion:1,id:'routine',mode:'disabled',usage:{classifier:usage,agent:usage,combined:usage},counts:{classifierProviderRequests:0}})});
+assert.equal(events.cost.totalCost,undefined);assert.equal(events.cost.available,false);assert.equal(events.cost.usage[0].requests,0);
+console.log('turn-classification adapter passed');

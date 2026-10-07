@@ -120,6 +120,25 @@ packs the exact workspace artifacts, installs those artifacts into a narrow
 Docker context, and records the source commit, dirty state, package hashes, and
 image ID in ignored `source-image.json`.
 
+The evaluator's manifest and lockfile pin the published `harness-evals@0.2.16`.
+For local development, this checkout currently resolves `evals/node_modules/harness-evals`
+through a symlink to the sibling `../harness-evals` source; check that package's
+version before attributing a run to the locked release. The harness cleanup fix
+is backward-compatible and therefore a patch release (`0.2.18`) of that
+package; it is not published by this validation. Keep the evaluator lock on the
+last available registry version until `0.2.18` is published, then update the
+manifest and lock together before release-facing benchmark runs.
+
+Each run's private copied auth/config files live under its harness-owned
+`config/` directory and are removed after every outcome, regardless of
+`--cleanup`. The persistent auth profile and environment credentials are not
+deleted. `--cleanup` controls only registered adapter cleanup paths; retained
+run workspaces and `.eval-output` diagnostics remain available for grading and
+failure triage. Persisted driver/verifier diagnostics use allowlisted phases,
+selection summaries, child statuses, safe error categories and bounded
+assertion values. They must not include auth material, prompts, transcripts,
+raw provider errors, or absolute paths.
+
 ```sh
 pnpm --dir evals install --frozen-lockfile
 pnpm eval:test

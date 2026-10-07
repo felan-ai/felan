@@ -13,8 +13,8 @@ pi-mcp-adapter 2.26.0 (npm gitHead
 1bf36719cec478a163bb52e3390182963aab9f85 ("fix: recover nested mcp proxy
 args"). The nested gateway-request recovery from that commit is adapted here.
 
-It uses @modelcontextprotocol/client 2.0.0 (and its @modelcontextprotocol/core
-2.0.0 dependency) from https://github.com/modelcontextprotocol/typescript-sdk
+It uses @modelcontextprotocol/client 2.2.0 (and its @modelcontextprotocol/core
+2.2.0 dependency) from https://github.com/modelcontextprotocol/typescript-sdk
 under that project's included Apache-2.0/MIT transition terms. Copyright (c)
 2024-2025 Model Context Protocol, a Series of LF Projects, LLC.
 

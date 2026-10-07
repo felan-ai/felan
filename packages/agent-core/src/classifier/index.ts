@@ -3,6 +3,14 @@ export { validateClassifierRequest, validateClassifierAnswers } from './validati
 export { collectClassifierSessionEvidence, sanitizeClassifierText } from './session-evidence.js';
 export type { ClassifierSessionEvidence, ClassifierSessionEvidenceLimits } from './session-evidence.js';
 export type {
+  TurnClassificationContribution,
+  TurnClassificationInput,
+  TurnClassificationPreparation,
+  TurnClassificationRegistry,
+  TurnClassificationRequest,
+  TurnClassificationResult,
+} from './turn-classification.js';
+export type {
   Classifier,
   ClassifierAnswer,
   ClassifierAnswers,

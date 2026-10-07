@@ -292,8 +292,9 @@ examples and storage/error behavior. Llama integration remains deferred.
 
 When an authenticated classifier model is available, the local host
 injects its optional provider-neutral classifier into root and child runtimes.
-In managed Pi-backed root turns, entry, discovery, and eligible dynamic-thinking
-classification share one 2-second preflight budget; a late decision falls back
+In composed root turns, registered entry, discovery and eligible regular-thinking
+questions share one sanitized context snapshot, classifier call and 2-second
+preflight budget. Oversized requests may use existing transport batching. A late decision falls back
 to the existing guidance or current thinking level. Later workflow decisions
 are outside this budget; see [classifier lifecycle](../concepts/classifier-lifecycle.md).
 Only root sessions use it for routing. Before each user turn, the subagent
@@ -301,8 +302,9 @@ extension asks whether the request needs broad discovery that the conversation
 does not already cover; at 0.65 or higher it adds guidance to delegate that
 discovery to `explore` children. It also picks the model tier for `Agent` calls
 whose definition does not pin a model. Prewalk uses the classifier to recommend
-entry, set planning exploration depth, raise the implementation tier or thinking
-level, and check completion. Every decision is optional: without a classifier,
+entry and a capable high-effort planning profile, set exploration depth,
+recommend implementation requirements, and check completion. Implementation
+recommendations never override configured targetModel/targetThinking. Every decision is optional: without a classifier,
 or when a call fails, the model follows the persistent guidance and the
 configured defaults apply.
 
@@ -316,7 +318,8 @@ patterns are redacted from shared evidence, but arbitrary secrets in prompts,
 transcripts, or wiki text cannot be detected reliably; do not include
 credentials in classifier-bound requests. Routing decisions are logged
 at debug level under the `subagent-routing`, `subagent-model`, and
-`prewalk-classifier` components without the request text.
+`prewalk-classifier` components without the request text. The
+`turn-classification` component records the shared validated answers and metadata.
 
 ### Dynamic thinking level
 
@@ -338,8 +341,9 @@ set this in `$FELAN_AGENT_DIR/settings.json`:
 The setting defaults to enabled and takes effect when a runtime is created or
 recreated. An explicit thinking-level selection overrides automation for the
 rest of that session; the headless `--thinking` option and explicit child-agent
-thinking also bypass it. This includes Prewalk's session-local planning and
-implementation thinking choices.
+thinking also bypass it. Prewalk temporarily owns its planning and implementation
+profiles instead: its automated changes do not permanently disable ordinary
+dynamic thinking, which resumes after restoration and ownership release.
 
 Only GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using official OpenAI
 `openai-responses` or `openai-codex-responses` with the Codex extension enabled,

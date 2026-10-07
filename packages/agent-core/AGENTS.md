@@ -5,3 +5,4 @@
 - Runtime contracts stay adapter-neutral. Host mode defaults to cwd-contained paths and can explicitly use current-user host paths; neither mode is a sandbox. Preserve byte-based file I/O and literal argv for `exec`, using `shell` only intentionally.
 - Model-tier selection stays pure: callers provide their allowed authenticated model scope, and Agent Core prefers the current provider and family before cross-provider fallback.
 - Export public API through `src/index.ts`; cover contract changes with corresponding runtime and composition tests.
+- Keep registered turn classification and temporary selection ownership session-scoped and feature-neutral. Extensions own preparation criteria and answer consumption; do not hardcode workflow names or move later evidence-dependent decisions into entry. Preserve cancellation, manual authority and existing admission budgets.

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ClassifierApi, ClassifierModel, ClassifierResult } from '@earendil-works/pi-ai';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import * as core from '../src/index.js';
-import { attachClassifierPreflight } from '../src/classifier/pi-classifier.js';
+import { createTurnClassificationRegistry } from '../src/classifier/turn-classification.js';
+import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 
 const model = {
   type: 'classifier', provider: 'typesafe', api: 'typesafe-system-one', id: 'jev-latest', name: 'Jev',
@@ -167,24 +168,28 @@ describe('Pi-backed classifier', () => {
       .toEqual({ requests: 1, inputTokens: 10, outputTokens: 2 });
   });
 
-  it('shares one root preflight across choice/bool calls and leaves custom classifiers untouched', async () => {
+  it('enforces the root deadline in the coordinator without capping later bridge calls', async () => {
     vi.useFakeTimers();
     try {
       const service = backend();
       service.classify.mockImplementation(() => new Promise(() => {}));
       const classifier = core.createPiClassifier(service, model);
-      const preflight = attachClassifierPreflight(classifier, core.createSilentLogger())!;
-      expect(attachClassifierPreflight({ classify: vi.fn() }, core.createSilentLogger())).toBeUndefined();
-      preflight.startNextTurn();
-      const first = expect(classifier.classify({}, { route: questions.route })).rejects.toMatchObject({ code: 'timeout' });
-      await vi.advanceTimersByTimeAsync(1_500);
-      const second = expect(classifier.classify({}, { discover: questions.discover })).rejects.toMatchObject({ code: 'timeout' });
-      const third = expect(classifier.classify({}, { relevance: questions.relevance })).rejects.toMatchObject({ code: 'timeout' });
-      await vi.advanceTimersByTimeAsync(500);
-      await Promise.all([first, second, third]);
-      expect(service.classify.mock.calls.every(([, , options]) => options?.signal?.aborted)).toBe(true);
-      preflight.finishPreflight();
-      preflight.dispose();
+      const registry = createTurnClassificationRegistry(classifier, core.createSilentLogger());
+      const ctx = { sessionManager: core.SessionManager.inMemory('/workspace') } as unknown as ExtensionContext;
+      for (const [id, question] of Object.entries(questions)) {
+        registry.register({ id, prepare: () => ({ questions: { answer: question } }) });
+      }
+      const request = { prompt: 'Task', imageCount: 0 };
+      registry.start(request, ctx);
+      const results = Promise.all(Object.keys(questions).map(id => registry.result(id, request, ctx)));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await results).toEqual([undefined, undefined, undefined]);
+      expect(service.classify).toHaveBeenCalledOnce();
+      expect(service.classify.mock.calls[0]?.[2]?.signal?.aborted).toBe(true);
+      registry.dispose();
+      service.classify.mockImplementation(backend().classify);
+      expect((await classifier.classify({}, questions)).answers.discover).toEqual({ type: 'bool', probability: 0.8 });
+      expect(service.classify.mock.calls[1]?.[2]?.signal).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }
@@ -197,14 +202,10 @@ describe('Pi-backed classifier', () => {
       const response = await service.classify(model, { state: {}, questions: { discover: questions.discover } });
       service.classify.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve(response), 3_000)));
       const classifier = core.createPiClassifier(service, model);
-      const preflight = attachClassifierPreflight(classifier, core.createSilentLogger())!;
-      preflight.startNextTurn();
-      preflight.finishPreflight();
       const result = classifier.classify({}, { discover: questions.discover });
       await vi.advanceTimersByTimeAsync(3_000);
       expect((await result).answers.discover).toEqual({ type: 'bool', probability: 0.8 });
-      expect(service.classify.mock.lastCall?.[2]?.signal?.aborted).toBe(false);
-      preflight.dispose();
+      expect(service.classify.mock.lastCall?.[2]?.signal).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }

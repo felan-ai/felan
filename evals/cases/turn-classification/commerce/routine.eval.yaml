@@ -1,0 +1,23 @@
+id: turn-classification-routine
+suite: turn-classification
+description: Verified routine workflow with identical source and phase policies across classifier arms.
+timeoutMs: 1800000
+workspace:
+  fixture: fixtures/turn-classification/v1/source
+agents:
+  include: [turn-classification-disabled, turn-classification-shared, turn-classification-separated, turn-classification-luna-disabled, turn-classification-luna-shared, turn-classification-luna-separated]
+prompt: Run the versioned routine scenario through the persistent SDK driver.
+assert:
+  - id: driver-exited
+    type: exitCode
+    equals: 0
+verifier:
+  command: node
+  args: [/tests/verify.mjs, routine]
+  cwd: /workspace
+  assetsDir: cases/turn-classification/commerce/verifier
+  assetsTarget: /tests
+  rewardFile: .harness-evals-reward.json
+  rewardFormat: json
+  network:
+    mode: none

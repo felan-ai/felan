@@ -1,11 +1,28 @@
 import { builtinProviders } from '@felan-ai/agent-core';
 import { describe, expect, it } from 'vitest';
+import { findPackageJSON } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import {
   acquireFelanModelDefaults,
   FELAN_DEFAULT_MODEL_PER_PROVIDER,
 } from '../src/model-defaults.js';
 
 describe('Felan model defaults', () => {
+  it('overrides and restores both composition and UI peer-context copies', async () => {
+    const targets = await Promise.all([import.meta.url, import.meta.resolve('@felan-ai/agent-core')].map(async base => {
+      const manifest = findPackageJSON('@earendil-works/pi-coding-agent', base);
+      expect(manifest).toBeDefined();
+      const resolver = await import(new URL('./dist/core/model-resolver.js', pathToFileURL(manifest!)).href);
+      return resolver.defaultModelPerProvider as Record<string, string>;
+    }));
+    const originals = targets.map(target => ({ ...target }));
+    const release = await acquireFelanModelDefaults();
+    try {
+      for (const target of targets) expect(target).toEqual(FELAN_DEFAULT_MODEL_PER_PROVIDER);
+    } finally { release(); }
+    targets.forEach((target, index) => expect(target).toEqual(originals[index]));
+  });
+
   it('covers every built-in provider', () => {
     expect(Object.keys(FELAN_DEFAULT_MODEL_PER_PROVIDER).sort()).toEqual(
       builtinProviders().filter((provider) => provider.getModels().length > 0).map(({ id }) => id).sort(),

@@ -8,6 +8,7 @@ import {
   isModelTier,
   parseModelReference,
   selectModelForTier,
+  type ClassifierChoiceQuestion,
   type FelanThinkingLevel,
   type ModelReference,
   type ModelTier,
@@ -20,8 +21,10 @@ import {
   type SavingsTokenUsage,
 } from '@felan-ai/agent-core';
 import { Type } from 'typebox';
+import { plannerProfiles, type PlannerProfile } from './planner-profile.js';
 import {
   isChildSession,
+  ENTRY_QUESTIONS,
   createPrewalkClassifier,
   strongerThinking,
   strongerTier,
@@ -165,11 +168,6 @@ interface GuidanceOptions {
   completionMessagePending: boolean;
 }
 
-interface PendingEntryClassification {
-  prompt: string;
-  controller: AbortController;
-  decision: Promise<boolean>;
-}
 
 const HEADLESS_TASK_MESSAGE_TYPE = 'pi-prewalk-task';
 const ENTER_PREWALK_TOOL = 'enter_prewalk';
@@ -200,15 +198,32 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   let exitRequested = false;
   let modelTransition: ModelTransition | undefined;
   let handoffPromise: Promise<void> | undefined;
+  let promotionPromise: Promise<ModelTransitionResult> | undefined;
   let restorationPromise: Promise<boolean> | undefined;
   let phaseContextAnchor: PhaseContextAnchor | undefined;
   let implementationSavingsModels: ImplementationSavingsModels | undefined;
   let internalThinkingChange = false;
   const classifier = createPrewalkClassifier(pi);
-  let pendingEntry: PendingEntryClassification | undefined;
+  let entryProfile: PlannerProfile | undefined;
+  let preparedProfiles: PlannerProfile[] = [];
+  let releaseSelection: (() => void) | undefined;
+  let activePlanner: PlannerModel | undefined;
   let entryGuidanceActive = false;
   let lastPrompt = '';
   let runDetails: RunDetails | undefined;
+  let selectionContext: ExtensionContext | undefined;
+
+  pi.selectionAutomation?.onManualThinkingSelection(() => {
+    if (modelTransition) {
+      modelTransition.externalThinkingLevel = pi.getThinkingLevel();
+      return;
+    }
+    if (state.phase === 'idle') { entryProfile = undefined; return; }
+    if (selectionContext) {
+      clearAutomation(selectionContext);
+      notify(selectionContext, `Prewalk cancelled after a manual thinking selection of ${pi.getThinkingLevel()}.`, 'warning');
+    }
+  });
 
   function refreshConfig(): void {
     config = pi.config as unknown as PrewalkConfig;
@@ -250,6 +265,10 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   }
 
   function clearAutomation(ctx: ExtensionContext): void {
+    releaseSelection?.();
+    releaseSelection = undefined;
+    activePlanner = undefined;
+    entryProfile = undefined;
     state = { phase: 'idle' };
     plannerSnapshot = undefined;
     phaseContextAnchor = undefined;
@@ -270,34 +289,38 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       && !isChildSession(ctx);
   }
 
-  function startEntryClassification(prompt: string, ctx: ExtensionContext): PendingEntryClassification {
-    pendingEntry?.controller.abort('superseded');
-    const controller = new AbortController();
-    const classification = {
-      prompt,
-      controller,
-      decision: classifier!.needsPrewalk(prompt, ctx, controller.signal),
-    };
-    pendingEntry = classification;
-    return classification;
-  }
+  pi.turnClassification?.register({
+    id: 'prewalk',
+    prepare(_input, ctx) {
+      entryProfile = undefined;
+      preparedProfiles = [];
+      if (isChildSession(ctx) || (state.phase !== 'armed' && !entryClassificationEligible(ctx))) return undefined;
+      preparedProfiles = plannerProfiles(ctx, pi.getThinkingLevel());
+      const questions: Record<string, ClassifierChoiceQuestion> = state.phase === 'armed' ? {} : { ...ENTRY_QUESTIONS };
+      if (preparedProfiles.length > 1) {
+        questions.planner = {
+          type: 'choice',
+          instructions: 'Assuming `request` enters Prewalk, select the capable planning model/effort profile from `extensions.prewalk.profiles`. Use high effort for complex planning; stronger effort or models are for unusually difficult architecture, security or debugging. This is independent of the regular-path effort answer.',
+          criteria: Object.fromEntries(preparedProfiles.map((profile, index) => [`p${index}`,
+            `${profile.tier} model ${profile.model.provider}/${profile.model.id} at ${profile.thinking} thinking`])),
+        };
+      }
+      if (!Object.keys(questions).length) return undefined;
+      return { questions, state: { profiles: preparedProfiles.map((profile, index) => ({
+        key: `p${index}`, model: formatModelReference(profile.model), tier: profile.tier, thinking: profile.thinking,
+      })) } };
+    },
+  });
 
-  async function applyEntryGuidance(
-    prompt: string,
-    ctx: ExtensionContext,
-  ) {
+  async function applyEntryGuidance(prompt: string, imageCount: number, ctx: ExtensionContext) {
     entryGuidanceActive = false;
-    if (!entryClassificationEligible(ctx)) {
-      pendingEntry?.controller.abort('ineligible');
-      pendingEntry = undefined;
-      return;
-    }
-    const classification = pendingEntry?.prompt === prompt
-      ? pendingEntry
-      : startEntryClassification(prompt, ctx);
-    const needed = await classification.decision;
-    if (pendingEntry === classification) pendingEntry = undefined;
-    if (classification.controller.signal.aborted || !needed || state.phase !== 'idle') return;
+    if (state.phase !== 'armed' && !entryClassificationEligible(ctx)) return;
+    const result = await pi.turnClassification?.result('prewalk', { prompt, imageCount }, ctx);
+    const profile = result?.answers.planner;
+    if (profile?.type === 'choice') entryProfile = preparedProfiles[Number(profile.choice.slice(1))];
+    if (state.phase === 'armed') return;
+    const route = result?.answers.route;
+    if (route?.type !== 'choice' || route.choice !== 'prewalk' || state.phase !== 'idle') return;
     entryGuidanceActive = true;
     return { message: { customType: ENTRY_MESSAGE_TYPE, content: ENTRY_GUIDANCE, display: false } };
   }
@@ -329,7 +352,14 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     details.completionAccepted = verdict === 'done';
     const reviewNeeded = verdict !== 'done' && (verdict !== 'gap' || details.completionChecks >= MAX_COMPLETION_CHECKS);
     if (reviewNeeded) {
-      if (details.reviewRequested) return;
+      if (details.reviewRequested) {
+        const reviewers = [...details.reviewers.values()];
+        if (reviewers.length > 0 && reviewers.every(status => status === 'completed')) {
+          exitRequested = true;
+          notify(ctx, 'Prewalk exited after the completed review; automatic verification could not confirm completion.', 'warning');
+        }
+        return;
+      }
       details.completionChecks = MAX_COMPLETION_CHECKS;
       details.reviewRequested = true;
     }
@@ -372,12 +402,24 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     return true;
   }
 
-  function startRun(ctx: ExtensionContext, handoffArmed = true): boolean {
+  async function startRun(ctx: ExtensionContext, handoffArmed = true): Promise<boolean> {
     if (!ctx.model) {
       failAutomation(ctx, 'Prewalk requires a selected planner model.');
       return false;
     }
 
+    const profiles = plannerProfiles(ctx, pi.getThinkingLevel());
+    const selected = profiles.find(profile => entryProfile && sameModel(profile.model, entryProfile.model)
+      && profile.thinking === entryProfile.thinking) ?? profiles[0];
+    if (!selected) {
+      failAutomation(ctx, 'Prewalk requires an authenticated, scoped high-capability model supporting high planning effort on the current provider. Continue without Prewalk.');
+      return false;
+    }
+    if (pi.selectionAutomation?.owner) {
+      failAutomation(ctx, 'Prewalk cannot enter while another workflow owns model selection.');
+      return false;
+    }
+    releaseSelection = pi.selectionAutomation?.acquire('@felan-ai/ext-prewalk');
     plannerSnapshot = {
       model: ctx.model,
       modelKey: modelKey(ctx.model),
@@ -408,13 +450,30 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
         reviewRequired: effectivePlanReview(config) === 'ask',
       }),
     };
+    const snapshot = plannerSnapshot;
+    try {
+      if (!sameModel(ctx.model, selected.model)) {
+        const promotion = setModelPreservingExternalSelection(selected.model, ctx);
+        promotionPromise = promotion;
+        let transition: ModelTransitionResult;
+        try { transition = await promotion; }
+        finally { if (promotionPromise === promotion) promotionPromise = undefined; }
+        if (plannerSnapshot !== snapshot || state.phase !== 'planning') return false;
+        if (!transition.switched) throw new Error('planning model selection failed');
+        if (transition.externalModel || transition.externalThinkingLevel !== undefined) {
+          clearAutomation(ctx);
+          return false;
+        }
+      }
+      if (pi.getThinkingLevel() !== selected.thinking) setThinkingLevelInternally(selected.thinking);
+      activePlanner = selected.model;
+    } catch (error) {
+      if (plannerSnapshot === snapshot) await restorePlanner(ctx);
+      notify(ctx, `Prewalk planning promotion failed: ${errorMessage(error)}`, 'error');
+      return false;
+    }
     updateStatus(ctx);
     return true;
-  }
-
-  function beginRun(ctx: ExtensionContext): void {
-    if (state.phase !== 'armed') return;
-    startRun(ctx);
   }
 
   async function switchToTarget(ctx: ExtensionContext): Promise<void> {
@@ -435,21 +494,22 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
         const profile = await classifier.implementationProfile(details, ctx);
         if (state.phase !== 'handoff' || plannerSnapshot !== snapshot) return;
         if (profile) {
-          tier = strongerTier(tier, profile.tier);
-          targetThinking = strongerThinking(targetThinking, profile.thinking);
+          if (strongerTier(tier, profile.tier) !== tier || strongerThinking(targetThinking, profile.thinking) !== targetThinking) {
+            notify(ctx, `Prewalk classifier recommends ${profile.tier}/${profile.thinking} implementation; keeping configured ${targetModel.key}/${config.targetThinking}.`, 'warning');
+          }
         }
       }
       const availableModels = ctx.scopedModels.length > 0
         ? ctx.scopedModels.map(({ model }) => model)
         : ctx.modelRegistry.getAvailable();
-      const plannerProvider = snapshot.model.provider.toLowerCase();
+      const plannerProvider = (activePlanner ?? snapshot.model).provider.toLowerCase();
       const providerModels = availableModels.filter((model) => (
         model.provider.toLowerCase() === plannerProvider
       ));
       const selected = selectModelForTier(tier, providerModels, {
-        preferredModel: snapshot.model,
+        preferredModel: activePlanner ?? snapshot.model,
       });
-      target = selected?.model ?? snapshot.model;
+      target = selected?.model ?? activePlanner ?? snapshot.model;
     } else {
       const exactReference = targetModel.model;
       const registeredTarget = ctx.modelRegistry.find(exactReference.provider, exactReference.id);
@@ -494,7 +554,8 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
         return;
       }
 
-      if (modelAlreadyActive && targetThinkingLevel === plannerThinkingLevel) {
+      if (modelAlreadyActive && targetThinkingLevel === plannerThinkingLevel
+        && sameModel(ctx.model, snapshot.model) && plannerThinkingLevel === snapshot.thinkingLevel) {
         clearAutomation(ctx);
         notify(ctx, `Prewalk target ${targetKey} at ${targetThinkingLevel} thinking already matches the planner; continuing without a handoff.`);
         return;
@@ -506,7 +567,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       implementationSavingsModels = modelAlreadyActive
         ? undefined
         : {
-            planner: savingsModelReference(snapshot.model),
+            planner: savingsModelReference(activePlanner ?? snapshot.model),
             target: savingsModelReference(target),
           };
       state = { phase: 'implementing', run };
@@ -532,6 +593,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
 
   async function performPlannerRestoration(ctx: ExtensionContext): Promise<boolean> {
     if (handoffPromise) await handoffPromise;
+    if (promotionPromise) await promotionPromise;
 
     const snapshot = plannerSnapshot;
     if (!snapshot) {
@@ -641,10 +703,9 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       return;
     }
 
-    const targetIsActive = state.phase === 'handoff'
-      || state.phase === 'implementing';
+    const targetIsActive = plannerSnapshot !== undefined;
     if (targetIsActive && config.restorePlanner && plannerSnapshot) {
-      if (state.phase === 'handoff' || !ctx.isIdle()) {
+      if (promotionPromise || state.phase === 'handoff' || !ctx.isIdle()) {
         if (!exitRequested) {
           exitRequested = true;
           updateStatus(ctx);
@@ -660,7 +721,8 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       return;
     }
 
-    clearAutomation(ctx);
+    if (plannerSnapshot && config.restorePlanner) await restorePlanner(ctx);
+    else clearAutomation(ctx);
     notify(ctx, 'Prewalk is off.');
   }
 
@@ -681,7 +743,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
 
     const approved = await ctx.ui.confirm(
       'Enter Prewalk?',
-      `The model wants to enter Prewalk for this task. Prewalk will plan in the current session and may hand implementation to ${targetModel.key} at ${config.targetThinking} thinking.`,
+      `The model wants to enter Prewalk for this task. Prewalk will establish a capable same-provider planner at high effort or above, then use the configured ${targetModel.key} target at ${config.targetThinking} thinking for implementation.`,
     );
     return approved
       ? { approved: true }
@@ -759,7 +821,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       const approval = await approveModelEntry(ctx);
       if (!approval.approved) return prewalkToolError(approval.reason);
 
-      startRun(ctx, false);
+      if (!await startRun(ctx, false)) return prewalkToolError('Prewalk could not establish a capable planning profile. Continue without Prewalk.');
       await classifyExplorationDepth(ctx);
       const reviewText = effectivePlanReview(config) === 'ask'
         ? ` submit the plan through ${EXIT_PLAN_MODE_TOOL} for user review,`
@@ -906,8 +968,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
 
       if (!ctx.hasUI) {
         lastPrompt = command;
-        beginRun(ctx);
-        if (state.phase !== 'planning') return;
+        if (!await startRun(ctx)) return;
         await classifyExplorationDepth(ctx);
         pi.sendMessage(
           {
@@ -926,29 +987,27 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   });
 
   pi.on('session_start', (_event, ctx) => {
+    selectionContext = ctx;
     if (state.phase === 'idle') refreshConfig();
     publishConfigWarning(ctx);
     updateStatus(ctx);
   });
 
-  // Pi awaits before_agent_start handlers sequentially, so the entry decision
-  // starts at input to overlap with other extensions' pre-start classifier calls.
   pi.on('input', (event, ctx) => {
     if ((event.source === 'interactive' || event.source === 'rpc') && state.phase === 'implementing'
       && runDetails?.reviewRequested && !runDetails.completionAccepted) {
       runDetails.reviewReassessmentPending = true;
     }
-    if (event.streamingBehavior !== undefined || !entryClassificationEligible(ctx)) return;
-    startEntryClassification(event.text, ctx);
   });
 
   pi.on('before_agent_start', async (event, ctx) => {
     lastPrompt = event.prompt;
+    const guidance = await applyEntryGuidance(event.prompt, event.images?.length ?? 0, ctx);
     if (state.phase === 'armed') {
-      if (startRun(ctx)) await classifyExplorationDepth(ctx);
+      if (await startRun(ctx)) await classifyExplorationDepth(ctx);
       return;
     }
-    return applyEntryGuidance(event.prompt, ctx);
+    return guidance;
   });
 
   pi.on('context', (event) => {
@@ -1005,6 +1064,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       return;
     }
     if (state.phase !== 'planning' || !state.run) return;
+    if (exitRequested) return;
 
     const textOnlyCompletion = isTextOnlyCompletion(event.message);
     const decision = reduceTurn(state.run, event.toolResults, {
@@ -1067,22 +1127,24 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
 
   pi.on('model_select', (event, ctx) => {
     const selectedModelKey = modelKey(event.model);
-    if (modelTransition?.expectedModelKey === selectedModelKey) {
+    if (modelTransition?.expectedModelKey === selectedModelKey
+      && (!pi.selectionAutomation || pi.selectionAutomation.isAutomated())) {
       modelTransition.modelSelectObserved = true;
       return;
     }
+    if (pi.selectionAutomation?.isAutomated()) return;
     if (modelTransition) {
       modelTransition.externalModel = event.model;
       modelTransition.externalThinkingLevel = pi.getThinkingLevel();
     }
-    if (state.phase === 'idle') return;
+    if (state.phase === 'idle') { entryProfile = undefined; return; }
 
     clearAutomation(ctx);
     notify(ctx, `Prewalk cancelled after the model changed to ${selectedModelKey}.`, 'warning');
   });
 
   pi.on('thinking_level_select', (event, ctx) => {
-    if (internalThinkingChange) return;
+    if (internalThinkingChange || pi.selectionAutomation?.isAutomated()) return;
     if (
       modelTransition
       && modelKey(ctx.model) === modelTransition.expectedModelKey
@@ -1093,11 +1155,11 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       // The canonical clamp lets us recognize that event even when a manual
       // effort change wins the race and arrives before Pi's own clamp event.
       const internalClamp = clampPiThinkingLevel(ctx.model!, transition.initialThinkingLevel);
-      // Pi's event has no source field, so a manual selection of exactly the
-      // same level as the automatic clamp is observationally indistinguishable
-      // from that clamp; preserve the canonical internal interpretation.
+      // Without a selection scope, Pi cannot distinguish a manual selection
+      // of the same level from its internal model clamp.
       if (
-        internalClamp === transition.initialThinkingLevel
+        pi.selectionAutomation !== undefined
+        || internalClamp === transition.initialThinkingLevel
         || event.level !== internalClamp
       ) {
         transition.externalThinkingLevel = event.level;
@@ -1108,7 +1170,7 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
       modelTransition.externalThinkingLevel = event.level;
       return;
     }
-    if (state.phase === 'idle') return;
+    if (state.phase === 'idle') { entryProfile = undefined; return; }
 
     clearAutomation(ctx);
     notify(ctx, `Prewalk cancelled after the thinking level changed to ${event.level}.`, 'warning');
@@ -1117,6 +1179,13 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
   pi.on('agent_settled', async (_event, ctx) => {
     if (state.phase === 'idle') {
       entryGuidanceActive = false;
+      return;
+    }
+    if (exitRequested) {
+      const snapshot = plannerSnapshot;
+      if (config.restorePlanner && snapshot) {
+        if (await restorePlanner(ctx)) notify(ctx, `Prewalk restored ${snapshot.modelKey}.`);
+      } else clearAutomation(ctx);
       return;
     }
     if (state.phase === 'implementing' || state.phase === 'handoff') {
@@ -1152,17 +1221,15 @@ function registerPrewalk(pi: FelanExtensionAPI): void {
     if (state.phase === 'reviewing') return;
 
     if (state.phase === 'planning') {
-      if (state.run?.reviewRequired && !state.run.reviewApproved) return;
-      clearAutomation(ctx);
+      if (!exitRequested && state.run?.reviewRequired && !state.run.reviewApproved) return;
+      if (plannerSnapshot && config.restorePlanner) await restorePlanner(ctx);
+      else clearAutomation(ctx);
       notify(ctx, 'Prewalk ended before a qualifying first mutation.', 'warning');
     }
   });
 
   pi.on('session_shutdown', async (_event, ctx) => {
-    pendingEntry?.controller.abort('session-shutdown');
-    const targetIsActive = state.phase === 'handoff'
-      || state.phase === 'implementing'
-      || state.phase === 'restoring';
+    const targetIsActive = plannerSnapshot !== undefined;
     if (targetIsActive && config.restorePlanner && plannerSnapshot) {
       await restorePlanner(ctx);
     } else if (state.phase !== 'idle') {

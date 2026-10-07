@@ -134,8 +134,8 @@ The upstream was reviewed through pi-mcp-adapter 2.26.0 at npm gitHead
 5ee81b47b571b3c4ac2e68a03812c64e3f95cb98, and nested gateway-request
 recovery is adapted from subsequent main commit
 1bf36719cec478a163bb52e3390182963aab9f85.
-It uses @modelcontextprotocol/client 2.0.0 and
-@modelcontextprotocol/core 2.0.0 from
+It uses @modelcontextprotocol/client 2.2.0 and
+@modelcontextprotocol/core 2.2.0 from
 https://github.com/modelcontextprotocol/typescript-sdk under that project's
 included Apache-2.0/MIT transition terms. Package-level attribution is in
 packages/ext-mcp/NOTICE and LICENSE.

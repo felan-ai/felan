@@ -49,6 +49,7 @@ export type {
   SavingsTokenUsage,
 } from './savings.js';
 export { AGENT_CORE_VERSION } from './version.js';
+export type { SessionSelectionAutomation } from './model-selection.js';
 export * from './classifier/index.js';
 export * from './dynamic-thinking/index.js';
 export {

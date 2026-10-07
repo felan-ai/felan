@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   SessionManager,
+  SettingsManager,
   type Api,
   type Classifier,
   type ExtensionAPI,
@@ -10,6 +11,7 @@ import {
 } from '../src/index.js';
 import { createDynamicThinkingSession } from '../src/dynamic-thinking/session.js';
 import { TestAgentRuntime } from './test-agent-runtime.js';
+import { installModelSelectionPersistenceScope } from '../src/model-selection.js';
 
 const RESPONSES_APIS = [
   ['openai-codex', 'openai-codex-responses'],
@@ -28,7 +30,7 @@ function harness(
   } as Model<Api>;
   const manager = SessionManager.inMemory('/workspace');
   const classify = vi.fn().mockImplementation(async () => ({
-    answers: { effort: { type: 'choice', choice: choices.shift() } },
+    answers: { 'thinking:effort': { type: 'choice', choice: choices.shift() } },
   }));
   const runtime = Object.assign(new TestAgentRuntime('/workspace'), { classifier: { classify } as Classifier });
   const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => unknown>>();
@@ -52,7 +54,8 @@ function harness(
     getThinkingLevel: () => level,
     setThinkingLevel: setLevel,
   } as unknown as ExtensionAPI;
-  const extension = createDynamicThinkingSession(runtime, codexEffortUpdatesAvailable, reporter);
+  const scope = installModelSelectionPersistenceScope(SettingsManager.inMemory());
+  const extension = createDynamicThinkingSession(runtime, codexEffortUpdatesAvailable, reporter, { selectionScope: scope });
   if (typeof extension === 'function') extension(pi);
   else extension.factory(pi);
   const assistant = (stopReason = 'stop', usage = { input: 50, output: 1_000, reasoning: 400,
@@ -62,17 +65,38 @@ function harness(
   const settle = (outcome: 'completed' | 'error' | 'aborted' = 'completed') => emit('agent_before_settle', {
     outcome, continue: false, context: { pendingMessages: [] },
   });
-  return { model, manager, emit, classify, getLevel: () => level, setLevel, assistant, settle };
+  return { model, manager, emit, classify, getLevel: () => level, setLevel, assistant, settle, scope };
 }
 
 describe('dynamic thinking session lifecycle', () => {
-  it.each(RESPONSES_APIS)('starts on input and applies only a matching timely result on %s/%s', async (provider, api) => {
-    const { emit, classify, getLevel, model } = harness(['low']);
-    Object.assign(model, { provider, api });
-    await emit('input', { text: 'Simple edit', source: 'interactive' });
+  it('pauses while owned and resumes after automated promotion and restoration', async () => {
+    const { emit, classify, getLevel, setLevel, scope } = harness(['low', 'high']);
+    await emit('before_agent_start', { prompt: 'Ordinary request' });
+    expect(getLevel()).toBe('low');
+    const release = scope.acquire('workflow');
+    scope.run(false, () => setLevel('high'));
+    await emit('before_agent_start', { prompt: 'Planning request' });
     expect(classify).toHaveBeenCalledOnce();
+    scope.run(false, () => setLevel('low'));
+    release();
+    await emit('before_agent_start', { prompt: 'Next ordinary request' });
+    expect(classify).toHaveBeenCalledTimes(2);
+    expect(getLevel()).toBe('high');
+  });
+
+  it.each(RESPONSES_APIS)('starts on input and applies only a matching timely result on %s/%s', async (provider, api) => {
+    const { emit, classify, getLevel, model, manager } = harness(['low']);
+    Object.assign(model, { provider, api });
+    manager.appendMessage({ role: 'user', content: [{ type: 'text', text: 'Earlier task' }], timestamp: 1 });
+    await emit('input', { text: 'Simple edit', source: 'interactive' });
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledOnce());
     await emit('before_agent_start', { prompt: 'Simple edit' });
     expect(classify).toHaveBeenCalledOnce();
+    expect(classify.mock.calls[0]?.[0]).toMatchObject({
+      request: 'Simple edit', image_count: 0,
+      session: { conversation: [{ role: 'user', text: 'Earlier task' }] },
+    });
+    expect(Object.keys(classify.mock.calls[0]?.[1] ?? {})).toEqual(['thinking:effort']);
     expect(getLevel()).toBe('low');
   });
 
@@ -85,10 +109,11 @@ describe('dynamic thinking session lifecycle', () => {
       return new Promise((resolve) => { release = resolve; });
     });
     await emit('input', { text: '/skill:task', source: 'interactive' });
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledOnce());
     await emit('before_agent_start', { prompt: 'Expanded task' });
     expect(oldSignal?.aborted).toBe(true);
     expect(classify).toHaveBeenCalledTimes(2);
-    release({ answers: { effort: { type: 'choice', choice: 'low' } } });
+    release({ answers: { 'thinking:effort': { type: 'choice', choice: 'low' } } });
     expect(getLevel()).toBe('high');
   });
 
@@ -99,6 +124,32 @@ describe('dynamic thinking session lifecycle', () => {
     await emit('before_agent_start', { prompt: 'Summarize the file' });
     expect(classify).not.toHaveBeenCalled();
     expect(getLevel()).toBe('medium');
+  });
+
+  it('skips models without reasoning capability', async () => {
+    const { emit, classify, getLevel, model } = harness(['low']);
+    model.reasoning = false;
+    await emit('input', { text: 'Summarize the file', source: 'interactive' });
+    await emit('before_agent_start', { prompt: 'Summarize the file' });
+    expect(classify).not.toHaveBeenCalled();
+    expect(getLevel()).toBe('medium');
+  });
+
+  it('finishes a private input-started registry pass at turn_start', async () => {
+    const { emit, classify, getLevel } = harness(['high']);
+    let signal: AbortSignal | undefined;
+    let release!: (value: unknown) => void;
+    classify.mockImplementationOnce((_state, _questions, activeSignal) => {
+      signal = activeSignal;
+      return new Promise((resolve) => { release = resolve; });
+    });
+    await emit('input', { text: 'Simple edit', source: 'interactive' });
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledOnce());
+    await emit('turn_start', { turnIndex: 0 });
+    expect(signal?.aborted).toBe(true);
+    release({ answers: { 'thinking:effort': { type: 'choice', choice: 'high' } } });
+    expect(getLevel()).toBe('medium');
+    expect(classify).toHaveBeenCalledOnce();
   });
 
   it('classifies only at agent start, not queued messages or tool continuations', async () => {
@@ -130,8 +181,9 @@ describe('dynamic thinking session lifecycle', () => {
     let release!: (value: unknown) => void;
     classify.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     const pending = emit('before_agent_start', { prompt: 'Fresh request' });
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledOnce());
     await emit('session_shutdown', {});
-    release({ answers: { effort: { type: 'choice', choice: 'high' } } });
+    release({ answers: { 'thinking:effort': { type: 'choice', choice: 'high' } } });
     await pending;
     expect(getLevel()).toBe('medium');
     expect(classify).toHaveBeenCalledOnce();
@@ -142,7 +194,7 @@ describe('dynamic thinking session lifecycle', () => {
     const { emit, classify, assistant, model } = harness(['medium'], true, { report }, 'high');
     Object.assign(model, { provider, api });
     classify.mockResolvedValueOnce({
-      answers: { effort: { type: 'choice', choice: 'medium' } },
+      answers: { 'thinking:effort': { type: 'choice', choice: 'medium' } },
       metadata: { usage: { requests: 1, costUsd: 0.0002 } },
     });
     await emit('before_agent_start', { prompt: 'Fix the bug' });
@@ -226,7 +278,7 @@ describe('dynamic thinking session lifecycle', () => {
     const report = vi.fn().mockResolvedValue(undefined);
     const { emit, classify, assistant, settle } = harness(['medium'], true, { report }, 'high');
     classify.mockResolvedValueOnce({
-      answers: { effort: { type: 'choice', choice: 'medium' } },
+      answers: { 'thinking:effort': { type: 'choice', choice: 'medium' } },
       metadata: { usage: { requests: 1, costUsd: 0.002 } },
     });
     await emit('before_agent_start', { prompt: 'Simple task' });

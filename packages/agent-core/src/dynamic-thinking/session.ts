@@ -1,11 +1,12 @@
 import type { Api, AssistantMessage, Model } from '@earendil-works/pi-ai';
 import type { ExtensionContext, InlineExtension } from '@earendil-works/pi-coding-agent';
-import { collectClassifierSessionEvidence } from '../classifier/index.js';
+import { createTurnClassificationRegistry, type TurnClassificationRegistry } from '../classifier/turn-classification.js';
 import type { AgentRuntime } from '../runtime.js';
 import type { SavingsReporter } from '../savings.js';
+import type { ModelSelectionPersistenceScope } from '../model-selection.js';
 import { isFelanThinkingLevel, type FelanThinkingLevel } from '../thinking.js';
 import { reportDynamicThinkingSavings } from './savings.js';
-import { evaluateDynamicThinkingLevel, supportsDynamicThinking } from './selection.js';
+import { dynamicThinkingQuestion, dynamicThinkingDecision, supportsDynamicThinking } from './selection.js';
 
 export const DYNAMIC_THINKING_PRODUCER = '@felan-ai/agent-core/dynamic-thinking';
 
@@ -13,6 +14,7 @@ export function createDynamicThinkingSession(
   runtime: AgentRuntime,
   codexEffortUpdatesAvailable: boolean,
   reporter?: SavingsReporter,
+  options: { selectionScope?: ModelSelectionPersistenceScope; turnClassification?: TurnClassificationRegistry } = {},
 ): InlineExtension {
   const classifier = runtime.classifier;
   if (!classifier) throw new Error('Dynamic thinking requires a classifier');
@@ -31,60 +33,76 @@ export function createDynamicThinkingSession(
   } | undefined;
   const canClassify = (api: string) => (api !== 'openai-codex-responses' && api !== 'openai-responses')
     || codexEffortUpdatesAvailable;
-  let pending: { prompt: string; model: Model<Api>; original: FelanThinkingLevel;
-    controller: AbortController; decision: ReturnType<typeof evaluateDynamicThinkingLevel> } | undefined;
+  const local = options.turnClassification ? undefined : createTurnClassificationRegistry(classifier, runtime.logger);
+  const registry = options.turnClassification ?? local!;
+  let prepared: { model: Model<Api>; original: FelanThinkingLevel } | undefined;
 
   return {
     name: DYNAMIC_THINKING_PRODUCER,
     hidden: true,
     factory: (pi) => {
-      pi.on('session_shutdown', () => { pendingSavings = undefined; pending?.controller.abort(); lifetime.abort(); });
-      pi.on('model_select', () => { pendingSavings = undefined; pending?.controller.abort(); });
+      options.selectionScope?.onManualThinkingSelection(() => {
+        manualOverride = true;
+        pendingSavings = undefined;
+      });
+      pi.on('session_shutdown', () => { pendingSavings = undefined; lifetime.abort(); });
+      pi.on('model_select', () => { pendingSavings = undefined; });
       pi.on('agent_settled', () => { pendingSavings = undefined; });
       pi.on('thinking_level_select', (event) => {
-        if (event.level === expectedLevel) expectedLevel = undefined;
-        else { manualOverride = true; pendingSavings = undefined; pending?.controller.abort(); }
-      });
-      const start = (prompt: string, model: Model<Api>, original: FelanThinkingLevel,
-        ctx: ExtensionContext) => {
-        pending?.controller.abort();
-        const controller = new AbortController();
-        const evidence = collectClassifierSessionEvidence(ctx.sessionManager);
-        const decision = evaluateDynamicThinkingLevel(classifier, model, prompt, evidence, original, controller.signal);
-        decision.catch(() => {});
-        pending = { prompt, model, original, controller, decision };
-        return pending;
-      };
-      pi.on('input', (event, ctx) => {
-        if (event.streamingBehavior !== undefined || manualOverride || lifetime.signal.aborted
-          || !supportsDynamicThinking(ctx.model) || !canClassify(ctx.model.api)) return;
-        const original = pi.getThinkingLevel();
-        if (lastAutomaticLevel !== undefined && original !== lastAutomaticLevel) {
-          manualOverride = true;
-          pending?.controller.abort();
+        if (options.selectionScope?.isAutomated()) {
+          if (!options.selectionScope.owner && event.level === expectedLevel) {
+            expectedLevel = undefined;
+            return;
+          }
+          expectedLevel = undefined;
+          lastAutomaticLevel = undefined;
+          pendingSavings = undefined;
           return;
         }
-        if (isFelanThinkingLevel(original)) start(event.text, ctx.model, original, ctx);
+        if (!options.selectionScope && event.level === expectedLevel) expectedLevel = undefined;
+        else { manualOverride = true; pendingSavings = undefined; }
       });
+      registry.register({
+        id: 'thinking',
+        prepare(input, ctx) {
+          prepared = undefined;
+          if (!input.prompt.trim() || options.selectionScope?.owner || manualOverride || lifetime.signal.aborted
+            || !supportsDynamicThinking(ctx.model) || !canClassify(ctx.model.api)) return undefined;
+          const original = pi.getThinkingLevel();
+          if (lastAutomaticLevel !== undefined && original !== lastAutomaticLevel) {
+            manualOverride = true;
+            return undefined;
+          }
+          if (!isFelanThinkingLevel(original)) return undefined;
+          const question = dynamicThinkingQuestion(ctx.model);
+          if (!question) return undefined;
+          prepared = { model: ctx.model, original };
+          return { questions: { effort: question } };
+        },
+      });
+      if (local) {
+        pi.on('input', (event, ctx) => {
+          if (event.streamingBehavior === undefined) local.start({ prompt: event.text, imageCount: event.images?.length ?? 0 }, ctx);
+        });
+        pi.on('turn_start', () => local.finish());
+        pi.on('session_shutdown', () => local.dispose());
+      }
       pi.on('before_agent_start', async (event, ctx) => {
         pendingSavings = undefined;
-        if (manualOverride || lifetime.signal.aborted || !supportsDynamicThinking(ctx.model)
-          || !canClassify(ctx.model.api)) return;
-        const model = ctx.model;
-        const original = pi.getThinkingLevel();
-        if (!isFelanThinkingLevel(original)) return;
+        const request = { prompt: event.prompt, imageCount: event.images?.length ?? 0 };
+        local?.start(request, ctx);
+        const result = await registry.result('thinking', request, ctx);
+        const active = prepared;
+        if (!result || !active || options.selectionScope?.owner || manualOverride || lifetime.signal.aborted) return;
+        const { model, original } = active;
+        if (ctx.model?.api !== model.api || ctx.model.provider !== model.provider
+          || ctx.model.id !== model.id || pi.getThinkingLevel() !== original) return;
+        const decision = dynamicThinkingDecision(model, original, result);
+        if (!decision) return;
         const sessionId = ctx.sessionManager.getSessionId();
-        const active = pending?.prompt === event.prompt && pending.model.id === model.id
-          && pending.model.provider === model.provider && pending.original === original
-          ? pending : start(event.prompt, model, original, ctx);
-        const decision = await active.decision;
-        if (pending === active) pending = undefined;
-        if (!decision || manualOverride || lifetime.signal.aborted || sessionId !== ctx.sessionManager.getSessionId()
-          || active.controller.signal.aborted
-          || ctx.model?.api !== model.api || ctx.model?.provider !== model.provider
-          || ctx.model?.id !== model.id || pi.getThinkingLevel() !== original) return;
         expectedLevel = decision.level;
-        pi.setThinkingLevel(decision.level);
+        if (options.selectionScope) options.selectionScope.run(false, () => pi.setThinkingLevel(decision.level));
+        else pi.setThinkingLevel(decision.level);
         lastAutomaticLevel = decision.level;
         if (reporter && original === 'high' && (decision.level === 'low' || decision.level === 'medium')) {
           pendingSavings = { sessionId, model, previous: original, selected: decision.level,

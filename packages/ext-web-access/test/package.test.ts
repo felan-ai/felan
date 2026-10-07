@@ -27,11 +27,11 @@ describe('@felan-ai/ext-web-access package boundary', () => {
       linkedom: '0.16.11',
       turndown: '7.2.0',
       typebox: '1.1.38',
-      undici: '8.10.0',
+      undici: '8.11.2',
     });
     expect(notice).toContain('pi-web-access 0.18.0');
     expect(notice).toContain('d2aab00dcf0547572276d9de4bc4a2a49d640e13');
-    expect(notice).toContain('undici 8.10.0');
+    expect(notice).toContain('undici 8.11.2');
     expect(notice).not.toMatch(/promise\.try|unpdf|PDF\.js|pdfjs-dist/iu);
     expect(notice).not.toMatch(/pi-web-access 0\.23\.0/u);
   });

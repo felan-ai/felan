@@ -167,14 +167,21 @@ path. You can also enter explicitly without a redundant approval prompt:
 /prewalk refactor the parser and verify the tests
 ```
 
-The default target is the `low` model tier at exact `medium` thinking. Tier
+Approved entry establishes a scoped, authenticated same-provider `high` or
+`xhigh` planner at supported `high` effort or above before planning inference.
+The shared classifier can choose the planning tuple; without an answer, a
+capable static profile preserves higher current effort when supported. Missing
+capabilities or authentication produce an explicit refusal rather than planning
+silently at low effort. Entry approval and manual selections remain authoritative.
+
+The default implementation target is the `low` model tier at exact `medium` thinking. Tier
 resolution stays on the current provider. If that provider has no authenticated
-model in the target tier, Prewalk keeps the planner model and only reduces
-thinking. Hosts or the declarative extension configuration can select another
+model in the target tier, Prewalk keeps the planner model and applies the configured implementation
+effort. Hosts or the declarative extension configuration can select another
 tier or exact authenticated `provider/model`, and can override the
 implementation effort with `off`, `low`, `medium`, `high`, `xhigh`, or `max`.
 An explicit `provider/model-id` may cross providers. Pi clamps that request to
-the target model's capabilities. The original planner model and thinking level
+the target model's capabilities. The original pre-entry model and thinking level
 are restored after the run settles by default.
 
 The optional `xhigh` model tier is intended for unusually complex architecture,
@@ -182,18 +189,23 @@ design, planning, difficult debugging, or high-stakes code review. It is
 available to subagents and explicit Prewalk configuration, but is not a routine
 default. This model tier is separate from the `xhigh` thinking level.
 
-With a classifier, Prewalk makes four small decisions in root sessions:
+With a classifier, Prewalk contributes entry and conditional planning-profile
+questions to the shared root pass, with separate later workflow decisions:
 
 - **Entry:** before each idle user turn, it judges whether the request needs
   Prewalk and, if so, adds a hidden conversation message telling the model to
   call `enter_prewalk` before exploring. The system prompt, tool, and
   `entryApproval` policy are unchanged.
+- **Planning profile:** if approved entry occurs, choose a capable model and
+  supported effort tuple independently of regular-path thinking. Active phase
+  ownership prevents ordinary dynamic effort from overwriting it.
 - **Exploration depth:** when a run starts, it judges what the conversation and
   prior tool activity already cover. Planning guidance then says to plan from
   existing findings, inspect the specific missing files, or delegate broad
   discovery to `explore` children.
-- **Implementation profile:** at handoff to a tier target, it may raise the
-  configured tier and thinking level for a harder plan. It never lowers them.
+- **Implementation advice:** at tier handoff, it can recommend stronger
+  requirements, but configured model and thinking targets remain authoritative.
+  Exact model targets retain their existing selection path.
 - **Completion:** when the implementer's agent run is ready to settle, it
   judges the final response and evidence. If the work is done, the run settles.
   If there is a gap, a hidden follow-up asks the
@@ -247,7 +259,8 @@ host's select dialog.
 
 ### Lifecycle
 
-1. The planner explores the relevant repository surface.
+1. Approved entry establishes capable high-effort planning, then the planner
+   explores the relevant repository surface.
 2. When both task tools are active, it creates a concise task graph and claims
    the first ready task.
 3. When plan review is active, it passes a concise numbered plan to
@@ -260,7 +273,7 @@ host's select dialog.
    has no target-tier model, it keeps the planner model and only changes thinking.
 6. The target sees the useful conversation and tool history, completes the
    task graph, and verifies the work.
-7. Felan Code restores the planner selection after the run settles. Prewalk's
+7. Felan Code restores the original pre-entry selection after the run settles. Prewalk's
    temporary model and thinking changes are scoped to the active session and do
    not change the user's or project's default selection, so a new session keeps
    using the configured default model.
@@ -269,7 +282,9 @@ The default `medium` implementation effort prevents a cheaper target from
 inheriting a planner's `max` effort. A same-model target with a different
 effective effort is still handed off; only matching model and effective effort
 are treated as a no-op. Manual thinking changes cancel Prewalk just like manual
-model changes, including when they race an in-flight handoff or restoration.
+model changes, including when they race promotion, handoff or restoration. Internal automated
+changes are not mistaken for manual overrides; ordinary dynamic thinking resumes
+after temporary phase ownership releases.
 
 Within planning or implementation, Prewalk injects the current hidden phase
 guidance once at a stable context position while later responses and tool

@@ -11,7 +11,7 @@
     "list": "node scripts/source-cli.mjs list",
     "run": "node scripts/source-cli.mjs run",
     "view": "harness-evals view --config felan-extension-evals.yaml --latest --open",
-    "test": "bun adapters/felan-compaction.test.mjs && bun adapters/felan-codemode.test.mjs && node scripts/source-image.test.mjs && node cases/memory/processing/verifier/verify.test.mjs && node fixtures/memory-processing/v1/source/.eval-setup/worker-evidence.test.mjs && node fixtures/codemode/v1/source/scenarios.test.mjs && node fixtures/codemode/v1/source/run.test.mjs",
+    "test": "bun adapters/felan-compaction.test.mjs && bun adapters/felan-codemode.test.mjs && node scripts/source-image.test.mjs && node cases/memory/processing/verifier/verify.test.mjs && node fixtures/memory-processing/v1/source/.eval-setup/worker-evidence.test.mjs && node fixtures/codemode/v1/source/scenarios.test.mjs && node fixtures/codemode/v1/source/run.test.mjs && bun adapters/felan-turn-classification.test.mjs && node --test fixtures/turn-classification/v1/source/.eval-setup/transport.test.mjs fixtures/turn-classification/v1/source/.eval-setup/driver.test.mjs cases/turn-classification/commerce/verifier/check.test.mjs",
     "build:runtime": "node scripts/build-runtime.mjs",
     "build:source": "node scripts/build-source-image.mjs --allow-current-source"
   },

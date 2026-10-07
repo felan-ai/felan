@@ -3,7 +3,8 @@ import type {
   InlineExtension,
 } from '@earendil-works/pi-coding-agent';
 import type { AgentRuntime } from './runtime.js';
-import type { ModelSelectionPersistenceScope } from './model-selection.js';
+import type { TurnClassificationRegistry } from './classifier/turn-classification.js';
+import type { ModelSelectionPersistenceScope, SessionSelectionAutomation } from './model-selection.js';
 import type { SavingsReporter, SavingsReporterProvider } from './savings.js';
 import {
   associateCapabilityCollector,
@@ -27,6 +28,8 @@ export interface FelanExtensionAPI extends Omit<ExtensionAPI, 'getFlag' | 'regis
   readonly runtime: AgentRuntime;
   readonly config: Readonly<Record<string, ExtensionConfigValue>>;
   readonly savings?: SavingsReporter;
+  readonly turnClassification?: TurnClassificationRegistry;
+  readonly selectionAutomation?: SessionSelectionAutomation;
   registerCapability(capability: FelanCapability): void;
   setModel(
     model: Parameters<ExtensionAPI['setModel']>[0],
@@ -81,6 +84,7 @@ function bindFelanExtensionWithCapabilities(
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
   config: Readonly<Record<string, ExtensionConfigValue>>,
   savings: SavingsReporterProvider | undefined,
+  turnClassification?: TurnClassificationRegistry,
 ): InlineExtension {
   const inline: InlineExtension = {
     name: packageName,
@@ -102,6 +106,7 @@ function bindFelanExtensionWithCapabilities(
           modelSelectionScope,
           config,
           savings?.createReporter(packageName),
+          turnClassification,
         ));
       } finally {
         initializing = false;
@@ -139,6 +144,7 @@ export async function loadFelanSessionExtensions(
   modelSelectionScope: ModelSelectionPersistenceScope,
   configOverrides: readonly ExtensionConfigOverride[] = [],
   savings?: SavingsReporterProvider,
+  turnClassification?: TurnClassificationRegistry,
 ): Promise<InlineExtension[]> {
   return loadFelanExtensionsWithScope(
     packageNames,
@@ -148,6 +154,7 @@ export async function loadFelanSessionExtensions(
     modelSelectionScope,
     configOverrides,
     savings,
+    turnClassification,
   );
 }
 
@@ -159,6 +166,7 @@ async function loadFelanExtensionsWithScope(
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
   configOverrides: readonly ExtensionConfigOverride[],
   savings: SavingsReporterProvider | undefined,
+  turnClassification?: TurnClassificationRegistry,
 ): Promise<InlineExtension[]> {
   const seen = new Set<string>();
   const extensions: InlineExtension[] = [];
@@ -206,6 +214,7 @@ async function loadFelanExtensionsWithScope(
       modelSelectionScope,
       config,
       savings,
+      turnClassification,
     ));
   }
 
@@ -220,6 +229,7 @@ function createFelanExtensionAPI(
   modelSelectionScope: ModelSelectionPersistenceScope | undefined,
   config: Readonly<Record<string, ExtensionConfigValue>>,
   savings: SavingsReporter | undefined,
+  turnClassification?: TurnClassificationRegistry,
 ): FelanExtensionAPI {
   const boundMethods = new Map<PropertyKey, unknown>();
 
@@ -229,6 +239,8 @@ function createFelanExtensionAPI(
       if (property === 'runtime') return runtime;
       if (property === 'config') return config;
       if (property === 'savings') return savings;
+      if (property === 'turnClassification') return turnClassification;
+      if (property === 'selectionAutomation') return modelSelectionScope;
       if (property === 'registerCapability') {
         return registerCapability;
       }
@@ -296,6 +308,8 @@ function createFelanExtensionAPI(
         || property === 'runtime'
         || property === 'config'
         || property === 'savings'
+        || property === 'turnClassification'
+        || property === 'selectionAutomation'
         || property === 'registerCapability'
       ) return false;
       return Reflect.set(target, property, value, target);

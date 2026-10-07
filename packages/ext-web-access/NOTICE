@@ -11,7 +11,7 @@ Runtime dependencies include:
 - linkedom 0.16.11, ISC License
 - Turndown 7.2.0, MIT License
 - TypeBox 1.1.38, MIT License
-- undici 8.10.0, MIT License
+- undici 8.11.2, MIT License
 
 The full license text for this package is in LICENSE. Dependency license texts
 are available in their published packages.

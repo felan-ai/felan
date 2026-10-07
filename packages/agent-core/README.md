@@ -73,14 +73,40 @@ The public Pi composition surface also exports `ImageApi`, `ImageModel`,
 `AssistantImages`, `ImagesContext`, and `ImagesOptions`; image feature behavior
 belongs in extensions, not `AgentRuntime`.
 
-In root sessions, Agent Core coordinates one shared 2-second initial-turn wait
-inside its managed Pi-backed classifier; later decisions and custom implementations retain
-their normal timing. `collectClassifierSessionEvidence` converts the active Pi session projection
-into bounded conversation and correlated tool-call metadata for classifiers.
-It handles branch/compaction summaries, omits images, raw thinking and tool
-result bodies, and redacts recognizable credential patterns. It is not a
-guarantee that arbitrary secrets in user text are detected. Feature packages
-choose their own classifier questions and any additional state.
+In classifier-enabled root sessions, Agent Core exposes the optional
+`FelanExtensionAPI.turnClassification` registry. Extensions register a unique
+producer ID and a `prepare(input, context, signal)` contribution during
+initialization, returning questions and optional JSON state or skipping the turn.
+Core captures one sanitized `input.session` snapshot, namespaces question IDs as
+`producer:question` and state as `extensions[producer]`, and makes one logical
+classification call. Consumers await `result(id, { prompt, imageCount }, context)`
+in their `before_agent_start` handler; returned answers use their original keys.
+Questions are independent, so conditional branches must state their premises.
+Eligibility, thresholds, actions and fallbacks stay feature-owned.
+
+The existing 2-second root budget covers preparation and inference, including
+custom classifiers. Invalid preparation is isolated; timeout or incomplete
+answers fail closed. Expansion supersedes an earlier prompt; continuation turns
+are not reclassified. Existing bridge byte budgets can split transport requests.
+Registration resets on reload; pending work is isolated per root session and
+cancelled on lifecycle/manual changes. Without composed root registration,
+extensions retain static guidance. Later explicit classifier calls remain outside
+this preflight. See [classifier lifecycle](../../docs/concepts/classifier-lifecycle.md).
+
+`collectClassifierSessionEvidence` handles branch/compaction summaries, bounds
+conversation and tool metadata, omits images/raw thinking/tool-result bodies and
+redacts recognized credential patterns. Arbitrary secrets cannot be guaranteed
+safe. Additional producer state is also validated and redacted before dispatch.
+
+The optional `selectionAutomation` service exposes temporary ownership and
+selection provenance. Workflow owners acquire a release callback; regular effort
+selection pauses until ownership releases. `updateDefault: false` model/thinking
+changes remain session-local and are distinguishable from manual choices, even
+across asynchronous transitions. Manual choices stay authoritative; stale release
+callbacks cannot clear a newer owner. Core owns this mechanism, not feature modes.
+`onManualThinkingSelection` observes explicit effort choices, including reselecting
+the current level. Composed sessions detect this at Pi's public setter boundary;
+implicit model-switch clamps and automated selections do not produce this signal.
 
 Session composition accepts an optional `dynamicThinking` capability. When the
 runtime has a classifier, it starts eligible effort selection at `input` and
