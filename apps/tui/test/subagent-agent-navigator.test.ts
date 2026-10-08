@@ -718,6 +718,7 @@ class TestTerminal implements Terminal {
   clearFromCursor(): void {}
   clearScreen(): void {}
   setTitle(): void {}
+  setProgramStatus(): void {}
   setProgress(): void {}
   send(data: string): void { this.#onInput?.(data); }
 }
@@ -770,6 +771,7 @@ function sessionWithMessages(
       setHideThinkingBlock: vi.fn(),
       getShowImages: vi.fn(() => false),
       getImageWidthCells: vi.fn(() => 40),
+      getOutputPad: vi.fn(() => 1),
     },
     sessionManager: {
       getCwd: vi.fn(() => process.cwd()),

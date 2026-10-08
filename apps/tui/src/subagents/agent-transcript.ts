@@ -59,6 +59,7 @@ export class AgentTranscript implements Component {
   #toolsExpanded = false;
   #showImages = true;
   #imageWidthCells = 60;
+  #outputPad: number = 1;
 
   constructor(
     private readonly tui: TUI,
@@ -96,6 +97,7 @@ export class AgentTranscript implements Component {
       this.#hideThinkingBlock = session.settingsManager.getHideThinkingBlock();
       this.#showImages = session.settingsManager.getShowImages();
       this.#imageWidthCells = session.settingsManager.getImageWidthCells();
+      this.#outputPad = session.settingsManager.getOutputPad();
       this.#rebuildFromSession(session);
 
       replaying = false;
@@ -399,7 +401,7 @@ export class AgentTranscript implements Component {
       : compactionMethodForMessage(this.#attachment.session.sessionManager.getBranch(), message);
     const component = method === undefined
       ? new CompactionSummaryMessageComponent(message, this.#markdownTheme)
-      : new CompactionMethodMessageComponent(message, method, this.#markdownTheme);
+      : new CompactionMethodMessageComponent(message, method, this.#markdownTheme, this.#outputPad);
     component.setExpanded(this.#toolsExpanded);
     this.#expandableComponents.add(component);
     this.#container.addChild(new Spacer(1));

@@ -203,6 +203,7 @@ class RecordingTerminal implements Terminal {
   clearFromCursor(): void {}
   clearScreen(): void {}
   setTitle(): void {}
+  setProgramStatus(): void {}
   setProgress(): void {}
   send(data: string): void {
     this.#onInput?.(data);

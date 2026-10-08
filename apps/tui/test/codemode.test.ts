@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as core from '@felan-ai/agent-core';
@@ -69,7 +69,8 @@ describe('local codemode composition', () => {
         if (mode === 'on') {
           const read = getCurrentTools(contexts[0]!.messages).find((tool) => tool.name === 'read')!;
           expect(read.description).toContain('tools.read(args)');
-          expect(read.description).toContain('resolves to a string');
+          expect(read.description).toContain('resolves to `string | { data: string;');
+          expect(read.description).toContain('type: "image"');
         }
       }
     },
@@ -244,6 +245,18 @@ describe('native codemode offline execution', () => {
     expect(execute).toHaveBeenCalledOnce();
   });
 
+  it('separates multiple text items from captured console output', async () => {
+    const fixture = await harness('only');
+    fixture.respond('text("first"); console.log("debug one"); text("second"); console.warn("debug two");');
+    const session = await fixture.nativeSession('only');
+    await session.prompt('Format output items');
+
+    const output = textContent(scriptResult(session).content);
+    expect(output).toContain('==> text 1/2 <==\nfirst');
+    expect(output).toContain('==> text 2/2 <==\nsecond');
+    expect(output).toContain('<console_output>\ndebug one\ndebug two\n</console_output>');
+  });
+
   it('omits the models namespace from script globals as well as declarations', async () => {
     const fixture = await harness('only');
     fixture.respond('return { models: typeof models, tools: typeof tools };');
@@ -279,6 +292,17 @@ describe('native codemode offline execution', () => {
     const result = scriptResult(session);
     expect(result.isError).toBe(false);
     expect(result.content).toContainEqual({ type: 'image', data, mimeType: 'image/png' });
+    const savedImage = result.content.find((part) => part.type === 'text' && part.text.startsWith('[Image saved to '));
+    expect(savedImage?.type).toBe('text');
+    if (savedImage?.type !== 'text') throw new Error('Expected Pi to save the codemode image');
+    const path = savedImage.text.match(/^\[Image saved to (.+) \(image\/png,/u)?.[1];
+    expect(path).toBeDefined();
+    if (!path) throw new Error('Expected a path for the codemode image output');
+    try {
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+    } finally {
+      await rm(path, { force: true });
+    }
   });
 
   it.each(['not-base64!', 'aGVsbG8='])('rejects invalid image data %s', async (data) => {

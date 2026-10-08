@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-mcp",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Portable OAuth-only MCP gateway for Felan",
   "license": "MIT",
   "type": "module",

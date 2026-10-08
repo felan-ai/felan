@@ -32,6 +32,7 @@ describe('Felan model defaults', () => {
   it('uses Felan current defaults for the primary frontier providers', () => {
     expect(FELAN_DEFAULT_MODEL_PER_PROVIDER).toMatchObject({
       anthropic: 'claude-opus-5',
+      azure: 'gpt-5.6-sol',
       google: 'gemini-3.8-flash',
       'google-vertex': 'gemini-3.8-flash',
       openai: 'gpt-5.6-sol',

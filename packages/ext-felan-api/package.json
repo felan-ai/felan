@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-felan-api",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Portable single-tool gateway for the Felan API",
   "license": "MIT",
   "type": "module",

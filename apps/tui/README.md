@@ -17,8 +17,8 @@ in the `@felan-ai/ext-*` packages.
 > The local host uses the current user's filesystem and process permissions. It
 > is not a sandbox.
 
-Felan Code uses Pi 0.99.1 for its agent, provider, and TUI runtime. Pi's newer
-model catalog and terminal color detection are available through that runtime.
+Felan Code uses Pi 1.1.0 for its agent, provider, and TUI runtime. Pi's model
+catalog and terminal color detection are available through that runtime.
 Pi-native MCP, codemode, and tool search are not automatically loaded in Felan:
 MCP remains the explicit OAuth-only HTTP gateway described in
 [Remote MCP](../../docs/user-guide/web-mcp-and-browser.md#remote-mcp).
@@ -26,6 +26,17 @@ Pi's native stdio servers, bearer tokens, custom headers, and direct MCP tools
 are not supported by Felan's built-in gateway.
 
 ## Requirements and quick start
+
+### Azure provider migration
+
+Pi 1.0.3 renamed the Azure provider from `azure-openai-responses` to `azure`.
+Update the provider key in `auth.json` and `models.json`, and change any
+`defaultProvider`, `enabledModels` patterns, and `modelThinkingLevels` keys in
+`settings.json` to `azure`. Pi does not reuse the old provider ID when resuming
+sessions, so an older Azure session may fall back to another model and will not
+reuse its prompt cache. Azure environment variables such as `AZURE_OPENAI_API_KEY`
+are unchanged; the model API identifier `azure-openai-responses` is also still
+used by Azure model definitions.
 
 Felan Code supports Node.js 22.19.0 or newer. Repository development and CI use
 Node.js 22.20.0 with pnpm 9.15.5.

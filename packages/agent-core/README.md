@@ -182,6 +182,13 @@ does not enable it automatically. Felan's local host supports `codemode.mode`
 values `off`, `on`, and `only`, defaults to `off`, and disables the sandbox's
 extra model helpers with `models: false`.
 
+Agent Core 0.12 follows Pi 1.1's public contracts. Extension integrations must
+handle `aborted` on `agent_settled` events, include `durationMs` and `outputPad`
+when implementing Pi tool-render callbacks, and provide
+`ToolLoadout.getPromptGuidelines()`. Custom stream functions should return an
+`AssistantMessageEventStream`, typically created by
+`createAssistantMessageEventStream()`.
+
 Agent Core also exposes shared `xhigh`, `high`, `medium`, and `low` model tiers for
 extensions that need model-strength selection:
 

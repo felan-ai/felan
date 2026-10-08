@@ -1,4 +1,5 @@
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
+import { stripTerminalSequences } from '@earendil-works/pi-tui';
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
   CompactionMethodMessageComponent,
@@ -60,6 +61,7 @@ describe('compaction presentation', () => {
       },
       'Classifier',
       getMarkdownTheme(),
+      1,
     );
 
     expect(component.render(100).join('\n')).toContain('Context compacted · Classifier');
@@ -69,5 +71,28 @@ describe('compaction presentation', () => {
     const expanded = component.render(100).join('\n');
     expect(expanded).toContain('Compacted from 12,345 tokens');
     expect(expanded).toContain('Keep the active work.');
+  });
+
+  it('applies and updates horizontal output padding', () => {
+    const component = new CompactionMethodMessageComponent(
+      {
+        role: 'compactionSummary',
+        summary: 'Keep the active work.',
+        tokensBefore: 100,
+        timestamp: 1,
+      },
+      'Native',
+      getMarkdownTheme(),
+      0,
+    );
+    const unpadded = component.render(100).join('\n');
+    component.setOutputPad(2);
+    const padded = component.render(100).join('\n');
+
+    expect(padded).not.toBe(unpadded);
+    expect(stripTerminalSequences(padded)).toContain('  Context compacted · Native');
+
+    component.setExpanded(true);
+    expect(stripTerminalSequences(component.render(100).join('\n'))).toContain('  Compacted from 100 tokens');
   });
 });

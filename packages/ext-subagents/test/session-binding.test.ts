@@ -66,7 +66,7 @@ describe('subagent session binding', () => {
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('queued');
     harness.session.clearQueue();
     (harness.session as any).isStreaming = false;
-    harness.emit({ type: 'agent_settled' });
+    harness.emit({ type: 'agent_settled', aborted: true });
     await settle();
     expect(harness.sendCustomMessage).toHaveBeenCalledOnce();
     await expect(parentPort!.deliverCompletion(notice)).resolves.toBe('queued');

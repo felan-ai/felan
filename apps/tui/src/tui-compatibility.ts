@@ -51,6 +51,7 @@ interface InteractiveModeTerminalInternals {
   showError?(message: string): void;
   showStatus?(message: string): void;
   addMessageToChat?(message: unknown, options?: unknown): void;
+  outputPad?: number;
   switchTuiMode?(mode: string, restoreProgress?: boolean, startRenderer?: boolean): boolean;
   updateTerminalTitle?(): void;
   themeController?: {
@@ -152,7 +153,12 @@ function installCompactionPresenter(
       return;
     }
     chatContainer.addChild(new Spacer(1));
-    const component = new CompactionMethodMessageComponent(message, method, getMarkdownTheme());
+    const component = new CompactionMethodMessageComponent(
+      message,
+      method,
+      getMarkdownTheme(),
+      internals.outputPad ?? 1,
+    );
     const expanded = (mode as unknown as { toolOutputExpanded?: unknown }).toolOutputExpanded;
     if (typeof expanded === 'boolean') component.setExpanded(expanded);
     chatContainer.addChild(component);

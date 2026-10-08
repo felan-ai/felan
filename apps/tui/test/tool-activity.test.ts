@@ -338,7 +338,7 @@ describe('tool activity rendering', () => {
     ]);
     const definition = createToolActivityDisplayDefinition(harness.state, 'read', toolDefinition('read'));
     const grepDefinition = createToolActivityDisplayDefinition(harness.state, 'grep', toolDefinition('grep'));
-    const anchor = definition.renderCall!({ path: 'src/a.ts' }, theme, renderContext('read-1', false));
+    const anchor = definition.renderCall!({ path: 'src/a.ts' }, theme, renderContext('read-1', false, undefined, 2));
     const hidden = grepDefinition.renderCall!({ pattern: 'needle' }, theme, renderContext('grep-1', false));
     const collapsed = anchor.render(100).join('\n');
 
@@ -346,6 +346,7 @@ describe('tool activity rendering', () => {
     expect(collapsed).toContain('  ✓ Read · src/a.ts');
     expect(collapsed).toContain('  ✓ Searched · needle');
     expect(collapsed).not.toContain('line 1');
+    expect(anchor.render(100)[0]).toMatch(/^  /u);
     expect(hidden.render(100)).toEqual([]);
     expect(anchor.render(36).every((line) => visibleWidth(line) <= 36)).toBe(true);
 
@@ -915,6 +916,7 @@ function renderContext(
   toolCallId: string,
   expanded: boolean,
   lastComponent?: unknown,
+  outputPad = 1,
 ) {
   return {
     args: {},
@@ -929,5 +931,7 @@ function renderContext(
     expanded,
     showImages: false,
     isError: false,
+    durationMs: undefined,
+    outputPad,
   } as never;
 }

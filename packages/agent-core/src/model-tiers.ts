@@ -257,7 +257,6 @@ function inferModelFamily(text: string): string | undefined {
 
 const PROVIDER_FAMILIES = new Map([
   ['anthropic', 'anthropic'],
-  ['azure-openai-responses', 'openai'],
   ['deepseek', 'deepseek'],
   ['google', 'google'],
   ['google-vertex', 'google'],

@@ -7,7 +7,7 @@ export const FELAN_DEFAULT_MODEL_PER_PROVIDER = {
   'ant-ling': 'Ring-2.6-1T',
   anthropic: 'claude-opus-5',
   openai: 'gpt-5.6-sol',
-  'azure-openai-responses': 'gpt-5.6-sol',
+  azure: 'gpt-5.6-sol',
   'openai-codex': 'gpt-5.6-sol',
   radius: 'balanced',
   nvidia: 'nvidia/nemotron-3-ultra-550b-a55b',

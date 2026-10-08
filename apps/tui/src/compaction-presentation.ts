@@ -57,18 +57,26 @@ export function compactionMethodForMessage(
 
 export class CompactionMethodMessageComponent extends Container {
   #expanded = false;
+  #outputPad: number;
 
   constructor(
     private readonly message: CompactionSummaryMessage,
     private readonly method: CompactionMethodLabel,
     private readonly markdownTheme: MarkdownTheme,
+    outputPad: number,
   ) {
     super();
+    this.#outputPad = Math.max(0, outputPad);
     this.#updateDisplay();
   }
 
   setExpanded(expanded: boolean): void {
     this.#expanded = expanded;
+    this.#updateDisplay();
+  }
+
+  setOutputPad(outputPad: number): void {
+    this.#outputPad = Math.max(0, outputPad);
     this.#updateDisplay();
   }
 
@@ -84,7 +92,7 @@ export class CompactionMethodMessageComponent extends Container {
     const action = this.#expanded ? 'hide details' : 'details';
     content.addChild(new Text(
       theme.description(`Context compacted · ${this.method} · ${keyText('app.tools.expand')} ${action}`),
-      0,
+      this.#outputPad,
       0,
     ));
     if (this.#expanded) {
@@ -92,7 +100,7 @@ export class CompactionMethodMessageComponent extends Container {
       content.addChild(new Spacer(1));
       content.addChild(new Markdown(
         `**Compacted from ${tokenCount} tokens**\n\n${this.message.summary}`,
-        0,
+        this.#outputPad,
         0,
         this.markdownTheme,
       ));

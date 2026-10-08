@@ -33,6 +33,8 @@ describe('model tiers', () => {
     ['anthropic', 'claude-opus-5', 'anthropic', 'high'],
     ['anthropic', 'claude-sonnet-5', 'anthropic', 'medium'],
     ['anthropic', 'claude-haiku-4-5', 'anthropic', 'low'],
+    ['azure', 'gpt-5.6-sol', 'openai', 'high'],
+    ['azure', 'deepseek-v4-pro', 'deepseek', 'high'],
     ['openai-codex', 'gpt-5.7-sol', 'openai', 'high'],
     ['openai-codex', 'gpt-6-astra', 'openai', 'xhigh'],
     ['openai', 'gpt-5.7-terra', 'openai', 'medium'],

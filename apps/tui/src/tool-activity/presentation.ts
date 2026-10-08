@@ -50,12 +50,16 @@ class ToolActivityGroupComponent implements Component {
     private readonly groupId: string,
     private readonly theme: Theme,
     private readonly expanded: boolean,
+    private readonly outputPad: number,
   ) {}
 
   render(width: number): string[] {
+    const padding = Math.min(Math.max(0, this.outputPad), Math.max(0, width - 1));
+    const availableWidth = Math.max(1, width - padding * 2);
+    const leftPadding = ' '.repeat(padding);
     return renderToolActivityGroup(this.state, this.groupId, this.theme, this.expanded)
       .split('\n')
-      .map((line) => truncateToWidth(line, Math.max(1, width), '…'));
+      .map((line) => leftPadding + truncateToWidth(line, availableWidth, '…'));
   }
 
   invalidate(): void {}
@@ -74,7 +78,7 @@ export function createToolActivityDisplayDefinition(
       state.registerRenderer(context.toolCallId, context.invalidate);
       const placement = state.placement(context.toolCallId);
       if (!placement?.anchor) return empty(context);
-      return new ToolActivityGroupComponent(state, placement.groupId, theme, context.expanded);
+      return new ToolActivityGroupComponent(state, placement.groupId, theme, context.expanded, context.outputPad);
     },
     renderResult(_result, _options, _theme, context) {
       state.registerRenderer(context.toolCallId, context.invalidate);
