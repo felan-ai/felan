@@ -9,6 +9,7 @@ import {
   resolvePiExtensionPaths,
 } from '../src/pi-extensions.js';
 import { createFelanProjectTrustStore } from '../src/project-trust.js';
+import { resolvePiLlamaCppExtensionPath } from '../src/pi-llama.js';
 
 const temporaryPaths: string[] = [];
 
@@ -25,7 +26,7 @@ describe('Pi extension path resolution', () => {
     expect(resolvePiExtensionPaths({
       cwd: layout.cwd,
       homeDir: layout.homeDir,
-      settings: { user: false, project: false },
+      settings: { user: false, project: false, llamaCpp: false },
       projectTrust: true,
       cliPaths: [cliPath],
     })).toEqual({
@@ -34,13 +35,27 @@ describe('Pi extension path resolution', () => {
     });
   });
 
+  it('adds only the bundled llama.cpp entry when explicitly enabled', async () => {
+    const layout = await createLayout({ user: true, project: true });
+    const cliPath = join(layout.root, 'explicit.mjs');
+    await writeFile(cliPath, '');
+
+    expect(resolvePiExtensionPaths({
+      cwd: layout.cwd,
+      homeDir: layout.homeDir,
+      settings: { user: false, project: false, llamaCpp: true },
+      projectTrust: false,
+      cliPaths: [cliPath],
+    }).paths).toEqual([resolvePiLlamaCppExtensionPath(), cliPath]);
+  });
+
   it('loads the user Pi directory and ignores project extensions', async () => {
     const layout = await createLayout({ user: true, project: true, felan: true });
 
     expect(resolvePiExtensionPaths({
       cwd: layout.cwd,
       homeDir: layout.homeDir,
-      settings: { user: true, project: false },
+      settings: { user: true, project: false, llamaCpp: false },
       projectTrust: true,
     })).toEqual({
       paths: [layout.userFile],
@@ -53,19 +68,19 @@ describe('Pi extension path resolution', () => {
     const trusted = resolvePiExtensionPaths({
       cwd: layout.cwd,
       homeDir: layout.homeDir,
-      settings: { user: false, project: true },
+      settings: { user: false, project: true, llamaCpp: false },
       projectTrust: true,
     });
     const untrusted = resolvePiExtensionPaths({
       cwd: layout.cwd,
       homeDir: layout.homeDir,
-      settings: { user: false, project: true },
+      settings: { user: false, project: true, llamaCpp: false },
       projectTrust: false,
     });
     const unknown = resolvePiExtensionPaths({
       cwd: layout.cwd,
       homeDir: layout.homeDir,
-      settings: { user: false, project: true },
+      settings: { user: false, project: true, llamaCpp: false },
       projectTrust: null,
     });
 
@@ -82,7 +97,7 @@ describe('Pi extension path resolution', () => {
     expect(resolvePiExtensionPaths({
       cwd: layout.cwd,
       homeDir: layout.homeDir,
-      settings: { user: true, project: true },
+      settings: { user: true, project: true, llamaCpp: false },
       projectTrust: null,
       cliPaths: [cliPath],
     })).toEqual({
@@ -97,7 +112,7 @@ describe('Pi extension path resolution', () => {
     expect(resolvePiExtensionPaths({
       cwd: layout.cwd,
       homeDir: layout.homeDir,
-      settings: { user: true, project: true },
+      settings: { user: true, project: true, llamaCpp: false },
       projectTrust: true,
     }).paths).toEqual([layout.userFile, layout.projectFile]);
     expect(layout.felanDir).toBeDefined();
@@ -112,7 +127,7 @@ describe('Pi extension path resolution', () => {
       cwd: layout.cwd,
       homeDir: layout.homeDir,
       agentDir: layout.agentDir,
-      settings: { user: false, project: true },
+      settings: { user: false, project: true, llamaCpp: false },
       store,
       prompt,
     })).resolves.toEqual([layout.projectFile]);

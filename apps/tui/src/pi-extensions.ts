@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { resolvePiLlamaCppExtensionPath } from './pi-llama.js';
 import { promptProjectTrust, type ProjectTrustPromptOption } from './project-trust-prompt.js';
 import {
   createFelanProjectTrustStore,
@@ -34,6 +35,7 @@ export function resolvePiExtensionPaths(
   options: ResolvePiExtensionPathsOptions,
 ): ResolvePiExtensionPathsResult {
   const paths: string[] = [];
+  if (options.settings.llamaCpp) paths.push(resolvePiLlamaCppExtensionPath());
   if (options.settings.user) {
     const userDir = piUserExtensionsDir(options.homeDir);
     if (isExistingDirectory(userDir)) paths.push(userDir);

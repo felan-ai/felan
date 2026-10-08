@@ -540,15 +540,26 @@ try {
       if (!terminalOutput.includes('packed-pty:true') || terminalSnapshot?.running !== false) {
         throw new Error('Packed HostAgentRuntime PTY smoke failed: ' + terminalOutput);
       }
+      const llamaAdapter = await import(new URL('./pi-llama.js', import.meta.resolve('@felan-ai/felan')).href);
+      const llamaPath = llamaAdapter.resolvePiLlamaCppExtensionPath();
       const runtime = await app.createLocalFelanRuntime({
         cwd: process.env.PACKED_SMOKE_WORKSPACE,
         agentDir: process.env.FELAN_AGENT_DIR,
-        extensionPaths: [explicitExtensionPath],
+        extensionPaths: [explicitExtensionPath, llamaPath],
       });
       if (!runtime.services.resourceLoader.getExtensions().extensions.some((extension) => (
         extension.path === explicitExtensionPath && extension.commands.has('packed-extension')
       ))) {
         throw new Error('Packed runtime did not load an explicit local Pi extension');
+      }
+      if (!runtime.services.resourceLoader.getExtensions().extensions.some((extension) => (
+        extension.path === llamaPath && extension.commands.has('llama')
+      ))) {
+        throw new Error('Packed runtime did not load the bundled Pi llama.cpp integration');
+      }
+      await runtime.session.bindExtensions({ mode: 'print' });
+      if (!runtime.services.modelRuntime.getProviders().some(({ id }) => id === 'llama.cpp')) {
+        throw new Error('Packed llama.cpp extension did not register its provider');
       }
       const imageRuntime = new core.HostAgentRuntime(process.env.PACKED_SMOKE_WORKSPACE, {
         sessionStorageRoot: ptySessionStorage,

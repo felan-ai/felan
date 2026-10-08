@@ -114,6 +114,52 @@ describe('ACP server', () => {
     expect(diagnostics.readableLength).toBe(0);
   });
 
+  it('does not pass interactive Pi extension paths into ACP sessions', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const diagnostics = new PassThrough();
+    let runtimeOptions: unknown;
+    const running = runLocalFelanAcp({
+      input,
+      output,
+      diagnostics,
+      createModelRuntime: async () => authenticatedModelRuntime(),
+      createRuntime: async (options) => {
+        runtimeOptions = options;
+        return {
+          diagnostics: [],
+          session: {
+            sessionManager: SessionManager.inMemory(options.cwd, { id: 'extension-boundary-session' }),
+            bindExtensions: vi.fn(async () => {}),
+            abort: vi.fn(async () => {}),
+          },
+          dispose: vi.fn(async () => {}),
+        } as unknown as LocalFelanRuntime;
+      },
+    });
+
+    let responseLine = nextLine(output);
+    input.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: 1, clientCapabilities: {} },
+    })}\n`);
+    await responseLine;
+    responseLine = nextLine(output);
+    input.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'session/new',
+      params: { cwd: process.cwd(), mcpServers: [] },
+    })}\n`);
+    await responseLine;
+    expect(runtimeOptions).not.toHaveProperty('extensionPaths');
+
+    input.end();
+    await expect(running).resolves.toBe(0);
+  });
+
   it('closes sessions and returns the conventional code on a termination signal', async () => {
     const input = new PassThrough();
     const output = new PassThrough();

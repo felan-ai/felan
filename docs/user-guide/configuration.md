@@ -83,7 +83,8 @@ browser and Powerline extensions:
   },
   "piExtensions": {
     "user": false,
-    "project": false
+    "project": false,
+    "llamaCpp": false
   },
   "editorPaddingX": 1,
   "tuiMode": "fullscreen"
@@ -102,7 +103,24 @@ Defaults:
 - editor horizontal padding is `1`;
 - tool display is `grouped`;
 - local memory processing is enabled; and
-- `piExtensions.user` and `piExtensions.project` are `false`.
+- `piExtensions.user`, `piExtensions.project`, and `piExtensions.llamaCpp` are
+  `false`.
+
+### Pi llama.cpp integration
+
+Set `piExtensions.llamaCpp` to `true` in Felan's global `settings.json` to
+enable Pi's bundled llama.cpp provider and model-management commands for
+interactive root sessions. It is off by default and does not enable Pi's other
+built-in extensions or ambient extension discovery. The external Hugging Face
+`pi-llama` package is separate and is not enabled by this setting. Restart or
+resume the interactive session to apply the change.
+
+Felan does not install or start llama.cpp. Start an existing llama.cpp router
+server, then use `/login llama.cpp` to configure its URL and optional API key.
+Set `LLAMA_BASE_URL` and optionally `LLAMA_API_KEY` instead if you prefer
+environment configuration. Use `/llama` to inspect and manage router models,
+then `/model` to select one for the session. Downloads are explicit actions in
+Pi's `/llama` interface; enabling the integration does not download models.
 
 ### Code mode
 

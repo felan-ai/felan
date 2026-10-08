@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { initTheme } from '@earendil-works/pi-coding-agent';
+import { resolvePiLlamaCppExtensionPath } from '../src/pi-llama.js';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -706,7 +707,7 @@ describe('interactive application', () => {
     const projectDir = piProjectExtensionsDir(targetCwd);
     await Promise.all([cwd, targetCwd, agentDir, userDir, projectDir].map((path) => mkdir(path, { recursive: true })));
     await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
-      piExtensions: { user: true, project: true },
+      piExtensions: { user: true, project: true, llamaCpp: true },
     }));
     await writeFile(join(userDir, 'home.js'),
       'export default (pi) => pi.registerCommand("home-ext", { description: "home", handler: async () => {} });');
@@ -719,9 +720,29 @@ describe('interactive application', () => {
 
     const userFile = join(userDir, 'home.js');
     const projectFile = join(projectDir, 'project.js');
+    const llamaPath = resolvePiLlamaCppExtensionPath();
     expect(interactive.extensionPaths[0]).toContain(userFile);
+    expect(interactive.extensionPaths[0]).toContain(llamaPath);
     expect(interactive.extensionPaths[0]).not.toContain(projectFile);
     expect(interactive.extensionPaths[1]).toEqual(expect.arrayContaining([userFile, projectFile]));
+    expect(interactive.extensionPaths[1]).toContain(llamaPath);
+    expect(interactive.extensionPaths.flat().filter((path) => path === llamaPath)).toHaveLength(2);
+    expect(interactive.extensionPaths.flat().some((path) => path.startsWith('builtin:'))).toBe(false);
+  });
+
+  it('loads the bundled llama.cpp integration only when enabled for the interactive root', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      piExtensions: { llamaCpp: true },
+    }));
+
+    await runLocalFelan({ cwd, agentDir });
+
+    const llamaPath = resolvePiLlamaCppExtensionPath();
+    expect(interactive.extensionPaths[0]).toContain(llamaPath);
   });
 
   it('does not load untrusted project Pi extensions', async () => {

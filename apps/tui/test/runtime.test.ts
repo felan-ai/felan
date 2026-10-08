@@ -45,6 +45,7 @@ import { createToolActivityRuntimeView } from '../src/tool-activity/runtime-view
 import { LocalMemoryCoordinator } from '../src/memory/coordinator.js';
 import { builtinExtensionPackages } from '../src/extensions.js';
 import { LocalSubagentHost } from '../src/subagents/host.js';
+import { resolvePiLlamaCppExtensionPath } from '../src/pi-llama.js';
 
 const temporaryPaths: string[] = [];
 
@@ -813,6 +814,24 @@ describe('local Agent Core lifecycle', () => {
     await runtime.dispose();
   });
 
+  it('loads and binds the selected Pi llama.cpp integration', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
+
+    const extensionPath = resolvePiLlamaCppExtensionPath();
+    const runtime = await createLocalFelanRuntime({ cwd, agentDir, extensionPaths: [extensionPath] });
+    const extension = runtime.services.resourceLoader.getExtensions().extensions
+      .find(({ path }) => path === extensionPath);
+    expect(extension?.commands.has('llama')).toBe(true);
+
+    await runtime.session.bindExtensions({ mode: 'print' });
+
+    expect(runtime.services.modelRuntime.getProviders().map(({ id }) => id)).toContain('llama.cpp');
+    await runtime.dispose();
+  });
+
   it('does not discover Pi extension directories from settings', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -821,7 +840,7 @@ describe('local Agent Core lifecycle', () => {
     const userDir = join(homeDir, '.pi', 'agent', 'extensions');
     await Promise.all([cwd, agentDir, userDir].map((path) => mkdir(path, { recursive: true })));
     await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
-      piExtensions: { user: true, project: true },
+      piExtensions: { user: true, project: true, llamaCpp: true },
     }));
     await writeFile(join(userDir, 'home.js'),
       'export default (pi) => pi.registerCommand("home-ext", { description: "home", handler: async () => {} });');
@@ -829,6 +848,7 @@ describe('local Agent Core lifecycle', () => {
     const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir });
     expect(runtime.services.resourceLoader.getExtensions().extensions.map((extension) => extension.path))
       .not.toContain(userDir);
+    expect(runtime.services.modelRuntime.getProviders().map(({ id }) => id)).not.toContain('llama.cpp');
     await runtime.dispose();
   });
 

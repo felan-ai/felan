@@ -55,6 +55,7 @@ describe('headless application', () => {
       model: headless.resolvedModel,
       thinkingLevel: 'high',
     }));
+    expect(headless.createRuntime.mock.calls[0]?.[0]).not.toHaveProperty('extensionPaths');
     expect(headless.runPrintMode).toHaveBeenCalledWith(expect.anything(), {
       mode: 'json',
       initialMessage: 'inspect this project',

@@ -26,6 +26,9 @@ and `piExtensions.project` can add `~/.pi/agent/extensions` and, after a Felan
 folder-trust prompt, `<cwd>/.pi/extensions`. Those decisions are stored in
 `$FELAN_AGENT_DIR/trust.json`, not Pi's trust file. The host still filters Pi
 packages, prompts, project themes, skills, project settings, and package resources.
+The separate `piExtensions.llamaCpp` opt-in loads only Pi's bundled llama.cpp
+integration in interactive root sessions; it does not enable other Pi built-ins
+or ambient discovery.
 `$FELAN_AGENT_DIR/themes` is Felan user configuration, not Pi ambient discovery.
 Explicit and opted-in extensions are executable code with the current user's
 filesystem and process permissions; they are not loaded in headless, ACP, or

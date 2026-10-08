@@ -218,6 +218,13 @@ provided with repeatable `--extension`/`-e` flags for the interactive root TUI.
 packages, prompts, themes, project settings, and package resources remain
 filtered.
 
+Set `piExtensions.llamaCpp: true` in Felan's global settings to opt into Pi's
+bundled llama.cpp integration for interactive root sessions. It is independent
+of the external `pi-llama` package, does not install or start a router, and
+does not enable other Pi built-ins. After restarting, connect to an existing
+llama.cpp router with `/login llama.cpp`, manage models with `/llama`, and
+select one with `/model`.
+
 These Pi extensions execute with the current user's permissions. They are not
 installed from network/package sources and are not loaded in headless, ACP, or
 subagent sessions. Project directories ask for Felan folder trust before load.

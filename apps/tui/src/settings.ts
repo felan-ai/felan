@@ -42,11 +42,13 @@ export type LocalCodemodeMode = typeof LOCAL_CODEMODE_MODES[number];
 export interface PiExtensionSettings {
   readonly user?: boolean;
   readonly project?: boolean;
+  readonly llamaCpp?: boolean;
 }
 
 export interface ResolvedPiExtensionSettings {
   readonly user: boolean;
   readonly project: boolean;
+  readonly llamaCpp: boolean;
 }
 
 export interface ResolvedExtensionConfigSettings {
@@ -287,11 +289,12 @@ export function getLocalToolDisplayMode(settingsManager: SettingsManager): Local
 export function getPiExtensionSettings(settingsManager: SettingsManager): ResolvedPiExtensionSettings {
   const rawSettings = settingsManager.getGlobalSettings() as Record<string, unknown>;
   const raw = rawSettings.piExtensions;
-  if (raw === undefined) return { user: false, project: false };
+  if (raw === undefined) return { user: false, project: false, llamaCpp: false };
   if (!isRecord(raw)) throw new Error('piExtensions must be an object');
   return {
     user: optionalBooleanSetting(raw.user, 'piExtensions.user'),
     project: optionalBooleanSetting(raw.project, 'piExtensions.project'),
+    llamaCpp: optionalBooleanSetting(raw.llamaCpp, 'piExtensions.llamaCpp'),
   };
 }
 

@@ -19,6 +19,7 @@ import {
   getBrowserAuthorizationPolicy,
   getFelanSettings,
   getLocalOutputStyle,
+  getPiExtensionSettings,
   getLocalToolDisplayMode,
   isDependencyOnboardingComplete,
   isBuiltinExtensionEnabled,
@@ -43,6 +44,22 @@ afterEach(async () => {
 });
 
 describe('local settings', () => {
+  it('keeps bundled Pi llama.cpp opt-in and validates the setting', () => {
+    const root = '/tmp/felan-pi-llama-settings-test';
+    expect(getPiExtensionSettings(createLocalSettingsManager(root, root))).toEqual({
+      user: false,
+      project: false,
+      llamaCpp: false,
+    });
+    expect(getPiExtensionSettings(settingsWith({ piExtensions: { llamaCpp: true } }))).toEqual({
+      user: false,
+      project: false,
+      llamaCpp: true,
+    });
+    expect(() => getPiExtensionSettings(settingsWith({ piExtensions: { llamaCpp: 'true' } })))
+      .toThrow('piExtensions.llamaCpp must be a boolean');
+  });
+
   it('defaults code mode off and validates the native-shaped configuration', () => {
     for (const settings of [{}, { codemode: {} }, { codemode: { inlineBudget: 0 } }]) {
       expect(getLocalCodemodeMode(settingsWith(settings))).toBe('off');
