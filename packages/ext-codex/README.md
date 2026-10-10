@@ -27,10 +27,11 @@ retain `fast: true` (priority processing) or `fast: false` (no tier override).
 With neither configured, no premium tier is requested. `normal` explicitly
 requests the standard `default` tier, even when `fast` is true.
 
-Ultrafast currently applies to the exact `gpt-6-astra` model ID on eligible
-OpenAI and Codex Responses routes. Other eligible GPT models fall back to fast
-(`priority`). Pi does not expose service-tier capability metadata, so this
-model rule is maintained in the extension rather than fetched from a catalog.
+Ultrafast currently applies to the exact `gpt-6-astra` and `gpt-6.1-sol` model
+IDs on eligible OpenAI and Codex Responses routes. Other eligible GPT models
+fall back to fast (`priority`). Pi does not expose service-tier capability
+metadata, so this model rule is maintained in the extension rather than fetched
+from a catalog.
 Account, plan, workspace and endpoint eligibility still apply; rejected
 requests are not automatically retried at another tier.
 

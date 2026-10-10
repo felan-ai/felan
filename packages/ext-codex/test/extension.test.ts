@@ -24,7 +24,10 @@ describe('Codex extension activation', () => {
     const harness = createHarness(true, { priority: 'ultrafast', fast: false });
     await codexExtension(harness.pi);
     for (const [id, serviceTier] of [
-      ['gpt-6-astra', 'ultrafast'], ['gpt-6-sol', 'priority'], ['gpt-6-astra', 'ultrafast'],
+      ['gpt-6-astra', 'ultrafast'],
+      ['gpt-6.1-sol', 'ultrafast'],
+      ['gpt-6-sol', 'priority'],
+      ['gpt-6-astra', 'ultrafast'],
     ] as const) {
       const ctx = context('openai-codex', id, 'openai-codex-responses');
       await harness.emit('model_select', { model: ctx.model }, ctx);

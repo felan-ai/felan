@@ -37,7 +37,7 @@ describe('Codex service priority', () => {
         const config = { ...DEFAULT_CODEX_CONFIG, fast, ...(priority === undefined ? {} : { priority }) };
         for (const [id, expectedTier] of [
           ['gpt-6-astra', supportedTier],
-          ['gpt-6.1-sol', fallbackTier],
+          ['gpt-6.1-sol', priority === 'ultrafast' ? supportedTier : fallbackTier],
           ['gpt-5.6-sol', fallbackTier],
           ['gpt-unknown', fallbackTier],
         ] as const) {

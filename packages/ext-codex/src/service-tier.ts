@@ -11,6 +11,9 @@ export function resolveCodexServiceTier(
   if (!supportsCodexResponsesRequest(model)) return undefined;
   const priority = config.priority ?? (config.fast ? 'fast' : undefined);
   if (priority === 'normal') return 'default';
-  if (priority === 'ultrafast' && model!.id === 'gpt-6-astra') return 'ultrafast';
+  if (priority === 'ultrafast'
+    && (model!.id === 'gpt-6-astra' || model!.id === 'gpt-6.1-sol')) {
+    return 'ultrafast';
+  }
   return priority === undefined ? undefined : 'priority';
 }
