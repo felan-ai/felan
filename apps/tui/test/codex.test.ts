@@ -17,11 +17,12 @@ describe('local Codex stream composition', () => {
       const wrapper = await createLocalCodexStreamFunctionWrapper(
         [builtinExtensionPackages.codex], runtimeWithConfig(config), '/agent', config,
       );
-      for (const id of ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-astra']) {
+      for (const id of ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-astra']) {
         const model = { provider: 'openai-codex', id, api: 'openai-codex-responses' } as Model<Api>;
         wrapper!(original)(model, { systemPrompt: '', messages: [] }, { transport: 'websocket' });
       }
       expect(original.mock.calls.map((call) => call[2])).toEqual([
+        { transport: 'websocket-cached', serviceTier: 'ultrafast', textVerbosity: 'low' },
         { transport: 'websocket-cached', serviceTier: 'ultrafast', textVerbosity: 'low' },
         { transport: 'websocket-cached', serviceTier: 'priority', textVerbosity: 'low' },
         { transport: 'websocket-cached', serviceTier: 'ultrafast', textVerbosity: 'low' },

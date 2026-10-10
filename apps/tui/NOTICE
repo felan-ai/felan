@@ -27,6 +27,11 @@ The model tools integration uses original MIT-licensed Felan code from
 @felan-ai/ext-model-tools. Its package-level LICENSE and NOTICE contain the
 applicable attribution.
 
+The Fusion integration uses original MIT-licensed Felan code from
+@felan-ai/ext-fusion. It is design-informed by disler/fusion-harness at the
+reviewed revision recorded in the extension's NOTICE; no upstream source or
+prompt text is copied. Its package-level LICENSE and NOTICE contain details.
+
 The terminal application uses @earendil-works/pi-coding-agent and
 @earendil-works/pi-tui from https://github.com/earendil-works/pi,
 licensed under the MIT License.

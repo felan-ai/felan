@@ -14,6 +14,8 @@ to do.
   definitions, skills, and feature-specific files.
 - [Commands and shortcuts](user-guide/commands-and-shortcuts.md) — Felan-owned
   commands and navigation controls.
+- [Model Fusion](user-guide/fusion.md) — compare independent model answers
+  before explicitly combining them.
 - [Agents, tasks, and Prewalk](user-guide/agents-tasks-and-prewalk.md) — parallel
   work, the shared task graph, and same-session model handoff.
 - [Context and memory](user-guide/context-and-memory.md) — project
@@ -81,6 +83,7 @@ The package READMEs are the canonical npm-facing API and development references:
 - [`@felan-ai/ext-markitdown`](../packages/ext-markitdown/README.md)
 - [`@felan-ai/ext-mcp`](../packages/ext-mcp/README.md)
 - [`@felan-ai/ext-felan-api`](../packages/ext-felan-api/README.md)
+- [`@felan-ai/ext-fusion`](../packages/ext-fusion/README.md)
 - [`@felan-ai/ext-memory`](../packages/ext-memory/README.md)
 - [`@felan-ai/ext-output-style`](../packages/ext-output-style/README.md)
 - [`@felan-ai/ext-powerline`](../packages/ext-powerline/README.md)

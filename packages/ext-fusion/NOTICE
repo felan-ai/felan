@@ -1,0 +1,8 @@
+@felan-ai/ext-fusion is original MIT-licensed Felan code. Its workflow is
+design-informed by disler/fusion-harness at reviewed revision
+01a348202482cad0e7d3c34eada180f711aaddd7:
+https://github.com/disler/fusion-harness/tree/01a348202482cad0e7d3c34eada180f711aaddd7
+The harness is MIT-licensed, copyright (c) 2026 IndyDevDan. No harness source
+code, prompt text, or other substantial upstream material is copied into this
+package. The upstream license is available at:
+https://github.com/disler/fusion-harness/blob/01a348202482cad0e7d3c34eada180f711aaddd7/LICENSE

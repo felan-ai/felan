@@ -1,13 +1,13 @@
 {
-  "name": "@felan-ai/ext-powerline",
-  "version": "0.13.0",
-  "description": "Terminal powerline extension for Felan",
+  "name": "@felan-ai/ext-fusion",
+  "version": "0.1.0",
+  "description": "Review parallel model answers and explicitly fuse them with a selected model",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/felan-ai/felan.git",
-    "directory": "packages/ext-powerline"
+    "directory": "packages/ext-fusion"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -25,16 +25,13 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "prepack": "pnpm build"
   },
-  "dependencies": {
-    "@earendil-works/pi-tui": "catalog:pi"
-  },
   "peerDependencies": {
-    "@felan-ai/agent-core": "catalog:agent-core"
+    "@felan-ai/agent-core": "^0.12.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

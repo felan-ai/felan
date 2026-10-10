@@ -75,11 +75,13 @@ describe('subscription usage parsing', () => {
   });
 
   it('detects supported providers and prioritizes model-specific windows', () => {
+    expect(detectSubscriptionProvider({ provider: 'openai', id: 'gpt-5.6' })).toBe('openai');
     expect(detectSubscriptionProvider({ provider: 'openai-codex', id: 'gpt-5.6-sol' })).toBe('codex');
     expect(detectSubscriptionProvider({ provider: 'anthropic', id: 'claude-opus-4-6' })).toBe('anthropic');
     expect(detectSubscriptionProvider({ provider: 'xai', id: 'grok-4.6' })).toBe('xai');
     expect(detectSubscriptionProvider({ provider: 'groq', id: 'grok-4.6' })).toBeUndefined();
     expect(detectSubscriptionProvider({ provider: 'openrouter', id: 'x-ai/grok-4' })).toBeUndefined();
+    expect(detectSubscriptionProvider({ provider: 'openai-compatible', id: 'gpt-5.6' })).toBeUndefined();
     expect(detectSubscriptionProvider({ provider: 'google', id: 'gemini-3' })).toBeUndefined();
 
     const windows = [
@@ -87,6 +89,27 @@ describe('subscription usage parsing', () => {
       { label: 'GPT-5.6 Week', usedPercent: 2 },
     ];
     expect(prioritizeWindowsForModel(windows, { id: 'gpt-5.6' })).toEqual([windows[1], windows[0]]);
+  });
+
+  it('parses only shared plan windows for native OpenAI usage', () => {
+    expect(parseUsageSnapshot('openai', {
+      rate_limit: {
+        primary_window: { limit_window_seconds: 18_000, used_percent: 25, reset_after_seconds: 3_600 },
+        secondary_window: { limit_window_seconds: 604_800, used_percent: 41 },
+      },
+      additional_rate_limits: [{ limit_name: 'GPT-5.6', rate_limit: {
+        primary_window: { limit_window_seconds: 18_000, used_percent: 90 },
+      } }],
+    })).toMatchObject({
+      provider: 'openai',
+      displayName: 'ChatGPT Plan',
+      windows: [{ label: '5h', usedPercent: 25 }, { label: 'Week', usedPercent: 41 }],
+    });
+    expect(parseUsageSnapshot('openai', {
+      rate_limit: { primary_window: {
+        limit_window_seconds: 18_000, used_percent: 25, reset_at: Number.MAX_VALUE,
+      } },
+    }).windows[0]?.resetAt).toBeUndefined();
   });
 
   it('normalizes xAI SuperGrok weekly credits (omitted percent defaults to 0)', () => {
@@ -145,6 +168,120 @@ describe('subscription controller', () => {
     expect(controller.state.loading).toBe(false);
     expect(controller.state.usage?.windows[0]).toMatchObject({ label: '3h', usedPercent: 20 });
     expect(updates).toHaveBeenCalled();
+  });
+
+  it('passes native model identity and keeps OpenAI usage session-local', async () => {
+    const store = createSubscriptionUsageStore();
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({ ok: true, data: {
+        rate_limit: { primary_window: { limit_window_seconds: 18_000, used_percent: 20 } },
+      } }),
+    };
+    const controller = createSubscriptionController(host, undefined, store);
+    await controller.refresh({ provider: 'openai', id: 'gpt-5.6' });
+
+    expect(host.fetchUsage).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'openai', modelProvider: 'openai', modelId: 'gpt-5.6',
+    }));
+    expect(controller.state.usage).toMatchObject({ provider: 'openai', windows: [{ usedPercent: 20 }] });
+    expect(store.get('openai')).toBeUndefined();
+  });
+
+  it('backs off native companion 429 responses without sharing cached usage', async () => {
+    vi.useFakeTimers();
+    const store = createSubscriptionUsageStore();
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({
+        ok: false,
+        error: { code: 'COMPANION_UNAVAILABLE', httpStatus: 429, retryAfterMs: 120_000 },
+      }),
+    };
+    const controller = createSubscriptionController(host, undefined, store);
+    const model = { provider: 'openai', id: 'gpt-5.6' };
+
+    await controller.refresh(model);
+    await controller.refresh(model, { force: true });
+    expect(host.fetchUsage).toHaveBeenCalledOnce();
+    expect(controller.state.usage?.error?.code).toBe('COMPANION_UNAVAILABLE');
+    expect(store.get('openai')).toBeUndefined();
+
+    vi.advanceTimersByTime(119_999);
+    await controller.refresh(model, { force: true });
+    expect(host.fetchUsage).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(1);
+    await controller.refresh(model, { force: true });
+    expect(host.fetchUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears native usage when a refresh rejects the current credentials', async () => {
+    vi.useFakeTimers();
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn()
+        .mockResolvedValueOnce({ ok: true, data: {
+          rate_limit: { primary_window: { limit_window_seconds: 18_000, used_percent: 20 } },
+        } })
+        .mockResolvedValueOnce({ ok: false, error: { code: 'NO_CREDENTIALS' } }),
+    };
+    const controller = createSubscriptionController(host);
+    const model = { provider: 'openai', id: 'gpt-5.6' };
+
+    await controller.refresh(model);
+    expect(controller.state.usage?.windows).toHaveLength(1);
+    vi.advanceTimersByTime(30_000);
+    await controller.refresh(model);
+
+    expect(controller.state.usage).toMatchObject({
+      provider: 'openai', windows: [], error: { code: 'NO_CREDENTIALS' },
+    });
+  });
+
+  it('aborts an in-flight native request when a different model is selected', async () => {
+    const requests: Array<{ resolve: (result: SubscriptionUsageHostResult) => void; signal: AbortSignal }> = [];
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn((request) => new Promise((resolve) => {
+        requests.push({ resolve, signal: request.signal });
+      })),
+    };
+    const controller = createSubscriptionController(host);
+    const first = controller.refresh({ provider: 'openai', id: 'gpt-5.6' });
+    const second = controller.refresh({ provider: 'openai', id: 'gpt-5.7' }, { force: true });
+
+    expect(host.fetchUsage).toHaveBeenCalledTimes(2);
+    expect(requests[0]!.signal.aborted).toBe(true);
+    expect(host.fetchUsage).toHaveBeenLastCalledWith(expect.objectContaining({ modelId: 'gpt-5.7' }));
+    requests[1]!.resolve({ ok: true, data: {
+      rate_limit: { primary_window: { limit_window_seconds: 18_000, used_percent: 35 } },
+    } });
+    await second;
+    requests[0]!.resolve({ ok: true, data: {
+      rate_limit: { primary_window: { limit_window_seconds: 18_000, used_percent: 5 } },
+    } });
+    await first;
+
+    expect(controller.state.usage?.windows[0]?.usedPercent).toBe(35);
+  });
+
+  it('times out native companion requests and removes displayed numbers', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn((request) => {
+        signal = request.signal;
+        return new Promise((_resolve, reject) => {
+          request.signal.addEventListener('abort', () => reject(new Error('aborted')));
+        });
+      }),
+    };
+    const controller = createSubscriptionController(host);
+    const refresh = controller.refresh({ provider: 'openai', id: 'gpt-5.6' });
+    await vi.advanceTimersByTimeAsync(5_001);
+    await refresh;
+
+    expect(signal?.aborted).toBe(true);
+    expect(controller.state.usage).toMatchObject({
+      provider: 'openai', windows: [], error: { code: 'FETCH_FAILED' },
+    });
   });
 
   it('keeps successful windows when a later fetch fails', async () => {

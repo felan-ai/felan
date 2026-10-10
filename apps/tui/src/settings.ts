@@ -111,13 +111,21 @@ export async function setExtensionConfigValue(
   field: string,
   value: unknown,
 ): Promise<void> {
+  await setExtensionConfigValues(agentDir, extensionId, { [field]: value });
+}
+
+export async function setExtensionConfigValues(
+  agentDir: string,
+  extensionId: string,
+  values: Readonly<Record<string, unknown>>,
+): Promise<void> {
   await updateGlobalFelanSettings(agentDir, (settings) => {
     const current = settings.extensionConfig;
     if (current !== undefined && !isRecord(current)) throw new Error('extensionConfig must be an object');
     const extensionConfig = { ...(current ?? {}) };
     const existing = extensionConfig[extensionId];
     if (existing !== undefined && !isRecord(existing)) throw new Error(`extensionConfig.${extensionId} must be an object`);
-    extensionConfig[extensionId] = { ...(existing ?? {}), [field]: value };
+    extensionConfig[extensionId] = { ...(existing ?? {}), ...values };
     settings.extensionConfig = extensionConfig;
   });
 }

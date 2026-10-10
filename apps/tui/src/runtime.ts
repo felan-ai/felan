@@ -431,6 +431,7 @@ export function createLocalSessionRuntimeFactory(
         true,
         browserAuthorizationPolicy,
         join(runtimeRequest.agentStorageRoot, 'subscription-usage.json'),
+        options.agentDir,
       ),
       modelRuntime: options.modelRuntime,
       settingsManager,

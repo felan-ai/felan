@@ -719,6 +719,7 @@ describe('local Agent Core lifecycle', () => {
         memory: false,
         felanApi: false,
         modelTools: false,
+        fusion: false,
         powerline: false,
         outputStyle: false,
         promptHistory: false,

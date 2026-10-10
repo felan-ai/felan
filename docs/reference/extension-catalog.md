@@ -18,6 +18,7 @@ It does not install arbitrary npm packages or load Pi project settings.
 | [`@felan-ai/ext-prewalk`](../../packages/ext-prewalk/README.md) | Same-session planner-to-implementation handoff | `/prewalk` | Authenticated target model and explicit mutation tool |
 | [`@felan-ai/ext-context`](../../packages/ext-context/README.md) | Progressive nested `AGENTS.md`/`CLAUDE.md` loading | `/progressive-context` | Structured reads or decoded `@file` blocks |
 | [`@felan-ai/ext-context-view`](../../packages/ext-context-view/README.md) | Estimated context-window usage inspector | `/context` | Inline by default, optional TUI overlay, or compact headless report |
+| [`@felan-ai/ext-fusion`](../../packages/ext-fusion/README.md) | Parallel model answers, automatic comparison, and explicit user-triggered synthesis | `/fusion <prompt>` | Authenticated models in the current session scope; local interactive TUI review |
 | [`@felan-ai/ext-insights`](../../packages/ext-insights/README.md) | Local session analytics reports | `/insights` | Host-owned bounded session discovery and report storage |
 | [`@felan-ai/ext-prompt-history`](../../packages/ext-prompt-history/README.md) | Prompt history search | `Ctrl+R`, `Cmd+R` | TUI-only; inline by default, optional overlay |
 | [`@felan-ai/ext-memory`](../../packages/ext-memory/README.md) | Portable Markdown memory schema and checkpoint integration | `/memory` through local host | Host supplies memory coordinator for processing |

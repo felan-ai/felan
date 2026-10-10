@@ -334,6 +334,7 @@ details:
 - [Local CLI and storage](../../docs/user-guide/local-cli.md)
 - [Configuration](../../docs/user-guide/configuration.md)
 - [Commands and shortcuts](../../docs/user-guide/commands-and-shortcuts.md)
+- [Model Fusion](../../docs/user-guide/fusion.md)
 - [Agents, tasks, and Prewalk](../../docs/user-guide/agents-tasks-and-prewalk.md)
 - [Context and memory](../../docs/user-guide/context-and-memory.md)
 - [Web, MCP, browser, and documents](../../docs/user-guide/web-mcp-and-browser.md)

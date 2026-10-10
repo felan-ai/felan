@@ -40,6 +40,9 @@ interactive TUI and requires the agent to be idle.
 | `/prewalk [task]` | Arm Prewalk, optionally starting the task immediately |
 | `/prewalk status` | Show phase, target model, and restoration setting |
 | `/prewalk exit` | Exit Prewalk; `off` and `cancel` are aliases |
+| `/fusion <prompt>` | Ask 2–8 selected models the same prompt, compare their answers, and review them before explicitly fusing |
+| `/fusion` | Reopen the latest Fusion review on the active session branch |
+| `/fusion-models` | Search and save the participant/comparison model lineup without making requests |
 | `/processes` | Inspect processes and logs |
 | `/mcp [status\|tools\|reconnect\|auth\|logout] [server]` | Inspect and manage configured remote MCP servers |
 | `/markitdown` | Show document-converter status |

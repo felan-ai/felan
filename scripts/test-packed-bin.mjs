@@ -104,6 +104,25 @@ try {
       const classifierResult = await classifier.classify({}, { ready: { type: 'bool', instructions: 'Ready?', criteria: { true: 'Yes', false: 'No' } } });
       if (classifierResult.answers.ready?.probability !== 0.8) throw new Error('packed classifier did not delegate to the model runtime');
       {
+        const fusion = await import('@felan-ai/ext-fusion');
+        const calls = [];
+        const runtime = {
+          participants: ['test/one', 'test/two'].map(reference => ({ reference, label: reference })),
+          fusionModel: { reference: 'test/one', label: 'test/one' },
+          resolve: reference => reference === 'test/one' ? { reference, label: reference } : undefined,
+          complete: async request => {
+            calls.push(request);
+            return { text: 'offline response ' + request.model.reference, model: request.model.reference,
+              durationMs: 1, usage: { input: 1, output: 2, totalTokens: 3, estimatedCost: 0.01 } };
+          },
+        };
+        const review = await fusion.runFusion({ prompt: 'Offline Fusion smoke', runtime,
+          config: fusion.DEFAULT_FUSION_CONFIG, signal: new AbortController().signal });
+        if (calls.length !== 3 || !review.comparison || review.fused) throw new Error('Packed Fusion did not stop at reviewed comparison');
+        const fused = await fusion.synthesizeFusion(review, runtime, fusion.DEFAULT_FUSION_CONFIG, new AbortController().signal);
+        if (calls.length !== 4 || !fused.text.includes('offline response')) throw new Error('Packed Fusion synthesis did not run explicitly');
+      }
+      {
         const { createModelToolsExtension } = await import('@felan-ai/ext-model-tools');
         const imageModel = { type: 'image', provider: 'test', api: 'openai-images', id: 'test-image', name: 'Offline image',
           baseUrl: 'https://not-used.invalid', input: ['text', 'image'], output: ['image'],
@@ -154,6 +173,7 @@ try {
       }
       const app = await import('@felan-ai/felan');
       if (!app.localExtensionPackages.includes('@felan-ai/ext-model-tools')) throw new Error('Packed application omitted model tools');
+      if (!app.localExtensionPackages.includes('@felan-ai/ext-fusion')) throw new Error('Packed application omitted Fusion');
       for (const packageName of app.localExtensionPackages) {
         const extension = await app.importLocalExtension(packageName);
         if (packageName === '@felan-ai/ext-subagents') {

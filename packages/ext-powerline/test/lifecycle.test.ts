@@ -256,6 +256,38 @@ describe('powerline lifecycle', () => {
 
     await harness.emit('session_shutdown', {}, grok.value);
   });
+
+  it('requests native OpenAI subscription usage only for TUI model events', async () => {
+    const usageHost: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({ ok: false, error: { code: 'COMPANION_UNAVAILABLE' } }),
+    };
+    const harness = extensionHarness();
+    createPowerlineExtension(usageHost)(harness.pi);
+    const ctx = extensionContext('tui', { provider: 'openai', id: 'gpt-5.6' });
+
+    await harness.emit('session_start', {}, ctx.value);
+    await vi.waitFor(() => expect(usageHost.fetchUsage).toHaveBeenCalledOnce());
+    expect(usageHost.fetchUsage).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'openai', modelProvider: 'openai', modelId: 'gpt-5.6',
+    }));
+    await harness.emit('session_shutdown', {}, ctx.value);
+  });
+
+  it.each(['rpc', 'json', 'print'] as const)(
+    'does not request native OpenAI usage in %s mode', async (mode) => {
+      const usageHost: SubscriptionUsageHost = {
+        fetchUsage: vi.fn().mockResolvedValue({ ok: true, data: {} }),
+      };
+      const harness = extensionHarness();
+      createPowerlineExtension(usageHost)(harness.pi);
+      const ctx = extensionContext(mode, { provider: 'openai', id: 'gpt-5.6' });
+
+      await harness.emit('session_start', {}, ctx.value);
+      await harness.emit('session_shutdown', {}, ctx.value);
+
+      expect(usageHost.fetchUsage).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function extensionHarness() {

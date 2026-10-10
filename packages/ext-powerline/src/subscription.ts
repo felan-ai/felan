@@ -1,5 +1,5 @@
-export type SubscriptionProviderName = 'codex' | 'anthropic' | 'xai';
-export type UsageErrorCode = 'NO_CREDENTIALS' | 'FETCH_FAILED' | 'HTTP_ERROR';
+export type SubscriptionProviderName = 'openai' | 'codex' | 'anthropic' | 'xai';
+export type UsageErrorCode = 'NO_CREDENTIALS' | 'COMPANION_UNAVAILABLE' | 'FETCH_FAILED' | 'HTTP_ERROR';
 
 export interface RateWindow {
   label: string;
@@ -34,6 +34,7 @@ export interface SubscriptionState {
 export interface SubscriptionUsageHostRequest {
   readonly provider: SubscriptionProviderName;
   readonly modelProvider: string;
+  readonly modelId?: string;
   readonly signal: AbortSignal;
 }
 
@@ -148,6 +149,7 @@ const RATE_LIMIT_BASE_BACKOFF_MS = 60_000;
 const RATE_LIMIT_MAX_BACKOFF_MS = 30 * 60_000;
 
 const DISPLAY_NAMES: Record<SubscriptionProviderName, string> = {
+  openai: 'ChatGPT Plan',
   codex: 'Codex Plan',
   anthropic: 'Claude Plan',
   xai: 'Grok Plan',
@@ -161,9 +163,12 @@ export function createSubscriptionController(
   const state: SubscriptionState = { loading: false };
   const latestRequestSequence: Partial<Record<SubscriptionProviderName, number>> = {};
   const lastAttemptAt: Partial<Record<SubscriptionProviderName, number>> = {};
+  let nativeRateLimitedCount = 0;
+  let nativeBlockedUntil: number | undefined;
   const missingCredentials = new Set<SubscriptionProviderName>();
   const activeRequests = new Set<AbortController>();
   let inFlightProvider: SubscriptionProviderName | undefined;
+  let inFlightModelId: string | undefined;
   let inFlight: Promise<void> | undefined;
   let inFlightSequence: number | undefined;
   let sequence = 0;
@@ -173,9 +178,11 @@ export function createSubscriptionController(
   }
 
   function showStoredUsage(provider: SubscriptionProviderName): void {
-    const usage = missingCredentials.has(provider)
-      ? emptySnapshot(provider, usageError('NO_CREDENTIALS'))
-      : usageFromRecord(provider, store.get(provider));
+    const usage = provider === 'openai'
+      ? state.usage?.provider === 'openai' ? state.usage : undefined
+      : missingCredentials.has(provider)
+        ? emptySnapshot(provider, usageError('NO_CREDENTIALS'))
+        : usageFromRecord(provider, store.get(provider));
     if (usage) state.usage = usage;
     else delete state.usage;
   }
@@ -193,9 +200,9 @@ export function createSubscriptionController(
       if (state.provider) releaseLease(state.provider);
       sequence += 1;
       abortActiveRequests();
-      delete latestRequestSequence.codex;
-      delete latestRequestSequence.anthropic;
-      delete latestRequestSequence.xai;
+      for (const provider of Object.keys(latestRequestSequence) as SubscriptionProviderName[]) {
+        delete latestRequestSequence[provider];
+      }
       delete state.provider;
       delete state.usage;
       state.loading = false;
@@ -210,8 +217,13 @@ export function createSubscriptionController(
       releaseLease(previousProvider);
     }
     state.provider = provider;
+    if (provider === 'openai' && inFlight && inFlightProvider === provider
+      && (inFlightModelId !== model?.id || options.force)) {
+      abortActiveRequests();
+      delete state.usage;
+    }
     showStoredUsage(provider);
-    if (inFlight && inFlightProvider === provider && inFlightSequence === sequence) {
+    if (inFlight && inFlightProvider === provider && inFlightSequence === sequence && !options.force) {
       state.loading = true;
       notify();
       return inFlight;
@@ -226,13 +238,14 @@ export function createSubscriptionController(
     const throttled = !options.force
       && previousAttempt !== undefined
       && now - previousAttempt < MIN_REFRESH_INTERVAL_MS;
-    const blockedUntil = store.get(provider)?.blockedUntil;
+    const blockedUntil = provider === 'openai' ? nativeBlockedUntil : store.get(provider)?.blockedUntil;
     if (throttled || (blockedUntil !== undefined && now < blockedUntil)) {
       state.loading = false;
       notify();
       return;
     }
 
+    if (provider === 'openai' && options.force) delete state.usage;
     lastAttemptAt[provider] = now;
     latestRequestSequence[provider] = requestSequence;
     state.loading = true;
@@ -243,6 +256,7 @@ export function createSubscriptionController(
     const promise = fetchAndCommit(
       provider,
       model?.provider ?? '',
+      model?.id,
       requestSequence,
       controller,
     ).finally(() => {
@@ -250,6 +264,7 @@ export function createSubscriptionController(
       if (inFlight === promise) {
         inFlight = undefined;
         inFlightProvider = undefined;
+        inFlightModelId = undefined;
         inFlightSequence = undefined;
       }
       if (state.provider === provider && sequence === requestSequence) {
@@ -259,6 +274,7 @@ export function createSubscriptionController(
     });
     inFlight = promise;
     inFlightProvider = provider;
+    inFlightModelId = model?.id;
     inFlightSequence = requestSequence;
     return promise;
   }
@@ -266,12 +282,29 @@ export function createSubscriptionController(
   async function fetchAndCommit(
     provider: SubscriptionProviderName,
     modelProvider: string,
+    modelId: string | undefined,
     requestSequence: number,
     controller: AbortController,
   ): Promise<void> {
-    const result = await fetchHostUsage(host, provider, modelProvider, controller);
+    const result = await fetchHostUsage(host, provider, modelProvider, modelId, controller);
     const errorCode = result.ok ? undefined : result.error.code;
-    if (errorCode === 'NO_CREDENTIALS') {
+    if (latestRequestSequence[provider] === requestSequence && provider === 'openai'
+      && errorCode !== 'REFRESH_DEFERRED') {
+      if (result.ok) {
+        missingCredentials.delete(provider);
+        nativeRateLimitedCount = 0;
+        nativeBlockedUntil = undefined;
+        state.usage = { ...parseUsageSnapshot(provider, result.data), lastSuccessAt: Date.now() };
+      } else {
+        if (errorCode === 'NO_CREDENTIALS') missingCredentials.add(provider);
+        else missingCredentials.delete(provider);
+        state.usage = emptySnapshot(provider, usageError(errorCode!, result.error.httpStatus));
+        if (result.error.httpStatus === 429) {
+          nativeRateLimitedCount += 1;
+          nativeBlockedUntil = Date.now() + rateLimitBackoffMs(nativeRateLimitedCount, result.error.retryAfterMs);
+        }
+      }
+    } else if (errorCode === 'NO_CREDENTIALS') {
       missingCredentials.add(provider);
     } else if (errorCode !== 'REFRESH_DEFERRED') {
       missingCredentials.delete(provider);
@@ -296,15 +329,16 @@ export function createSubscriptionController(
     delete state.usage;
     state.loading = false;
     delete state.lastRefreshAt;
-    delete latestRequestSequence.codex;
-    delete latestRequestSequence.anthropic;
-    delete latestRequestSequence.xai;
-    delete lastAttemptAt.codex;
-    delete lastAttemptAt.anthropic;
-    delete lastAttemptAt.xai;
+    nativeRateLimitedCount = 0;
+    nativeBlockedUntil = undefined;
+    for (const provider of Object.keys(latestRequestSequence) as SubscriptionProviderName[]) {
+      delete latestRequestSequence[provider];
+      delete lastAttemptAt[provider];
+    }
     missingCredentials.clear();
     inFlight = undefined;
     inFlightProvider = undefined;
+    inFlightModelId = undefined;
     inFlightSequence = undefined;
     notify();
   }
@@ -325,6 +359,7 @@ export function detectSubscriptionProvider(
   if (!model) return undefined;
   const provider = model.provider?.toLowerCase() ?? '';
   const id = model.id?.toLowerCase() ?? '';
+  if (provider === 'openai') return 'openai';
   if (
     provider.includes('openai-codex')
     || provider.includes('codex')
@@ -341,6 +376,7 @@ export function parseUsageSnapshot(
   data: unknown,
 ): UsageSnapshot {
   if (provider === 'codex') return parseCodexUsage(data);
+  if (provider === 'openai') return parseCodexUsage(data, false, 'openai');
   if (provider === 'anthropic') return parseAnthropicUsage(data);
   return parseXaiUsage(data);
 }
@@ -349,11 +385,17 @@ async function fetchHostUsage(
   host: SubscriptionUsageHost,
   provider: SubscriptionProviderName,
   modelProvider: string,
+  modelId: string | undefined,
   controller: AbortController,
 ): Promise<SubscriptionUsageHostResult> {
   const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
-    return await host.fetchUsage({ provider, modelProvider, signal: controller.signal });
+    return await host.fetchUsage({
+      provider,
+      modelProvider,
+      ...(modelId === undefined ? {} : { modelId }),
+      signal: controller.signal,
+    });
   } catch {
     return { ok: false, error: { code: 'FETCH_FAILED' } };
   } finally {
@@ -433,11 +475,15 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function parseCodexUsage(data: unknown): UsageSnapshot {
+function parseCodexUsage(
+  data: unknown,
+  includeAdditionalLimits = true,
+  provider: 'codex' | 'openai' = 'codex',
+): UsageSnapshot {
   const root = isRecord(data) ? data : {};
   const windows: RateWindow[] = [];
   addCodexRateWindows(windows, asCodexRateLimit(root.rate_limit));
-  if (Array.isArray(root.additional_rate_limits)) {
+  if (includeAdditionalLimits && Array.isArray(root.additional_rate_limits)) {
     for (const entry of root.additional_rate_limits) {
       if (!isRecord(entry)) continue;
       const prefix = getNonEmptyString(entry.limit_name)
@@ -446,7 +492,7 @@ function parseCodexUsage(data: unknown): UsageSnapshot {
       addCodexRateWindows(windows, asCodexRateLimit(entry.rate_limit), prefix);
     }
   }
-  return snapshot('codex', { windows });
+  return snapshot(provider, { windows });
 }
 
 function parseAnthropicUsage(data: unknown): UsageSnapshot {
@@ -537,14 +583,20 @@ function pushCodexWindow(
 }
 
 function getCodexResetDate(window: CodexRateWindow): Date | undefined {
-  if (typeof window.reset_at === 'number' && Number.isFinite(window.reset_at) && window.reset_at > 0) {
-    return new Date(window.reset_at * 1_000);
+  if (typeof window.reset_at === 'number' && Number.isFinite(window.reset_at)
+    && window.reset_at > 0 && window.reset_at <= 8_640_000_000_000) {
+    const reset = new Date(window.reset_at * 1_000);
+    if (Number.isFinite(reset.getTime())) return reset;
   }
   if (
     typeof window.reset_after_seconds === 'number'
     && Number.isFinite(window.reset_after_seconds)
     && window.reset_after_seconds > 0
-  ) return new Date(Date.now() + window.reset_after_seconds * 1_000);
+    && window.reset_after_seconds <= 8_000_000_000_000
+  ) {
+    const reset = new Date(Date.now() + window.reset_after_seconds * 1_000);
+    if (Number.isFinite(reset.getTime())) return reset;
+  }
   return undefined;
 }
 
@@ -633,6 +685,7 @@ function emptySnapshot(provider: SubscriptionProviderName, error: UsageError): U
 
 function usageError(code: UsageErrorCode, httpStatus?: number): UsageError {
   if (code === 'NO_CREDENTIALS') return { code, message: 'No OAuth credentials found' };
+  if (code === 'COMPANION_UNAVAILABLE') return { code, message: 'ChatGPT usage requires a matching Codex login' };
   if (code === 'HTTP_ERROR') {
     return {
       code,

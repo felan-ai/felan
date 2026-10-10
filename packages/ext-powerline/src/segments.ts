@@ -177,6 +177,9 @@ function renderSubscription(
   if (usage.error?.code === 'NO_CREDENTIALS') {
     return { name: 'subscription', colorKey: 'warning', text: sanitizePlainText(`${label} no OAuth`) };
   }
+  if (usage.error?.code === 'COMPANION_UNAVAILABLE') {
+    return { name: 'subscription', colorKey: 'warning', text: 'ChatGPT usage: web only' };
+  }
 
   const maxWindows = clampInteger(config.maxWindows ?? 3, 1, 8);
   const windows = prioritizeWindowsForModel(usage.windows, context.ctx.model)
@@ -244,6 +247,7 @@ function renderStatus(context: SegmentRenderContext): Omit<RenderedSegment, 'ali
 }
 
 function getSubscriptionProviderLabel(provider: SubscriptionProviderName): string {
+  if (provider === 'openai') return 'ChatGPT';
   if (provider === 'codex') return 'Codex';
   if (provider === 'xai') return 'Grok';
   return 'Claude';
@@ -254,7 +258,7 @@ function formatSubscriptionWindow(
   window: RateWindow,
   config: SegmentConfig,
 ): string {
-  if (provider === 'codex' || provider === 'xai') {
+  if (provider === 'openai' || provider === 'codex' || provider === 'xai') {
     return formatCompactSubscriptionWindow(window, config, 100 - window.usedPercent);
   }
   return formatAnthropicWindow(window, config);
@@ -305,6 +309,7 @@ function normalizeCodexWindowLabel(label: string): string {
 }
 
 function formatSubscriptionError(error: { code: string; httpStatus?: number }): string {
+  if (error.code === 'COMPANION_UNAVAILABLE') return 'usage: web only';
   if (error.code === 'HTTP_ERROR' && error.httpStatus === 429) return 'usage unavailable';
   if (error.code === 'HTTP_ERROR' && error.httpStatus) return `HTTP ${error.httpStatus}`;
   return 'fetch failed';

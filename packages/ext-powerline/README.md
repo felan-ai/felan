@@ -42,20 +42,34 @@ The optional `version` segment displays the Felan version supplied by the host.
 It is not enabled by the package default; hostless consumers omit it when no
 version is provided. Felan's local TUI supplies its current application version.
 
-The `subscription` segment supports Codex, Claude, and Grok SuperGrok / X Premium
-OAuth plans. Codex and Grok values show remaining percentage; Claude values show
-used percentage. The segment can configure `showProviderName`, `showReset`,
+The `subscription` segment supports native OpenAI ChatGPT, Codex, Claude, and
+Grok SuperGrok / X Premium OAuth plans. ChatGPT, Codex, and Grok values show
+remaining percentage; Claude values show used percentage. Native OpenAI usage
+requires both an OpenAI ChatGPT OAuth login and a separate Codex OAuth login
+for the same ChatGPT account/workspace (`/login openai-codex`). ChatGPT values
+show shared-plan primary/secondary windows only; app-specific quotas are not
+displayed. The TUI uses Codex credentials only for the companion ChatGPT usage
+endpoints; it never sends native OpenAI tokens to ChatGPT backend endpoints.
+These companion endpoints are undocumented. If the Codex companion is missing
+or its app registration cannot be matched, the footer displays
+`ChatGPT usage: web only`; users can review usage at
+<https://chatgpt.com/settings/usage>. App-registration matching is a safeguard,
+not independent proof that the accounts match. Native OpenAI usage is
+session-local and is not persisted/shared with Codex usage. The segment can
+configure `showProviderName`, `showReset`,
 `showPercentage`, and `maxWindows`. It refreshes at startup, after turns and
 model changes, and once per minute. Only model changes bypass the 30-second
-minimum between requests. After HTTP 429 every refresh waits for the provider's
-`Retry-After` or an exponential backoff from one minute up to 30 minutes, and the
-segment keeps showing the last successful values whose reset time has not
-passed. Hosts can pass a `subscriptionStore`, optionally backed by host-owned
-persistence, to share those values, the latest error, and the backoff across
-sessions, restarts, and processes. A host that coordinates processes returns
+minimum between requests. For Codex, Claude, and Grok, after HTTP 429 every
+refresh waits for the provider's `Retry-After` or an exponential backoff from
+one minute up to 30 minutes, and the segment keeps showing the last successful
+values whose reset time has not passed. Hosts can pass a `subscriptionStore`,
+optionally backed by host-owned persistence, to share those values, the latest
+error, and the backoff across sessions, restarts, and processes. A host that coordinates processes returns
 `REFRESH_DEFERRED` when another process owns the refresh; the segment then shows
-the shared values. The controller calls `releaseRefreshLease` when the model
-changes provider or the session shuts down.
+the shared values. Native OpenAI values are neither persisted nor shared across
+sessions and clear to the web-only fallback when companion validation fails.
+The controller calls `releaseRefreshLease` when the model changes provider or
+the session shuts down.
 
 The `savings` segment is enabled by default at the end of the first line and is
 right-aligned above the model. It reports estimated API-equivalent savings

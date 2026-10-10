@@ -13,6 +13,7 @@ import { ASK_USER_CONFIG, createAskUserExtension, type AskUserConfig } from '@fe
 import { createTuiAskUserHost } from '@felan-ai/ext-ask-user/tui';
 import { createMemoryExtension, type MemoryHost, type MemoryRole } from '@felan-ai/ext-memory';
 import { createModelToolsExtension } from '@felan-ai/ext-model-tools';
+import { createFusionExtension } from '@felan-ai/ext-fusion';
 import {
   DEFAULT_OUTPUT_STYLE,
   type OutputStyle,
@@ -40,6 +41,7 @@ import {
 import type { SavingsService } from './savings.js';
 import { createLocalInsightsHost } from './insights.js';
 import { createLocalOutputStyleExtension } from './output-style-instructions.js';
+import { createLocalFusionHost } from './fusion/host.js';
 import {
   registerLocalSubagentNavigator,
   type AgentRailRenderer,
@@ -53,6 +55,7 @@ export const powerlineExtensionPackage = '@felan-ai/ext-powerline';
 export const subagentsExtensionPackage = '@felan-ai/ext-subagents';
 export const memoryExtensionPackage = '@felan-ai/ext-memory';
 export const modelToolsExtensionPackage = '@felan-ai/ext-model-tools';
+export const fusionExtensionPackage = '@felan-ai/ext-fusion';
 export const outputStyleExtensionPackage = '@felan-ai/ext-output-style';
 export const insightsExtensionPackage = '@felan-ai/ext-insights';
 export const promptHistoryExtensionPackage = '@felan-ai/ext-prompt-history';
@@ -66,6 +69,7 @@ export const builtinExtensionPackages = {
   mcp: mcpExtensionPackage,
   felanApi: felanApiExtensionPackage,
   modelTools: modelToolsExtensionPackage,
+  fusion: fusionExtensionPackage,
   webAccess: '@felan-ai/ext-web-access',
   browser: '@felan-ai/ext-browser',
   backgroundBash: '@felan-ai/ext-background-bash',
@@ -158,6 +162,7 @@ export function createLocalExtensionImporter(
     readonly persist: (policy: BrowserAuthorizationPolicy) => Promise<void>;
   },
   subscriptionUsagePath?: string,
+  fusionAgentDir?: string,
 ): ExtensionPackageImporter {
   let powerlineLoaded = false;
   let agentRailRenderer: AgentRailRenderer | undefined;
@@ -201,6 +206,9 @@ export function createLocalExtensionImporter(
     }
     if (packageName === modelToolsExtensionPackage) {
       return { default: createModelToolsExtension(modelRuntime) };
+    }
+    if (packageName === fusionExtensionPackage) {
+      return { default: createFusionExtension(fusionAgentDir ? createLocalFusionHost(fusionAgentDir) : undefined) };
     }
     if (packageName === builtinExtensionPackages.browser) {
       const { createBrowserExtension } = await import('@felan-ai/ext-browser');

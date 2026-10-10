@@ -42,6 +42,17 @@ describe('local extension importer', () => {
     }));
   });
 
+  it('discovers Fusion configuration through the built-in importer', async () => {
+    const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-fusion']);
+    expect(definitions.find((definition) => definition.id === 'fusion')).toEqual(expect.objectContaining({
+      id: 'fusion',
+      fields: expect.objectContaining({
+        participants: expect.objectContaining({ default: [] }),
+        fusionModel: expect.objectContaining({ default: 'inherit' }),
+      }),
+    }));
+  });
+
   it('discovers Background Bash foreground timeout configuration from factory extensions', async () => {
     const definitions = await loadLocalExtensionConfigDefinitions(['@felan-ai/ext-background-bash']);
     expect(definitions.find((definition) => definition.id === 'backgroundBash')).toEqual(expect.objectContaining({
@@ -102,6 +113,7 @@ describe('local extension importer', () => {
       '@felan-ai/ext-mcp',
       '@felan-ai/ext-felan-api',
       '@felan-ai/ext-model-tools',
+      '@felan-ai/ext-fusion',
       '@felan-ai/ext-web-access',
       '@felan-ai/ext-browser',
       '@felan-ai/ext-background-bash',
@@ -183,6 +195,32 @@ describe('local extension importer', () => {
     await expect(importer('@felan-ai/ext-model-tools')).resolves.toMatchObject({
       default: expect.any(Function),
     });
+  });
+
+  it('binds Fusion to the local interactive model-selection and review host', async () => {
+    const importer = createLocalExtensionImporter(
+      testSubagentHost(),
+      testModelRuntime(),
+      async () => { throw new Error('Fusion must be host-bound in the local TUI'); },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      '/tmp/felan-fusion-test',
+    );
+    const imported = await importer('@felan-ai/ext-fusion') as { default: (api: FelanExtensionAPI) => void };
+    const commands: string[] = [];
+    imported.default({
+      config: {},
+      on: () => () => {},
+      registerCommand: (name) => commands.push(name),
+    } as unknown as FelanExtensionAPI);
+    expect(commands).toContain('fusion');
   });
 
   it('creates the host-bound browser extension without invoking the generic importer', async () => {
@@ -373,6 +411,7 @@ describe('local extension importer', () => {
       memory: false,
       felanApi: false,
       modelTools: false,
+      fusion: false,
       powerline: false,
       outputStyle: false,
       contextView: false,
@@ -401,6 +440,11 @@ describe('local extension importer', () => {
     expect(() => resolveBuiltinExtensionPackages({ modelTools: 'yes' })).toThrow(
       'Built-in extension modelTools must be a boolean',
     );
+  });
+
+  it('enables Fusion by default and honors explicit disablement', () => {
+    expect(resolveBuiltinExtensionPackages(undefined)).toContain('@felan-ai/ext-fusion');
+    expect(resolveBuiltinExtensionPackages({ fusion: false })).not.toContain('@felan-ai/ext-fusion');
   });
 });
 

@@ -36,6 +36,11 @@ e3f262a7f4d42bd8dd32ced30d26176f7cb545b0, and pi-jev at commit
 package-level license and notice are included in
 packages/ext-session-compaction/LICENSE and NOTICE.
 
+@felan-ai/ext-fusion is original MIT-licensed Felan code. Its workflow is
+design-informed by disler/fusion-harness at revision
+01a348202482cad0e7d3c34eada180f711aaddd7; no upstream source or prompt text is
+copied. Its package-level LICENSE and NOTICE contain the reference details.
+
 The Jev classifier client lives in @felan-ai/agent-core as original Felan
 MIT-licensed code. Direct HTTPS to the public TypeSafe and OpenRouter API
 hosts is an intentional I/O exception.

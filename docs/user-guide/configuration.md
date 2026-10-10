@@ -41,6 +41,7 @@ browser and Powerline extensions:
     "mcp": true,
     "felanApi": true,
     "modelTools": true,
+    "fusion": true,
     "webAccess": true,
     "browser": false,
     "backgroundBash": true,
@@ -66,7 +67,15 @@ browser and Powerline extensions:
     "codebaseMemory": { "maxCacheBytes": 0 },
     "promptHistory": { "displayMode": "inline" },
     "codex": { "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
-    "sessionCompaction": { "method": "classifier", "model": "inherit" }
+    "sessionCompaction": { "method": "classifier", "model": "inherit" },
+    "fusion": {
+      "participants": [],
+      "fusionModel": "inherit",
+      "concurrency": 4,
+      "timeoutSeconds": 120,
+      "maxOutputChars": 12000,
+      "thinking": "off"
+    }
   },
   "felanSubagents": {
     "concurrency": 4,
@@ -102,6 +111,7 @@ Defaults:
 - subagent concurrency is `4` and maximum nesting depth is `3`;
 - editor horizontal padding is `1`;
 - tool display is `grouped`;
+- Fusion has no participant models until selected in the interactive TUI;
 - local memory processing is enabled; and
 - `piExtensions.user`, `piExtensions.project`, and `piExtensions.llamaCpp` are
   `false`.
@@ -608,9 +618,10 @@ the existing boolean behavior. The `fast` boolean is deprecated and hidden from
 `/settings`, but remains supported in existing config files and CLI options.
 With both omitted, no premium tier is requested.
 `normal` requests the standard tier even if `fast` is true. `ultrafast` requests
-Ultrafast for the exact `gpt-6-astra` ID on eligible Responses routes and falls
-back to fast for other eligible GPT models. This capability rule is maintained
-in the extension because Pi does not expose service-tier metadata.
+Ultrafast for the exact `gpt-6-astra` and `gpt-6.1-sol` IDs on eligible Responses
+routes and falls back to fast for other eligible GPT models. This capability
+rule is maintained in the extension because Pi does not expose service-tier
+metadata.
 Account and workspace access requirements still apply; entitlement errors are
 not automatically retried. Neither reasoning effort nor transport changes.
 Fast and Ultrafast use premium quota/pricing; 2x/8x are not universal billing
@@ -703,6 +714,20 @@ options. The complete shape is:
   ]
 }
 ```
+
+The subscription segment supports ChatGPT usage on native `openai` models when
+both native OpenAI OAuth and a separate Codex OAuth login are configured for
+the same ChatGPT account/workspace; sign in to the companion with
+`/login openai-codex`. Keep inference on `openai`; the TUI uses only the Codex
+credential for companion usage requests. The status bar shows shared-plan
+primary/secondary windows, not app-specific quotas. The companion ChatGPT
+endpoints are undocumented, and matching the native app registration is a
+safeguard rather than independent account verification. When companion usage
+is unavailable or cannot be matched, the status bar displays
+`ChatGPT usage: web only`; review usage at
+<https://chatgpt.com/settings/usage>. Native OpenAI usage is held only in the
+current session and is not shared with cached Codex usage. Native OpenAI OAuth
+tokens are never sent to ChatGPT backend endpoints.
 
 `lines` replaces the default layout, so preserve any default segments you want
 when adding a custom line. Each line contains supported

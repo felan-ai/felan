@@ -258,6 +258,16 @@ for (const requiredNotice of [
     errors.push(`packages/ext-session-compaction/NOTICE is missing ${requiredNotice}`);
   }
 }
+const fusionNotice = readFileSync(resolve(root, 'packages/ext-fusion/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'disler/fusion-harness',
+  '01a348202482cad0e7d3c34eada180f711aaddd7',
+  'No harness source',
+]) {
+  if (!fusionNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-fusion/NOTICE is missing ${requiredNotice}`);
+  }
+}
 const webAccessNotice = readFileSync(resolve(root, 'packages/ext-web-access/NOTICE'), 'utf8');
 for (const requiredNotice of [
   'pi-web-access 0.18.0',
@@ -303,6 +313,7 @@ for (const requiredNotice of [
   'codebase-memory-mcp 0.11.0',
   '@felan-ai/ext-session-compaction',
   '@felan-ai/ext-model-tools',
+  '@felan-ai/ext-fusion',
 ]) {
   if (!tuiNotice.includes(requiredNotice)) {
     errors.push(`apps/tui/NOTICE is missing ${requiredNotice}`);

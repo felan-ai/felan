@@ -280,6 +280,43 @@ describe('powerline segments', () => {
     expect(claudeRateLimited.text).toBe('Claude usage unavailable');
   });
 
+  it('renders ChatGPT remaining shared-plan usage and web-only fallback', () => {
+    const usage = renderSingle('subscription', {
+      enabled: true, showProviderName: true, showReset: true,
+    }, context({
+      model: { provider: 'openai', id: 'gpt-5.6' },
+      subscription: {
+        provider: 'openai', loading: false,
+        usage: {
+          provider: 'openai', displayName: 'ChatGPT Plan',
+          windows: [{ label: '5h', usedPercent: 25, resetDescription: '2h' }],
+        },
+      },
+    }));
+    expect(usage.text).toBe('ChatGPT 5h 75% | 2h');
+    const narrow = renderFooterLine(
+      [usage],
+      testConfig({ style: 'minimal', charset: 'text', padding: 0, autoWrap: false }),
+      getThemePalette(theme),
+      'none',
+      getSymbols('text'),
+      10,
+    );
+    expect(visibleWidth(narrow[0]!)).toBeLessThanOrEqual(10);
+
+    const unavailable = renderSingle('subscription', { enabled: true }, context({
+      model: { provider: 'openai', id: 'gpt-5.6' },
+      subscription: {
+        provider: 'openai', loading: false,
+        usage: {
+          provider: 'openai', displayName: 'ChatGPT Plan', windows: [],
+          error: { code: 'COMPANION_UNAVAILABLE', message: 'ChatGPT usage requires a matching Codex login' },
+        },
+      },
+    }));
+    expect(unavailable.text).toBe('ChatGPT usage: web only');
+  });
+
   it('renders context variants and threshold colors', () => {
     const warning = renderSingle('context', {
       enabled: true,
