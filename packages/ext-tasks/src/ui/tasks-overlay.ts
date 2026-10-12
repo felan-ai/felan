@@ -1,4 +1,5 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
+import { stripVTControlCharacters } from 'node:util';
 import { matchesKey, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Task, TaskState } from '../contracts.js';
 import { emptyTaskState, listTasks, taskAvailability } from '../graph.js';
@@ -8,7 +9,7 @@ import {
   formatTaskSummary,
   taskGraphLayers,
 } from '../presentation.js';
-import type { TaskStore } from '../store.js';
+import type { TaskDataSource } from '../host.js';
 import type { TasksDisplayMode } from '../config.js';
 
 const LIST_ROWS = 18;
@@ -18,6 +19,12 @@ const PADDING_Y = 1;
 
 type Theme = ExtensionContext['ui']['theme'];
 type View = 'list' | 'detail' | 'graph';
+export interface TasksNavigation {
+  view: View;
+  selectedTaskId?: string;
+  scroll: number;
+  contentScroll: number;
+}
 
 export class TasksOverlay {
   readonly #unsubscribe: () => void;
@@ -32,15 +39,23 @@ export class TasksOverlay {
   #message = '';
   #view: View = 'list';
   #disposed = false;
+  #initialSelectedId: string | undefined;
 
   constructor(
-    private readonly store: TaskStore,
+    private readonly store: TaskDataSource,
     private readonly theme: Theme,
     private readonly done: () => void,
     private readonly requestRender: () => void,
     private readonly onDispose: () => void = () => {},
     private readonly displayMode: TasksDisplayMode = 'inline',
+    private readonly navigation?: { initial?: TasksNavigation; requestDetails?: (id: string) => void },
   ) {
+    if (navigation?.initial) {
+      this.#view = navigation.initial.view;
+      this.#scroll = navigation.initial.scroll;
+      this.#contentScroll = navigation.initial.contentScroll;
+      this.#initialSelectedId = navigation.initial.selectedTaskId;
+    }
     this.#unsubscribe = store.subscribe((state) => {
       if (this.#disposed) return;
       this.#setState(state);
@@ -88,6 +103,7 @@ export class TasksOverlay {
     if ((matchesKey(data, 'return') || matchesKey(data, 'right')) && this.#tasks.length > 0) {
       this.#view = 'detail';
       this.#contentScroll = 0;
+      if (this.navigation?.requestDetails) { this.navigation.requestDetails(this.#tasks[this.#selected]!.id); return; }
       this.requestRender();
     }
   }
@@ -110,6 +126,12 @@ export class TasksOverlay {
   }
 
   invalidate(): void {}
+
+  snapshotNavigation(): TasksNavigation {
+    const selectedTaskId = this.#tasks[this.#selected]?.id;
+    return { view: this.#view, scroll: this.#scroll, contentScroll: this.#contentScroll,
+      ...(selectedTaskId === undefined ? {} : { selectedTaskId }) };
+  }
 
   dispose(): void {
     if (this.#disposed) return;
@@ -197,10 +219,12 @@ export class TasksOverlay {
   }
 
   #setState(state: TaskState): void {
-    const selectedId = this.#tasks[this.#selected]?.id;
-    this.#state = state;
-    this.#tasks = listTasks(state, 'all');
+    const selectedId = this.#initialSelectedId ?? this.#tasks[this.#selected]?.id;
+    this.#initialSelectedId = undefined;
+    this.#state = displayState(state);
+    this.#tasks = listTasks(this.#state, 'all');
     const nextSelected = selectedId ? this.#tasks.findIndex((task) => task.id === selectedId) : -1;
+    if (this.#view === 'detail' && selectedId && nextSelected < 0) this.#view = 'list';
     this.#selected = nextSelected >= 0
       ? nextSelected
       : Math.min(this.#selected, Math.max(0, this.#tasks.length - 1));
@@ -259,6 +283,18 @@ export class TasksOverlay {
     this.dispose();
     this.done();
   }
+}
+
+function displayState(state: TaskState): TaskState {
+  const fields = ['title', 'description', 'acceptanceCriteria', 'ownerSessionId', 'claimedAt', 'notes', 'result', 'blockedReason', 'createdAt', 'updatedAt', 'completedAt'] as const;
+  return { ...state, tasks: state.tasks.map(task => {
+    const copy = { ...task };
+    for (const field of fields) {
+      const value = task[field];
+      if (value !== undefined) Object.assign(copy, { [field]: stripVTControlCharacters(value).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, '') });
+    }
+    return copy;
+  }) };
 }
 
 function frameLines(

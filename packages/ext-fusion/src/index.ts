@@ -31,7 +31,7 @@ export function createFusionExtension(host?: FusionHost): FelanExtension {
     pi.registerCommand('fusion', {
       description: 'Compare independent model answers, review their differences, then explicitly fuse them',
       handler: async (raw: string, ctx: ExtensionCommandContext) => {
-        if (!host || ctx.mode !== 'tui' || !ctx.hasUI) {
+        if (!host || !ctx.hasUI) {
           ctx.ui.notify('Fusion requires the local interactive review UI.', 'warning');
           return;
         }
@@ -113,7 +113,7 @@ export function createFusionExtension(host?: FusionHost): FelanExtension {
     pi.registerCommand('fusion-models', {
       description: 'Search and save the participant and comparison models used by /fusion',
       handler: async (_raw: string, ctx: ExtensionCommandContext) => {
-        if (!host || ctx.mode !== 'tui' || !ctx.hasUI) {
+        if (!host || !ctx.hasUI) {
           ctx.ui.notify('Fusion model configuration requires the local interactive review UI.', 'warning');
           return;
         }
@@ -305,4 +305,9 @@ export { FusionComparisonError, compareFusionAnswers, runFusion, synthesizeFusio
 export type { RunFusionOptions } from './orchestration.js';
 export { buildComparisonPrompt, buildFusionPrompt } from './prompts.js';
 export { FUSION_STATE_ENTRY, latestFusionReview, validateFusionReview } from './session-state.js';
+export {
+  FUSION_PICKER_PRESENTER, FUSION_REVIEW_PRESENTER, parseFusionPickerRequest, parseFusionPickerResult,
+  parseFusionReview, parseFusionReviewMetadata, parseFusionReviewDecision,
+} from './presentation.js';
+export type { FusionPickerRequest, FusionPickerResult, FusionReviewDecision } from './presentation.js';
 export default fusionExtension;

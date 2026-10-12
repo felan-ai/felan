@@ -19,7 +19,9 @@ pnpm verify
 - Keep runtime contracts independent of concrete host, Docker, and Daytona adapters.
 - Add conformance coverage when the runtime contract changes.
 - Keep extension packages free of direct filesystem and child-process access.
-- Keep local-host policy, credentials, storage, and presentation in `apps/tui`.
+- Keep local-host policy, credentials, storage and execution in `apps/daemon`,
+  and CLI/TUI, ACP and headless presentation in `apps/felan`. The daemon must
+  not depend on the client application.
 - Keep feature behavior in its owning `packages/ext-*` package and public
   runtime composition in `packages/agent-core`.
 - Update the owning package README and the relevant canonical docs page when a

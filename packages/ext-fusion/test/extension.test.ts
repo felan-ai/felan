@@ -9,7 +9,7 @@ const model = (provider: string, id: string): Model<any> => ({
   contextWindow: 32000, maxTokens: 2000,
 });
 
-function harness(overrides: { mode?: 'tui' | 'print'; idle?: boolean; participants?: string[] } = {}) {
+function harness(overrides: { mode?: 'tui' | 'print'; hasUI?: boolean; idle?: boolean; participants?: string[] } = {}) {
   const models = [model('openai', 'one'), model('other', 'two')];
   const entries: SessionEntry[] = [];
   const requests: unknown[] = [];
@@ -38,7 +38,7 @@ function harness(overrides: { mode?: 'tui' | 'print'; idle?: boolean; participan
     sendMessage: vi.fn((...args: unknown[]) => messages.push(args)),
   } as unknown as FelanExtensionAPI;
   const ctx = {
-    mode: overrides.mode ?? 'tui', hasUI: true, cwd: '/workspace', model: models[0], scopedModels: [], signal: undefined,
+    mode: overrides.mode ?? 'tui', hasUI: overrides.hasUI ?? true, cwd: '/workspace', model: models[0], scopedModels: [], signal: undefined,
     isIdle: () => overrides.idle ?? true,
     isProjectTrusted: () => true,
     sessionManager: { getBranch: () => entries },
@@ -187,8 +187,8 @@ describe('Fusion slash command', () => {
     expect(reviews[0]?.get().failures).toBeUndefined();
   });
 
-  it('rejects headless and busy runs before requesting models', async () => {
-    for (const overrides of [{ mode: 'print' as const }, { idle: false }]) {
+  it('rejects unavailable UI and busy runs before requesting models', async () => {
+    for (const overrides of [{ hasUI: false }, { idle: false }]) {
       const h = harness({ ...overrides, participants: ['openai/one', 'other/two'] });
       const host: FusionHost = { confirm: vi.fn(), configure: vi.fn(), review: vi.fn() };
       createFusionExtension(host)(h.api);
@@ -196,6 +196,19 @@ describe('Fusion slash command', () => {
       expect(h.requests).toHaveLength(0);
       expect(host.configure).not.toHaveBeenCalled();
     }
+  });
+
+  it('uses an explicit presentation host in a print-mode daemon without inferring approval', async () => {
+    const h = harness({ mode: 'print', participants: ['openai/one', 'other/two'] });
+    const host: FusionHost = { confirm: vi.fn(async () => false), configure: vi.fn(), review: vi.fn() };
+    createFusionExtension(host)(h.api);
+    await h.handlerStore.handler!('question', h.ctx);
+    expect(host.confirm).toHaveBeenCalledOnce(); expect(h.requests).toHaveLength(0);
+    vi.mocked(host.confirm).mockResolvedValue(true);
+    await h.handlerStore.handler!('question', h.ctx);
+    expect(h.requests).toHaveLength(3); expect(host.review).toHaveBeenCalledOnce();
+    await h.handlerStore.handlers['fusion-models']!('', h.ctx);
+    expect(host.configure).toHaveBeenCalledOnce();
   });
 
   it('does not spend when the user declines the request-count confirmation', async () => {

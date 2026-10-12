@@ -156,6 +156,7 @@ export {
 export type {
   AgentSessionEvent,
   AgentSessionEventListener,
+  AgentSessionRuntime,
   AgentSessionRuntimeDiagnostic,
   AgentSessionServices,
   BuildSystemPromptOptions,

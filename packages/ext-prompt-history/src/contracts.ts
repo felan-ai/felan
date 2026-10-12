@@ -1,4 +1,32 @@
-import type { SessionEntry } from "@felan-ai/agent-core";
+import type { ExtensionContext, SessionEntry } from "@felan-ai/agent-core";
+import type { PromptHistoryDisplayMode } from "./config.js";
+
+export const PROMPT_HISTORY_SCOPES = ["session", "project", "all"] as const;
+export type PromptHistoryScope = (typeof PROMPT_HISTORY_SCOPES)[number];
+export interface PromptHistoryItem {
+	readonly id: string;
+	readonly text: string;
+	readonly cwd: string;
+	readonly sessionLabel: string;
+	readonly sessionName?: string | undefined;
+	readonly timestamp: number;
+}
+export interface PromptHistorySearchState {
+	readonly items: readonly PromptHistoryItem[];
+	readonly loading: boolean;
+	readonly scanned: number;
+	readonly total?: number;
+	readonly complete: boolean;
+}
+export type PromptHistorySearch = (
+	scope: PromptHistoryScope, query: string,
+	onProgress: (state: PromptHistorySearchState) => void,
+	shouldContinue: () => boolean,
+) => Promise<PromptHistorySearchState>;
+export interface PromptHistoryPresentationHost {
+	show(ui: Pick<ExtensionContext["ui"], "custom" | "setEditorText">,
+		search: PromptHistorySearch, displayMode: PromptHistoryDisplayMode, signal: AbortSignal): Promise<void>;
+}
 
 export interface PromptHistorySessionReference {
 	/** Opaque host identifier passed back to readSession. */

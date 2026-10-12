@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-background-bash",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Runtime-portable detached Bash processes for Felan",
   "license": "MIT",
   "type": "module",
@@ -22,6 +22,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
+    },
+    "./view": {
+      "types": "./dist/view.d.ts",
+      "import": "./dist/view.js"
     }
   },
   "scripts": {

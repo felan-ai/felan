@@ -5,8 +5,7 @@ import {
   type Component,
 } from '@earendil-works/pi-tui';
 import type { BackgroundBashStatus } from '../job-store.js';
-
-export const BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE = 'felan-background-bash-completion';
+import { BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE } from '../presentation.js';
 
 const MAX_DETAIL_LINES = 3;
 const MAX_INLINE_CHARACTERS = 240;

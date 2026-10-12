@@ -1,0 +1,710 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  configField,
+  defineExtensionConfig,
+  type ExtensionConfigDefinition,
+  type SettingsManager,
+} from '@felan-ai/agent-core';
+import { OUTPUT_STYLE_CONFIG } from '@felan-ai/ext-output-style';
+import { CODEX_CONFIG } from '@felan-ai/ext-codex';
+import type { Component, Focusable } from '@earendil-works/pi-tui';
+import { initTheme, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  createLocalSettingsManager,
+  getDynamicThinkingEnabled,
+  getLocalCodemodeMode,
+  getBrowserAuthorizationPolicy,
+  getFelanSettings,
+  getLocalOutputStyle,
+  getPiExtensionSettings,
+  getLocalToolDisplayMode,
+  isDependencyOnboardingComplete,
+  isBuiltinExtensionEnabled,
+  setBuiltinExtensionEnabled,
+  setDependencyOnboardingDecision,
+  resolveExtensionConfigSettings,
+  setExtensionConfigValue,
+  setLocalCodemodeMode,
+} from '@felan-ai/daemon/internal/settings';
+import {
+  formatExtensionSettingDisplayValue,
+  installFelanSettingsCommand,
+  parseExtensionSettingValue,
+} from '../src/extension-settings.js';
+
+const temporaryPaths: string[] = [];
+
+beforeAll(() => initTheme('dark', false));
+
+afterEach(async () => {
+  await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
+});
+
+describe('local settings', () => {
+  it('keeps bundled Pi llama.cpp opt-in and validates the setting', () => {
+    const root = '/tmp/felan-pi-llama-settings-test';
+    expect(getPiExtensionSettings(createLocalSettingsManager(root, root))).toEqual({
+      user: false,
+      project: false,
+      llamaCpp: false,
+    });
+    expect(getPiExtensionSettings(settingsWith({ piExtensions: { llamaCpp: true } }))).toEqual({
+      user: false,
+      project: false,
+      llamaCpp: true,
+    });
+    expect(() => getPiExtensionSettings(settingsWith({ piExtensions: { llamaCpp: 'true' } })))
+      .toThrow('piExtensions.llamaCpp must be a boolean');
+  });
+
+  it('defaults code mode off and validates the native-shaped configuration', () => {
+    for (const settings of [{}, { codemode: {} }, { codemode: { inlineBudget: 0 } }]) {
+      expect(getLocalCodemodeMode(settingsWith(settings))).toBe('off');
+    }
+    for (const mode of ['off', 'on', 'only'] as const) {
+      expect(getLocalCodemodeMode(settingsWith({ codemode: { mode } }))).toBe(mode);
+    }
+    for (const codemode of [null, [], 'on', true]) {
+      expect(() => getLocalCodemodeMode(settingsWith({ codemode }))).toThrow('codemode must be an object');
+    }
+    for (const mode of [null, true, 'invalid', 'ON']) {
+      expect(() => getLocalCodemodeMode(settingsWith({ codemode: { mode } })))
+        .toThrow('codemode.mode must be "off", "on", or "only"');
+    }
+  });
+
+  it('persists code mode without overwriting native budgets or unrelated settings', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir);
+    const path = join(agentDir, 'settings.json');
+    await writeFile(path, JSON.stringify({ codemode: { inlineBudget: 128 }, defaultModel: 'test-model' }));
+    await setLocalCodemodeMode(agentDir, 'only');
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+      codemode: { inlineBudget: 128, mode: 'only' }, defaultModel: 'test-model',
+    });
+    expect(getLocalCodemodeMode(createLocalSettingsManager(root, agentDir))).toBe('only');
+    await setLocalCodemodeMode(agentDir, 'off');
+    expect(getLocalCodemodeMode(createLocalSettingsManager(root, agentDir))).toBe('off');
+    await writeFile(path, JSON.stringify({ codemode: 'on' }));
+    await expect(setLocalCodemodeMode(agentDir, 'on')).rejects.toThrow('codemode must be an object');
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ codemode: 'on' });
+  });
+
+  it('cycles and saves the code-mode selector in selection order', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    const manager = createLocalSettingsManager(root, agentDir);
+    const harness = createExtensionSettingsHarness([], agentDir, manager);
+    harness.current().handleInput?.('code');
+    expect(harness.current().render(140).join('\n')).toContain('Code mode');
+    harness.current().handleInput?.('\r');
+    harness.current().handleInput?.('\r');
+    await vi.waitFor(() => expect(getLocalCodemodeMode(manager)).toBe('only'));
+    harness.open();
+    harness.current().handleInput?.('code');
+    expect(harness.current().render(140).join('\n')).toContain('only');
+    harness.current().handleInput?.('\r');
+    await vi.waitFor(() => expect(getLocalCodemodeMode(manager)).toBe('off'));
+  });
+
+  it('shows the last saved code mode when persistence fails', async () => {
+    const root = await temporaryDirectory();
+    const invalidAgentDir = join(root, 'not-a-directory');
+    await writeFile(invalidAgentDir, 'file');
+    const harness = createExtensionSettingsHarness([], invalidAgentDir);
+    harness.current().handleInput?.('code');
+    harness.current().handleInput?.('\r');
+    await vi.waitFor(() => expect(harness.current().render(140).join('\n')).toContain('off (save failed)'));
+  });
+
+  it('defaults dynamic thinking on and accepts an explicit disable switch', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    const path = join(agentDir, 'settings.json');
+    const read = () => getDynamicThinkingEnabled(createLocalSettingsManager(root, agentDir));
+
+    expect(read()).toBe(true);
+    await writeFile(path, JSON.stringify({ felanThinking: { dynamic: false } }));
+    expect(read()).toBe(false);
+    await writeFile(path, JSON.stringify({ felanThinking: { dynamic: true } }));
+    expect(read()).toBe(true);
+    await writeFile(path, JSON.stringify({ felanThinking: { dynamic: 'false' } }));
+    expect(read).toThrow('felanThinking.dynamic must be a boolean');
+  });
+
+  it('preserves terminal and model settings while filtering executable resources', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, '.felan');
+    await mkdir(join(cwd, '.pi'), { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      quietStartup: true,
+      defaultProvider: 'anthropic',
+      defaultModel: 'test-model',
+      builtinExtensions: { prewalk: false },
+      outputStyle: 'explanatory',
+      felanSubagents: { concurrency: 2 },
+      felanTui: { toolDisplay: 'full' },
+      cacheWarming: 'streaming',
+      packages: ['npm:untrusted-package'],
+      extensions: ['/tmp/untrusted-extension.ts'],
+      skills: ['/tmp/untrusted-skill'],
+      prompts: ['/tmp/untrusted-prompt'],
+      themes: ['/tmp/untrusted-theme'],
+    }));
+    await writeFile(join(cwd, '.pi', 'settings.json'), JSON.stringify({
+      defaultModel: 'project-model',
+    }));
+
+    const settings = createLocalSettingsManager(cwd, agentDir);
+
+    expect(settings.getQuietStartup()).toBe(true);
+    expect(settings.getDefaultProvider()).toBe('anthropic');
+    expect(settings.getDefaultModel()).toBe('test-model');
+    expect(settings.isProjectTrusted()).toBe(true);
+    expect(settings.getPackages()).toEqual([]);
+    expect(settings.getExtensionPaths()).toEqual([]);
+    expect(settings.getSkillPaths()).toEqual([]);
+    expect(settings.getPromptTemplatePaths()).toEqual([]);
+    expect(settings.getThemePaths()).toEqual([]);
+    expect(settings.getEditorPaddingX()).toBe(1);
+    expect(settings.getEnableInstallTelemetry()).toBe(false);
+    expect(settings.getCacheWarmingMode()).toBe('streaming');
+    expect(settings.getLastChangelogVersion()).toBe(PI_VERSION);
+    expect(settings.getGlobalSettings().packages).toEqual([]);
+    expect(settings.getProjectSettings().packages).toEqual([]);
+    expect(settings.getProjectSettings().defaultModel).toBeUndefined();
+    expect(getFelanSettings(settings)).toMatchObject({
+      builtinExtensions: { prewalk: false },
+      outputStyle: 'explanatory',
+      felanSubagents: { concurrency: 2 },
+      felanTui: { toolDisplay: 'full' },
+    });
+    expect(getLocalToolDisplayMode(settings)).toBe('full');
+    expect(getLocalOutputStyle(settings)).toBe('explanatory');
+
+    await settings.reload();
+
+    settings.setProjectTrusted(false);
+    expect(settings.isProjectTrusted()).toBe(true);
+    expect(settings.getDefaultModel()).toBe('test-model');
+    expect(settings.getEditorPaddingX()).toBe(1);
+    expect(settings.getPackages()).toEqual([]);
+    expect(settings.getEnableInstallTelemetry()).toBe(false);
+    expect(settings.getLastChangelogVersion()).toBe(PI_VERSION);
+    expect(settings.getGlobalSettings().packages).toEqual([]);
+  });
+
+  it('preserves explicitly configured editor padding', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ editorPaddingX: 0 }));
+
+    const settings = createLocalSettingsManager(root, agentDir);
+
+    expect(settings.getEditorPaddingX()).toBe(0);
+  });
+
+  it('turns off Pi cache warming only when it is not configured', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    const settings = createLocalSettingsManager(root, agentDir);
+
+    expect(settings.getCacheWarmingMode()).toBe('off');
+  });
+
+  it('defaults to grouped tool display and rejects invalid values', () => {
+    expect(getLocalToolDisplayMode(settingsWith({}))).toBe('grouped');
+    expect(() => getLocalToolDisplayMode(settingsWith({ felanTui: 'grouped' })))
+      .toThrow('felanTui must be an object');
+    expect(() => getLocalToolDisplayMode(settingsWith({ felanTui: { toolDisplay: 'compact' } })))
+      .toThrow('felanTui.toolDisplay must be "grouped" or "full"');
+  });
+
+  it('defaults output style to concise and rejects invalid values', () => {
+    expect(getLocalOutputStyle(settingsWith({}))).toBe('concise');
+    expect(getLocalOutputStyle(settingsWith({ outputStyle: 'explanatory' }))).toBe('explanatory');
+    expect(getLocalOutputStyle(settingsWith({ extensionConfig: { outputStyle: { style: 'custom' } } }))).toBe('custom');
+    expect(() => getLocalOutputStyle(settingsWith({ outputStyle: 'caveman' })))
+      .toThrow('outputStyle must be one of: concise, explanatory, custom');
+    expect(() => getLocalOutputStyle(settingsWith({ extensionConfig: { outputStyle: { style: 'caveman' } } })))
+      .toThrow('outputStyle must be one of: concise, explanatory, custom');
+    expect(() => getLocalOutputStyle(settingsWith({ outputStyle: 'verbose' })))
+      .toThrow('outputStyle must be one of: concise, explanatory, custom');
+    expect(() => getLocalOutputStyle(settingsWith({ outputStyle: { path: '/tmp/prompt' } })))
+      .toThrow('outputStyle must be one of: concise, explanatory, custom');
+  });
+
+  it('warns and defaults removed caveman extension configuration to concise', () => {
+    const resolved = resolveExtensionConfigSettings({
+      extensionConfig: { outputStyle: { style: 'caveman' } },
+    }, [OUTPUT_STYLE_CONFIG]);
+    const outputStyle = resolved.configs.get('outputStyle');
+
+    expect(outputStyle).toEqual({ style: 'concise', instructions: '', instructionsFile: '' });
+    expect(resolved.warnings).toEqual([
+      'settings.json.extensionConfig.outputStyle.style must be one of: concise, explanatory, custom; using the default value.',
+    ]);
+    expect(getLocalOutputStyle(settingsWith({}), outputStyle)).toBe('concise');
+  });
+
+  it('persists dependency choices without replacing unrelated global settings', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      defaultProvider: 'anthropic',
+      felanTui: { toolDisplay: 'full' },
+    }));
+
+    await Promise.all([
+      setBuiltinExtensionEnabled(agentDir, 'markitdown', false),
+      setDependencyOnboardingDecision(agentDir, {
+        extension: 'rtkOptimizer',
+        revision: 1,
+        enabled: true,
+      }),
+    ]);
+
+    const settings = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8'));
+    expect(settings).toMatchObject({
+      defaultProvider: 'anthropic',
+      builtinExtensions: { markitdown: false },
+      felanTui: {
+        toolDisplay: 'full',
+        onboarding: { schemaVersion: 1, extensions: { rtkOptimizer: 1 } },
+      },
+    });
+    expect(isBuiltinExtensionEnabled(settings, 'markitdown')).toBe(false);
+    expect(isDependencyOnboardingComplete(settings, 'rtkOptimizer', 1)).toBe(true);
+    expect(isDependencyOnboardingComplete(settings, 'rtkOptimizer', 2)).toBe(false);
+    const manager = createLocalSettingsManager(root, agentDir);
+    expect(isDependencyOnboardingComplete(getFelanSettings(manager), 'rtkOptimizer', 1)).toBe(true);
+    await setDependencyOnboardingDecision(agentDir, {
+      extension: 'rtkOptimizer',
+      revision: 2,
+      enabled: false,
+    });
+    const cleared = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8'));
+    expect(cleared.felanTui).toEqual({
+      toolDisplay: 'full',
+      onboarding: { schemaVersion: 1, extensions: { rtkOptimizer: 2 } },
+    });
+    expect(cleared.builtinExtensions.rtkOptimizer).toBe(false);
+  });
+
+  it('treats legacy, malformed, and mismatched onboarding records as incomplete', () => {
+    expect(isDependencyOnboardingComplete({ felanTui: { dependencyOnboarding: { rtk: 'continue' } } }, 'rtkOptimizer', 1)).toBe(false);
+    expect(isDependencyOnboardingComplete({ felanTui: { onboarding: { schemaVersion: 2, extensions: { rtkOptimizer: 1 } } } }, 'rtkOptimizer', 1)).toBe(false);
+    expect(isDependencyOnboardingComplete({ felanTui: { onboarding: { schemaVersion: 1, extensions: { rtkOptimizer: '1' } } } }, 'rtkOptimizer', 1)).toBe(false);
+    expect(isDependencyOnboardingComplete({ felanTui: { onboarding: { schemaVersion: 1, extensions: { rtkOptimizer: 2 } } } }, 'rtkOptimizer', 1)).toBe(false);
+  });
+
+  it('persists namespaced extension configuration without replacing unrelated settings', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ defaultModel: 'model', outputStyle: 'concise' }));
+
+    await setExtensionConfigValue(agentDir, 'prewalk', 'entryApproval', 'allow');
+
+    const settings = getFelanSettings(createLocalSettingsManager(root, agentDir));
+    expect(settings.extensionConfig?.prewalk?.entryApproval).toBe('allow');
+    const config = defineExtensionConfig({
+      id: 'prewalk',
+      title: 'Prewalk',
+      fields: {
+        entryApproval: configField.enum(['ask', 'allow', 'deny'], {
+          default: 'ask',
+          description: 'Approval policy for model-entered Prewalk',
+        }),
+      },
+    });
+    const resolved = resolveExtensionConfigSettings(settings, [config]);
+    expect(resolved.overrides).toEqual([{
+      extensionId: 'prewalk',
+      values: { entryApproval: 'allow' },
+      source: 'settings.json.extensionConfig.prewalk',
+    }]);
+    expect(resolved.configs.get('prewalk')).toEqual({ entryApproval: 'allow' });
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it('reads the browser authorization policy and restores ask when configured', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), '{}\n');
+    const manager = createLocalSettingsManager(root, agentDir);
+
+    expect(getBrowserAuthorizationPolicy(manager)).toBe('ask');
+    await setExtensionConfigValue(agentDir, 'browser', 'authorizationPolicy', 'always-allow');
+    await manager.reload();
+    expect(getBrowserAuthorizationPolicy(manager)).toBe('always-allow');
+    await setExtensionConfigValue(agentDir, 'browser', 'authorizationPolicy', 'ask');
+    await manager.reload();
+    expect(getBrowserAuthorizationPolicy(manager)).toBe('ask');
+  });
+
+  it('warns and uses defaults for invalid persisted extension configuration', () => {
+    const config = defineExtensionConfig({
+      id: 'prewalk',
+      title: 'Prewalk',
+      fields: {
+        entryApproval: configField.enum(['ask', 'allow', 'deny'], {
+          default: 'ask',
+          description: 'Approval policy for model-entered Prewalk',
+        }),
+        restorePlanner: configField.boolean({
+          default: true,
+          description: 'Restore the planner after implementation',
+        }),
+      },
+    });
+    const resolved = resolveExtensionConfigSettings({
+      extensionConfig: {
+        prewalk: {
+          entryApproval: 'always',
+          restorePlanner: false,
+          removedField: true,
+        },
+      },
+    }, [config]);
+
+    expect(resolved.overrides).toEqual([{
+      extensionId: 'prewalk',
+      values: { restorePlanner: false },
+      source: 'settings.json.extensionConfig.prewalk',
+    }]);
+    expect(resolved.configs.get('prewalk')).toEqual({
+      entryApproval: 'ask',
+      restorePlanner: false,
+    });
+    expect(resolved.warnings).toEqual([
+      'settings.json.extensionConfig.prewalk.entryApproval must be one of: ask, allow, deny; using the default value.',
+      'settings.json.extensionConfig.prewalk contains unknown field: prewalk.removedField; ignoring it.',
+    ]);
+  });
+
+  it('redacts sensitive extension values in settings presentation', async () => {
+    const field = {
+      type: 'string' as const,
+      default: '',
+      description: 'Credential source',
+      sensitive: true,
+    };
+    expect(formatExtensionSettingDisplayValue(field, '$OPENAI_API_KEY')).toBe('configured');
+    expect(formatExtensionSettingDisplayValue(field, '')).toBe('not set');
+    expect(parseExtensionSettingValue(field, '')).toBe('');
+    expect(parseExtensionSettingValue(field, '$OPENAI_API_KEY')).toBe('$OPENAI_API_KEY');
+  });
+
+  it('preserves a configured sensitive value when its blank editor is submitted', () => {
+    const definitions: readonly ExtensionConfigDefinition[] = [{
+      id: 'webAccess',
+      title: 'Web Access',
+      fields: {
+        openaiApiKey: {
+          type: 'string',
+          default: '',
+          label: 'OpenAI API key',
+          description: 'OpenAI credential source',
+          sensitive: true,
+        },
+      },
+    }];
+    const settings = openExtensionSettings(
+      definitions,
+      '/tmp/felan-settings-test-unused',
+      settingsWith({ extensionConfig: { webAccess: { openaiApiKey: '$OPENAI_API_KEY' } } }),
+    );
+    settings.handleInput?.('web');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('configured');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('Enter a value:');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('configured');
+  });
+
+  it('keeps an editor open and reports invalid scalar input', () => {
+    const definitions: readonly ExtensionConfigDefinition[] = [{
+      id: 'powerline',
+      title: 'Powerline',
+      fields: {
+        padding: {
+          type: 'number',
+          default: 1,
+          description: 'Horizontal padding',
+        },
+      },
+    }];
+    const settings = openExtensionSettings(definitions);
+    settings.handleInput?.('powerline');
+    settings.handleInput?.('\r');
+    settings.handleInput?.('\r');
+    settings.handleInput?.('x');
+    settings.handleInput?.('\r');
+    const rendered = settings.render(100).join('\n');
+    expect(rendered).toContain('Enter a value:');
+    expect(rendered).toContain('Invalid value: Setting value must be a number');
+  });
+
+  it('rolls back an enum value when persistence fails', async () => {
+    const root = await temporaryDirectory();
+    const invalidAgentDir = join(root, 'not-a-directory');
+    await writeFile(invalidAgentDir, 'file');
+    const definitions: readonly ExtensionConfigDefinition[] = [{
+      id: 'prewalk',
+      title: 'Prewalk',
+      fields: {
+        entryApproval: {
+          type: 'string',
+          default: 'ask',
+          description: 'Approval policy for model-entered Prewalk',
+          values: ['ask', 'allow', 'deny'],
+        },
+      },
+    }];
+    const settings = openExtensionSettings(definitions, invalidAgentDir);
+    settings.handleInput?.('prewalk');
+    settings.handleInput?.('\r');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('allow');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('deny');
+    await vi.waitFor(() => {
+      expect(settings.render(100).join('\n')).toContain('ask (save failed)');
+    });
+  });
+
+  it('groups extension settings into fuzzy-searchable submenus', () => {
+    const definitions: readonly ExtensionConfigDefinition[] = [
+      {
+        id: 'webAccess',
+        title: 'Web Access',
+        fields: {
+          openaiApiKey: {
+            type: 'string',
+            default: '',
+            label: 'OpenAI API key',
+            description: 'OpenAI credential source',
+          },
+        },
+      },
+      {
+        id: 'rtkOptimizer',
+        title: 'RTK Optimizer',
+        fields: {
+          mode: {
+            type: 'string',
+            default: 'rewrite',
+            label: 'Rewrite mode',
+            description: 'Command rewrite mode',
+            values: ['rewrite', 'suggest'],
+          },
+        },
+      },
+    ];
+    const navigation = createExtensionSettingsHarness(definitions);
+    navigation.current().handleInput?.('\r');
+    expect(navigation.current().render(100).join('\n')).toContain('Native Pi settings');
+    navigation.current().handleInput?.('\x1b');
+    expect(navigation.current().render(100).join('\n')).toContain('General settings');
+
+    const extensionSearch = openExtensionSettings(definitions);
+    const rootItems = extensionSearch.render(100).join('\n');
+    expect(rootItems).toContain('General settings');
+    expect(rootItems).toContain('Web Access');
+    expect(rootItems).toContain('RTK Optimizer');
+    expect(rootItems).not.toContain('OpenAI API key');
+
+    extensionSearch.handleInput?.('wbacc');
+    const extensionResults = extensionSearch.render(100).join('\n');
+    expect(extensionResults).toContain('Web Access');
+    expect(extensionResults).not.toContain('RTK Optimizer');
+    extensionSearch.handleInput?.('\r');
+    const webAccessSettings = extensionSearch.render(100).join('\n');
+    expect(webAccessSettings).toContain('OpenAI API key');
+    expect(webAccessSettings).not.toContain('RTK Optimizer');
+    extensionSearch.handleInput?.('\x1b');
+    expect(extensionSearch.render(100).join('\n')).toContain('Web Access');
+
+    const settingSearch = openExtensionSettings(definitions);
+    settingSearch.handleInput?.('rtk');
+    settingSearch.handleInput?.('\r');
+    settingSearch.handleInput?.('mode');
+    const settingResults = settingSearch.render(100).join('\n');
+    expect(settingResults).toContain('Rewrite mode');
+    expect(settingResults).not.toContain('OpenAI API key');
+  });
+
+  it('hides deprecated Codex fast without changing its stored value', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    const path = join(agentDir, 'settings.json');
+    await writeFile(path, JSON.stringify({ extensionConfig: { codex: { fast: true } } }));
+    const manager = createLocalSettingsManager(root, agentDir);
+    const harness = createExtensionSettingsHarness([CODEX_CONFIG], agentDir, manager);
+    harness.current().handleInput?.('codex');
+    harness.current().handleInput?.('\r');
+    const rendered = harness.current().render(100).join('\n');
+    expect(rendered).toContain('priority');
+    expect(rendered).not.toContain('Legacy fast mode');
+    expect(rendered).not.toMatch(/\bfast\s+true\b/);
+    expect(JSON.parse(await readFile(path, 'utf8')).extensionConfig.codex).toEqual({ fast: true });
+
+    harness.current().handleInput?.('\r');
+    await vi.waitFor(async () => {
+      expect(JSON.parse(await readFile(path, 'utf8')).extensionConfig.codex)
+        .toEqual({ fast: true, priority: 'normal' });
+    });
+  });
+
+  it('leaves optional enums unset on viewing and persists only a selected choice', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    const path = join(agentDir, 'settings.json');
+    await writeFile(path, '{}\n');
+    const manager = createLocalSettingsManager(root, agentDir);
+    const definition = defineExtensionConfig({
+      id: 'codex',
+      title: 'Codex',
+      fields: {
+        priority: configField.optionalEnum(['normal', 'fast', 'ultrafast'], {
+          description: 'Service priority; omit to use the fast setting',
+        }),
+      },
+    });
+    const harness = createExtensionSettingsHarness([definition], agentDir, manager);
+    harness.current().handleInput?.('codex');
+    harness.current().handleInput?.('\r');
+    expect(harness.current().render(100).join('\n')).toContain('not set');
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({});
+
+    harness.current().handleInput?.('\r');
+    expect(harness.current().render(100).join('\n')).toContain('normal');
+    await vi.waitFor(async () => {
+      expect(JSON.parse(await readFile(path, 'utf8')).extensionConfig.codex)
+        .toEqual({ priority: 'normal' });
+    });
+  });
+
+  it('cycles and persists enum values from an extension submenu', async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, '.felan');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), '{}\n');
+    const manager = createLocalSettingsManager(root, agentDir);
+    const definitions: readonly ExtensionConfigDefinition[] = [{
+      id: 'prewalk',
+      title: 'Prewalk',
+      fields: {
+        entryApproval: {
+          type: 'string',
+          default: 'ask',
+          description: 'Approval policy for model-entered Prewalk',
+          values: ['ask', 'allow', 'deny'],
+        },
+      },
+    }];
+    const harness = createExtensionSettingsHarness(definitions, agentDir, manager);
+    const settings = harness.current();
+    settings.handleInput?.('prewalk');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('ask');
+
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('allow');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('deny');
+    settings.handleInput?.('\r');
+    expect(settings.render(100).join('\n')).toContain('ask');
+    await vi.waitFor(async () => {
+      const persisted = JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8'));
+      expect(persisted.extensionConfig.prewalk.entryApproval).toBe('ask');
+    });
+    await vi.waitFor(() => {
+      expect(getFelanSettings(manager).extensionConfig?.prewalk?.entryApproval).toBe('ask');
+    });
+
+    harness.open();
+    harness.current().handleInput?.('prewalk');
+    harness.current().handleInput?.('\r');
+    expect(harness.current().render(100).join('\n')).toContain('ask');
+  });
+});
+
+interface ExtensionSettingsHarness {
+  current(): Component;
+  open(): void;
+}
+
+function createExtensionSettingsHarness(
+  definitions: readonly ExtensionConfigDefinition[],
+  agentDir = '/tmp/felan-settings-test-unused',
+  settingsManager: SettingsManager = settingsWith({}),
+): ExtensionSettingsHarness {
+  let selector: { component: Component; focus: Focusable } | undefined;
+  let nativeDone = () => {};
+  const nativeSettings: Component & Focusable = {
+    focused: false,
+    render: () => ['Native Pi settings'],
+    handleInput(data: string) {
+      if (data === '\x1b') nativeDone();
+    },
+  };
+  const mode: {
+    showSettingsSelector(): void;
+    showSelector(create: (done: () => void) => { component: Component; focus: Focusable }): void;
+  } = {
+    showSettingsSelector() {
+      mode.showSelector((done) => {
+        nativeDone = done;
+        return { component: nativeSettings, focus: nativeSettings };
+      });
+    },
+    showSelector(create: (done: () => void) => { component: Component; focus: Focusable }) {
+      selector = create(() => {});
+    },
+  };
+  installFelanSettingsCommand(mode, {
+    agentDir,
+    settingsManager,
+    definitions,
+  });
+  const current = (): Component => {
+    if (!selector) throw new Error('Settings selector was not created');
+    return selector.component;
+  };
+  mode.showSettingsSelector();
+  return { current, open: () => mode.showSettingsSelector() };
+}
+
+function openExtensionSettings(
+  definitions: readonly ExtensionConfigDefinition[],
+  agentDir = '/tmp/felan-settings-test-unused',
+  settingsManager: SettingsManager = settingsWith({}),
+): Component {
+  return createExtensionSettingsHarness(definitions, agentDir, settingsManager).current();
+}
+
+function settingsWith(settings: Record<string, unknown>): SettingsManager {
+  return { getGlobalSettings: () => settings } as unknown as SettingsManager;
+}
+
+async function temporaryDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'felan-tui-settings-'));
+  temporaryPaths.push(path);
+  return path;
+}

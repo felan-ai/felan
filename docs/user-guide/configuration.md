@@ -8,14 +8,14 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 
 | Path | Purpose |
 | --- | --- |
-| `settings.json` | Built-in enablement, extension configuration, local TUI behavior, model scope, and subagent limits |
+| `settings.json` | Daemon-owned built-in enablement, extension configuration, model scope, and subagent limits |
 | `trust.json` | Remembered folder trust for optional project Pi extensions |
 | `models.json` | Pi provider credentials, custom models, and model metadata overrides |
 | `APPEND_SYSTEM.md` | Optional local application prompt append |
 | `mcp.json` | Felan-owned remote OAuth MCP servers |
 | `<workspace>/.mcp.json` | Project MCP entries; higher precedence by server name |
 | `agents/*.md` | Felan-specific user agent definitions |
-| `themes/*.json` | User Pi themes; same JSON `name` as `felan-light` or `felan-dark` shadows the packaged theme |
+| `themes/*.json` | Client-local user themes; same JSON `name` as `felan-light` or `felan-dark` shadows the packaged theme |
 
 The local host does not read Pi project settings. Configuration for ambient Pi
 extensions, prompts, packages, themes, or skills is filtered by default. Load a
@@ -175,7 +175,9 @@ When `piExtensions.user` is `true`, interactive root TUI sessions load
 parent-folder decisions apply. Trusting a folder authorizes those extension
 files only. It does not load Pi project settings, packages, skills, prompts, or
 themes. These directories are not loaded in headless, ACP, or subagent sessions.
-`--extension`/`-e` remains additive.
+`--extension`/`-e` remains additive. Executable extension paths are fixed when a
+session is created. An attach cannot replace them: omit `-e` to retain the
+existing paths, or create a new session with another path set.
 
 `builtinExtensions.sessionTitle` controls automatic names for interactive root
 sessions. Disable it to keep the first prompt as the session-picker fallback.

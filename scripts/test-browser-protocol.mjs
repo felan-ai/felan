@@ -519,7 +519,7 @@ async function validateWrapperExecution(context, args, localOnly) {
 
 async function wrapperScenario(context, connectionLoss) {
   const { createBrowserExtension } = await import('../packages/ext-browser/dist/index.js');
-  const { createChromeConnectionLease } = await import('../apps/tui/dist/browser/connection-lease.js');
+  const { createChromeConnectionLease } = await import('../apps/daemon/dist/browser/connection-lease.js');
   const upstream = new URL(await context.fake.start());
   const tools = new Map();
   const shutdown = [];

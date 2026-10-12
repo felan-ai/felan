@@ -37,8 +37,9 @@ not started, in progress, and done. `/tasks` retains ready, blocked, waiting,
 cancelled, and dependency details. Details group lifecycle, execution, dependency,
 work-context, and timeline information. Related tasks show their availability
 and title, while the graph shows both prerequisite and dependent directions.
-Headless and cloud sessions use the same tools and storage without registering TUI
-controls.
+Headless and cloud sessions use the same tools and storage. The command remains
+discoverable but reports unavailable presentation when no compatible UI host is
+provided; keyboard shortcuts remain TUI-only.
 
 The interactive view defaults to inline rendering with two full-width horizontal
 separators. Set
@@ -63,6 +64,26 @@ import tasksExtension from '@felan-ai/ext-tasks';
 
 const extension = tasksExtension;
 ```
+
+The default export owns execution without implicitly loading a TUI. To retain
+the local interactive view, supply its explicit host:
+
+```ts
+import { createTasksExtension } from '@felan-ai/ext-tasks';
+import { createTuiTasksHost } from '@felan-ai/ext-tasks/tui';
+
+const extension = createTasksExtension(createTuiTasksHost());
+```
+
+Version 0.8.0 changes the default export's interactive behavior. Existing
+consumers that need the task view
+must migrate to the explicit host. The host receives only a read-only snapshot
+and subscription source, not the task store or mutation methods.
+
+Daemon clients use the versioned `felan.tasks` presenter and bounded, coherent
+view pages. Overview data and selected details are separate; large notes and
+results are not copied into every task row. Reconnect rebuilds the view from the
+session snapshot, while task execution and persistence remain daemon-owned.
 
 The package owns the root-session graph, persistence, dependency validation,
 task tools, and optional TUI view. The host supplies `AgentRuntime.storage('session')`

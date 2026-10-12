@@ -100,7 +100,7 @@ export function createAskUserExtension(host: AskUserHost): FelanExtension {
       parameters: AskUserParameters,
       prepareArguments: (args: unknown) => prepareAskUserArguments(args) as AskUserParams,
       async execute(toolCallId, params: AskUserParams, signal, onUpdate, extensionContext) {
-        const normalized = normalizeAskUserRequest(params as AskUserInput);
+        const normalized = normalizeAskUserRequest({ ...pi.config, ...params } as AskUserInput);
         if (!normalized.ok) return toolError(normalized.error);
         const request = normalized.value;
         const effectiveSignal = signal ?? new AbortController().signal;

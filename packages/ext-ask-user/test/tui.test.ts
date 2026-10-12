@@ -6,7 +6,7 @@ import type {
   AskUserHostExecutionContext,
   AskUserRequest,
 } from '../src/index.js';
-import { createTuiAskUserHost } from '../src/tui.js';
+import { createTuiAskUserHost, createTuiAskUserPresenter } from '../src/tui.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -14,6 +14,23 @@ afterEach(() => {
 });
 
 describe('createTuiAskUserHost', () => {
+  it('presents directly without an extension session context', async () => {
+    const { context } = tuiContext(component => {
+      component.handleInput?.('\u001b[B'); component.handleInput?.('\r');
+    });
+    await expect(createTuiAskUserPresenter().present(singleRequest(), {
+      ui: context.ui, signal: new AbortController().signal,
+    })).resolves.toMatchObject({ status: 'answered', answers: [{ questionId: 'q1', response: { selections: ['Beta'] } }] });
+  });
+
+  it('does not open a presenter for an already-aborted signal', async () => {
+    const opened = vi.fn(); const { context } = tuiContext(opened);
+    const controller = new AbortController(); controller.abort();
+    await expect(createTuiAskUserPresenter().present(singleRequest(), { ui: context.ui, signal: controller.signal }))
+      .resolves.toEqual({ status: 'cancelled', reason: 'abort' });
+    expect(opened).not.toHaveBeenCalled();
+  });
+
   it('searches single-select options with descriptions', async () => {
     const { context } = tuiContext((component) => {
       component.handleInput?.('b');

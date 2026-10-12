@@ -30,6 +30,30 @@ built-in; set `builtinExtensions.contextView` to `false` to disable it.
 import contextViewExtension from '@felan-ai/ext-context-view';
 ```
 
+The default export collects the report and retains the compact headless
+notification. Interactive hosts now opt into the renderer explicitly:
+
+```ts
+import { createContextViewExtension } from '@felan-ai/ext-context-view';
+import { createTuiContextViewHost } from '@felan-ai/ext-context-view/tui';
+
+const extension = createContextViewExtension(createTuiContextViewHost());
+```
+
+The TUI subpath also exports `ContextUsageOverlay`. Moving that class and
+removing implicit interactive rendering are breaking changes in 0.7.0, not a
+patch release. Active views close and settle on
+session shutdown.
+
+The daemon/client adapter uses the validated `./view` contract. It sends only
+report measurements, bounded display labels, and the eight detail rows already
+shown by the overlay, with accurate total counts for `+N more`. It does not send
+prompt text, memory documents, credentials, or runtime handles. The interaction
+can only be closed; it cannot change the model or context. Unknown context
+windows remain unknown, and the report remains an estimate, not a billing
+measurement. Felan's local daemon/client composition uses this adapter;
+Windows support for the local daemon remains deferred.
+
 The package consumes the public Pi composition surface from
 `@felan-ai/agent-core` and the pinned `@earendil-works/pi-tui` dependency. It
 performs no filesystem, network, credential, or host-specific I/O.

@@ -46,6 +46,15 @@ describe('@felan-ai/ext-ask-user core', () => {
     expect(schema.properties.overlayToggleKey.anyOf).toBeUndefined();
   });
 
+  it('applies extension display defaults before crossing the host boundary and permits request overrides', async () => {
+    const ask = vi.fn(answeringHost().ask);
+    const harness = createHarness({ ask }, { displayMode: 'overlay', singleSelectLayout: 'list', overlayToggleKey: 'off', commentToggleKey: 'ctrl+g' });
+    await harness.execute({ question: 'Name?' });
+    expect(ask.mock.calls[0]?.[0]).toMatchObject({ displayMode: 'overlay', singleSelectLayout: 'list', overlayToggleKey: 'off', commentToggleKey: 'ctrl+g' });
+    await harness.execute({ question: 'Name?', displayMode: 'inline', overlayToggleKey: 'alt+x' });
+    expect(ask.mock.calls[1]?.[0]).toMatchObject({ displayMode: 'inline', singleSelectLayout: 'list', overlayToggleKey: 'alt+x' });
+  });
+
   it('normalizes defaults, inherited wizard values, and stable ids', () => {
     const normalized = normalizeAskUserRequest({
       context: ' Shared context ',
@@ -238,10 +247,11 @@ function answeringHost(): AskUserHost {
   };
 }
 
-function createHarness(host: AskUserHost) {
+function createHarness(host: AskUserHost, config: Record<string, unknown> = {}) {
   let tool!: ToolDefinition<any, any, any>;
   const capabilities: Array<{ id: string; instructions: string }> = [];
   const pi = {
+    config,
     registerCapability: (capability: { id: string; instructions: string }) => capabilities.push(capability),
     registerTool: (definition: ToolDefinition<any, any, any>) => {
       tool = definition;

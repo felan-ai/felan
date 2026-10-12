@@ -1,0 +1,189 @@
+{
+  "name": "@felan-ai/daemon",
+  "version": "0.1.0",
+  "description": "Felan session daemon, local execution host and profile contracts",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felan-ai/felan.git",
+    "directory": "apps/daemon"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "prepack": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "catalog:pi",
+    "@earendil-works/pi-tui": "catalog:pi",
+    "@felan-ai/agent-core": "workspace:*",
+    "@felan-ai/ext-ask-user": "workspace:*",
+    "@felan-ai/ext-background-bash": "workspace:*",
+    "@felan-ai/ext-browser": "workspace:*",
+    "@felan-ai/ext-codebase-memory": "workspace:*",
+    "@felan-ai/ext-codex": "workspace:*",
+    "@felan-ai/ext-context": "workspace:*",
+    "@felan-ai/ext-context-view": "workspace:*",
+    "@felan-ai/ext-felan-api": "workspace:*",
+    "@felan-ai/ext-fusion": "workspace:*",
+    "@felan-ai/ext-insights": "workspace:*",
+    "@felan-ai/ext-markitdown": "workspace:*",
+    "@felan-ai/ext-mcp": "workspace:*",
+    "@felan-ai/ext-memory": "workspace:*",
+    "@felan-ai/ext-model-tools": "workspace:*",
+    "@felan-ai/ext-output-style": "workspace:*",
+    "@felan-ai/ext-powerline": "workspace:*",
+    "@felan-ai/ext-prewalk": "workspace:*",
+    "@felan-ai/ext-prompt-history": "workspace:*",
+    "@felan-ai/ext-rtk-optimizer": "workspace:*",
+    "@felan-ai/ext-session-title": "workspace:*",
+    "@felan-ai/ext-session-compaction": "workspace:*",
+    "@felan-ai/ext-subagents": "workspace:*",
+    "@felan-ai/ext-tasks": "workspace:*",
+    "@felan-ai/ext-web-access": "workspace:*",
+    "@felan-ai/session-protocol": "workspace:*",
+    "@modelcontextprotocol/client": "2.2.0",
+    "@napi-rs/keyring": "1.3.0",
+    "koffi": "3.3.2",
+    "open": "11.0.0",
+    "typebox": "1.1.38",
+    "zod": "4.4.3"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./daemon-profile": {
+      "types": "./dist/daemon/profile.d.ts",
+      "import": "./dist/daemon/profile.js"
+    },
+    "./internal/classifier": {
+      "types": "./dist/classifier.d.ts",
+      "import": "./dist/classifier.js"
+    },
+    "./internal/codemode": {
+      "types": "./dist/codemode.d.ts",
+      "import": "./dist/codemode.js"
+    },
+    "./internal/codex": {
+      "types": "./dist/codex.d.ts",
+      "import": "./dist/codex.js"
+    },
+    "./internal/daemon/ipc": {
+      "types": "./dist/daemon/ipc.d.ts",
+      "import": "./dist/daemon/ipc.js"
+    },
+    "./internal/daemon/ownership": {
+      "types": "./dist/daemon/ownership.d.ts",
+      "import": "./dist/daemon/ownership.js"
+    },
+    "./internal/daemon/supervisor": {
+      "types": "./dist/daemon/supervisor.d.ts",
+      "import": "./dist/daemon/supervisor.js"
+    },
+    "./internal/daemon/target": {
+      "types": "./dist/daemon/target.d.ts",
+      "import": "./dist/daemon/target.js"
+    },
+    "./internal/extensions": {
+      "types": "./dist/extensions.d.ts",
+      "import": "./dist/extensions.js"
+    },
+    "./internal/herdr": {
+      "types": "./dist/herdr.d.ts",
+      "import": "./dist/herdr.js"
+    },
+    "./internal/local-resources": {
+      "types": "./dist/local-resources.d.ts",
+      "import": "./dist/local-resources.js"
+    },
+    "./internal/llama/extension": {
+      "types": "./dist/llama/extension.d.ts",
+      "import": "./dist/llama/extension.js"
+    },
+    "./internal/logger": {
+      "types": "./dist/logger.d.ts",
+      "import": "./dist/logger.js"
+    },
+    "./internal/memory/coordinator": {
+      "types": "./dist/memory/coordinator.d.ts",
+      "import": "./dist/memory/coordinator.js"
+    },
+    "./internal/memory/history": {
+      "types": "./dist/memory/history.d.ts",
+      "import": "./dist/memory/history.js"
+    },
+    "./internal/memory/control": {
+      "types": "./dist/memory/control.d.ts",
+      "import": "./dist/memory/control.js"
+    },
+    "./internal/memory/project": {
+      "types": "./dist/memory/project.d.ts",
+      "import": "./dist/memory/project.js"
+    },
+    "./internal/memory/run": {
+      "types": "./dist/memory/run.d.ts",
+      "import": "./dist/memory/run.js"
+    },
+    "./internal/memory/store": {
+      "types": "./dist/memory/store.d.ts",
+      "import": "./dist/memory/store.js"
+    },
+    "./internal/model-defaults": {
+      "types": "./dist/model-defaults.d.ts",
+      "import": "./dist/model-defaults.js"
+    },
+    "./internal/pi-lock": {
+      "types": "./dist/pi-lock.d.ts",
+      "import": "./dist/pi-lock.js"
+    },
+    "./internal/prompt-history": {
+      "types": "./dist/prompt-history.d.ts",
+      "import": "./dist/prompt-history.js"
+    },
+    "./internal/runtime-factory": {
+      "types": "./dist/runtime-factory.d.ts",
+      "import": "./dist/runtime-factory.js"
+    },
+    "./internal/safe-tools": {
+      "types": "./dist/safe-tools.d.ts",
+      "import": "./dist/safe-tools.js"
+    },
+    "./internal/savings": {
+      "types": "./dist/savings.d.ts",
+      "import": "./dist/savings.js"
+    },
+    "./internal/settings": {
+      "types": "./dist/settings.d.ts",
+      "import": "./dist/settings.js"
+    },
+    "./internal/subagents/host": {
+      "types": "./dist/subagents/host.d.ts",
+      "import": "./dist/subagents/host.js"
+    },
+    "./internal/system-prompt": {
+      "types": "./dist/system-prompt.d.ts",
+      "import": "./dist/system-prompt.js"
+    },
+    "./internal/subagents/presentation": {
+      "types": "./dist/subagents/presentation.d.ts",
+      "import": "./dist/subagents/presentation.js"
+    }
+  }
+}

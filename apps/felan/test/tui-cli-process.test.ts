@@ -1,0 +1,97 @@
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { afterEach, expect, it } from 'vitest';
+import { HostAgentRuntime, type AgentRuntimeProcess } from '@felan-ai/agent-core';
+import { clientDaemonTarget } from '../src/client-application.js';
+import { SessionClient } from '../src/client/client.js';
+import { DaemonConfiguration } from '../../daemon/src/daemon/configuration.js';
+import { SessionServer } from '../../daemon/src/daemon/server.js';
+import { gate, serverFixture } from '../../daemon/test/fixtures/server.js';
+import { DAEMON_VERSION } from '@felan-ai/daemon';
+import { stripTerminalSequences } from '@earendil-works/pi-tui';
+
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+
+async function fixture(hold = false, version = DAEMON_VERSION) {
+  const entered = gate(); const release = gate();
+  const f = await serverFixture({ now: Date.now, namespace: directory => {
+    const target = clientDaemonTarget({ daemonRuntime: directory });
+    if (target.kind !== 'isolated') throw new Error('Expected an isolated target');
+    return target.namespaceId;
+  }, onStream: async () => { entered.resolve(); if (hold) await release.promise; } });
+  let server: SessionServer | undefined;
+  const processes: AgentRuntimeProcess[] = []; const clients: SessionClient[] = [];
+  cleanups.push(async () => {
+    release.resolve();
+    const results = await Promise.allSettled(processes.map(async process => { try { await process.terminate('SIGKILL'); } finally { await process.dispose(); } }));
+    try { for (const client of clients) client.close(); server?.close(); }
+    finally { await f.dispose(); }
+    const errors = results.filter(result => result.status === 'rejected').map(result => result.reason);
+    if (errors.length) throw new AggregateError(errors, 'Client process cleanup failed.');
+  });
+  const runtime = new HostAgentRuntime(f.cwd, { sessionStorageRoot: join(f.directory, 'test-session'), agentStorageRoot: join(f.directory, 'test-agent') });
+  server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version,
+    configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() }) });
+  await server.start();
+  async function launch(message: string) {
+    const command = [process.execPath, fileURLToPath(new URL('../dist/cli.js', import.meta.url)), '--daemon-runtime', f.directory,
+      '--session', f.root.sessionId, message].map(quote).join(' ');
+    const child = await runtime.terminals!.startShell(`exec ${command}`); processes.push(child); return child;
+  }
+  async function client() {
+    const value = new SessionClient({ target: clientDaemonTarget({ daemonRuntime: f.directory }), expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui' });
+    clients.push(value); await value.connect(); await value.attach(f.root.sessionId); return value;
+  }
+  return { ...f, entered, release, launch, client };
+}
+
+it('runs the emitted CLI over a real PTY and detaches without closing its daemon session', async () => {
+  const f = await fixture(); const child = await f.launch('real terminal prompt');
+  const output = await readUntil(child, text => {
+    const visible = stripTerminalSequences(text);
+    // Viewport diffs need not re-emit an unchanged idle line after the final text.
+    return visible.includes('Felan') && visible.includes('real terminal prompt')
+      && visible.includes('done') && visible.includes('live · idle') && f.store.session(f.root.sessionId).run.state === 'idle';
+  });
+  expect(output).not.toContain('Runtime: host');
+  expect(f.store.session(f.root.sessionId).run.state).toBe('idle');
+  await child.write(new TextEncoder().encode('\x04'));
+  await readUntil(child, (_text, running) => !running);
+  expect(f.store.session(f.root.sessionId).state).toBe('open');
+  const observer = await f.client(); expect(observer.getAttachment(f.root.sessionId)?.state.snapshot?.state).toBe('open');
+  expect(observer.getAttachment(f.root.sessionId)?.state.snapshot?.run.state).toBe('idle');
+}, 20_000);
+
+it('keeps an active daemon run alive after the terminal client is killed', async () => {
+  const f = await fixture(true); const child = await f.launch('survive terminal loss');
+  await f.entered.promise;
+  await child.terminate('SIGKILL');
+  expect(f.store.session(f.root.sessionId).run.state).toBe('running');
+  const observer = await f.client();
+  expect(observer.getAttachment(f.root.sessionId)?.state.snapshot?.run.state).toBe('running');
+  f.release.resolve();
+}, 20_000);
+
+it('requires consent for an incompatible daemon and exits without submitting input when declined', async () => {
+  const f = await fixture(false, 'incompatible-fixture'); const count = f.root.runtime.session.messages.length;
+  const child = await f.launch('must remain unsubmitted');
+  await readUntil(child, text => text.includes('Daemon version mismatch'));
+  await child.write(new TextEncoder().encode('\r'));
+  await readUntil(child, (_text, running) => !running);
+  expect(f.root.runtime.session.messages).toHaveLength(count);
+  expect(f.store.session(f.root.sessionId).state).toBe('open');
+}, 20_000);
+
+async function readUntil(process: AgentRuntimeProcess, predicate: (text: string, running: boolean) => boolean): Promise<string> {
+  const deadline = performance.now() + 10_000; const decoder = new TextDecoder(); let offset = 0; let text = '';
+  while (performance.now() < deadline) {
+    const result = await process.read(offset, { waitMs: 500, maxBytes: 64 * 1024 }); offset = result.nextOffset;
+    text = (text + decoder.decode(result.output, { stream: result.running })).slice(-256 * 1024);
+    if (predicate(text, result.running)) return text;
+    if (!result.running) throw new Error(`Terminal exited before the expected output: ${text}`);
+  }
+  throw new Error(`Terminal did not reach the expected state: ${text}`);
+}
+
+function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }

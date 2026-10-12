@@ -38,6 +38,10 @@ workflow stores no npm credential.
    tests, packs, clean-installs, imports every public package, checks exact
    workspace dependency versions, constructs a runtime, and runs the `felan`
    binary without credentials.
+   Run `node scripts/audit-packed.mjs` separately for a read-only registry audit
+   of typed metadata from the generated actual `packed-lock.json`. It neither
+   runs application code nor installs packages. Pass `--artifacts <directory>`
+   to inspect copied artifacts from an isolated verification run.
 4. Confirm that every package already present on npm trusts this repository's
    `release.yml` workflow and the `npm` GitHub environment.
 5. Commit the release-facing changes and push or merge them to `main`.
@@ -53,12 +57,24 @@ the dependency order defined by `scripts/package-paths.mjs`. Stable versions use
 the `latest` tag and prereleases use `next`. Reruns skip versions already
 published by a partially successful attempt. Releases require no Git tag.
 
+## Story 1 release prerequisites
+
+`@felan-ai/daemon` and `@felan-ai/session-protocol` have intended initial 0.1.0
+releases and require the new-package procedure below before CI publication. The
+breaking removal of the former client `daemon-profile` export requires the
+`@felan-ai/felan` 0.29.0 release. `@felan-ai/ext-background-bash` 0.11.0 is a
+breaking integration release: programmatic consumers must supply its presentation
+host for process views. Context View 0.7.0 moves `ContextUsageOverlay` to its
+TUI subpath and requires an explicit presentation host; Tasks 0.8.0 likewise
+requires a host for task views. Prewalk retains compatibility with Tasks 0.7
+and adds support for 0.8. Agent Core is 0.12.1; other changed extensions are
+patch releases. No publication is performed by local release checks.
+
 ## Bootstrap a new npm package
 
-`@felan-ai/ext-model-tools` is a new package with intended version `0.1.0`.
-Before its first CI release, a maintainer must complete the manual `0.0.0`
-bootstrap and trusted-publisher setup below. Local build, test, pack, and smoke
-verification do not publish it or establish that trust relationship.
+Before a new package's first CI release, a maintainer must complete the manual
+`0.0.0` bootstrap and trusted-publisher setup below. Local build, test, pack,
+and smoke verification do not publish it or establish that trust relationship.
 
 npm requires a package to exist before it can receive a trusted-publisher
 configuration. Establish a new package with a manually published `0.0.0`
@@ -210,12 +226,12 @@ npm logout --registry=https://registry.npmjs.org/ # for a bootstrap-only login
 The release workflow records the packed dependency audit for stable versions:
 
 ```sh
-pnpm audit:packed
+node scripts/audit-packed.mjs
 ```
 
-The packed audit evaluates the exact dependencies installed from the generated
-tarballs, including upstream shrinkwrap and extension runtime dependencies.
-Record the audit output with the release evidence; `pnpm audit:packed` is
-advisory and does not gate publication. After publication, record the package
+The audit reads typed metadata from the generated actual `packed-lock.json`; it
+does not execute application code or install packages. Use
+`--artifacts <directory>` for a custom artifact directory. Record the audit
+output with release evidence; it is advisory and does not gate publication. After publication, record the package
 versions, integrities, provenance, and source commit before updating cloud
 dependencies.

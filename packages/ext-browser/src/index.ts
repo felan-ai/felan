@@ -279,7 +279,7 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
           }
           const origin = validateAuthorizationOrigin(params.origin);
           if (!origin) throw new Error('browser_authorize requires an http or https origin.');
-          const outcome = await attachments.authorize(scope, origin, ctx, signal);
+          const outcome = await attachments.authorize(scope, origin, ctx, signal, params.reason);
           return authorizationResult('authorize', outcome.state, outcome.message, outcome.reused);
         },
       });

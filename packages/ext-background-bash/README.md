@@ -89,6 +89,36 @@ import backgroundBashExtension from '@felan-ai/ext-background-bash';
 const extension = backgroundBashExtension;
 ```
 
+The default export now contains execution only. Supply the explicit TUI host
+when composing a local interactive runtime:
+
+```ts
+import { createBackgroundBashExtension } from '@felan-ai/ext-background-bash';
+import { createTuiBackgroundBashHost } from '@felan-ai/ext-background-bash/tui';
+
+const extension = createBackgroundBashExtension(undefined, true, createTuiBackgroundBashHost());
+```
+
+The host owns process-view rendering, status styling, Bash call rendering and
+completion-message rendering. Closing a view stops new reads and joins reads
+or controls already in progress before the presentation returns. This explicit
+composition changes the default export's interactive behavior and requires a
+breaking 0.x minor release, not a patch. The daemon/client wire adapter remains
+separate from the local TUI host.
+
+The daemon adapter uses the validated `./view` contract and the client's
+`presentProcessView` renderer from `./tui`. Each durable interaction contains
+at most 18 job summaries and one encoded-byte-bounded output chunk, below
+60 KiB in total. Navigation can reach every saved job and every chunk of the
+manager's bounded tail. Command previews are explicitly marked when clipped;
+PIDs, process tokens and runtime handles are not control inputs.
+
+Stop and kill answers are bound to the visible page and its generation, then
+rechecked against the daemon's current jobs. They are not automatically
+replayed after disconnect. Output is refreshed explicitly; status polling and
+shortcuts remain local-TUI-only. Felan's local daemon/client composition uses
+this adapter; Windows support for the local daemon remains deferred.
+
 Hosts provide the `AgentRuntime`; the local TUI owns the process view,
 shortcut, status polling, and dependency onboarding. Compatible runtimes need
 the POSIX shell/process facilities listed in
