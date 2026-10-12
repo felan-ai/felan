@@ -1,7 +1,7 @@
 # Extension catalog
 
-Felan publishes portable packages under `@felan-ai/*`. The local TUI composes
-the source-controlled built-ins listed here and can additionally load explicitly
+Felan publishes portable packages under `@felan-ai/*`. The local daemon composes
+the source-controlled built-ins listed here; the TUI presents them and can additionally load explicitly
 requested local Pi extension files or directories with `--extension`/`-e`, plus
 optional standard Pi directories through `piExtensions`.
 It does not install arbitrary npm packages or load Pi project settings.
@@ -10,7 +10,7 @@ It does not install arbitrary npm packages or load Pi project settings.
 
 | Package | Capability | Local TUI surface | Conditions |
 | --- | --- | --- | --- |
-| [`@felan-ai/felan`](../../apps/tui/README.md) | Account-free local terminal host | `felan` binary and interactive TUI | Node.js 22.19.0 or newer; provider credentials configured locally |
+| [`@felan-ai/felan`](../../apps/felan/README.md) | Account-free local terminal host | `felan` binary and interactive TUI | Node.js 22.19.0 or newer; provider credentials configured locally |
 | [`@felan-ai/agent-core`](../../packages/agent-core/README.md) | Runtime contracts, base prompt, coding tools, Pi composition | Local host runtime | Required by extensions |
 | [`@felan-ai/ext-subagents`](../../packages/ext-subagents/README.md) | Asynchronous child agents, lifecycle tools, and optional classifier-guided catalog routing | `/agents`, `Alt+A`, agent rail | Local host supplies `SubagentHost`; routing also needs an injected classifier |
 | [`@felan-ai/ext-ask-user`](../../packages/ext-ask-user/README.md) | One-question and one-to-four-question structured input | TUI question wizard | Host supplies `AskUserHost` |
@@ -28,7 +28,7 @@ It does not install arbitrary npm packages or load Pi project settings.
 | [`@felan-ai/ext-felan-api`](../../packages/ext-felan-api/README.md) | Single authenticated Felan REST API gateway | `felan_api` | `FELAN_API_KEY` or explicit factory `apiKey`; local built-in is disabled when no key is present |
 | [`@felan-ai/ext-browser`](../../packages/ext-browser/README.md) | Reviewed `agent-browser` CLI integration with configurable existing-browser consent | Model-facing `browser` and local `browser_authorize` tools | Reviewed CLI; Chrome, consent policy, and attachment authorization are host-owned |
 | [`@felan-ai/ext-markitdown`](../../packages/ext-markitdown/README.md) | Bounded document conversion through ordinary `read` | `/markitdown` | Managed `markitdown` executable |
-| [`@felan-ai/ext-background-bash`](../../packages/ext-background-bash/README.md) | Provider-neutral foreground/background Bash, PTY input, process registry and logs | `/processes`, `Ctrl+Shift+J` | POSIX process utilities; PTY only when requested |
+| [`@felan-ai/ext-background-bash`](../../packages/ext-background-bash/README.md) | Provider-neutral foreground/background Bash, PTY input, process registry and logs | `/processes`, `Ctrl+Shift+J` | POSIX process utilities; PTY only when requested; programmatic consumers supply a presentation host |
 | [`@felan-ai/ext-codex`](../../packages/ext-codex/README.md) | GPT-specific `apply_patch` replacement and OpenAI request controls | Model-selected editing replacement | GPT model on exact `openai`/`openai-codex` provider |
 | [`@felan-ai/ext-rtk-optimizer`](../../packages/ext-rtk-optimizer/README.md) | Command rewriting and output compaction | `/rtk` | Compaction ships; rewriting needs `rtk` |
 | [`@felan-ai/ext-codebase-memory`](../../packages/ext-codebase-memory/README.md) | Structural code index, symbol reads, and bounded grep augmentation | `/codebase-memory` and four model tools | Exact reviewed `codebase-memory-mcp` 0.11.0 binary |
@@ -36,11 +36,18 @@ It does not install arbitrary npm packages or load Pi project settings.
 | [`@felan-ai/ext-session-title`](../../packages/ext-session-title/README.md) | Automatic first-prompt session names | Persisted Pi session name | Host-controlled root-session modes; enabled by default locally |
 | [`@felan-ai/ext-session-compaction`](../../packages/ext-session-compaction/README.md) | Bounded verified compaction and active-lineage recall | `session_recall` | Pi session lifecycle; enabled by default locally |
 
+## Breaking integration change
+
+`@felan-ai/ext-background-bash` 0.11.0 requires programmatic consumers to supply
+a presentation host for process views. Daemon-backed Felan clients provide it;
+standalone consumers must adapt before upgrading.
+
 ## Host ownership rules
 
 Portable extensions own schemas, validation, lifecycle behavior, and
-model-facing contracts. Hosts own credentials, storage roots, installation,
-browser callbacks, presentation, admission policy, and cloud/team integration.
+model-facing contracts. The daemon owns credentials, storage roots, installation,
+browser callbacks, and admission policy; clients own presentation and themes.
+Cloud/team integration remains host-specific.
 The package README for each extension is the API and development reference.
 
 ## Local defaults

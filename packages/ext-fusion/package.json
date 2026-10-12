@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-fusion",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Review parallel model answers and explicitly fuse them with a selected model",
   "license": "MIT",
   "type": "module",
@@ -22,6 +22,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
     }
   },
   "scripts": {
@@ -29,6 +33,9 @@
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "@earendil-works/pi-tui": "catalog:pi"
   },
   "peerDependencies": {
     "@felan-ai/agent-core": "^0.12.0"

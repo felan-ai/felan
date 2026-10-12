@@ -7,12 +7,16 @@ import {
 } from '@felan-ai/agent-core';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import backgroundBashExtension, {
+import {
+  createBackgroundBashExtension,
   BackgroundBashManager,
   type BackgroundBashJob,
   type BackgroundBashStatus,
 } from '../src/index.js';
+import { createTuiBackgroundBashHost } from '../src/tui.js';
 import { BackgroundBashView } from '../src/ui/background-bash-view.js';
+
+const backgroundBashExtension = createBackgroundBashExtension(undefined, true, createTuiBackgroundBashHost());
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 type CompletionRenderer = (
@@ -31,6 +35,26 @@ afterEach(() => {
 });
 
 describe('background bash extension activation', () => {
+  it('registers the command without loading implicit presentation', async () => {
+    const harness = createHarness();
+    await createBackgroundBashExtension()(harness.pi);
+    expect(harness.registerCommand).toHaveBeenCalledWith('processes', expect.any(Object));
+    expect(harness.messageRenderers.size).toBe(0);
+  });
+
+  it('does not install TUI polling or shortcuts for the daemon UI bridge', async () => {
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    const harness = createHarness();
+    const ctx = { ...tuiContext('openai'), mode: 'print' } as ExtensionContext;
+    await backgroundBashExtension(harness.pi);
+    try {
+      await harness.emit('session_start', {}, ctx);
+      expect(interval).not.toHaveBeenCalled();
+      expect(harness.registerShortcut).not.toHaveBeenCalled();
+      expect(harness.registerTool).toHaveBeenCalledTimes(6);
+    } finally { await harness.emit('session_shutdown', {}, ctx); }
+  });
+
   it('renders an inline frame for an empty process list', async () => {
     const view = new BackgroundBashView(
       { list: vi.fn(async () => []) } as unknown as BackgroundBashManager,
@@ -213,12 +237,17 @@ describe('background bash extension activation', () => {
   it('registers tools for OpenAI models', async () => {
     const harness = createHarness();
     await backgroundBashExtension(harness.pi);
-
-    await harness.emit('session_start', {}, context('openai'));
-
-    expect(harness.registerTool).toHaveBeenCalledTimes(6);
-    expect(harness.registerCommand).not.toHaveBeenCalled();
-    expect(harness.registerShortcut).not.toHaveBeenCalled();
+    const ctx = context('openai');
+    try {
+      await harness.emit('session_start', {}, ctx);
+      expect(harness.registerTool).toHaveBeenCalledTimes(6);
+      expect(harness.registerCommand).toHaveBeenCalledWith('processes', expect.any(Object));
+      expect(harness.registerShortcut).not.toHaveBeenCalled();
+      const command = harness.registerCommand.mock.calls[0]?.[1] as {
+        handler: (args: string, ctx: ExtensionContext) => Promise<void>;
+      };
+      await expect(command.handler('', ctx)).rejects.toMatchObject({ code: 'unsupported' });
+    } finally { await harness.emit('session_shutdown', {}, ctx); }
   });
 
   it('registers the background bash tool set for other models', async () => {
@@ -519,6 +548,7 @@ function context(provider: string): ExtensionContext {
 function tuiContext(provider: string): ExtensionContext {
   return {
     mode: 'tui',
+    hasUI: true,
     model: model(provider),
     ui: {
       custom: vi.fn(async () => undefined),

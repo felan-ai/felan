@@ -320,6 +320,7 @@ async function createClient(
     runtime,
     registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
     registerMessageRenderer() {},
+    registerCommand() {},
     sendMessage() {},
     getActiveTools: () => activeTools,
     setActiveTools: (names: string[]) => { activeTools = names; },

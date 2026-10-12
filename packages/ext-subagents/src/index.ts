@@ -46,7 +46,7 @@ export function createSubagentsExtension(host: SubagentHost): FelanExtension {
 const genericSubagentGuidance = [
   'Delegate only when a child lowers cost, protects correctness, or saves time: broad discovery across many unknown files on a cheaper model that returns a compact summary instead of the parent reading them; an independent review or completion check in a fresh context; or independent tasks with disjoint file scopes that can run in parallel. Keep small, sequential, known-location, and critical-path work in the parent. Never re-read a scope you delegated, delegate trivial lookups, or launch several reviewers when one suffices. Explicit user, routing, or Prewalk guidance takes precedence.',
   'Use the xhigh model tier selectively for unusually complex architecture, design, planning, difficult debugging, or high-stakes code review; do not use it for routine delegation.',
-  'Child model selection follows definition model, classifier-selected tier when available, per-call model, then parent model. Thinking follows definition, per-call, then parent settings. If classification fails, per-call model or parent model applies.',
+  'Child model selection follows definition model, per-call model, classifier-selected tier when available, then parent model. Thinking follows definition, per-call, then parent settings. If classification fails, parent model applies.',
   'Child agents always run asynchronously. Give each child a self-contained task with a disjoint scope, constraints, and expected output. Do not duplicate delegated work or enter a child-owned scope. Continue non-overlapping parent work while children run; if no independent parent work remains, yield and rely on completion notices instead of polling. Cancel a child before taking over its unfinished scope.',
   'Treat max_turns as a hard assistant-turn budget and leave enough room for the child to return a final result.',
   'Completion notices surface finished work automatically; rely on them during normal execution. Use list_subagents and get_subagent_result for an immediate status check when current state is needed, steer_subagent to refine active work, and cancel_subagent when work is no longer needed. Integrate and verify child results before reporting completion. When using session tasks, create or claim only work you own, keep at most one active task per session, and never force-recover another session\'s active claim unless it is stale and you are explicitly taking ownership.',
@@ -102,17 +102,17 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
       const validation = validateSpawn(host, descriptor, params);
       if (validation) return toolError(validation);
       const parentThinking = normalizeThinking(pi.getThinkingLevel());
-      const classifiedTier = descriptor.model === undefined ? await classifySubagentModelTier(pi, descriptor, {
+      const classifiedTier = descriptor.model === undefined && params.model === undefined ? await classifySubagentModelTier(pi, descriptor, {
         prompt: params.prompt,
         description: params.description,
         subagent_type: type,
       }, signal) : undefined;
-      let model = normalizeModel(descriptor.model ?? classifiedTier ?? params.model, ctx);
+      let model = normalizeModel(descriptor.model ?? params.model ?? classifiedTier, ctx);
       if (!model.ok && classifiedTier !== undefined) {
         pi.runtime?.logger?.child({ component: 'subagent-model' })?.warn({
           event: 'decision', outcome: 'unavailable_tier', type, tier: classifiedTier,
-        }, 'subagent classifier tier unavailable; using the call or parent model');
-        model = normalizeModel(params.model, ctx);
+        }, 'subagent classifier tier unavailable; using the parent model');
+        model = normalizeModel(undefined, ctx);
       }
       if (!model.ok) return toolError(model.error);
       const thinking = descriptor.thinking

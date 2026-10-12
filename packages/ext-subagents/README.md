@@ -82,11 +82,11 @@ and JSON modes do not classify discovery: they exit when the parent first
 settles and cannot deliver a child's later completion into that run.
 
 With a classifier that supports choice questions, each `Agent` call whose
-definition does not pin a model classifies the child task into the `low`,
+definition does not pin a model and which omits the call's `model` classifies the child task into the `low`,
 `medium`, `high`, or `xhigh` tier. Model precedence is definition, then
-classifier tier, then the call's `model`, then the parent. Thinking precedence
+the call's `model`, then classifier tier, then the parent. Thinking precedence
 is unchanged. A failed classification or unavailable classified tier falls back
-to the call's model or parent; an unavailable tier is logged as a warning.
+to the parent; an unavailable tier is logged as a warning.
 
 Classifier state contains the current prompt, image count, up to 24 recent
 model-visible conversation items including summaries (at most 1,200 UTF-8

@@ -2,7 +2,7 @@ import type { ExtensionCommandContext, ExtensionContext, FelanExtensionAPI, Sess
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 import { createPromptHistoryExtension, PROMPT_HISTORY_CONFIG } from '../src/index.js';
-import { collectPrompts, limitedPrompts } from '../src/history.js';
+import { collectPrompts, limitedPrompts, searchPromptHistory } from '../src/history.js';
 import { PromptHistoryPicker } from '../src/picker.js';
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as ExtensionContext['ui']['theme'];
@@ -58,7 +58,7 @@ describe('@felan-ai/ext-prompt-history', () => {
       { id: '1', text: 'find the important thing', cwd: '/workspace', sessionLabel: 'current', timestamp: 1 },
     ] };
     const done = vi.fn();
-    const picker = new PromptHistoryPicker(source, theme as never, vi.fn(), done);
+    const picker = new PromptHistoryPicker((...args) => searchPromptHistory(source, ...args), theme as never, vi.fn(), done);
     picker.handleInput('x');
     expect(picker.render(80).every((line) => line.length <= 80)).toBe(true);
     picker.handleInput('\x1b');
@@ -73,7 +73,7 @@ describe('@felan-ai/ext-prompt-history', () => {
       getCurrentItems: () => [],
     };
     const makePicker = (displayMode: 'inline' | 'overlay') => new PromptHistoryPicker(
-      source,
+      (...args) => searchPromptHistory(source, ...args),
       theme,
       vi.fn(),
       vi.fn(),
@@ -98,7 +98,7 @@ function entry(id: string, content: unknown, timestamp: string): SessionEntry {
 }
 
 function fakePi(overrides: Partial<FelanExtensionAPI> = {}): FelanExtensionAPI {
-  return { config: {}, registerShortcut: vi.fn(), ...overrides } as unknown as FelanExtensionAPI;
+  return { config: {}, registerShortcut: vi.fn(), registerCommand: vi.fn(), on: vi.fn(), ...overrides } as unknown as FelanExtensionAPI;
 }
 
 function fakeContext(overrides: Record<string, unknown> = {}): ExtensionCommandContext {

@@ -59,7 +59,7 @@ try {
   rmSync(context, { recursive: true, force: true });
 }
 
-const packageVersion = JSON.parse(readFileSync(resolve(projectRoot, 'apps/tui/package.json'), 'utf8')).version;
+const packageVersion = JSON.parse(readFileSync(resolve(projectRoot, 'apps/felan/package.json'), 'utf8')).version;
 const felanProbe = output('docker', ['run', '--rm', tag, 'felan', '--version']);
 const installedPackages = output('docker', ['run', '--rm', tag, 'npm', 'ls', '--global', '--parseable', '--all']);
 const agentCoreInstallations = installedPackages

@@ -7,7 +7,6 @@ import {
   type ExtensionContext,
   type FelanExtension,
 } from '@felan-ai/agent-core';
-import { Key, Text } from '@earendil-works/pi-tui';
 import { Type, type Static } from 'typebox';
 import { normalizeBackgroundCommand } from './command-normalizer.js';
 import {
@@ -18,11 +17,11 @@ import {
 import { BackgroundBashManager } from './process-manager.js';
 import { BackgroundBashCoordinator } from './coordinator.js';
 import { inspectBackgroundBashRuntime } from './runtime-support.js';
-import { BackgroundBashView } from './ui/background-bash-view.js';
 import {
   BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE,
-  registerBackgroundBashCompletionRenderer,
-} from './ui/completion-message.js';
+  type BackgroundBashPresentationHost,
+  type BackgroundProcessViewSource,
+} from './presentation.js';
 
 const STATUS_VALUES = ['running', 'completed', 'failed', 'killed', 'unknown', 'all'] as const;
 const SIGNAL_VALUES = ['SIGTERM', 'SIGKILL'] as const;
@@ -121,12 +120,13 @@ export const BACKGROUND_BASH_CONFIG = defineExtensionConfig({
 export function createBackgroundBashExtension(
   coordinator?: BackgroundBashCoordinator,
   ownsCoordinator = coordinator === undefined,
+  presentation?: BackgroundBashPresentationHost,
 ): FelanExtension {
   const extension: FelanExtension = (pi) => {
   const config = {
     foregroundTimeoutSeconds: Number(pi.config?.foregroundTimeoutSeconds ?? 120),
   };
-  registerBackgroundBashCompletionRenderer(pi);
+  presentation?.install?.(pi);
   const manager = new BackgroundBashManager(pi.runtime, coordinator);
   const foregroundBash = createRuntimeCodingTools(pi.runtime, { shellFlavor: 'posix' })
     .find((tool) => tool.name === 'bash')!;
@@ -143,10 +143,15 @@ export function createBackgroundBashExtension(
   let completionPollRunningGeneration: number | undefined;
   let runtimeAvailable: boolean | undefined;
   let runtimeCheck: Promise<boolean> | undefined;
+  const viewLifetime = new AbortController();
+  const views = new Set<Promise<void>>();
+  const viewSource: BackgroundProcessViewSource = {
+    list: status => manager.list(status), tail: (id, lines) => manager.tail(id, lines), stop: (id, signal) => manager.stop(id, signal),
+  };
   const watchedJobIds = new Set<string>();
 
   const createStatusTarget = (ctx: ExtensionContext): StatusTarget | undefined => {
-    if (ctx.mode !== 'tui') return undefined;
+    if (!ctx.hasUI || !presentation) return undefined;
     return { ui: ctx.ui, generation: statusGeneration };
   };
 
@@ -157,16 +162,13 @@ export function createBackgroundBashExtension(
       const running = await manager.list('running');
       if (target.generation !== statusGeneration) return;
       if (running.length === 0) {
-        target.ui.setStatus('background-bash', undefined);
+        presentation?.status(target.ui, undefined);
         return;
       }
-      const label = running.length === 1 ? '1 process' : `${running.length} processes`;
-      const icon = target.ui.theme.fg('accent', '●');
-      const text = target.ui.theme.fg('accent', label);
-      target.ui.setStatus('background-bash', `${icon} ${text}`);
+      presentation?.status(target.ui, running.length);
     } catch {
       if (target.generation !== statusGeneration) return;
-      target.ui.setStatus('background-bash', target.ui.theme.fg('warning', 'bash ?'));
+      presentation?.status(target.ui, 'unavailable');
     } finally {
       statusUpdateRunning = false;
     }
@@ -187,7 +189,7 @@ export function createBackgroundBashExtension(
       clearInterval(statusPollTimer);
       statusPollTimer = undefined;
     }
-    statusTarget?.ui.setStatus('background-bash', undefined);
+    if (statusTarget) presentation?.status(statusTarget.ui, undefined);
     statusTarget = undefined;
   };
 
@@ -279,20 +281,16 @@ export function createBackgroundBashExtension(
   };
 
   const openProcessView = async (ctx: ExtensionContext) => {
+    viewLifetime.signal.throwIfAborted();
     if (!backgroundBashActive) {
-      if (ctx.mode === 'tui') ctx.ui.notify('Background processes are unavailable in this runtime.', 'info');
+      if (ctx.hasUI) ctx.ui.notify('Background processes are unavailable in this runtime.', 'info');
       return;
     }
     const target = createStatusTarget(ctx);
-    if (!target) return;
-    await target.ui.custom<void>(
-      (tui, theme, _keybindings, done) => new BackgroundBashView(
-        manager,
-        theme,
-        () => done(undefined),
-        () => tui.requestRender(),
-      ),
-    );
+    if (!target || !presentation) throw Object.assign(new Error('Process presentation requires a compatible interactive client.'), { code: 'unsupported' });
+    const view = presentation.show(target.ui, viewSource, viewLifetime.signal).catch(error => { if (!viewLifetime.signal.aborted) throw error; });
+    views.add(view);
+    try { await view; } finally { views.delete(view); }
     await updateStatus(target);
   };
 
@@ -396,10 +394,7 @@ export function createBackgroundBashExtension(
           details,
         };
       },
-      renderCall(args, theme) {
-        const suffix = args.background || args.tty ? theme.fg('muted', args.tty ? ' (pty)' : ' (background)') : '';
-        return new Text(theme.fg('toolTitle', theme.bold(`$ ${args.command}`)) + suffix, 0, 0);
-      },
+      ...(presentation?.renderCall ? { renderCall: presentation.renderCall } : {}),
     });
     backgroundBashActive = true;
   };
@@ -512,14 +507,14 @@ export function createBackgroundBashExtension(
     });
   };
 
-  const registerControls = () => {
-    if (controlsRegistered) return;
-    controlsRegistered = true;
-    pi.registerCommand('processes', {
+  pi.registerCommand('processes', {
       description: 'View processes and logs',
       handler: async (_args, ctx) => openProcessView(ctx),
-    });
-    pi.registerShortcut(Key.ctrlShift('j'), {
+  });
+  const registerControls = () => {
+    if (controlsRegistered || !presentation) return;
+    controlsRegistered = true;
+    pi.registerShortcut('ctrl+shift+j', {
       description: 'View processes and logs',
       handler: openProcessView,
     });
@@ -552,7 +547,8 @@ export function createBackgroundBashExtension(
     registerHelperTools();
     activateRegisteredTools();
     resumeCompletionPolling();
-    if (ctx.mode === 'tui') startStatusPolling(ctx);
+    if (ctx.mode === 'tui' && ctx.hasUI && presentation) startStatusPolling(ctx);
+    else statusTarget = createStatusTarget(ctx);
   };
 
   const disableExtension = () => {
@@ -577,10 +573,12 @@ export function createBackgroundBashExtension(
   pi.on('model_select', async (_event, ctx) => {
     await enableExtension(ctx);
   });
-  pi.on('session_shutdown', (event) => {
+  pi.on('session_shutdown', async (event) => {
+    viewLifetime.abort();
     stopStatusPolling();
     clearCompletionWatches();
-    return ownsCoordinator && event.reason !== 'reload' ? manager.shutdownInteractive() : undefined;
+    try { await Promise.all([...views]); }
+    finally { if (ownsCoordinator && event.reason !== 'reload') await manager.shutdownInteractive(); }
   });
   };
   associateExtensionConfig(extension, BACKGROUND_BASH_CONFIG);
@@ -677,6 +675,8 @@ function formatForegroundOutput(job: BackgroundBashJob, output: string): string 
 }
 
 export type { BackgroundBashDetails };
+export { BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE } from './presentation.js';
+export type { BackgroundBashPresentationHost, BackgroundProcessViewSource } from './presentation.js';
 export { BackgroundBashManager } from './process-manager.js';
 export { BackgroundBashCoordinator } from './coordinator.js';
 export type { InteractiveBashProcess } from './coordinator.js';

@@ -4,7 +4,6 @@ import {
   type ExtensionContext,
   type FelanExtension,
 } from '@felan-ai/agent-core';
-import { Key, Text } from '@earendil-works/pi-tui';
 import { Type, type Static } from 'typebox';
 import {
   TASK_STATUS_VALUES,
@@ -26,7 +25,7 @@ import {
   formatTaskMutation,
 } from './presentation.js';
 import { TaskStore } from './store.js';
-import { TasksOverlay } from './ui/tasks-overlay.js';
+import type { TaskDataSource, TasksPresentationHost } from './host.js';
 
 const TaskId = Type.String({
   pattern: '^T-[A-Z0-9]{6}$',
@@ -101,231 +100,206 @@ type TaskUpdateParams = Static<typeof TaskUpdateParams>;
 type TaskListParams = Static<typeof TaskListParams>;
 type TaskGetParams = Static<typeof TaskGetParams>;
 
-const tasksExtension: FelanExtension = (pi) => {
-  const store = new TaskStore(pi.runtime);
-  const displayMode = resolveDisplayMode(pi.config?.displayMode);
-  let controlsRegistered = false;
-  let unsubscribe: (() => void) | undefined;
-  let statusContext: ExtensionContext | undefined;
-  const taskViews = new Set<TasksOverlay>();
+export function createTasksExtension(host?: TasksPresentationHost): FelanExtension {
+  const extension: FelanExtension = (pi) => {
+    const store = new TaskStore(pi.runtime);
+    const displayMode = resolveDisplayMode(pi.config?.displayMode);
+    let controlsRegistered = false;
+    let unsubscribe: (() => void) | undefined;
+    let statusContext: ExtensionContext | undefined;
+    const lifetime = new AbortController();
+    const taskViews = new Set<Promise<void>>();
+    const source: TaskDataSource = { snapshot: () => store.snapshot(), subscribe: listener => store.subscribe(listener) };
 
-  pi.registerCapability({
-    id: 'tasks',
-    instructions: 'Use session tasks for multi-step, dependency-heavy, or delegated work where explicit progress improves execution. Skip them for trivial requests. Create outcome-oriented tasks with true prerequisite edges, claim a ready task by setting it in_progress before working, keep at most one active task per session, and complete it only after satisfying its acceptance criteria and recording a verified result. Independent sessions may claim different ready tasks concurrently. Record concise notes before blocking or releasing work. Use a persistent issue tracker when work must outlive this root session.',
-  });
+    pi.registerCapability({
+      id: 'tasks',
+      instructions: 'Use session tasks for multi-step, dependency-heavy, or delegated work where explicit progress improves execution. Skip them for trivial requests. Create outcome-oriented tasks with true prerequisite edges, claim a ready task by setting it in_progress before working, keep at most one active task per session, and complete it only after satisfying its acceptance criteria and recording a verified result. Independent sessions may claim different ready tasks concurrently. Record concise notes before blocking or releasing work. Use a persistent issue tracker when work must outlive this root session.',
+    });
 
-  pi.registerTool({
-    name: 'TaskCreate',
-    label: 'TaskCreate',
-    description: 'Create one pending task in the root session task graph and return its stable ID. Use blocked_by only for true hard prerequisites.',
-    promptSnippet: 'Create a dependency-aware session task',
-    parameters: TaskCreateParams,
-    async execute(_id, params: TaskCreateParams) {
-      const input: CreateTaskInput = {
-        title: params.title,
-        ...(params.description === undefined ? {} : { description: params.description }),
-        ...(params.acceptance_criteria === undefined
-          ? {}
-          : { acceptanceCriteria: params.acceptance_criteria }),
-        ...(params.priority === undefined ? {} : { priority: params.priority }),
-        ...(params.blocked_by === undefined ? {} : { blockedBy: params.blocked_by }),
-      };
-      const result = await store.create(input);
-      return {
-        content: [{ type: 'text', text: formatTaskMutation('Created', result.state, result.task) }],
-        details: { revision: result.state.revision, task: result.task },
-      };
-    },
-    renderCall(args, theme) {
-      return new Text(
-        theme.fg('toolTitle', theme.bold('TaskCreate ')) + theme.fg('muted', args.title),
-        0,
-        0,
-      );
-    },
-  });
-
-  pi.registerTool({
-    name: 'TaskUpdate',
-    label: 'TaskUpdate',
-    description: 'Incrementally edit a task, change prerequisites, or transition its lifecycle. Setting in_progress claims a ready task for the calling session. Completion requires ownership and a verified result. Use force only to recover a stale claim.',
-    promptSnippet: 'Claim, update, block, release, complete, or cancel a session task',
-    parameters: TaskUpdateParams,
-    async execute(_id, params: TaskUpdateParams, _signal, _update, ctx) {
-      const input: UpdateTaskInput = {
-        taskId: params.task_id,
-        ...(params.force === undefined ? {} : { force: params.force }),
-        ...(params.title === undefined ? {} : { title: params.title }),
-        ...(params.description === undefined ? {} : { description: params.description }),
-        ...(params.acceptance_criteria === undefined
-          ? {}
-          : { acceptanceCriteria: params.acceptance_criteria }),
-        ...(params.priority === undefined ? {} : { priority: params.priority }),
-        ...(params.status === undefined ? {} : { status: params.status }),
-        ...(params.add_blocked_by === undefined ? {} : { addBlockedBy: params.add_blocked_by }),
-        ...(params.remove_blocked_by === undefined
-          ? {}
-          : { removeBlockedBy: params.remove_blocked_by }),
-        ...(params.notes === undefined ? {} : { notes: params.notes }),
-        ...(params.result === undefined ? {} : { result: params.result }),
-        ...(params.blocked_reason === undefined ? {} : { blockedReason: params.blocked_reason }),
-      };
-      const result = await store.update(input, ctx.sessionManager.getSessionId());
-      return {
-        content: [{ type: 'text', text: formatTaskMutation('Updated', result.state, result.task) }],
-        details: { revision: result.state.revision, task: result.task },
-      };
-    },
-    renderCall(args, theme) {
-      const status = args.status ? theme.fg('muted', ` → ${args.status}`) : '';
-      return new Text(theme.fg('toolTitle', theme.bold(`TaskUpdate ${args.task_id}`)) + status, 0, 0);
-    },
-  });
-
-  pi.registerTool({
-    name: 'TaskList',
-    label: 'TaskList',
-    description: 'List the current task frontier or filter by readiness and lifecycle state. The default current view excludes terminal tasks.',
-    promptSnippet: 'List ready, active, blocked, pending, completed, or all session tasks',
-    parameters: TaskListParams,
-    async execute(_id, params: TaskListParams) {
-      const view = params.view ?? 'current';
-      const limit = params.limit ?? 50;
-      const result = await store.list(view);
-      return {
-        content: [{ type: 'text', text: formatTaskList(result.state, result.tasks, view, limit) }],
-        details: {
-          revision: result.state.revision,
-          tasks: result.tasks.slice(0, limit),
-          total: result.tasks.length,
-          view,
-        },
-      };
-    },
-    renderCall(args, theme) {
-      return new Text(
-        theme.fg('toolTitle', theme.bold('TaskList ')) + theme.fg('muted', args.view ?? 'current'),
-        0,
-        0,
-      );
-    },
-  });
-
-  pi.registerTool({
-    name: 'TaskGet',
-    label: 'TaskGet',
-    description: 'Read one task with its prerequisites, dependents, ownership, notes, and result.',
-    promptSnippet: 'Read full context for one session task',
-    parameters: TaskGetParams,
-    async execute(_id, params: TaskGetParams) {
-      const result = await store.get(params.task_id);
-      return {
-        content: [{ type: 'text', text: formatTaskDetails(result.state, result.task) }],
-        details: { revision: result.state.revision, task: result.task },
-      };
-    },
-    renderCall(args, theme) {
-      return new Text(theme.fg('toolTitle', theme.bold(`TaskGet ${args.task_id}`)), 0, 0);
-    },
-  });
-
-  const setStatus = (state: TaskState): void => {
-    if (!statusContext) return;
-    if (state.tasks.length === 0) {
-      statusContext.ui.setStatus('tasks', undefined);
-      return;
-    }
-    let notStarted = 0;
-    let inProgress = 0;
-    let done = 0;
-    for (const task of state.tasks) {
-      if (task.status === 'pending' || task.status === 'blocked') notStarted += 1;
-      if (task.status === 'in_progress') inProgress += 1;
-      if (task.status === 'completed') done += 1;
-    }
-    statusContext.ui.setStatus(
-      'tasks',
-      `Tasks ${notStarted} · ${inProgress} · ${done}`,
-    );
-  };
-
-  const openTasks = async (ctx: ExtensionContext): Promise<void> => {
-    if (ctx.mode !== 'tui') return;
-    await ctx.ui.custom<void>(
-      (tui, theme, _keybindings, done) => {
-        let taskView!: TasksOverlay;
-        taskView = new TasksOverlay(
-          store,
-          theme,
-          () => done(undefined),
-          () => tui.requestRender(),
-          () => taskViews.delete(taskView),
-          displayMode,
-        );
-        taskViews.add(taskView);
-        return taskView;
+    pi.registerTool({
+      name: 'TaskCreate',
+      label: 'TaskCreate',
+      description: 'Create one pending task in the root session task graph and return its stable ID. Use blocked_by only for true hard prerequisites.',
+      promptSnippet: 'Create a dependency-aware session task',
+      parameters: TaskCreateParams,
+      async execute(_id, params: TaskCreateParams) {
+        const input: CreateTaskInput = {
+          title: params.title,
+          ...(params.description === undefined ? {} : { description: params.description }),
+          ...(params.acceptance_criteria === undefined
+            ? {}
+            : { acceptanceCriteria: params.acceptance_criteria }),
+          ...(params.priority === undefined ? {} : { priority: params.priority }),
+          ...(params.blocked_by === undefined ? {} : { blockedBy: params.blocked_by }),
+        };
+        const result = await store.create(input);
+        return {
+          content: [{ type: 'text', text: formatTaskMutation('Created', result.state, result.task) }],
+          details: { revision: result.state.revision, task: result.task },
+        };
       },
-      displayMode === 'overlay'
-        ? {
-            overlay: true,
-            overlayOptions: {
-              width: '85%',
-              minWidth: 72,
-              maxHeight: '90%',
-              margin: 2,
-            },
-          }
-        : undefined,
-    );
-  };
+      ...(host?.renderCalls?.TaskCreate ? { renderCall: host.renderCalls.TaskCreate } : {}),
+    });
 
-  const registerControls = (): void => {
-    if (controlsRegistered) return;
-    controlsRegistered = true;
+    pi.registerTool({
+      name: 'TaskUpdate',
+      label: 'TaskUpdate',
+      description: 'Incrementally edit a task, change prerequisites, or transition its lifecycle. Setting in_progress claims a ready task for the calling session. Completion requires ownership and a verified result. Use force only to recover a stale claim.',
+      promptSnippet: 'Claim, update, block, release, complete, or cancel a session task',
+      parameters: TaskUpdateParams,
+      async execute(_id, params: TaskUpdateParams, _signal, _update, ctx) {
+        const input: UpdateTaskInput = {
+          taskId: params.task_id,
+          ...(params.force === undefined ? {} : { force: params.force }),
+          ...(params.title === undefined ? {} : { title: params.title }),
+          ...(params.description === undefined ? {} : { description: params.description }),
+          ...(params.acceptance_criteria === undefined
+            ? {}
+            : { acceptanceCriteria: params.acceptance_criteria }),
+          ...(params.priority === undefined ? {} : { priority: params.priority }),
+          ...(params.status === undefined ? {} : { status: params.status }),
+          ...(params.add_blocked_by === undefined ? {} : { addBlockedBy: params.add_blocked_by }),
+          ...(params.remove_blocked_by === undefined
+            ? {}
+            : { removeBlockedBy: params.remove_blocked_by }),
+          ...(params.notes === undefined ? {} : { notes: params.notes }),
+          ...(params.result === undefined ? {} : { result: params.result }),
+          ...(params.blocked_reason === undefined ? {} : { blockedReason: params.blocked_reason }),
+        };
+        const result = await store.update(input, ctx.sessionManager.getSessionId());
+        return {
+          content: [{ type: 'text', text: formatTaskMutation('Updated', result.state, result.task) }],
+          details: { revision: result.state.revision, task: result.task },
+        };
+      },
+      ...(host?.renderCalls?.TaskUpdate ? { renderCall: host.renderCalls.TaskUpdate } : {}),
+    });
+
+    pi.registerTool({
+      name: 'TaskList',
+      label: 'TaskList',
+      description: 'List the current task frontier or filter by readiness and lifecycle state. The default current view excludes terminal tasks.',
+      promptSnippet: 'List ready, active, blocked, pending, completed, or all session tasks',
+      parameters: TaskListParams,
+      async execute(_id, params: TaskListParams) {
+        const view = params.view ?? 'current';
+        const limit = params.limit ?? 50;
+        const result = await store.list(view);
+        return {
+          content: [{ type: 'text', text: formatTaskList(result.state, result.tasks, view, limit) }],
+          details: {
+            revision: result.state.revision,
+            tasks: result.tasks.slice(0, limit),
+            total: result.tasks.length,
+            view,
+          },
+        };
+      },
+      ...(host?.renderCalls?.TaskList ? { renderCall: host.renderCalls.TaskList } : {}),
+    });
+
+    pi.registerTool({
+      name: 'TaskGet',
+      label: 'TaskGet',
+      description: 'Read one task with its prerequisites, dependents, ownership, notes, and result.',
+      promptSnippet: 'Read full context for one session task',
+      parameters: TaskGetParams,
+      async execute(_id, params: TaskGetParams) {
+        const result = await store.get(params.task_id);
+        return {
+          content: [{ type: 'text', text: formatTaskDetails(result.state, result.task) }],
+          details: { revision: result.state.revision, task: result.task },
+        };
+      },
+      ...(host?.renderCalls?.TaskGet ? { renderCall: host.renderCalls.TaskGet } : {}),
+    });
+
+    const setStatus = (state: TaskState): void => {
+      if (!statusContext) return;
+      if (state.tasks.length === 0) {
+        statusContext.ui.setStatus('tasks', undefined);
+        return;
+      }
+      let notStarted = 0;
+      let inProgress = 0;
+      let done = 0;
+      for (const task of state.tasks) {
+        if (task.status === 'pending' || task.status === 'blocked') notStarted += 1;
+        if (task.status === 'in_progress') inProgress += 1;
+        if (task.status === 'completed') done += 1;
+      }
+      statusContext.ui.setStatus(
+        'tasks',
+        `Tasks ${notStarted} · ${inProgress} · ${done}`,
+      );
+    };
+
+    const openTasks = async (ctx: ExtensionContext): Promise<void> => {
+      lifetime.signal.throwIfAborted();
+      if (!ctx.hasUI || !host) {
+        const message = 'Task presentation requires a compatible interactive client.';
+        ctx.ui.notify(message, 'warning');
+        throw Object.assign(new Error(message), { code: 'unsupported' });
+      }
+      const view = host.show(ctx.ui, source, displayMode, lifetime.signal)
+        .catch(error => { if (!lifetime.signal.aborted) throw error; });
+      taskViews.add(view);
+      try { await view; } finally { taskViews.delete(view); }
+    };
+
     pi.registerCommand('tasks', {
       description: 'View session tasks and their dependency graph',
       handler: async (_args, ctx) => openTasks(ctx),
     });
-    pi.registerShortcut(Key.ctrlShift('t'), {
-      description: 'View session tasks and their dependency graph',
-      handler: openTasks,
+    const registerControls = (): void => {
+      if (controlsRegistered || !host) return;
+      controlsRegistered = true;
+      pi.registerShortcut('ctrl+shift+t', {
+        description: 'View session tasks and their dependency graph',
+        handler: openTasks,
+      });
+    };
+
+    pi.on('session_start', async (_event, ctx) => {
+      unsubscribe?.();
+      statusContext = ctx.hasUI ? ctx : undefined;
+      unsubscribe = store.subscribe(setStatus);
+      setStatus(await store.snapshot());
+      if (ctx.mode === 'tui') registerControls();
+    });
+
+    pi.on('session_tree', async (_event, ctx) => {
+      statusContext = ctx.hasUI ? ctx : undefined;
+      setStatus(await store.snapshot());
+    });
+
+    pi.on('before_agent_start', async (event) => {
+      const state = await store.snapshot();
+      if (!hasOpenTasks(state)) {
+        delete event.systemPromptOptions.sections.session_tasks;
+        return;
+      }
+      event.systemPromptOptions.sections.session_tasks = formatTaskContext(state);
+    });
+
+    pi.on('session_shutdown', async () => {
+      lifetime.abort();
+      try { await Promise.all([...taskViews]); }
+      finally {
+        taskViews.clear();
+        unsubscribe?.();
+        unsubscribe = undefined;
+        statusContext?.ui.setStatus('tasks', undefined);
+        statusContext = undefined;
+        store.close();
+      }
     });
   };
+  associateExtensionConfig(extension, TASKS_CONFIG);
+  return extension;
+}
 
-  pi.on('session_start', async (_event, ctx) => {
-    unsubscribe?.();
-    statusContext = ctx.mode === 'tui' ? ctx : undefined;
-    unsubscribe = store.subscribe(setStatus);
-    setStatus(await store.snapshot());
-    if (ctx.mode === 'tui') registerControls();
-  });
-
-  pi.on('session_tree', async (_event, ctx) => {
-    statusContext = ctx.mode === 'tui' ? ctx : undefined;
-    setStatus(await store.snapshot());
-  });
-
-  pi.on('before_agent_start', async (event) => {
-    const state = await store.snapshot();
-    if (!hasOpenTasks(state)) {
-      delete event.systemPromptOptions.sections.session_tasks;
-      return;
-    }
-    event.systemPromptOptions.sections.session_tasks = formatTaskContext(state);
-  });
-
-  pi.on('session_shutdown', () => {
-    for (const taskView of taskViews) taskView.dispose();
-    taskViews.clear();
-    unsubscribe?.();
-    unsubscribe = undefined;
-    statusContext?.ui.setStatus('tasks', undefined);
-    statusContext = undefined;
-    store.close();
-  });
-};
-
-associateExtensionConfig(tasksExtension, TASKS_CONFIG);
+const tasksExtension = createTasksExtension();
 
 function resolveDisplayMode(value: unknown): TasksDisplayMode {
   return value === 'overlay' ? 'overlay' : DEFAULT_TASKS_DISPLAY_MODE;
@@ -365,4 +339,5 @@ export {
   updateTask,
 } from './graph.js';
 export { TaskStore } from './store.js';
+export type { TaskDataSource, TasksPresentationHost } from './host.js';
 export default tasksExtension;

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-powerline",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Terminal powerline extension for Felan",
   "license": "MIT",
   "type": "module",
@@ -22,6 +22,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./view": {
+      "types": "./dist/view.d.ts",
+      "import": "./dist/view.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
     }
   },
   "scripts": {

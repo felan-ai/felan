@@ -1,34 +1,19 @@
 import type { ExtensionContext, SessionEntry } from "@felan-ai/agent-core";
-import { fuzzyFilter } from "@earendil-works/pi-tui";
+import { fuzzyFilter } from "@earendil-works/pi-tui/dist/fuzzy.js";
 import { basename, normalize, resolve } from "node:path";
 import type {
 	PromptHistoryHost,
 	PromptHistorySession,
 	PromptHistorySessionReference,
+	PromptHistoryItem,
+	PromptHistoryScope,
+	PromptHistorySearchState,
 } from "./contracts.js";
+export { PROMPT_HISTORY_SCOPES } from "./contracts.js";
+export type { PromptHistoryItem, PromptHistoryScope, PromptHistorySearchState } from "./contracts.js";
 
 export const MAX_PROMPT_HISTORY_RESULTS = 50;
 export const PROMPT_HISTORY_SEARCH_BATCH_SIZE = 4;
-
-export const PROMPT_HISTORY_SCOPES = ["session", "project", "all"] as const;
-export type PromptHistoryScope = (typeof PROMPT_HISTORY_SCOPES)[number];
-
-export interface PromptHistoryItem {
-	readonly id: string;
-	readonly text: string;
-	readonly cwd: string;
-	readonly sessionLabel: string;
-	readonly sessionName?: string | undefined;
-	readonly timestamp: number;
-}
-
-export interface PromptHistorySearchState {
-	readonly items: readonly PromptHistoryItem[];
-	readonly loading: boolean;
-	readonly scanned: number;
-	readonly total?: number;
-	readonly complete: boolean;
-}
 
 export interface PromptHistorySource {
 	readonly cwd: string;

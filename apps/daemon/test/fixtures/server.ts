@@ -1,0 +1,83 @@
+import { randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative } from 'node:path';
+import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream, type ExtensionAPI, type ExtensionConfigDefinition } from '@felan-ai/agent-core';
+import { builtinExtensionPackages } from '../../src/extension-catalog.js';
+import { DaemonControlStore, type ControlCapacity } from '../../src/daemon/control-store.js';
+import { createLocalDaemonProfile } from '../../src/daemon/local-profile.js';
+import type { ProfileExtensionBindings, ProfileExtensionContext } from '../../src/daemon/profile.js';
+import type { DaemonOwnership } from '../../src/daemon/ownership.js';
+import { SessionRegistry, type RegistryOptions } from '../../src/daemon/registry.js';
+import { canonicalProspectivePath, identityFor, resolveDaemonTarget } from '../../src/daemon/target.js';
+import { assistant, now, offlineModel } from './registry.js';
+
+export { now, requestId } from './registry.js';
+export function gate() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+export async function serverFixture(options: { now?: () => number; capacity?: Partial<ControlCapacity>; onStream?: () => Promise<void>; extension?: (pi: ExtensionAPI) => void;
+  namespace?: (directory: string) => string;
+  configDefinitions?: readonly ExtensionConfigDefinition[];
+  deferActivation?: boolean;
+  builtins?: readonly string[];
+  servicesFactory?: (registry: SessionRegistry) => RegistryOptions['services'];
+  onBind?: (context: ProfileExtensionContext) => void;
+  extensionUi?: (context: ProfileExtensionContext, registry: SessionRegistry) => { context: NonNullable<ProfileExtensionBindings['uiContext']>; dispose(): void };
+  compaction?: { reserveTokens: number; keepRecentTokens: number }; skill?: boolean } = {}) {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 's7-')));
+  const cwd = join(directory, 'work'); const agentDir = join(directory, 'agent');
+  await mkdir(cwd); await mkdir(agentDir, { mode: 0o700 }); await mkdir(join(directory, 'runtime'), { mode: 0o700 });
+  if (options.skill) {
+    const skills = join(cwd, '.agents', 'skills', 'shared-test-skill'); await mkdir(skills, { recursive: true });
+    await writeFile(join(skills, 'SKILL.md'), '---\nname: shared-test-skill\ndescription: Private fixture skill\n---\nLoaded skill instructions from private fixture.\n');
+  }
+  const target = resolveDaemonTarget({ kind: 'isolated', directory, namespaceId: options.namespace?.(directory) ?? randomUUID(), storeRoots: [directory] });
+  // The fixture exercises real profile/control files without acquiring account-wide OS ownership.
+  const owner = {
+    target, identity: identityFor(target, randomUUID()),
+    assertCurrent() {},
+    assertOwnsPath(input: string) {
+      const path = canonicalProspectivePath(input); const child = relative(directory, path);
+      if (child === '..' || child.startsWith('../') || isAbsolute(child)) throw new Error('Outside private server fixture');
+      return path;
+    },
+    watchPath: () => () => {}, onLost: () => () => {},
+  } as unknown as DaemonOwnership;
+  let registry: SessionRegistry | undefined;
+  const store = new DaemonControlStore(owner, { now: options.now ?? (() => now), ...(options.capacity ? { capacity: options.capacity } : {}) });
+  await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ builtinExtensions: Object.fromEntries(Object.keys(builtinExtensionPackages).map(name => [name, options.builtins?.includes(name) ?? false])),
+    ...(options.compaction ? { compaction: options.compaction } : {}) }));
+  const profile = await createLocalDaemonProfile({ agentDir, homeDir: directory, ...(options.deferActivation ? { deferActivation: true } : {}),
+    initializeProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }),
+    runtimeFactory: request => registry!.wrapOpeningRuntime(new HostAgentRuntime(request.cwd, request), request.rootSessionId),
+    createModelRuntime: async () => {
+      const models = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
+      models.registerProvider('offline', { api: 'openai-completions', baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel], streamSimple: () => {
+        const stream = createAssistantMessageEventStream();
+        void Promise.resolve().then(options.onStream).then(() => stream.push({ type: 'done', reason: 'stop', message: assistant() }));
+        return stream;
+      } });
+      return models;
+    } });
+  let installedServices: RegistryOptions['services'] | undefined;
+  registry = new SessionRegistry({ owner, store, profile, now: options.now ?? (() => now), idleMs: 0,
+    services: input => {
+      if (options.servicesFactory) return (installedServices ??= options.servicesFactory(registry!))(input);
+      return { getExecutionPolicy: input.getExecutionPolicy, extensions: {
+      configuration: async () => options.configDefinitions ?? [], bind: async context => {
+        options.onBind?.(context);
+        const ui = options.extensionUi?.(context, registry!);
+        return { importExtension: async () => ({ default() {} }), dispose: async () => { ui?.dispose(); },
+          ...(ui ? { uiContext: ui.context } : {}),
+          ...(options.extension ? { inlineExtensions: [{ name: 'synthetic', factory: options.extension }] } : {}) };
+      },
+      } };
+    } });
+  const root = await registry.create({ cwd, target: { kind: 'new' }, model: offlineModel });
+  return { directory, cwd, store, owner, profile, registry, root,
+    async dispose() { await registry!.shutdown(); store.close(); await profile.dispose(); await rm(directory, { recursive: true, force: true }); } };
+}

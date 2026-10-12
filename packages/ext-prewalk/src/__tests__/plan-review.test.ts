@@ -16,6 +16,7 @@ import {
   PLAN_REVIEW_OVERLAY_OPTIONS,
   PLAN_REVIEW_OPTIONS,
   presentPlanReview,
+  presentPrewalkPlan,
   sanitizePlanForDisplay,
   type PlanReviewResult,
 } from '../plan-review.js';
@@ -29,7 +30,7 @@ const theme = {
   strikethrough: (text: string) => text,
 } as unknown as ExtensionContext['ui']['theme'];
 
-function createHarness(rows = 12, columns = 64, keybindings = new KeybindingsManager(TUI_KEYBINDINGS)) {
+function createHarness(rows = 12, columns = 64, keybindings = new KeybindingsManager(TUI_KEYBINDINGS), validateResult?: (result: PlanReviewResult) => string | undefined) {
   const tui = { terminal: { rows, columns }, requestRender: vi.fn() };
   let result: PlanReviewResult | undefined;
   const done = vi.fn((value: PlanReviewResult | undefined) => { result = value; });
@@ -51,6 +52,7 @@ function createHarness(rows = 12, columns = 64, keybindings = new KeybindingsMan
       ...Array.from({ length: 24 }, (_, index) => `Plan line ${index + 1}`),
     ].join('\n'),
     done,
+    validateResult,
   );
   review.focused = true;
   return { review, tui, done, get result() { return result; } };
@@ -96,6 +98,17 @@ class TestTerminal implements Terminal {
 }
 
 describe('PlanReview', () => {
+  it('keeps invalid feedback open and preserves its text for correction', () => {
+    let reject = true;
+    const harness = createHarness(24, 80, undefined, () => reject ? 'Feedback is too large.' : undefined);
+    openFeedback(harness.review); harness.review.handleInput('Keep my feedback'); harness.review.handleInput('\r');
+    expect(harness.done).not.toHaveBeenCalled();
+    const rendered = harness.review.render(80).join('\n');
+    expect(rendered).toContain('Feedback is too large.'); expect(rendered).toContain('Keep my feedback');
+    reject = false; harness.review.handleInput('\r');
+    expect(harness.done).toHaveBeenCalledWith({ action: 'Provide feedback', feedback: 'Keep my feedback' });
+  });
+
   it('renders Markdown in a bounded fullscreen layout with fixed actions', () => {
     const harness = createHarness();
     const lines = harness.review.render(64);
@@ -466,6 +479,18 @@ describe('PlanReview', () => {
 });
 
 describe('presentPlanReview', () => {
+  it('accepts a minimal client UI without an extension execution context', async () => {
+    const custom = vi.fn(async () => undefined);
+    await expect(presentPrewalkPlan({ custom } as Pick<ExtensionContext['ui'], 'custom'>, '# Plan')).resolves.toBeUndefined();
+    expect(custom).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ overlay: true }));
+  });
+
+  it('does not open a client view after cancellation', async () => {
+    const custom = vi.fn(); const controller = new AbortController(); controller.abort();
+    await expect(presentPrewalkPlan({ custom } as Pick<ExtensionContext['ui'], 'custom'>, '# Plan', controller.signal)).resolves.toBeUndefined();
+    expect(custom).not.toHaveBeenCalled();
+  });
+
   it('settles once and removes its abort listener while feedback is open', async () => {
     const controller = new AbortController();
     const removeListener = vi.spyOn(controller.signal, 'removeEventListener');

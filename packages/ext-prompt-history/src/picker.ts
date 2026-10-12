@@ -10,12 +10,11 @@ import {
 import type { PromptHistoryDisplayMode } from "./config.js";
 import {
 	PROMPT_HISTORY_SCOPES,
-	searchPromptHistory,
 	type PromptHistoryItem,
 	type PromptHistoryScope,
 	type PromptHistorySearchState,
-	type PromptHistorySource,
-} from "./history.js";
+	type PromptHistorySearch,
+} from "./contracts.js";
 
 export const PROMPT_HISTORY_SHORTCUT = Key.ctrl("r");
 export const PROMPT_HISTORY_COMMAND_SHORTCUT = Key.super("r");
@@ -31,7 +30,9 @@ const SCOPE_LABELS: Record<PromptHistoryScope, string> = {
 
 export interface PromptHistoryResult {
 	readonly text: string;
+	readonly id: string;
 }
+export interface PromptHistoryNavigation { scope: PromptHistoryScope; query: string; selectedIndex: number }
 
 export class PromptHistoryPicker implements Component, Focusable {
 	focused = false;
@@ -46,12 +47,14 @@ export class PromptHistoryPicker implements Component, Focusable {
 	private readonly states: Record<PromptHistoryScope, PromptHistorySearchState>;
 
 	constructor(
-		private readonly source: PromptHistorySource,
+		private readonly search: PromptHistorySearch,
 		private readonly theme: Theme,
 		private readonly requestRender: () => void,
 		private readonly done: (value: PromptHistoryResult | undefined) => void,
 		private readonly displayMode: PromptHistoryDisplayMode = "inline",
+		navigation?: PromptHistoryNavigation,
 	) {
+		if (navigation) { this.scope = navigation.scope; this.query = navigation.query; this.selectedIndex = navigation.selectedIndex; }
 		this.states = {
 			session: emptySearchState(true),
 			project: emptySearchState(false),
@@ -78,7 +81,7 @@ export class PromptHistoryPicker implements Component, Focusable {
 		}
 		if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
 			const selected = this.filteredItems()[this.selectedIndex];
-			if (selected) this.finish({ text: selected.text });
+			if (selected) this.finish({ text: selected.text, id: selected.id });
 			return;
 		}
 		if (matchesKey(data, Key.up) || matchesKey(data, Key.ctrl("p"))) {
@@ -180,6 +183,10 @@ export class PromptHistoryPicker implements Component, Focusable {
 		this.close();
 	}
 
+	getNavigation(): PromptHistoryNavigation {
+		return { scope: this.scope, query: this.query, selectedIndex: this.selectedIndex };
+	}
+
 	private filteredItems(): readonly PromptHistoryItem[] {
 		return this.states[this.scope].items;
 	}
@@ -243,7 +250,7 @@ export class PromptHistoryPicker implements Component, Focusable {
 		};
 
 		try {
-			apply(await searchPromptHistory(this.source, scope, query, apply, current));
+			apply(await this.search(scope, query, apply, current));
 		} catch {
 			apply(emptySearchState(false, true));
 		}

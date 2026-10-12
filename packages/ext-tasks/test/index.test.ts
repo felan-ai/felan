@@ -8,7 +8,8 @@ import type {
 } from '@felan-ai/agent-core';
 import { getExtensionConfigDefinition, HostAgentRuntime } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import tasksExtension, { TASKS_CONFIG } from '../src/index.js';
+import tasksExtension, { createTasksExtension, TASKS_CONFIG, type TasksPresentationHost } from '../src/index.js';
+import { createTuiTasksHost } from '../src/tui.js';
 
 type Handler = (event: any, context: ExtensionContext) => unknown;
 
@@ -131,12 +132,45 @@ describe('@felan-ai/ext-tasks', () => {
       overlayOptions: { width: '85%', minWidth: 72, maxHeight: '90%', margin: 2 },
     });
   });
+
+  it('keeps commands available without importing a presenter and refuses unavailable UI', async () => {
+    const harness = await createHarness('main', 'tui', {}, null);
+    await harness.emit('session_start');
+    expect([...harness.commands.keys()]).toEqual(['tasks']);
+    expect(harness.shortcuts).toHaveLength(0);
+    expect(harness.tools.get('TaskCreate')!.renderCall).toBeUndefined();
+    const command = harness.commands.get('tasks') as { handler: (args: string, ctx: ExtensionContext) => Promise<void> };
+    await expect(command.handler('', harness.context)).rejects.toMatchObject({ code: 'unsupported' });
+    await harness.shutdown();
+  });
+
+  it('exposes only read access and joins a view before closing its store', async () => {
+    let entered!: () => void;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    let readableAfterAbort = false;
+    const host: TasksPresentationHost = { async show(_ui, source, _mode, signal) {
+      expect(Object.keys(source).sort()).toEqual(['snapshot', 'subscribe']);
+      entered();
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+      await source.snapshot();
+      readableAfterAbort = true;
+    } };
+    const harness = await createHarness('main', 'print', {}, host);
+    Object.assign(harness.context, { hasUI: true });
+    await harness.emit('session_start');
+    const command = harness.commands.get('tasks') as { handler: (args: string, ctx: ExtensionContext) => Promise<void> };
+    const pending = command.handler('', harness.context);
+    await ready; await harness.shutdown(); await pending;
+    expect(readableAfterAbort).toBe(true);
+    await expect(harness.execute('TaskList', {})).rejects.toThrow('closed');
+  });
 });
 
 async function createHarness(
   sessionId = 'main',
   mode: ExtensionContext['mode'] = 'print',
   config: Readonly<Record<string, unknown>> = {},
+  host: TasksPresentationHost | null = createTuiTasksHost(),
 ) {
   const root = await mkdtemp(join(tmpdir(), 'felan-tasks-extension-'));
   temporaryPaths.push(root);
@@ -158,6 +192,7 @@ async function createHarness(
   const statuses: Array<[string, string | undefined]> = [];
   const custom = vi.fn();
   const ui = {
+    notify: vi.fn(),
     setStatus: (key: string, value: string | undefined) => statuses.push([key, value]),
     custom,
     theme: {
@@ -185,7 +220,7 @@ async function createHarness(
       handlers.set(event, eventHandlers);
     },
   } as unknown as FelanExtensionAPI;
-  tasksExtension(pi);
+  createTasksExtension(host ?? undefined)(pi);
 
   const emit = async (event: string, value: Record<string, unknown> = {}) => {
     const results = [];

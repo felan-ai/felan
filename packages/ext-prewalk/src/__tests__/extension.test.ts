@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { SettingsManager, createSilentLogger } from '@felan-ai/agent-core';
 import { createTurnClassificationRegistry } from '../../../agent-core/src/classifier/turn-classification.js';
 import { installModelSelectionPersistenceScope } from '../../../agent-core/src/model-selection.js';
-import prewalkExtension from '../index.js';
+import { createPrewalkExtension, type PrewalkHost } from '../index.js';
+import { createTuiPrewalkHost } from '../plan-review.js';
 import {
   CONTINUATION_INSTRUCTION,
   CONTINUATION_MESSAGE_TYPE,
@@ -27,6 +28,7 @@ import {
 } from '../prompts.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => any;
+const prewalkExtension = createPrewalkExtension(createTuiPrewalkHost());
 
 const plannerModel = { provider: 'openai-codex', id: 'gpt-5.6-sol', name: 'Sol', reasoning: true,
   thinkingLevelMap: { xhigh: 'xhigh', max: 'max' } } as any;
@@ -111,6 +113,8 @@ function createHarness(
     selectionAutomation?: boolean;
     idle?: boolean;
     mode?: 'tui' | 'rpc' | 'json' | 'print';
+    hasUI?: boolean;
+    reviewHost?: PrewalkHost;
     flags?: Record<string, boolean | string>;
     thinkingLevel?: string;
     entryApproved?: boolean;
@@ -228,7 +232,7 @@ function createHarness(
 
   const ctx = {
     ui,
-    hasUI: options.mode !== 'json' && options.mode !== 'print',
+    hasUI: options.hasUI ?? (options.mode !== 'json' && options.mode !== 'print'),
     mode: options.mode ?? 'tui',
     cwd: '/workspace',
     get model() {
@@ -311,7 +315,7 @@ function createHarness(
     ...(options.selectionAutomation === false ? {} : { selectionAutomation: selectionScope }),
   } as unknown as FelanExtensionAPI;
 
-  prewalkExtension(pi);
+  (options.reviewHost ? createPrewalkExtension(options.reviewHost) : prewalkExtension)(pi);
 
   return {
     pi,
@@ -914,6 +918,15 @@ describe('model entry', () => {
 });
 
 describe('plan review', () => {
+  it('accepts broker-supplied feedback without re-prompting based on daemon execution mode', async () => {
+    const review = vi.fn(async () => ({ action: 'Provide feedback' as const, feedback: 'Preserve the public API.' }));
+    const harness = createHarness({ mode: 'print', hasUI: true, reviewHost: { review }, prewalkOptions: { planReview: 'ask' } });
+    await startPlanning(harness); await preparePlanForReview(harness);
+    const result = await exitPlanMode(harness, 'Update the internals');
+    expect(result).toMatchObject({ details: { decision: 'feedback', feedback: 'Preserve the public API.' } });
+    expect(review).toHaveBeenCalled(); expect(harness.ui.input).not.toHaveBeenCalled(); expect(harness.ui.custom).not.toHaveBeenCalled();
+  });
+
   it('presents the plan argument for ask plus inherit and hands off after approval and mutation', async () => {
     const harness = createHarness({ prewalkOptions: { planReview: 'inherit' } });
     await startPlanning(harness);

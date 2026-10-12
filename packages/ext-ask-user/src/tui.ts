@@ -75,20 +75,49 @@ const DISABLED_SHORTCUT: ResolvedShortcut = {
   matches: (_data: string): false => false,
 };
 
+export type AskUserPresenterUi = Pick<ExtensionContext['ui'], 'custom' | 'onTerminalInput' | 'notify' | 'select' | 'input'>;
+export interface AskUserPresentationContext {
+  readonly ui: AskUserPresenterUi;
+  readonly signal: AbortSignal;
+  readonly reportProgress?: (answers: readonly AskUserQuestionAnswer[]) => void;
+}
+export type AskUserPresentationOutcome = Exclude<AskUserHostOutcome, { status: 'deferred' }>;
+type PresentationExecution = AskUserPresentationContext & {
+  readonly hasUI: boolean;
+  readonly mode: ExtensionContext['mode'];
+  readonly reportProgress: (answers: readonly AskUserQuestionAnswer[]) => void;
+};
+
+export function createTuiAskUserPresenter(config: Partial<AskUserConfig> = {}): {
+  present(request: AskUserRequest, context: AskUserPresentationContext): Promise<AskUserPresentationOutcome>;
+} {
+  const defaults: AskUserConfig = { ...DEFAULT_ASK_USER_CONFIG, ...config };
+  return { present: (request, context) => presentAskUser(request, {
+    ...context, mode: 'tui', hasUI: true, reportProgress: context.reportProgress ?? (() => {}),
+  }, defaults) };
+}
+
 export function createTuiAskUserHost(config: Partial<AskUserConfig> = {}): AskUserHost {
   const defaults: AskUserConfig = { ...DEFAULT_ASK_USER_CONFIG, ...config };
   return {
-    ask: (request, execution) => presentAskUser(request, execution, defaults),
+    ask: (request, execution) => presentAskUser(request, {
+      ui: execution.extensionContext.ui,
+      mode: execution.extensionContext.mode,
+      hasUI: execution.extensionContext.hasUI,
+      signal: execution.signal,
+      reportProgress: execution.reportProgress,
+    }, defaults),
     toolPresentation,
   };
 }
 
 async function presentAskUser(
   request: AskUserRequest,
-  execution: Parameters<AskUserHost['ask']>[1],
+  execution: PresentationExecution,
   config: AskUserConfig,
-): Promise<AskUserHostOutcome> {
-  const ctx = execution.extensionContext;
+): Promise<AskUserPresentationOutcome> {
+  if (execution.signal.aborted) return { status: 'cancelled', reason: 'abort' };
+  const ctx = execution;
   if (!ctx.hasUI || (ctx.mode !== 'tui' && ctx.mode !== 'rpc')) {
     return {
       status: 'cancelled',
@@ -1233,7 +1262,7 @@ class AskWizard implements Component {
 }
 
 async function askQuestionsViaDialogs(
-  ui: ExtensionContext['ui'],
+  ui: Pick<AskUserPresenterUi, 'select' | 'input'>,
   questions: readonly AskUserQuestion[],
   timeout?: number,
   signal?: AbortSignal,
@@ -1288,7 +1317,7 @@ async function raceDialogAbort<T>(
 }
 
 async function askViaDialogs(
-  ui: ExtensionContext['ui'],
+  ui: Pick<AskUserPresenterUi, 'select' | 'input'>,
   question: AskUserQuestion,
   timeout?: number,
 ): Promise<AskUserResponse | null> {

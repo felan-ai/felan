@@ -54,6 +54,7 @@ export type SubscriptionUsageHostResult =
 
 export interface SubscriptionUsageHost {
   fetchUsage(request: SubscriptionUsageHostRequest): Promise<SubscriptionUsageHostResult>;
+  settle?(): Promise<void>;
   /** Gives up this host's right to refresh the provider so another process can take over. */
   releaseRefreshLease?(provider: SubscriptionProviderName): void;
 }

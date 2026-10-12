@@ -1,0 +1,101 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
+import { DaemonControlStore } from '../src/daemon/control-store.js';
+import { CONTROL_LIMITS } from '../src/daemon/control-state.js';
+import { DaemonConfiguration } from '../src/daemon/configuration.js';
+import { SessionServer } from '../src/daemon/server.js';
+import { SessionClient, newRequestId } from '../../felan/src/client/client.js';
+import { fixture, fixtures, now, requestId } from './fixtures/registry.js';
+import { serverFixture } from './fixtures/server.js';
+
+afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
+const overrides = [{ extensionId: 'codex', source: 'CLI', values: { fast: true } }];
+
+it('retains an explicitly interactive source even without overrides or extension paths', async () => {
+  const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, source: 'tui' });
+  expect(f.store.session(binding.sessionId).profile).toEqual({ source: 'tui' });
+  await f.registry.evictIdle(); await f.registry.restore(binding.sessionId);
+  expect(f.opened.at(-1)?.source).toBe('tui');
+});
+
+it('retains session configuration through eviction and a recovered control store', async () => {
+  const f = await fixture();
+  const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, source: 'tui', extensionConfigOverrides: overrides });
+  expect(f.store.session(binding.sessionId).profile).toEqual({ source: 'tui', extensionConfigOverrides: overrides });
+  await f.registry.evictIdle(); await f.registry.restore(binding.sessionId);
+  expect(f.opened.at(-1)?.extensionConfigOverrides).toEqual(overrides);
+  await f.registry.shutdown(); f.store.close();
+  const store = new DaemonControlStore(f.owner, { now: () => now }); const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
+  await registry.restore(binding.sessionId);
+  expect(f.opened.at(-1)?.extensionConfigOverrides).toEqual(overrides);
+  expect(f.opened.at(-1)?.source).toBe('tui');
+});
+
+it('atomically binds a configuration update to its admitted payload and preserves policy', async () => {
+  const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' },
+    policy: { mode: 'acp-strict', pendingTightening: false, generation: 1 } });
+  const id = requestId(); const values = { 'codex-fast': true };
+  f.store.admit({ v: 1, id, op: 'config.set', session: binding.sessionId, params: { scope: 'session', values } }, 'client');
+  expect(() => f.store.configureSession(id, { 'codex-fast': false }, overrides)).toThrow('differs');
+  expect(f.store.snapshot().requests.find(row => row.id === id)?.phase).toBe('intent');
+  await f.registry.reloadAdmitted(id, binding.sessionId, { values, overrides });
+  expect(f.store.session(binding.sessionId).profile?.extensionConfigOverrides).toEqual(overrides);
+  expect(f.store.session(binding.sessionId).policy.effective).toBe('acp-strict');
+  expect(f.store.snapshot().requests.find(row => row.id === id)?.phase).toBe('dispatch_intent');
+  expect(f.opened.at(-1)?.extensionConfigOverrides).toEqual(overrides);
+  expect(() => f.store.configureSession(id, values, overrides)).toThrow('undispatched');
+});
+
+it('refuses configuration reload while work is active without changing the desired profile', async () => {
+  const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+  f.store.updateSession(binding.sessionId, { run: { state: 'running', id: 'active' } });
+  const id = requestId(); const values = { 'codex-fast': true };
+  f.store.admit({ v: 1, id, op: 'config.set', session: binding.sessionId, params: { scope: 'session', values } }, 'client');
+  expect(() => f.registry.reloadAdmitted(id, binding.sessionId, { values, overrides })).toThrow('quiescent');
+  expect(f.store.session(binding.sessionId).profile).toBeUndefined();
+  expect(f.store.snapshot().requests.find(row => row.id === id)?.phase).toBe('intent');
+  f.store.updateSession(binding.sessionId, { run: { state: 'idle' } });
+});
+
+it('rejects an at-capacity profile change before disposing the current runtime', async () => {
+  const f = await fixture({ capacity: { bytes: CONTROL_LIMITS.reserveBytes * 2 + 40_000 } });
+  const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+  const id = requestId(); const instructions = 'x'.repeat(60_000); const values = { 'output-style-instructions': instructions };
+  f.store.admit({ v: 1, id, op: 'config.set', session: binding.sessionId, params: { scope: 'session', values } }, 'client');
+  const disposal = f.instances.get(binding.sessionId)!.dispose; const before = disposal.mock.calls.length;
+  await expect(f.registry.reloadAdmitted(id, binding.sessionId, { values,
+    overrides: [{ extensionId: 'outputStyle', source: 'CLI', values: { instructions } }],
+  })).rejects.toMatchObject({ code: 'request_capacity' });
+  expect(disposal.mock.calls).toHaveLength(before); expect(f.registry.binding(binding.sessionId)).toBe(binding);
+  expect(f.store.session(binding.sessionId).profile).toBeUndefined();
+  expect(f.store.snapshot().requests.find(row => row.id === id)?.phase).toBe('intent');
+});
+
+it('applies wire creation and reload overrides in real composition without changing global settings or replaying a duplicate', async () => {
+  const definition = defineExtensionConfig({ id: 'codex', title: 'Fixture', fields: { fast: configField.boolean({ default: false, description: 'Fixture' }) } });
+  const observed: unknown[] = [];
+  const f = await serverFixture({ now: Date.now, configDefinitions: [definition], onBind: context => { observed.push(context.extensionConfigs.get('codex')?.fast); } });
+  let server: SessionServer | undefined; let client: SessionClient | undefined;
+  try {
+    const settings = join(f.owner.target.agentDir, 'settings.json'); const before = await readFile(settings);
+    server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture',
+      configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [definition], assertCurrent: () => f.registry.assertAdmission() }) });
+    await server.start();
+    client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
+      expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui' });
+    await client.connect();
+    const created = await client.request('sessions.create', { cwd: f.cwd, source: 'tui', config: { 'codex-fast': true } });
+    expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') throw new Error('Creation failed');
+    const session = created.result.sessionId; await client.attach(session); expect(observed.at(-1)).toBe(true);
+    const opens = vi.spyOn(f.profile, 'openSession'); const id = newRequestId();
+    const response = await client.request('config.set', { scope: 'session', values: { 'codex-fast': false } }, { session, id });
+    expect(response.outcome).toBe('accepted'); expect(observed.at(-1)).toBe(false);
+    const count = opens.mock.calls.length;
+    expect(await client.request('config.set', { scope: 'session', values: { 'codex-fast': false } }, { session, id })).toEqual(response);
+    expect(opens.mock.calls).toHaveLength(count);
+    expect(await client.request('config.get', { scope: 'session' }, { session })).toMatchObject({ outcome: 'accepted', result: { values: { 'codex-fast': false } } });
+    expect(await readFile(settings)).toEqual(before);
+  } finally { client?.close(); server?.close(); await f.dispose(); }
+});

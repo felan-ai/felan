@@ -19,6 +19,7 @@ export * from './input-materializer.js';
 export * from './manifest.js';
 export * from './schema.js';
 export * from './validation.js';
+export * from './diagnostics.js';
 
 export interface CreateMemoryExtensionOptions {
   readonly role: MemoryRole;

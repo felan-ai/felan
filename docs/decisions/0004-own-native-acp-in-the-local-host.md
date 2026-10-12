@@ -5,6 +5,11 @@
 > Deciders: Felan maintainers
 > Related: [BUG-392](https://linear.app/bugzyai/issue/BUG-392/add-native-agent-client-protocol-acp-support-to-felan), [ACP v1 transport](https://agentclientprotocol.com/protocol/v1/transports)
 
+The in-process runtime/store ownership below is superseded for Story 1 by
+[ADR 0020](0020-own-local-session-protocol-and-stores.md). All other decisions
+remain in force; [ADR 0023](0023-retain-acp-approvals-in-daemon-policy.md) records
+how existing ACP approvals survive the ownership change.
+
 ## Context
 
 Felan needs a native Agent Client Protocol endpoint for editor and IDE clients.

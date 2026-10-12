@@ -4,6 +4,7 @@ packages:
 
 onlyBuiltDependencies:
   - '@silvia-odwyer/photon-node'
+  - koffi
 
 catalogs:
   pi:

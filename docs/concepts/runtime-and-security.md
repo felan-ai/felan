@@ -43,8 +43,8 @@ the current user can access.
 
 The portable packages never assume a credential store or callback listener:
 
-- the local TUI owns provider credentials and model login;
-- the local MCP host owns OAuth browser/callback flows and OS credential-store
+- the local daemon owns provider credentials, model login, and persisted settings;
+- the daemon owns MCP OAuth browser/callback flows and OS credential-store
   persistence;
 - a cloud host may implement tenant-aware OAuth through the same
   `McpOAuthHost` contract; and

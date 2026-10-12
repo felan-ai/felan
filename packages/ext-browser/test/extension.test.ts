@@ -202,6 +202,7 @@ describe('browser extension', () => {
     await expect(authorize.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'revoked' } });
     expect(authorizationHost.authorize).toHaveBeenCalledOnce();
+    expect(authorizationHost.authorize).toHaveBeenCalledWith(expect.objectContaining({ reason: 'Use the existing authenticated browser session for this task.' }));
     expect(harness.runtime.calls.filter((call) => call.args.includes('--pin-tab'))).toHaveLength(1);
     expect(harness.runtime.calls.some((call) => call.args.includes('--pin-tab'))).toBe(true);
     expect(lease.close).toHaveBeenCalledOnce();

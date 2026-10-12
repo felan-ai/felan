@@ -22,7 +22,7 @@
     "eval:view": "pnpm --dir evals run view",
     "eval:build-runtime": "pnpm --dir evals build:runtime",
     "eval:build-source": "pnpm --dir evals build:source",
-    "audit:packed": "node scripts/test-packed-bin.mjs --audit",
+    "audit:packed": "node scripts/audit-packed.mjs",
     "pack:all": "node scripts/pack.mjs",
     "check:licenses": "node scripts/check-third-party-licenses.mjs",
     "check:proposed-version": "node scripts/check-proposed-version.mjs",

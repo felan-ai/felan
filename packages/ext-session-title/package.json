@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-session-title",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Portable automatic session title generation for Felan",
   "license": "MIT",
   "type": "module",
@@ -22,6 +22,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./view": {
+      "types": "./dist/view.d.ts",
+      "import": "./dist/view.js"
     }
   },
   "scripts": {

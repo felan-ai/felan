@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import {
   getExtensionConfigDefinition,
   type ExtensionCommandContext,
@@ -9,9 +10,10 @@ import { describe, expect, it, vi } from 'vitest';
 import contextViewExtension, {
   CONTEXT_VIEW_CONFIG,
   collectContextReport,
-  ContextUsageOverlay,
+  createContextViewExtension,
   type ContextReport,
 } from '../src/index.js';
+import { ContextUsageOverlay, createTuiContextViewHost } from '../src/tui.js';
 
 function theme() {
   return {
@@ -53,6 +55,35 @@ function pi(overrides: Partial<FelanExtensionAPI> = {}): FelanExtensionAPI {
 }
 
 describe('@felan-ai/ext-context-view', () => {
+  it('keeps the root free of renderer imports and requires an explicit interactive host', async () => {
+    const source = await readFile(new URL('../src/index.ts', import.meta.url), 'utf8');
+    expect(source).not.toContain('@earendil-works/pi-tui');
+    expect(source).not.toContain('ContextUsageOverlay');
+    const api = pi(); contextViewExtension(api);
+    const handler = (api.registerCommand as ReturnType<typeof vi.fn>).mock.calls[0]![1].handler as (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+    await expect(handler('', context({ hasUI: true }))).rejects.toMatchObject({ code: 'unsupported' });
+  });
+
+  it('aborts and joins an active host before shutdown and rejects retained commands', async () => {
+    const handlers = new Map<string, () => Promise<void>>();
+    const api = pi({ on: vi.fn((name: string, handler: unknown) => {
+      if (name === 'session_shutdown') handlers.set(name, handler as () => Promise<void>);
+      return () => {};
+    }) });
+    let entered!: () => void; let settled = false;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    createContextViewExtension({ show: async (_ui, _report, _mode, signal) => {
+      await new Promise<void>(resolve => { signal.addEventListener('abort', () => { settled = true; resolve(); }, { once: true }); entered(); });
+    } })(api);
+    const handler = (api.registerCommand as ReturnType<typeof vi.fn>).mock.calls[0]![1].handler as (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+    const work = handler('', context({ hasUI: true }));
+    try {
+      await ready; await handlers.get('session_shutdown')!(); await work;
+      expect(settled).toBe(true);
+      await expect(handler('', context())).rejects.toMatchObject({ name: 'AbortError' });
+    } finally { await handlers.get('session_shutdown')!(); await work; }
+  });
+
   it('declares inline as its configurable display default', () => {
     expect(getExtensionConfigDefinition(contextViewExtension)).toBe(CONTEXT_VIEW_CONFIG);
     expect(CONTEXT_VIEW_CONFIG.fields.displayMode).toMatchObject({
@@ -78,7 +109,7 @@ describe('@felan-ai/ext-context-view', () => {
 
     for (const config of [{}, { displayMode: 'overlay' }] as const) {
       const api = pi({ config });
-      contextViewExtension(api);
+      createContextViewExtension(createTuiContextViewHost())(api);
       const handler = (api.registerCommand as ReturnType<typeof vi.fn>).mock.calls[0]![1].handler as (args: string, ctx: ExtensionCommandContext) => Promise<void>;
       const done = vi.fn();
       const custom = vi.fn(async (

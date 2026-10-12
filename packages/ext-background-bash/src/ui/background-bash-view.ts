@@ -1,7 +1,7 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import { matchesKey, stripTerminalSequences, truncateToWidth } from '@earendil-works/pi-tui';
 import type { BackgroundBashJob } from '../job-store.js';
-import type { BackgroundBashManager } from '../process-manager.js';
+import type { BackgroundProcessViewSource } from '../presentation.js';
 
 const LOG_SCROLLBACK_LINES = 2_000;
 const LOG_VISIBLE_LINES = 28;
@@ -23,14 +23,15 @@ export class BackgroundBashView {
   private message = '';
   private view: ProcessView = 'list';
   private closed = false;
+  private readonly pending = new Set<Promise<void>>();
 
   constructor(
-    private readonly manager: BackgroundBashManager,
+    private readonly manager: BackgroundProcessViewSource,
     private readonly theme: Theme,
     private readonly done: () => void,
     private readonly requestRender: () => void,
   ) {
-    void this.refresh();
+    this.track(() => this.refresh());
   }
 
   handleInput(data: string): void {
@@ -59,6 +60,21 @@ export class BackgroundBashView {
   }
 
   invalidate(): void {}
+
+  close(): void { this.closed = true; }
+
+  async dispose(): Promise<void> {
+    this.close();
+    await Promise.all([...this.pending]);
+  }
+
+  private track(action: () => Promise<void>): void {
+    if (this.closed) return;
+    const pending = action();
+    this.pending.add(pending);
+    const remove = () => { this.pending.delete(pending); };
+    void pending.then(remove, remove);
+  }
 
   private handleListInput(data: string): void {
     if (matchesKey(data, 'up')) {
@@ -90,18 +106,18 @@ export class BackgroundBashView {
       return;
     }
     if (matchesKey(data, 'return') || matchesKey(data, 'right')) {
-      void this.openDetail();
+      this.track(() => this.openDetail());
       return;
     }
     if (data === 'r') {
-      void this.refresh();
+      this.track(() => this.refresh());
       return;
     }
     if (data === 's') {
-      void this.stopSelected();
+      this.track(() => this.stopSelected());
       return;
     }
-    if (data === 'k') void this.killSelected();
+    if (data === 'k') this.track(() => this.killSelected());
   }
 
   private handleDetailInput(data: string): void {
@@ -137,14 +153,14 @@ export class BackgroundBashView {
       return;
     }
     if (data === 'r') {
-      void this.refreshDetail();
+      this.track(() => this.refreshDetail());
       return;
     }
     if (data === 's') {
-      void this.stopSelected();
+      this.track(() => this.stopSelected());
       return;
     }
-    if (data === 'k') void this.killSelected();
+    if (data === 'k') this.track(() => this.killSelected());
   }
 
   private renderList(): string[] {
@@ -211,11 +227,13 @@ export class BackgroundBashView {
   }
 
   private async refresh(): Promise<void> {
+    if (this.closed) return;
     this.loading = true;
     this.requestViewRender();
     try {
       const selectedId = this.jobs[this.selected]?.meta.id;
       this.jobs = await this.manager.list('all');
+      if (this.closed) return;
       const selectedIndex = selectedId
         ? this.jobs.findIndex((job) => job.meta.id === selectedId)
         : -1;
@@ -235,10 +253,12 @@ export class BackgroundBashView {
 
   private async refreshDetail(): Promise<void> {
     await this.refresh();
+    if (this.closed) return;
     await this.refreshLog(true, true);
   }
 
   private async refreshLog(render = true, scrollToBottom = false): Promise<void> {
+    if (this.closed) return;
     const current = this.jobs[this.selected];
     if (!current) {
       this.logLines = [];
@@ -249,6 +269,7 @@ export class BackgroundBashView {
 
     try {
       const log = await this.manager.tail(current.meta.id, LOG_SCROLLBACK_LINES);
+      if (this.closed) return;
       this.logLines = getProcessOutputLines(log);
     } catch (error) {
       this.logLines = [errorMessage(error)];
@@ -266,7 +287,7 @@ export class BackgroundBashView {
   }
 
   private async openDetail(): Promise<void> {
-    if (this.jobs.length === 0) return;
+    if (this.closed || this.jobs.length === 0) return;
     this.view = 'detail';
     await this.refreshLog(true, true);
   }
@@ -312,6 +333,7 @@ export class BackgroundBashView {
     action: string,
     result: string,
   ): Promise<void> {
+    if (this.closed) return;
     const current = this.jobs[this.selected];
     if (!current) return;
     this.loading = true;
@@ -319,6 +341,7 @@ export class BackgroundBashView {
     this.requestViewRender();
     try {
       await this.manager.stop(current.meta.id, signal);
+      if (this.closed) return;
       await this.refresh();
       if (this.view === 'detail') await this.refreshLog(false, true);
       this.message = `${result} ${current.meta.id}`;

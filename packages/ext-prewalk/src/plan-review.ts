@@ -18,25 +18,15 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from '@earendil-works/pi-tui';
+import {
+  APPROVE_PLAN_OPTION, CANCEL_PREWALK_OPTION, FEEDBACK_PLAN_OPTION, PLAN_REVIEW_OPTIONS, reviewPlanWithDialogs,
+  type PlanReviewResult, type PrewalkHost,
+} from './plan-review-contracts.js';
+export { APPROVE_PLAN_OPTION, CANCEL_PREWALK_OPTION, FEEDBACK_PLAN_OPTION, PLAN_REVIEW_OPTIONS } from './plan-review-contracts.js';
+export { PREWALK_PLAN_LIMIT, PREWALK_REVIEW_PRESENTER, PlanReviewRequestSchema, PlanReviewResultSchema } from './plan-review-contracts.js';
+export type { PlanReviewAction, PlanReviewResult, PrewalkHost } from './plan-review-contracts.js';
 
 type Theme = ExtensionContext['ui']['theme'];
-
-export const APPROVE_PLAN_OPTION = 'Approve plan';
-export const FEEDBACK_PLAN_OPTION = 'Provide feedback';
-export const CANCEL_PREWALK_OPTION = 'Cancel Prewalk';
-
-export const PLAN_REVIEW_OPTIONS = [
-  APPROVE_PLAN_OPTION,
-  FEEDBACK_PLAN_OPTION,
-  CANCEL_PREWALK_OPTION,
-] as const;
-
-export type PlanReviewAction = (typeof PLAN_REVIEW_OPTIONS)[number];
-
-export interface PlanReviewResult {
-  action: PlanReviewAction;
-  feedback?: string;
-}
 
 interface EditorLayout {
   top: number;
@@ -56,22 +46,27 @@ export const PLAN_REVIEW_OVERLAY_OPTIONS: OverlayOptions = {
 const UNSAFE_CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/gu;
 
 export async function presentPlanReview(
-  ctx: ExtensionContext,
+  ctx: Pick<ExtensionContext, 'ui' | 'mode'>,
   plan: string,
   signal?: AbortSignal,
 ): Promise<PlanReviewResult | undefined> {
-  if (ctx.mode !== 'tui') {
-    const action = await ctx.ui.select(
-      `Review Prewalk plan\n\n${plan}`,
-      [...PLAN_REVIEW_OPTIONS],
-      signal ? { signal } : undefined,
-    );
-    return isPlanReviewAction(action) ? { action } : undefined;
-  }
+  return ctx.mode === 'tui' ? presentPrewalkPlan(ctx.ui, plan, signal) : reviewPlanWithDialogs(ctx, plan, signal);
+}
 
+export function createTuiPrewalkHost(): PrewalkHost {
+  return { review: presentPlanReview };
+}
+
+export async function presentPrewalkPlan(
+  ui: Pick<ExtensionContext['ui'], 'custom'>,
+  plan: string,
+  signal?: AbortSignal,
+  validateResult?: (result: PlanReviewResult) => string | undefined,
+): Promise<PlanReviewResult | undefined> {
+  if (signal?.aborted) return undefined;
   let removeAbortListener: (() => void) | undefined;
   try {
-    return await ctx.ui.custom<PlanReviewResult | undefined>(
+    return await ui.custom<PlanReviewResult | undefined>(
       (tui, theme, keybindings, done) => {
         let settled = false;
         const finish = (result: PlanReviewResult | undefined): void => {
@@ -85,7 +80,7 @@ export async function presentPlanReview(
           signal.addEventListener('abort', onAbort, { once: true });
           removeAbortListener = () => signal.removeEventListener('abort', onAbort);
         }
-        return new PlanReview(tui, theme, keybindings, plan, finish);
+        return new PlanReview(tui, theme, keybindings, plan, finish, validateResult);
       },
       { overlay: true, overlayOptions: PLAN_REVIEW_OVERLAY_OPTIONS },
     );
@@ -106,6 +101,7 @@ export class PlanReview implements Component, Focusable {
   #viewportHeight = 1;
   #anchoredToEnd = false;
   #closed = false;
+  #validationError: string | undefined;
 
   constructor(
     private readonly tui: TUI,
@@ -113,6 +109,7 @@ export class PlanReview implements Component, Focusable {
     private readonly keybindings: KeybindingsManager,
     plan: string,
     private readonly done: (result: PlanReviewResult | undefined) => void,
+    private readonly validateResult?: (result: PlanReviewResult) => string | undefined,
   ) {
     this.#markdown = new Markdown(
       sanitizePlanForDisplay(plan),
@@ -133,7 +130,10 @@ export class PlanReview implements Component, Focusable {
       },
     });
     this.#editor.onSubmit = (feedback) => {
-      if (feedback.trim()) this.#finish({ action: FEEDBACK_PLAN_OPTION, feedback });
+      if (feedback.trim()) {
+        this.#finish({ action: FEEDBACK_PLAN_OPTION, feedback });
+        if (this.#validationError) this.#editor.setText(feedback);
+      }
     };
   }
 
@@ -148,6 +148,7 @@ export class PlanReview implements Component, Focusable {
 
   handleInput(data: string): void {
     if (this.#closed) return;
+    this.#validationError = undefined;
     const wheelDirection = parseWheelDirection(data);
     if (wheelDirection !== undefined) {
       this.#scrollBy(wheelDirection);
@@ -281,6 +282,8 @@ export class PlanReview implements Component, Focusable {
 
   #finish(result: PlanReviewResult | undefined): void {
     if (this.#closed) return;
+    const error = result && this.validateResult?.(result);
+    if (error) { this.#validationError = error; this.tui.requestRender(); return; }
     this.#closed = true;
     this.done(result);
   }
@@ -350,6 +353,7 @@ export class PlanReview implements Component, Focusable {
   }
 
   #renderHints(): string {
+    if (this.#validationError) return this.theme.fg('error', this.#validationError);
     const pageUp = bindingLabel(this.keybindings, 'tui.select.pageUp', 'pageUp');
     const pageDown = bindingLabel(this.keybindings, 'tui.select.pageDown', 'pageDown');
     const cancel = bindingLabel(this.keybindings, 'tui.select.cancel', 'escape');
@@ -431,10 +435,6 @@ function bindingLabel(
 ): string {
   const keys = keybindings.getKeys(binding);
   return keys.length > 0 ? keys.join('/') : fallback;
-}
-
-function isPlanReviewAction(action: string | undefined): action is PlanReviewAction {
-  return PLAN_REVIEW_OPTIONS.some((option) => option === action);
 }
 
 function normalizeDimension(value: number): number {

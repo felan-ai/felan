@@ -73,7 +73,12 @@ export function createInsightsExtension(host: InsightsHost): FelanExtension {
         const reportPath = await host.writeReport(pi.runtime, 'felan-insights.html', renderReport(analytics));
         if (options.markdown && host.writeMarkdown) await host.writeMarkdown(pi.runtime, 'felan-insights.md', generateMarkdown(analytics));
         ctx.ui.notify(`Insights report ready: ${reportPath}`, 'info');
-        if (options.openReport && host.openReport) await host.openReport(pi.runtime, reportPath);
+        if (options.openReport && host.openReport) {
+          const signal = ctx.signal;
+          signal?.throwIfAborted();
+          if (signal) await host.openReport(pi.runtime, reportPath, signal);
+          else await host.openReport(pi.runtime, reportPath);
+        }
       },
     });
   };

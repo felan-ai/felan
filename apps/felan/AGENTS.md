@@ -1,0 +1,7 @@
+# Felan clients
+
+- `@felan-ai/felan` owns the `felan` CLI, TUI, ACP and headless clients. It depends on the exact installed `@felan-ai/daemon` version and resolves the daemon entrypoint through package resolution, never cwd-relative paths.
+- The daemon owns credentials/settings, storage, local profiles, sessions, processes, and execution. TUI, ACP, and headless are daemon clients; do not reintroduce in-process runtime, ACP, or store ownership here.
+- Preserve the fixed resource boundary: source-controlled built-ins, Felan-owned settings/appends, explicit global/workspace agent definitions and Agent Skills, the Agent Core-selected cwd `AGENTS.md`/`CLAUDE.md`, and interactive-root Pi extensions from `--extension`/`-e` plus optional `piExtensions` user/project directories after Felan folder trust. Ambient Pi packages, prompts, themes, skills, project settings, network/package sources, and extension loading in other modes remain filtered.
+- Every new, resumed, forked, cloned, or imported root session gets a host-path runtime whose cwd resolves relative paths, plus a local subagent host keyed by its active SessionManager ID. Nested subagents share that root session's storage path. Rebind presentation after replacement and await host shutdown before Pi disposal.
+- Keep external runtime dependency onboarding TUI-owned, interactive-only, explicit before installation, and persisted in Felan global settings. Binary-backed extensions must still degrade safely in non-interactive and cloud runtimes where onboarding never runs.
