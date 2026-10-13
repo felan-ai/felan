@@ -1,6 +1,7 @@
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import { Container, CURSOR_MARKER, Editor, Input, SelectList, Text, getKeybindings, stripTerminalSequences, type Component, type OverlayHandle, type OverlayOptions, type SelectItem, type TUI } from '@earendil-works/pi-tui';
 import { clientSelectListTheme, defaultClientTheme } from './theme.js';
+import { SettingsMenu, type SettingsEntry } from './settings-menu.js';
 
 export interface DialogOptions { signal?: AbortSignal; timeout?: number; placeholder?: string; secret?: boolean }
 
@@ -20,19 +21,21 @@ export class TuiDialogs implements TuiDialogHost {
 
   select(title: string, choices: readonly SelectItem[], options: DialogOptions = {}): Promise<string | undefined> {
     return this.show<string>(finish => {
-      const content = new Container(); const search = new Input({ placeholder: 'Filter choices' });
+      const content = new Container(); const search = new Input(); search.focused = true;
       const items = choices.map(choice => ({ ...choice, label: stripTerminalSequences(choice.label),
         ...(choice.description ? { description: stripTerminalSequences(choice.description) } : {}) }));
       const makeList = (filter = '') => {
         const prefix = filter.toLowerCase();
-        const result = new SelectList(items.filter(item => item.label.toLowerCase().startsWith(prefix) || item.value.toLowerCase().startsWith(prefix)), 12, clientSelectListTheme(this.theme));
+        const result = new SelectList(items.filter(item => item.label.toLowerCase().startsWith(prefix) || item.value.toLowerCase().startsWith(prefix))
+          .map(({ value, label }) => ({ value, label })), 12, clientSelectListTheme(this.theme));
         result.onSelect = item => finish(item.value); result.onCancel = () => finish(undefined);
         return result;
       };
       let list = makeList();
       content.addChild(new Text(this.theme().fg('accent', this.theme().bold(stripTerminalSequences(title))), 1, 1)); content.addChild(search); content.addChild(list);
       return {
-        render: width => this.frame(content.render(width), width), invalidate: () => content.invalidate(),
+        render: width => this.frame([...content.render(width), ...new Text(this.theme().fg('dim',
+          items.find(item => item.value === list.getSelectedItem()?.value)?.description ?? ''), 1, 1).render(width)], width), invalidate: () => content.invalidate(),
         handleInput: data => {
           if ((['tui.select.up', 'tui.select.down', 'tui.select.confirm', 'tui.select.cancel'] as const).some(key => getKeybindings().matches(data, key))) list.handleInput(data);
           else {
@@ -45,6 +48,13 @@ export class TuiDialogs implements TuiDialogHost {
         },
       };
     }, options);
+  }
+
+  async settings(entries: SettingsEntry[]): Promise<void> {
+    await this.show<void>(finish => {
+      const menu = new SettingsMenu(entries, this.theme, () => this.tui.requestRender(), () => finish());
+      return { render: width => this.frame(menu.render(width), width), invalidate: () => menu.invalidate(), handleInput: data => menu.handleInput(data) };
+    });
   }
 
   input(title: string, initial = '', options: DialogOptions = {}): Promise<string | undefined> {

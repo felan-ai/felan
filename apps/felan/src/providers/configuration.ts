@@ -31,6 +31,24 @@ export class DaemonConfiguration implements HostConfiguration {
       const value = record(extension) && Object.hasOwn(extension, field.field) ? extension[field.field] : field.configField.default;
       if (value !== undefined) values[name] = validateExtensionConfigValue(field.definition, field.field, value, 'daemon configuration');
     }
+    const extensionConfig: Record<string, Record<string, unknown>> = {};
+    const extensions = this.options.definitions.map(definition => {
+      const stored = record(configured) ? configured[definition.id] : undefined;
+      if (stored !== undefined && !record(stored)) throw new Error(`extensionConfig.${definition.id} must be an object`);
+      const fields = Object.entries(definition.fields).filter(([, field]) => !field.deprecated);
+      extensionConfig[definition.id] = Object.fromEntries(fields.filter(([, field]) => !field.sensitive).flatMap(([id, field]) => {
+        const value = record(stored) && Object.hasOwn(stored, id) ? stored[id] : field.default;
+        return value === undefined ? [] : [[id, validateExtensionConfigValue(definition, id, value, 'daemon configuration')]];
+      }));
+      return { id: definition.id, title: definition.title, fields: fields.map(([id, field]) => ({
+        id, label: field.label ?? id, description: field.description, type: field.type,
+        ...(field.sensitive ? { sensitive: true } : {}),
+        ...(!field.sensitive && field.values ? { values: field.values } : {}),
+      })) };
+    }).filter(extension => extension.fields.length);
+    values.extensionConfig = extensionConfig;
+    if (settings.codemode !== undefined && !record(settings.codemode)) throw new Error('codemode must be an object');
+    values.codemode = record(settings.codemode) ? settings.codemode.mode ?? 'on' : 'on';
     if (settings.enabledModels !== undefined) values.scopedModels = settings.enabledModels;
     if (settings.defaultProvider !== undefined || settings.defaultModel !== undefined) {
       if (typeof settings.defaultProvider !== 'string' || typeof settings.defaultModel !== 'string') throw new Error('Incomplete configured default model.');
@@ -46,7 +64,7 @@ export class DaemonConfiguration implements HostConfiguration {
     values.builtinExtensions = Object.fromEntries(Object.keys(builtinExtensionPackages)
       .map(name => [name, builtins?.[name as keyof typeof builtinExtensionPackages] ?? true]));
     this.options.assertCurrent();
-    return parseOperationResult('config.get', { values });
+    return parseOperationResult('config.get', { values, extensions });
   }
 
   async set(scope: OperationParams<'config.set'>['scope'], input: unknown): Promise<void> {
@@ -56,7 +74,7 @@ export class DaemonConfiguration implements HostConfiguration {
   sessionOverrides(input: unknown, previous: readonly ExtensionConfigOverride[] = []): ReturnType<HostConfiguration['sessionOverrides']> {
     const update = this.prepare('global', input);
     if (update.scopedModels !== undefined || update.defaultModel !== undefined || update.defaultThinking !== undefined) throw new ConfigurationUnavailable('Model defaults are global; use session model/thinking operations.');
-    if (update.classifierModel !== undefined || update.builtinExtensions !== undefined) throw new ConfigurationUnavailable('Classifier and built-in extension settings are global; use a new session or /reload to apply them.');
+    if (update.classifierModel !== undefined || update.builtinExtensions !== undefined || update.codemode !== undefined) throw new ConfigurationUnavailable('Classifier, code mode and built-in extension settings are global; use a new session or /reload to apply them.');
     const groups = new Map<string, { extensionId: string; source: string; values: Record<string, unknown> }>(previous.map(row => [row.extensionId, { ...row, values: { ...row.values } }]));
     for (const { definition, field, value } of update.extensions) {
       const group = groups.get(definition.id) ?? { extensionId: definition.id, source: 'CLI', values: {} };
@@ -75,6 +93,15 @@ export class DaemonConfiguration implements HostConfiguration {
         Object.assign(result.values, { [name]: validateExtensionConfigValue(field.definition, field.field, row.values[field.field], 'session configuration') });
       }
     }
+    for (const extension of result.extensions ?? []) {
+      const row = overrides.find(row => row.extensionId === extension.id);
+      for (const field of extension.fields) {
+        if (!field.sensitive && row && Object.hasOwn(row.values, field.id)) {
+          const definition = this.options.definitions.find(item => item.id === extension.id)!;
+          result.values.extensionConfig![extension.id]![field.id] = validateExtensionConfigValue(definition, field.id, row.values[field.id], 'session configuration') as JsonValue;
+        }
+      }
+    }
     return parseOperationResult('config.get', result);
   }
 
@@ -84,15 +111,25 @@ export class DaemonConfiguration implements HostConfiguration {
     validateBuiltinExtensionKeys(values.builtinExtensions);
     const extensions: DaemonGlobalSettingsUpdate['extensions'][number][] = [];
     for (const [name, value] of Object.entries(values)) {
-      if (name === 'scopedModels' || name === 'defaultModel' || name === 'defaultThinking' || name === 'classifierModel' || name === 'builtinExtensions') continue;
+      if (name === 'scopedModels' || name === 'defaultModel' || name === 'defaultThinking' || name === 'classifierModel' || name === 'builtinExtensions' || name === 'extensionConfig' || name === 'codemode') continue;
       const field = this.fields.get(name);
       if (!field) throw new ConfigurationUnavailable('Configuration field is not available in this daemon.');
       extensions.push({ definition: field.definition, field: field.field, value: validateExtensionConfigValue(field.definition, field.field, value, 'daemon configuration') });
+    }
+    for (const [id, fields] of Object.entries(values.extensionConfig ?? {})) {
+      const definition = this.options.definitions.find(item => item.id === id);
+      if (!definition) throw new ConfigurationUnavailable('Extension is not available in this daemon.');
+      for (const [field, value] of Object.entries(fields)) {
+        const config = definition.fields[field];
+        if (!config || config.sensitive || config.deprecated) throw new ConfigurationUnavailable('Configuration field is unavailable.');
+        extensions.push({ definition, field, value: validateExtensionConfigValue(definition, field, value, 'daemon configuration') });
+      }
     }
     if (!Object.keys(values).length) throw new Error('Empty configuration update.');
     if (values.defaultModel && (!parseModelReference(values.defaultModel) || /[\x00-\x1f\x7f]/u.test(values.defaultModel))) throw new Error('Default model must be an exact provider/model-id.');
     if (values.scopedModels?.some(value => /[\x00-\x1f\x7f]/u.test(value))) throw new Error('Invalid configured model scope.');
     return { extensions,
+      ...(values.codemode === undefined ? {} : { codemode: values.codemode }),
       ...(values.scopedModels === undefined ? {} : { scopedModels: values.scopedModels }),
       ...(values.defaultModel === undefined ? {} : { defaultModel: values.defaultModel }),
       ...(values.defaultThinking === undefined ? {} : { defaultThinking: values.defaultThinking }),

@@ -62,7 +62,7 @@ export function request(op: Operation, params: object = commandParams[op]) {
 }
 
 export const results = {
-  hello: { attachmentId: 'attachment', principal: 'principal', daemonVersion: '0.1.0', protocol: 1, identity,
+  hello: { attachmentId: 'attachment', localConsole: true, principal: 'principal', daemonVersion: '0.1.0', protocol: 1, identity,
     operations: Object.keys(commandParams), interactionKinds: ['confirm'] },
   'host.status': { state: 'ready', identity, daemonVersion: '0.1.0', protocol: 1, active: { sessions: 1, runs: 1, attachments: 1 }, setupNeeds: [] },
   'sessions.list': { entries: [] }, 'sessions.create': { sessionId: 'session' },
@@ -74,7 +74,7 @@ export const results = {
   'session.export': { destination: '/fixture/export.jsonl' }, 'session.delete': {}, 'session.history': history, 'queue.update': {},
   'shell.execute': { resourceId: 'resource', runId: 'run' }, 'config.get': { values: { 'codex-priority': 'fast' } }, 'config.set': {},
   'tui.preferences.get': { hideThinking: false, showImages: true, imageWidthCells: 60, outputPad: 1, toolDisplay: 'grouped', keybindings: {} }, 'tui.preferences.set': {},
-  'host.setup.catalog': { providers: [], dependencies: [] }, 'host.setup.start': { id: 'setup', kind: 'login', state: 'running', message: 'Starting' },
+  'host.setup.catalog': { providers: [], credentials: [], dependencies: [] }, 'host.setup.start': { id: 'setup', kind: 'login', state: 'running', message: 'Starting' },
   'host.setup.read': { id: 'setup', kind: 'login', state: 'completed', message: 'Complete' },
   'host.setup.answer': {}, 'host.setup.cancel': {}, 'host.open_interaction': {},
   'host.setup.open_link': {},

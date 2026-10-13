@@ -174,4 +174,35 @@ describe('daemon locked configuration', () => {
     expect(await f.read()).toEqual({ extensionConfig: { codex: { fast: true } } });
   });
 
+  it('publishes generic metadata and values for fields outside the fixed CLI schema', async () => {
+    const f = await fixture();
+    const custom = defineExtensionConfig({ id: 'custom', title: 'Custom', fields: {
+      active: configField.boolean({ default: false, description: 'Enable it', label: 'Active', cliName: false }),
+      hidden: configField.string({ default: 'secret', description: 'Private', sensitive: true }),
+      old: configField.boolean({ default: false, description: 'Old', deprecated: 'Use active' }),
+    } });
+    const config = new DaemonConfiguration({ agentDir: f.agentDir, definitions: [custom], assertCurrent: f.assertCurrent });
+    const first = await config.get('global');
+    expect(first.extensions).toEqual([{ id: 'custom', title: 'Custom', fields: [
+      { id: 'active', label: 'Active', description: 'Enable it', type: 'boolean' },
+      { id: 'hidden', label: 'hidden', description: 'Private', type: 'string', sensitive: true },
+    ] }]);
+    expect(first.values.extensionConfig).toEqual({ custom: { active: false } });
+    expect(JSON.stringify(first)).not.toContain('secret');
+    await config.set('global', { extensionConfig: { custom: { active: true } } });
+    expect((await config.get('global')).values.extensionConfig).toEqual({ custom: { active: true } });
+    const overrides = config.sessionOverrides({ extensionConfig: { custom: { active: false } } });
+    expect((await config.sessionValues(overrides)).values.extensionConfig).toEqual({ custom: { active: false } });
+    for (const values of [{ custom: { active: 'bad' } }, { custom: { hidden: 'bad' } }, { custom: { old: true } }, { missing: { active: true } }]) {
+      await expect(config.set('global', { extensionConfig: values })).rejects.toThrow();
+    }
+  });
+
+  it('persists code mode without replacing other code mode settings', async () => {
+    const f = await fixture({ codemode: { mode: 'on', inlineBudget: 42 } });
+    await f.config.set('global', { codemode: 'only' });
+    expect((await f.read()).codemode).toEqual({ mode: 'only', inlineBudget: 42 });
+    expect((await f.config.get('global')).values.codemode).toBe('only');
+    expect(() => f.config.sessionOverrides({ codemode: 'off' })).toThrow('global');
+  });
 });

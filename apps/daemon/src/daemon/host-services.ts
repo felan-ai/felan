@@ -46,6 +46,7 @@ export interface HostServicesRequest {
   readonly models: ModelRuntime;
   readonly definitions: readonly ExtensionConfigDefinition[];
   readonly interactions: Pick<InteractionBroker, 'request'>;
+  refreshModelAvailability(signal: AbortSignal): Promise<void>;
   assertCurrent(): void;
 }
 

@@ -28,12 +28,12 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
     interactionKinds: [...TERMINAL_INTERACTION_KINDS], connector: fake.connector, retries: 0 });
   const identity = identityFor(client.target, 'instance'); const controller = new TuiSessionController(client);
   const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal); const abort = new AbortController();
-  let loggedIn = options.provider ?? false;
+  let loggedIn = options.provider ?? false; let cancelled = false;
   const waiting: SetupJob = { id: 'login-job', kind: 'login', state: 'waiting', message: 'Waiting for credentials',
     prompt: { id: 'key', kind: 'input', message: 'Secret API key', secret: true } };
   fake.onSend = (request, connection) => {
     switch (request.op) {
-      case 'hello': fake.reply(request, { attachmentId: 'client', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
+      case 'hello': fake.reply(request, { attachmentId: 'client', localConsole: true, principal: 'principal', daemonVersion: 'fixture', protocol: 1,
         identity, operations, interactionKinds: [...TERMINAL_INTERACTION_KINDS] }, connection); break;
       case 'host.status': fake.reply(request, { identity, daemonVersion: 'fixture', protocol: 1, state: 'ready',
         active: { sessions: 0, runs: 0, attachments: 0 }, setupNeeds: loggedIn ? [] : [{ code: 'provider', message: 'No model available' }] }, connection); break;
@@ -45,10 +45,11 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
       case 'attach':
         if (options.askBeforeAttach) fake.frame({ v: 1, interaction: question }, connection);
         fake.reply(request, { attachmentId: 'binding', snapshot: snapshot() }, connection); break;
-      case 'host.setup.catalog': fake.reply(request, { providers: [{ id: 'provider', label: 'Fixture provider', configured: loggedIn, methods: ['api_key'] }],
-        dependencies: options.dependencies ? [{ id: 'dependency', label: 'Optional dependency', description: 'Reviewed install', enabled: true, available: false, installable: true, needsSetup: true }] : [] }, connection); break;
+      case 'host.setup.catalog': fake.reply(request, { providers: [{ id: 'provider', label: 'Fixture provider', configured: loggedIn, subscription: false, apiKeyLogin: true, methods: ['api_key'] }],
+        credentials: [], dependencies: options.dependencies ? [{ id: 'dependency', label: 'Optional dependency', description: 'Reviewed install', enabled: true, available: false, installable: true, needsSetup: true }] : [] }, connection); break;
       case 'host.setup.start': fake.reply(request, waiting, connection); break;
-      case 'host.setup.read': fake.reply(request, loggedIn ? { id: 'login-job', kind: 'login', state: 'completed', message: 'Done' } : waiting, connection); break;
+      case 'host.setup.cancel': cancelled = true; fake.reply(request, {}, connection); break;
+      case 'host.setup.read': fake.reply(request, cancelled ? { id: 'login-job', kind: 'login', state: 'cancelled', message: 'Cancelled' } : loggedIn ? { id: 'login-job', kind: 'login', state: 'completed', message: 'Done' } : waiting, connection); break;
       case 'host.setup.answer': loggedIn = true; fake.reply(request, {}, connection); break;
       case 'prompt': fake.reply(request, { runId: 'run' }, connection); break;
       default: fake.reply(request, {}, connection);
@@ -67,10 +68,10 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
 
 async function openLogin(f: Awaited<ReturnType<typeof fixture>>) {
   f.terminal.input('\x03'); f.terminal.input('/login'); f.terminal.input('\r');
-  await vi.waitFor(() => expect(f.text()).toContain('Log in through the daemon'));
-  f.terminal.input('\r'); await vi.waitFor(() => expect(f.text()).toContain('Login method'));
-  f.terminal.input('\r'); await vi.waitFor(() => expect(f.text()).toContain('Start login'));
+  await vi.waitFor(() => expect(f.text()).toContain('Select authentication method:'));
   f.terminal.input('\x1b[B'); f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.text()).toContain('Select provider to configure:'));
+  f.terminal.input('\r');
   await vi.waitFor(() => expect(f.text()).toContain('Secret API key'));
 }
 
@@ -131,6 +132,9 @@ it('keeps initial input recoverable and never submits it when login is cancelled
   await vi.waitFor(() => expect(f.controller.notice).toContain('No model is available'));
   await openLogin(f); f.terminal.input('\x1b');
   await vi.waitFor(() => expect(f.fake.requests.some(request => request.op === 'host.setup.cancel')).toBe(true));
+  await vi.waitFor(() => expect(f.text()).toContain('Select provider to configure:'));
+  f.terminal.input('\x1b');
+  await vi.waitFor(() => expect(f.text()).toContain('Select authentication method:')); f.terminal.input('\x1b');
   f.terminal.input('\x03'); f.terminal.input('\x1b[A'); f.terminal.input('\x1b[A');
   expect(f.text()).toContain('unsent initial request');
   expect(f.fake.requests.some(request => request.op === 'sessions.create' || request.op === 'prompt')).toBe(false);
@@ -160,6 +164,10 @@ it.each(['complete', 'cancel'] as const)('queues an arriving model question unti
   expect(f.text()).not.toContain('private-credential');
   expect(f.fake.requests.some(request => request.op === 'interaction.answer')).toBe(false);
   f.terminal.input(finish === 'complete' ? '\r' : '\x1b');
+  if (finish === 'cancel') {
+    await vi.waitFor(() => expect(f.text()).toContain('Select provider to configure:')); f.terminal.input('\x1b');
+    await vi.waitFor(() => expect(f.text()).toContain('Select authentication method:')); f.terminal.input('\x1b');
+  }
   await vi.waitFor(() => expect(f.text()).toContain('Model question must wait'), { timeout: 3_000 });
   const answers = f.fake.requests.filter(request => request.op === 'host.setup.answer');
   expect(answers).toHaveLength(finish === 'complete' ? 1 : 0);

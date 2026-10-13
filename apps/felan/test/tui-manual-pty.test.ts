@@ -151,7 +151,8 @@ async function captureManualTerminal(output: string): Promise<void> {
     await preferences.set({ keybindings: { 'app.model.select': 'alt+m', 'app.exit': 'alt+x' } });
     await server.start(); pty = new Capture(output, checkpoints, f.directory, f.cwd, f.root.sessionId); const terminal = pty;
     const idle = () => f.store.session(f.root.sessionId).run.state === 'idle' && !terminal.screen.includes('Working');
-    const filter = () => terminal.screen.includes('Filter choices');
+    const modelSelector = () => /Model\s+>\s+→ Fixture/u.test(terminal.screen);
+    const settingsSelector = () => terminal.screen.includes('Type to search');
     await terminal.wait('initial connected frame', () => idle() && terminal.screen.includes('Felan Code')
       && terminal.screen.split('\n').at(-2) === '─'.repeat(terminal.grid.screenColumns));
     expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getFgAnsi('text'));
@@ -161,39 +162,44 @@ async function captureManualTerminal(output: string): Promise<void> {
     await terminal.snapshot('01-dark-wide-idle');
 
     terminal.send('QA retained draft'); await terminal.wait('draft visible', () => terminal.screen.includes('QA retained draft'));
-    terminal.send('\x1bm'); await terminal.wait('configured model shortcut', () => filter() && terminal.screen.includes('Model'));
+    terminal.send('\x1bm'); await terminal.wait('configured model shortcut', modelSelector);
+    expect(terminal.screen).not.toContain('Filter choices');
     await terminal.snapshot('02-model-shortcut-draft');
-    terminal.send('\x1b'); await terminal.wait('draft restored', () => !filter() && terminal.screen.includes('QA retained draft'));
+    terminal.send('\x1b'); await terminal.wait('draft restored', () => !modelSelector() && terminal.screen.includes('QA retained draft'));
     expect(f.root.runtime.session.messages).toHaveLength(0);
     await terminal.snapshot('03-shortcut-dismissed');
     terminal.send('\x03'); await terminal.wait('draft cleared', () => !terminal.screen.includes('QA retained draft'));
 
-    terminal.send('/settings\r'); await terminal.wait('settings opened', () => filter() && terminal.screen.includes('Settings'));
+    terminal.send('/settings\r'); await terminal.wait('settings opened', () => settingsSelector() && terminal.screen.includes('General settings'));
     await terminal.snapshot('04-dark-settings');
-    terminal.send('Thinking\r'); await terminal.wait('thinking draft toggled', () => terminal.screen.includes('Thinking: hidden'));
-    terminal.send('Save display changes\r'); await terminal.wait('preferences saved', () => !filter() && terminal.screen.includes('Display preferences saved'));
+    terminal.send('\r'); await terminal.wait('general settings opened', () => terminal.screen.includes('Hide thinking'));
+    terminal.send('Hide thinking\r'); await terminal.wait('thinking saved immediately', () => /Hide thinking\s+true/u.test(terminal.screen) && terminal.screen.includes('Display preferences saved'));
     expect((await preferences.get()).hideThinking).toBe(true);
+    terminal.send('\x1b'); await terminal.wait('general settings closed', () => terminal.screen.includes('General settings'));
+    terminal.send('\x1b'); await terminal.wait('settings closed', () => !settingsSelector());
     await terminal.snapshot('05-settings-saved');
 
-    terminal.send('/settings\r'); await terminal.wait('settings reopened', () => filter() && terminal.screen.includes('Settings'));
-    terminal.send('Theme\r'); await terminal.wait('local theme picker', () => filter() && terminal.screen.includes('Client theme'));
+    terminal.send('/settings\r'); await terminal.wait('settings reopened', () => settingsSelector() && terminal.screen.includes('General settings'));
+    terminal.send('\r'); await terminal.wait('general settings reopened', () => terminal.screen.includes('Hide thinking'));
+    terminal.send('Theme\r'); await terminal.wait('local theme picker', () => settingsSelector() && terminal.screen.includes('Custom value'));
     await terminal.snapshot('06-local-theme-picker');
-    terminal.send('felan-light\r'); await terminal.wait('light theme draft', () => terminal.screen.includes('Theme: felan-light'));
     const paletteOffset = terminal.frameRaw.length;
-    terminal.send('Save display changes\r'); await terminal.wait('light palette applied', () => !filter() && terminal.screen.includes('Display preferences saved')
+    terminal.send('felan-light\r'); await terminal.wait('light palette applied immediately', () => /Theme\s+felan-light/u.test(terminal.screen) && terminal.screen.includes('Display preferences saved')
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getFgAnsi('text'))
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg')));
     expect(JSON.parse(await readFile(join(f.directory, 'client', 'tui', 'settings.json'), 'utf8')).theme).toBe('felan-light');
     expect(JSON.parse(await readFile(join(f.owner.target.agentDir, 'settings.json'), 'utf8'))).not.toHaveProperty('theme');
+    terminal.send('\x1b'); await terminal.wait('general settings closed after theme change', () => terminal.screen.includes('General settings'));
+    terminal.send('\x1b'); await terminal.wait('theme settings closed', () => !settingsSelector());
     await terminal.snapshot('07-light-wide-idle');
 
     const beforeResize = terminal.grid.clears;
     terminal.grid.resize(52, 18); terminal.terminal.resize(52, 18);
     await terminal.wait('narrow full redraw', () => terminal.grid.clears > beforeResize && terminal.grid.screenColumns === 52 && terminal.grid.screenRows === 18 && idle());
     await terminal.snapshot('08-light-narrow-idle');
-    terminal.send('/settings\r'); await terminal.wait('narrow settings', () => filter() && terminal.screen.includes('Settings'));
+    terminal.send('/settings\r'); await terminal.wait('narrow settings', () => settingsSelector() && terminal.screen.includes('General settings'));
     await terminal.snapshot('09-light-narrow-settings');
-    terminal.send('\x1b'); await terminal.wait('settings dismissed without approval', () => !filter());
+    terminal.send('\x1b'); await terminal.wait('settings dismissed without approval', () => !settingsSelector());
     await terminal.wait('cancelled command cleared', () => !terminal.screen.includes('/settings'));
 
     terminal.send('QA streamed model run\r'); await bounded(firstDelta.promise, 'first provider delta');

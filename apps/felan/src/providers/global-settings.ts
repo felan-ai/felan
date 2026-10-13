@@ -4,7 +4,7 @@ import {
   validateExtensionConfigValue,
   type ExtensionConfigDefinition,
 } from '@felan-ai/agent-core';
-import { LIMITS, ThinkingSchema, TuiPreferencesUpdateSchema, assertJson, parseSchema, type TuiPreferencesUpdate } from '@felan-ai/session-protocol';
+import { ConfigValuesSchema, LIMITS, ThinkingSchema, TuiPreferencesUpdateSchema, assertJson, parseSchema, type TuiPreferencesUpdate } from '@felan-ai/session-protocol';
 import { readDaemonSettingsStore, updateDaemonSettingsStore, type MutableDaemonGlobalSettings } from './settings-store.js';
 import { validateBuiltinExtensionKeys } from './extension-catalog.js';
 
@@ -52,6 +52,7 @@ export interface DaemonGlobalSettingsUpdate {
   readonly defaultModel?: string;
   readonly defaultThinking?: string;
   readonly classifierModel?: string;
+  readonly codemode?: 'off' | 'on' | 'only';
   readonly builtinExtensions?: Readonly<Record<string, boolean>>;
   readonly preferences?: TuiPreferencesUpdate;
   readonly dependencyDecisions?: readonly DependencyOnboardingDecision[];
@@ -73,7 +74,7 @@ export async function mergeDaemonGlobalSettings(
   const extensions = update.extensions.map(({ definition, field, value }) => {
     assertJson(value, LIMITS.structuredBytes);
     const config = definition.fields[field];
-    if (!config || config.sensitive || config.cliName === false) throw new Error('Configuration field is unavailable.');
+    if (!config || config.sensitive) throw new Error('Configuration field is unavailable.');
     return { id: definition.id, field, value: validateExtensionConfigValue(definition, field, value, 'daemon configuration') };
   });
   const defaults: Record<string, unknown> = {};
@@ -91,14 +92,19 @@ export async function mergeDaemonGlobalSettings(
   }
   if (update.defaultThinking !== undefined) defaults.defaultThinkingLevel = parseSchema(ThinkingSchema, update.defaultThinking);
   const classifierModel = update.classifierModel === undefined ? undefined : parseClassifierModelSetting(update.classifierModel);
+  const codemode = update.codemode === undefined ? undefined : parseSchema(ConfigValuesSchema, { codemode: update.codemode }).codemode;
   const builtins = update.builtinExtensions;
   validateBuiltinExtensionKeys(builtins);
   const preferences = update.preferences === undefined ? undefined : parseSchema(TuiPreferencesUpdateSchema, update.preferences);
   const decisions = update.dependencyDecisions ?? [];
   if (decisions.length > 16 || decisions.some(value => !isExtensionIdentifier(value.extension)
     || !Number.isSafeInteger(value.revision) || value.revision < 1 || typeof value.enabled !== 'boolean')) throw new Error('Invalid dependency decisions.');
-  if (!extensions.length && !Object.keys(defaults).length && !preferences && !decisions.length && !builtins && classifierModel === undefined) throw new Error('Empty configuration update.');
+  if (!extensions.length && !Object.keys(defaults).length && !preferences && !decisions.length && !builtins && classifierModel === undefined && codemode === undefined) throw new Error('Empty configuration update.');
   await updateDaemonGlobalSettings(agentDir, assertCurrent, settings => {
+    if (codemode !== undefined) {
+      if (settings.codemode !== undefined && !isRecord(settings.codemode)) throw new Error('codemode must be an object');
+      settings.codemode = { ...settings.codemode, mode: codemode };
+    }
     if (classifierModel !== undefined) {
       if (settings.felanClassifier !== undefined && !isRecord(settings.felanClassifier)) throw new Error('felanClassifier must be an object');
       settings.felanClassifier = { ...settings.felanClassifier, model: classifierModel };

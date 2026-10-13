@@ -88,6 +88,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const host = await sessionRuntime.createHostServices({ agentDir: owner.target.agentDir, homeDir: homeDir ?? homedir(),
       runtime: setupRuntime, models, interactions: { request: broker.request.bind(broker) },
       definitions: await sessionRuntime.configuration(hostConfig.config.extensions.map(row => row.package)),
+      refreshModelAvailability: signal => liveRegistry.refreshModelAvailability(signal),
       assertCurrent: () => owner.assertCurrent() });
     setup = host.setup;
     runtimeDependencies = createRuntimeDependenciesPort(setup, broker);

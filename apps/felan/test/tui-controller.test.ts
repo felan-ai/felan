@@ -152,8 +152,9 @@ it('keeps an editor draft when the model shortcut opens and cancels its selector
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     const before = f.root.runtime.session.messages.length;
     terminal.input('unsubmitted draft'); terminal.input('\x0c');
-    await vi.waitFor(() => expect(screenText(tui)).toContain('Filter choices'));
-    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('Filter choices'));
+    await vi.waitFor(() => expect(screenText(tui)).toMatch(/Model\s+>\s+→ Fixture/u));
+    expect(screenText(tui)).not.toContain('Filter choices');
+    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('→ Fixture'));
     tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('unsubmitted draft');
     expect(f.root.runtime.session.messages).toHaveLength(before);
     terminal.input('\x03'); terminal.input('\x04'); await running;
@@ -187,33 +188,40 @@ it('exits while a daemon preference request remains unresolved', async () => {
   } finally { release.resolve(); signal.abort(); await running; }
 });
 
-it('uses daemon shortcuts in the active terminal and preserves a rejected settings draft', async () => {
+it('uses daemon shortcuts in the active terminal and retains the saved setting after a rejected change', async () => {
   const f = await fixture(); await f.preferences.set({ keybindings: { 'app.exit': 'alt+x', 'app.model.select': 'alt+m' } });
   const controller = f.controller(); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
   const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, sessionId: f.root.sessionId, terminal, createTui: () => tui, signal: signal.signal });
   try {
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     terminal.input('retained draft'); terminal.input('\x1bm');
-    await vi.waitFor(() => expect(screenText(tui)).toContain('Filter choices'));
-    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('Filter choices'));
+    await vi.waitFor(() => expect(screenText(tui)).toMatch(/Model\s+>\s+→ Fixture/u));
+    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('→ Fixture'));
     tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('retained draft');
     terminal.input('\x03');
     vi.spyOn(f.preferences, 'set').mockRejectedValueOnce(new Error('cannot write preferences'));
     terminal.input('/settings'); terminal.input('\r');
-    await vi.waitFor(() => expect(screenText(tui)).toContain('Filter choices'));
-    terminal.input('Thinking'); terminal.input('\r');
-    await vi.waitFor(() => { tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('Thinking: hidden'); });
-    terminal.input('Save display changes'); terminal.input('\r');
+    await vi.waitFor(() => expect(screenText(tui)).toContain('General settings'));
+    terminal.input('\r');
+    await vi.waitFor(() => expect(screenText(tui)).toContain('Hide thinking'));
+    terminal.input('Hide thinking'); terminal.input('\r');
     await vi.waitFor(() => {
       expect(controller.notice).toBe('Outcome uncertain: Operation did not complete. Inspect the current session before retrying.');
       tui.renderNow(true);
       const visible = stripTerminalSequences(tui.getScreenLines().join('\n'));
       expect(visible).toContain('Outcome uncertain: Operation did not complete.');
-      expect(visible).toContain('Thinking: hidden');
+      expect(visible).toMatch(/Hide thinking\s+false/u);
     });
-    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('Filter choices'));
-    expect(screenText(tui)).not.toContain('/settings');
     expect((await f.preferences.get()).hideThinking).toBe(false);
+    terminal.input('\r');
+    await vi.waitFor(async () => {
+      expect((await f.preferences.get()).hideThinking).toBe(true);
+      expect(screenText(tui)).toMatch(/Hide thinking\s+true/u);
+      expect(controller.notice).toContain('Display preferences saved.');
+    });
+    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).toContain('General settings'));
+    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('General settings'));
+    expect(screenText(tui)).not.toContain('/settings');
     terminal.input('\x03'); terminal.input('\x04'); expect(terminal.active).toBe(true);
     terminal.input('\x1bx'); await running; expect(terminal.active).toBe(false);
   } finally { signal.abort(); await running; }
@@ -228,12 +236,16 @@ it('routes settings locally without requiring an attached session', async () => 
 
 it('routes login and dependency commands locally without attaching or adding credentials to model input', async () => {
   const f = await fixture(); const controller = f.controller(); const login = vi.fn(async () => true); const dependencies = vi.fn(async () => false);
-  const options = { cwd: f.cwd, exit: vi.fn(), login, dependencies };
+  const logout = vi.fn(async () => true);
+  const options = { cwd: f.cwd, exit: vi.fn(), login, logout, dependencies };
   expect(await submitTuiInput(controller, fakeDialogs(), '/login', options)).toBe(true);
   expect(await submitTuiInput(controller, fakeDialogs(), '/dependencies', options)).toBe(false);
   expect(login).toHaveBeenCalledOnce(); expect(dependencies).toHaveBeenCalledOnce(); expect(controller.sessionId).toBeUndefined();
-  await expect(submitTuiInput(controller, fakeDialogs(), '/login secret-in-command', options)).rejects.toThrow('Usage: /login');
-  expect(login).toHaveBeenCalledOnce();
+  expect(await submitTuiInput(controller, fakeDialogs(), '/login Fixture Provider', options)).toBe(true);
+  expect(login).toHaveBeenLastCalledWith('Fixture Provider');
+  expect(await submitTuiInput(controller, fakeDialogs(), '/logout', options)).toBe(true);
+  expect(logout).toHaveBeenCalledOnce();
+  await expect(submitTuiInput(controller, fakeDialogs(), '/logout provider', options)).rejects.toThrow('Usage: /logout');
   const completions = await createCommandAutocomplete(controller).getSuggestions(['/dep'], 0, 4, { signal: new AbortController().signal });
   expect(completions?.items).toContainEqual({ value: 'dependencies', label: 'dependencies', description: 'Set up runtime dependencies' });
 });

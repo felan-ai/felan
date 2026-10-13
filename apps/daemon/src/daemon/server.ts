@@ -309,7 +309,7 @@ export class SessionServer {
     const composition = await this.currentComposition();
     connection.out.send(accepted(request, { attachmentId: connection.id, principal: this.principal, daemonVersion: this.options.version, protocol: 1,
       identity: this.options.registry.options.owner.identity, ...(composition ? { composition } : {}), operations: this.available(connection.capabilities, connection.localConsole),
-      interactionKinds: connection.interactionKinds, capabilities: connection.capabilities }));
+      interactionKinds: connection.interactionKinds, capabilities: connection.capabilities, localConsole: connection.localConsole }));
     for (const interaction of this.options.broker?.pending?.() ?? []) this.sendInteraction(connection, interaction);
   }
 

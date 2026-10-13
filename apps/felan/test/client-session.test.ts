@@ -22,7 +22,7 @@ async function fixture(options: Partial<ConstructorParameters<typeof SessionClie
   clients.push(client);
   const identity = identityFor(client.target, 'instance');
   fake.onSend = (request, connection) => {
-    if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: 'fixture',
+    if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, localConsole: true, principal: 'principal', daemonVersion: 'fixture',
       protocol: 1, identity, operations: ['attach', 'detach', 'prompt', 'sessions.create', 'host.status'], interactionKinds: [] }, connection);
     else if (request.op === 'attach') fake.reply(request, { attachmentId: `binding-${connection}`, snapshot: snapshot() }, connection);
     else fake.reply(request, request.op === 'prompt' ? { runId: 'run' } : {}, connection);
@@ -37,7 +37,7 @@ describe('shared session client', () => {
     offered.pop();
     const original = fake.onSend;
     fake.onSend = (request, connection) => {
-      if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: 'fixture',
+      if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, localConsole: true, principal: 'principal', daemonVersion: 'fixture',
         protocol: 1, identity, operations: ['attach', 'ui.action'], interactionKinds: ['form'], capabilities: ['ui.action'] }, connection);
       else original(request, connection);
     };
@@ -65,14 +65,14 @@ describe('shared session client', () => {
   it.each(['instanceId', 'namespaceId', 'agentDir', 'rootSet'] as const)('fails closed on mismatched %s', async field => {
     const { client, fake, identity } = await fixture({ reconnectAttempts: 0 });
     await client.connect(); fake.lose();
-    fake.onSend = request => fake.reply(request, { attachmentId: 'a', principal: 'p', daemonVersion: 'fixture', protocol: 1,
+    fake.onSend = request => fake.reply(request, { attachmentId: 'a', localConsole: true, principal: 'p', daemonVersion: 'fixture', protocol: 1,
       identity: { ...identity, [field]: field === 'rootSet' ? ['/wrong'] : field === 'agentDir' ? '/wrong' : 'wrong' }, operations: [], interactionKinds: [] });
     await expect(client.connect()).rejects.toThrow(); expect(client.status).toBe('blocked');
   });
   it('blocks session attachment when the trusted host-composition fingerprint differs', async () => {
     const expectedComposition = { managerPackage: '@felan-ai/felan', managerVersion: '0.29.0', providerDigest: 'a'.repeat(64) };
     const { client, fake, identity } = await fixture({ expectedComposition });
-    fake.onSend = request => fake.reply(request, { attachmentId: 'hello', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
+    fake.onSend = request => fake.reply(request, { attachmentId: 'hello', localConsole: true, principal: 'principal', daemonVersion: 'fixture', protocol: 1,
       identity, operations: ['attach'], interactionKinds: [], composition: { ...expectedComposition, configDigest: 'b'.repeat(64), providerDigest: 'b'.repeat(64) } });
     await expect(client.connect()).rejects.toThrow('configuration differs');
     expect(client.status).toBe('incompatible');

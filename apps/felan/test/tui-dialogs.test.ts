@@ -1,6 +1,6 @@
 import { beforeAll, expect, it, vi } from 'vitest';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { KeybindingsManager, TUI_KEYBINDINGS, setKeybindings, type Component, type TUI } from '@earendil-works/pi-tui';
+import { KeybindingsManager, TUI_KEYBINDINGS, setKeybindings, stripTerminalSequences, type Component, type TUI } from '@earendil-works/pi-tui';
 import { TuiDialogs } from '../src/tui/dialogs.js';
 import { createClientKeybindings } from '../src/tui/keybindings.js';
 
@@ -64,4 +64,56 @@ it('cancels and clears secret input when its prompt signal becomes stale', async
   f.input('private-test-key'); abort.abort();
   expect(await result).toBeUndefined(); expect(f.hide).toHaveBeenCalledOnce();
   expect(f.render()).not.toContain('*'.repeat('private-test-key'.length)); f.dialogs.dispose();
+});
+
+it('shows an empty search prompt and wraps the selected description below generic choices', async () => {
+  const f = fixture();
+  const result = f.dialogs.select('Pick', [{ value: 'one', label: 'First', description: 'A long description '.repeat(12) },
+    { value: 'two', label: 'Second', description: 'Second description' }]);
+  const lines = f.render().split('\n').map(stripTerminalSequences);
+  expect(lines.some(line => line.startsWith('> '))).toBe(true);
+  expect(lines.join('\n')).not.toContain('Filter choices');
+  expect(lines.find(line => line.includes('First'))).not.toContain('description');
+  expect(lines.filter(line => line.includes('description')).length).toBeGreaterThan(1);
+  f.input('\x1b[B'); expect(stripTerminalSequences(f.render())).toContain('Second description');
+  f.input('\x1b'); expect(await result).toBeUndefined();
+});
+
+it('keeps settings search, values, position counter, description and delimiters', async () => {
+  const f = fixture();
+  const result = f.dialogs.settings(Array.from({ length: 18 }, (_, index) => ({ id: `extension-${index}`, label: index ? `Extension ${index}` : 'General settings',
+    description: `Description for ${index}`, currentValue: index ? '4 settings' : 'open', children: [] })));
+  const screen = stripTerminalSequences(f.render());
+  expect(screen).toContain('General settings'); expect(screen).toContain('open'); expect(screen).toContain('4 settings');
+  expect(screen).toContain('(1/18)'); expect(screen).toContain('Description for 0');
+  expect(screen).toContain('Type to search · Enter/Space to change · Esc to cancel');
+  expect(screen.split('\n')[0]).toBe('─'.repeat(80)); expect(screen.split('\n').at(-1)).toBe('─'.repeat(80));
+  expect(screen).not.toContain('Filter choices');
+  f.input('Extension 17'); expect(stripTerminalSequences(f.render())).toContain('Description for 17');
+  f.input('\x1b'); await result;
+});
+
+it('preselects the current choice and applies custom values without save rows', async () => {
+  const f = fixture(); const change = vi.fn(async () => {});
+  const result = f.dialogs.settings([{ id: 'theme', label: 'Theme', description: 'Client display', currentValue: 'dark', edit: true,
+    choices: [{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }], change }]);
+  f.input('\r'); expect(stripTerminalSequences(f.render())).toContain('→ Dark');
+  f.input('\x1b[B'); f.input('\r');
+  f.input('\x0b'); f.input('light/dark'); f.input('\r');
+  await vi.waitFor(() => expect(change).toHaveBeenCalledWith('light/dark'));
+  await vi.waitFor(() => expect(stripTerminalSequences(f.render())).toContain('→ Theme'));
+  expect(stripTerminalSequences(f.render())).toContain('light/dark');
+  f.input('\x1b'); await result;
+});
+
+it('retains the saved value after a rejected toggle and allows retry', async () => {
+  const f = fixture(); const change = vi.fn().mockRejectedValueOnce(new Error('Write rejected')).mockResolvedValueOnce(undefined);
+  const result = f.dialogs.settings([{ id: 'toggle', label: 'Toggle', description: 'Example', currentValue: 'off', values: ['off', 'on'], change }]);
+  f.input(' ');
+  await vi.waitFor(() => expect(stripTerminalSequences(f.render())).toContain('Write rejected'));
+  expect(stripTerminalSequences(f.render())).toMatch(/Toggle\s+off/u);
+  f.input(' ');
+  await vi.waitFor(() => expect(stripTerminalSequences(f.render())).toMatch(/Toggle\s+on/u));
+  expect(change.mock.calls).toEqual([['on'], ['on']]);
+  f.input('\x1b'); await result;
 });

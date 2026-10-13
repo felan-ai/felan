@@ -23,7 +23,7 @@ describe('complete operation inventory', () => {
   });
 
   it('preserves all 64 inventoried configuration options without credential setters', () => {
-    const names = Object.keys(ConfigValuesSchema.properties).filter(key => !['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions'].includes(key));
+    const names = Object.keys(ConfigValuesSchema.properties).filter(key => !['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions', 'codemode', 'extensionConfig'].includes(key));
     expect(names).toHaveLength(64);
     expect(names.some(name => /api-key|secret|token|headers|placeholder/.test(name))).toBe(false);
     expect(parseSchema(ConfigValuesSchema, { 'powerline-lines': [{ segments: { git: { enabled: true, showSha: true } } }], 'prewalk-entry-approval': 'ask' })).toBeTruthy();

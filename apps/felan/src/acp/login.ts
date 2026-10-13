@@ -79,7 +79,7 @@ export async function runLocalFelanAcpLogin(options: RunLocalFelanAcpLoginOption
     abort.signal.throwIfAborted();
     setup = new TerminalSetup(controller, nodeSetupUi(terminal, abort.signal, secrets, state));
     const completed = await setup.login();
-    if (abort.signal.aborted || state.cancelled) throw new AcpLoginCancelledError();
+    if (abort.signal.aborted || state.cancelled && !completed) throw new AcpLoginCancelledError();
     if (!completed) {
       writeError(`Authentication failed: ${safeMessage(controller.notice || 'The daemon could not complete authentication.', secrets)}`);
       return 1;
@@ -116,9 +116,24 @@ function nodeSetupUi(terminal: AcpLoginTerminal, lifetime: AbortSignal, secrets:
     if (!signal.aborted && result === undefined) state.cancelled = true;
     return result;
   };
-  return {
+  const ui: TerminalSetupUi = {
     isIdle: () => true,
     select,
+    providers: (title, choices, _initialSearch, signal) => select(title, choices, { signal }),
+    login: async (job, provider, signal) => {
+      terminal.writeLine(safePromptMessage(`Login to ${provider}`, secrets));
+      for (const link of job.links ?? []) terminal.writeLine(safePromptMessage(`${link.url}\n${link.label}`, secrets));
+      const prompt = job.state === 'waiting' ? job.prompt : undefined;
+      if (prompt) {
+        terminal.writeLine(safePromptMessage(job.message, secrets));
+        return prompt.kind === 'select'
+          ? ui.select(prompt.message, prompt.choices.map(choice => ({ value: choice.id, label: choice.label,
+            ...(choice.description ? { description: choice.description } : {}) })), { signal })
+          : ui.input(prompt.message, '', { signal, secret: prompt.secret, ...(prompt.placeholder ? { placeholder: prompt.placeholder } : {}) });
+      }
+      await ui.progress({ ...job, links: [] }, signal);
+      return undefined;
+    },
     input: async (message, _initial, options) => {
       const signal = options?.signal ? AbortSignal.any([lifetime, options.signal]) : lifetime;
       const result = await promptResult(terminal.input(safePromptMessage(message, secrets), {
@@ -154,6 +169,7 @@ function nodeSetupUi(terminal: AcpLoginTerminal, lifetime: AbortSignal, secrets:
       });
     },
   };
+  return ui;
 }
 
 async function promptResult<T>(operation: Promise<T>, signal: AbortSignal): Promise<T | undefined> {

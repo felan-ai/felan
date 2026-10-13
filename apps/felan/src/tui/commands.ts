@@ -12,6 +12,7 @@ const BUILTINS: SlashCommand[] = [
   { name: 'thinking', description: 'Set thinking level' },
   { name: 'fork', description: 'Create a new fork from a previous user message' },
   { name: 'login', description: 'Configure provider authentication' },
+  { name: 'logout', description: 'Remove stored provider credentials' },
   { name: 'new', description: 'Start a new session' },
   { name: 'compact', description: 'Manually compact the session context' },
   { name: 'resume', description: 'Resume a different session' },
@@ -52,7 +53,7 @@ export function createCommandAutocomplete(controller: TuiSessionController): Aut
 }
 
 export async function submitTuiInput(controller: TuiSessionController, dialogs: TuiDialogHost, text: string,
-  options: { cwd: string; exit(): void; setDraft?(text: string): void; preferences?(): Promise<boolean>; login?(): Promise<boolean>; dependencies?(): Promise<boolean>; ui?(): Promise<boolean>; daemon?(action: DaemonAction, force: boolean): Promise<void> }): Promise<boolean> {
+  options: { cwd: string; exit(): void; setDraft?(text: string): void; preferences?(): Promise<boolean>; login?(provider?: string): Promise<boolean>; logout?(): Promise<boolean>; dependencies?(): Promise<boolean>; ui?(): Promise<boolean>; daemon?(action: DaemonAction, force: boolean): Promise<void> }): Promise<boolean> {
   const trimmed = text.trim();
   if (trimmed === '/exit' || trimmed === '/quit') { options.exit(); return true; }
   if (trimmed === '/history') { await controller.loadHistory(); return true; }
@@ -78,11 +79,11 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     if (!options.preferences) throw new Error('Client preferences are unavailable.');
     return options.preferences();
   }
-  if (name === 'login' || name === 'dependencies') {
-    if (argument) throw new Error(`Usage: /${name}`);
+  if (name === 'login' || name === 'logout' || name === 'dependencies') {
+    if (name !== 'login' && argument) throw new Error(`Usage: /${name}`);
     const setup = options[name];
     if (!setup) throw new Error('Interactive daemon setup is unavailable in this client.');
-    return setup();
+    return setup(name === 'login' ? argument || undefined : undefined);
   }
   if (name === 'daemon') {
     const [action = 'status', mode, extra] = argument.split(/\s+/u).filter(Boolean);
@@ -196,7 +197,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       await dialogs.select('Queue (read-only; targeted editing is unavailable)', snapshot.queue.map(item => ({ value: item.id, label: `${item.kind}: ${item.prompt.text}` })));
       return true;
     case 'help':
-      controller.setNotice('/new /cwd /sessions /model /thinking /settings /login /dependencies /compact /fork /tree /rename /reload /reconnect /queue /steer /follow-up /cancel /close /ui /exit; ! shell, !! shell without context');
+      controller.setNotice('/new /cwd /sessions /model /thinking /settings /login /logout /dependencies /compact /fork /tree /rename /reload /reconnect /queue /steer /follow-up /cancel /close /ui /exit; ! shell, !! shell without context');
       return true;
     default: {
       const command = snapshot.catalog.commands.find(command => command.name === name);
