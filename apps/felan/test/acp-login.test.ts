@@ -14,7 +14,7 @@ type SetupOperation = Extract<Operation, `host.setup.${string}`>;
 type Endpoints = { [O in SetupOperation]: (params: OperationParams<O>) => OperationResult<O> | Promise<OperationResult<O>> };
 const waiting: SetupJob = { id: 'job', kind: 'login', state: 'waiting', message: 'Enter credentials', prompt: { id: 'key', kind: 'input', message: 'Enter API key', secret: true } };
 const completed: SetupJob = { id: 'job', kind: 'login', state: 'completed', message: 'Saved' };
-const catalog: SetupCatalog = { providers: [{ id: 'provider', label: 'Provider', methods: ['api_key'], configured: false }], dependencies: [] };
+const catalog: SetupCatalog = { providers: [{ id: 'provider', label: 'Provider', methods: ['api_key'], configured: false, subscription: false, apiKeyLogin: true }], credentials: [], dependencies: [] };
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
 
@@ -33,7 +33,7 @@ async function fixture(overrides: Partial<Endpoints> = {}) {
     fake.onSend = (request, connection) => {
       requests.push(request);
       if (request.op === 'hello') {
-        fake.reply(request, { attachmentId: 'client', principal: 'principal', daemonVersion: options.expectedDaemonVersion ?? options.clientVersion,
+        fake.reply(request, { attachmentId: 'client', localConsole: true, principal: 'principal', daemonVersion: options.expectedDaemonVersion ?? options.clientVersion,
           protocol: 1, identity, operations: Object.keys(endpoints), interactionKinds: [] }, connection); return;
       }
       const endpoint = endpoints[request.op as SetupOperation] as (params: unknown) => unknown;
@@ -52,8 +52,8 @@ async function fixture(overrides: Partial<Endpoints> = {}) {
 }
 
 describe('finite ACP daemon login', () => {
-  it('selects a provider and method, masks API keys and waits for the daemon result without creating a session', async () => {
-    const f = await fixture(); const terminal = new TestLoginTerminal([0, 0, 1], ['test-private-key']);
+  it('selects a provider directly, masks API keys and waits for the daemon result without creating a session', async () => {
+    const f = await fixture(); const terminal = new TestLoginTerminal([1, 0], ['test-private-key']);
     expect(await f.run(terminal)).toBe(0);
     expect(terminal.inputRequests).toEqual([{ message: 'Enter API key', options: { secret: true } }]);
     expect(f.requests.filter(request => request.op === 'host.setup.start').map(request => request.params)).toEqual([
@@ -70,66 +70,83 @@ describe('finite ACP daemon login', () => {
     expect(isAbsolute(f.settings[0]!.launch!.entrypoint)).toBe(true);
   });
 
+  it('allows backing out of provider selection before completing authentication', async () => {
+    const f = await fixture(); const terminal = new TestLoginTerminal([1, undefined, 1, 0], ['test-key']);
+    expect(await f.run(terminal)).toBe(0);
+    expect(terminal.selections.map(selection => selection.message)).toEqual([
+      'Select authentication method:', 'Select provider to configure:', 'Select authentication method:', 'Select provider to configure:',
+    ]);
+    expect(f.errors).toEqual([]);
+  });
+
   it('uses OAuth links, typed selection prompts and masked manual codes through host setup only', async () => {
     let answered = 0;
     const first: SetupJob = { ...waiting, links: [{ label: 'Authorize', url: 'https://auth.example/login?state=keep&token=hide' }],
       prompt: { id: 'account', kind: 'select', message: 'Choose account', choices: [{ id: 'first', label: 'First' }, { id: 'second', label: 'Second' }] } };
     const f = await fixture({
-      'host.setup.catalog': () => ({ ...catalog, providers: [{ id: 'oauth-provider', label: 'OAuth Provider', methods: ['oauth'], configured: false }] }),
+      'host.setup.catalog': () => ({ ...catalog, providers: [{ id: 'oauth-provider', label: 'OAuth Provider', methods: ['oauth'], configured: false, subscription: false, apiKeyLogin: true }] }),
       'host.setup.start': () => first,
       'host.setup.read': () => answered < 2 ? { ...waiting, prompt: { id: 'code', kind: 'input', message: 'Paste authorization code', secret: true } } : completed,
       'host.setup.answer': () => { answered++; return {}; },
     });
-    const terminal = new TestLoginTerminal([0, 0, 1, 1, 1, 0, 1, 1], ['manual-secret-code']);
+    const terminal = new TestLoginTerminal([0, 0, 1], ['manual-secret-code']);
     expect(await f.run(terminal)).toBe(0);
-    expect(f.requests.find(request => request.op === 'host.setup.open_link')?.params).toEqual({ jobId: 'job', index: 0, confirmed: true });
+    expect(f.requests.some(request => request.op === 'host.setup.open_link')).toBe(false);
     expect(f.requests.filter(request => request.op === 'host.setup.answer').map(request => request.params)).toEqual([
       { jobId: 'job', promptId: 'account', text: 'second' }, { jobId: 'job', promptId: 'code', text: 'manual-secret-code' },
     ]);
     expect(terminal.inputRequests[0]?.options.secret).toBe(true);
-    expect(JSON.stringify(terminal.selections)).toContain('state=keep');
-    expect(JSON.stringify(terminal.selections)).not.toContain('token=hide');
+    expect(terminal.lines.join('\n')).toContain('state=keep');
+    expect(terminal.lines.join('\n')).not.toContain('token=hide');
     expect(terminal.lines.join('\n')).not.toContain('manual-secret-code');
   });
 
   it('fails safely when the daemon has no provider methods or lacks setup capabilities', async () => {
-    const f = await fixture({ 'host.setup.catalog': () => ({ providers: [], dependencies: [] }) });
-    expect(await f.run(new TestLoginTerminal([], []))).toBe(1);
+    const f = await fixture({ 'host.setup.catalog': () => ({ providers: [], credentials: [], dependencies: [] }) });
+    expect(await f.run(new TestLoginTerminal([1], []))).toBe(1);
     expect(f.requests.some(request => request.op === 'host.setup.start')).toBe(false);
-    expect(f.errors.join('\n')).toContain('no login providers');
+    expect(f.errors.join('\n')).toContain('No API key providers available.');
     delete (f.endpoints as Partial<Endpoints>)['host.setup.start'];
     expect(await f.run(new TestLoginTerminal([], []))).toBe(1);
     expect(f.errors.at(-1)).toContain('does not support interactive setup');
   });
 
-  it('treats provider, confirmation and secret-input dismissal as cancellation', async () => {
-    for (const [selections, answers] of [[[], []], [[0, 0, 0], []], [[0, 0, 1], []]] as Array<[number[], string[]]>) {
-      const f = await fixture(); const terminal = new TestLoginTerminal(selections, answers);
+  it('treats provider and secret-input dismissal as cancellation', async () => {
+    for (const selections of [[], [1, 0]]) {
+      const f = await fixture(); const terminal = new TestLoginTerminal(selections, []);
       expect(await f.run(terminal)).toBe(1);
       expect(terminal.lines).toContain('Authentication cancelled.'); expect(f.errors).toEqual([]);
-      if (selections.at(-1) === 1) expect(f.requests.some(request => request.op === 'host.setup.cancel')).toBe(true);
+      if (selections.length) expect(f.requests.some(request => request.op === 'host.setup.cancel')).toBe(true);
       expect(f.clients[0]?.status).toBe('closed');
     }
+  });
+
+  it('allows cancelling replacement of existing credentials', async () => {
+    const f = await fixture({ 'host.setup.catalog': () => ({ ...catalog, providers: [{ ...catalog.providers[0]!, configured: true }] }) });
+    const terminal = new TestLoginTerminal([1, 0, 0], []);
+    expect(await f.run(terminal)).toBe(1);
+    expect(terminal.lines).toContain('Authentication cancelled.');
+    expect(f.requests.some(request => request.op === 'host.setup.start')).toBe(false);
   });
 
   it('redacts entered credentials from failing daemon replies and releases the job', async () => {
     const secret = 'unstructured private value';
     const f = await fixture({ 'host.setup.answer': () => { throw new Error(`Rejected ${secret}`); } });
-    const terminal = new TestLoginTerminal([0, 0, 1], [secret]);
+    const terminal = new TestLoginTerminal([1, 0], [secret]);
     expect(await f.run(terminal)).toBe(1);
     expect(f.errors.join('\n')).not.toContain(secret); expect(terminal.lines.join('\n')).not.toContain(secret);
     expect(f.requests.filter(request => request.op === 'host.setup.cancel')).toHaveLength(1);
   });
 
   it('bounds injected terminal answers before they reach the setup channel', async () => {
-    const f = await fixture(); const terminal = new TestLoginTerminal([0, 0, 1], ['x'.repeat(64 * 1024 + 1)]);
+    const f = await fixture(); const terminal = new TestLoginTerminal([1, 0], ['x'.repeat(64 * 1024 + 1)]);
     expect(await f.run(terminal)).toBe(1);
     expect(f.requests.some(request => request.op === 'host.setup.answer')).toBe(false);
     expect(f.requests.some(request => request.op === 'host.setup.cancel')).toBe(true);
   });
 
   it.each([['SIGINT', 130], ['SIGTERM', 143]] as const)('preserves %s exit status and cancels an active daemon job', async (signal, code) => {
-    const f = await fixture(); const source = new EventEmitter(); const terminal = new TestLoginTerminal([0, 0, 1], []);
+    const f = await fixture(); const source = new EventEmitter(); const terminal = new TestLoginTerminal([1, 0], []);
     let entered!: () => void; const ready = new Promise<void>(resolve => { entered = resolve; });
     let promptSignal: AbortSignal | undefined;
     terminal.input = async (_message, _options, value) => { promptSignal = value; entered(); return new Promise(() => {}); };
@@ -154,7 +171,7 @@ describe('finite ACP daemon login', () => {
     let entered!: () => void; const ready = new Promise<void>(resolve => { entered = resolve; });
     let finish!: (value: SetupJob) => void;
     const f = await fixture({ 'host.setup.start': () => { entered(); return new Promise(resolve => { finish = resolve; }); } });
-    const terminal = new TestLoginTerminal([0, 0, 1], []); const abort = new AbortController();
+    const terminal = new TestLoginTerminal([1, 0], []); const abort = new AbortController();
     const running = f.run(terminal, { signal: abort.signal }); await ready; abort.abort(); expect(await running).toBe(1);
     const lines = [...terminal.lines]; finish(waiting); await new Promise(resolve => setImmediate(resolve));
     expect(terminal.inputRequests).toEqual([]); expect(terminal.lines).toEqual(lines); expect(f.clients[0]?.status).toBe('closed');

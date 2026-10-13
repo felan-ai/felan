@@ -19,11 +19,11 @@ interface Job {
 export interface SetupManagerOptions {
   agentDir: string;
   runtime: AgentRuntime;
-  models: Pick<ModelRuntime, 'getProviders' | 'hasConfiguredAuth'>;
+  models: Pick<ModelRuntime, 'getProviders' | 'getProviderAuthStatus' | 'isUsingOAuth' | 'listCredentials' | 'logout'>;
   assertCurrent(): void;
   dependencies?: readonly SetupDependency[];
   login?: typeof startAuthWorker;
-  refreshModels?(signal: AbortSignal): Promise<void>;
+  refreshModels?(provider: string, signal: AbortSignal): Promise<void>;
   open(value: string, signal: AbortSignal): Promise<void>;
 }
 
@@ -65,9 +65,19 @@ export class HostSetupManager {
     const providers = this.options.models.getProviders().flatMap(provider => {
       const methods: Array<'oauth' | 'api_key'> = [];
       if (provider.auth.oauth) methods.push('oauth');
-      if (provider.auth.apiKey?.login) methods.push('api_key');
-      return methods.length ? [{ id: provider.id, label: clean(provider.name || provider.id), configured: this.options.models.hasConfiguredAuth(provider.id), methods }] : [];
-    });
+      if (provider.auth.apiKey) methods.push('api_key');
+      const status = this.options.models.getProviderAuthStatus(provider.id);
+      return methods.length ? [{ id: provider.id, label: clean(provider.name || provider.id), configured: status.configured, methods,
+        subscription: provider.auth.oauth?.isSubscription === true, apiKeyLogin: !!provider.auth.apiKey?.login,
+        ...(provider.auth.apiKey ? { apiKeyName: clean(provider.auth.apiKey.name) } : {}),
+        ...(status.configured ? { status: { type: this.options.models.isUsingOAuth(provider.id) ? 'oauth' as const : 'api_key' as const,
+          ...((status.label ?? status.source) ? { source: clean((status.label ?? status.source)!) } : {}) } } : {}),
+        ...(provider.auth.oauth?.loginLabel ? { oauthLabel: clean(provider.auth.oauth.loginLabel) } : {}) }] : [];
+    }).sort((a, b) => a.label.localeCompare(b.label));
+    const credentials = (await this.options.models.listCredentials({ signal: AbortSignal.timeout(15_000) })).map(({ providerId, type }) => {
+      const provider = this.options.models.getProviders().find(value => value.id === providerId);
+      return { id: providerId, label: clean(provider?.name ?? providerId), type, subscription: provider?.auth.oauth?.isSubscription === true };
+    }).sort((a, b) => a.label.localeCompare(b.label));
     const dependencies = await Promise.all(this.dependencies.map(async dependency => {
       let status: Awaited<ReturnType<SetupDependency['check']>>;
       try { status = await dependency.check(this.options.runtime); }
@@ -78,16 +88,16 @@ export class HostSetupManager {
         ...(status.version === undefined ? {} : { version: boundedText(clean(status.version), 128) }),
         ...(status.reason === undefined ? {} : { reason: boundedText(clean(status.reason), 4096) }) };
     }));
-    this.check(); return parseSchema(SetupCatalogSchema, { providers, dependencies });
+    this.check(); return parseSchema(SetupCatalogSchema, { providers, credentials, dependencies });
   }
 
   validateStart(value: SetupStart): void {
     this.check(); const request = parseSchema(SetupStartSchema, value);
     if ([...this.jobs.values()].filter(job => !terminal(job.view)).length >= 8) throw commandError('request_capacity');
-    if (request.kind === 'login') {
+    if (request.kind !== 'dependencies') {
       const provider = this.options.models.getProviders().find(provider => provider.id === request.provider);
-      if (!provider || !(request.method === 'oauth' ? provider.auth.oauth : provider.auth.apiKey?.login)) throw commandError('unavailable');
-      if ([...this.jobs.values()].some(job => !terminal(job.view) && job.view.kind === 'login')) throw commandError('busy');
+      if (request.kind === 'login' && (!provider || !(request.method === 'oauth' ? provider.auth.oauth : provider.auth.apiKey?.login))) throw commandError('unavailable');
+      if ([...this.jobs.values()].some(job => !terminal(job.view) && job.view.kind !== 'dependencies')) throw commandError('busy');
     } else {
       if (new Set(request.choices.map(choice => choice.id)).size !== request.choices.length) throw commandError('invalid_request');
       if (request.choices.some(choice => !this.dependencies.some(dependency => dependency.id === choice.id
@@ -99,11 +109,11 @@ export class HostSetupManager {
   start(request: SetupStart, client: string): SetupJob {
     this.validateStart(request);
     const job: Job = { client, control: new AbortController(), work: Promise.resolve(), view: {
-      id: randomUUID(), kind: request.kind, state: 'running', message: request.kind === 'login' ? 'Starting provider sign-in…' : 'Preparing dependencies…',
+      id: randomUUID(), kind: request.kind, state: 'running', message: request.kind === 'login' ? 'Starting provider sign-in…' : request.kind === 'logout' ? 'Removing stored credentials…' : 'Preparing dependencies…',
     } };
     this.jobs.set(job.view.id, job);
     job.work = Promise.resolve().then(async () => {
-      const message = request.kind === 'login' ? await this.login(job, request) : await this.install(job, request);
+      const message = request.kind === 'login' ? await this.login(job, request) : request.kind === 'logout' ? await this.logout(job, request.provider) : await this.install(job, request);
       if (!job.committed) job.control.signal.throwIfAborted(); this.options.assertCurrent();
       job.view = { id: job.view.id, kind: job.view.kind, state: 'completed', message: message ?? (request.kind === 'login' ? 'Authentication saved.' : 'Dependencies updated. New sessions or an explicit reload pick up changes.') };
     }).catch(error => {
@@ -162,16 +172,29 @@ export class HostSetupManager {
       else if (event.kind === 'link') {
         const links = job.view.links ?? [];
         if (links.length >= 16) throw new Error('Too many authentication links.');
-        job.view.links = [...links, { label: event.label, url: event.url }];
+        job.view.links = [...links, { label: event.label, url: event.url, ...(event.autoOpen ? { autoOpen: true } : {}) }];
       }
     } });
     job.answer = driver.answer; await driver.done;
-    try { await this.options.refreshModels?.(job.control.signal); }
+    try { await this.options.refreshModels?.(request.provider, job.control.signal); }
     catch {
       job.control.signal.throwIfAborted();
       return 'Authentication saved. Model availability could not be refreshed; open a new session to retry.';
     }
     return undefined;
+  }
+
+  private async logout(job: Job, provider: string): Promise<string> {
+    const credential = (await this.options.models.listCredentials({ signal: job.control.signal })).find(value => value.providerId === provider);
+    if (!credential) throw commandError('not_found');
+    await this.options.models.logout(provider, { signal: job.control.signal });
+    job.committed = true;
+    const name = clean(this.options.models.getProviders().find(value => value.id === provider)?.name ?? provider);
+    const message = credential.type === 'oauth' ? `Logged out of ${name}`
+      : `Removed stored API key for ${name}. Environment variables and models.json config are unchanged.`;
+    try { await this.options.refreshModels?.(provider, job.control.signal); }
+    catch { return `${message} Model availability could not be refreshed; open a new session to retry.`; }
+    return message;
   }
 
   private async install(job: Job, request: Extract<SetupStart, { kind: 'dependencies' }>): Promise<void> {

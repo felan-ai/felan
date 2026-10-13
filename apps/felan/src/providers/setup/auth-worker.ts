@@ -28,7 +28,7 @@ export async function authenticateProvider(start: Start, io: {
     if (--remaining < 0) throw new Error('Provider authentication exceeded its interaction limit.');
     io.emit(parseAuthWorkerOutput(value));
   };
-  const link = (label: string, value: string) => {
+  const link = (label: string, value: string, autoOpen = false) => {
     if (Buffer.byteLength(value) > 4096 || /[\u0000-\u0020\u007f]/u.test(value)) return;
     let url: URL;
     try { url = new URL(value); } catch { return; }
@@ -36,7 +36,7 @@ export async function authenticateProvider(start: Start, io: {
     if ([...secrets].some(secret => secret && (value.includes(secret) || value.includes(encodeURIComponent(secret))))) return;
     for (const key of url.searchParams.keys()) if (/^(?:access_token|refresh_token|api_key|client_secret|password|token)$/iu.test(key)) url.searchParams.set(key, '[REDACTED]');
     if (/(?:access_token|refresh_token|client_secret|password|token)=/iu.test(url.hash)) url.hash = '#[REDACTED]';
-    emit({ kind: 'link', label: boundedText(message(label), 4096), url: url.toString() });
+    emit({ kind: 'link', label: boundedText(message(label), 4096), url: url.toString(), ...(autoOpen ? { autoOpen: true } : {}) });
   };
   try {
     io.signal.throwIfAborted();
@@ -66,9 +66,9 @@ export async function authenticateProvider(start: Start, io: {
       notify: event => {
         if (event.type === 'auth_url') {
           if (event.instructions) emit({ kind: 'info', message: message(event.instructions) });
-          link('Open this URL to continue', event.url);
+          link(event.instructions || 'Open this URL to continue', event.url, true);
         } else if (event.type === 'device_code') {
-          link('Open this URL to continue', event.verificationUri);
+          link(`Enter code: ${message(event.userCode)}`, event.verificationUri, true);
           emit({ kind: 'info', message: `Device code: ${message(event.userCode)}` });
           if (event.userCode) secrets.add(event.userCode);
         } else {

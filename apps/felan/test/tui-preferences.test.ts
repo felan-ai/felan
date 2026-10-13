@@ -3,23 +3,18 @@ import type { TuiPreferences } from '@felan-ai/session-protocol';
 import { TerminalPreferences, type ClientTuiPreferences } from '../src/tui/preferences.js';
 import { createClientKeybindings } from '../src/tui/keybindings.js';
 import type { TuiSessionController } from '../src/tui/controller.js';
-import type { TuiDialogHost } from '../src/tui/dialogs.js';
+import type { SettingsEntry } from '../src/tui/settings-menu.js';
 
 const defaults: TuiPreferences = { hideThinking: true, showImages: false, imageWidthCells: 80, outputPad: 3,
   toolDisplay: 'full', keybindings: { 'app.model.select': 'alt+m', 'app.exit': 'alt+x' } };
 
 function fixture(value: unknown = defaults, overrides: ConstructorParameters<typeof TerminalPreferences>[1] = {}) {
   const controller = { notice: '', setNotice(message: string) { this.notice = message; }, perform: vi.fn(async (op: string, _params: unknown) =>
-    ({ outcome: 'accepted', result: op === 'tui.preferences.get' ? structuredClone(value) : {} })) };
+    ({ outcome: 'accepted', result: op === 'tui.preferences.get' ? structuredClone(value) : op === 'config.get' ? { values: {} } : {} })) };
   const keys = createClientKeybindings();
   const changed = vi.fn(async (_value: ClientTuiPreferences, bindings: Parameters<typeof keys.setUserBindings>[0]) => { keys.setUserBindings(bindings); });
   const preferences = new TerminalPreferences(controller as unknown as TuiSessionController, overrides, changed);
   return { controller, keys, changed, preferences };
-}
-
-function dialogs() {
-  return { select: vi.fn<TuiDialogHost['select']>(async () => undefined), input: vi.fn<TuiDialogHost['input']>(async () => undefined),
-    confirm: vi.fn<TuiDialogHost['confirm']>(async () => false) };
 }
 
 it('loads negotiated display preferences and changes the existing keybinding manager', async () => {
@@ -60,35 +55,30 @@ it('validates updates before sending and retains loaded fields on request errors
   expect(f.controller.notice).toContain('connection lost'); expect(f.changed).toHaveBeenCalledTimes(1);
 });
 
-it('keeps edited fields after a rejected save and only submits changed fields on retry', async () => {
-  const f = fixture(); await f.preferences.load(); const ui = dialogs();
-  ui.select.mockResolvedValueOnce('showImages').mockResolvedValueOnce('save').mockResolvedValueOnce('save');
-  f.controller.perform.mockImplementationOnce(async () => { f.controller.setNotice('Rejected: read-only'); return { outcome: 'rejected', result: {} }; });
-  expect(await f.preferences.open(ui)).toBe(true);
-  expect(ui.select.mock.calls[2]?.[0]).toContain('Rejected: read-only');
-  expect(ui.select.mock.calls[2]?.[1]).toContainEqual({ value: 'showImages', label: 'Images: shown' });
-  expect(f.controller.perform.mock.calls.slice(1)).toEqual([
-    ['tui.preferences.set', { values: { showImages: true } }], ['tui.preferences.set', { values: { showImages: true } }],
+it('applies display settings immediately and rejects invalid input without a write', async () => {
+  const f = fixture();
+  await f.preferences.open({ settings: async entries => {
+    const general = entries.find(entry => entry.id === 'general')!.children!;
+    await general.find(entry => entry.id === 'showImages')!.change!('true');
+    expect(f.preferences.values.showImages).toBe(true);
+    const padding = general.find(entry => entry.id === 'outputPad')!;
+    await expect(padding.change!('19')).rejects.toThrow();
+    await padding.change!('2');
+    expect(f.preferences.values.outputPad).toBe(2);
+    expect(general.some(entry => entry.id === 'save' || entry.id === 'cancel')).toBe(false);
+  } });
+  expect(f.controller.perform.mock.calls.filter(([op]) => op === 'tui.preferences.set')).toEqual([
+    ['tui.preferences.set', { values: { showImages: true } }], ['tui.preferences.set', { values: { outputPad: 2 } }],
   ]);
-  expect(f.preferences.values).toEqual({ ...defaults, showImages: true, theme: 'felan-dark' });
 });
 
-it('retains invalid field input for correction and cancels without persisting', async () => {
-  const f = fixture(); await f.preferences.load(); const ui = dialogs();
-  ui.select.mockResolvedValueOnce('outputPad').mockResolvedValueOnce('cancel');
-  ui.input.mockResolvedValueOnce('19').mockResolvedValueOnce('2');
-  expect(await f.preferences.open(ui)).toBe(false);
-  expect(ui.input.mock.calls[1]?.[1]).toBe('19');
-  expect(ui.select.mock.calls[1]?.[1]).toContainEqual({ value: 'outputPad', label: 'Output padding: 2 cells' });
-  expect(f.controller.perform).toHaveBeenCalledTimes(1); expect(f.preferences.values).toEqual({ ...defaults, theme: 'felan-dark' });
-});
-
-it('selects a local theme without sending a theme field or write to the daemon', async () => {
-  const f = fixture(); await f.preferences.load(); const ui = dialogs();
-  ui.select.mockResolvedValueOnce('theme').mockResolvedValueOnce('theme:felan-light').mockResolvedValueOnce('save');
-  expect(await f.preferences.open(ui)).toBe(true);
+it('selects a local theme without sending it to the daemon', async () => {
+  const f = fixture();
+  await f.preferences.open({ settings: async entries => {
+    await entries.find(entry => entry.id === 'general')!.children!.find(entry => entry.id === 'theme')!.change!('felan-light');
+  } });
   expect(f.preferences.values.theme).toBe('felan-light');
-  expect(f.controller.perform).toHaveBeenCalledTimes(1);
+  expect(f.controller.perform.mock.calls.map(([op]) => op)).toEqual(['tui.preferences.get', 'config.get']);
   expect(f.changed.mock.lastCall?.[0].theme).toBe('felan-light');
 });
 
@@ -100,33 +90,23 @@ it('does not apply a late preference reply after terminal disposal', async () =>
   expect(await load).toBe(false); expect(f.changed).not.toHaveBeenCalled();
 });
 
-it('reads, edits and saves execution defaults through global config with reload guidance', async () => {
-  const f = fixture(); await f.preferences.load(); const ui = dialogs();
-  Object.assign(f.controller, { snapshot: { catalog: { models: [{ provider: 'offline', id: 'classifier', label: 'Classifier' }] } } });
-  f.controller.perform.mockResolvedValueOnce({ outcome: 'accepted', result: { values: { classifierModel: 'auto', builtinExtensions: { memory: false } } } });
-  ui.select.mockResolvedValueOnce('execution').mockResolvedValueOnce('classifierModel').mockResolvedValueOnce('offline/classifier')
-    .mockResolvedValueOnce('builtin:memory').mockResolvedValueOnce('builtin:contextView').mockResolvedValueOnce('save').mockResolvedValueOnce('cancel');
-  await f.preferences.open(ui);
-  expect(f.controller.perform).toHaveBeenCalledWith('config.get', { scope: 'global' });
-  expect(ui.select.mock.calls[1]?.[1]).toContainEqual(expect.objectContaining({ value: 'builtin:memory', label: 'memory: disabled' }));
-  expect(f.controller.perform).toHaveBeenLastCalledWith('config.set', { scope: 'global', values: {
-    classifierModel: 'offline/classifier', builtinExtensions: { memory: true, contextView: false },
+it('shows general settings and extension counts and writes execution defaults immediately', async () => {
+  const f = fixture(); await f.preferences.load();
+  f.controller.perform.mockResolvedValueOnce({ outcome: 'accepted', result: {
+    values: { codemode: 'on', classifierModel: 'auto', extensionConfig: { custom: { active: false } } },
+    extensions: [{ id: 'custom', title: 'Custom extension', fields: [{ id: 'active', label: 'Active', description: 'Toggle it', type: 'boolean' }] }],
   } });
-  expect(f.controller.notice).toContain('new sessions or use /reload');
-});
-
-it('does not persist cancelled execution changes and retains rejected changes for retry', async () => {
-  const f = fixture(); await f.preferences.load(); const ui = dialogs();
-  f.controller.perform.mockResolvedValueOnce({ outcome: 'accepted', result: { values: {} } });
-  ui.select.mockResolvedValueOnce('execution').mockResolvedValueOnce('builtin:memory').mockResolvedValueOnce('cancel').mockResolvedValueOnce('cancel');
-  await f.preferences.open(ui);
-  expect(f.controller.perform).not.toHaveBeenCalledWith('config.set', expect.anything());
-  f.controller.perform.mockResolvedValueOnce({ outcome: 'accepted', result: { values: {} } })
-    .mockResolvedValueOnce({ outcome: 'rejected', result: {} });
-  ui.select.mockResolvedValueOnce('execution').mockResolvedValueOnce('builtin:memory').mockResolvedValueOnce('save').mockResolvedValueOnce('save').mockResolvedValueOnce('cancel');
-  await f.preferences.open(ui);
-  expect(f.controller.perform.mock.calls.filter(([op]) => op === 'config.set')).toEqual([
-    ['config.set', { scope: 'global', values: { builtinExtensions: { memory: false } } }],
-    ['config.set', { scope: 'global', values: { builtinExtensions: { memory: false } } }],
+  let items: SettingsEntry[] = [];
+  await f.preferences.open({ settings: async entries => {
+    items = entries;
+    await entries.find(entry => entry.id === 'codemode')!.change!('only');
+    await entries.find(entry => entry.id === 'classifierModel')!.change!('offline/classifier');
+    await entries.find(entry => entry.id === 'custom')!.children![0]!.change!('true');
+  } });
+  expect(items.map(({ label, currentValue }) => [label, currentValue])).toEqual([
+    ['General settings', 'open'], ['Code mode', 'on'], ['Classifier model', 'auto'], ['Custom extension', '1 setting'],
   ]);
+  expect(items.at(-1)?.children?.[0]?.description).toContain('new sessions or /reload');
+  expect(f.controller.perform).toHaveBeenLastCalledWith('config.set', { scope: 'global', values: { extensionConfig: { custom: { active: true } } } });
+  expect(f.controller.notice).toContain('new sessions or use /reload');
 });

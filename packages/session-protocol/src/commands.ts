@@ -1,5 +1,5 @@
 import { Type, type Static, type TSchema } from 'typebox';
-import { ConfigScopeSchema, ConfigValuesSchema } from './config.js';
+import { ConfigScopeSchema, ConfigValuesSchema, ExtensionSettingsSchema } from './config.js';
 import { ExecutionSchema, ExecutionsPageSchema } from './executions.js';
 import { CatalogSchema, HistoryPageSchema, ProcessPageSchema, PromptSchema, SessionsPageSchema, TreePageSchema } from './data.js';
 import { SessionSnapshotSchema } from './events.js';
@@ -120,7 +120,7 @@ export const OPERATION_CATALOG = Object.freeze({
 
 export const HelloResultSchema = Type.Object({
   attachmentId: IdSchema, principal: IdSchema, daemonVersion: text(128, 1), protocol: Type.Literal(1), identity: DaemonIdentitySchema,
-  composition: Type.Optional(HostCompositionSchema),
+  composition: Type.Optional(HostCompositionSchema), localConsole: Type.Boolean(),
   operations: Type.Array(NameSchema, { maxItems: LIMITS.catalogEntries, uniqueItems: true }),
   interactionKinds: Type.Array(InteractionKindSchema, { maxItems: 32, uniqueItems: true }),
   capabilities: Type.Optional(Type.Array(UiCapabilitySchema, { maxItems: 32, uniqueItems: true })),
@@ -142,7 +142,7 @@ export const ResultSchemas = {
   'ui.action': emptyResult,
   'session.clone': created, 'session.import': created, 'session.export': Type.Object({ destination: AbsolutePathSchema }), 'session.delete': emptyResult,
   'session.history': HistoryPageSchema, 'queue.update': emptyResult, 'shell.execute': Type.Object({ resourceId: IdSchema, runId: IdSchema }),
-  'config.get': Type.Object({ values: ConfigValuesSchema, catalog: Type.Optional(CatalogSchema), credentialSetup: Type.Optional(Type.Object({ provisioningId: IdSchema })) }),
+  'config.get': Type.Object({ values: ConfigValuesSchema, extensions: Type.Optional(ExtensionSettingsSchema), catalog: Type.Optional(CatalogSchema), credentialSetup: Type.Optional(Type.Object({ provisioningId: IdSchema })) }),
   'config.set': emptyResult, 'session.reload': emptyResult, 'processes.list': ProcessPageSchema,
   'tui.preferences.get': TuiPreferencesSchema, 'tui.preferences.set': emptyResult,
   'host.setup.catalog': SetupCatalogSchema, 'host.setup.start': SetupJobSchema, 'host.setup.read': SetupJobSchema,

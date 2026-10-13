@@ -37,9 +37,9 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
   let setup: TerminalSetup | undefined;
   let startupDeferred = false;
   const updateCheck = new AbortController();
-  const setupAction = async (action: 'login' | 'dependencies'): Promise<boolean> => {
+  const setupAction = async (action: 'login' | 'logout' | 'dependencies', provider?: string): Promise<boolean> => {
     if (setup) {
-      const completed = await setup[action]();
+      const completed = await (action === 'login' ? setup.login(provider) : setup[action]());
       if (completed && action === 'login' && startupDeferred && !controller.sessionId && !stopped) {
         controller.setNotice('Login completed. Use /new to create a session, then review and submit your retained input. Nothing was sent automatically.');
       }
@@ -59,7 +59,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
   const settings = () => preferences.settings;
   const screen: DaemonTuiScreen = new DaemonTuiScreen(controller, tui, { cwd: options.cwd, exit, settings, theme: () => theme, preferences: (): Promise<boolean> => preferences.open(screen.dialogs),
     agents: async id => { if (!builtins) throw new Error('Session UI is not ready.'); await builtins.openExecutions(id); },
-    login: (): Promise<boolean> => setupAction('login'), dependencies: (): Promise<boolean> => setupAction('dependencies'), toolPresentation: terminalToolPresentation,
+    login: (provider?: string): Promise<boolean> => setupAction('login', provider), logout: (): Promise<boolean> => setupAction('logout'), dependencies: (): Promise<boolean> => setupAction('dependencies'), toolPresentation: terminalToolPresentation,
     hasRenderer: element => isPowerlinePresentation(element) || ('hint' in element && !!builtins?.presenters.hints.get(element.hint)),
     ui: async () => {
       if (!interactions) throw new Error('Session UI is not ready.');

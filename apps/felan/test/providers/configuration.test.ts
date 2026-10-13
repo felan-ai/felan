@@ -30,12 +30,23 @@ it('lets host.json narrow builtinExtensions settings but never lets settings wid
 
 it('maps the exact existing 64 noncredential fields from built-in definitions', async () => {
   const agentDir = await fixture(); const definitions = await configuredDefinitions();
-  const expected = Object.keys(ConfigValuesSchema.properties).filter(key => !['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions'].includes(key));
+  const globalFields = ['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions', 'extensionConfig', 'codemode'];
+  const expected = Object.keys(ConfigValuesSchema.properties).filter(key => !globalFields.includes(key));
   const fields = getExtensionConfigCliOptions(definitions).filter(field => expected.includes(field.name));
   expect(new Set(fields.map(field => field.name))).toEqual(new Set(expected)); expect(fields).toHaveLength(64);
   const result = await new DaemonConfiguration({ agentDir, definitions, assertCurrent() {} }).get('global');
-  expect(Object.keys(result.values).every(key => expected.includes(key) || key === 'builtinExtensions')).toBe(true);
+  expect(Object.keys(result.values).every(key => expected.includes(key) || globalFields.includes(key))).toBe(true);
   expect(result.values.builtinExtensions).toEqual(Object.fromEntries(Object.keys(builtinExtensionPackages).map(name => [name, true])));
+  expect(result.values.codemode).toBe('on');
+  expect(result.extensions?.map(extension => ({ id: extension.id, fields: extension.fields.map(field => field.id) }))).toEqual(
+    definitions.map(definition => ({ id: definition.id, fields: Object.entries(definition.fields).filter(([, field]) => !field.deprecated).map(([id]) => id) }))
+      .filter(extension => extension.fields.length),
+  );
+  for (const field of fields) {
+    expect(result.values.extensionConfig?.[field.extensionId]?.[field.field], field.name).toEqual(
+      field.configField.deprecated ? undefined : result.values[field.name as keyof typeof result.values],
+    );
+  }
 });
 
 it('applies execution defaults to fresh provider settings without mutating existing settings or widening host.json', async () => {

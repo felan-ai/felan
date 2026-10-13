@@ -1,5 +1,5 @@
 import { Type, type TOptional, type TString, type TBoolean, type TNumber } from 'typebox';
-import { IdSchema, ThinkingSchema, enumOf, text } from './schema.js';
+import { IdSchema, JsonValueSchema, ThinkingSchema, enumOf, text } from './schema.js';
 import { LIMITS } from './limits.js';
 
 const strings = <const T extends readonly string[]>(values: T) => Object.fromEntries(values.map(key => [key, Type.Optional(text(LIMITS.structuredBytes))])) as { [K in T[number]]: TOptional<TString> };
@@ -17,6 +17,8 @@ const segments = Type.Object(Object.fromEntries(['directory', 'git', 'model', 's
   .map(name => [name, Type.Optional(segment)])), { additionalProperties: false });
 
 export const ConfigValuesSchema = Type.Object({
+  extensionConfig: Type.Optional(Type.Record(IdSchema, Type.Record(IdSchema, JsonValueSchema, { maxProperties: LIMITS.catalogEntries }), { maxProperties: LIMITS.catalogEntries })),
+  codemode: Type.Optional(enumOf(['off', 'on', 'only'] as const)),
   ...strings(['output-style', 'output-style-instructions', 'output-style-instructions-file',
     'ask-user-overlay-toggle-key', 'ask-user-comment-toggle-key', 'prewalk-target-model',
     'fusion-fusion-model', 'web-access-openai-search-model', 'web-access-searxng-base-url',
@@ -64,3 +66,13 @@ export const ConfigValuesSchema = Type.Object({
 }, { additionalProperties: false, 'x-maxEncodedBytes': LIMITS.structuredBytes });
 
 export const ConfigScopeSchema = enumOf(['session', 'project', 'global'] as const);
+
+export const ExtensionSettingsSchema = Type.Array(Type.Object({
+  id: IdSchema, title: text(4096, 1),
+  fields: Type.Array(Type.Object({
+    id: IdSchema, label: text(4096, 1), description: text(16384),
+    type: enumOf(['boolean', 'string', 'number', 'json'] as const),
+    sensitive: Type.Optional(Type.Boolean()),
+    values: Type.Optional(Type.Array(JsonValueSchema, { maxItems: LIMITS.catalogEntries })),
+  }), { maxItems: LIMITS.catalogEntries }),
+}), { maxItems: LIMITS.catalogEntries });

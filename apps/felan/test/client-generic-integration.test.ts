@@ -50,7 +50,7 @@ async function wire(uiAvailable = true) {
   fake.onSend = (request, connection) => {
     if (request.op === 'hello') {
       const options = offered.at(-1)!;
-      fake.reply(request, { attachmentId: `client-${connection}`, principal: 'principal', daemonVersion: options.expectedDaemonVersion ?? 'fixture',
+      fake.reply(request, { attachmentId: `client-${connection}`, localConsole: true, principal: 'principal', daemonVersion: options.expectedDaemonVersion ?? 'fixture',
         protocol: 1, identity: identityFor(clients.at(-1)!.target, 'instance'), operations: ['attach', 'detach', 'sessions.list', 'session.history', 'interaction.answer',
           ...(uiAvailable && (request.params.capabilities ?? []).includes('ui.action') ? ['ui.action'] : [])],
         interactionKinds: uiAvailable ? request.params.interactionKinds : [], capabilities: uiAvailable ? request.params.capabilities ?? [] : [] }, connection);

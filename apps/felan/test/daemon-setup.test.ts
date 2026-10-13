@@ -15,8 +15,9 @@ async function fixture(login?: typeof startAuthWorker, dependencies: readonly Se
   const models = f.root.runtime.session.modelRuntime;
   const provider = models.getProviders().find(provider => provider.auth.apiKey?.login);
   if (!provider) throw new Error('Missing deterministic provider metadata.');
+  const refreshModels = vi.fn(async (_provider: string, signal: AbortSignal) => f.registry.refreshModelAvailability(signal));
   const manager = new HostSetupManager({ agentDir: f.owner.target.agentDir, runtime: f.root.agentRuntime, models,
-    dependencies, ...(login ? { login } : {}), assertCurrent: () => f.owner.assertCurrent(), open: vi.fn(async () => {}) });
+    dependencies, refreshModels, ...(login ? { login } : {}), assertCurrent: () => f.owner.assertCurrent(), open: vi.fn(async () => {}) });
   const server = new SessionServer({ registry: f.registry, models, setup: manager, version: 'fixture',
     configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.owner.assertCurrent() }) });
   const clients: SessionClient[] = [];
@@ -26,8 +27,37 @@ async function fixture(login?: typeof startAuthWorker, dependencies: readonly Se
     const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
       kind: 'tui', clientVersion: 'fixture', retries: 0 }); clients.push(client); await client.connect(); return client;
   }
-  return { ...f, manager, client, start: { kind: 'login' as const, provider: provider.id, method: 'api_key' as const, confirmed: true as const } };
+  return { ...f, manager, client, refreshModels, start: { kind: 'login' as const, provider: provider.id, method: 'api_key' as const, confirmed: true as const } };
 }
+
+it('refreshes the attached session model catalog after authentication and before reporting success', async () => {
+  const complete = gate();
+  const f = await fixture(async () => ({ done: complete.promise, answer: async () => {} }));
+  const client = await f.client(); expect(client.capabilities?.localConsole).toBe(true);
+  const models = f.root.runtime.session.modelRuntime; const model = models.getModels()[0]!;
+  let available = false;
+  vi.spyOn(models, 'getAvailableSnapshot').mockImplementation(() => available ? [model] : []);
+  vi.spyOn(models, 'getAvailable').mockImplementation(async () => { available = true; return [model]; });
+  f.registry.projection(f.root.sessionId).refresh();
+  expect(f.registry.projection(f.root.sessionId).snapshot().catalog.models).toEqual([]);
+  await client.attach(f.root.sessionId);
+  const start = await client.request('host.setup.start', f.start);
+  if (start.outcome !== 'accepted') throw new Error('Setup did not start.');
+  expect(f.refreshModels).not.toHaveBeenCalled(); complete.resolve();
+  await vi.waitFor(() => expect(f.manager.read(start.result.id, client.capabilities!.attachmentId).state).toBe('completed'));
+  expect(f.refreshModels).toHaveBeenCalledExactlyOnceWith(f.start.provider, expect.any(AbortSignal));
+  await vi.waitFor(() => expect(client.getAttachment(f.root.sessionId)?.state.snapshot?.catalog.models)
+    .toContainEqual(expect.objectContaining({ provider: model.provider, id: model.id })));
+});
+
+it('reports saved credentials and a refresh warning without exposing internal errors', async () => {
+  const f = await fixture(async () => ({ done: Promise.resolve(), answer: async () => {} }));
+  f.refreshModels.mockRejectedValueOnce(new Error('private-refresh-error'));
+  const job = f.manager.start(f.start, 'owner');
+  await vi.waitFor(() => expect(f.manager.read(job.id, 'owner').state).toBe('completed'));
+  expect(f.manager.read(job.id, 'owner').message).toContain('Model availability could not be refreshed');
+  expect(JSON.stringify(f.manager.read(job.id, 'owner'))).not.toContain('private-refresh-error');
+});
 
 it('carries secret answers only in ephemeral setup requests and scrubs completed client records', async () => {
   const received: string[] = [];
@@ -114,4 +144,51 @@ it('reports authentication requirements before creating a session or starting a 
   expect(await client.request('prompt', { text: 'do not dispatch' }, { session: f.root.sessionId }))
     .toMatchObject({ outcome: 'rejected', error: { code: 'authentication_required' } });
   expect(f.store.session(f.root.sessionId).run.state).toBe('idle');
+});
+
+
+it('catalogs ambient methods, OAuth labels, subscriptions and safe configured sources', async () => {
+  const f = await fixture(); const models = f.root.runtime.session.modelRuntime;
+  const base = models.getProviders().find(provider => provider.auth.apiKey?.login)!;
+  const oauth = models.getProviders().find(provider => provider.auth.oauth)!.auth.oauth!;
+  const { login: _login, ...ambient } = base.auth.apiKey!;
+  vi.spyOn(models, 'getProviders').mockReturnValue([
+    { ...base, id: 'ambient', name: 'Zulu Ambient', auth: { apiKey: { ...ambient, name: 'Cloud credentials' } } },
+    { ...base, id: 'dual', name: 'Alpha Dual', auth: { apiKey: base.auth.apiKey!, oauth: { ...oauth, isSubscription: true, loginLabel: 'Use subscription' } } },
+  ]);
+  vi.spyOn(models, 'getProviderAuthStatus').mockReturnValue({ configured: true, source: 'env', label: 'FIXTURE_API_KEY' });
+  vi.spyOn(models, 'isUsingOAuth').mockImplementation(id => id === 'dual');
+  vi.spyOn(models, 'listCredentials').mockResolvedValue([{ providerId: 'dual', type: 'oauth' }]);
+  const catalog = await f.manager.catalog();
+  expect(catalog.providers).toEqual([
+    expect.objectContaining({ id: 'dual', methods: ['oauth', 'api_key'], apiKeyLogin: true, subscription: true, oauthLabel: 'Use subscription',
+      status: { type: 'oauth', source: 'FIXTURE_API_KEY' } }),
+    expect.objectContaining({ id: 'ambient', methods: ['api_key'], apiKeyLogin: false, apiKeyName: 'Cloud credentials',
+      status: { type: 'api_key', source: 'FIXTURE_API_KEY' } }),
+  ]);
+  expect(catalog.credentials).toEqual([{ id: 'dual', label: 'Alpha Dual', type: 'oauth', subscription: true }]);
+  expect(() => f.manager.start({ kind: 'login', provider: 'ambient', method: 'api_key', confirmed: true }, 'owner')).toThrow();
+});
+
+it('removes only stored credentials through the daemon and refreshes model availability', async () => {
+  const f = await fixture(); const models = f.root.runtime.session.modelRuntime;
+  vi.spyOn(models, 'listCredentials').mockResolvedValue([{ providerId: f.start.provider, type: 'api_key' }]);
+  const logout = vi.spyOn(models, 'logout').mockResolvedValue(undefined);
+  const client = await f.client();
+  const response = await client.request('host.setup.start', { kind: 'logout', provider: f.start.provider, confirmed: true });
+  if (response.outcome !== 'accepted') throw new Error('Logout did not start.');
+  await vi.waitFor(async () => expect(await client.request('host.setup.read', { jobId: response.result.id })).toMatchObject({ result: {
+    kind: 'logout', state: 'completed', message: expect.stringContaining('Environment variables and models.json config are unchanged.'),
+  } }));
+  expect(logout).toHaveBeenCalledExactlyOnceWith(f.start.provider, { signal: expect.any(AbortSignal) });
+  expect(f.refreshModels).toHaveBeenCalledExactlyOnceWith(f.start.provider, expect.any(AbortSignal));
+});
+
+it('does not invoke logout for providers without a stored credential', async () => {
+  const f = await fixture(); const models = f.root.runtime.session.modelRuntime;
+  vi.spyOn(models, 'listCredentials').mockResolvedValue([]);
+  const logout = vi.spyOn(models, 'logout').mockResolvedValue(undefined);
+  const job = f.manager.start({ kind: 'logout', provider: f.start.provider, confirmed: true }, 'owner');
+  await vi.waitFor(() => expect(f.manager.read(job.id, 'owner').state).toBe('failed'));
+  expect(logout).not.toHaveBeenCalled();
 });

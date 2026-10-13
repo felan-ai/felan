@@ -43,7 +43,8 @@ export class DaemonTuiScreen {
     exit(): void;
     daemon?(action: DaemonAction, force: boolean): Promise<void>;
     preferences?(): Promise<boolean>;
-    login?(): Promise<boolean>;
+    login?(provider?: string): Promise<boolean>;
+    logout?(): Promise<boolean>;
     dependencies?(): Promise<boolean>;
     ui?(): Promise<boolean>;
     hasRenderer?(element: Presentation): boolean;

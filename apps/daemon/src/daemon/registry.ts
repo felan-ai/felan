@@ -251,6 +251,22 @@ export class SessionRegistry {
   list(): ControlSession[] { this.options.owner.assertCurrent(); return this.options.store.snapshot().sessions.filter(session => session.deletedAt === undefined); }
   binding(id: string): SessionBinding | undefined { return this.entries.get(id)?.binding; }
   projection(id: string): SessionProjection { return this.require(id).projection; }
+  async refreshModelAvailability(signal: AbortSignal): Promise<void> {
+    this.assertAdmission(); signal.throwIfAborted();
+    const work = [...this.entries].filter(([id, entry]) => !this.closing.has(id) && !entry.disposing).map(async ([, entry]) => {
+      const refresh = entry.binding.runtime.session.modelRuntime.getAvailable(undefined, { signal });
+      const settled = refresh.then(() => {}, () => {});
+      entry.writers.add(settled);
+      try {
+        await refresh;
+        signal.throwIfAborted(); this.options.owner.assertCurrent();
+        entry.projection.refresh();
+      } finally { entry.writers.delete(settled); }
+    });
+    const results = await Promise.allSettled(work);
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  }
   recordResource(resource: Parameters<DaemonControlStore['putResource']>[0], change?: KnownSessionChange): void {
     const commit = this.options.store.putResource(resource);
     if (change) this.publish({ v: 1, session: commit.value.session, rev: commit.revisions[commit.value.session]!, change });

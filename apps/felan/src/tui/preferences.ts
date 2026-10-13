@@ -1,11 +1,12 @@
-import { ConfigValuesSchema, parseSchema, TuiPreferencesSchema, TuiPreferencesUpdateSchema, type TuiPreferences, type TuiPreferencesUpdate } from '@felan-ai/session-protocol';
+import { parseOperationResult, parseSchema, TuiPreferencesSchema, TuiPreferencesUpdateSchema, type OperationParams, type TuiPreferences, type TuiPreferencesUpdate } from '@felan-ai/session-protocol';
 import type { KeybindingsConfig } from '@earendil-works/pi-tui';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import type { AgentViewTranscript } from '../subagents/types.js';
 import type { TuiSessionController } from './controller.js';
-import type { TuiDialogHost } from './dialogs.js';
+import type { TuiDialogs } from './dialogs.js';
 import { parseClientKeybindings } from './keybindings.js';
 import { ClientThemes } from './theme-config.js';
+import type { SettingsEntry } from './settings-menu.js';
 
 export type ClientTuiPreferences = TuiPreferences & { theme: string };
 type ClientTuiPreferencesUpdate = TuiPreferencesUpdate & { theme?: string };
@@ -73,116 +74,83 @@ export class TerminalPreferences {
     return this.changed({ ...this.values, theme: this.overrides.theme ?? this.themes.value }, keybindings, this.themes.theme);
   }
 
-  async open(dialogs: TuiDialogHost): Promise<boolean> {
+  async open(dialogs: Pick<TuiDialogs, 'settings'>): Promise<boolean> {
     if (!await this.load()) return false;
-    const original = this.values; const draft = this.values;
-    let error = '';
-    while (!this.closed) {
-      const launchOverride = this.overrides.theme !== undefined || Object.values(this.overrides.keybindings ?? {}).some(value => value !== undefined);
-      const field = await dialogs.select(`Settings${launchOverride ? '\nTheme/keybinding launch overrides remain active.' : ''}${error ? `\n${error}` : ''}`, [
-        { value: 'execution', label: 'Execution defaults…', description: 'Classifier model and built-in extensions; apply to new sessions or /reload' },
-        { value: 'theme', label: `Theme: ${draft.theme}`, description: 'Stored only in this TUI client configuration' },
-        { value: 'hideThinking', label: `Thinking: ${draft.hideThinking ? 'hidden' : 'visible'}` },
-        { value: 'showImages', label: `Images: ${draft.showImages ? 'shown' : 'hidden'}` },
-        { value: 'imageWidthCells', label: `Image width: ${draft.imageWidthCells} cells` },
-        { value: 'outputPad', label: `Output padding: ${draft.outputPad} cells` },
-        { value: 'toolDisplay', label: `Tool display: ${draft.toolDisplay}` },
-        { value: 'keybindings', label: 'Keybindings (JSON)', description: 'Action → key or key array; [] disables a binding' },
-        { value: 'save', label: 'Save display changes', description: 'Updates global defaults and this display, not running daemon execution' },
-        { value: 'cancel', label: 'Cancel' },
-      ]);
-      if (field === undefined || field === 'cancel' || this.closed) return false;
-      error = '';
-      if (field === 'save') {
-        const changes: Record<string, unknown> = {};
-        for (const key of Object.keys(draft) as (keyof ClientTuiPreferences)[]) {
-          if (JSON.stringify(draft[key]) !== JSON.stringify(original[key])) changes[key] = draft[key];
-        }
-        if (!Object.keys(changes).length) return true;
-        if (await this.update(changes as ClientTuiPreferencesUpdate)) return true;
-        error = this.controller.notice || 'Could not save. Your changes are retained; retry or cancel.';
-      } else if (field === 'execution') await this.openExecutionSettings(dialogs);
-      else if (field === 'hideThinking' || field === 'showImages') draft[field] = !draft[field];
-      else if (field === 'theme') {
-        const selected = await dialogs.select('Client theme', [
-          ...this.themes.names.map(name => ({ value: `theme:${name}`, label: name })),
-          { value: 'theme:felan-light/felan-dark', label: 'Automatic · Felan light/dark' },
-          { value: 'pair', label: 'Custom light/dark pair' },
-        ]);
-        const next = selected === 'pair' ? await dialogs.input('Theme names: light/dark', draft.theme)
-          : selected?.startsWith('theme:') ? selected.slice(6) : undefined;
-        if (next !== undefined) {
-          try { this.themes.validate(next); draft.theme = next; }
-          catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
-        }
-      } else if (field === 'toolDisplay') {
-        const selected = await dialogs.select('Tool display', [{ value: 'grouped', label: 'Grouped activity' }, { value: 'full', label: 'Full tool output' }]);
-        if (selected === 'grouped' || selected === 'full') draft.toolDisplay = selected;
-      } else if (field === 'imageWidthCells' || field === 'outputPad' || field === 'keybindings') {
-        let text = field === 'keybindings' ? JSON.stringify(draft.keybindings) : String(draft[field]);
-        let invalid = '';
-        while (!this.closed) {
-          const input = await dialogs.input(`${field}${field === 'imageWidthCells' ? ' (1–4096)' : field === 'outputPad' ? ' (0–16)' : ''}${invalid ? `\n${invalid}` : ''}`, text);
-          if (input === undefined || this.closed) break;
-          text = input;
-          try {
-            let value: unknown = input;
-            if (field === 'keybindings') { value = JSON.parse(input); parseClientKeybindings(value); }
-            else {
-              if (!/^\d+$/u.test(input)) throw new Error('Enter a whole number in the displayed range.');
-              value = Number(input);
-            }
-            Object.assign(draft, parseSchema(TuiPreferencesUpdateSchema, { [field]: value }));
-            break;
-          } catch (failure) { invalid = failure instanceof Error ? failure.message : String(failure); }
-        }
-      }
-    }
-    return false;
-  }
-
-  private async openExecutionSettings(dialogs: TuiDialogHost): Promise<void> {
     try {
       const response = await this.controller.perform('config.get', { scope: 'global' });
-      if (response.outcome !== 'accepted' || this.closed) return;
-      const original = parseSchema(ConfigValuesSchema, response.result.values);
-      let classifierModel = original.classifierModel ?? 'auto';
-      const builtinExtensions = { ...original.builtinExtensions };
-      let error = '';
-      while (!this.closed) {
-        const field = await dialogs.select(`Execution defaults · new sessions or /reload${error ? `\n${error}` : ''}`, [
-          { value: 'classifierModel', label: `Classifier model: ${classifierModel}` },
-          ...Object.entries(builtinExtensions).map(([name, enabled]) => ({ value: `builtin:${name}`,
-            label: `${name}: ${enabled ? 'enabled' : 'disabled'}` })),
-          { value: 'save', label: 'Save execution defaults' }, { value: 'cancel', label: 'Back' },
-        ]);
-        if (field === undefined || field === 'cancel' || this.closed) return;
-        error = '';
-        if (field === 'classifierModel') {
-          const selected = await dialogs.select('Classifier model', [
-            { value: 'auto', label: 'Automatic' },
-            ...(this.controller.snapshot?.catalog.models ?? []).map(model => ({ value: `${model.provider}/${model.id}`, label: model.label,
-              description: `${model.provider}/${model.id}` })),
-          ]);
-          if (selected !== undefined) classifierModel = selected;
-        } else if (field.startsWith('builtin:')) {
-          const name = field.slice(8);
-          builtinExtensions[name] = builtinExtensions[name] === false;
-        } else if (field === 'save') {
-          const changed = Object.fromEntries(Object.entries(builtinExtensions).filter(([name, enabled]) => enabled !== (original.builtinExtensions?.[name] ?? true)));
-          const values = { ...(classifierModel === (original.classifierModel ?? 'auto') ? {} : { classifierModel }),
-            ...(Object.keys(changed).length ? { builtinExtensions: changed } : {}) };
-          if (!Object.keys(values).length) return;
-          const saved = await this.controller.perform('config.set', { scope: 'global', values });
-          if (this.closed) return;
-          if (saved.outcome === 'accepted') {
-            this.controller.setNotice('Execution defaults saved. Apply to new sessions or use /reload; running sessions are unchanged.');
-            return;
+      if (response.outcome !== 'accepted' || this.closed) return false;
+      const { values, extensions = [] } = parseOperationResult('config.get', response.result);
+      const executionScope = 'Daemon defaults · new sessions or /reload; running sessions unchanged.';
+      const displayScope = 'Display only · saved defaults and this client; execution unchanged.';
+      const models = (this.controller.snapshot?.catalog.models ?? []).map(model => ({ value: `${model.provider}/${model.id}`, label: model.label }));
+      const save = async (values: OperationParams<'config.set'>['values']) => {
+        if (this.closed) throw new Error('Settings closed.');
+        const result = await this.controller.perform('config.set', { scope: 'global', values });
+        if (result.outcome !== 'accepted') throw new Error(result.error.message);
+        this.controller.setNotice('Settings saved. Apply to new sessions or use /reload; running sessions are unchanged.');
+      };
+      const display = (id: keyof ClientTuiPreferences, label: string, description: string, options: Partial<SettingsEntry> = {}): SettingsEntry => ({
+        id, label, description: `${description} ${displayScope}`, currentValue: typeof this.values[id] === 'object' ? JSON.stringify(this.values[id]) : String(this.values[id]),
+        ...options,
+        change: async value => {
+          let parsed: unknown = value;
+          if (id === 'hideThinking' || id === 'showImages') parsed = value === 'true';
+          if (id === 'imageWidthCells' || id === 'outputPad') {
+            if (!/^\d+$/u.test(value)) throw new Error('Enter a whole number in the displayed range.');
+            parsed = Number(value);
           }
-          error = this.controller.notice || 'Could not save. Retry or go back.';
-        }
-      }
-    } catch (error) { this.notice(error); }
+          if (id === 'keybindings') parsed = JSON.parse(value);
+          if (!await this.update({ [id]: parsed } as ClientTuiPreferencesUpdate)) throw new Error(this.controller.notice || 'Could not save display preference.');
+          return typeof parsed === 'object' ? JSON.stringify(parsed) : String(parsed);
+        },
+      });
+      const launchOverride = this.overrides.theme !== undefined || Object.values(this.overrides.keybindings ?? {}).some(value => value !== undefined);
+      const general: SettingsEntry[] = [
+        display('theme', 'Theme', `Choose a theme or a custom light/dark pair.${launchOverride ? ' Launch overrides remain active.' : ''}`, { edit: true,
+          choices: [...this.themes.names.map(name => ({ value: name, label: name })), { value: 'felan-light/felan-dark', label: 'Automatic · Felan light/dark' }] }),
+        display('hideThinking', 'Hide thinking', '', { values: ['false', 'true'] }),
+        display('showImages', 'Show images', '', { values: ['true', 'false'] }),
+        display('imageWidthCells', 'Image width', 'Width in cells (1–4096).', { edit: true }),
+        display('outputPad', 'Output padding', 'Padding in cells (0–16).', { edit: true }),
+        display('toolDisplay', 'Tool display', '', { values: ['grouped', 'full'] }),
+        display('keybindings', 'Keybindings (JSON)', `Action → key or key array; [] disables a binding.${launchOverride ? ' Launch overrides remain active.' : ''}`, { edit: true }),
+        { id: 'defaultModel', label: 'Default model', currentValue: values.defaultModel ?? 'not set', description: executionScope,
+          choices: models, change: async value => save({ defaultModel: value }) },
+        { id: 'defaultThinking', label: 'Default thinking', currentValue: values.defaultThinking ?? 'off', description: executionScope,
+          values: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], change: async value => save({ defaultThinking: value as NonNullable<typeof values.defaultThinking> }) },
+        { id: 'scopedModels', label: 'Enabled models (JSON)', currentValue: JSON.stringify(values.scopedModels ?? []), description: executionScope,
+          edit: true, change: async value => { await save({ scopedModels: JSON.parse(value) }); } },
+        { id: 'builtins', label: 'Built-in extensions', currentValue: 'open', description: executionScope,
+          children: Object.entries(values.builtinExtensions ?? {}).map(([id, enabled]) => ({ id, label: id, currentValue: String(enabled),
+            description: executionScope, values: ['true', 'false'], change: async value => save({ builtinExtensions: { [id]: value === 'true' } }) })) },
+      ];
+      await dialogs.settings([
+        { id: 'general', label: 'General settings', currentValue: 'open', description: 'Client display settings and daemon execution defaults.', children: general },
+        { id: 'codemode', label: 'Code mode', currentValue: values.codemode ?? 'on', description: executionScope,
+          values: ['off', 'on', 'only'], change: async value => save({ codemode: value as NonNullable<typeof values.codemode> }) },
+        { id: 'classifierModel', label: 'Classifier model', currentValue: values.classifierModel ?? 'auto', description: executionScope,
+          choices: [{ value: 'auto', label: 'Automatic' }, ...models], change: async value => save({ classifierModel: value }) },
+        ...extensions.map(extension => ({ id: extension.id, label: extension.title,
+          currentValue: `${extension.fields.length} ${extension.fields.length === 1 ? 'setting' : 'settings'}`, description: `Configure ${extension.title}. ${executionScope}`,
+          children: extension.fields.map(field => {
+            if (field.sensitive) return { id: field.id, label: field.label, currentValue: 'protected',
+              description: `${field.description} Sensitive setting · not editable in this selector.` };
+            const current = values.extensionConfig?.[extension.id]?.[field.id];
+            return { id: field.id, label: field.label, description: `${field.description} ${executionScope}`,
+              currentValue: current === undefined ? 'not set' : field.type === 'json' ? JSON.stringify(current) : String(current),
+              ...(field.values ? { values: field.values.map(String) } : field.type === 'boolean' ? { values: ['true', 'false'] } : { edit: true }),
+              change: async (value: string) => {
+                const parsed = field.type === 'boolean' ? value === 'true' : field.type === 'json' ? JSON.parse(value) : field.type === 'number' ? Number(value) : value;
+                if (field.type === 'number' && (!value.trim() || !Number.isFinite(parsed))) throw new Error('Enter a finite number.');
+                await save({ extensionConfig: { [extension.id]: { [field.id]: parsed } } });
+                return field.type === 'json' ? JSON.stringify(parsed) : String(parsed);
+              },
+            };
+          }),
+        })),
+      ]);
+      return true;
+    } catch (error) { this.notice(error); return false; }
   }
 
   dispose(): void { this.closed = true; }

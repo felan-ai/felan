@@ -10,7 +10,7 @@ const output = Type.Union([
   Type.Object({ kind: Type.Literal('prompt'), prompt: SetupPromptSchema }, { additionalProperties: false }),
   Type.Object({ kind: Type.Literal('dismiss'), promptId: IdSchema }, { additionalProperties: false }),
   Type.Object({ kind: Type.Literal('info'), message: text(8192) }, { additionalProperties: false }),
-  Type.Object({ kind: Type.Literal('link'), label: text(4096, 1), url: text(4096, 1) }, { additionalProperties: false }),
+  Type.Object({ kind: Type.Literal('link'), label: text(4096, 1), url: text(4096, 1), autoOpen: Type.Optional(Type.Literal(true)) }, { additionalProperties: false }),
   Type.Object({ kind: enumOf(['done', 'failed'] as const) }, { additionalProperties: false }),
 ], { 'x-maxEncodedBytes': 64 * 1024 });
 export type AuthWorkerInput = Static<typeof input>;

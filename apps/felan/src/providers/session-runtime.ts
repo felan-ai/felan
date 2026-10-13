@@ -68,7 +68,11 @@ export function createLocalSessionRuntime(options: {
         prepareRoot: createRootPreparation({ agentDir, homeDir, broker: request.interactions, assertCurrent }),
         setup: new HostSetupManager({ agentDir, runtime, models, assertCurrent, dependencies: setupDependencies,
           open: (value, signal) => openHostUrl(runtime, value, signal),
-          refreshModels: async signal => { await models.getAvailable(undefined, { signal }); } }),
+          refreshModels: async (provider, signal) => {
+            const result = await models.refresh({ providers: [provider], signal });
+            if (result.aborted || result.errors.size) throw new Error('Model refresh failed.');
+            await request.refreshModelAvailability(signal);
+          } }),
       };
     },
     processAdapter: createLocalProcessAdapter(),
