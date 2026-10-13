@@ -1,5 +1,9 @@
 # Story 1 command and extension migration inventory
 
+Historical pre-daemon inventory, not current API or test guidance. See
+[Services and UI](extension-services-and-ui.md) for current composition and
+[the client boundary](session-daemon-presenters.md) for presentation.
+
 Baseline: `fdbf7151ae5e760e312983e9798570a9fdb001ea` plus the preserved user
 `ext-subagents` edits. Source, not a proposed feature list. Static inventory:
 `node docs/maintainers/probes/session-daemon-inventory.mjs`; it records 26 workspace
@@ -46,13 +50,15 @@ aliases. At this baseline their names, grouped by prefix, are:
 | Output style | `output-style`, `output-style-instructions`, `output-style-instructions-file` |
 | `prompt-history-` | `display-mode` |
 
-Pi 1.1.0's actual `dist/core/slash-commands.js` contributes all commands below.
-Felan adds/intercepts commands in `cwd-command.ts`, `restart-command.ts`,
-`extension-settings.ts` and the registration sites in the next table.
+Pi 1.1.0's baseline `dist/core/slash-commands.js` contributed the commands below.
+The in-process `cwd-command.ts`, `restart-command.ts` and `extension-settings.ts`
+have been deleted. The daemon TUI routes commands through
+`apps/felan/src/tui/commands.ts` and settings through `tui/preferences.ts`.
 
 | Current command/workflow | Target owner and operation |
 | --- | --- |
 | `/settings`, `/scoped-models` | TUI selector + daemon schema-bound `config.get/set`; explicit reload rules, keep scoped-model ordering/save. |
+| `/settings` → Execution defaults | Implemented in `tui/preferences.ts`: global `classifierModel` and `builtinExtensions` through `config.get/set`; locked host settings persistence. Changes apply to new sessions or explicit `/reload`, never automatically to running sessions. Built-in settings only narrow the configured host allowlist. |
 | `/model`, `/thinking` | TUI selector + `set_model/set_thinking`; dynamic-thinking/manual overrides remain observable. |
 | `/tree`, labels, branch switching | TUI tree + `session.tree/branch.select/entry.label`; one shared active branch. |
 | `/fork`, `/clone`, `/new`, `/resume`, `/import` | Registry creates/selects a separate session; client detaches/attaches. Preserve IDs/cwd/history and trust checks, never start another writer. |
@@ -66,7 +72,7 @@ Felan adds/intercepts commands in `cwd-command.ts`, `restart-command.ts`,
 | `/compact`, `/reload` | `compact`, `session.reload`; no automatic reload between turns. |
 | `/quit`, Ctrl+D/EOF | Detach; explicit session close and daemon stop remain different actions. |
 | `/cwd` (Felan) | Validate/trust new directory, create/select session there and reattach; do not mutate daemon process cwd. |
-| `/restart` (Felan) | Explicit client/daemon version workflow; drain/force semantics in S1.14, not terminal loss. |
+| `/daemon restart` (replaces `/restart`) | Explicit client/daemon version workflow; drain/force semantics, not terminal loss. |
 | `!command`, `!!command` | `shell.execute`, with/without context injection respectively; daemon-owned execution. |
 | `/skill:<name>` | Dynamic catalog from the explicitly allowed Agent Skills, not a fixed source list. Daemon performs normal skill prompt expansion; preserve ACP's current disabled prompt-template expansion. Ambient Pi prompt packages stay filtered. |
 
@@ -158,8 +164,8 @@ The remaining host-only presentation inventory is explicit:
 | `subagents/completion-presentation.ts`, `ext-background-bash/src/ui/completion-message.ts` message renderers | Client presenters keyed by the existing custom message types; stable completion data comes from daemon. |
 | `herdr.ts` pane reporting | Client-local pane integration driven by shared run/interaction/child state. Never bind all sessions to the daemon starter's pane or socket env. |
 | `tool-activity/{state,extension,presentation}.ts` | Execution state in daemon; Alt+T panel and call/result rendering in TUI. |
-| `startup-header.ts`, `update-notification.ts`, `tui-compatibility.ts`, `overlay-images.ts`, themes | TUI client; retain startup details, safe image layering, terminal title and working indicators. Update checks cannot gate offline daemon readiness. |
-| `dependency-onboarding.ts`, `project-trust-prompt.ts`, `extension-settings.ts` | TUI prompts/pickers with host-side authorized persistence/install; no hidden terminal in daemon. |
+| Deleted `startup-header.ts`, `update-notification.ts`, `tui-compatibility.ts`, `overlay-images.ts`; client themes | Replaced by `tui/run.ts`, `tui/screen.ts` and client renderers. `run.ts` checks for updates asynchronously after startup, shows `felan update` guidance and cancels the check on exit. Offline failures are silent; update checks never gate daemon readiness. |
+| `dependency-onboarding.ts`, `project-trust-prompt.ts`; deleted `extension-settings.ts` | TUI prompts/pickers with host-side authorized persistence/install; execution settings now use `tui/preferences.ts` and `config.get/set`. No hidden terminal in daemon. |
 | `savings-command.ts::runLocalSavingsCli` | S1.13 proves the entire HostAgentRuntime/query path read-only or routes it through daemon; no presumed standalone-writer exception. |
 
 ## UI categories and known unsupported surfaces
@@ -192,9 +198,8 @@ The remaining host-only presentation inventory is explicit:
   optional form elicitation/terminal-login surfaces. It does not acquire TUI
   panels, model/mode selection, images, additional directories or MCP injection.
   `session/close` and EOF detach; TUI may answer pending ACP approvals.
-  Unadopted legacy files are the explicit one-time exception: return typed
-  `adoption_required`, direct the owner to the existing interactive resume
-  workflow, then permit normal load/replay after confirmed adoption.
+  Only registered daemon sessions are resumable. Pre-daemon files require an
+  explicit import into a new ID and are never adopted or modified.
 
 S1.09 and S1.12 must turn every row/category into an implemented-or-explicitly-
 unsupported test entry. S1.15 fails on an unexplained built-in loss. Current

@@ -1,0 +1,29 @@
+{
+  "sessions": [
+    {
+      "id": "release-session",
+      "entries": [
+        { "type": "message", "id": "release-decision", "message": { "role": "user", "content": "Remember our permanent release smoke requirement: successful login and blocked-account login must both be checked." } },
+        { "type": "message", "id": "release-status", "message": { "role": "assistant", "content": "The current build is green; the review is complete." } }
+      ]
+    },
+    {
+      "id": "incident-session",
+      "entries": [
+        { "type": "message", "id": "incident-detail", "message": { "role": "user", "content": "During the auth incident, the provider returned success for a request it discarded. This failure mode is not in repository docs." } }
+      ]
+    }
+  ],
+  "existing": [
+    { "path": "summary.md", "content": "# Memory summary\n\nThe release is temporarily paused for review." },
+    { "path": "index.md", "content": "# Memory index\n\n## How to use this memory\n\n## Memory map\n- [Workflows](.memory/pages/workflows/index.md)" },
+    { "path": "pages/workflows/index.md", "content": "# Workflows\n\n- [Pause](pause.md)" },
+    { "path": "pages/workflows/pause.md", "content": "# Current pause\n\nThe release is temporarily paused for review.\n\n## Sources\n- session:previous" }
+  ],
+  "expected": {
+    "summary": "Successful and blocked-account login are required release smoke checks.",
+    "detail": "The auth provider once reported success for a discarded request; the failure mode is not documented in the repository.",
+    "omitted": "temporarily paused",
+    "sources": ["release-session", "incident-session"]
+  }
+}

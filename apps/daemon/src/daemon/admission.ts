@@ -24,7 +24,7 @@ export interface AdmittedCommand {
 export interface AdmissionOutcome { response: Response | Promise<Response> }
 export type AdmissionHandler = (command: AdmittedCommand) => AdmissionOutcome | Promise<AdmissionOutcome>;
 
-const safetyOperations = new Set(['cancel', 'agents.cancel', 'interaction.answer', 'processes.stop', 'host.stop', 'host.restart', 'close']);
+const safetyOperations = new Set(['cancel', 'executions.cancel', 'interaction.answer', 'processes.stop', 'host.stop', 'host.restart', 'close']);
 const safetyBytes = LIMITS.answerBytes + 4096;
 
 export class OrderedAdmission {

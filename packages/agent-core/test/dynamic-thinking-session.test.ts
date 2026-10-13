@@ -55,7 +55,7 @@ function harness(
     setThinkingLevel: setLevel,
   } as unknown as ExtensionAPI;
   const scope = installModelSelectionPersistenceScope(SettingsManager.inMemory());
-  const extension = createDynamicThinkingSession(runtime, codexEffortUpdatesAvailable, reporter, { selectionScope: scope });
+  const extension = createDynamicThinkingSession(runtime, () => codexEffortUpdatesAvailable, reporter, { selectionScope: scope });
   if (typeof extension === 'function') extension(pi);
   else extension.factory(pi);
   const assistant = (stopReason = 'stop', usage = { input: 50, output: 1_000, reasoning: 400,

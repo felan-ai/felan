@@ -3,8 +3,9 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { HostAgentRuntime, type AgentRuntimeProcess } from '@felan-ai/agent-core';
 import { clientDaemonTarget } from '../src/client-application.js';
+import { resolveClientHostComposition } from '../src/daemon-entrypoint.js';
 import { SessionClient } from '../src/client/client.js';
-import { DaemonConfiguration } from '../../daemon/src/daemon/configuration.js';
+import { DaemonConfiguration } from '../src/providers/configuration.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { gate, serverFixture } from '../../daemon/test/fixtures/server.js';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
@@ -31,7 +32,9 @@ async function fixture(hold = false, version = DAEMON_VERSION) {
     if (errors.length) throw new AggregateError(errors, 'Client process cleanup failed.');
   });
   const runtime = new HostAgentRuntime(f.cwd, { sessionStorageRoot: join(f.directory, 'test-session'), agentStorageRoot: join(f.directory, 'test-agent') });
-  server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version,
+  const daemonTarget = clientDaemonTarget({ daemonRuntime: f.directory });
+  const composition = await resolveClientHostComposition(daemonTarget);
+  server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version, composition,
     configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() }) });
   await server.start();
   async function launch(message: string) {
@@ -50,9 +53,8 @@ it('runs the emitted CLI over a real PTY and detaches without closing its daemon
   const f = await fixture(); const child = await f.launch('real terminal prompt');
   const output = await readUntil(child, text => {
     const visible = stripTerminalSequences(text);
-    // Viewport diffs need not re-emit an unchanged idle line after the final text.
     return visible.includes('Felan') && visible.includes('real terminal prompt')
-      && visible.includes('done') && visible.includes('live · idle') && f.store.session(f.root.sessionId).run.state === 'idle';
+      && visible.includes('done') && f.store.session(f.root.sessionId).run.state === 'idle';
   });
   expect(output).not.toContain('Runtime: host');
   expect(f.store.session(f.root.sessionId).run.state).toBe('idle');

@@ -1,16 +1,18 @@
 # @felan-ai/ext-powerline
 
-Portable ANSI-aware TUI footer extension targeting Pi. The local Felan
-TUI enables it by default and binds a host that can display Codex, Claude, or
-Grok subscription usage; the package itself is hostless by default.
+Portable Powerline data and an ANSI-aware TUI footer targeting Pi. The package
+root publishes generic `pi.ui` views and typed statuses in TUI, ACP, and headless
+sessions without requiring a presentation service. Optional usage providers add
+Codex, Claude, or Grok subscription usage and estimated savings. Footer
+construction remains client-side.
 
 The footer displays:
 
 - current directory
 - cached Git branch, revision, working-tree status, tag, age, stash, upstream, and repository name
 - active model and thinking level
-- session token and cost totals (the local Felan TUI includes the root session
-  and local subagent sessions; hostless consumers use the active session only)
+- session token and cost totals (a configured usage provider can include root
+  and child sessions; without one, totals cover the active session only)
 - active Codex, Claude, or Grok subscription usage
 - estimated API-equivalent Felan savings for the configured recent-day period
 - context-window usage
@@ -22,11 +24,20 @@ Rendering is ANSI-width-aware and supports left/right alignment, wrapping,
 charsets. Git probes are asynchronous, cached, coalesced, time-bounded, and
 executed exclusively through `pi.exec`.
 
-The extension installs its footer on `session_start` only when `ctx.mode` is
-`tui`, redraws for model, thinking, agent, turn, tool, compaction, tree, usage,
-and Git branch changes, and removes and disposes the footer on
-`session_shutdown`. Headless Pi modes perform no footer, Git, or subscription
-work.
+The default entry publishes on `session_start` and refreshes for model,
+thinking, agent, turn, tool, compaction, tree, usage, and Git changes. Its generic
+views retain every configured segment and display setting, splitting larger
+outputs into views of at most 100 rows without shortening segment text. Session
+and context metrics also use typed token, percent, and USD statuses. The
+optional `felan.powerline@2.0.0` hint changes presentation only; clients without
+it can display the same columns, rows, and values. Other extensions' common UI
+statuses remain separately available to clients rather than being copied into
+Powerline through a feature service.
+
+Shutdown aborts Git probes, usage requests, and pending presentation requests,
+joins owned work, closes views, and removes statuses. A failed publication stops
+refresh timers and preserves a sanitized cleanup failure. Felan's client installs
+the optional footer; the extension never constructs terminal components.
 
 Powerline inherits the active Pi theme. Segment roles use Pi semantic color
 tokens, so changing the TUI theme also changes the footer; Powerline does not
@@ -40,7 +51,7 @@ supported segment objects. Theme selection and colors belong to Pi.
 
 The optional `version` segment displays the Felan version supplied by the host.
 It is not enabled by the package default; hostless consumers omit it when no
-version is provided. Felan's local TUI supplies its current application version.
+version is provided. Felan's local usage provider supplies its application version.
 
 The `subscription` segment supports native OpenAI ChatGPT, Codex, Claude, and
 Grok SuperGrok / X Premium OAuth plans. ChatGPT, Codex, and Grok values show
@@ -48,7 +59,7 @@ remaining percentage; Claude values show used percentage. Native OpenAI usage
 requires both an OpenAI ChatGPT OAuth login and a separate Codex OAuth login
 for the same ChatGPT account/workspace (`/login openai-codex`). ChatGPT values
 show shared-plan primary/secondary windows only; app-specific quotas are not
-displayed. The TUI uses Codex credentials only for the companion ChatGPT usage
+displayed. The host uses Codex credentials only for the companion ChatGPT usage
 endpoints; it never sends native OpenAI tokens to ChatGPT backend endpoints.
 These companion endpoints are undocumented. If the Codex companion is missing
 or its app registration cannot be matched, the footer displays
@@ -77,44 +88,47 @@ across all retained local Felan activity for seven inclusive UTC calendar days
 (today plus the six previous days), displayed as
 `Est. Savings(7d): $33.00`. Set `periodDays` on the segment to choose another
 period. A `~` before the amount means at least one measurement had unavailable
-pricing, so the USD total is incomplete. The local TUI supplies the host query;
+pricing, so the USD total is incomplete. The configured usage provider supplies the query;
 the portable package does not access storage itself.
 
 Scalar display settings are available through generated `felan --powerline-*`
 options and `/settings`; structured `lines` values are edited as JSON in
 `settings.json` or `/settings`.
 
-The package default export is hostless and renders no subscription data.
-Consumers enable subscription usage with
-`createPowerlineExtension(subscriptionUsageHost)`. The portable package owns
+The package default export obtains optional Models, Usage and Sessions services.
+The portable package owns
 provider detection, response parsing, caching, throttling, and rendering; the
 host owns credential access and provider requests.
 
-Hosts can supply `options.footerRows` as the second argument to append
-width-aware rows after the configured powerline status lines.
-
-Felan's local TUI supplies a host backed by `ModelRuntime`. It uses the active
+A local host can supply usage backed by `ModelRuntime`. It uses the active
 provider's Felan OAuth credential and fixed Codex, Anthropic, or xAI Grok Build
 billing endpoints. The extension package does not inspect authentication files,
 receive stored credential objects, or perform network requests.
 
 ## Package boundary and requirements
 
-```ts
-import { createPowerlineExtension } from '@felan-ai/ext-powerline';
+The root uses optional Agent Core services:
 
-const extension = createPowerlineExtension();
-```
+- `felan.models@1` supplies authenticated subscription usage without exposing credentials; the provider shares caching and rate-limit backoff across sessions.
+- `felan.usage@1` supplies savings summaries.
+- `felan.sessions@1` supplies execution usage totals and execution change events.
+- `pi.runtime.host` supplies host version metadata without exposing a runtime factory.
+
+There is no Powerline-specific service. Omitting optional services leaves normal
+session/model/context rendering intact and omits unavailable subscription and
+savings segments. The root exports portable runtime APIs plus the service-backed
+default; `./runtime` exposes explicit runtime composition and `./data` exposes
+normalized records. Neither loads footer implementations or Pi-TUI. The package
+exports no TUI or view entrypoint; native footer rendering belongs to `apps/felan`.
 
 The package owns width-safe rendering, layout/config validation, Git-cache
 behavior, provider detection, response parsing, caching, and throttling. Hosts
 own credential access, provider requests, TUI installation, and any extra footer
-rows. The footer is installed only in TUI mode; headless sessions do no Git or
-subscription work.
+rows. Only footer construction is TUI-specific; generic data collection and
+publication are not gated by client mode or the presence of a footer.
 
-The local default can be disabled with `builtinExtensions.powerline: false` in
-Felan settings. The package requires a compatible `@felan-ai/agent-core` peer
-and Pi-TUI.
+Configured hosts select this package through their extension list. The package
+requires a compatible `@felan-ai/agent-core` peer.
 
 ## Development
 

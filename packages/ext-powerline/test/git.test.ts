@@ -80,6 +80,26 @@ describe('Git execution and cache', () => {
     });
   });
 
+  it('forwards scoped cancellation and waits for the interrupted Git call to settle', async () => {
+    let signal: AbortSignal | undefined;
+    let release!: () => void;
+    const exec = vi.fn(async (_command: string, _args: string[], options: { signal?: AbortSignal }) => {
+      signal = options.signal;
+      await new Promise<void>(resolve => { release = resolve; });
+      return { stdout: '/repo', stderr: '', code: 0, killed: false };
+    });
+    const cache = new GitCache({ exec } as unknown as Pick<FelanExtensionAPI, 'exec'>, '/repo');
+    let settled = false;
+    const refresh = cache.refresh().then(() => { settled = true; });
+    cache.dispose();
+    expect(signal?.aborted).toBe(true);
+    expect(settled).toBe(false);
+    release();
+    await refresh;
+    expect(exec).toHaveBeenCalledOnce();
+    expect(cache.get()).toBeUndefined();
+  });
+
   it('retains cached status details when later status probes fail or time out', async () => {
     let statusAttempt = 0;
     const exec = vi.fn(async (_command: string, args: string[]) => {

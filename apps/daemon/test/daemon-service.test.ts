@@ -1,26 +1,42 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream } from '@felan-ai/agent-core';
 import { SessionClient } from '../../felan/src/client/client.js';
-import { builtinExtensionPackages } from '../src/extension-catalog.js';
 import { settleDaemonWork, startDaemonService } from '../src/daemon/service.js';
-import { spawnDetachedDaemon } from '../src/daemon/supervisor.js';
 import { acquireDaemonOwnership } from '../src/daemon/ownership.js';
+import { resolveDaemonTarget } from '../src/daemon/target.js';
 import { assistant, offlineModel } from './fixtures/registry.js';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
-import { DaemonConfiguration } from '../src/daemon/configuration.js';
+import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+const testManager = { packageName: '@felan-ai/test-manager', version: '0.0.0',
+  resolveFrom: import.meta.url,
+  resolveProvider: (specifier: string) => {
+    if (specifier === '@felan-ai/test-manager/provider') return new URL('./fixtures/service-provider.ts', import.meta.url).href;
+    throw new Error(`Unexpected fixture provider: ${specifier}`);
+  } };
 
-async function target() {
-  const directory = await mkdtemp(join(tmpdir(), 's14-'));
-  cleanups.push(() => rm(directory, { recursive: true, force: true }));
-  return { kind: 'isolated' as const, directory, namespaceId: randomUUID() };
+async function target(initialize = true) {
+  const root = await mkdtemp(join(process.cwd(), '.s14-'));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const directory = join(root, 'isolated');
+  await mkdir(directory, { mode: 0o700 });
+  const input = { kind: 'isolated' as const, directory, namespaceId: randomUUID() };
+  const hostConfigPath = join(resolveDaemonTarget(input).agentDir, 'host.json');
+  if (initialize) {
+    const owner = await acquireDaemonOwnership(input);
+    try {
+      await writeFile(hostConfigPath, JSON.stringify({ version: 1, services: [
+        { id: 'felan.runtime', major: 1, use: '@felan-ai/test-manager/provider' },
+        { id: 'felan.session-runtime', major: 1, use: '@felan-ai/test-manager/provider' },
+      ], extensions: [] }), { mode: 0o600 });
+    } finally { await owner.release(); }
+  }
+  return { target: input, hostConfigPath };
 }
 
 async function models() {
@@ -31,14 +47,31 @@ async function models() {
   return runtime;
 }
 
+it('rejects a populated isolation directory before loading model state', async () => {
+  const { target: input, hostConfigPath } = await target(false);
+  await writeFile(join(input.directory, 'unowned-state'), 'existing');
+  const createModels = vi.fn(models);
+  const starting = startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: createModels }).then(service => {
+    cleanups.push(async () => { await service.requestStop('stop', 'force'); await service.stopped; });
+    return service;
+  });
+  await expect(starting).rejects.toThrow('A new isolated target must be an empty private directory');
+  expect(createModels).not.toHaveBeenCalled();
+  expect(await readFile(join(input.directory, 'unowned-state'), 'utf8')).toBe('existing');
+});
+
 it('assembles owned service state and executes a real offline session before explicit shutdown', async () => {
-  const input = await target();
-  const service = await startDaemonService(input, { createModelRuntime: models, initializeProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }) });
+  const { target: input, hostConfigPath } = await target();
+  const createModels = vi.fn(async () => {
+    expect(JSON.parse(await readFile(join(input.directory, '.felan-isolated.json'), 'utf8'))).toMatchObject({ namespaceId: input.namespaceId });
+    return models();
+  });
+  const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: createModels });
   cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
-  await writeFile(join(service.owner.target.agentDir, 'settings.json'), JSON.stringify({ builtinExtensions: Object.fromEntries(Object.keys(builtinExtensionPackages).map(key => [key, false])) }));
+  expect(createModels).toHaveBeenCalledOnce();
   const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui', expected: service.owner.identity });
   cleanups.push(async () => client.close()); await client.connect();
-  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'ready', setupNeeds: [] } });
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'ready', setupNeeds: [], composition: { managerPackage: testManager.packageName } } });
   const created = await client.request('sessions.create', { cwd: input.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
   expect((await stat(join(service.owner.target.agentDir, 'storage'))).mode & 0o777).toBe(0o700);
@@ -52,25 +85,6 @@ it('assembles owned service state and executes a real offline session before exp
   const next = await acquireDaemonOwnership(input); await next.release();
 });
 
-it('launches the emitted installed entrypoint and remains alive after a client detaches', async () => {
-  const input = await target();
-  const receipt = await spawnDetachedDaemon({ target: input, entrypoint: fileURLToPath(new URL('../dist/index.js', import.meta.url)) });
-  const cleanup = new SessionClient({ target: input, expected: receipt.identity, clientVersion: 'fixture', kind: 'tui' });
-  cleanups.push(async () => {
-    try {
-      await cleanup.connect();
-      expect((await cleanup.control('host.stop', { confirmed: true, mode: 'force' })).outcome).toBe('accepted');
-      await vi.waitFor(async () => { const owner = await acquireDaemonOwnership(input); await owner.release(); }, { timeout: 5_000 });
-    }
-    finally { cleanup.close(); }
-  });
-  const client = new SessionClient({ target: input, expected: receipt.identity, clientVersion: 'fixture', kind: 'tui' });
-  await client.connect(); client.close();
-  await cleanup.connect();
-  expect(await cleanup.control('host.status')).toMatchObject({ outcome: 'accepted', state: 'ready', identity: receipt.identity });
-  expect(await cleanup.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { setupNeeds: [{ code: 'provider' }] } });
-});
-
 it('starts forced cancellation before joining a broker continuation that needs it', async () => {
   let release!: () => void; const joined = new Promise<void>(resolve => { release = resolve; });
   const shutdown = vi.fn(async () => { release(); });
@@ -81,10 +95,8 @@ it('starts forced cancellation before joining a broker continuation that needs i
 });
 
 it('forces an owned foreground process to settle and persists its interrupted run before release', async () => {
-  const input = await target(); const service = await startDaemonService(input, { createModelRuntime: models,
-    initializeProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }) });
+  const { target: input, hostConfigPath } = await target(); const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: models });
   cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
-  await writeFile(join(service.owner.target.agentDir, 'settings.json'), JSON.stringify({ builtinExtensions: Object.fromEntries(Object.keys(builtinExtensionPackages).map(key => [key, false])) }));
   const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui' }); cleanups.push(async () => client.close()); await client.connect();
   const created = await client.request('sessions.create', { cwd: input.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
@@ -103,13 +115,13 @@ it('forces an owned foreground process to settle and persists its interrupted ru
 });
 
 it('blocks recovered unknown processes instead of signalling a stored process identity', async () => {
-  const input = await target(); const owner = await acquireDaemonOwnership(input); const seed = new DaemonControlStore(owner);
+  const { target: input, hostConfigPath } = await target(); const owner = await acquireDaemonOwnership(input); const seed = new DaemonControlStore(owner);
   try {
     seed.createSession({ id: 'prior-session', root: 'prior-session', cwd: input.directory, piPath: join(owner.target.agentDir, 'sessions', 'prior.jsonl'),
       title: 'Synthetic prior session', state: 'open', residency: 'warm', run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 } });
     seed.putResource({ id: 'synthetic-process', session: 'prior-session', root: 'prior-session', kind: 'foreground', state: 'running', updatedAt: Date.now() });
   } finally { seed.close(); await owner.release(); }
-  const service = await startDaemonService(input, { createModelRuntime: models, initializeProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }) });
+  const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: models });
   cleanups.push(async () => {
     if (service.lifecycle.state !== 'stopped') {
       const row = service.registry.options.store.snapshot().resources.find(row => row.id === 'synthetic-process')!;
@@ -124,8 +136,7 @@ it('blocks recovered unknown processes instead of signalling a stored process id
 });
 
 it('joins a dispatched global settings writer before closing its control store or releasing ownership', async () => {
-  const input = await target(); const service = await startDaemonService(input, { createModelRuntime: models,
-    initializeProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }) });
+  const { target: input, hostConfigPath } = await target(); const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: models });
   cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
   const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui' }); cleanups.push(async () => client.close()); await client.connect();
   let entered!: () => void; const entering = new Promise<void>(resolve => { entered = resolve; });
@@ -137,10 +148,10 @@ it('joins a dispatched global settings writer before closing its control store o
     entered(); await held; await originalSet.call(this, scope, value); order.push('write');
   });
   const originalJoin = service.server.settleCommands.bind(service.server);
-  const join = vi.spyOn(service.server, 'settleCommands').mockImplementation(async () => { joining(); await originalJoin(); });
+  const joinSpy = vi.spyOn(service.server, 'settleCommands').mockImplementation(async () => { joining(); await originalJoin(); });
   const originalClose = service.registry.options.store.close.bind(service.registry.options.store);
   const close = vi.spyOn(service.registry.options.store, 'close').mockImplementation(() => { order.push('close'); originalClose(); });
-  cleanups.push(async () => { release(); writer.mockRestore(); join.mockRestore(); close.mockRestore(); });
+  cleanups.push(async () => { release(); writer.mockRestore(); joinSpy.mockRestore(); close.mockRestore(); });
   const write = client.request('config.set', { scope: 'global', values: { defaultThinking: 'low' } });
   await entering;
   expect((await client.control('host.stop', { confirmed: true, mode: 'drain' })).outcome).toBe('accepted');

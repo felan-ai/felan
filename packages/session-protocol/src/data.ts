@@ -1,6 +1,9 @@
 import { Type, type Static } from 'typebox';
 import { LIMITS, ProtocolValidationError, utf8Bytes } from './limits.js';
-import { AbsolutePathSchema, ClientKindSchema, CounterSchema, CursorSchema, IdSchema, JsonValueSchema, ModelSchema, NameSchema, PresenterSchema, ThinkingSchema, enumOf, text, type JsonValue } from './schema.js';
+import { AbsolutePathSchema, ClientKindSchema, CounterSchema, CursorSchema, IdSchema, JsonValueSchema, ModelSchema, NameSchema, ThinkingSchema, enumOf, parseSchema, text, type JsonValue } from './schema.js';
+import { UiPresentationSchema, parseUiPresentation } from './ui.js';
+
+import { ActiveMessageDisplaySchema } from './message-display.js';
 
 const TranscriptDataSchema = Type.Unsafe<JsonValue>(Type.Unknown({ 'x-jsonValue': true, 'x-maxEncodedBytes': LIMITS.pageBytes }));
 
@@ -33,7 +36,6 @@ export const ToolCatalogEntrySchema = Type.Object({
 });
 export const CommandCatalogEntrySchema = Type.Object({
   name: NameSchema, description: text(16384), source: IdSchema, kind: enumOf(['extension', 'skill'] as const),
-  eligibleClientKinds: Type.Array(ClientKindSchema, { minItems: 1, maxItems: 3, uniqueItems: true }),
 });
 export const CatalogSchema = Type.Object({
   tools: Type.Array(ToolCatalogEntrySchema, { maxItems: LIMITS.catalogEntries }),
@@ -76,25 +78,24 @@ export const ProcessSchema = Type.Object({
 });
 export const ProcessPageSchema = Type.Object({ entries: Type.Array(ProcessSchema, { maxItems: LIMITS.pageEntries }), cursor: Type.Optional(CursorSchema) }, { 'x-maxEncodedBytes': LIMITS.pageBytes });
 export const ChildSchema = Type.Object({ session: IdSchema, parent: IdSchema, root: IdSchema, title: text(4096), run: RunSchema, state: enumOf(['open', 'closed'] as const) });
+const UnknownPresentationSchema = Type.Object({ id: IdSchema,
+  kind: Type.String({ minLength: 1, maxLength: LIMITS.idBytes, pattern: '^(?!(?:notification|status|title|widget|message_display|progress|document|view)$)[a-z][a-z0-9._@-]*$' }),
+  fallback: Type.String({ minLength: 1, maxLength: 4096, 'x-maxBytes': 4096 }),
+});
 export const PresentationSchema = Type.Union([
-  Type.Object({ id: IdSchema, kind: Type.Literal('notification'), level: enumOf(['info', 'warning', 'error'] as const), text: text(LIMITS.statusTextBytes) }),
-  Type.Object({ id: IdSchema, kind: enumOf(['status', 'title'] as const), text: text(LIMITS.statusTextBytes) }),
-  Type.Object({ id: IdSchema, kind: Type.Literal('widget'), text: text(LIMITS.statusTextBytes), placement: Type.Optional(enumOf(['aboveEditor', 'belowEditor'] as const)) }),
-  Type.Object({ id: IdSchema, kind: Type.Literal('custom'), presenter: PresenterSchema, data: JsonValueSchema }),
-], { 'x-maxEncodedBytes': LIMITS.structuredBytes });
+  Type.Object({ id: IdSchema, kind: Type.Literal('notification'), level: enumOf(['info', 'warning', 'error'] as const), text: text(LIMITS.statusTextBytes) }, { 'x-maxEncodedBytes': LIMITS.structuredBytes }),
+  Type.Object({ id: IdSchema, kind: Type.Literal('title'), text: text(LIMITS.statusTextBytes) }, { 'x-maxEncodedBytes': LIMITS.structuredBytes }),
+  Type.Object({ id: IdSchema, kind: Type.Literal('widget'), text: text(LIMITS.statusTextBytes), placement: Type.Optional(enumOf(['aboveEditor', 'belowEditor'] as const)) }, { 'x-maxEncodedBytes': LIMITS.structuredBytes }),
+  Type.Object({ id: IdSchema, kind: Type.Literal('message_display'), data: ActiveMessageDisplaySchema }),
+  UiPresentationSchema,
+], { 'x-maxEncodedBytes': LIMITS.pageBytes });
 const sessionSummaryFields = {
   session: IdSchema, root: IdSchema, parent: Type.Optional(IdSchema), cwd: AbsolutePathSchema,
   state: enumOf(['open', 'closed'] as const), residency: enumOf(['warm', 'evicted'] as const),
   title: text(4096), model: Type.Optional(ModelSchema), lastActivity: CounterSchema, run: RunSchema, policy: PolicySchema,
 };
-export const SessionSummarySchema = Type.Union([
-  Type.Object({ ...sessionSummaryFields, adoption: Type.Literal('legacy'), sourceFingerprint: Type.Optional(text(256, 1)), revision: Type.Optional(Type.Never()) }),
-  Type.Object({ ...sessionSummaryFields, adoption: Type.Literal('adopted'), revision: CounterSchema, sourceFingerprint: Type.Optional(Type.Never()) }),
-]);
+export const SessionSummarySchema = Type.Object({ ...sessionSummaryFields, revision: CounterSchema });
 export const SessionsPageSchema = Type.Object({ entries: Type.Array(SessionSummarySchema, { maxItems: LIMITS.pageEntries }), cursor: Type.Optional(CursorSchema),
-  inventory: Type.Optional(Type.Object({ complete: Type.Boolean(), diagnostics: Type.Array(Type.Object({
-    code: enumOf(['unavailable_cwd', 'unreadable', 'oversize', 'truncated'] as const), count: CounterSchema,
-  }), { maxItems: 4 }) })),
 }, { 'x-maxEncodedBytes': LIMITS.pageBytes });
 export type Prompt = Static<typeof PromptSchema>;
 export type PromptAttachment = Static<typeof PromptAttachmentSchema>;
@@ -103,6 +104,24 @@ export type Policy = Static<typeof PolicySchema>;
 export type Message = Static<typeof MessageSchema>;
 export type Process = Static<typeof ProcessSchema>;
 export type Presentation = Static<typeof PresentationSchema>;
+
+export function parsePresentation(value: unknown): Presentation {
+  let presentation: Presentation;
+  try {
+    presentation = parseSchema(PresentationSchema, value);
+  } catch (knownError) {
+    try {
+      const unknown = parseSchema(UnknownPresentationSchema, value);
+      return { id: unknown.id, kind: 'notification', level: 'info', text: unknown.fallback };
+    } catch {
+      throw knownError;
+    }
+  }
+  if (presentation.kind === 'status' || presentation.kind === 'progress' || presentation.kind === 'document' || presentation.kind === 'view') {
+    return parseUiPresentation(presentation);
+  }
+  return presentation;
+}
 
 export function validatePrompt(prompt: Prompt): void {
   const textBytes = utf8Bytes(prompt.text) + (prompt.attachments ?? []).reduce((sum, item) => sum + (item.type === 'text' ? utf8Bytes(item.text) : 0), 0);

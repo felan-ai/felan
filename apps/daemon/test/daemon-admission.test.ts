@@ -364,25 +364,6 @@ describe('ordered durable admission', () => {
 });
 
 describe('adoption and deletion admission boundaries', () => {
-  it('keeps unregistered adoption identity in the host bucket without inventing a session', async () => {
-    const f = await fixture({ capacity: { sessionRequests: 2 } });
-    const request: ClientEnvelope = { v: 1, id: requestId(), op: 'session.adopt', session: 'legacy', params: {
-      expected: { namespaceId: 'fixture', instanceId: 'instance', agentDir: '/fixture', rootSet: ['/fixture'] },
-      sourceFingerprint: 'fingerprint', backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true,
-    } };
-    const admission = new OrderedAdmission(f.store); const effect = vi.fn();
-    const response = await admission.submit(request, 'owner', command => command.dispatch(() => {
-      effect(); return { response: { v: 1, re: request.id, outcome: 'accepted', result: { sessionId: 'legacy', adoptionId: 'adoption' } } };
-    }));
-    expect(response.outcome).toBe('accepted');
-    expect(f.store.snapshot().sessions.some(session => session.id === 'legacy')).toBe(false);
-    expect(f.store.snapshot().requests.find(row => row.id === request.id)?.session).toBeUndefined();
-    expect(await admission.submit(request, 'owner', effect)).toEqual(response); expect(effect).toHaveBeenCalledOnce();
-    expect(() => f.store.admit(prompt('invalid', 'legacy'), 'owner')).toThrowError(/not found/);
-    expect(() => f.store.admit({ ...request, id: requestId() }, 'owner')).toThrowError(/capacity/);
-    expect(() => f.store.admit(prompt(), 'owner')).not.toThrow();
-    await expect(admission.submit({ ...request, session: 'different-legacy' }, 'owner')).rejects.toMatchObject({ code: 'request_conflict' });
-  });
 
   it('atomically clears obsolete projections on deletion while retaining the tombstone and expiring normal request history', () => {
     let clock = now; const fPromise = fixture({ now: () => clock });
@@ -432,7 +413,7 @@ describe('adoption and deletion admission boundaries', () => {
     f.store.project('other', [{ type: 'status', id: 'reserve-fill', text: '' }]);
     const other = prompt('pending', 'other'); f.store.admit(other, 'owner');
     f.store.putInteraction({ id: 'question', scope: { kind: 'session', session: 'other', root: 'other' },
-      request: { kind: 'confirm', title: 'Synthetic', message: 'Test' }, eligibleClientKinds: ['tui'], createdAt: now, state: 'waiting' });
+      request: { kind: 'confirm', title: 'Synthetic', message: 'Test' }, createdAt: now, state: 'waiting' });
     f.store.transitionSessionForSafety('s', 'closed'); const revision = f.store.session('s').revision;
     const request: ClientEnvelope = { v: 1, id: requestId(), op: 'session.delete', session: 's', params: { confirmed: true, expectedRevision: revision } };
     f.store.admit(request, 'owner');
@@ -440,7 +421,8 @@ describe('adoption and deletion admission boundaries', () => {
       const state = f.store.snapshot();
       const reserved = state.requests.filter(row => row.phase !== 'terminal').length * CONTROL_REQUEST_BUDGET.outcome
         + state.interactions.filter(row => ['waiting', 'deferred'].includes(row.state)).length * (LIMITS.answerBytes + 1024);
-      return capacity - CONTROL_LIMITS.reserveBytes - Buffer.byteLength(JSON.stringify(state)) - reserved - CONTROL_REQUEST_BUDGET.bookkeeping;
+      const document = JSON.parse(readFileSync(join(f.store.directory, 'control.json'), 'utf8')).data;
+      return capacity - CONTROL_LIMITS.reserveBytes - Buffer.byteLength(JSON.stringify(document)) - reserved - CONTROL_REQUEST_BUDGET.bookkeeping;
     };
     for (let index = 0; remaining() > 16384; index++) {
       f.store.project('other', [{ type: 'status', id: `fill-${index}`, text: 'x'.repeat(Math.min(16000, remaining() - 512)) }]);

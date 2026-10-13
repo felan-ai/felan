@@ -1,21 +1,22 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { DaemonTarget } from '@felan-ai/daemon/internal/daemon/target';
+import type { DaemonTarget } from '@felan-ai/daemon/client';
 import { SessionClient, type SessionClientOptions } from './client/client.js';
-import { resolveInstalledDaemonEntrypoint } from './daemon-entrypoint.js';
+import { resolveClientHostComposition, resolveInstalledDaemonEntrypoint } from './daemon-entrypoint.js';
 import { TuiSessionController, type TuiSessionOptions } from './tui/controller.js';
 import { runDaemonTerminal } from './tui/run.js';
 import { FELAN_VERSION } from './version.js';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import { waitForDaemonStop } from './client/daemon-stop.js';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
-import { TERMINAL_INTERACTION_KINDS, TERMINAL_PRESENTERS } from './tui/interactions.js';
+import { TERMINAL_INTERACTION_KINDS, TERMINAL_UI_CAPABILITIES } from './tui/interactions.js';
 
 export interface RunDaemonFelanOptions extends Omit<TuiSessionOptions, 'cwd' | 'extensions'> {
   cwd?: string;
   agentDir?: string;
   daemonRuntime?: string;
+  hostConfigPath?: string;
   extensionPaths?: readonly string[];
   initialMessage?: string;
   verbose?: boolean;
@@ -48,9 +49,11 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
   let draft = '';
   let first = true;
   while (!options.signal?.aborted) {
-    const client = (dependencies.createClient ?? (options => new SessionClient(options)))({ target: clientDaemonTarget(options),
-      clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, kind: 'tui', interactionKinds: [...TERMINAL_INTERACTION_KINDS], presenters: [...TERMINAL_PRESENTERS],
-      launch: { entrypoint: resolveInstalledDaemonEntrypoint(), ...(replacing ? { replacing } : {}) } });
+    const target = clientDaemonTarget(options);
+    const expectedComposition = dependencies.createClient ? undefined : await resolveClientHostComposition(target, options.hostConfigPath);
+    const client = (dependencies.createClient ?? (options => new SessionClient(options)))({ target,
+      clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}), kind: 'tui', interactionKinds: [...TERMINAL_INTERACTION_KINDS], capabilities: [...TERMINAL_UI_CAPABILITIES],
+      launch: { entrypoint: resolveInstalledDaemonEntrypoint(), ...(options.hostConfigPath ? { hostConfigPath: resolve(options.hostConfigPath) } : {}), ...(replacing ? { replacing } : {}) } });
     const controller = new TuiSessionController(client);
     const outcome: { restart?: { identity: DaemonIdentity; sessionId?: string; cwd: string; draft: string; keepStartup: boolean } } = {};
     try {

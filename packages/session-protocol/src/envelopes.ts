@@ -10,7 +10,7 @@ import { PresentationEventSchema } from './presentation.js';
 
 export const ERROR_CODES = Object.freeze(['invalid_request', 'unsupported_operation', 'protocol_mismatch', 'unavailable', 'authentication_required', 'busy', 'policy_pending',
   'request_conflict', 'stale_request', 'expired', 'not_found', 'forbidden', 'already_resolved', 'storage_failure',
-  'ownership_lost', 'resync_required', 'indeterminate', 'adoption_required', 'request_capacity', 'target_mismatch'] as const);
+  'ownership_lost', 'resync_required', 'indeterminate', 'configuration_recovery_required', 'request_capacity', 'target_mismatch'] as const);
 export type KnownErrorCode = (typeof ERROR_CODES)[number];
 export const ErrorCodeSchema = NameSchema;
 export const ProtocolErrorSchema = Type.Object({
@@ -89,13 +89,6 @@ function assertEnumerableData(value: unknown, seen = new Set<object>(), depth = 
   }
 }
 
-export function validateClientEligibility(request: ClientEnvelope, kind: 'tui' | 'acp' | 'headless'): void {
-  if (!OPERATION_CATALOG[request.op].clients.includes(kind)) throw new ProtocolValidationError('invalid_request', 'Operation unavailable to this client kind');
-  if (request.op === 'sessions.create' && (request.params.source !== kind || (kind !== 'tui' && request.params.extensions?.length))) throw new ProtocolValidationError('invalid_request', 'Invalid session source or extensions');
-  if (kind === 'acp' && request.op === 'prompt' && request.params.attachments?.some(item => item.type === 'image')) throw new ProtocolValidationError('invalid_request', 'ACP image prompts are unsupported');
-  if (kind === 'headless' && request.op === 'config.set' && request.params.scope !== 'session') throw new ProtocolValidationError('invalid_request', 'Headless configuration changes must be session scoped');
-}
-
 export function parseOperationResult<O extends Operation>(operation: O, value: unknown): OperationResult<O> {
   const result = parseSchema(ResultSchemas[operation], value);
   if (operation === 'attach') parseSessionSnapshot((result as OperationResult<'attach'>).snapshot);
@@ -122,7 +115,7 @@ export function parseServerEnvelope(value: unknown, responseOperation?: Operatio
   if (value !== null && typeof value === 'object' && 'interaction' in value) {
     const notification = parseSchema(InteractionNotificationSchema, value);
     const interaction = parseInteraction(notification.interaction);
-    if (interaction.scope.kind !== 'host' && interaction.request.kind !== 'oauth') {
+    if (interaction.scope.kind !== 'host') {
       throw new ProtocolValidationError('invalid_request', 'Session interactions require the revisioned event stream');
     }
     return notification;

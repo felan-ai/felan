@@ -5,6 +5,27 @@ CLI. The package does not vendor the upstream Rust daemon or Chrome. It probes
 the exact reviewed CLI on Felan's `AgentRuntime` and otherwise remains safely
 unavailable.
 
+## Configured authorization service
+
+The package root exports a service-backed execution entry. A trusted provider
+may register `BROWSER_AUTHORIZATION_SERVICE` from
+`@felan-ai/ext-browser/service` (`felan.browser.authorization@1`). Without it,
+the extension still registers `browser` for isolated sessions and skills, but
+does not register `browser_authorize`.
+
+The service implements `authorize(request)` and optionally `checkExecution()`.
+Each authorization request includes the existing `BrowserAuthorizationRequest`
+fields plus `authorizationPolicy`, resolved from `pi.config.authorizationPolicy`
+with the schema default `ask`. The provider must honor this policy, the request's
+cancellation signal, and the attachment/lease contract. Policy persistence,
+consent presentation, and Chrome discovery remain provider-owned; no ambient
+policy lookup occurs in the execution entry. Changed configuration applies to
+new extension activations. `checkExecution` retains the host's inherited CLI
+configuration guard.
+
+`createBrowserExtension` and the existing host types remain available for
+explicit composition.
+
 ## Tool
 
 The extension registers the ordinary `browser` tool and, when its host supplies
@@ -12,11 +33,11 @@ authorization, a separate `browser_authorize` control-plane tool.
 
 `browser_authorize` supports `authorize`, `status`, and `revoke`. The
 `authorize` operation requires a concise, non-blank `reason` explaining the
-authenticated task; the local TUI displays that reason next to the tool call
-before asking for consent. Authorization defaults to an interactive local
-consent choice and opens a fresh strict pinned tab in the existing Chrome
-session. The local TUI can persist `always-allow`
-through browser settings; changing it back to `ask` restores the prompt for
+authenticated task. The configured provider presents an owner-only session
+approval with that reason when policy requires consent, then opens a fresh
+strict pinned tab in the existing Chrome session. Capable TUI and ACP clients
+can present the approval; client kind alone grants no authority. Hosts can
+configure `always-allow` through browser settings; changing it back to `ask` restores the prompt for
 later authorizations. The host supplies a transient validated loopback CDP
 endpoint. After authorization, the attached browser accepts the native CLI
 command surface, including authenticated browser state and advanced
@@ -75,9 +96,11 @@ binary is needed.
 
 ## Runtime dependency and onboarding
 
-The local TUI checks for the exact reviewed CLI during interactive startup. If
-it is unavailable, `/dependencies` and the first-run dependency wizard offer a
-confirmed managed installation or disabling the Browser extension. The managed
+The host checks for the exact reviewed CLI. If it is unavailable, explicit
+dependency setup can request a managed installation or disable the extension.
+The trusted provider applies installation policy and obtains eligible
+local-console consent when required; an extension's session form is not
+installation authority. The managed
 installer downloads the pinned npm archive into Felan agent storage, verifies
 its SHA-512 integrity and platform native binary SHA-256 digest, extracts the
 bundled version-matched skills without lifecycle scripts, and verifies the CLI
@@ -107,8 +130,9 @@ The extension owns literal-argv validation, session namespacing, bounded output,
 version-matched skill retrieval, screenshot validation, and safe text/image
 fallbacks. Hosts own credentials, attachment authorization, dependency
 installation, and browser policy. Page content, CLI output, and bundled skill
-text are untrusted. Existing-browser attachment requires `browser_authorize`;
-noninteractive hosts fail closed.
+text are untrusted. Existing-browser attachment requires `browser_authorize`.
+When policy requires consent and no eligible owner client can answer, access
+fails closed.
 
 ## Related documentation
 

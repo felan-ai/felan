@@ -1,9 +1,8 @@
 import type {
-  Api,
   AssistantMessage,
   Context,
-  Model,
-  SimpleStreamOptions,
+  ModelsCallOptions,
+  TextModelInfo,
 } from '@felan-ai/agent-core';
 
 export type SessionTitleMode = 'tui' | 'rpc' | 'json' | 'print';
@@ -16,7 +15,7 @@ export interface SessionTitlePreparationRequest {
   readonly sessionId: string;
   readonly prompt: string;
   readonly mode: SessionTitleMode;
-  readonly currentModel: Model<Api> | undefined;
+  readonly currentModel: TextModelInfo | undefined;
   readonly parentSession: string | undefined;
   readonly signal: AbortSignal;
 }
@@ -24,16 +23,16 @@ export interface SessionTitlePreparationRequest {
 export interface SessionTitlePreparation {
   readonly prompt: string;
   readonly provider: string;
-  readonly models: readonly Model<Api>[];
-  readonly preferredModel?: Model<Api>;
+  readonly models: readonly TextModelInfo[];
+  readonly preferredModel?: TextModelInfo;
 }
 
 export interface SessionTitleCompletionRequest {
   readonly sessionId: string;
   readonly requestId: string;
-  readonly model: Model<Api>;
+  readonly model: TextModelInfo;
   readonly context: Context;
-  readonly options: SimpleStreamOptions;
+  readonly options: ModelsCallOptions;
 }
 
 export interface SessionTitlePersistenceRequest {

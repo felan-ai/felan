@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS } from '@felan-ai/session-protocol';
 import { SessionClient, newRequestId } from '../src/client/client.js';
-import { identityFor } from '@felan-ai/daemon/internal/daemon/target';
+import { identityFor } from '../../daemon/src/daemon/target.js';
 import type { ClientTransport, TransportConnector } from '../src/client/transport.js';
-import * as supervisor from '@felan-ai/daemon/internal/daemon/supervisor';
+import * as supervisor from '@felan-ai/daemon/client';
 import { FakeTransport, delta, snapshot } from './client-fixtures.js';
 
 const clients: SessionClient[] = [];
@@ -23,7 +23,7 @@ async function fixture(options: Partial<ConstructorParameters<typeof SessionClie
   const identity = identityFor(client.target, 'instance');
   fake.onSend = (request, connection) => {
     if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: 'fixture',
-      protocol: 1, identity, operations: ['attach', 'detach', 'prompt', 'sessions.create', 'host.status'], interactionKinds: [], presenters: [] }, connection);
+      protocol: 1, identity, operations: ['attach', 'detach', 'prompt', 'sessions.create', 'host.status'], interactionKinds: [] }, connection);
     else if (request.op === 'attach') fake.reply(request, { attachmentId: `binding-${connection}`, snapshot: snapshot() }, connection);
     else fake.reply(request, request.op === 'prompt' ? { runId: 'run' } : {}, connection);
   };
@@ -31,6 +31,25 @@ async function fixture(options: Partial<ConstructorParameters<typeof SessionClie
 }
 
 describe('shared session client', () => {
+  it('negotiates an immutable generic UI capability offer and keeps unsupported actions local', async () => {
+    const offered: Array<'ui.action'> = ['ui.action'];
+    const { client, fake, identity } = await fixture({ capabilities: offered });
+    offered.pop();
+    const original = fake.onSend;
+    fake.onSend = (request, connection) => {
+      if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: 'fixture',
+        protocol: 1, identity, operations: ['attach', 'ui.action'], interactionKinds: ['form'], capabilities: ['ui.action'] }, connection);
+      else original(request, connection);
+    };
+    await client.connect();
+    expect(fake.requests.find(request => request.op === 'hello')?.params).toMatchObject({ capabilities: ['ui.action'] });
+    expect(client.capabilities?.capabilities).toEqual(['ui.action']);
+    const fallback = await fixture(); await fallback.client.connect();
+    expect(await fallback.client.request('ui.action', { elementId: 'doc', revision: 1, actionId: 'close', outcome: 'cancel', values: {} }, { session: 'session' }))
+      .toMatchObject({ outcome: 'rejected', error: { code: 'unsupported_operation' } });
+    expect(fallback.fake.requests.some(request => request.op === 'ui.action')).toBe(false);
+  });
+
   it('negotiates, pins canonical full identity and reconstructs racing streams before attach reply', async () => {
     const { client, fake, identity } = await fixture(); const original = fake.onSend;
     fake.onSend = (request, connection) => {
@@ -47,8 +66,17 @@ describe('shared session client', () => {
     const { client, fake, identity } = await fixture({ reconnectAttempts: 0 });
     await client.connect(); fake.lose();
     fake.onSend = request => fake.reply(request, { attachmentId: 'a', principal: 'p', daemonVersion: 'fixture', protocol: 1,
-      identity: { ...identity, [field]: field === 'rootSet' ? ['/wrong'] : field === 'agentDir' ? '/wrong' : 'wrong' }, operations: [], interactionKinds: [], presenters: [] });
+      identity: { ...identity, [field]: field === 'rootSet' ? ['/wrong'] : field === 'agentDir' ? '/wrong' : 'wrong' }, operations: [], interactionKinds: [] });
     await expect(client.connect()).rejects.toThrow(); expect(client.status).toBe('blocked');
+  });
+  it('blocks session attachment when the trusted host-composition fingerprint differs', async () => {
+    const expectedComposition = { managerPackage: '@felan-ai/felan', managerVersion: '0.29.0', providerDigest: 'a'.repeat(64) };
+    const { client, fake, identity } = await fixture({ expectedComposition });
+    fake.onSend = request => fake.reply(request, { attachmentId: 'hello', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
+      identity, operations: ['attach'], interactionKinds: [], composition: { ...expectedComposition, configDigest: 'b'.repeat(64), providerDigest: 'b'.repeat(64) } });
+    await expect(client.connect()).rejects.toThrow('configuration differs');
+    expect(client.status).toBe('incompatible');
+    expect(fake.requests.some(request => request.op === 'attach')).toBe(false);
   });
   it('retries the exact immutable command and ID, exposing pending then accepted without completion inference', async () => {
     const { client, fake } = await fixture({ requestTimeoutMs: 10 }); await client.connect();
@@ -72,7 +100,7 @@ describe('shared session client', () => {
   });
   it('reconnects with logical attachment/policy, new server binding and the original pending request', async () => {
     const { client, fake } = await fixture({ kind: 'acp' }); const original = fake.onSend;
-    await client.connect(); await client.attach('session'); const before = client.getAttachment('session')!;
+    await client.connect(); await client.attach('session', { requirePolicy: 'acp-strict' }); const before = client.getAttachment('session')!;
     fake.onSend = (request, connection) => {
       if (request.op === 'prompt' && connection === 0) fake.lose(); else original(request, connection);
     };
@@ -115,7 +143,7 @@ describe('shared session client', () => {
     expect(fake.controls).toHaveLength(2);
   });
   it('never treats advertised presenters as operation permission', async () => {
-    const { client, fake } = await fixture({ presenters: [{ id: 'admin', version: '1' }] }); const original = fake.onSend;
+    const { client, fake } = await fixture({  }); const original = fake.onSend;
     fake.onSend = (request, index) => original(request, index); await client.connect();
     expect(await client.request('host.stop', { expected: client.identity!, confirmed: true, mode: 'force' })).toMatchObject({ outcome: 'rejected', error: { code: 'unsupported_operation' } });
     expect(fake.requests.some(item => item.op === 'host.stop')).toBe(false);
@@ -313,7 +341,7 @@ describe('shared session client', () => {
   it('retries an indeterminate initial attach while retaining identity/policy and rejecting stale late cutovers', async () => {
     const { client, fake } = await fixture({ kind: 'acp', requestTimeoutMs: 5, retries: 0 }); const original = fake.onSend;
     await client.connect(); fake.onSend = () => {}; vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const attached = client.attach('session'); await flushMicrotasks(); const originalRequest = fake.requests.at(-1)!;
+    const attached = client.attach('session', { requirePolicy: 'acp-strict' }); await flushMicrotasks(); const originalRequest = fake.requests.at(-1)!;
     await vi.advanceTimersByTimeAsync(5); expect(await attached).toMatchObject({ outcome: 'indeterminate' });
     const originalId = client.getAttachment('session')!.id;
     fake.reply(originalRequest, { attachmentId: 'late', snapshot: snapshot() }); await flushMicrotasks();

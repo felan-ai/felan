@@ -3,9 +3,14 @@ import type {
   InlineExtension,
 } from '@earendil-works/pi-coding-agent';
 import type { AgentRuntime } from './runtime.js';
+import type { Api, Model } from '@earendil-works/pi-ai';
+import type { StreamFunction } from './session.js';
 import type { TurnClassificationRegistry } from './classifier/turn-classification.js';
 import type { ModelSelectionPersistenceScope, SessionSelectionAutomation } from './model-selection.js';
 import type { SavingsReporter, SavingsReporterProvider } from './savings.js';
+import { createUnavailableExtensionUi, type ExtensionUi, type ExtensionUiBindingFactory } from './extension-ui.js';
+import { createExtensionConfigBinding, type ExtensionConfigWriter } from './extension-config-write.js';
+import { createExtensionServiceAccess, createFelanServiceRegistry, type ExtensionServiceAccess, type ExtensionServiceRequirements, type FelanServiceRegistry } from './services.js';
 import {
   associateCapabilityCollector,
   CapabilityCollector,
@@ -19,6 +24,8 @@ import {
   resolveExtensionConfigs,
 } from './extension-config.js';
 
+export type { ExtensionConfigWriter } from './extension-config-write.js';
+
 export interface FelanModelSelectionOptions {
   readonly updateDefault?: boolean;
 }
@@ -28,6 +35,9 @@ export interface FelanExtensionAPI extends Omit<ExtensionAPI, 'getFlag' | 'regis
   readonly runtime: AgentRuntime;
   readonly config: Readonly<Record<string, ExtensionConfigValue>>;
   readonly savings?: SavingsReporter;
+  readonly services: ExtensionServiceAccess;
+  readonly ui: ExtensionUi;
+  updateConfig(patch: Readonly<Record<string, ExtensionConfigValue>>): Promise<void>;
   readonly turnClassification?: TurnClassificationRegistry;
   readonly selectionAutomation?: SessionSelectionAutomation;
   registerCapability(capability: FelanCapability): void;
@@ -47,6 +57,30 @@ export type FelanExtension = (
 
 export interface ConfiguredFelanExtension extends FelanExtension {
   readonly configDefinition?: ExtensionConfigDefinition;
+  readonly serviceRequirements?: ExtensionServiceRequirements;
+  /** Resolved once per package load, after config validation and required-service admission. */
+  readonly execution?: (context: FelanExecutionContext) => FelanExecutionContribution;
+}
+
+export interface FelanExecutionContext {
+  readonly config: Readonly<Record<string, ExtensionConfigValue>>;
+  readonly services: ExtensionServiceAccess;
+}
+
+export interface FelanExecutionContribution {
+  /** Applied in package order, before the caller's wrapStreamFunction. */
+  readonly wrapStreamFunction?: (original: StreamFunction) => StreamFunction;
+  readonly supportsNativeThinkingUpdates?: (model: Model<Api>) => boolean;
+}
+
+const executionContributions = new WeakMap<object, {
+  readonly contribution: FelanExecutionContribution;
+  initialized: boolean;
+}>();
+
+export function getExecutionContribution(extension: InlineExtension): FelanExecutionContribution | undefined {
+  const entry = executionContributions.get(extension);
+  return entry?.initialized ? entry.contribution : undefined;
 }
 
 export type ExtensionPackageImporter = (
@@ -60,6 +94,10 @@ export function bindFelanExtension(
   agentDir: string = runtime.cwd,
   config: Readonly<Record<string, ExtensionConfigValue>> = {},
   savings?: SavingsReporterProvider,
+  services: FelanServiceRegistry = createFelanServiceRegistry(),
+  serviceRequirements: ExtensionServiceRequirements = {},
+  createExtensionUi?: ExtensionUiBindingFactory,
+  updateExtensionConfig?: ExtensionConfigWriter,
 ): InlineExtension {
   return bindFelanExtensionWithCapabilities(
     packageName,
@@ -71,6 +109,11 @@ export function bindFelanExtension(
     undefined,
     config,
     savings,
+    undefined,
+    services,
+    serviceRequirements,
+    createExtensionUi,
+    updateExtensionConfig,
   );
 }
 
@@ -85,10 +128,22 @@ function bindFelanExtensionWithCapabilities(
   config: Readonly<Record<string, ExtensionConfigValue>>,
   savings: SavingsReporterProvider | undefined,
   turnClassification?: TurnClassificationRegistry,
+  services: FelanServiceRegistry = createFelanServiceRegistry(),
+  serviceRequirements: ExtensionServiceRequirements = {},
+  createExtensionUi?: ExtensionUiBindingFactory,
+  updateExtensionConfig?: ExtensionConfigWriter,
 ): InlineExtension {
+  const createConfigBinding = createExtensionConfigBinding(packageName, getExtensionConfigDefinition(extension), updateExtensionConfig);
+  const contribution = (extension as ConfiguredFelanExtension).execution?.({
+    config,
+    services: createExtensionServiceAccess(services, serviceRequirements),
+  });
+  const execution = contribution === undefined ? undefined : { contribution, initialized: false };
   const inline: InlineExtension = {
     name: packageName,
     factory: async (pi) => {
+      const configBinding = createConfigBinding();
+      if (execution) execution.initialized = false;
       if (resetCapabilities) capabilityCollector.beginLoad();
       let initializing = true;
       const registerCapability = (capability: FelanCapability): void => {
@@ -107,12 +162,22 @@ function bindFelanExtensionWithCapabilities(
           config,
           savings?.createReporter(packageName),
           turnClassification,
+          services,
+          serviceRequirements,
+          createExtensionUi ? createExtensionUi(packageName) : createUnavailableExtensionUi(),
+          configBinding.updateConfig,
         ));
+        if (updateExtensionConfig) pi.on('session_shutdown', () => { configBinding.revoke(); });
+        if (execution) execution.initialized = true;
+      } catch (error) {
+        configBinding.revoke();
+        throw error;
       } finally {
         initializing = false;
       }
     },
   };
+  if (execution) executionContributions.set(inline, execution);
   associateCapabilityCollector(inline, capabilityCollector);
   return inline;
 }
@@ -124,6 +189,10 @@ export async function loadFelanExtensions(
   agentDir: string = runtime.cwd,
   configOverrides: readonly ExtensionConfigOverride[] = [],
   savings?: SavingsReporterProvider,
+  services?: FelanServiceRegistry,
+  onServiceRequirementFailure?: (packageName: string, service: string) => void,
+  createExtensionUi?: ExtensionUiBindingFactory,
+  updateExtensionConfig?: ExtensionConfigWriter,
 ): Promise<InlineExtension[]> {
   return loadFelanExtensionsWithScope(
     packageNames,
@@ -133,6 +202,11 @@ export async function loadFelanExtensions(
     undefined,
     configOverrides,
     savings,
+    undefined,
+    services,
+    onServiceRequirementFailure,
+    createExtensionUi,
+    updateExtensionConfig,
   );
 }
 
@@ -145,6 +219,10 @@ export async function loadFelanSessionExtensions(
   configOverrides: readonly ExtensionConfigOverride[] = [],
   savings?: SavingsReporterProvider,
   turnClassification?: TurnClassificationRegistry,
+  services?: FelanServiceRegistry,
+  onServiceRequirementFailure?: (packageName: string, service: string) => void,
+  createExtensionUi?: ExtensionUiBindingFactory,
+  updateExtensionConfig?: ExtensionConfigWriter,
 ): Promise<InlineExtension[]> {
   return loadFelanExtensionsWithScope(
     packageNames,
@@ -155,6 +233,10 @@ export async function loadFelanSessionExtensions(
     configOverrides,
     savings,
     turnClassification,
+    services,
+    onServiceRequirementFailure,
+    createExtensionUi,
+    updateExtensionConfig,
   );
 }
 
@@ -167,6 +249,10 @@ async function loadFelanExtensionsWithScope(
   configOverrides: readonly ExtensionConfigOverride[],
   savings: SavingsReporterProvider | undefined,
   turnClassification?: TurnClassificationRegistry,
+  services?: FelanServiceRegistry,
+  onServiceRequirementFailure?: (packageName: string, service: string) => void,
+  createExtensionUi?: ExtensionUiBindingFactory,
+  updateExtensionConfig?: ExtensionConfigWriter,
 ): Promise<InlineExtension[]> {
   const seen = new Set<string>();
   const extensions: InlineExtension[] = [];
@@ -200,6 +286,12 @@ async function loadFelanExtensionsWithScope(
     }
 
     const configuredExtension = defaultExport as ConfiguredFelanExtension;
+    const serviceRequirements = configuredExtension.serviceRequirements ?? {};
+    const missing = (serviceRequirements.required ?? []).find(contract => services?.get(contract) === undefined);
+    if (missing) {
+      onServiceRequirementFailure?.(packageName, missing.key);
+      continue;
+    }
     const definition = getExtensionConfigDefinition(configuredExtension);
     const config = definition === undefined
       ? {}
@@ -215,6 +307,10 @@ async function loadFelanExtensionsWithScope(
       config,
       savings,
       turnClassification,
+      services,
+      serviceRequirements,
+      createExtensionUi,
+      updateExtensionConfig,
     ));
   }
 
@@ -230,6 +326,10 @@ function createFelanExtensionAPI(
   config: Readonly<Record<string, ExtensionConfigValue>>,
   savings: SavingsReporter | undefined,
   turnClassification?: TurnClassificationRegistry,
+  services: FelanServiceRegistry = createFelanServiceRegistry(),
+  serviceRequirements: ExtensionServiceRequirements = {},
+  ui: ExtensionUi = createUnavailableExtensionUi(),
+  updateConfig: FelanExtensionAPI['updateConfig'] = async () => { throw new Error('Extension configuration persistence is unsupported.'); },
 ): FelanExtensionAPI {
   const boundMethods = new Map<PropertyKey, unknown>();
 
@@ -238,8 +338,11 @@ function createFelanExtensionAPI(
       if (property === 'agentDir') return agentDir;
       if (property === 'runtime') return runtime;
       if (property === 'config') return config;
+      if (property === 'updateConfig') return updateConfig;
       if (property === 'savings') return savings;
       if (property === 'turnClassification') return turnClassification;
+      if (property === 'services') return createExtensionServiceAccess(services, serviceRequirements);
+      if (property === 'ui') return ui;
       if (property === 'selectionAutomation') return modelSelectionScope;
       if (property === 'registerCapability') {
         return registerCapability;
@@ -307,12 +410,18 @@ function createFelanExtensionAPI(
         property === 'agentDir'
         || property === 'runtime'
         || property === 'config'
+        || property === 'updateConfig'
         || property === 'savings'
         || property === 'turnClassification'
+        || property === 'services'
+        || property === 'ui'
         || property === 'selectionAutomation'
         || property === 'registerCapability'
       ) return false;
       return Reflect.set(target, property, value, target);
+    },
+    has(target, property) {
+      return property === 'ui' || property === 'updateConfig' || Reflect.has(target, property);
     },
   });
 }

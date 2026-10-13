@@ -1,13 +1,16 @@
+import type { ProcessAdapter } from '../../src/daemon/process-adapter.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream, type ExtensionAPI, type ExtensionConfigDefinition } from '@felan-ai/agent-core';
-import { builtinExtensionPackages } from '../../src/extension-catalog.js';
 import { DaemonControlStore, type ControlCapacity } from '../../src/daemon/control-store.js';
-import { createLocalDaemonProfile } from '../../src/daemon/local-profile.js';
-import type { ProfileExtensionBindings, ProfileExtensionContext } from '../../src/daemon/profile.js';
+import { createTestSessionLifecycle } from './session-runtime.js';
+import type { SessionExtensionBindings as ProfileExtensionBindings, SessionExtensionContext as ProfileExtensionContext } from '../../src/daemon/session-execution.js';
 import type { DaemonOwnership } from '../../src/daemon/ownership.js';
+import type { SessionRuntime } from '../../src/daemon/session-runtime.js';
+import type { SessionLifecycleOptions } from '../../src/daemon/session-lifecycle.js';
+import type { RuntimeFactory } from '../../src/runtime-factory.js';
 import { SessionRegistry, type RegistryOptions } from '../../src/daemon/registry.js';
 import { canonicalProspectivePath, identityFor, resolveDaemonTarget } from '../../src/daemon/target.js';
 import { assistant, now, offlineModel } from './registry.js';
@@ -24,9 +27,14 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
   configDefinitions?: readonly ExtensionConfigDefinition[];
   deferActivation?: boolean;
   builtins?: readonly string[];
+  extensionPackages?: readonly string[];
+  composition?: SessionRuntime;
+  processAdapter?: ProcessAdapter;
+  createComposition?: (runtimeFactory: RuntimeFactory) => SessionRuntime;
+  openServiceScope?: SessionLifecycleOptions['openServiceScope'];
   servicesFactory?: (registry: SessionRegistry) => RegistryOptions['services'];
   onBind?: (context: ProfileExtensionContext) => void;
-  extensionUi?: (context: ProfileExtensionContext, registry: SessionRegistry) => { context: NonNullable<ProfileExtensionBindings['uiContext']>; dispose(): void };
+  extensionUi?: (context: ProfileExtensionContext, registry: SessionRegistry) => { context: NonNullable<ProfileExtensionBindings['uiContext']>; dispose(): void | Promise<void> };
   compaction?: { reserveTokens: number; keepRecentTokens: number }; skill?: boolean } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 's7-')));
   const cwd = join(directory, 'work'); const agentDir = join(directory, 'agent');
@@ -49,11 +57,16 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
   } as unknown as DaemonOwnership;
   let registry: SessionRegistry | undefined;
   const store = new DaemonControlStore(owner, { now: options.now ?? (() => now), ...(options.capacity ? { capacity: options.capacity } : {}) });
-  await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ builtinExtensions: Object.fromEntries(Object.keys(builtinExtensionPackages).map(name => [name, options.builtins?.includes(name) ?? false])),
+  await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
     ...(options.compaction ? { compaction: options.compaction } : {}) }));
-  const profile = await createLocalDaemonProfile({ agentDir, homeDir: directory, ...(options.deferActivation ? { deferActivation: true } : {}),
-    initializeProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }),
-    runtimeFactory: request => registry!.wrapOpeningRuntime(new HostAgentRuntime(request.cwd, request), request.rootSessionId),
+  const runtimeFactory: RuntimeFactory = request => registry!.wrapOpeningRuntime(new HostAgentRuntime(request.cwd, request), request.rootSessionId);
+  const composition = options.createComposition?.(runtimeFactory) ?? options.composition;
+  const profile = await createTestSessionLifecycle({ agentDir, homeDir: directory, ...(options.deferActivation ? { deferActivation: true } : {}),
+    ...(options.extensionPackages ? { extensionAllowlist: options.extensionPackages } : {}),
+    ...(composition ? { composition } : {}), definitions: options.configDefinitions ?? [],
+    ...(options.openServiceScope ? { openServiceScope: options.openServiceScope } : {}),
+    ...(options.skill ? { skillPaths: [join(cwd, '.agents', 'skills')] } : {}),
+    runtimeFactory,
     createModelRuntime: async () => {
       const models = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
       models.registerProvider('offline', { api: 'openai-completions', baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel], streamSimple: () => {
@@ -64,14 +77,15 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
       return models;
     } });
   let installedServices: RegistryOptions['services'] | undefined;
-  registry = new SessionRegistry({ owner, store, profile, now: options.now ?? (() => now), idleMs: 0,
+  registry = new SessionRegistry({ owner, store, lifecycle: profile, now: options.now ?? (() => now), idleMs: 0,
+    ...(options.processAdapter ?? composition?.processAdapter ? { processAdapter: options.processAdapter ?? composition!.processAdapter! } : {}),
     services: input => {
       if (options.servicesFactory) return (installedServices ??= options.servicesFactory(registry!))(input);
       return { getExecutionPolicy: input.getExecutionPolicy, extensions: {
       configuration: async () => options.configDefinitions ?? [], bind: async context => {
         options.onBind?.(context);
         const ui = options.extensionUi?.(context, registry!);
-        return { importExtension: async () => ({ default() {} }), dispose: async () => { ui?.dispose(); },
+        return { importExtension: async () => ({ default() {} }), dispose: async () => { await ui?.dispose(); },
           ...(ui ? { uiContext: ui.context } : {}),
           ...(options.extension ? { inlineExtensions: [{ name: 'synthetic', factory: options.extension }] } : {}) };
       },

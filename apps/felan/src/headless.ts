@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { ConfigValuesSchema, HEADLESS_JSON_PRESENTER, LIMITS, parseSchema, readMessageDisplay, type OperationParams, type PresentationEvent, type SessionSnapshot } from '@felan-ai/session-protocol';
+import { ConfigValuesSchema, LIMITS, parseSchema, readMessageDisplay, type OperationParams, type PresentationEvent, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { accepted, createDaemonClient, readCurrentDaemonHistory, waitForDaemonAttachment, waitForDaemonRun, type DaemonClientOptions } from './acp/daemon-session.js';
 import { sanitizeAcpErrorMessage } from './acp/session-updates.js';
 
@@ -27,7 +27,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
   const writeOutput = options.writeOutput ?? (chunk => { process.stdout.write(chunk); });
   if (options.provider !== undefined && options.model === undefined) { writeError('--provider requires --model in headless mode'); return 1; }
   if (options.signal?.aborted) return 130;
-  let client: ReturnType<typeof createDaemonClient> | undefined;
+  let client: Awaited<ReturnType<typeof createDaemonClient>> | undefined;
   let session: string | undefined;
   let runId: string | undefined;
   let signalCode: number | undefined;
@@ -57,7 +57,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     }
     if (Reflect.get(options, 'extensionConfigOverrides') !== undefined) throw new Error('Use typed daemon config rather than extensionConfigOverrides in headless mode');
     const cwd = resolve(options.cwd ?? process.cwd());
-    client = createDaemonClient(options, 'headless');
+    client = await createDaemonClient(options, 'headless');
     await client.connect();
     if (signalCode) return signalCode;
     session = options.sessionId;
@@ -67,10 +67,9 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
       let latest = -1;
       do {
         const page = accepted(await client.request('sessions.list', { cwd, limit: LIMITS.pageEntries, ...(cursor ? { cursor } : {}) }));
-        for (const row of page.entries) if (row.adoption === 'adopted' && row.state === 'open' && row.session === row.root && row.lastActivity > latest) {
+        for (const row of page.entries) if (row.state === 'open' && row.session === row.root && row.lastActivity > latest) {
           session = row.session; latest = row.lastActivity;
         }
-        if (page.inventory?.complete === false) throw new Error('Session inventory is incomplete; specify --session instead of --continue');
         cursor = page.cursor;
         if (cursor && (seen.has(cursor) || seen.size >= 64)) throw new Error('Session inventory exceeds the headless page limit');
         if (cursor) seen.add(cursor);
@@ -96,9 +95,9 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     if (options.mode === 'json') {
       accepted(await client.detach(session));
       client.close();
-      client = createDaemonClient(options, 'headless', [], [HEADLESS_JSON_PRESENTER]);
+      client = await createDaemonClient(options, 'headless', [], ['native.events']);
       await client.connect();
-      if (!client.capabilities?.presenters.some(presenter => presenter.id === HEADLESS_JSON_PRESENTER.id && presenter.version === HEADLESS_JSON_PRESENTER.version)) {
+      if (!client.capabilities?.capabilities?.includes('native.events')) {
         throw new Error('The daemon does not support native headless JSON output');
       }
       output = new HeadlessJsonWriter(options.writeOutput
@@ -106,7 +105,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
         : (line, done) => { process.stdout.write(line, done); }, error => failOutput?.(error));
       let nextSequence = 0;
       unsubscribePresentation = client.subscribePresentation((event: PresentationEvent) => {
-        if (event.session !== session || event.presentationEvent.presenter.id !== HEADLESS_JSON_PRESENTER.id || event.presentationEvent.presenter.version !== HEADLESS_JSON_PRESENTER.version) return;
+        if (event.session !== session) return;
         if (event.presentationEvent.sequence !== nextSequence++) {
           output!.fail(new Error('Native headless JSON sequence was interrupted; output cannot be replayed'));
           return;

@@ -11,7 +11,7 @@ it('exposes daemon clients without legacy execution or store ownership APIs', ()
     'openLocalSessionManager', 'selectLocalSessionManager', 'createLocalSettingsManager', 'getFelanSettings',
     'createLocalClassifier', 'selectLocalClassifierModel', 'LocalMemoryCoordinator', 'LocalSubagentHost',
     'localMemoryProjectDirectory', 'resolveLocalMemoryProject', 'loadLocalAppendSystemPrompt',
-    'builtinExtensionPackages', 'localExtensionPackages', 'importLocalExtension', 'resolveBuiltinExtensionPackages']) {
+    'builtinExtensionPackages', 'importLocalExtension']) {
     expect(client).not.toHaveProperty(name);
   }
 });

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { CONTROL_LIMITS } from '../src/daemon/control-state.js';
-import { DaemonConfiguration } from '../src/daemon/configuration.js';
+import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 import { SessionServer } from '../src/daemon/server.js';
 import { SessionClient, newRequestId } from '../../felan/src/client/client.js';
 import { fixture, fixtures, now, requestId } from './fixtures/registry.js';
@@ -13,11 +13,12 @@ import { serverFixture } from './fixtures/server.js';
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 const overrides = [{ extensionId: 'codex', source: 'CLI', values: { fast: true } }];
 
-it('retains an explicitly interactive source even without overrides or extension paths', async () => {
-  const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, source: 'tui' });
-  expect(f.store.session(binding.sessionId).profile).toEqual({ source: 'tui' });
+it('retains interactive extension permission independently of source through eviction', async () => {
+  const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, source: 'acp', interactiveExtensions: true });
+  expect(f.store.session(binding.sessionId).profile).toEqual({ source: 'acp', interactiveExtensions: true });
   await f.registry.evictIdle(); await f.registry.restore(binding.sessionId);
-  expect(f.opened.at(-1)?.source).toBe('tui');
+  expect(f.opened.at(-1)?.source).toBe('acp');
+  expect(f.opened.at(-1)?.interactiveExtensions).toBe(true);
 });
 
 it('retains session configuration through eviction and a recovered control store', async () => {
@@ -81,7 +82,7 @@ it('applies wire creation and reload overrides in real composition without chang
   try {
     const settings = join(f.owner.target.agentDir, 'settings.json'); const before = await readFile(settings);
     server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture',
-      configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [definition], assertCurrent: () => f.registry.assertAdmission() }) });
+      configuration: new DaemonConfiguration({ definitions: [definition], assertCurrent: () => f.registry.assertAdmission() }) });
     await server.start();
     client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
       expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui' });

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStorageScope } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundBashCoordinator } from '../src/coordinator.js';
+import { withOwnedTerminals } from './owned-terminals.js';
 import { BackgroundBashJobStore, getBackgroundBashJobsDir } from '../src/job-store.js';
 import { BackgroundBashManager } from '../src/process-manager.js';
 
@@ -121,10 +121,10 @@ describe('BackgroundBashManager', () => {
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('keeps shared live PTYs running after the detached process identity grace period', async () => {
-    const { runtime } = await createManager();
-    const coordinator = new BackgroundBashCoordinator(runtime);
-    const first = new BackgroundBashManager(runtime, coordinator);
-    const second = new BackgroundBashManager(runtime, coordinator);
+    const { runtime: source } = await createManager();
+    const { runtime, shutdown } = withOwnedTerminals(source);
+    const first = new BackgroundBashManager(runtime);
+    const second = new BackgroundBashManager(runtime);
     const started = await first.startInteractive('read input; printf "result:%s\\n" "$input"; exit 7');
     trackJob(first, started.job.meta.id);
     vi.spyOn(Date, 'now').mockReturnValue(started.job.meta.startedAt + 6_000);
@@ -139,21 +139,21 @@ describe('BackgroundBashManager', () => {
     const completed = await first.wait(started.job.meta.id, 5);
     expect(completed.job.status).toMatchObject({ status: 'failed', exitCode: 7 });
     await expect(second.tail(started.job.meta.id)).resolves.toContain('result:hello');
-    await coordinator.shutdown();
+    await shutdown();
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('keeps an in-flight PTY launch authoritative after five seconds without blocking list', async () => {
-    const { runtime } = await createManager();
-    const coordinator = new BackgroundBashCoordinator(runtime);
-    const manager = new BackgroundBashManager(runtime, coordinator);
-    const child = new BackgroundBashManager(runtime, coordinator);
+    const { runtime: source } = await createManager();
+    const { runtime, shutdown } = withOwnedTerminals(source);
+    const manager = new BackgroundBashManager(runtime);
+    const child = new BackgroundBashManager(runtime);
     const store = new BackgroundBashJobStore(runtime, runtime.storage('session'));
-    const startShell = runtime.terminals.startShell.bind(runtime.terminals);
+    const startShell = runtime.terminals!.startShell.bind(runtime.terminals);
     let release!: () => void;
     let entered!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const entering = new Promise<void>((resolve) => { entered = resolve; });
-    vi.spyOn(runtime.terminals, 'startShell').mockImplementation(async (command, options) => {
+    vi.spyOn(runtime.terminals!, 'startShell').mockImplementation(async (command, options) => {
       entered();
       await gate;
       return startShell(command, options);
@@ -170,7 +170,7 @@ describe('BackgroundBashManager', () => {
       release();
       const started = await starting;
       trackJob(manager, started.job.meta.id);
-      await coordinator.shutdown();
+      await shutdown();
     }
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
@@ -194,8 +194,8 @@ describe('BackgroundBashManager', () => {
     });
     let processHandle: AgentRuntimeProcess | undefined;
     let runnerPid: number | undefined;
-    const startShell = runtime.terminals.startShell.bind(runtime.terminals);
-    vi.spyOn(runtime.terminals, 'startShell').mockImplementation(async (command, options) => {
+    const startShell = runtime.terminals!.startShell.bind(runtime.terminals);
+    vi.spyOn(runtime.terminals!, 'startShell').mockImplementation(async (command, options) => {
       processHandle = await startShell(command, options);
       return processHandle;
     });
@@ -241,7 +241,7 @@ describe('BackgroundBashManager', () => {
       },
     });
     const manager = new BackgroundBashManager(runtime);
-    const startShell = vi.spyOn(runtime.terminals, 'startShell');
+    const startShell = vi.spyOn(runtime.terminals!, 'startShell');
     const shell = vi.spyOn(runtime, 'shell');
     await expect(mode === 'pty' ? manager.startInteractive('unused') : manager.start('unused'))
       .rejects.toThrow('pre-launch write failed');
@@ -266,9 +266,9 @@ describe('BackgroundBashManager', () => {
         await storage.writeFile(path, content);
       },
     });
-    const coordinator = new BackgroundBashCoordinator(runtime);
-    const manager = new BackgroundBashManager(runtime, coordinator);
-    const child = new BackgroundBashManager(runtime, coordinator);
+    const owned = withOwnedTerminals(runtime);
+    const manager = new BackgroundBashManager(owned.runtime);
+    const child = new BackgroundBashManager(owned.runtime);
     const starting = mode === 'pty'
       ? manager.startInteractive('sleep 30').then((result) => result.job)
       : manager.start('sleep 30');
@@ -287,6 +287,7 @@ describe('BackgroundBashManager', () => {
       release();
       const launched = await starting;
       trackJob(manager, launched.meta.id);
+      await owned.shutdown();
       if (launched.meta.pid) {
         await runtime.shell(`kill -KILL -${launched.meta.pid} 2>/dev/null || true`, { shellFlavor: 'posix' });
       }

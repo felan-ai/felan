@@ -1,13 +1,15 @@
 import {
   selectModelForTier,
   uuidv7,
-  type Api,
+  MODELS_SERVICE,
   type AssistantMessage,
   type Context,
+  type ConfiguredFelanExtension,
   type ExtensionContext,
   type FelanExtension,
   type FelanExtensionAPI,
-  type Model,
+  type ModelReference,
+  type TextModelInfo,
   type SessionEntry,
 } from '@felan-ai/agent-core';
 import type {
@@ -17,6 +19,7 @@ import type {
   SessionTitlePreparation,
   SessionTitleSkipReason,
 } from './contracts.js';
+import { createSessionTitleModelsHost, sessionTitleModelInfo } from './models.js';
 
 export * from './contracts.js';
 export { formatSessionTerminalTitle } from './view.js';
@@ -104,7 +107,7 @@ async function generateSessionTitle(
       sessionId,
       prompt,
       mode: ctx.mode,
-      currentModel: ctx.model,
+      currentModel: sessionTitleModelInfo(ctx.model),
       parentSession,
       signal,
     });
@@ -247,8 +250,8 @@ function hasPriorUserMessage(entries: readonly SessionEntry[]): boolean {
 
 function selectSessionTitleModel(
   preparation: SessionTitlePreparation,
-  preferredModel: Model<Api> | undefined,
-): Model<Api> | undefined {
+  preferredModel: ModelReference | undefined,
+): TextModelInfo | undefined {
   const candidates = preparation.models.filter(
     (model) => model.provider === preparation.provider && model.input.includes('text'),
   );
@@ -263,11 +266,11 @@ function selectSessionTitleModel(
     (SESSION_TITLE_SYSTEM_PROMPT.length
       + Math.min(preparation.prompt.trim().length, SESSION_TITLE_PROMPT_MAX_LENGTH)) / 4,
   ));
-  const estimatedCost = (model: Model<Api>) => (
+  const estimatedCost = (model: TextModelInfo) => (
     estimatedInputTokens * model.cost.input + SESSION_TITLE_MAX_TOKENS * model.cost.output
   );
 
-  return candidates.slice(1).reduce<Model<Api>>((cheapest, candidate) => {
+  return candidates.slice(1).reduce<TextModelInfo>((cheapest, candidate) => {
     const costDifference = estimatedCost(candidate) - estimatedCost(cheapest);
     if (costDifference < 0) return candidate;
     if (costDifference === 0 && candidate.id.localeCompare(cheapest.id) < 0) return candidate;
@@ -371,3 +374,17 @@ async function reportError(
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : String(error);
 }
+
+const sessionTitleExtension: ConfiguredFelanExtension = Object.assign(
+  (pi: FelanExtensionAPI) => {
+    const models = pi.services.get(MODELS_SERVICE);
+    if (!models) {
+      pi.runtime.logger.debug({ component: 'session-title', reason: 'models-unavailable' }, 'Session title generation disabled.');
+      return;
+    }
+    return createSessionTitleExtension(createSessionTitleModelsHost(models, pi.runtime.logger))(pi);
+  },
+  { serviceRequirements: { optional: [MODELS_SERVICE] } },
+);
+
+export default sessionTitleExtension;

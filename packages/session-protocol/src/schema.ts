@@ -20,7 +20,6 @@ export const ThinkingSchema = enumOf(['off', 'minimal', 'low', 'medium', 'high',
 export const ModelSchema = Type.Object({ provider: IdSchema, id: IdSchema });
 export const CursorSchema = text(4096, 1);
 export const PageRequestSchema = Type.Object({ cursor: Type.Optional(CursorSchema), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: LIMITS.pageEntries })) });
-export const PresenterSchema = Type.Object({ id: IdSchema, version: text(128, 1) });
 export const DiagnosticTextSchema = Type.String({ ...text(4096), pattern: '^[^\u0000-\u001f\u007f-\u009f]*$' });
 export const JsonValueSchema = Type.Unsafe<JsonValue>(Type.Unknown({
   'x-jsonValue': true, 'x-maxEncodedBytes': LIMITS.structuredBytes, 'x-maxCollectionEntries': LIMITS.catalogEntries,

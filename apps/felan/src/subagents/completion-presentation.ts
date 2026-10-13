@@ -1,8 +1,5 @@
 import type { FelanExtensionAPI } from '@felan-ai/agent-core';
-import {
-  SUBAGENT_COMPLETION_MESSAGE_TYPE,
-  type SubagentCompletionNotice,
-} from '@felan-ai/ext-subagents';
+import { SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE, type ExecutionCompletionNotice } from '../execution-completion.js';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import {
   stripTerminalSequences,
@@ -23,7 +20,7 @@ export function registerSubagentCompletionRenderer(
   pi: Pick<FelanExtensionAPI, 'registerMessageRenderer'>,
 ): void {
   pi.registerMessageRenderer<CompletionMessageDetails>(
-    SUBAGENT_COMPLETION_MESSAGE_TYPE,
+    SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE,
     (message, options, theme) => new SubagentCompletionComponent(
       completionNotices(message.details),
       messageText(message.content),
@@ -35,11 +32,11 @@ export function registerSubagentCompletionRenderer(
 }
 
 class SubagentCompletionComponent implements Component {
-  readonly #notices: readonly SubagentCompletionNotice[];
+  readonly #notices: readonly ExecutionCompletionNotice[];
   readonly #detailLines: readonly string[];
 
   constructor(
-    notices: readonly SubagentCompletionNotice[],
+    notices: readonly ExecutionCompletionNotice[],
     fallbackText: string,
     private readonly expanded: boolean,
     private readonly outputPad: number,
@@ -51,7 +48,7 @@ class SubagentCompletionComponent implements Component {
         ? notices[0]!.summary ?? notices[0]!.error?.message ?? notices[0]!.status
         : notices.length > 1
           ? notices.map((notice) => (
-            `${notice.type} ${shortAgentId(notice.agentId)}: ${notice.summary ?? notice.error?.message ?? notice.status}`
+            `${notice.label} ${shortAgentId(notice.executionId)}: ${notice.summary ?? notice.error?.message ?? notice.status}`
           ))
           : fallbackText,
     );
@@ -100,8 +97,8 @@ class SubagentCompletionComponent implements Component {
         + this.theme.fg('muted', `· ${this.#detailLines[0] ?? ''} · Alt+A details`);
     }
     const notice = notices[0]!;
-    const title = `Subagent ${inlineText(notice.type)} ${formatStatus(notice.status)}`;
-    const metadata = [shortAgentId(notice.agentId)];
+    const title = `Subagent ${inlineText(notice.label)} ${formatStatus(notice.status)}`;
+    const metadata = [shortAgentId(notice.executionId)];
     if (!this.expanded && this.#detailLines[0]) metadata.push(this.#detailLines[0]);
     metadata.push('Alt+A details');
     return `${statusIcon(notice.status, this.theme)} ${this.theme.bold(title)}`
@@ -109,13 +106,13 @@ class SubagentCompletionComponent implements Component {
   }
 }
 
-function completionNotice(value: unknown): SubagentCompletionNotice | undefined {
+function completionNotice(value: unknown): ExecutionCompletionNotice | undefined {
   if (!isRecord(value)) return undefined;
   if (
     typeof value.deliveryId !== 'string'
     || typeof value.parentSessionId !== 'string'
-    || typeof value.agentId !== 'string'
-    || typeof value.type !== 'string'
+    || typeof value.executionId !== 'string'
+    || typeof value.label !== 'string'
     || !isTerminalStatus(value.status)
     || (value.summary !== undefined && typeof value.summary !== 'string')
     || (
@@ -123,10 +120,10 @@ function completionNotice(value: unknown): SubagentCompletionNotice | undefined 
       && (!isRecord(value.error) || typeof value.error.message !== 'string')
     )
   ) return undefined;
-  return value as unknown as SubagentCompletionNotice;
+  return value as unknown as ExecutionCompletionNotice;
 }
 
-function completionNotices(details: CompletionMessageDetails | undefined): SubagentCompletionNotice[] {
+function completionNotices(details: CompletionMessageDetails | undefined): ExecutionCompletionNotice[] {
   const notices = Array.isArray(details?.notices)
     ? details.notices.map(completionNotice).filter(isNotice)
     : [];
@@ -135,25 +132,25 @@ function completionNotices(details: CompletionMessageDetails | undefined): Subag
   return notice ? [notice] : [];
 }
 
-function isNotice(value: SubagentCompletionNotice | undefined): value is SubagentCompletionNotice {
+function isNotice(value: ExecutionCompletionNotice | undefined): value is ExecutionCompletionNotice {
   return value !== undefined;
 }
 
-function isTerminalStatus(value: unknown): value is SubagentCompletionNotice['status'] {
+function isTerminalStatus(value: unknown): value is ExecutionCompletionNotice['status'] {
   return value === 'completed'
     || value === 'failed'
     || value === 'timed_out'
     || value === 'cancelled';
 }
 
-function statusIcon(status: SubagentCompletionNotice['status'], theme: Theme): string {
+function statusIcon(status: ExecutionCompletionNotice['status'], theme: Theme): string {
   if (status === 'completed') return theme.fg('success', '✓');
   if (status === 'failed') return theme.fg('error', '✗');
   if (status === 'timed_out') return theme.fg('warning', '◷');
   return theme.fg('dim', '■');
 }
 
-function formatStatus(status: SubagentCompletionNotice['status']): string {
+function formatStatus(status: ExecutionCompletionNotice['status']): string {
   return status === 'timed_out' ? 'timed out' : status;
 }
 

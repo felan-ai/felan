@@ -1,4 +1,5 @@
 import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
+import { createExtensionServiceAccess, createFelanServiceRegistry } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import rtkOptimizerExtension from '../src/index.js';
 import { MemoryRuntime, result } from './test-runtime.js';
@@ -121,7 +122,7 @@ describe('RTK optimizer extension', () => {
     expect(output.content[0]?.text).toContain('TAIL');
     const recoveryPath = output.details.rtkCompaction.recoveryPath;
     expect(recoveryPath).toContain('/agent-storage/rtk-optimizer/recovery/');
-    expect([...runtime.files.values()].some((value) => new TextDecoder().decode(value) === original)).toBe(true);
+    expect([...runtime.fileContents.values()].some((value) => new TextDecoder().decode(value) === original)).toBe(true);
   });
 
   it('does not support the former metric subcommands', async () => {
@@ -402,16 +403,16 @@ describe('RTK optimizer extension', () => {
     expect(harness.notifications.at(-1)).toEqual(['RTK is available (rtk 1.0.0).', 'info']);
   });
 
-  it('exposes explicit managed installation without running it at startup', async () => {
+  it('disables installation without a provider without running installers at startup', async () => {
     const runtime = rtkRuntime();
     const harness = await createHarness(runtime);
     expect(runtime.execCalls).toEqual([]);
 
     await harness.commands.get('rtk')!.handler('install', harness.ctx);
 
-    expect(runtime.execCalls.some((call) => call.command === 'curl')).toBe(true);
-    expect(harness.notifications.at(-1)?.[0]).toContain('RTK installation failed');
-    expect(harness.statuses.at(-1)).toEqual(['rtk-install', undefined]);
+    expect(runtime.execCalls).toEqual([]);
+    expect(harness.notifications.at(-1)?.[0]).toContain('no runtime-dependencies provider');
+    expect(harness.statuses).toEqual([]);
   });
 
 });
@@ -446,6 +447,8 @@ async function createHarness(runtime: MemoryRuntime, hasUI = true, config: Recor
   } as unknown as ExtensionContext;
   const pi = {
     runtime,
+    services: createExtensionServiceAccess(createFelanServiceRegistry(), rtkOptimizerExtension.serviceRequirements!),
+    ui: { notify: async ({ text, level }: { text: string; level: string }) => { notifications.push([text, level]); } },
     agentDir: '/agent',
     config,
     ...(savings === undefined ? {} : { savings }),

@@ -15,7 +15,7 @@ import {
   type Skill,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { loadFelanSessionExtensions, type ExtensionPackageImporter } from './extensions.js';
+import { getExecutionContribution, loadFelanSessionExtensions, type ExtensionConfigWriter, type ExtensionPackageImporter } from './extensions.js';
 import { createTurnClassificationRegistry } from './classifier/turn-classification.js';
 import { createDynamicThinkingSession, DYNAMIC_THINKING_PRODUCER } from './dynamic-thinking/session.js';
 import { installModelSelectionPersistenceScope } from './model-selection.js';
@@ -27,6 +27,8 @@ import type { AgentRuntime } from './runtime.js';
 import { createRuntimeCodingTools } from './tools.js';
 import type { ExtensionConfigOverride } from './extension-config.js';
 import type { SavingsReporter, SavingsReporterProvider } from './savings.js';
+import type { ExtensionUiBindingFactory } from './extension-ui.js';
+import { createFelanServiceRegistry, type FelanServiceRegistry } from './services.js';
 
 export type StreamFunction = AgentSession['agent']['streamFunction'];
 const PROJECT_INSTRUCTION_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const;
@@ -66,6 +68,10 @@ export interface CreateAgentCoreSessionOptions {
   readonly skills?: readonly Skill[];
   readonly appendSystemPrompt?: readonly string[];
   readonly savings?: SavingsReporterProvider;
+  readonly services?: FelanServiceRegistry;
+  readonly onServiceRequirementFailure?: (packageName: string, service: string) => void;
+  readonly createExtensionUi?: ExtensionUiBindingFactory;
+  readonly updateExtensionConfig?: ExtensionConfigWriter;
 }
 
 export async function createAgentCoreSession(
@@ -119,6 +125,7 @@ async function composeAgentCoreSession(
   options: CreateAgentCoreSessionOptions,
 ): Promise<AgentCoreSessionComposition> {
   const agentDir = options.agentDir ?? options.runtime.cwd;
+  const diagnostics: AgentSessionServices['diagnostics'] = [];
   const modelSelectionScope = installModelSelectionPersistenceScope(options.settingsManager);
   const turnClassification = options.sessionManager.getHeader()?.parentSession === undefined && options.runtime.classifier
     ? createTurnClassificationRegistry(options.runtime.classifier, options.runtime.logger, () => modelSelectionScope.owner !== undefined)
@@ -132,11 +139,21 @@ async function composeAgentCoreSession(
     options.extensionConfigOverrides,
     options.savings,
     turnClassification,
+    options.services ?? createFelanServiceRegistry(),
+    (packageName, service) => {
+      diagnostics.push({
+        type: 'warning',
+        message: `Disabled Felan extension ${packageName}: required service ${service} has no configured provider.`,
+      });
+      options.onServiceRequirementFailure?.(packageName, service);
+    },
+    options.createExtensionUi,
+    options.updateExtensionConfig,
   );
   const projectInstructions = await loadProjectInstructions(options.runtime);
   const dynamicThinking = options.dynamicThinking && options.runtime.classifier
     ? createDynamicThinkingSession(options.runtime,
-      featureExtensions.some((extension) => typeof extension !== 'function' && extension.name === '@felan-ai/ext-codex'),
+      (model) => featureExtensions.some((extension) => getExecutionContribution(extension)?.supportsNativeThinkingUpdates?.(model) === true),
       optionalDynamicThinkingReporter(options.savings), { selectionScope: modelSelectionScope, ...(turnClassification ? { turnClassification } : {}) })
     : undefined;
   const extensionFactories = [
@@ -225,6 +242,10 @@ async function composeAgentCoreSession(
     }
   };
   try {
+    for (const extension of featureExtensions) {
+      const wrap = getExecutionContribution(extension)?.wrapStreamFunction;
+      if (wrap) session.agent.streamFunction = wrap(session.agent.streamFunction);
+    }
     if (options.wrapStreamFunction) {
       result.session.agent.streamFunction = options.wrapStreamFunction(result.session.agent.streamFunction);
     }
@@ -241,7 +262,7 @@ async function composeAgentCoreSession(
       modelRuntime: options.modelRuntime,
       settingsManager: options.settingsManager,
       resourceLoader,
-      diagnostics: [],
+      diagnostics,
     },
   };
 }

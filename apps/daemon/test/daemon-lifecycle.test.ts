@@ -55,8 +55,8 @@ it('waits for existing work without aborting it and refuses new turns', async ()
 });
 
 it('defers a waiting question before releasing the host', async () => {
-  const f = await setup(); const answer = f.broker.request({ kind: 'ask_user', questions: [{ id: 'q', question: 'Choose', options: [{ id: 'yes', title: 'Yes' }] }] },
-    { kind: 'session', session: f.root.sessionId, root: f.root.sessionId });
+  const f = await setup(); const answer = f.broker.request({ kind: 'input', title: 'Choose' },
+    { kind: 'session', session: f.root.sessionId, root: f.root.sessionId }, { deferrable: true });
   await f.request(); expect(await answer).toMatchObject({ state: 'deferred' });
   await vi.waitFor(() => expect(f.lifecycle.state).toBe('stopped'));
   expect(f.store.snapshot().interactions.at(-1)?.state).toBe('deferred');

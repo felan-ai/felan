@@ -8,6 +8,7 @@ import type {
 } from '@felan-ai/agent-core';
 import codexExtension from '@felan-ai/ext-codex';
 import markitdownExtension from '@felan-ai/ext-markitdown';
+import { createExtensionServiceAccess, createFelanServiceRegistry } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
@@ -83,6 +84,7 @@ function createHarness(processSupport: boolean) {
   const runtime = unusedRuntime(processSupport);
   const pi = {
     runtime,
+    services: createExtensionServiceAccess(createFelanServiceRegistry(), markitdownExtension.serviceRequirements),
     agentDir: '/agent',
     config: {},
     registerCapability: vi.fn(),

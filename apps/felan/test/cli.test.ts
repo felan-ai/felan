@@ -485,17 +485,6 @@ describe('felan CLI', () => {
       'ask-user-overlay-toggle-key': 'off', 'ask-user-comment-toggle-key': 'ctrl+x' });
   });
 
-  it('parses context-view configuration options', async () => {
-    const launches: RunDaemonFelanOptions[] = [];
-    const exitCode = await runCli([
-      '--context-view-display-mode', 'overlay',
-      'inspect',
-    ], { launch: async (options) => launches.push(options) });
-
-    expect(exitCode).toBe(0);
-    expect(launches[0]?.config).toEqual({ 'context-view-display-mode': 'overlay' });
-  });
-
   it('parses browser authorization configuration options', async () => {
     const launches: RunDaemonFelanOptions[] = [];
     const exitCode = await runCli(['--browser-authorization-policy', 'always-allow', 'inspect'], {

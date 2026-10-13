@@ -1,6 +1,6 @@
 # Local daemon control persistence
 
-S1.04 supplies internal persistence/recovery/adoption primitives, not an entrypoint
+S1.04 supplies internal persistence/recovery primitives, not an entrypoint
 cutover, registry, interaction broker, or execution engine. The existing Pi JSONL
 and tree remain the content authority. No dependency or public export/version is
 added. Windows remains unsupported by the ownership prerequisite.
@@ -65,9 +65,9 @@ UUIDv7 timestamp remains the freshness authority. Terminal records are pruned
 only after both admission time and ID timestamp age beyond seven days. A durable
 clock high-water prevents clock rollback from reviving an expired request.
 
-The schema caps sessions/adoptions at 4,096, interactions/continuations at 1,024,
+The schema caps sessions at 4,096, interactions/continuations at 1,024,
 resources at 4,096 and coalesced projections at 256/session. Session revision
-high-water, adoption identities and nonterminal records are not age-evicted.
+high-water and nonterminal records are not age-evicted.
 Resolved interaction/completed-continuation/exited-resource and request records
 have a minimum seven-day retention window; `compact` removes expired records and
 old terminal projections. Call it periodically from lifecycle management.
@@ -188,53 +188,19 @@ cancels nonreplayable pending interactions, defers pending ask-user requests
 (default 30 minutes when no explicit expiry exists), and preserves existing
 terminal results. Later drain orchestration must use the same durable ordering.
 
-## Explicit legacy adoption and downgrade
+## Pre-daemon files and downgrade
 
-`inspectLegacySession` is read-only; it validates bounded Pi header/JSONL rows and
-returns the selected source/cwd/session identity plus a SHA-256 fingerprint.
-Existing listings and files remain untouched. There is no automatic importer,
-writer takeover, CLI flag or hidden manager open.
-
-`adoptLegacySession` requires explicit backup, quiescence and residual-risk
-acknowledgements, the expected source fingerprint/session/cwd, a complete inventory
-of default **and custom** Pi-scanned directories, and an asynchronous known-writer
-check. `live` or `unknown` refuses adoption. The check is required before copying
-and again before completion, with ownership/source revalidation after each await.
-Canonical source, managed and scan-root paths and their existing ancestors are
-pinned across both waits; a newly substituted ancestor cannot redirect a managed
-copy into a Pi scan root. Exclusion is checked again before installation and
-completion.
-An old noncooperating binary can still evade detection; the warning is explicit,
-not a false fencing claim. Registry-held source/destination claims must span the
-whole call. The caller is responsible for the complete scan-root inventory.
-
-The managed directory must be inside a held root but **outside every scanned
-session directory**, including symlink aliases. The filename hashes the opaque
-session ID. A durable `copy_intent` precedes copying; a private, fsynced,
-byte-preserving working copy is installed without overwriting an existing path,
-then completion is committed. Every attempt, including reuse of a visible staged
-copy, fsyncs that file and its managed directory/owned parent chain under renewed
-identity checks before committing completion. An interrupted/mismatched copy stays unexecutable
-and requires explicit retry/inspection. Only a `complete` adoption can suppress
-the legacy listing and supply the managed path for resume. Do not merge later
-legacy changes, overwrite the source, or let old in-process entrypoints write the
-managed file. The original remains unchanged.
-
-Before a real upgrade, explicitly stop known old sessions/descendants/detached
-jobs; make a verified private backup of every actual configured store root and
-record version, paths and hashes. A backup taken while writers run is not a
-consistent backup. Downgrade requires draining/stopping the new daemon, settling
-all owned work, preserving post-upgrade stores, then restoring the full
-pre-adoption backup into **separate** roots for the old binary. Never point an
-older binary at live/new control data or managed copies. New work is not merged
-back automatically; history export is not resumable execution authority.
+Pre-daemon files are not discovered or resumed. Explicit import validates and
+copies history into a new daemon session without changing the source. Export
+remains available. Older binaries must not write daemon-owned transcripts or
+control data; use separate roots and verified backups when downgrading.
 
 ## Verification scope
 
 Deterministic disposable-root tests cover each atomic write boundary, corrupt/
 missing/versioned snapshots, count/byte reserves, retry conflicts/expiry/clock
 rollback, coalesced revisions, policy monotonicity, interaction winners, committed
-answers and continuation ambiguity, and explicit adoption guards. Spawned offline
+answers and continuation ambiguity, and explicit import boundaries. Spawned offline
 fixtures SIGKILL themselves at real intent/dispatch/effect/outcome, answer/
 continuation and Pi/control boundaries; reload assertions inspect actual files.
 There is no provider/network call or live user config/store/process access.
@@ -242,15 +208,7 @@ All app build/type-check/test blocks hold the shared Story 1 `fcntl.flock`.
 Platform evidence and exact commands/results are in the S1.04 review artifacts;
 this document does not claim integration/packed/Linux coverage by implication.
 
-## Adoption admission and deletion tombstones
-
-Only `session.adopt` may admit an unregistered session ID. Its durable request
-record deliberately omits `session`, so it consumes the host request bucket and
-cannot create an invalid reference or a fabricated session revision. The request
-digest still binds the selected legacy ID and all three acknowledgements. Normal
-requests retain their existing session checks, reserves, retention and conflict
-rules. A completed adoption is registered only by an explicit request, never by
-startup recovery; a completed copy with failed registration stays staged.
+## Deletion tombstones
 
 `markSessionDeleted` atomically commits its matching request's dispatch intent and
 the optional `deletedAt` timestamp. It compares the admitted expected revision

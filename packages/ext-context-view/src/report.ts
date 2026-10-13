@@ -1,6 +1,3 @@
-import type { ExtensionCommandContext } from "@felan-ai/agent-core";
-import type { ContextViewDisplayMode } from "./config.js";
-
 export type UsedCategoryKey = "systemPrompt" | "systemTools" | "extensions" | "contextFiles" | "skills" | "memory" | "messages" | "other";
 export type CategoryKey = UsedCategoryKey | "available";
 
@@ -58,7 +55,7 @@ export const CATEGORY_SUMMARIES: ReadonlyArray<{ key: CategoryKey; label: string
 ];
 
 export interface ContextViewPresentationHost {
-	show(ui: Pick<ExtensionCommandContext["ui"], "custom">, report: ContextReport, displayMode: ContextViewDisplayMode, signal: AbortSignal): Promise<void>;
+	show(report: ContextReport, signal: AbortSignal): Promise<void>;
 }
 
 export function formatTokens(tokens: number): string {

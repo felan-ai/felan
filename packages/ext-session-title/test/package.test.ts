@@ -20,7 +20,7 @@ describe('@felan-ai/ext-session-title package boundary', () => {
   });
 
   it('does not import application, filesystem, or network dependencies', async () => {
-    const source = await readFile(join(packageRoot, 'src', 'index.ts'), 'utf8');
+    const source = (await Promise.all(['index.ts', 'models.ts'].map(file => readFile(join(packageRoot, 'src', file), 'utf8')))).join('\n');
     expect(source).not.toMatch(/node:|supabase|daytona|fetch\(|process\.|@earendil-works/u);
   });
 
@@ -28,5 +28,7 @@ describe('@felan-ai/ext-session-title package boundary', () => {
     const contracts = await readFile(join(packageRoot, 'src', 'contracts.ts'), 'utf8');
     expect(contracts).toContain('SessionTitleSkip');
     expect(contracts).toContain('reportSkip');
+    expect(contracts).toContain('TextModelInfo');
+    expect(contracts).not.toMatch(/\bModel\s*</u);
   });
 });

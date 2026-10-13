@@ -4,12 +4,9 @@ import {
   fuzzyMatch,
   Key,
   matchesKey,
-  ProcessTerminal,
   truncateToWidth,
-  TuiMainScreen,
   type Component,
   type Focusable,
-  type TUI,
 } from '@earendil-works/pi-tui';
 import type { SessionInfo } from '@earendil-works/pi-coding-agent';
 
@@ -19,53 +16,9 @@ export interface SessionPickerNavigation {
   scope: PickerScope; sort: PickerSort; namedOnly: boolean; showPath: boolean; selectedIndex: number; search: string;
 }
 
-export interface SelectLocalSessionOptions {
-  readonly currentSessions: readonly SessionInfo[];
-  readonly allSessions: readonly SessionInfo[];
-  readonly agentDir: string;
-  readonly showHardwareCursor?: boolean;
-  readonly clearOnShrink?: boolean;
-  readonly createTui?: () => TUI;
-  readonly createPicker?: (tui: TUI, done: (path: string | undefined) => void) => Component & Focusable & { dispose?(): void };
-}
-
 interface PickerSession {
   readonly session: SessionInfo;
   readonly depth: number;
-}
-
-export async function selectLocalSession(
-  options: SelectLocalSessionOptions,
-): Promise<string | undefined> {
-  if (options.allSessions.length === 0) return undefined;
-
-  const ui = options.createTui?.() ?? new TuiMainScreen(
-    new ProcessTerminal(),
-    options.showHardwareCursor,
-    options.agentDir,
-  );
-  if (options.clearOnShrink !== undefined) ui.setClearOnShrink(options.clearOnShrink);
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (path: string | undefined) => {
-      if (settled) return;
-      settled = true;
-      picker.dispose?.();
-      ui.stop();
-      resolve(path);
-    };
-    const picker: Component & Focusable & { dispose?(): void } = options.createPicker?.(ui, finish) ?? new LocalSessionPicker(
-      options.currentSessions,
-      options.allSessions,
-      (path) => finish(path),
-      () => finish(undefined),
-      () => ui.requestRender(),
-    );
-    ui.addChild(picker);
-    ui.setFocus(picker);
-    ui.start();
-  });
 }
 
 export class LocalSessionPicker implements Component, Focusable {

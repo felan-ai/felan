@@ -1,7 +1,6 @@
 import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import * as core from '@felan-ai/agent-core';
 import {
   HostAgentRuntime,
   ModelRuntime,
@@ -17,11 +16,10 @@ import {
 } from '@felan-ai/agent-core';
 import { Type } from 'typebox';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createLocalCodemodeExtension } from '@felan-ai/daemon/internal/codemode';
-import { builtinExtensionPackages } from '@felan-ai/daemon/internal/extensions';
-import { createLocalFelanRuntime } from '../src/runtime.js';
-import type { LocalCodemodeMode } from '@felan-ai/daemon/internal/settings';
-import { inspectionToolNames } from '@felan-ai/daemon/internal/subagents/host';
+import { createLocalCodemodeExtension } from '../src/providers/codemode.js';
+import { builtinExtensionPackages } from '../src/providers/extensions.js';
+import { composeLocalSession } from './fixtures/local-composition.js';
+import type { LocalCodemodeMode } from '../src/providers/settings.js';
 
 const temporaryPaths: string[] = [];
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -100,35 +98,7 @@ describe('local codemode composition', () => {
       .toHaveLength(mode === 'off' ? 0 : 1);
   });
 
-  it.each(['off', 'on', 'only'] as const)('inherits the root mode %s through the real child host', async (mode) => {
-    const fixture = await harness(mode);
-    const contexts = fixture.respond();
-    const runtime = await fixture.rootRuntime();
-    await runtime.session.bindExtensions({ mode: 'print' });
-    const createChild = vi.spyOn(core, 'createAgentCoreSession');
-    const spawned = await runtime.localSubagentHost.spawn({
-      type: 'general', description: 'Offline inheritance', prompt: 'Report inherited tools',
-      model: `${fixture.model.provider}/${fixture.model.id}`,
-    });
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.error.message);
-    await vi.waitFor(async () => {
-      expect(await runtime.localSubagentHost.getResult(spawned.value.agentId))
-        .toMatchObject({ ok: true, value: { status: 'completed', result: 'Done' } });
-    });
-
-    expect(createChild).toHaveBeenCalledOnce();
-    const extensions = createChild.mock.calls[0]![0].inlineExtensions ?? [];
-    expect(extensions.filter((extension) => typeof extension !== 'function'
-      && extension.name === '@felan-ai/felan/codemode')).toHaveLength(mode === 'off' ? 0 : 1);
-    expect(contexts.length).toBeGreaterThanOrEqual(1);
-    for (const context of contexts) {
-      expect(declaredNames(context)).toEqual(mode === 'only'
-        ? ['codemode'] : [...codingTools, ...(mode === 'on' ? ['codemode'] : [])].sort());
-    }
-  });
-
-  it('snapshots the root and child mode until the next runtime composition', async () => {
+  it('snapshots the mode until the next provider composition', async () => {
     const fixture = await harness('on');
     const contexts = fixture.respond();
     const runtime = await fixture.rootRuntime();
@@ -136,15 +106,7 @@ describe('local codemode composition', () => {
     await fixture.settings('only');
     await runtime.session.settingsManager.reload();
     await runtime.session.prompt('Keep the original mode');
-    const spawned = await runtime.localSubagentHost.spawn({
-      type: 'general', description: 'Snapshot', prompt: 'Keep the original mode',
-      model: `${fixture.model.provider}/${fixture.model.id}`,
-    });
-    if (!spawned.ok) throw new Error(spawned.error.message);
-    await vi.waitFor(async () => expect(await runtime.localSubagentHost.getResult(spawned.value.agentId))
-      .toMatchObject({ ok: true, value: { status: 'completed' } }));
-    expect(contexts.length).toBeGreaterThanOrEqual(2);
-    for (const context of contexts) expect(declaredNames(context)).toEqual([...codingTools, 'codemode'].sort());
+    expect(declaredNames(contexts.at(-1)!)).toEqual([...codingTools, 'codemode'].sort());
 
     const replacement = await fixture.rootRuntime();
     await replacement.session.bindExtensions({ mode: 'print' });
@@ -330,7 +292,7 @@ describe('native codemode offline execution', () => {
       return ALL_TOOLS.map(tool => tool.name);
     `);
     const session = await fixture.nativeSession(mode);
-    session.setActiveToolsByName(inspectionToolNames(session.getActiveToolNames()));
+    session.setActiveToolsByName(['read', 'grep', 'find', 'ls', 'codemode']);
     await session.prompt('Try forbidden nested calls');
 
     const result = scriptResult(session);
@@ -434,19 +396,11 @@ async function harness(mode?: LocalCodemodeMode) {
       return contexts;
     },
     async rootRuntime(sessionManager?: SessionManager) {
-      const local = await createLocalFelanRuntime({
-        cwd, agentDir, homeDir: root, modelRuntime, model, skillPaths: [],
+      const local = await composeLocalSession({
+        cwd, agentDir, homeDir: root, modelRuntime, model,
         runtimeFactory: (request) => new HostAgentRuntime(request.cwd, request),
         ...(sessionManager === undefined ? {} : { sessionManager }),
       });
-      let disposed = false;
-      const dispose = local.dispose.bind(local);
-      local.dispose = async () => {
-        if (disposed) return;
-        disposed = true;
-        await local.localSubagentHost.shutdown();
-        await dispose();
-      };
       cleanup.push(() => local.dispose());
       return local;
     },

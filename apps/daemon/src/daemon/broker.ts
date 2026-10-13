@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { AskUserHost, AskUserHostOutcome, AskUserRequest } from '@felan-ai/ext-ask-user';
 import type { CreateAgentCoreSessionOptions } from '@felan-ai/agent-core';
 import {
-  INTERACTION_KINDS, LIMITS, PresenterSchema, RUNTIME_UI_PRESENTER, parseInteraction, parseSchema, validateInteractionAnswer,
-  type Interaction, type InteractionAnswer, type JsonValue, type OperationParams,
+  INTERACTION_KINDS, LIMITS, parseInteraction, validateInteractionAnswer,
+  type Interaction, type InteractionAnswer, type InteractionAuthority, type OperationParams,
 } from '@felan-ai/session-protocol';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
 import { accepted, commandError } from './commands.js';
@@ -22,7 +21,15 @@ export interface BrokerClient {
   attachment: string;
   sessions: readonly string[];
   interactionKinds: OperationParams<'hello'>['interactionKinds'];
-  presenters: OperationParams<'hello'>['presenters'];
+  localConsole?: boolean;
+}
+
+export interface BrokerRequestOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+  deferrable?: boolean;
+  transient?: boolean;
+  authority?: InteractionAuthority;
 }
 
 export type BrokerOutcome =
@@ -30,15 +37,10 @@ export type BrokerOutcome =
   | { state: 'cancelled'; reason: Cancellation['reason'] }
   | { state: 'deferred'; interactionId: string };
 
-export interface BrokerPresenter {
-  readonly id: string;
-  readonly version: string;
-  readonly validateAnswer?: (data: JsonValue, request: Request) => undefined;
-}
-
 export interface BrokerOptions {
   store: DaemonControlStore;
-  presenters?: readonly BrokerPresenter[];
+  ownerPrincipal?: string;
+  requireLocalConsole?: boolean;
   publish(interaction: Interaction, revisions: Readonly<Record<string, number>>): void;
   resume?(session: string, answer: InteractionAnswer, continuationId: string, dispatch: () => void): Promise<void>;
   committed?(revisions: Readonly<Record<string, number>>): void;
@@ -53,7 +55,6 @@ interface Waiter {
 }
 
 export class InteractionBroker {
-  private readonly registeredPresenters: BrokerPresenter[];
   private readonly clients = new Map<string, BrokerClient>();
   private readonly clientListeners = new Set<() => void>();
   private readonly waiters = new Map<string, Waiter>();
@@ -61,24 +62,14 @@ export class InteractionBroker {
   private readonly continuations = new Map<string, Promise<void>>();
   private readonly continuationLanes = new Map<string, Promise<void>>();
   private readonly now: () => number;
+  private readonly ownerPrincipal: string;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private draining = false;
   private failure: unknown;
 
   constructor(private readonly options: BrokerOptions) {
-    const presenters = options.presenters ?? [];
-    if (!Array.isArray(presenters) || presenters.length >= LIMITS.catalogEntries) throw new Error('Custom presenter capacity exceeded.');
-    const identities = new Set<string>();
-    this.registeredPresenters = presenters.map(value => {
-      if (value === null || typeof value !== 'object') throw new Error('Invalid presenter contract.');
-      const { id, version } = parseSchema(PresenterSchema, { id: value.id, version: value.version });
-      if (value.validateAnswer !== undefined && typeof value.validateAnswer !== 'function') throw new Error('Invalid presenter validator.');
-      const identity = JSON.stringify([id, version]);
-      if (id === RUNTIME_UI_PRESENTER.id || identities.has(identity)) throw new Error('Presenter identity is reserved or duplicated.');
-      identities.add(identity);
-      return { id, version, ...(value.validateAnswer === undefined ? {} : { validateAnswer: value.validateAnswer }) };
-    });
     this.now = options.now ?? Date.now;
+    this.ownerPrincipal = options.ownerPrincipal ?? `local:${options.store.owner.target.uid}:${options.store.owner.target.namespaceId}`;
     for (const item of this.pending()) {
       if (item.scope.kind === 'host' && item.scope.recipient !== undefined) this.cancel(item.id, 'restart');
     }
@@ -86,17 +77,19 @@ export class InteractionBroker {
   }
 
   get interactionKinds(): OperationParams<'hello'>['interactionKinds'] {
-    return INTERACTION_KINDS.filter(kind => kind !== 'custom' || this.registeredPresenters.length > 0);
+    return [...INTERACTION_KINDS];
   }
 
-  get presenters(): OperationParams<'hello'>['presenters'] {
-    return this.registeredPresenters.map(({ id, version }) => ({ id, version }));
-  }
-
-  canPresent(request: Request, scope: Scope, kind?: ClientKind): boolean {
+  canPresent(request: Request, scope: Scope, options: Pick<BrokerRequestOptions, 'authority'> = {}): boolean {
     this.assertUsable();
-    return !this.draining && [...this.clients.values()].some(client => (kind === undefined || client.kind === kind) && this.eligible(client, { request, scope,
-      eligibleClientKinds: scope.kind === 'host' || request.kind === 'oauth' ? ['tui'] : ['tui', 'acp'] }));
+    return !this.draining && [...this.clients.values()].some(client => this.eligible(client, { request, scope,
+      ...(options.authority ? { authority: options.authority } : {}) }));
+  }
+
+  canReceive(attachment: string, interaction: Interaction): boolean {
+    this.assertUsable();
+    const client = this.clients.get(attachment);
+    return client !== undefined && this.eligible(client, interaction);
   }
 
   subscribeClients(listener: () => void): () => void {
@@ -147,30 +140,34 @@ export class InteractionBroker {
   presentationRequest(id: string, attachment: string): Interaction['request'] {
     this.assertUsable();
     const item = this.find(id); const client = this.clients.get(attachment);
-    if (!client || client.kind !== 'tui' || !this.eligible(client, item)
+    if (!client || !this.eligible(client, item)
       || !['waiting', 'deferred'].includes(item.state)) throw commandError('forbidden');
     return structuredClone(item.request);
   }
 
-  request(request: Request, scope: Scope, options: { signal?: AbortSignal; timeout?: number } = {}): Promise<BrokerOutcome> {
+  request(request: Request, scope: Scope, options: BrokerRequestOptions = {}): Promise<BrokerOutcome> {
     this.assertUsable();
     if (this.draining) throw commandError('busy');
     if (options.signal?.aborted) return Promise.resolve({ state: 'cancelled', reason: 'abort' });
     if (options.timeout !== undefined && (!Number.isSafeInteger(options.timeout) || options.timeout < 1)) throw commandError('invalid_request');
+    if (options.transient && scope.kind !== 'host') throw commandError('invalid_request');
+    if (options.transient && options.deferrable) throw commandError('invalid_request');
+    const transient = options.transient === true;
     const pending = this.pending();
     if (pending.length >= CONTROL_LIMITS.interactions || pending.filter(item => sameScope(item.scope, scope)).length >= LIMITS.pageEntries) throw commandError('request_capacity');
     if (scope.kind === 'session' && this.options.store.session(scope.session).state !== 'open') throw commandError('not_found');
     const createdAt = Math.max(this.now(), this.options.store.snapshot().clock);
     const interaction = parseInteraction({ id: randomUUID(), state: 'waiting', scope, request, createdAt,
-      eligibleClientKinds: scope.kind === 'host' || request.kind === 'oauth' ? ['tui'] : ['tui', 'acp'],
+      ...(options.deferrable === undefined ? {} : { deferrable: options.deferrable }),
+      ...(options.authority ? { authority: options.authority }
+        : scope.kind === 'host' ? { authority: 'local-console' } : {}),
       ...(options.timeout === undefined ? {} : { expiresAt: createdAt + options.timeout }) });
-    if (!this.supports(request)
-      || (request.kind === 'oauth' || request.kind === 'custom' || scope.kind === 'host' && scope.recipient !== undefined)
+    if ((transient || scope.kind === 'host' && scope.recipient !== undefined)
         && ![...this.clients.values()].some(client => this.eligible(client, interaction))) {
       return Promise.resolve({ state: 'cancelled', reason: 'unsupported' });
     }
-    const commit = request.kind === 'oauth' ? undefined : this.options.store.putInteraction(interaction);
-    if (request.kind === 'oauth') this.transient.set(interaction.id, interaction);
+    const commit = transient ? undefined : this.options.store.putInteraction(interaction);
+    if (transient) this.transient.set(interaction.id, interaction);
     const answer = new Promise<BrokerOutcome>(resolve => {
       const abort = () => this.safely(() => this.cancel(interaction.id, 'abort'));
       this.waiters.set(interaction.id, { resolve, cleanup: () => options.signal?.removeEventListener('abort', abort),
@@ -193,13 +190,9 @@ export class InteractionBroker {
     if (item.state !== 'waiting' && item.state !== 'deferred' || item.expiresAt !== undefined && item.expiresAt <= this.now()) throw commandError('already_resolved');
     const answer = command.request.params.answer;
     if (!('cancelled' in answer)) validateInteractionAnswer(item, answer);
-    if ('kind' in answer && answer.kind === 'custom') {
-      const validate = this.registeredPresenters.find(presenter => presenter.id === answer.presenter.id && presenter.version === answer.presenter.version)?.validateAnswer;
-      if (validate?.(answer.data, item.request) !== undefined) throw commandError('invalid_request');
-    }
     command.assertDispatch();
     let continuationId: string | undefined;
-    if (item.request.kind === 'oauth') {
+    if (this.transient.has(item.id)) {
       command.dispatch(() => {
         const next: Interaction = 'cancelled' in answer
           ? { ...item, state: 'cancelled', resolvedAt: Math.max(this.now(), item.createdAt), result: answer }
@@ -209,7 +202,7 @@ export class InteractionBroker {
       });
     } else {
       if (item.state === 'deferred' && !('cancelled' in answer) && item.scope.kind === 'session') continuationId = randomUUID();
-      this.publish(this.options.store.answerInteraction(command.request.id, answer, client.kind, continuationId, client.attachment));
+      this.publish(this.options.store.answerInteraction(command.request.id, answer, continuationId, client.attachment));
     }
     if (continuationId) this.startContinuation(continuationId);
     this.scheduleExpiry();
@@ -229,9 +222,6 @@ export class InteractionBroker {
   async recover(): Promise<void> {
     this.assertUsable();
     this.expire();
-    for (const item of this.pending()) {
-      if (!this.supports(item.request)) this.cancel(item.id, 'unsupported');
-    }
     for (const item of this.options.store.snapshot().continuations) {
       if (item.phase === 'ready') this.startContinuation(item.id);
     }
@@ -249,7 +239,7 @@ export class InteractionBroker {
     this.draining = true;
     this.clientsChanged(); this.clientListeners.clear();
     for (const item of this.pending()) {
-      if (item.request.kind === 'ask_user') this.publish(this.options.store.deferInteraction(item.id));
+      if (item.deferrable) this.publish(this.options.store.deferInteraction(item.id));
       else this.cancel(item.id, 'drain');
     }
     await Promise.all(this.continuations.values());
@@ -262,28 +252,12 @@ export class InteractionBroker {
     this.assertUsable();
     const item = this.find(id);
     if (item.state !== 'waiting' && item.state !== 'deferred') return;
-    if (item.request.kind === 'oauth') {
+    if (this.transient.has(item.id)) {
       this.transient.delete(id);
       this.publish({ value: { ...item, state: reason === 'timeout' ? 'expired' : 'cancelled',
         resolvedAt: Math.max(this.now(), item.createdAt), result: { cancelled: true, reason } }, revisions: {} });
     } else this.publish(this.options.store.cancelInteraction(id, reason));
     this.scheduleExpiry();
-  }
-
-  askUserHost(): AskUserHost {
-    return { ask: async (request, context): Promise<AskUserHostOutcome> => {
-      const session = this.options.store.session(context.sessionId);
-      const outcome = await this.request(askUserRequest(request), { kind: 'session', session: session.id, root: session.root },
-        { signal: context.signal, ...(request.timeout === undefined ? {} : { timeout: Math.ceil(request.timeout) }) });
-      if (outcome.state === 'deferred') return { status: 'deferred', interactionId: outcome.interactionId };
-      if (outcome.state === 'cancelled') return { status: 'cancelled', reason: outcome.reason === 'unsupported' ? 'unavailable'
-        : outcome.reason === 'timeout' || outcome.reason === 'user' ? outcome.reason : 'abort' };
-      if (outcome.answer.kind !== 'ask_user') throw new Error('Ask-user answer kind changed.');
-      return { status: 'answered', answers: outcome.answer.answers.map(answer => ({ questionId: answer.questionId,
-        response: answer.text !== undefined ? { kind: 'freeform', text: answer.text }
-          : { kind: 'selection', selections: answer.choices.map(id => request.questions.find(q => q.id === answer.questionId)!.options[Number(id.slice(7))]!.title),
-            ...(answer.comment === undefined ? {} : { comment: answer.comment }) } })) };
-    } };
   }
 
   approvalExtension(registry: SessionRegistry): NonNullable<CreateAgentCoreSessionOptions['inlineExtensions']>[number] {
@@ -309,15 +283,11 @@ export class InteractionBroker {
     return item;
   }
 
-  private supports(request: Request): boolean {
-    return request.kind !== 'custom' || this.registeredPresenters.some(presenter => presenter.id === request.presenter.id && presenter.version === request.presenter.version);
-  }
-
-  private eligible(client: BrokerClient, item: Pick<Interaction, 'request' | 'scope' | 'eligibleClientKinds'>): boolean {
-    return this.supports(item.request) && item.eligibleClientKinds.includes(client.kind) && client.interactionKinds.includes(item.request.kind)
-      && (item.scope.kind === 'host' ? client.kind === 'tui' && (item.scope.recipient === undefined || item.scope.recipient === client.attachment) : client.sessions.includes(item.scope.session))
-      && (item.request.kind !== 'custom' || client.presenters.some(p => item.request.kind === 'custom'
-        && p.id === item.request.presenter.id && p.version === item.request.presenter.version));
+  private eligible(client: BrokerClient, item: Pick<Interaction, 'request' | 'scope' | 'authority'>): boolean {
+    return client.interactionKinds.includes(item.request.kind)
+      && (!(this.options.requireLocalConsole || item.scope.kind === 'host' || item.authority === 'local-console') || client.localConsole === true)
+      && (item.authority !== 'owner' || client.principal === this.ownerPrincipal)
+      && (item.scope.kind === 'host' ? item.scope.recipient === undefined || item.scope.recipient === client.attachment : client.sessions.includes(item.scope.session));
   }
 
   private publish(commit: ControlCommit<Interaction>): void {
@@ -395,9 +365,10 @@ export class InteractionBroker {
   }
 }
 
-export function createRegistryInteractionBroker(registry: SessionRegistry, options: Pick<BrokerOptions, 'presenters'> = {}): InteractionBroker {
+export function createRegistryInteractionBroker(registry: SessionRegistry, options: Pick<BrokerOptions, 'ownerPrincipal' | 'requireLocalConsole'> = {}): InteractionBroker {
   return new InteractionBroker({ store: registry.options.store,
-    ...(options.presenters === undefined ? {} : { presenters: options.presenters }),
+    ...(options.ownerPrincipal === undefined ? {} : { ownerPrincipal: options.ownerPrincipal }),
+    ...(options.requireLocalConsole === undefined ? {} : { requireLocalConsole: options.requireLocalConsole }),
     publish: (interaction, revisions) => registry.publishInteraction(interaction, revisions),
     committed: revisions => registry.publishCommitted(revisions),
     resume: (session, answer, id, dispatch) => registry.resumeInteraction(session, answer, id, dispatch),
@@ -406,13 +377,4 @@ export function createRegistryInteractionBroker(registry: SessionRegistry, optio
 
 function sameScope(left: Scope, right: Scope): boolean {
   return left.kind === right.kind && (left.kind === 'host' || right.kind === 'session' && left.session === right.session);
-}
-
-function askUserRequest(request: AskUserRequest): Extract<Request, { kind: 'ask_user' }> {
-  return { kind: 'ask_user', questions: request.questions.map(({ options, ...question }) => ({ ...question,
-    ...(options.length ? { options: options.map((option, index) => ({ ...option, id: `choice-${index}` })) } : {}) })),
-    ...(request.displayMode === undefined ? {} : { displayMode: request.displayMode }),
-    ...(request.singleSelectLayout === undefined ? {} : { singleSelectLayout: request.singleSelectLayout }),
-    ...(request.overlayToggleKey === undefined ? {} : { overlayToggleKey: request.overlayToggleKey ?? 'off' }),
-    ...(request.commentToggleKey === undefined ? {} : { commentToggleKey: request.commentToggleKey ?? 'off' }) };
 }

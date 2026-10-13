@@ -2,20 +2,19 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { HostAgentRuntime, type ModelRuntime } from '@felan-ai/agent-core';
+import { HOST_RUNTIME_SERVICE, type ModelRuntime, type RuntimeDependenciesService } from '@felan-ai/agent-core';
 import { encodeFrame, type DaemonIdentity } from '@felan-ai/session-protocol';
-import { createLocalModelRuntime } from '../local-resources.js';
-import { loadLocalExtensionConfigDefinitions } from '../extensions.js';
 import { DAEMON_VERSION } from '../version.js';
 import { DaemonAgentLogs } from './agent-logs.js';
 import { createRegistryInteractionBroker, type InteractionBroker } from './broker.js';
 import { commandError } from './commands.js';
-import { DaemonConfiguration } from './configuration.js';
 import { DaemonControlStore } from './control-store.js';
 import { createDaemonExecutionServices } from './execution-services.js';
-import { SESSION_UI_PRESENTERS } from './extension-ui.js';
 import { HostLifecycle, type HostAction, type HostMode } from './lifecycle.js';
-import { createLocalDaemonProfile, type LocalDaemonProfileOptions } from './local-profile.js';
+import type { SessionLifecycle } from './session-lifecycle-contracts.js';
+import { SESSION_RUNTIME_SERVICE } from './session-runtime.js';
+import type { HostSetup } from './host-services.js';
+import { createSessionLifecycle } from './session-lifecycle.js';
 import { DaemonOperationalLog } from './operational-log.js';
 import { acquireDaemonOwnership } from './ownership.js';
 import { SessionRegistry, type RegistryOptions } from './registry.js';
@@ -23,50 +22,79 @@ import { SessionServer } from './server.js';
 import { BoundedDaemonLogs } from './supervisor.js';
 import { assertTargetIdentity, resolveDaemonTarget, type DaemonTarget } from './target.js';
 import { connectLocalIpc, readControlFrame } from './ipc.js';
-import { createRootPreparation } from './project-trust.js';
-import { DaemonTuiPreferences } from './tui-preferences.js';
-import { HostSetupManager } from '../setup/manager.js';
-import { prepareHostInteraction, openHostUrl } from '../setup/open.js';
+import { prepareHostInteraction } from '../setup/open.js';
+import { loadHostConfig, resolveHostComposition, type HostManager } from './host-config.js';
+import { createConfiguredProviders, ProviderStartupError, type LoadedProviders } from './provider-loader.js';
+import { createRegistrySessionsService } from './session-services.js';
+import { createRegisteredWorkerLauncher } from './worker.js';
+import { createRuntimeDependenciesPort } from './runtime-dependencies.js';
 
 export async function startDaemonService(target: DaemonTarget, options: {
   createModelRuntime?: (agentDir: string) => Promise<ModelRuntime>;
-  initializeProcess?: LocalDaemonProfileOptions['initializeProcess'];
   drainTimeoutMs?: number;
   replacing?: DaemonIdentity;
+  hostConfigPath?: string;
+  manager?: HostManager;
 } = {}) {
   const owner = await acquireForLaunch(target, options.replacing);
   let sink: BoundedDaemonLogs | undefined;
   let store: DaemonControlStore | undefined;
-  let profile: Awaited<ReturnType<typeof createLocalDaemonProfile>> | undefined;
+  let sessionLifecycle: SessionLifecycle | undefined;
   let registry: SessionRegistry | undefined;
   let server: SessionServer | undefined;
-  let setup: HostSetupManager | undefined;
+  let setup: HostSetup | undefined;
+  let providers: LoadedProviders | undefined;
   const agentLogs = new DaemonAgentLogs(owner);
   try {
     sink = new BoundedDaemonLogs(owner);
+    const manager = options.manager ?? { packageName: '@felan-ai/daemon', version: DAEMON_VERSION, resolveFrom: new URL('../index.js', import.meta.url).href };
+    const hostConfig = await loadHostConfig({ agentDir: owner.target.agentDir, ...(options.hostConfigPath ? { explicitPath: options.hostConfigPath } : {}),
+      ...(manager.packagedDefaultPath ? { packagedDefaultPath: manager.packagedDefaultPath } : {}) });
+    const loadedProviders = await createConfiguredProviders({ config: hostConfig.config, manager, requiredDaemonServices: [HOST_RUNTIME_SERVICE.key, SESSION_RUNTIME_SERVICE.key] });
+    providers = loadedProviders;
+    const composition = loadedProviders.composition;
     const log = new DaemonOperationalLog(sink);
     store = new DaemonControlStore(owner);
-    const makeModels = options.createModelRuntime ?? createLocalModelRuntime;
     const homeDir = target.kind === 'isolated' ? dirname(owner.target.runtimeDirectory) : undefined;
-    profile = await createLocalDaemonProfile({ agentDir: owner.target.agentDir, ...(homeDir ? { homeDir } : {}),
-      createModelRuntime: makeModels, ...(options.initializeProcess ? { initializeProcess: options.initializeProcess } : {}), deferActivation: true,
+    const sessionRuntime = loadedProviders.services.get(SESSION_RUNTIME_SERVICE)!;
+    const modelRuntimes = new WeakSet<ModelRuntime>();
+    const makeModels = async (agentDir: string): Promise<ModelRuntime> => {
+      const models = await (options.createModelRuntime ? options.createModelRuntime(agentDir) : sessionRuntime.createModelRuntime(agentDir));
+      if (modelRuntimes.has(models)) throw new Error('Model runtime factories must return fresh registration state.');
+      modelRuntimes.add(models);
+      return models;
+    };
+    let runtimeDependencies: RuntimeDependenciesService | undefined;
+    sessionLifecycle = createSessionLifecycle({ composition: sessionRuntime, configurationIdentity: composition.configDigest,
+      agentDir: owner.target.agentDir, ...(homeDir ? { homeDir } : {}),
+      createModelRuntime: makeModels, deferActivation: true,
+      secretStorage: sessionRuntime.secretStorage,
+      runtimeDependencies: { install: (request, options) => runtimeDependencies ? runtimeDependencies.install(request, options)
+        : Promise.resolve({ status: 'unavailable', message: 'Dependency installation is unavailable.' }) },
+      serviceRegistry: loadedProviders.services, openServiceScope: loadedProviders.openSession,
+      sessions: (current, cwd) => createRegistrySessionsService(registry!, current, cwd),
+      openWorker: (current, models, allowed) => createRegisteredWorkerLauncher(registry!, current, models, allowed),
+      extensionPackages: hostConfig.config.extensions.map(extension => extension.package),
       wrapRuntime: (runtime, request) => registry!.wrapOpeningRuntime(runtime, request.rootSessionId),
       createLogger: root => agentLogs.create(root) });
     const models = await makeModels(owner.target.agentDir);
-    const configuration = new DaemonConfiguration({ agentDir: owner.target.agentDir,
-      definitions: await loadLocalExtensionConfigDefinitions(), assertCurrent: () => owner.assertCurrent() });
     let services: RegistryOptions['services'];
-    registry = new SessionRegistry({ owner, store, profile, services: context => services(context) });
-    const liveRegistry = registry; const liveStore = store; const liveProfile = profile; const liveSink = sink;
-    const broker = createRegistryInteractionBroker(registry, { presenters: SESSION_UI_PRESENTERS });
-    const setupRuntime = new HostAgentRuntime(owner.target.agentDir, { pathAccess: 'host', agentDir: owner.target.agentDir,
+    registry = new SessionRegistry({ owner, store, lifecycle: sessionLifecycle, services: context => services(context),
+      ...(sessionRuntime.processAdapter ? { processAdapter: sessionRuntime.processAdapter } : {}) });
+    const liveRegistry = registry; const liveStore = store; const liveSessionLifecycle = sessionLifecycle; const liveSink = sink;
+    const broker = createRegistryInteractionBroker(registry, { requireLocalConsole: hostConfig.config.policy?.requireLocalConsole ?? false });
+    const setupRuntime = loadedProviders.services.get(HOST_RUNTIME_SERVICE)!.create(owner.target.agentDir, { pathAccess: 'host', agentDir: owner.target.agentDir,
       agentStorageRoot: join(owner.target.agentDir, 'storage', 'agent'), sessionStorageRoot: join(owner.target.agentDir, 'storage', 'setup') });
-    setup = new HostSetupManager({ agentDir: owner.target.agentDir, runtime: setupRuntime, models,
-      assertCurrent: () => owner.assertCurrent(), open: (value, signal) => openHostUrl(setupRuntime, value, signal),
-      refreshModels: async signal => { await models.getAvailable(undefined, { signal }); } });
+    const host = await sessionRuntime.createHostServices({ agentDir: owner.target.agentDir, homeDir: homeDir ?? homedir(),
+      runtime: setupRuntime, models, interactions: { request: broker.request.bind(broker) },
+      definitions: await sessionRuntime.configuration(hostConfig.config.extensions.map(row => row.package)),
+      assertCurrent: () => owner.assertCurrent() });
+    setup = host.setup;
+    runtimeDependencies = createRuntimeDependenciesPort(setup, broker);
     const liveSetup = setup;
-    services = createDaemonExecutionServices(registry, broker, { ...(homeDir ? { homeDir } : {}), version: DAEMON_VERSION });
-    const ambiguous = () => liveStore.snapshot().resources.some(resource => resource.kind !== 'child' && ['missing', 'reconciling'].includes(resource.state));
+    services = createDaemonExecutionServices(registry, broker, sessionRuntime);
+    await loadedProviders.activate();
+    const ambiguous = () => liveStore.snapshot().resources.some(resource => ['missing', 'reconciling'].includes(resource.state));
     let finish!: (action: HostAction) => void;
     const stopped = new Promise<HostAction>(resolve => { finish = resolve; });
     let hold: ReturnType<typeof setInterval> | undefined;
@@ -74,20 +102,31 @@ export async function startDaemonService(target: DaemonTarget, options: {
       ...(options.drainTimeoutMs ? { timeoutMs: options.drainTimeoutMs } : {}),
       allowControl() { if (ambiguous()) throw commandError('busy'); },
       beginDrain: () => { liveSetup.beginDrain(); liveRegistry.beginDrain(); },
-      settle: async mode => { await Promise.all([liveSetup.drain(), settleDaemonWork(liveRegistry, broker, mode)]); await liveServer.settleCommands(); },
+      settle: async mode => { await Promise.all([liveSetup.drain(), settleDaemonWork(liveRegistry, broker, mode)]); await liveServer.settleCommands(); await loadedProviders.settle(mode); },
       record: event => log.record(event),
       complete: async action => {
         clearInterval(idleTimer); clearInterval(hold); removeLoss();
         liveServer.sealCommands(); await liveServer.settleCommands();
-        await agentLogs.close(); await liveProfile.dispose();
+        await agentLogs.close(); await liveSessionLifecycle.dispose(); await loadedProviders.dispose();
         liveServer.close(); liveStore.close(); liveSink.close(); await owner.release(); finish(action);
       },
     });
-    server = new SessionServer({ registry, configuration, models, version: DAEMON_VERSION, broker,
-      setup: liveSetup, prepareOpenInteraction: (id, client, signal) => prepareHostInteraction({ runtime: setupRuntime, broker,
-        assertCurrent: () => owner.assertCurrent(), assertOwnsPath: path => owner.assertOwnsPath(path) }, id, client, signal),
-      preferences: new DaemonTuiPreferences({ agentDir: owner.target.agentDir, assertCurrent: () => owner.assertCurrent() }),
-      prepareRoot: createRootPreparation({ agentDir: owner.target.agentDir, homeDir: homeDir ?? homedir(), broker, assertCurrent: () => owner.assertCurrent() }),
+    server = new SessionServer({ registry, configuration: host.configuration, models, version: DAEMON_VERSION, broker, composition,
+      currentComposition: async () => {
+        const currentConfig = await loadHostConfig({ agentDir: owner.target.agentDir,
+          ...(options.hostConfigPath ? { explicitPath: options.hostConfigPath } : {}),
+          ...(manager.packagedDefaultPath ? { packagedDefaultPath: manager.packagedDefaultPath } : {}) });
+        const current = await resolveHostComposition(currentConfig, manager);
+        return { managerPackage: current.managerPackage, managerVersion: current.managerVersion,
+          providerDigest: current.providerDigest, configDigest: current.configDigest };
+      },
+      setup: liveSetup, prepareOpenInteraction: (id, client, signal) => prepareHostInteraction({ broker,
+        assertCurrent: () => owner.assertCurrent(), prepareOpen: (request, signal) => {
+          if (!sessionRuntime.prepareOpenInteraction) throw new Error('Opening this interaction is unsupported.');
+          return sessionRuntime.prepareOpenInteraction(setupRuntime, request, path => owner.assertOwnsPath(path), signal);
+        } }, id, client, signal),
+      ...(host.preferences ? { preferences: host.preferences } : {}),
+      ...(host.prepareRoot ? { prepareRoot: host.prepareRoot } : {}),
       management: { lifecycle, logs: params => log.page(params) },
       setupNeeds: () => ambiguous() ? [{ code: 'process_recovery', message: 'Unverified prior processes block new work. Operator reconciliation is required.' }]
         : models.getAvailableSnapshot().length ? [] : [{ code: 'provider', message: 'Configure a local model provider. A Felan account is not required.' }] });
@@ -111,8 +150,10 @@ export async function startDaemonService(target: DaemonTarget, options: {
           params: { expected: owner.identity, confirmed: true, mode } });
       } };
   } catch (error) {
+    sink?.write('stderr', error instanceof Error ? `${error.name}: ${error.message}` : 'Daemon startup failed.');
     try {
-      server?.close(); await setup?.drain(); await registry?.shutdown(); await profile?.dispose(); await agentLogs.close();
+      server?.close(); await setup?.drain(); await registry?.shutdown(); await sessionLifecycle?.dispose(); await providers?.dispose(); await agentLogs.close();
+      if (error instanceof ProviderStartupError) await error.cleanup();
       store?.close(); sink?.close(); await owner.release();
     } catch (cleanup) {
       setInterval(() => {}, 60_000);

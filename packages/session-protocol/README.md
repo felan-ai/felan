@@ -5,12 +5,12 @@ schemas, inferred types, bounded validation and JSON-line framing. Its sole
 runtime dependency is `typebox@1.1.38`. It imports no Node, Pi, Agent Core, TUI,
 ACP or platform APIs and can run directly in a browser.
 
-The intended first public release is **0.1.0**. No publication is performed by
+The intended first public release is **0.2.0**. No publication is performed by
 this implementation. The manual `0.0.0` bootstrap and trusted publisher setup in
 [`docs/maintainers/releasing.md`](../../docs/maintainers/releasing.md) remain
 release prerequisites. The only public subpath is `.`; no daemon or profile
 implementation is exported here. Breaking changes require the next minor;
-compatible fixes stay within `0.1.x`. Wire, stored-row and mismatch-control
+compatible fixes stay within `0.2.x`. Wire, stored-row and mismatch-control
 versions are independent constants, initially `1`.
 
 ## Boundary API
@@ -18,13 +18,11 @@ versions are independent constants, initially `1`.
 ```ts
 import {
   JsonLineDecoder, encodeFrame, parseClientEnvelope, parseServerEnvelope,
-  validateClientEligibility,
 } from '@felan-ai/session-protocol';
 
 const decoder = new JsonLineDecoder();
 for (const raw of decoder.push(bytesFromAuthenticatedTransport)) {
   const request = parseClientEnvelope(raw);
-  validateClientEligibility(request, connectionKind);
   // The host must still authorize, admit and execute the request.
 }
 decoder.finish(); // Reject a truncated final frame at EOF.
@@ -65,63 +63,90 @@ The host still applies each setting's existing validation and reload rules.
 
 ## Operations and capabilities
 
-`OPERATION_CATALOG` contains 39 operations and declares scope,
+`OPERATION_CATALOG` declares each operation's scope,
 mutation, persistence category and eligible client kinds. `hello` negotiates
-the actually available subset, interaction kinds and versioned presenters;
+the actually available subset, interaction kinds and optional UI
+capabilities;
 catalog membership alone does not mean a handler exists or authorize its use.
 Hello capability names and error codes accept bounded unknown strings for
 forward compatibility. Clients ignore unsupported advertised operations; a
 request using an unknown operation still fails validation. Optional response
 fields, including additions to an empty result, are stripped before use.
 
-`ERROR_CODES` exports the 19 known codes, with `KnownErrorCode` as their literal
+`ERROR_CODES` exports the known codes, with `KnownErrorCode` as their literal
 union: `invalid_request`, `unsupported_operation`, `protocol_mismatch`,
-`unavailable`, `busy`, `policy_pending`, `request_conflict`, `stale_request`,
+`unavailable`, `authentication_required`, `busy`, `policy_pending`, `request_conflict`, `stale_request`,
 `expired`, `not_found`, `forbidden`, `already_resolved`, `storage_failure`,
-`ownership_lost`, `resync_required`, `indeterminate`, `adoption_required`,
-`request_capacity` and `target_mismatch`. `ProtocolError.code` remains a bounded
+`ownership_lost`, `resync_required`, `indeterminate`,
+`configuration_recovery_required`, `request_capacity` and `target_mismatch`. `ProtocolError.code` remains a bounded
 wire string so clients can handle future codes with a generic fallback.
 
 - Host: `hello`, `host.status`, `sessions.list`,
   `sessions.create`, `session.import`, `host.stop`, `host.restart`, `host.logs`.
-- Session binding/lifetime: `attach`, `detach`, `close`, `session.adopt`.
+- Session binding/lifetime: `attach`, `detach`, `close`.
 - Execution: `prompt`, `steer`, `follow_up`, `cancel`, `set_model`,
   `set_thinking`, `compact`, `fork`, `command.invoke`, `interaction.answer`,
-  `shell.execute`, `session.reload`.
+  `ui.action`, `shell.execute`, `session.reload`.
 - History/settings: `session.rename`, `session.tree`, `session.branch.select`,
   `session.entry.label`, `session.clone`, `session.export`, `session.delete`,
   `session.history`, `queue.update`, `config.get`, `config.set`.
+- Child execution inspection/control: `executions.list`, `executions.read`,
+  `executions.steer`, `executions.cancel`.
 - Root-scoped process panel: `processes.list`, `processes.read`,
   `processes.write`, `processes.stop`. Resource IDs are authority references,
   never PIDs. Arbitrary process output/stdin/control bytes use canonical base64;
   offsets and read/write limits count decoded bytes.
 
-ACP retains text/resource-link prompts, attach/load/replay, cancellation and
-interaction answers, not image prompts, arbitrary extensions or TUI panels.
-`validateClientEligibility` is a cooperative client-kind check, **not** an OS
-security boundary. The authenticated host assigns principals, origins, session
-bindings and resource/control authority. `command.invoke` is for registered
+Operation eligibility does not assign privileges to TUI, ACP or headless labels.
+Clients negotiate the operations and UI vocabulary they implement; native TUI
+components remain client-local. ACP requests strict session
+policy explicitly. Client kinds only describe provenance. The authenticated
+host assigns principals, origins, session bindings and resource/control
+authority. `command.invoke` is for registered
 extension/skill commands only; built-ins have their own typed operations.
 Missing handlers reject explicitly. Detach is not cancel, close or host stop.
 
-`session.adopt.legacyRiskAcknowledged: true` explicitly accepts the residual risk
-from non-cooperating older writers; it is separate from backup and quiescence.
-Legacy `sessions.list` entries may include an optional `sourceFingerprint`, using
-the same bounded text contract as `session.adopt`. Owned entries omit it. This
-selection digest adds no source path or execution authority; the daemon checks
-it against its current inventory again when adoption is requested.
-Owned list rows carry `revision`; legacy rows do not. A client can therefore
-close a session, list its current revision, and submit `session.delete` without
-restoring it. After a stale revision rejection, list again before retrying.
-Optional list `inventory` metadata reports completeness and at most four
-bounded diagnostic counters (`unavailable_cwd`, `unreadable`, `oversize`,
-`truncated`). Completeness describes directory/header coverage, not whether
-every body was fully hashed. Rows beyond the read budget or with an unverifiable
-body omit `sourceFingerprint`; root/cwd filters prioritize matching rows for
-hashing. Missing cwds and unusable files are diagnostic only. Adoption checks the
-selected target, duplicate header IDs and genuinely unscanned areas; incomplete
-coverage cannot prove uniqueness. No diagnostic contains an additional
-filesystem path. These additions remain unpublished-v1 changes.
+## Generic UI elements
+
+The current generic vocabulary negotiates `ui.status`, `ui.progress`,
+`ui.document`, `ui.view` and `ui.action`. Forms are negotiated solely through
+the `form` interaction kind, not a separate UI capability. Forms declare typed
+inputs and explicit submit/cancel actions. Views and documents carry complete
+bounded data and revision-checked actions; `ui.action` identifies the element,
+revision, action, optional item and submitted values. Optional hints may select
+rendering but cannot change data, actions, validation or outcomes.
+
+Elements carry plain-text fallbacks; document/view/progress actions are
+declarative IDs bound to the current element revision and session through the
+`ui.action` request. Forms use a bounded field vocabulary (string, boolean,
+number, enum and multi-select), and the parser checks answers against declared
+fields and choices. Documents reject raw HTML and non-HTTP(S) links; views
+validate item fields and page limits. Renderer hints remain optional metadata
+and do not grant eligibility or authority. Hosts must verify the current
+element, session, revision and declared action through ordinary request
+admission.
+
+The optional `hello.capabilities` list describes UI vocabulary support only. It
+cannot assert local-console status; the authenticated transport determines that
+host property. An interaction's optional `authority` distinguishes `owner`
+approval from `local-console` host consent. Hosts enforce current capabilities,
+principal, attachment, scope and policy, including creator-affine host prompts. Existing-Chrome
+approval is owner-session scoped; MCP sign-in and installation prompts require
+local-console authority. Hosts must not infer either authority from client claims.
+
+Interactions opt into drain/restart deferral with `deferrable: true`, independently
+of their request kind. A later answer to a deferred session interaction starts a
+continuation turn. Other pending interactions are cancelled. ACP clients request
+strict policy explicitly with `requirePolicy: 'acp-strict'` on create, import or
+attach; client kind does not select execution policy.
+
+Only registered daemon sessions appear in `sessions.list` or can be resumed.
+Pre-daemon transcripts remain untouched and invisible to session discovery.
+Explicit `session.import` creates a new session ID from validated JSONL history;
+`session.export` remains available. Every listed row carries a `revision`, so a
+client can close a session and submit `session.delete` without restoring it.
+After a stale revision rejection, list again before retrying.
+
 Accepted `steer` and `follow_up` results are either `{itemId}` or
 `{status: 'handled'}`, never both. These are unpublished-v1 corrections and remain
 part of the first-release public-contract assessment.
@@ -137,9 +162,9 @@ and the last successful writer wins for the same field. It takes no revision.
 The runtime parser rejects any own obsolete `params.expectedRevision` before
 normalization and request identity, rather than silently discarding a CAS
 expectation. Branch, label and deletion operations retain their revision checks.
-The local host currently supports global existing configuration fields and
-model defaults; session model/thinking changes use their dedicated operations.
-Project configuration and other durable session overrides are unavailable.
+The local host supports global configuration fields and model defaults, plus
+session-scoped extension overrides. Session model/thinking changes use their
+dedicated operations. Project configuration remains unavailable.
 
 Story 1 explicitly defers targeted `queue.update`: the server rejects it as
 unavailable and does not advertise it. Existing enqueue and faithful observation
@@ -241,9 +266,9 @@ not a new transcript store or execution replay log.
 
 ## Interactions and mismatch control
 
-Interactions are data: scope, request kind/schema, eligible kinds, timestamps,
+Interactions are data: scope, request kind/schema, authority, timestamps,
 waiting/deferred/terminal state, responder and result. `validateInteractionAnswer`
-checks kind, offered IDs, wizard completeness and presenter version. The broker
+checks kind, offered IDs and declared form fields/actions. The broker
 must additionally enforce principal eligibility, expiry and atomic first-winner
 semantics; persist the winner and continuation before notification. Disconnect
 does not answer/cancel. Deferral without a prior timeout uses 30 minutes; live
@@ -269,7 +294,7 @@ data, 8 active streams/1 MiB each/4 MiB
 total, 256 KiB interactions/64 KiB answers, 100 choices/4 wizard pages,
 64 KiB process reads/16 KiB writes, 256-entry/12 MiB pages, 32 MiB unsent bytes and
 64 in-flight requests. The 64 KiB/1,024-entry structured JSON limits apply to
-presentation, custom interactions, tool catalog parameters and coalesced tool
+structured presentation data, tool catalog parameters and coalesced tool
 status details, not transcript payloads. Transcript tool arguments, result
 details and message details instead use the enclosing 12 MiB message/page/
 snapshot budgets and depth 32; they are preserved without truncation, including

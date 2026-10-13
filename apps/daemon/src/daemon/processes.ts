@@ -1,25 +1,26 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
-import { basename, dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { stripVTControlCharacters } from 'node:util';
 import { DEFAULT_MAX_BYTES, getShellConfig, truncateTail } from '@earendil-works/pi-coding-agent';
-import type { AgentRuntime, AgentRuntimeProcess, AgentRuntimeStorage } from '@felan-ai/agent-core';
-import { BackgroundBashCoordinator, BackgroundBashManager, type BackgroundBashInfo } from '@felan-ai/ext-background-bash';
+import type { AgentRuntime, AgentRuntimeProcess, AgentRuntimeStorage, AgentRuntimeTerminationSignal } from '@felan-ai/agent-core';
 import { LIMITS, canonicalRequestPayload, type OperationParams, type Process as ProcessView } from '@felan-ai/session-protocol';
 import type { DaemonControlStore } from './control-store.js';
 import { CONTROL_LIMITS, type ControlResource } from './control-state.js';
+import type { ProcessAdapter, ProcessRecord } from './process-adapter.js';
 import { boundedText } from './projection.js';
 import { readOwnedOutputRange } from './session-files.js';
 import { pathInside } from './target.js';
 
 interface Scope { session: string; root: string }
 interface Lifetime { scope: Scope; runtime: AgentRuntime; draining: boolean; revoked: boolean }
-interface LiveProcess { raw: AgentRuntimeProcess; process: AgentRuntimeProcess; view: ProcessView; settled: boolean; disposed: boolean }
+interface LiveProcess { raw: AgentRuntimeProcess; process: AgentRuntimeProcess; view: ProcessView; transport: boolean; settled: boolean; disposed: boolean; signal?: AgentRuntimeTerminationSignal }
 export interface ProcessTrackerOptions {
   store: DaemonControlStore;
   assertCurrent(): void;
   changed(session: string, process: ProcessView, revision: number): void;
+  processAdapter?: ProcessAdapter;
   now?: () => number;
 }
 export interface RegistryProcessOutput {
@@ -34,9 +35,8 @@ export class RegistryProcesses {
   private readonly live = new Map<string, LiveProcess>();
   private readonly views = new Map<string, ProcessView>();
   private readonly lifetimes = new Set<Lifetime>();
-  private readonly coordinators = new Map<string, BackgroundBashCoordinator>();
-  private readonly operations = new Map<Promise<unknown>, Scope>();
-  private readonly ptyId = new AsyncLocalStorage<string>();
+  private readonly starting = new Set<string>();
+  private readonly operations = new Map<Promise<unknown>, { scope: Scope; passive: boolean }>();
   private readonly foregroundId = new AsyncLocalStorage<string>();
   private readonly foregroundStarts = new Map<string, string>();
   private readonly cleanup = new AsyncLocalStorage<ReadonlySet<string>>();
@@ -60,7 +60,7 @@ export class RegistryProcesses {
             root: original.root,
             readFile: (path, opts) => checked(() => original.readFile(path, opts)),
             writeFile: (path, content) => checked(async () => {
-              if (kind === 'session') this.observeJob(path, content, original.root, scope);
+              if (kind === 'session') this.observeJob(path, content, runtime, scope);
               await original.writeFile(path, content);
             }),
             appendFile: (path, content) => checked(() => original.appendFile(path, content)),
@@ -79,13 +79,30 @@ export class RegistryProcesses {
       listFiles: (path, opts) => checked(() => runtime.listFiles(path, opts)),
       mkdir: (path, opts) => checked(() => runtime.mkdir(path, opts)),
       remove: (path, opts) => checked(() => runtime.remove(path, opts)),
+      ...(runtime.files ? { files: {
+        inspect: path => checked(() => runtime.files!.inspect(path)),
+        canonicalPath: path => checked(() => runtime.files!.canonicalPath(path)),
+        move: (source, target) => checked(() => runtime.files!.move(source, target)),
+        removeEmptyDirectory: path => checked(() => runtime.files!.removeEmptyDirectory(path)),
+        touch: (path, modifiedAt) => checked(() => runtime.files!.touch(path, modifiedAt)),
+        ensurePrivateDirectory: (path, options) => checked(() => runtime.files!.ensurePrivateDirectory(path, options)),
+        snapshot: (path, maxBytes) => checked(() => runtime.files!.snapshot(path, maxBytes)),
+        append: (path, content, expected) => checked(() => runtime.files!.append(path, content, expected)),
+      } } : {}),
       ...(runtime.readAgentFile ? { readAgentFile: (path: string) => checked(() => runtime.readAgentFile!(path)) } : {}),
       ...(runtime.privateRuntime ? { privateRuntime: { ensureDirectory: (name: string) => checked(() => runtime.privateRuntime!.ensureDirectory(name)) } } : {}),
       ...(runtime.processes ? { processes: {
         startShell: (command, opts) => this.start(lifetime, 'foreground', command, () => runtime.processes!.startShell(command, opts), this.foregroundId.getStore()),
-        ...(runtime.processes.startStdio ? { startStdio: (command: string, args: readonly string[], opts?: Parameters<NonNullable<NonNullable<AgentRuntime['processes']>['startStdio']>>[2]) => this.start(lifetime, 'foreground', command, () => runtime.processes!.startStdio!(command, args, opts)) } : {}),
+        ...(runtime.processes.startStdio ? { startStdio: (command: string, args: readonly string[], opts?: Parameters<NonNullable<NonNullable<AgentRuntime['processes']>['startStdio']>>[2]) => this.start(lifetime, 'foreground', command, () => runtime.processes!.startStdio!(command, args, opts), undefined, true) } : {}),
       } } : {}),
-      ...(runtime.terminals ? { terminals: { startShell: (command, opts) => this.start(lifetime, 'pty', command, () => runtime.terminals!.startShell(command, opts), this.ptyId.getStore()) } } : {}),
+      ...(runtime.terminals ? { terminals: {
+        startShell: async (command, opts) => {
+          const id = opts?.id ?? randomUUID();
+          await this.start(lifetime, 'pty', command, () => runtime.terminals!.startShell(command, opts), id);
+          return this.terminalHandle(lifetime, id)!;
+        },
+        attach: id => this.terminalHandle(lifetime, id),
+      } } : {}),
     };
     lifetime.runtime = wrapped; this.lifetimes.add(lifetime);
     return wrapped;
@@ -109,38 +126,26 @@ export class RegistryProcesses {
     return [...this.lifetimes].reverse().find(item => !item.revoked && item.scope.session === session && item.scope.root === root)?.runtime;
   }
 
-  coordinator(root: string, runtime: AgentRuntime): BackgroundBashCoordinator {
-    let coordinator = this.coordinators.get(root);
-    if (!coordinator) {
-      const context = this.ptyId;
-      const tracked = <T>(id: string, operation: () => Promise<T>) => {
-        const row = this.options.store.snapshot().resources.find(item => item.id === id && item.root === root);
-        if (!row) throw new Error('Interactive process is not registered.');
-        return this.track(operation(), { session: row.session, root });
-      };
-      const routed = new Proxy(runtime, { get: (target, key) => {
-        if (key !== 'terminals') return Reflect.get(target, key, target);
-        return { startShell: (command: string, options: Parameters<NonNullable<AgentRuntime['terminals']>['startShell']>[1]) => {
-          const id = context.getStore();
-          const row = this.options.store.snapshot().resources.find(item => item.id === id && item.root === root);
-          const creator = row && this.runtime(row.session, root);
-          if (!creator?.terminals) throw new Error('Interactive process creator is unavailable.');
-          return creator.terminals.startShell(command, options);
-        } };
-      } });
-      coordinator = new class extends BackgroundBashCoordinator {
-        override start(...args: Parameters<BackgroundBashCoordinator['start']>) { return tracked(args[0], () => context.run(args[0], () => super.start(...args))); }
-        override read(...args: Parameters<BackgroundBashCoordinator['read']>) { return tracked(args[0], () => super.read(...args)); }
-        override write(...args: Parameters<BackgroundBashCoordinator['write']>) { return tracked(args[0], () => super.write(...args)); }
-        override stop(...args: Parameters<BackgroundBashCoordinator['stop']>) { return tracked(args[0], () => super.stop(...args)); }
-      }(routed);
-      this.coordinators.set(root, coordinator);
-    }
-    return coordinator;
+  private terminalHandle(lifetime: Lifetime, id: string): AgentRuntimeProcess | undefined {
+    this.assertLifetime(lifetime);
+    const live = this.live.get(id);
+    if (!live || live.view.root !== lifetime.scope.root || live.view.kind !== 'pty') return undefined;
+    const checked = <T>(operation: () => Promise<T>) => {
+      this.assertLifetime(lifetime);
+      return this.track(operation(), lifetime.scope);
+    };
+    return {
+      pid: live.raw.pid,
+      read: (offset, options) => checked(() => live.process.read(offset, options)),
+      write: content => checked(() => live.process.write(content)),
+      terminate: signal => checked(() => live.process.terminate(signal)),
+      ...(live.process.interrupt ? { interrupt: () => checked(() => live.process.interrupt!()) } : {}),
+      dispose: async () => {},
+    };
   }
 
   list(root: string): ProcessView[] {
-    return this.options.store.snapshot().resources.filter(row => row.root === root && row.kind !== 'child').map(row => {
+    return this.options.store.snapshot().resources.filter(row => row.root === root).map(row => {
       const known = this.views.get(row.id);
       return known ?? { id: row.id, session: row.session, root, kind: row.kind as ProcessView['kind'],
         state: row.state === 'reconciling' ? 'interrupted' : row.state, command: '', startedAt: row.updatedAt, controllable: false, outputOffset: 0 };
@@ -231,15 +236,15 @@ export class RegistryProcesses {
       if (!row.reference || !row.startIdentity) throw new Error('Detached output identity is unavailable.');
       const root = this.currentLifetime(row.root); this.assertLifetime(root);
       const storage = root.runtime.storage('session'); const reference = row.reference;
-      if (!pathInside(join(storage.root, 'background-bash'), reference)) throw new Error('Detached output is outside its root storage.');
+      const directory = this.options.processAdapter?.storageDirectory(root.runtime);
+      if (!directory || !pathInside(directory, reference)) throw new Error('Detached output is outside its root storage.');
       return this.track((async () => {
-        const info = parseInfo(await storage.readFile(reference, { maxBytes: 65536 }));
+        const info = this.describeJob(root.runtime, reference, await storage.readFile(reference, { maxBytes: 65536 }));
         this.assertLifetime(lifetime); this.assertLifetime(root);
         const current = this.authorizeResource(requester, id);
         if (current.reference !== reference || current.startIdentity !== row.startIdentity || current.kind !== 'detached'
-          || !info || info.id !== id || info.processToken !== row.startIdentity || resolve(info.infoPath) !== reference
-          || resolve(info.jobDir) !== dirname(reference) || info.logPath !== join(info.jobDir, 'output.log')) throw new Error('Detached output identity changed.');
-        const data = readOwnedOutputRange(this.options.store.owner, info.logPath, offset, limit);
+          || !info || info.id !== id || info.startIdentity !== row.startIdentity || info.kind !== 'detached') throw new Error('Detached output identity changed.');
+        const data = readOwnedOutputRange(this.options.store.owner, info.outputPath, offset, limit);
         this.assertLifetime(lifetime); this.assertLifetime(root); this.authorizeResource(requester, id);
         const state = current.state === 'reconciling' ? 'interrupted' : info.status === 'unknown' ? 'missing'
           : info.status !== 'running' ? 'exited' : current.state;
@@ -314,7 +319,7 @@ export class RegistryProcesses {
   private authorizeResource(requester: string, id: string): ControlResource {
     this.options.assertCurrent();
     const state = this.options.store.snapshot(); const session = state.sessions.find(item => item.id === requester);
-    const row = state.resources.find(item => item.id === id && item.kind !== 'child');
+    const row = state.resources.find(item => item.id === id);
     if (!session || session.state !== 'open' || !row || row.root !== session.root) throw new Error('Process not found in the authorized session scope.');
     const creator = state.sessions.find(item => item.id === row.session);
     if (!creator || creator.root !== row.root) throw new Error('Process creator identity is invalid.');
@@ -334,12 +339,12 @@ export class RegistryProcesses {
   }
 
   blocksEviction(root: string): boolean {
-    return [...this.operations.values()].some(scope => scope.root === root)
-      || this.options.store.snapshot().resources.some(row => row.root === root && row.kind !== 'child' && (row.state === 'running' || row.state === 'reconciling'));
+    return [...this.operations.values()].some(({ scope, passive }) => scope.root === root && !passive)
+      || this.options.store.snapshot().resources.some(row => row.root === root && !this.live.get(row.id)?.transport && (row.state === 'running' || row.state === 'reconciling'));
   }
 
   async refresh(root: string): Promise<void> {
-    for (const row of this.options.store.snapshot().resources.filter(row => row.root === root && row.kind !== 'child')) {
+    for (const row of this.options.store.snapshot().resources.filter(row => row.root === root)) {
       const live = this.live.get(row.id);
       if (live) { await live.process.read(live.view.outputOffset, { maxBytes: 0 }); continue; }
       if (row.kind !== 'detached' || !row.reference || !row.startIdentity) continue;
@@ -348,16 +353,18 @@ export class RegistryProcesses {
       const bytes = await runtime.storage('session').readFile(row.reference, { maxBytes: 64 * 1024 }).catch(() => undefined);
       this.options.assertCurrent();
       if (!bytes) { this.update(row, 'missing'); continue; }
-      const info = parseInfo(bytes);
-      if (!info || info.id !== row.id || info.processToken !== row.startIdentity || resolve(info.infoPath) !== row.reference) { this.update(row, 'missing'); continue; }
-      const manager = new BackgroundBashManager(runtime, this.coordinator(root, runtime));
-      const job = await manager.get(row.id);
+      const adapter = this.options.processAdapter;
+      if (!adapter) continue;
+      let info: ProcessRecord | undefined;
+      try { info = this.describeJob(runtime, row.reference, bytes); } catch { this.update(row, 'missing'); continue; }
+      if (!info || info.id !== row.id || info.startIdentity !== row.startIdentity || info.kind !== 'detached') { this.update(row, 'missing'); continue; }
+      const job = await adapter.inspectDetached(runtime, row.id);
       this.options.assertCurrent();
-      if (job.status.status !== 'running') { this.update(row, job.status.status === 'unknown' ? 'missing' : 'exited'); continue; }
-      const pid = job.status.pid ?? job.meta.pid;
+      if (job.status !== 'running') { this.update(row, job.status === 'unknown' ? 'missing' : 'exited'); continue; }
+      const pid = job.pid;
       const inspection = pid ? await runtime.exec('ps', ['-o', 'command=', '-p', String(pid)]) : undefined;
       this.options.assertCurrent();
-      const verified = inspection?.code === 0 && inspection.stdout.includes(info.runnerPath) && inspection.stdout.includes(row.startIdentity);
+      const verified = inspection?.code === 0 && info.commandIdentity.every(value => inspection.stdout.includes(value)) && inspection.stdout.includes(row.startIdentity);
       this.update(row, verified ? 'running' : 'reconciling', {
         id: row.id, session: row.session, root, kind: 'detached', state: verified ? 'running' : 'interrupted',
         command: boundedText(info.command, 16384), startedAt: info.startedAt, controllable: verified, outputOffset: 0,
@@ -368,14 +375,16 @@ export class RegistryProcesses {
   async stop(root: string, id: string, signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'): Promise<void> {
     this.options.assertCurrent();
     const row = this.options.store.snapshot().resources.find(row => row.id === id && row.root === root);
-    if (!row || row.kind === 'child') throw new Error('Process not found in this root session.');
+    if (!row) throw new Error('Process not found in this root session.');
     const live = this.live.get(id);
     if (live) { await live.process.terminate(signal); await live.process.read(0, { maxBytes: 0 }); return; }
     await this.refresh(root);
     this.options.assertCurrent();
     const runtime = this.runtime(row.session, root) ?? this.runtime(root, root);
     if (!runtime || !this.views.get(id)?.controllable || row.kind !== 'detached') throw new Error('Process identity is missing or unverified.');
-    await new BackgroundBashManager(runtime, this.coordinator(root, runtime)).stop(id, signal);
+    const adapter = this.options.processAdapter;
+    if (!adapter) throw processFault('unavailable', 'Detached process control is unavailable.');
+    await adapter.stopDetached(runtime, id, signal);
     await this.refresh(root);
   }
 
@@ -392,12 +401,8 @@ export class RegistryProcesses {
       const handles = [...this.live.values()].filter(item => owns(item.view) && !item.disposed);
       await join(handles.map(async item => {
         if (!item.settled) await item.raw.terminate('SIGTERM');
-        const coordinator = this.coordinators.get(root);
-        if (!fenced && coordinator?.has(item.view.id)) {
-          await this.withCleanup(item.view.session, () => coordinator.stop(item.view.id));
-        }
       }));
-      const pending = [...this.operations].filter(([, scope]) => owns(scope)).map(([operation]) => operation);
+      const pending = [...this.operations].filter(([, { scope }]) => owns(scope)).map(([operation]) => operation);
       await join(pending);
       await join(handles.map(async item => {
         const snapshot = await item.raw.read(0, { maxBytes: 0 });
@@ -411,38 +416,46 @@ export class RegistryProcesses {
         await item.raw.dispose(); item.disposed = true;
       }));
       if (failures.length) throw new AggregateError(failures, 'Owned processes did not settle.');
-      if (![...this.operations.values()].some(owns) && ![...this.live.values()].some(item => owns(item.view) && !item.disposed)) break;
+      if (![...this.operations.values()].some(({ scope }) => owns(scope)) && ![...this.live.values()].some(item => owns(item.view) && !item.disposed)) break;
     }
-    if (!fenced && !sessions) await this.coordinators.get(root)?.shutdown();
   }
 
-  private start<T extends AgentRuntimeProcess>(lifetime: Lifetime, kind: ProcessView['kind'], command: string, create: () => Promise<T>, requestedId?: string): Promise<T> {
+  private start<T extends AgentRuntimeProcess>(lifetime: Lifetime, kind: ProcessView['kind'], command: string, create: () => Promise<T>, requestedId?: string, transport = false): Promise<T> {
     const scope = lifetime.scope;
     return this.track((async () => {
       this.assertLifetime(lifetime, true);
       const id = requestedId ?? randomUUID();
       const previous = this.options.store.snapshot().resources.find(row => row.id === id);
+      if (this.live.has(id) || this.starting.has(id) || previous && (previous.session !== scope.session || previous.root !== scope.root || previous.kind !== kind)) throw new Error('Process identity is already registered.');
+      this.starting.add(id);
       const row: ControlResource = previous ?? { id, ...scope, kind, state: 'running', updatedAt: this.now() };
       this.update(row, 'running', { id, ...scope, kind, state: 'running', command: boundedText(command, 16384), startedAt: this.now(), controllable: false, outputOffset: 0 });
       let process: T;
-      try { process = await create(); } catch (error) { this.update(row, 'missing'); throw error; }
+      try { process = await create(); } catch (error) { this.update(row, 'missing'); throw error; } finally { this.starting.delete(id); }
       try { this.options.assertCurrent(); } catch (error) {
         await process.terminate('SIGTERM'); await process.dispose(); throw error;
       }
       const view: ProcessView = { id, ...scope, kind, state: 'running', command: boundedText(command, 16384), startedAt: this.now(), controllable: true, outputOffset: 0 };
-      const live: LiveProcess = { raw: process, process, view, settled: false, disposed: false };
+      const live: LiveProcess = { raw: process, process, view, transport, settled: false, disposed: false };
       const wrapped = new Proxy(process, { get: (target, key) => {
         const current = () => { this.options.assertCurrent(); if (live.disposed) throw new Error('Process handle is disposed.'); };
-        if (key === 'read') return (...args: Parameters<AgentRuntimeProcess['read']>) => {
+        if (key === 'read' || transport && (key === 'readStdout' || key === 'readStderr')) return (...args: Parameters<AgentRuntimeProcess['read']>) => {
           if (live.disposed) return Promise.resolve({ output: new Uint8Array(), nextOffset: live.view.outputOffset, running: false,
-            ...(live.view.exitCode === undefined ? {} : { exitCode: live.view.exitCode }) });
+            ...(live.view.exitCode === undefined ? {} : { exitCode: live.view.exitCode }), ...(live.signal ? { signal: live.signal } : {}) });
           return this.track((async () => {
-          current(); const snapshot = await target.read(...args); this.options.assertCurrent();
+          current(); const read = Reflect.get(target, key, target) as AgentRuntimeProcess['read'];
+          const snapshot = await read.apply(target, args); this.options.assertCurrent();
           live.settled ||= !snapshot.running;
-          live.view = { ...live.view, state: live.settled ? 'exited' : 'running', controllable: !live.settled, outputOffset: Math.max(live.view.outputOffset, snapshot.nextOffset), ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }) };
+          live.view = { ...live.view, state: live.settled ? 'exited' : 'running', controllable: !live.settled, outputOffset: key === 'read' ? Math.max(live.view.outputOffset, snapshot.nextOffset) : live.view.outputOffset, ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }) };
           this.update(row, live.view.state, live.view);
-          return { ...snapshot, running: !live.settled, ...(live.view.exitCode === undefined ? {} : { exitCode: live.view.exitCode }) };
-          })(), scope);
+          return { ...snapshot, running: !live.settled, ...(live.view.exitCode === undefined ? {} : { exitCode: live.view.exitCode }), ...(!snapshot.running && live.signal ? { signal: live.signal } : {}) };
+          })(), scope, transport);
+        };
+        if (key === 'terminate') return (signal: AgentRuntimeTerminationSignal = 'SIGTERM') => {
+          if (live.disposed) return Promise.resolve();
+          current();
+          live.signal = signal;
+          return this.track(target.terminate(signal).catch(error => { delete live.signal; throw error; }), scope);
         };
         const value: unknown = Reflect.get(target, key, target);
         if (typeof value !== 'function') return value;
@@ -459,15 +472,24 @@ export class RegistryProcesses {
     })(), scope);
   }
 
-  private observeJob(path: string, bytes: Uint8Array, storageRoot: string, scope: Scope): void {
-    const absolute = resolve(storageRoot, path);
-    if (basename(absolute) !== 'info.json' || !absolute.startsWith(join(storageRoot, 'background-bash') + '/')) return;
-    const info = parseInfo(bytes);
-    if (!info || resolve(info.infoPath) !== absolute || resolve(info.jobDir) !== resolve(absolute, '..') || !/^bash-\d{14}-[a-f0-9]{6}$/u.test(info.id)) throw new Error('Invalid background job identity.');
+  private describeJob(runtime: AgentRuntime, path: string, bytes: Uint8Array): ProcessRecord | undefined {
+    const adapter = this.options.processAdapter;
+    if (!adapter || !pathInside(adapter.storageDirectory(runtime), path)) return undefined;
+    const info = adapter.describeJob(runtime, path, bytes);
+    if (info && !pathInside(adapter.storageDirectory(runtime), info.outputPath)) throw new Error('Process output is outside its root storage.');
+    return info;
+  }
+
+  private observeJob(path: string, bytes: Uint8Array, runtime: AgentRuntime, scope: Scope): void {
+    const absolute = resolve(runtime.storage('session').root, path);
+    const directory = this.options.processAdapter?.storageDirectory(runtime);
+    if (!directory || !pathInside(directory, absolute)) return;
+    const info = this.describeJob(runtime, absolute, bytes);
+    if (!info) return;
     const previous = this.options.store.snapshot().resources.find(row => row.id === info.id);
-    const row: ControlResource = previous ?? { id: info.id, ...scope, kind: info.executionMode === 'pty' ? 'pty' : 'detached', state: 'running', reference: absolute,
-      ...(info.processToken ? { startIdentity: info.processToken } : {}), updatedAt: this.now() };
-    if (previous && (previous.root !== scope.root || previous.reference !== absolute || previous.startIdentity !== info.processToken)) throw new Error('Background job identity changed.');
+    const row: ControlResource = previous ?? { id: info.id, ...scope, kind: info.kind, state: 'running', reference: absolute,
+      ...(info.startIdentity ? { startIdentity: info.startIdentity } : {}), updatedAt: this.now() };
+    if (previous && (previous.root !== scope.root || previous.reference !== absolute || previous.startIdentity !== info.startIdentity)) throw new Error('Background job identity changed.');
     this.update(row, info.status === 'running' ? 'running' : info.status === 'unknown' ? 'missing' : 'exited', {
       id: info.id, session: row.session, root: row.root, kind: row.kind as ProcessView['kind'], state: info.status === 'running' ? 'running' : info.status === 'unknown' ? 'missing' : 'exited',
       command: boundedText(info.command, 16384), startedAt: info.startedAt, controllable: this.live.has(info.id), outputOffset: 0,
@@ -486,22 +508,11 @@ export class RegistryProcesses {
       this.options.changed(row.session, next, commit.revisions[row.session]!);
     }
   }
-  private track<T>(operation: Promise<T>, scope: Scope): Promise<T> {
-    this.operations.set(operation, scope); void operation.then(() => this.operations.delete(operation), () => this.operations.delete(operation)); return operation;
+  private track<T>(operation: Promise<T>, scope: Scope, passive = false): Promise<T> {
+    this.operations.set(operation, { scope, passive }); void operation.then(() => this.operations.delete(operation), () => this.operations.delete(operation)); return operation;
   }
 }
 
-function parseInfo(bytes: Uint8Array): BackgroundBashInfo | undefined {
-  if (bytes.byteLength > 64 * 1024) return undefined;
-  try {
-    const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-    if (!value || typeof value !== 'object') return undefined;
-    const info = value as BackgroundBashInfo;
-    return typeof info.id === 'string' && typeof info.infoPath === 'string' && typeof info.jobDir === 'string'
-      && typeof info.runnerPath === 'string' && typeof info.command === 'string' && Number.isSafeInteger(info.startedAt)
-      && ['running', 'completed', 'failed', 'killed', 'unknown'].includes(info.status) ? info : undefined;
-  } catch { return undefined; }
-}
 function processFault(code: string, message: string): Error & { code: string } { return Object.assign(new Error(message), { code }); }
 
 function splitShellOutput(value: string): { complete: string; pending: string } {

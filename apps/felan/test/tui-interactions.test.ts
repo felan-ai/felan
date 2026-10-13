@@ -1,31 +1,38 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { TuiAltScreen, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
+import { stripTerminalSequences, TuiAltScreen, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
 import { createRegistryInteractionBroker } from '../../daemon/src/daemon/broker.js';
-import { SESSION_UI_PRESENTERS } from '../../daemon/src/daemon/extension-ui.js';
-import { DaemonConfiguration } from '../../daemon/src/daemon/configuration.js';
+import { createSessionExtensionUi } from '../../daemon/src/daemon/extension-ui.js';
+import { sessionUiPort } from './session-ui-fixture.js';
+import { createUiAskUserHost } from '../../../packages/ext-ask-user/src/ui.js';
+import { createPrewalkUiHost } from '../../../packages/ext-prewalk/src/ui.js';
+import type { ExtensionContext } from '@felan-ai/agent-core';
+import { DaemonConfiguration } from '../src/providers/configuration.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { serverFixture } from '../../daemon/test/fixtures/server.js';
 import { SessionClient } from '../src/client/client.js';
 import { TuiSessionController } from '../src/tui/controller.js';
-import { TERMINAL_INTERACTION_KINDS, TERMINAL_PRESENTERS } from '../src/tui/interactions.js';
+import { TERMINAL_INTERACTION_KINDS, TERMINAL_UI_CAPABILITIES } from '../src/tui/interactions.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
 import { bundledClientThemes, themedClientTerminal, themeName } from '../src/tui/theme.js';
-import { PREWALK_REVIEW_PRESENTER, APPROVE_PLAN_OPTION } from '@felan-ai/ext-prewalk/tui';
-import { TASKS_PRESENTER, createTaskViewPublication } from '@felan-ai/ext-tasks/view';
-import { POWERLINE_PRESENTER } from '@felan-ai/ext-powerline/view';
-import { AGENT_VIEW_PRESENTER } from '@felan-ai/ext-subagents/view';
+import { APPROVE_PLAN_OPTION } from '../src/tui/renderers/prewalk.js';
+import type { UiView } from '@felan-ai/session-protocol';
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
 
+function screenText(tui: TuiAltScreen): string {
+  tui.renderNow(true);
+  return stripTerminalSequences(tui.getScreenLines().join('\n'));
+}
+
 async function fixture() {
-  const f = await serverFixture({ now: Date.now }); const broker = createRegistryInteractionBroker(f.registry, { presenters: SESSION_UI_PRESENTERS });
+  const f = await serverFixture({ now: Date.now }); const broker = createRegistryInteractionBroker(f.registry, {  });
   const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture', broker,
     configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.owner.assertCurrent() }) });
   await server.start();
   cleanup.push(async () => { server.close(); await broker.drain(); await f.dispose(); });
   function client() { return new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
-    clientVersion: 'fixture', kind: 'tui', interactionKinds: [...TERMINAL_INTERACTION_KINDS], presenters: [...TERMINAL_PRESENTERS] }); }
+    clientVersion: 'fixture', kind: 'tui', interactionKinds: [...TERMINAL_INTERACTION_KINDS], capabilities: [...TERMINAL_UI_CAPABILITIES] }); }
   async function terminal() {
     const transport = client(); const controller = new TuiSessionController(transport); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
     const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, sessionId: f.root.sessionId,
@@ -63,7 +70,8 @@ it('paints terminal clears and resets with client colors and restores terminal d
 it('presents an input interaction and commits only the entered protocol answer', async () => {
   const f = await fixture(); const view = await f.terminal();
   const pending = f.broker.request({ kind: 'input', title: 'Enter a value' }, f.scope);
-  await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(true));
+  await vi.waitFor(() => expect(screenText(view.tui)).toContain('Enter a value'));
+  expect(view.tui.hasOverlay()).toBe(false);
   view.terminal.input('chosen'); view.terminal.input('\r');
   expect(await pending).toEqual({ state: 'answered', answer: { kind: 'input', text: 'chosen' } });
   expect(f.store.snapshot().interactions.at(-1)?.state).toBe('answered');
@@ -72,9 +80,9 @@ it('presents an input interaction and commits only the entered protocol answer',
 it('retains a pending question when the terminal disconnects and presents it after reattachment', async () => {
   const f = await fixture(); const first = await f.terminal();
   const pending = f.broker.request({ kind: 'input', title: 'Still pending' }, f.scope);
-  await vi.waitFor(() => expect(first.tui.hasOverlay()).toBe(true)); first.signal.abort(); await first.running;
+  await vi.waitFor(() => expect(screenText(first.tui)).toContain('Still pending')); first.signal.abort(); await first.running;
   expect(f.broker.pending()).toHaveLength(1);
-  const second = await f.terminal(); await vi.waitFor(() => expect(second.tui.hasOverlay()).toBe(true));
+  const second = await f.terminal(); await vi.waitFor(() => expect(screenText(second.tui)).toContain('Still pending'));
   second.terminal.input('after reconnect'); second.terminal.input('\r');
   expect(await pending).toMatchObject({ state: 'answered', answer: { text: 'after reconnect' } });
 });
@@ -82,7 +90,7 @@ it('retains a pending question when the terminal disconnects and presents it aft
 it('keeps a question draft during snapshot recovery and waits to validate its answer', async () => {
   const f = await fixture(); const view = await f.terminal();
   const pending = f.broker.request({ kind: 'input', title: 'Recovery question' }, f.scope);
-  await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(true));
+  await vi.waitFor(() => expect(screenText(view.tui)).toContain('Recovery question'));
   view.terminal.input('kept');
   const getAttachment = view.transport.getAttachment.bind(view.transport);
   let recovering = true;
@@ -92,9 +100,9 @@ it('keeps a question draft during snapshot recovery and waits to validate its an
   });
   try {
     view.controller.setNotice('Recovering snapshot');
-    expect(view.tui.hasOverlay()).toBe(true);
+    expect(screenText(view.tui)).toContain('Recovery question');
     view.terminal.input('-answer'); view.terminal.input('\r');
-    await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(false));
+    await vi.waitFor(() => expect(screenText(view.tui)).not.toContain('Recovery question'));
     expect(f.broker.pending()).toHaveLength(1);
     expect(f.store.snapshot().requests.filter(row => row.op === 'interaction.answer')).toHaveLength(0);
     recovering = false; view.controller.setNotice('Snapshot restored');
@@ -105,7 +113,7 @@ it('keeps a question draft during snapshot recovery and waits to validate its an
 it('does not submit a held recovery answer after another client wins', async () => {
   const f = await fixture(); const view = await f.terminal();
   const pending = f.broker.request({ kind: 'input', title: 'Recovering winner' }, f.scope);
-  await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(true));
+  await vi.waitFor(() => expect(screenText(view.tui)).toContain('Recovering winner'));
   const getAttachment = view.transport.getAttachment.bind(view.transport);
   let recovering = true;
   const lookup = vi.spyOn(view.transport, 'getAttachment').mockImplementation(session => {
@@ -115,7 +123,7 @@ it('does not submit a held recovery answer after another client wins', async () 
   try {
     view.controller.setNotice('Recovering snapshot');
     view.terminal.input('must not submit'); view.terminal.input('\r');
-    await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(false));
+    await vi.waitFor(() => expect(screenText(view.tui)).not.toContain('Recovering winner'));
     const other = f.client(); cleanup.push(async () => other.close()); await other.connect(); await other.attach(f.root.sessionId);
     const interaction = f.broker.pending()[0]!;
     await other.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'input', text: 'other client' } }, { session: f.root.sessionId });
@@ -130,60 +138,51 @@ it('does not submit a held recovery answer after another client wins', async () 
 it('closes a stale dialog when another client wins without submitting a second answer', async () => {
   const f = await fixture(); const first = await f.terminal();
   const pending = f.broker.request({ kind: 'input', title: 'One winner' }, f.scope);
-  await vi.waitFor(() => expect(first.tui.hasOverlay()).toBe(true));
+  await vi.waitFor(() => expect(screenText(first.tui)).toContain('One winner'));
   const other = f.client(); cleanup.push(async () => other.close()); await other.connect(); await other.attach(f.root.sessionId);
   const interaction = f.broker.pending()[0]!;
   expect((await other.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'input', text: 'other client' } }, { session: f.root.sessionId })).outcome).toBe('accepted');
-  await pending; await vi.waitFor(() => expect(first.tui.hasOverlay()).toBe(false));
+  await pending; await vi.waitFor(() => expect(screenText(first.tui)).not.toContain('One winner'));
   expect(f.store.snapshot().requests.filter(row => row.op === 'interaction.answer')).toHaveLength(1);
 });
 
 it('runs the actual multi-page ask-user wizard with public TUI presentation primitives', async () => {
   const f = await fixture(); const view = await f.terminal();
-  const pending = f.broker.request({ kind: 'ask_user', questions: ['first', 'second'].map(id => ({ id, question: `Choose ${id}`, allowFreeform: false,
-    options: [{ id: `${id}-a`, title: 'Alpha' }, { id: `${id}-b`, title: 'Beta' }] })) }, f.scope);
-  await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(true));
+  const ui = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); ui.activate(() => {});
+  cleanup.push(async () => { await ui.vocabulary.dispose(); ui.dispose(); });
+  const host = createUiAskUserHost(ui.vocabulary.createExtensionUi('@felan-ai/ext-ask-user'));
+  const pending = host.ask({ questions: ['first', 'second'].map(id => ({ id, question: `Choose ${id}`, header: id, allowMultiple: false, allowFreeform: false, allowComment: false,
+    options: [{ title: 'Alpha' }, { title: 'Beta' }] })) }, { signal: new AbortController().signal });
+  await vi.waitFor(() => expect(screenText(view.tui)).toContain('Choose first'));
+  expect(view.tui.hasOverlay()).toBe(false);
   view.terminal.input('\r'); view.terminal.input('\r'); view.terminal.input('\r');
-  expect(await pending).toMatchObject({ state: 'answered', answer: { kind: 'ask_user', answers: [
-    { questionId: 'first', choices: ['first-a'] }, { questionId: 'second', choices: ['second-a'] },
-  ] } });
+  expect(await pending).toMatchObject({ status: 'answered', answers: [
+    { questionId: 'first', response: { kind: 'selection', selections: ['Alpha'] } }, { questionId: 'second', response: { kind: 'selection', selections: ['Alpha'] } },
+  ] });
 });
 
-it('mounts the native Prewalk review through the advertised production presenter catalog', async () => {
+it('renders Prewalk through its generic form hint', async () => {
   const f = await fixture(); const view = await f.terminal();
-  expect(view.transport.capabilities?.presenters).toEqual(expect.arrayContaining([...TERMINAL_PRESENTERS]));
-  const pending = f.broker.request({ kind: 'custom', presenter: PREWALK_REVIEW_PRESENTER, data: null, document: '# Review this plan' }, f.scope);
+  const ui = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); ui.activate(() => {});
+  const review = createPrewalkUiHost(ui.vocabulary.createExtensionUi('@felan-ai/ext-prewalk'));
+  cleanup.push(async () => { await review.dispose(); await ui.vocabulary.dispose(); ui.dispose(); });
+  const pending = review.host.review({} as ExtensionContext, '# Review this plan');
   await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(true));
   view.terminal.input('\r');
-  expect(await pending).toMatchObject({ state: 'answered', answer: { kind: 'custom', data: { action: APPROVE_PLAN_OPTION } } });
-});
-
-it('reads a task view from its child session rather than the selected root', async () => {
-  const f = await fixture(); const view = await f.terminal();
-  const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, rootSessionId: f.root.sessionId, parentSessionId: f.root.sessionId });
-  await view.transport.attach(child.sessionId);
-  const request = { viewId: 'shared-view-id', displayMode: 'overlay' as const };
-  for (const [session, title] of [[f.root.sessionId, 'WRONG ROOT CONTENT'], [child.sessionId, 'Correct child task']] as const) {
-    const publication = createTaskViewPublication({ schemaVersion: 1, revision: 1, tasks: [{ id: 'T-000001', title, status: 'pending', priority: 2,
-      blockedBy: [], createdAt: '2026-01-01', updatedAt: '2026-01-01' }] }, request, 1);
-    for (const [index, data] of [publication.manifest, ...publication.pages].entries()) {
-      f.registry.projection(session).setPresentation({ id: `tasks:${request.viewId}:${index}`, kind: 'custom', presenter: TASKS_PRESENTER, data });
-    }
-  }
-  const pending = f.broker.request({ kind: 'custom', presenter: TASKS_PRESENTER, data: request }, { ...f.scope, session: child.sessionId });
-  await vi.waitFor(() => expect(view.terminal.output).toContain('Correct child task'));
-  expect(view.terminal.output).not.toContain('WRONG ROOT CONTENT');
-  expect(view.transport.getInteractions()).toEqual([]);
-  expect(view.transport.getInteractions({ includeSessions: true })).toHaveLength(1);
-  view.terminal.input('\x1b');
-  expect(await pending).toMatchObject({ state: 'answered', answer: { kind: 'custom', data: { action: 'close' } } });
+  expect(await pending).toMatchObject({ action: APPROVE_PLAN_OPTION });
 });
 
 it('renders daemon-owned status and powerline data and follows terminal resize', async () => {
   const f = await fixture(); const view = await f.terminal();
-  f.registry.projection(f.root.sessionId).setPresentation({ id: 'status-fixture', kind: 'status', key: 'fixture', text: 'Index ready' });
-  f.registry.projection(f.root.sessionId).setPresentation({ id: POWERLINE_PRESENTER.id, kind: 'custom', presenter: POWERLINE_PRESENTER,
-    data: { style: 'minimal', charset: 'text', autoWrap: true, padding: 0, lines: [[{ name: 'directory', colorKey: 'directory', align: 'left', text: 'Projected footer' }]] } });
+  f.registry.projection(f.root.sessionId).setPresentation({ id: 'status-fixture', kind: 'status', key: 'fixture', value: { kind: 'text', text: 'Index ready' }, fallback: 'Status' });
+  f.registry.projection(f.root.sessionId).setPresentation({ id: 'footer-view', kind: 'view', revision: 1, title: 'Powerline',
+    hint: { id: 'felan.powerline', version: '2.0.0' }, fields: [
+      { id: 'line', label: 'Line', valueKind: 'number' }, { id: 'segment', label: 'Segment', valueKind: 'text' },
+      { id: 'text', label: 'Value', valueKind: 'text' }, { id: 'alignment', label: 'Alignment', valueKind: 'text' }, { id: 'color', label: 'Color', valueKind: 'text' }],
+    items: [...Object.entries({ style: 'minimal', charset: 'text', autoWrap: 'true', padding: '0', lines: '1' }).map(([key, text]) => ({
+      id: `display-${key}`, values: { line: 0, segment: `display.${key}`, text, alignment: '', color: '' }, fallback: key,
+    })), { id: 'line-0-segment-0', values: { line: 1, segment: 'directory', text: 'Projected footer', alignment: 'left', color: 'directory' }, fallback: 'Directory' }],
+    actions: [], fallback: 'Powerline data' });
   await vi.waitFor(() => expect(view.terminal.output).toContain('Projected footer'));
   expect(view.terminal.output).toContain('Index ready');
   view.terminal.output = ''; view.terminal.columns = 45; view.terminal.rows = 16; view.terminal.resize();
@@ -193,11 +192,8 @@ it('renders daemon-owned status and powerline data and follows terminal resize',
 
 it('opens the scoped agent navigator without constructing an execution host in the client', async () => {
   const f = await fixture(); const view = await f.terminal();
-  f.registry.bindSubagentView(f.root.sessionId, { listLocalSubagents: () => [], getLocalSubagent: () => undefined,
-    subscribe: listener => { listener([]); return () => {}; },
-    steer: async () => { throw new Error('No child selected'); }, cancel: async () => { throw new Error('No child selected'); } });
-  const pending = f.broker.request({ kind: 'custom', presenter: AGENT_VIEW_PRESENTER, data: {} }, f.scope);
-  expect(await pending).toMatchObject({ state: 'answered', answer: { kind: 'custom', data: { opened: true } } });
+  view.terminal.input('/agents'); view.terminal.input('\r');
+  await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(true));
   expect(view.tui.hasOverlay()).toBe(true);
   view.terminal.input('\x1b');
   await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(false));
@@ -206,10 +202,8 @@ it('opens the scoped agent navigator without constructing an execution host in t
 
 it('keeps Escape scoped to a question above the agent navigator', async () => {
   const f = await fixture(); const view = await f.terminal();
-  f.registry.bindSubagentView(f.root.sessionId, { listLocalSubagents: () => [], getLocalSubagent: () => undefined,
-    subscribe: listener => { listener([]); return () => {}; },
-    steer: async () => { throw new Error('No child selected'); }, cancel: async () => { throw new Error('No child selected'); } });
-  await f.broker.request({ kind: 'custom', presenter: AGENT_VIEW_PRESENTER, data: {} }, f.scope);
+  view.terminal.input('/agents'); view.terminal.input('\r');
+  await vi.waitFor(() => expect(view.tui.hasOverlay()).toBe(true));
   const question = f.broker.request({ kind: 'input', title: 'Question above navigator' }, f.scope);
   await vi.waitFor(() => expect(view.terminal.output).toContain('Question above navigator'));
   view.terminal.input('\x1b');
@@ -221,11 +215,20 @@ it('keeps Escape scoped to a question above the agent navigator', async () => {
 
 it('hides malformed powerline data without losing the terminal and accepts a later valid frame', async () => {
   const f = await fixture(); const view = await f.terminal();
-  f.registry.projection(f.root.sessionId).setPresentation({ id: POWERLINE_PRESENTER.id, kind: 'custom', presenter: POWERLINE_PRESENTER, data: { invalid: true } });
+  const footer: UiView = { id: 'footer-recovery', kind: 'view', revision: 1, title: 'Powerline',
+    hint: { id: 'felan.powerline', version: '2.0.0' }, fields: [
+      { id: 'line', label: 'Line', valueKind: 'number' }, { id: 'segment', label: 'Segment', valueKind: 'text' },
+      { id: 'text', label: 'Value', valueKind: 'text' }, { id: 'alignment', label: 'Alignment', valueKind: 'text' }, { id: 'color', label: 'Color', valueKind: 'text' }],
+    items: [...Object.entries({ style: 'minimal', charset: 'text', autoWrap: 'true', padding: '0', lines: '1' }).map(([key, text]) => ({
+      id: `display-${key}`, values: { line: 0, segment: `display.${key}`, text, alignment: '', color: '' }, fallback: key,
+    })), { id: 'line-0-segment-0', values: { line: 1, segment: 'directory', text: 'Recovered footer', alignment: 'left', color: 'directory' }, fallback: 'Directory' }],
+    actions: [], fallback: 'Powerline data' };
+  f.registry.projection(f.root.sessionId).setPresentation({ ...footer, items: footer.items.map(item => item.id === 'line-0-segment-0'
+    ? { ...item, values: { ...item.values, color: 'untrusted-color' } } : item) });
   await vi.waitFor(() => expect(view.controller.notice).toContain('invalid powerline data'));
   expect(view.controller.state?.status).toBe('live');
-  f.registry.projection(f.root.sessionId).setPresentation({ id: POWERLINE_PRESENTER.id, kind: 'custom', presenter: POWERLINE_PRESENTER,
-    data: { style: 'minimal', charset: 'text', autoWrap: true, padding: 0, lines: [[{ name: 'directory', colorKey: 'directory', align: 'left', text: 'Recovered footer' }]] } });
+  expect(view.terminal.output).not.toContain('Recovered footer');
+  f.registry.projection(f.root.sessionId).setPresentation({ ...footer, revision: 2 });
   await vi.waitFor(() => expect(view.terminal.output).toContain('Recovered footer'));
 });
 
@@ -248,3 +251,4 @@ class TestTerminal implements Terminal {
   setProgress(_active: boolean): void {}
   setProgramStatus(_status: ProgramStatus): void {}
 }
+

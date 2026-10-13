@@ -63,6 +63,13 @@ describe.skipIf(!supported)('owner-only local daemon IPC and startup', () => {
     await expect(probeDaemon(owner.target, { ...owner.identity, rootSet: [join(owner.target.agentDir, 'wrong')] })).rejects.toThrow();
   });
 
+  it('classifies a vanished native endpoint as unavailable and closes its socket descriptor', async () => {
+    const { owner } = await fixture();
+    const before = descriptorCount();
+    await expect(connectUnix(owner.target.endpoint, owner.target.uid)).rejects.toMatchObject({ code: 'unavailable' });
+    expect(descriptorCount()).toBe(before);
+  });
+
   it.each(['replace', 'delete'] as const)('stops admission and drops existing connections on endpoint %s', async action => {
     const { owner } = await fixture(); await serve(owner); const socket = await connectLocalIpc(owner.target);
     let tearingDown = false;

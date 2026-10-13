@@ -486,38 +486,10 @@ describe('subscription controller', () => {
     expect(Object.keys((persisted as { providers: object }).providers)).toEqual(['anthropic']);
   });
 
-  it('shows usage written by the lease holder when the host defers the refresh', async () => {
-    const store = createSubscriptionUsageStore();
-    const set = vi.spyOn(store, 'set');
-    const host: SubscriptionUsageHost = {
-      fetchUsage: vi.fn().mockResolvedValue({ ok: false, error: { code: 'REFRESH_DEFERRED' } }),
-    };
-    const controller = createSubscriptionController(host, undefined, store);
-    const model = { provider: 'anthropic', id: 'claude-opus-4-6' };
-
-    await controller.refresh(model);
-    expect(controller.state.usage).toBeUndefined();
-    expect(controller.state.loading).toBe(false);
-
-    store.set('anthropic', {
-      rateLimitedCount: 0,
-      snapshot: { provider: 'anthropic', displayName: 'Claude Plan', windows: [{ label: '5h', usedPercent: 60 }] },
-    });
-    set.mockClear();
-    await controller.refresh(model);
-    expect(controller.state.usage).toMatchObject({ windows: [{ label: '5h', usedPercent: 60 }] });
-    expect(controller.state.usage?.error).toBeUndefined();
-
-    await controller.refresh(model, { force: true });
-    expect(host.fetchUsage).toHaveBeenCalledTimes(2);
-    expect(set).not.toHaveBeenCalled();
-  });
-
-  it('keeps missing credentials local and releases leases on provider switch and clear', async () => {
+  it('keeps missing credentials local across provider switches', async () => {
     const store = createSubscriptionUsageStore();
     const host: SubscriptionUsageHost = {
       fetchUsage: vi.fn().mockResolvedValue({ ok: false, error: { code: 'NO_CREDENTIALS' } }),
-      releaseRefreshLease: vi.fn(),
     };
     const controller = createSubscriptionController(host, undefined, store);
 
@@ -526,10 +498,10 @@ describe('subscription controller', () => {
     expect(store.get('anthropic')).toBeUndefined();
 
     await controller.refresh({ provider: 'openai-codex', id: 'gpt-5.6-sol' });
-    expect(host.releaseRefreshLease).toHaveBeenCalledWith('anthropic');
+    expect(controller.state.provider).toBe('codex');
 
     controller.clear();
-    expect(host.releaseRefreshLease).toHaveBeenCalledWith('codex');
+    expect(controller.state.provider).toBeUndefined();
   });
 
   it('does not fall back to windows whose reset time has passed', async () => {

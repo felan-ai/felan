@@ -1,12 +1,12 @@
 import { expect, it, vi } from 'vitest';
-import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_PRESENTER, PresentationSchema, parseActiveMessageDisplay, parseMessageDisplay, parseSchema, readMessageDisplay } from '../src/index.js';
+import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, PresentationSchema, parseActiveMessageDisplay, parseMessageDisplay, parseSchema, readMessageDisplay } from '../src/index.js';
 
 const display = { kind: 'assistant', timestamp: 42, api: 'fixture-api', provider: 'fixture', model: 'model', stopReason: 'toolUse',
   usage: { input: 17, output: 23, cacheRead: 2, cacheWrite: 3, totalTokens: 45, cost: { input: 0.01, output: 0.02, cacheRead: 0.003, cacheWrite: 0.004, total: 0.037 } } };
 it('carries actual assistant fields inside existing JSON presentation and message details', () => {
   expect(readMessageDisplay({ [MESSAGE_DISPLAY_KEY]: display })).toEqual(display);
   const active = { message: 'assistant', display };
-  expect(parseSchema(PresentationSchema, { id: MESSAGE_DISPLAY_PRESENTER.id, kind: 'custom', presenter: MESSAGE_DISPLAY_PRESENTER, data: active })).toMatchObject({ data: active });
+  expect(parseSchema(PresentationSchema, { id: MESSAGE_DISPLAY_ID, kind: 'message_display', data: active })).toMatchObject({ data: active });
   expect(parseActiveMessageDisplay(active)).toEqual(active);
   expect(parseMessageDisplay({ kind: 'tool', name: 'read', timestamp: 7 })).toEqual({ kind: 'tool', name: 'read', timestamp: 7 });
   expect(readMessageDisplay({ other: 'legacy details' })).toBeUndefined();

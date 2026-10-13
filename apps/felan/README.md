@@ -8,18 +8,31 @@ with public Pi TUI primitives, and Pi's session runtime.
 npx @felan-ai/felan
 ```
 
-The package exposes the `felan` binary and owns CLI/TUI, ACP, headless and local
-onboarding presentation. It installs an exact `@felan-ai/daemon` dependency;
-the daemon owns credentials, settings, stores, profiles and host execution.
+The package exposes the `felan` binary and owns CLI/TUI, ACP, headless clients,
+local service providers and the default `host.json`. It installs an exact
+`@felan-ai/daemon` dependency. The daemon owns admission, canonical storage and
+execution lifetime; local providers supply settings, credentials and runtimes.
 Portable feature behavior remains in the `@felan-ai/ext-*` packages.
 
 All session execution goes through the exact installed daemon package;
 `resolveInstalledDaemonEntrypoint()` does not assume the launch cwd. The former
-`@felan-ai/felan/daemon-profile` export was removed; profile API version 1 is at
-`@felan-ai/daemon/daemon-profile`. This breaking application change targets the
-prepared, unpublished `@felan-ai/felan` 0.29.0 release.
+profile exports are removed. Providers use `@felan-ai/daemon/provider` and
+`@felan-ai/daemon/session-runtime`. The coordinated breaking releases are
+Felan 0.30.0, daemon 0.2.0 and Agent Core 0.13.0.
 
-### Prepared 0.29.0 migration
+### Configured services
+
+Pass `--host-config /absolute/path/host.json` to select explicit trusted
+configuration. Otherwise the launcher uses `host.json` in the agent directory,
+then its packaged default. Providers resolve from the installed managing
+package, never from the project or configuration directory. Provider changes
+require a daemon restart. Restored sessions do not silently adopt changed
+configuration; use explicit session reload when recovery requires it.
+The TUI offers a confirmation when a saved session needs configuration recovery.
+You can also use `/reload <session-id>` before attaching. No transcript is reset
+and no pending work is replayed to recover configuration.
+Child sessions with missing or changed configuration identities remain blocked
+from execution; explicit reload currently applies only to root sessions.
 
 Programmatic consumers use the client API: `runCli`, `runDaemonFelan`,
 `runLocalFelanHeadless`, `SessionClient`, `newRequestId`, daemon target and
@@ -86,6 +99,7 @@ felan [options] [message]
 --session <id>     Resume a specific session
 --session-dir <dir> Session directory for --session
 --diagnostics      Print runtime versions and configuration mode
+--host-config <path> Select an absolute trusted host.json path
 update             Update a global npm installation of Felan Code
 savings            Show persisted estimated API-equivalent savings
 daemon <action>     Manage the persistent local daemon
@@ -395,12 +409,12 @@ corepack enable
 pnpm install --frozen-lockfile
 pnpm --filter @felan-ai/felan build
 pnpm --filter @felan-ai/felan type-check
-pnpm --filter @felan-ai/felan test
+scripts/test-isolated.sh pnpm --filter @felan-ai/felan test
 ```
 
 The development-only root preview (`pnpm theme:preview`) shows the two
 host-owned themes across representative Pi, editor, and Powerline states. It
 is intentionally a browser approximation rather than a second renderer.
 
-Run `pnpm verify` from the repository root for cross-package and packed-binary
+Run `scripts/test-isolated.sh pnpm verify` from the repository root for cross-package and packed-binary
 coverage.

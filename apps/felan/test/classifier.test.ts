@@ -1,13 +1,12 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ModelRuntime, type SettingsManager } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createLocalClassifier, selectLocalClassifierModel, type LocalClassifierModel } from '@felan-ai/daemon/internal/classifier';
-import { createLocalFelanRuntime } from '../src/runtime.js';
-import { LocalMemoryCoordinator } from '@felan-ai/daemon/internal/memory/coordinator';
-import { LocalSubagentHost } from '@felan-ai/daemon/internal/subagents/host';
-import { createLocalSettingsManager, getClassifierModelSetting, setClassifierModelSetting } from '@felan-ai/daemon/internal/settings';
+import { createLocalClassifier, selectLocalClassifierModel, type LocalClassifierModel } from '../src/providers/classifier.js';
+import { composeLocalSession } from './fixtures/local-composition.js';
+import { createLocalSettingsManager, getClassifierModelSetting } from '../src/providers/settings.js';
+import { mergeDaemonGlobalSettings } from '../src/providers/global-settings.js';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -21,7 +20,7 @@ function model(provider: string, id: string): LocalClassifierModel {
 }
 
 async function directory(): Promise<string> {
-  const path = await mkdtemp(join(tmpdir(), 'felan-classifier-test-'));
+  const path = await realpath(await mkdtemp(join(tmpdir(), 'felan-classifier-test-')));
   directories.push(path);
   return path;
 }
@@ -88,12 +87,12 @@ describe('classifier settings and selection', () => {
     const manager = createLocalSettingsManager(agentDir, agentDir);
     manager.setDefaultProvider('openai');
     await manager.flush();
-    await setClassifierModelSetting(agentDir, 'openrouter/typesafe/jev-1.13');
+    await mergeDaemonGlobalSettings(agentDir, { extensions: [], classifierModel: ' openrouter/ typesafe/jev-1.13 ' }, () => {});
     await manager.reload();
     expect(getClassifierModelSetting(manager)).toBe('openrouter/typesafe/jev-1.13');
     expect(manager.getDefaultProvider()).toBe('openai');
-    await expect(setClassifierModelSetting(agentDir, 'invalid')).rejects.toThrow('felanClassifier.model');
-    await setClassifierModelSetting(agentDir, 'auto');
+    await expect(mergeDaemonGlobalSettings(agentDir, { extensions: [], classifierModel: 'invalid' }, () => {})).rejects.toThrow('felanClassifier.model');
+    await mergeDaemonGlobalSettings(agentDir, { extensions: [], classifierModel: 'auto' }, () => {});
     await manager.reload();
     expect(getClassifierModelSetting(manager)).toBe('auto');
   });
@@ -136,28 +135,25 @@ describe('native classifier runtime integration', () => {
       api: model.api, provider: model.provider, model: model.id, timestamp: 1, stopReason: 'stop',
       answers: Object.fromEntries(Object.keys(context.questions).map(id => [id, { type: 'bool' as const, probability: 0.7 }])),
     }));
-    await setClassifierModelSetting(agentDir, 'missing/model');
-    const memory = new LocalMemoryCoordinator({ agentDir, modelRuntime: native, enabled: false, recover: false });
-    const selection = vi.spyOn(memory, 'setModelSelection');
-    const childHost = vi.spyOn(LocalSubagentHost, 'create');
-    const runtime = await createLocalFelanRuntime({ cwd: agentDir, agentDir, homeDir: agentDir,
-      modelRuntime: native, memoryCoordinator: memory });
+    await mergeDaemonGlobalSettings(agentDir, { extensions: [], classifierModel: 'missing/model' }, () => {});
     const question = { yes: { type: 'bool' as const, instructions: 'Yes?', criteria: { true: 'Yes', false: 'No' } } };
+    const first = await composeLocalSession({ cwd: agentDir, agentDir, homeDir: agentDir, modelRuntime: native });
     try {
-      expect(runtime.diagnostics.some(d => d.message.includes('using Auto'))).toBe(true);
-      expect(childHost.mock.calls.at(-1)?.[0].classifier).toBe(selection.mock.calls.at(-1)![2]);
-      await selection.mock.calls.at(-1)![2]!.classify({}, question);
+      expect(first.composition.diagnostics.some(d => d.message.includes('using Auto'))).toBe(true);
+      await first.composition.options.runtime.classifier!.classify({}, question);
       expect(classify.mock.calls.at(-1)?.[0]).toBe(direct);
-      await setClassifierModelSetting(agentDir, 'openrouter/typesafe/jev-1.13');
-      await runtime.newSession();
-      expect(childHost.mock.calls.at(-1)?.[0].classifier).toBe(selection.mock.calls.at(-1)![2]);
-      await selection.mock.calls.at(-1)![2]!.classify({}, question);
-      expect(classify.mock.calls.at(-1)?.[0]).toBe(router);
-      expect(available.mock.calls).toEqual([['classifier'], ['image'], ['classifier'], ['image']]);
-      expect(getClassifierModelSetting(runtime.services.settingsManager)).toBe('openrouter/typesafe/jev-1.13');
     } finally {
-      await runtime.dispose();
-      await memory.dispose();
+      await first.dispose();
+    }
+    await mergeDaemonGlobalSettings(agentDir, { extensions: [], classifierModel: 'openrouter/typesafe/jev-1.13' }, () => {});
+    const replacement = await composeLocalSession({ cwd: agentDir, agentDir, homeDir: agentDir, modelRuntime: native });
+    try {
+      await replacement.composition.options.runtime.classifier!.classify({}, question);
+      expect(classify.mock.calls.at(-1)?.[0]).toBe(router);
+      expect(available.mock.calls).toEqual([['classifier'], ['classifier']]);
+      expect(getClassifierModelSetting(replacement.session.settingsManager)).toBe('openrouter/typesafe/jev-1.13');
+    } finally {
+      await replacement.dispose();
     }
   });
 
@@ -166,17 +162,14 @@ describe('native classifier runtime integration', () => {
     const native = await ModelRuntime.create({ authPath: join(agentDir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
     vi.spyOn(native, 'getAvailableOfType').mockResolvedValue([]);
     const classify = vi.spyOn(native, 'classify');
-    const memory = new LocalMemoryCoordinator({ agentDir, modelRuntime: native, enabled: false, recover: false });
-    const selection = vi.spyOn(memory, 'setModelSelection');
-    const runtime = await createLocalFelanRuntime({ cwd: agentDir, agentDir, homeDir: agentDir, modelRuntime: native, memoryCoordinator: memory });
+    const result = await composeLocalSession({ cwd: agentDir, agentDir, homeDir: agentDir, modelRuntime: native });
     try {
-      expect(selection.mock.calls.at(-1)?.[2]).toBeUndefined();
+      expect(result.composition.options.runtime.classifier).toBeUndefined();
       expect(classify).not.toHaveBeenCalled();
-      expect(runtime.session.resourceLoader.getExtensions().extensions.some(extension =>
+      expect(result.session.resourceLoader.getExtensions().extensions.some(extension =>
         extension.path === '<inline:@felan-ai/agent-core/dynamic-thinking>')).toBe(false);
     } finally {
-      await runtime.dispose();
-      await memory.dispose();
+      await result.dispose();
     }
   });
 });

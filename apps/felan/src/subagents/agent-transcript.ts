@@ -15,7 +15,7 @@ import {
   type TUI,
 } from '@earendil-works/pi-tui';
 import { getLocalToolDisplayMode } from '../tool-activity/mode.js';
-import type { AgentViewTranscript } from '@felan-ai/ext-subagents/view';
+import type { AgentViewTranscript } from './types.js';
 import { createToolActivitySessionView } from '../tool-activity/runtime-view.js';
 import { createToolActivityDisplayDefinition } from '../tool-activity/presentation.js';
 import { ToolActivityState } from '../tool-activity/state.js';

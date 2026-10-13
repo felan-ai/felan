@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { closeSync, fstatSync, ftruncateSync, readSync, realpathSync, writeSync } from 'node:fs';
 import { Socket } from 'node:net';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { encodeFrame, type DaemonIdentity } from '@felan-ai/session-protocol';
 import { DaemonSecurityError } from './native-ownership.js';
 import { probeDaemon, readControlFrame, readinessResponse } from './ipc.js';
@@ -17,6 +17,7 @@ export interface DaemonLaunchReceipt {
 export async function spawnDetachedDaemon(options: {
   target: DaemonTarget;
   entrypoint: string;
+  hostConfigPath?: string;
   timeoutMs?: number;
   replacing?: DaemonIdentity;
 }): Promise<DaemonLaunchReceipt> {
@@ -25,8 +26,11 @@ export async function spawnDetachedDaemon(options: {
   const entrypoint = realpathSync(options.entrypoint);
   const timeoutMs = options.timeoutMs ?? 10_000;
   if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 60_000) throw new DaemonSecurityError('invalid_launch', 'Readiness deadline must be between 100 and 60000 milliseconds.');
+  if (options.hostConfigPath !== undefined && (!isAbsolute(options.hostConfigPath) || Buffer.byteLength(options.hostConfigPath) > 4096 || options.hostConfigPath.includes('\0')))
+    throw new DaemonSecurityError('invalid_launch', 'Explicit host configuration must be a bounded absolute path.');
   if (options.replacing) assertTargetIdentity(target, options.replacing, options.replacing);
-  const child = spawn(executable, [entrypoint, JSON.stringify(options.target), ...(options.replacing ? ['--replace', JSON.stringify(options.replacing)] : [])], {
+  const child = spawn(executable, [entrypoint, JSON.stringify(options.target), ...(options.hostConfigPath ? ['--host-config', options.hostConfigPath] : []),
+    ...(options.replacing ? ['--replace', JSON.stringify(options.replacing)] : [])], {
     cwd: process.cwd(),
     env: process.env,
     detached: true,

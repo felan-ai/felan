@@ -10,6 +10,20 @@ ordinary editing tools. File operations use the current `AgentRuntime`.
 The local TUI presents patch calls with friendly action labels while headless
 modes continue to expose the stable tool name and raw results.
 
+## Entry points
+
+- `@felan-ai/ext-codex` is the renderer-free default extension for daemon and
+  headless loading. Its `createCodexTools` export returns execution-only tools.
+- `@felan-ai/ext-codex/runtime` remains a renderer-free entry for direct access
+  to `createCodexExtension`, `createCodexExecutionTools`, and request controls.
+
+All default entries carry the same execution contribution. Agent Core resolves
+it from validated extension configuration and applies the configured stream
+wrapper; hosts do not need a Codex-specific wrapper or package-name branch.
+Rich patch-call rendering belongs to `apps/felan`; the package exports no TUI entry.
+The root and `/runtime` export the same portable API, including `createCodexTools`.
+Configured hosts should import the root without a package-specific path rewrite.
+
 For eligible Responses requests, `extensionConfig.codex.priority` accepts
 `normal`, `fast`, or `ultrafast`:
 
@@ -99,8 +113,9 @@ package owns provider/model eligibility, structured patch replacement, and
 request controls; it does not register or replace a provider. File operations
 go through the active `AgentRuntime`.
 
-The package requires a compatible `@felan-ai/agent-core` peer, TypeBox, and
-Pi-TUI. Host mode remains current-user access and is not a sandbox.
+The package requires a compatible `@felan-ai/agent-core` peer and TypeBox.
+Neither the root nor `/runtime` loads terminal renderers. Host mode remains
+current-user access and is not a sandbox.
 
 ## Related documentation
 

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile, symlink, link } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile, symlink, link, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -56,7 +56,7 @@ it('uses valid user palettes over shipped palettes and keeps invalid overrides f
   const themes = new ClientThemes(path); await themes.load();
   expect(colorToHex(themes.theme.colors.accent)).toBe('#abcdef');
   expect(themes.warnings).toHaveLength(1);
-  expect(getLocalThemePaths(path)).toEqual([join(path, 'themes'), FELAN_THEME_PATHS[0]]);
+  expect(getLocalThemePaths(path)).toEqual([join(await realpath(path), 'themes'), FELAN_THEME_PATHS[0]]);
 });
 
 it('selects both sides of a saved light/dark pair without rewriting its name', async () => {

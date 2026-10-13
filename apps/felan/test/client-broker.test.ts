@@ -1,17 +1,20 @@
+import { sessionUiPort } from './session-ui-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Type } from 'typebox';
 import type { ExtensionAPI, ExtensionContext } from '@felan-ai/agent-core';
-import { LIMITS, RUNTIME_UI_PRESENTER, parseInteraction, type Interaction } from '@felan-ai/session-protocol';
-import { SessionClient } from '../src/client/client.js';
-import { ClientInteractionPresenters, type InteractionPresenterUi } from '../src/client/presenters.js';
+import { LIMITS, parseInteraction, type Interaction } from '@felan-ai/session-protocol';
+import { SessionClient, newRequestId } from '../src/client/client.js';
+import { createBrowserAuthorizationPresentation } from '../src/providers/ui/extension-ui.js';
 import { createSessionExtensionUi } from '../../daemon/src/daemon/extension-ui.js';
-import { createLocalBrowserAuthorizationHost } from '../../daemon/src/browser/authorization-host.js';
+import { createLocalBrowserAuthorizationHost } from '../src/providers/browser/authorization-host.js';
 import type { AgentRuntime } from '@felan-ai/agent-core';
 import { InteractionBroker, createRegistryInteractionBroker } from '../../daemon/src/daemon/broker.js';
-import { DaemonConfiguration } from '../../daemon/src/daemon/configuration.js';
+import { DaemonConfiguration } from '../src/providers/configuration.js';
 import { DaemonControlStore } from '../../daemon/src/daemon/control-store.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
+import { createUiVocabulary } from '../../daemon/src/daemon/ui-vocabulary.js';
 import { serverFixture } from '../../daemon/test/fixtures/server.js';
+import { createUiAskUserHost } from '../../../packages/ext-ask-user/src/ui.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -20,11 +23,11 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function fixture(extension?: (pi: ExtensionAPI) => void, presenters: Array<{ id: string; version: string }> = []) {
+async function fixture(extension?: (pi: ExtensionAPI) => void, policy: { requireLocalConsole?: boolean } = {}) {
   const f = await serverFixture({ now: () => Date.now(), ...(extension ? { extension } : {}) });
   const published: Interaction[] = [];
   const resumed = vi.fn(async (_session: string, _answer: unknown, _id: string, dispatch: () => void) => { dispatch(); });
-  const broker = new InteractionBroker({ store: f.store, presenters, now: () => Date.now(), resume: resumed,
+  const broker = new InteractionBroker({ store: f.store, ...policy, now: () => Date.now(), resume: resumed,
     publish: (interaction, revisions) => { published.push(interaction); f.registry.publishInteraction(interaction, revisions); } });
   const configuration = new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() });
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'fixture', broker });
@@ -37,10 +40,11 @@ async function fixture(extension?: (pi: ExtensionAPI) => void, presenters: Array
     await f.dispose();
   });
   const scope = { kind: 'session', session: f.root.sessionId, root: f.root.sessionId } as const;
-  async function client(kind: 'tui' | 'acp' | 'headless' = 'tui', attach = true, clientPresenters: Array<{ id: string; version: string }> = []) {
+  async function client(kind: 'tui' | 'acp' | 'headless' = 'tui', attach = true, forms = true) {
     const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
-      expected: f.owner.identity, clientVersion: 'fixture', kind, presenters: clientPresenters,
-      interactionKinds: ['select', 'confirm', 'input', 'ask_user', 'tool_approval', 'oauth', 'trust', 'dependency', ...(clientPresenters.length ? ['custom' as const] : [])],
+      expected: f.owner.identity, clientVersion: 'fixture', kind, interactionKinds: kind === 'headless' ? [] : ['select', 'confirm', 'input', 'tool_approval', 'dependency',
+        ...(forms ? ['form' as const] : [])],
+      capabilities: [],
       requestTimeoutMs: 1000, retries: 0 });
     clients.push(client);
     await client.connect();
@@ -50,168 +54,177 @@ async function fixture(extension?: (pi: ExtensionAPI) => void, presenters: Array
   return { ...f, broker, published, resumed, server, scope, client };
 }
 
+function setClientAuthority(f: Awaited<ReturnType<typeof fixture>>, client: SessionClient, kind: 'tui' | 'acp',
+  authority: { principal?: string; localConsole: boolean }) {
+  const capabilities = client.capabilities!;
+  f.broker.connected({ principal: authority.principal ?? f.server.principal, kind, attachment: capabilities.attachmentId,
+    sessions: [f.root.sessionId], interactionKinds: capabilities.interactionKinds, localConsole: authority.localConsole });
+}
+
+function askUserHost(f: Awaited<ReturnType<typeof fixture>>) {
+  const vocabulary = createUiVocabulary({ canRequest: () => true, publish() {}, async request(form, options) {
+    const result = await f.broker.request({ kind: 'form', form }, f.scope, {
+      ...(options?.signal ? { signal: options.signal } : {}),
+      ...(options?.deferrable === undefined ? {} : { deferrable: options.deferrable }),
+      ...(options?.timeoutMs === undefined ? {} : { timeout: Math.ceil(options.timeoutMs) }),
+    });
+    if (result.state !== 'answered') return result;
+    if (result.answer.kind !== 'form') throw new Error('Expected a generic form answer.');
+    return { state: 'answered', answer: result.answer };
+  } });
+  cleanups.push(() => vocabulary.dispose());
+  return createUiAskUserHost(vocabulary.createExtensionUi('@felan-ai/ext-ask-user'));
+}
+
 describe('InteractionBroker', () => {
-  it('requires a local TUI and committed browser consent before native inspection', async () => {
+  it.each(['host', 'session'] as const)('answers %s interactions from equally capable clients', async kind => {
     const f = await fixture();
-    const bridge = createSessionExtensionUi({ broker: f.broker, scope: f.scope }); bridge.activate(() => {});
+    const scope = kind === 'host' ? { kind: 'host' as const } : f.scope;
+    const interaction = parseInteraction({ id: `capable-${kind}`, state: 'waiting', scope, createdAt: Date.now(),
+      request: { kind: 'confirm', title: 'Shared prompt', message: 'Continue?' } });
+    f.store.putInteraction(interaction);
+    const client = await f.client('acp');
+    await vi.waitFor(() => expect(client.getInteractions({ includeSessions: true })).toContainEqual(expect.objectContaining({ id: interaction.id })));
+    expect((await client.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'confirm', confirmed: true } },
+      kind === 'session' ? { session: f.root.sessionId } : undefined)).outcome).toBe('accepted');
+    expect(f.store.snapshot().interactions.find(item => item.id === interaction.id)).toMatchObject({ state: 'answered' });
+  });
+
+  it('requires the owner principal for session approvals without requiring a local console', async () => {
+    const f = await fixture(); const client = await f.client('acp');
+    setClientAuthority(f, client, 'acp', { principal: 'remote:other-user', localConsole: false });
+    const request = { kind: 'confirm', title: 'Owner approval', message: 'Approve this session action?' } as const;
+    const waiting = f.broker.request(request, f.scope, { authority: 'owner' });
+    const item = f.broker.pending()[0]!;
+    expect(item).toMatchObject({ scope: f.scope, authority: 'owner' });
+    expect(f.broker.canReceive(client.capabilities!.attachmentId, item)).toBe(false);
+    expect(() => f.broker.presentationRequest(item.id, client.capabilities!.attachmentId)).toThrow();
+    expect((await client.request('interaction.answer', { interactionId: item.id,
+      answer: { kind: 'confirm', confirmed: true } }, { session: f.root.sessionId })).outcome).toBe('rejected');
+    setClientAuthority(f, client, 'acp', { localConsole: false });
+    expect(f.broker.canReceive(client.capabilities!.attachmentId, item)).toBe(true);
+    expect((await client.request('interaction.answer', { interactionId: item.id,
+      answer: { kind: 'confirm', confirmed: true } }, { session: f.root.sessionId })).outcome).toBe('accepted');
+    await expect(waiting).resolves.toMatchObject({ state: 'answered' });
+  });
+
+  it.each(['tui', 'acp'] as const)('does not turn a %s label or form interaction support into local-console authority', async kind => {
+    const f = await fixture(); const client = await f.client(kind);
+    setClientAuthority(f, client, kind, { localConsole: false });
+    const bridge = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); bridge.activate(() => {});
+    cleanups.push(async () => bridge.dispose());
+    await expect(bridge.vocabulary.createExtensionUi('@felan-ai/ext-mcp').request({
+      title: 'Authorize MCP server', fallback: 'Authorize locally', input: { fields: [] },
+      actions: [{ id: 'cancel', label: 'Cancel', target: 'element', outcome: 'cancel' }],
+    }, { audience: 'host' })).resolves.toEqual({ state: 'cancelled', reason: 'unsupported' });
+    expect(f.broker.pending()).toEqual([]);
+    const request = { kind: 'dependency', dependency: 'fixture', message: 'Install?' } as const;
+    const scope = { kind: 'host' } as const;
+    expect(f.broker.canPresent(request, scope)).toBe(false);
+    const waiting = f.broker.request(request, scope);
+    const item = f.broker.pending()[0]!;
+    expect(item.authority).toBe('local-console');
+    expect(f.broker.canReceive(client.capabilities!.attachmentId, item)).toBe(false);
+    expect((await client.request('interaction.answer', { interactionId: item.id,
+      answer: { kind: 'dependency', approved: true } })).outcome).toBe('rejected');
+    f.broker.cancel(item.id, 'abort'); await waiting;
+  });
+
+  it('applies the host-wide local-console requirement to owner and ordinary session approvals', async () => {
+    const f = await fixture(undefined, { requireLocalConsole: true }); const client = await f.client('acp');
+    setClientAuthority(f, client, 'acp', { localConsole: false });
+    const request = { kind: 'confirm', title: 'Continue?', message: 'Check authority' } as const;
+    expect(f.broker.canPresent(request, f.scope)).toBe(false);
+    expect(f.broker.canPresent(request, f.scope, { authority: 'owner' })).toBe(false);
+    setClientAuthority(f, client, 'acp', { localConsole: true });
+    expect(f.broker.canPresent(request, f.scope)).toBe(true);
+    expect(f.broker.canPresent(request, f.scope, { authority: 'owner' })).toBe(true);
+  });
+
+  it('keeps creator-affine host trust prompts bound to their original local connection', async () => {
+    const f = await fixture(); const creator = await f.client('acp', false); const other = await f.client('tui', false);
+    const request = { kind: 'confirm', title: 'Trust project?', message: f.cwd } as const;
+    const scope = { kind: 'host', recipient: creator.capabilities!.attachmentId } as const;
+    const waiting = f.broker.request(request, scope); const item = f.broker.pending()[0]!;
+    expect(f.broker.canReceive(other.capabilities!.attachmentId, item)).toBe(false);
+    expect((await other.request('interaction.answer', { interactionId: item.id,
+      answer: { kind: 'confirm', confirmed: true } })).outcome).toBe('rejected');
+    creator.close();
+    await expect(waiting).resolves.toEqual({ state: 'cancelled', reason: 'abort' });
+    expect(f.broker.pending()).toEqual([]);
+  });
+
+  it.each(['tui', 'acp'] as const)('requires owner consent through capable %s clients before native Chrome inspection', async kind => {
+    const f = await fixture();
+    const bridge = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); bridge.activate(() => {});
     cleanups.push(async () => bridge.dispose());
     const inspect = vi.fn(async () => ({ state: 'ready' as const, processId: 1, connection: { port: 1234, webSocketPath: '/private' } }));
     const lease = { connection: { port: 1234, webSocketPath: '/private' }, signal: new AbortController().signal, connected: true, close: vi.fn(async () => {}) };
     const attach = vi.fn(async () => ({ ready: true }));
-    const host = createLocalBrowserAuthorizationHost({ runtime: { kind: 'host' } as AgentRuntime, presentation: bridge.browser, inspect, createLease: async () => lease });
+    const host = createLocalBrowserAuthorizationHost({ runtime: { kind: 'host' } as AgentRuntime, presentation: createBrowserAuthorizationPresentation({ port: sessionUiPort(f.broker, f.scope), openBrowserSetup: async () => {} }), inspect, createLease: async () => lease });
     const context = { mode: 'print', hasUI: true, ui: bridge.context } as unknown as ExtensionContext;
     const request = { origin: 'https://example.test', reason: 'Read the report.', extensionContext: context, signal: new AbortController().signal, attach };
-    const acp = await f.client('acp'); await expect(host.authorize(request)).resolves.toMatchObject({ status: 'unavailable' });
+    await expect(host.authorize(request)).resolves.toMatchObject({ status: 'cancelled' });
     expect(inspect).not.toHaveBeenCalled();
-    const client = await f.client('tui'); const pending = host.authorize(request);
-    await vi.waitFor(() => expect(client.getInteractions()).toHaveLength(1));
-    const item = client.getInteractions()[0]!;
-    expect(item.scope).toEqual({ kind: 'host' }); expect(item.request).toMatchObject({ title: expect.stringContaining('Read the report.') });
-    expect(acp.getInteractions()).toEqual([]);
-    expect((await acp.request('interaction.answer', { interactionId: item.id, answer: { kind: 'select', choices: ['once'] } })).outcome).toBe('rejected');
+    const incompatible = await f.client(kind, true, false);
+    expect(incompatible.capabilities?.interactionKinds).not.toContain('form');
+    await expect(host.authorize(request)).resolves.toMatchObject({ status: 'cancelled' });
+    expect(incompatible.getInteractions()).toEqual([]); expect(inspect).not.toHaveBeenCalled();
+    const client = await f.client(kind); const pending = host.authorize(request);
+    expect(client.capabilities?.interactionKinds).toContain('form');
+    await vi.waitFor(() => expect(client.getInteractions({ includeSessions: true })).toHaveLength(1));
+    const item = client.getInteractions({ includeSessions: true })[0]!;
+    expect(item.scope).toEqual(f.scope);
+    expect(item).toMatchObject({ authority: 'owner', request: { kind: 'form', form: {
+      description: expect.stringContaining('Read the report.'),
+    } } });
+    const answer = { kind: 'form', actionId: 'once', outcome: 'submit', values: {} } as const;
+    expect((await incompatible.request('interaction.answer', { interactionId: item.id, answer }, { session: f.root.sessionId })).outcome).toBe('rejected');
     expect(inspect).not.toHaveBeenCalled();
-    await client.request('interaction.answer', { interactionId: item.id, answer: { kind: 'select', choices: ['once'] } });
+    expect((await client.request('interaction.answer', { interactionId: item.id, answer }, { session: f.root.sessionId })).outcome).toBe('accepted');
     await expect(pending).resolves.toEqual({ status: 'authorized' }); expect(attach).toHaveBeenCalledOnce();
   });
 
-  it('reports unavailable OAuth presentation before creating a dialog', async () => {
+  it('reports unavailable host authorization before creating a dialog', async () => {
     const f = await fixture();
-    const bridge = createSessionExtensionUi({ broker: f.broker, scope: f.scope }); bridge.activate(() => {});
+    const bridge = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); bridge.activate(() => {});
     cleanups.push(async () => bridge.dispose());
-    await expect(bridge.mcp({ server: 'server', url: 'https://oauth.example.test/authorize', signal: new AbortController().signal }))
-      .rejects.toMatchObject({ code: 'unsupported' });
+    await expect(bridge.vocabulary.createExtensionUi('@felan-ai/ext-mcp').request({ title: 'Authorize MCP server', fallback: 'Authorize locally',
+      description: 'https://oauth.example.test/authorize', input: { fields: [] },
+      actions: [{ id: 'cancel', label: 'Cancel', target: 'element', outcome: 'cancel' }] },
+    { audience: 'host', deferrable: false, transient: true })).resolves.toEqual({ state: 'cancelled', reason: 'unsupported' });
     expect(f.broker.pending()).toEqual([]);
   });
 
-  it('keeps local OAuth pending after opening and never persists its authorization URL', async () => {
-    const f = await fixture(); const client = await f.client();
-    const bridge = createSessionExtensionUi({ broker: f.broker, scope: f.scope }); bridge.activate(() => {});
+  it.each(['tui', 'acp'] as const)('keeps host authorization pending through %s without persisting its URL', async kind => {
+    const f = await fixture(); const client = await f.client(kind);
+    const bridge = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); bridge.activate(() => {});
     cleanups.push(async () => bridge.dispose());
     const control = new AbortController();
-    const waiting = bridge.mcp({ server: 'private-server', url: 'https://oauth.example.test/authorize?state=private-state', signal: control.signal });
+    const waiting = bridge.vocabulary.createExtensionUi('@felan-ai/ext-mcp').request({ title: 'Authorize MCP server', fallback: 'Authorize locally',
+      description: 'https://oauth.example.test/authorize?state=private-state', input: { fields: [] },
+      actions: [{ id: 'cancel', label: 'Cancel', target: 'element', outcome: 'cancel' }] },
+    { audience: 'host', deferrable: false, transient: true, signal: control.signal });
     await vi.waitFor(() => expect(client.getInteractions()).toHaveLength(1));
     const item = client.getInteractions()[0]!; expect(item.scope).toEqual({ kind: 'host' });
-    const openOAuthUrl = vi.fn(async () => {});
-    const select = vi.fn(async (_title, _choices, options: { signal: AbortSignal }) => {
-      await new Promise<void>(resolve => options.signal.addEventListener('abort', () => resolve(), { once: true }));
-      return undefined;
-    });
-    const presenters = new ClientInteractionPresenters({ select, notify: vi.fn() } as unknown as InteractionPresenterUi, { openOAuthUrl });
-    const shown = presenters.present(item, control.signal);
-    await vi.waitFor(() => expect(select).toHaveBeenCalledOnce());
-    expect(openOAuthUrl).toHaveBeenCalledOnce(); expect(f.broker.pending()).toHaveLength(1);
+    expect(item.request).toMatchObject({ kind: 'form', form: { description: expect.stringContaining('private-state') } });
     expect(JSON.stringify(f.store.snapshot())).not.toContain('private-state');
-    control.abort(); await waiting; await expect(shown).resolves.toMatchObject({ state: 'cancelled', reason: 'abort' });
+    control.abort(); await waiting;
     expect(f.broker.pending()).toEqual([]);
   });
 
-  it('cancels host OAuth when the last eligible local client disconnects', async () => {
+  it('cancels host authorization when the last eligible local client disconnects', async () => {
     const f = await fixture(); const client = await f.client();
-    const bridge = createSessionExtensionUi({ broker: f.broker, scope: f.scope }); bridge.activate(() => {});
+    const bridge = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); bridge.activate(() => {});
     cleanups.push(async () => bridge.dispose());
-    const waiting = bridge.mcp({ server: 'server', url: 'https://oauth.example.test/authorize', signal: new AbortController().signal });
-    await vi.waitFor(() => expect(client.getInteractions()).toHaveLength(1)); client.close();
-    await waiting; expect(f.broker.pending()).toEqual([]); expect(f.store.snapshot().interactions).toEqual([]);
-  });
-
-  it('fails closed when a custom validator violates its synchronous return contract', async () => {
-    const presenter = { id: 'fixture.invalid-validator', version: '1' };
-    const f = await fixture(undefined, [{ ...presenter, validateAnswer: () => 'invalid return' } as never]);
-    const client = await f.client('tui', true, [presenter]);
-    const waiting = f.broker.request({ kind: 'custom', presenter, data: {} }, f.scope);
-    const item = f.broker.pending()[0]!;
-    expect((await client.request('interaction.answer', { interactionId: item.id, answer: { kind: 'custom', presenter, data: {} } }, { session: f.root.sessionId })).outcome).toBe('rejected');
-    expect(f.broker.pending()).toHaveLength(1);
-    f.broker.cancel(item.id, 'abort');
-    await expect(waiting).resolves.toEqual({ state: 'cancelled', reason: 'abort' });
-  });
-
-  it('negotiates exact registered custom versions and rejects an incompatible responder', async () => {
-    const presenter = { id: 'fixture.review', version: '1' };
-    const f = await fixture(undefined, [presenter]);
-    const compatible = await f.client('tui', true, [presenter]);
-    const incompatible = await f.client('tui', true, [{ ...presenter, version: '2' }]);
-    expect(compatible.capabilities?.presenters).toEqual([presenter]);
-    expect(incompatible.capabilities?.presenters).toEqual([]);
-    const waiting = f.broker.request({ kind: 'custom', presenter, data: { title: 'Review' } }, f.scope);
-    const item = f.published.at(-1)!;
-    const params = { interactionId: item.id, answer: { kind: 'custom', presenter, data: { approved: false } } } as const;
-    expect((await incompatible.request('interaction.answer', params, { session: f.root.sessionId })).outcome).toBe('rejected');
-    expect(f.broker.pending()).toContainEqual(item);
-    expect((await compatible.request('interaction.answer', params, { session: f.root.sessionId })).outcome).toBe('accepted');
-    await expect(waiting).resolves.toEqual({ state: 'answered', answer: params.answer });
-  });
-
-  it('does not let a client capability claim register a custom contract', async () => {
-    const presenter = { id: 'fixture.unregistered', version: '1' };
-    const f = await fixture();
-    const client = await f.client('tui', true, [presenter]);
-    expect(client.capabilities?.interactionKinds).not.toContain('custom');
-    expect(client.capabilities?.presenters).toEqual([]);
-    await expect(f.broker.request({ kind: 'custom', presenter, data: {} }, f.scope))
-      .resolves.toEqual({ state: 'cancelled', reason: 'unsupported' });
-    expect(f.broker.pending()).toEqual([]);
-    expect(f.store.snapshot().interactions).toEqual([]);
-  });
-
-  it('rejects unregistered versions even when other custom contracts are installed', async () => {
-    const presenter = { id: 'fixture.review', version: '1' };
-    const f = await fixture(undefined, [presenter]);
-    await expect(f.broker.request({ kind: 'custom', presenter: { ...presenter, version: '2' }, data: {} }, f.scope))
-      .resolves.toEqual({ state: 'cancelled', reason: 'unsupported' });
-    expect(f.broker.pending()).toEqual([]);
-  });
-
-  it('requires a compatible client at custom-dialog creation but preserves an existing dialog across detach', async () => {
-    const presenter = { id: 'fixture.review', version: '1' };
-    const f = await fixture(undefined, [presenter]);
-    await f.client('tui', true, [{ ...presenter, version: '2' }]);
-    await expect(f.broker.request({ kind: 'custom', presenter, data: {} }, f.scope))
-      .resolves.toEqual({ state: 'cancelled', reason: 'unsupported' });
-    expect(f.broker.pending()).toEqual([]);
-    const first = await f.client('tui', true, [presenter]);
-    const waiting = f.broker.request({ kind: 'custom', presenter, data: {} }, f.scope);
-    const item = f.published.at(-1)!;
-    first.close();
-    const next = await f.client('tui', true, [presenter]);
-    expect(next.getAttachment(f.root.sessionId)?.state.snapshot?.interactions).toContainEqual(expect.objectContaining({ id: item.id, state: 'waiting' }));
-    expect((await next.request('interaction.answer', { interactionId: item.id, answer: { kind: 'custom', presenter, data: {} } }, { session: f.root.sessionId })).outcome).toBe('accepted');
-    await expect(waiting).resolves.toMatchObject({ state: 'answered' });
-  });
-
-  it('negotiates runtime UI state independently from interactive custom contracts', async () => {
-    const f = await fixture();
-    const client = await f.client('tui', true, [RUNTIME_UI_PRESENTER]);
-    expect(client.capabilities?.presenters).toEqual([RUNTIME_UI_PRESENTER]);
-    expect(client.capabilities?.interactionKinds).not.toContain('custom');
-  });
-
-  it('validates and isolates the fixed daemon presenter registration', async () => {
-    const input = [{ id: 'fixture.review', version: '1' }];
-    const f = await fixture(undefined, input);
-    input[0]!.version = '2';
-    f.broker.presenters[0]!.version = '3';
-    f.broker.interactionKinds.splice(0);
-    expect(f.broker.presenters).toEqual([{ id: 'fixture.review', version: '1' }]);
-    expect(f.broker.interactionKinds).toContain('custom');
-    const options = { store: f.store, publish() {} };
-    expect(() => new InteractionBroker({ ...options, presenters: [RUNTIME_UI_PRESENTER] })).toThrow('reserved');
-    expect(() => new InteractionBroker({ ...options, presenters: [input[0]!, input[0]!] })).toThrow('duplicated');
-    expect(() => new InteractionBroker({ ...options, presenters: [{ id: 'bad', version: 0 }] as never })).toThrow();
-    expect(() => new InteractionBroker({ ...options, presenters: Array.from({ length: LIMITS.catalogEntries }, () => input[0]!) })).toThrow('capacity');
-    const registryBroker = createRegistryInteractionBroker(f.registry, { presenters: [{ id: 'factory', version: '1' }] });
-    cleanups.push(() => registryBroker.drain());
-    expect(registryBroker.presenters).toEqual([{ id: 'factory', version: '1' }]);
-  });
-
-  it('cancels a recovered custom question whose daemon contract is no longer installed', async () => {
-    const f = await fixture();
-    const item = parseInteraction({ id: 'orphan', state: 'waiting', scope: f.scope, createdAt: Date.now(), eligibleClientKinds: ['tui'],
-      request: { kind: 'custom', presenter: { id: 'removed', version: '1' }, data: {} } });
-    f.store.putInteraction(item);
-    await f.broker.recover();
-    expect(f.broker.pending()).toEqual([]);
-    expect(f.store.snapshot().interactions[0]).toMatchObject({ state: 'cancelled', result: { reason: 'unsupported' } });
+    const waiting = bridge.vocabulary.createExtensionUi('@felan-ai/ext-mcp').request({ title: 'Authorize MCP server', fallback: 'Authorize locally',
+      description: 'https://oauth.example.test/authorize', input: { fields: [] },
+      actions: [{ id: 'cancel', label: 'Cancel', target: 'element', outcome: 'cancel' }] },
+    { audience: 'host', deferrable: false, transient: true });
+    await vi.waitFor(() => expect(client.getInteractions()).toHaveLength(1));
+    client.close();
+    await waiting; expect(f.broker.pending()).toEqual([]);
+    expect(JSON.stringify(f.store.snapshot())).not.toContain('https://oauth.example.test/authorize');
   });
 
   it('persists before publication and records only the first concurrent answer', async () => {
@@ -254,7 +267,7 @@ describe('InteractionBroker', () => {
     await expect(waiting).resolves.toEqual({ state: 'cancelled', reason: 'user' });
   });
 
-  it('requires a current session attachment and rejects headless answers', async () => {
+  it('requires a current session attachment and rejects clients without the interaction capability', async () => {
     const f = await fixture();
     const unattached = await f.client('tui', false);
     const headless = await f.client('headless');
@@ -283,15 +296,22 @@ describe('InteractionBroker', () => {
   it('defers ask-user on drain and resumes a committed answer only once', async () => {
     const f = await fixture();
     const client = await f.client();
-    const waiting = f.broker.request({ kind: 'ask_user', questions: [{ id: 'q', question: 'Name?' }] }, f.scope);
+    const waiting = askUserHost(f).ask({ questions: [{ id: 'q', question: 'Name?', header: 'Name',
+      options: [], allowMultiple: false, allowFreeform: true, allowComment: false }], overlayToggleKey: null, commentToggleKey: null },
+    { requestId: 'tool-call', sessionId: f.root.sessionId, signal: new AbortController().signal,
+      extensionContext: {} as ExtensionContext, reportProgress() {} });
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
     const id = f.published.at(-1)!.id;
+    const cancelled = f.broker.request(f.published.at(-1)!.request, f.scope);
     const beforeDrain = Date.now();
     await f.broker.drain();
-    await expect(waiting).resolves.toEqual({ state: 'deferred', interactionId: id });
+    await expect(waiting).resolves.toEqual({ status: 'deferred', interactionId: id });
+    await expect(cancelled).resolves.toEqual({ state: 'cancelled', reason: 'drain' });
     expect(f.store.snapshot().interactions[0]).toMatchObject({ state: 'deferred', expiresAt: expect.any(Number) });
     expect(f.store.snapshot().interactions[0]!.expiresAt).toBeGreaterThanOrEqual(beforeDrain + 30 * 60 * 1000);
     expect(f.store.snapshot().interactions[0]!.expiresAt).toBeLessThanOrEqual(Date.now() + 30 * 60 * 1000);
-    expect((await client.request('interaction.answer', { interactionId: id, answer: { kind: 'ask_user', answers: [{ questionId: 'q', choices: [], text: 'Alice' }] } }, { session: f.root.sessionId })).outcome).toBe('accepted');
+    expect((await client.request('interaction.answer', { interactionId: id, answer: { kind: 'form',
+      actionId: 'submit', outcome: 'submit', values: { 'q.text': 'Alice' } } }, { session: f.root.sessionId })).outcome).toBe('accepted');
     expect(f.resumed).not.toHaveBeenCalled();
     const recovered = new InteractionBroker({ store: f.store, publish() {}, resume: f.resumed });
     await recovered.recover();
@@ -304,10 +324,10 @@ describe('InteractionBroker', () => {
   it.each(['ready', 'dispatch_intent'] as const)('recovers a persisted %s continuation conservatively', async phase => {
     const f = await fixture();
     const client = await f.client();
-    const waiting = f.broker.request({ kind: 'ask_user', questions: [{ id: 'q', question: 'Name?' }] }, f.scope);
+    const waiting = f.broker.request({ kind: 'input', title: 'Name?' }, f.scope, { deferrable: true });
     const id = f.published.at(-1)!.id;
     await f.broker.drain(); await waiting;
-    await client.request('interaction.answer', { interactionId: id, answer: { kind: 'ask_user', answers: [{ questionId: 'q', choices: [], text: 'Alice' }] } }, { session: f.root.sessionId });
+    await client.request('interaction.answer', { interactionId: id, answer: { kind: 'input', text: 'Alice' } }, { session: f.root.sessionId });
     const continuation = f.store.snapshot().continuations[0]!;
     if (phase === 'dispatch_intent') f.store.transitionContinuation(continuation.id, phase);
     await f.registry.shutdown(); f.store.close();
@@ -321,28 +341,19 @@ describe('InteractionBroker', () => {
     store.close();
   });
 
-  it('limits host trust answers to local TUI clients', async () => {
+  it('allows equally capable local TUI and ACP clients to answer host trust prompts', async () => {
     const f = await fixture();
     const acp = await f.client('acp', false);
+    expect(f.broker.canPresent({ kind: 'confirm', title: 'Trust?', message: f.cwd }, { kind: 'host' })).toBe(true);
     const tui = await f.client('tui', false);
-    const waiting = f.broker.request({ kind: 'trust', cwd: f.cwd, message: 'Trust this workspace?' }, { kind: 'host' });
+    const waiting = f.broker.request({ kind: 'confirm', title: 'Trust this workspace?', message: f.cwd }, { kind: 'host' });
     const id = f.published.at(-1)!.id;
     await vi.waitFor(() => expect(tui.getInteractions()).toContainEqual(expect.objectContaining({ id })));
-    expect(acp.getInteractions()).toHaveLength(0);
-    const params = { interactionId: id, answer: { kind: 'trust', trusted: true } } as const;
-    expect((await acp.request('interaction.answer', params)).outcome).toBe('rejected');
-    expect((await tui.request('interaction.answer', params)).outcome).toBe('accepted');
+    await vi.waitFor(() => expect(acp.getInteractions()).toContainEqual(expect.objectContaining({ id })));
+    const params = { interactionId: id, answer: { kind: 'confirm', confirmed: true } } as const;
+    expect((await acp.request('interaction.answer', params)).outcome).toBe('accepted');
+    expect((await tui.request('interaction.answer', params)).outcome).toBe('rejected');
     await expect(waiting).resolves.toMatchObject({ state: 'answered' });
-  });
-
-  it('keeps OAuth details out of persistent control state', async () => {
-    const f = await fixture();
-    const client = await f.client();
-    const waiting = f.broker.request({ kind: 'oauth', provider: 'fixture', provisioningId: 'setup', url: 'https://example.invalid/private', instructions: 'Complete sign-in' }, f.scope);
-    expect(f.store.snapshot().interactions).toHaveLength(0);
-    await vi.waitFor(() => expect(client.getInteractions()).toHaveLength(1));
-    await f.broker.drain();
-    await expect(waiting).resolves.toEqual({ state: 'cancelled', reason: 'drain' });
   });
 
   it('replays pending host prompts after reconnect', async () => {
@@ -365,35 +376,54 @@ describe('InteractionBroker', () => {
 
   it('adapts ask-user options and comments without losing their identities', async () => {
     const f = await fixture(); const client = await f.client();
-    const waiting = f.broker.askUserHost().ask({ questions: [{ id: 'q', question: 'Which?', header: 'Choice',
+    const waiting = askUserHost(f).ask({ questions: [{ id: 'q', question: 'Which?', header: 'Choice',
       options: [{ title: 'First' }, { title: 'Second' }], allowMultiple: false, allowFreeform: true, allowComment: true }] },
     { requestId: 'tool-call', sessionId: f.root.sessionId, signal: new AbortController().signal, extensionContext: {} as ExtensionContext, reportProgress() {} });
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
     const interaction = f.published.at(-1)!;
-    await client.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'ask_user',
-      answers: [{ questionId: 'q', choices: ['choice-1'], comment: 'selected' }] } }, { session: f.root.sessionId });
+    expect(interaction.request).toMatchObject({ kind: 'form', form: { input: { fields: expect.arrayContaining([
+      expect.objectContaining({ id: 'q.selection', options: [{ id: 'option1', label: 'First' }, { id: 'option2', label: 'Second' }] }),
+    ]) } } });
+    expect((await client.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'form',
+      actionId: 'submit', outcome: 'submit', values: { 'q.mode': 'selection', 'q.selection': 'option2', 'q.comment': 'selected' } } },
+    { session: f.root.sessionId })).outcome).toBe('accepted');
     await expect(waiting).resolves.toEqual({ status: 'answered', answers: [{ questionId: 'q', response: { kind: 'selection', selections: ['Second'], comment: 'selected' } }] });
   });
 
   it('adapts a freeform ask-user question with no options', async () => {
     const f = await fixture(); const client = await f.client();
-    const waiting = f.broker.askUserHost().ask({ questions: [{ id: 'q', question: 'Name?', header: 'Name',
-      options: [], allowMultiple: false, allowFreeform: true, allowComment: false }], timeout: 5000.5, overlayToggleKey: null, commentToggleKey: null },
+    const waiting = askUserHost(f).ask({ questions: [{ id: 'q', question: 'Name?', header: 'Name',
+      options: [], allowMultiple: false, allowFreeform: true, allowComment: false }], timeout: 5001, overlayToggleKey: null, commentToggleKey: null },
     { requestId: 'tool-call', sessionId: f.root.sessionId, signal: new AbortController().signal, extensionContext: {} as ExtensionContext, reportProgress() {} });
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
     const interaction = f.published.at(-1)!;
     expect(interaction.expiresAt! - interaction.createdAt).toBe(5001);
-    expect(interaction.request).toMatchObject({ overlayToggleKey: 'off', commentToggleKey: 'off' });
-    expect(interaction.request).toMatchObject({ kind: 'ask_user', questions: [expect.not.objectContaining({ options: expect.anything() })] });
-    await client.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'ask_user',
-      answers: [{ questionId: 'q', choices: [], text: 'Alice' }] } }, { session: f.root.sessionId });
+    expect(interaction.request).toMatchObject({ kind: 'form', form: { input: { fields: expect.arrayContaining([
+      expect.objectContaining({ id: 'q.text', kind: 'string' }),
+    ]) } } });
+    if (interaction.request.kind !== 'form') throw new Error('Expected a generic ask-user form.');
+    expect(interaction.request.form.input.fields.some(field => field.id === 'q.selection')).toBe(false);
+    expect((await client.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'form',
+      actionId: 'submit', outcome: 'submit', values: { 'q.text': 'Alice' } } },
+    { session: f.root.sessionId })).outcome).toBe('accepted');
     await expect(waiting).resolves.toEqual({ status: 'answered', answers: [{ questionId: 'q', response: { kind: 'freeform', text: 'Alice' } }] });
   });
 
   it('resumes a deferred answer through the real registry only after dispatch is durable', async () => {
     const f = await fixture(); const client = await f.client();
-    const waiting = f.broker.request({ kind: 'ask_user', questions: [{ id: 'q', question: 'Name?' }] }, f.scope);
+    const requestId = newRequestId();
+    f.store.admit({ v: 1, id: requestId, op: 'prompt', session: f.root.sessionId, params: { text: 'Ask my name' } }, f.server.principal);
+    const waiting = f.registry.runAdmitted(requestId, f.root.sessionId, { kind: 'tui', attachment: 'tool-client' }, () =>
+      askUserHost(f).ask({ questions: [{ id: 'q', question: 'Name?', header: 'Name', options: [],
+        allowMultiple: false, allowFreeform: true, allowComment: false }], overlayToggleKey: null, commentToggleKey: null },
+      { requestId: 'tool-call', sessionId: f.root.sessionId, signal: new AbortController().signal,
+        extensionContext: {} as ExtensionContext, reportProgress() {} }));
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
     const id = f.published.at(-1)!.id;
-    await f.broker.drain(); await waiting;
-    await client.request('interaction.answer', { interactionId: id, answer: { kind: 'ask_user', answers: [{ questionId: 'q', choices: [], text: 'Alice' }] } }, { session: f.root.sessionId });
+    await f.broker.drain();
+    await expect(waiting).resolves.toEqual({ status: 'deferred', interactionId: id });
+    await client.request('interaction.answer', { interactionId: id, answer: { kind: 'form',
+      actionId: 'submit', outcome: 'submit', values: { 'q.text': 'Alice' } } }, { session: f.root.sessionId });
     const original = f.root.runtime.session.prompt.bind(f.root.runtime.session);
     const prompt = vi.spyOn(f.root.runtime.session, 'prompt').mockImplementation(async (...args) => {
       expect(f.store.snapshot().continuations[0]?.phase).toBe('dispatch_intent');
@@ -402,6 +432,7 @@ describe('InteractionBroker', () => {
     const recovered = createRegistryInteractionBroker(f.registry);
     await recovered.recover(); await recovered.recover();
     expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt.mock.calls[0]?.[0]).toContain('Alice');
     expect(f.store.snapshot().continuations[0]?.phase).toBe('completed');
     await recovered.drain();
   });
@@ -431,10 +462,10 @@ describe('InteractionBroker', () => {
 
   it('keeps a provably undispatched continuation ready after a busy preflight', async () => {
     const f = await fixture(); const client = await f.client();
-    const waiting = f.broker.request({ kind: 'ask_user', questions: [{ id: 'q', question: 'Name?' }] }, f.scope);
+    const waiting = f.broker.request({ kind: 'input', title: 'Name?' }, f.scope, { deferrable: true });
     const id = f.published.at(-1)!.id;
     await f.broker.drain(); await waiting;
-    await client.request('interaction.answer', { interactionId: id, answer: { kind: 'ask_user', answers: [{ questionId: 'q', choices: [], text: 'Alice' }] } }, { session: f.root.sessionId });
+    await client.request('interaction.answer', { interactionId: id, answer: { kind: 'input', text: 'Alice' } }, { session: f.root.sessionId });
     let busy = true;
     const recovered = new InteractionBroker({ store: f.store, publish() {}, resume: async (_session, _answer, _id, dispatch) => {
       if (busy) throw Object.assign(new Error('busy'), { code: 'busy' });
@@ -446,25 +477,6 @@ describe('InteractionBroker', () => {
     await recovered.recover();
     expect(f.store.snapshot().continuations[0]?.phase).toBe('completed');
     await recovered.drain();
-  });
-
-  it('does not advertise or persist custom interactions without a registered presenter', async () => {
-    const f = await fixture(); const client = await f.client();
-    expect(f.broker.interactionKinds).not.toContain('custom');
-    expect(client.capabilities?.interactionKinds).not.toContain('custom');
-    await expect(f.broker.request({ kind: 'custom', presenter: { id: 'external.panel', version: '1' }, data: {} }, f.scope))
-      .resolves.toEqual({ state: 'cancelled', reason: 'unsupported' });
-    expect(f.published).toHaveLength(0);
-    expect(f.broker.pending()).toHaveLength(0);
-  });
-
-  it('does not expose OAuth to an ACP-only attachment', async () => {
-    const f = await fixture(); const client = await f.client('acp');
-    await expect(f.broker.request({ kind: 'oauth', provider: 'fixture', provisioningId: 'setup',
-      url: 'https://example.invalid/private', instructions: 'Complete sign-in' }, f.scope))
-      .resolves.toEqual({ state: 'cancelled', reason: 'unsupported' });
-    expect(client.getInteractions()).toHaveLength(0);
-    expect(f.broker.pending()).toHaveLength(0);
   });
 
   it('rejects a late answer without reviving a cancelled question', async () => {
@@ -479,11 +491,11 @@ describe('InteractionBroker', () => {
 
   it('serializes multiple deferred continuations for the same session', async () => {
     const f = await fixture(); const client = await f.client();
-    const waiting = ['First?', 'Second?'].map(question => f.broker.request({ kind: 'ask_user', questions: [{ id: 'q', question }] }, f.scope));
+    const waiting = ['First?', 'Second?'].map(question => f.broker.request({ kind: 'input', title: question }, f.scope, { deferrable: true }));
     const ids = f.published.map(item => item.id);
     await f.broker.drain(); await Promise.all(waiting);
     for (const id of ids) await client.request('interaction.answer', { interactionId: id,
-      answer: { kind: 'ask_user', answers: [{ questionId: 'q', choices: [], text: 'answer' }] } }, { session: f.root.sessionId });
+      answer: { kind: 'input', text: 'answer' } }, { session: f.root.sessionId });
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     let signalStarted!: () => void;

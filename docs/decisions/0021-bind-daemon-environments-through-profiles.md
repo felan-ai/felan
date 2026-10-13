@@ -1,6 +1,6 @@
 # ADR 0021: Bind daemon environments through a small host profile
 
-> Status: Accepted for Story 1
+> Status: Superseded by [ADR 0036](0036-configure-extension-services-through-trusted-providers.md)
 > Date: 2026-10-10
 > Deciders: Felan maintainers, approved Story 1 plan
 > Related: [Profile contract](../maintainers/session-daemon-contracts.md#public-profile-seam-felan-aifelandaemon-profile)
@@ -8,8 +8,8 @@
 Distribution amendment: [ADR 0025](0025-separate-daemon-and-client-distributions.md)
 moves the profile surface to the daemon package during S1.07a. The
 `@felan-ai/felan/daemon-profile` path below records the original implementation;
-it is not the target client-package boundary. The ownership and profile rules
-remain unchanged.
+it is not the target client-package boundary. The text below records the
+historical profile design, not the current configured-service API.
 
 ## Context
 

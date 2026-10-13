@@ -24,20 +24,15 @@ describe('nested union boundaries', () => {
   });
 
   it('applies the 64KiB answer limit inside a complete interaction.answer request', () => {
-    const answer = { kind: 'ask_user', answers: [{ questionId: 'q', choices: [], text: '', comment: '' }] };
+    const answer = { kind: 'form', actionId: 'submit', outcome: 'submit', values: { first: '', second: '' } };
     const overhead = utf8Bytes(JSON.stringify(answer));
-    answer.answers[0]!.text = 'a'.repeat(32768);
-    answer.answers[0]!.comment = 'c'.repeat(LIMITS.answerBytes - overhead - 32768);
+    answer.values.first = 'a'.repeat(32768);
+    answer.values.second = 'c'.repeat(LIMITS.answerBytes - overhead - 32768);
     expect(utf8Bytes(JSON.stringify(answer))).toBe(LIMITS.answerBytes);
     expect(parseClientEnvelope(request('interaction.answer', { interactionId: 'i', answer }), { now }).op).toBe('interaction.answer');
-    answer.answers[0]!.comment += 'c';
+    answer.values.second += 'c';
     expect(() => parseSchema(InteractionAnswerSchema, answer)).toThrow(/Encoded field limit/);
     expect(() => parseClientEnvelope(request('interaction.answer', { interactionId: 'i', answer }), { now })).toThrow(/Encoded field limit/);
-    const oversized = { kind: 'ask_user', answers: Array.from({ length: 4 }, (_, index) => ({
-      questionId: `q${index}`, choices: [], text: 'a'.repeat(32768), comment: 'c'.repeat(32768),
-    })) };
-    expect(utf8Bytes(JSON.stringify(oversized))).toBeGreaterThan(4 * LIMITS.answerBytes);
-    expect(() => parseClientEnvelope(request('interaction.answer', { interactionId: 'i', answer: oversized }), { now })).toThrow(/Encoded field limit/);
   });
 });
 
@@ -101,8 +96,6 @@ describe('transcript-specific JSON boundaries', () => {
   });
 
   it.each([
-    ['presentation', PresentationSchema, (data: string) => ({ id: 'p', kind: 'custom', presenter: { id: 'p', version: '1' }, data })],
-    ['custom interaction', InteractionAnswerSchema, (data: string) => ({ kind: 'custom', presenter: { id: 'p', version: '1' }, data })],
     ['tool catalog', ToolCatalogEntrySchema, (data: string) => ({ name: 'write', label: 'Write', description: '', parameters: data, provenance: 'builtin', source: 'core', active: true })],
   ] as const)('keeps the 64KiB limit for %s data', (_name, schema, value) => {
     expect(() => parseSchema(schema, value('x'.repeat(LIMITS.structuredBytes)))).toThrow(/Encoded field limit/);
@@ -110,10 +103,10 @@ describe('transcript-specific JSON boundaries', () => {
 });
 
 describe('known error vocabulary and future wire codes', () => {
-  it('exports all 20 known codes while retaining future error strings', () => {
+  it('exports all known codes while retaining future error strings', () => {
     expect(ERROR_CODES).toEqual(['invalid_request', 'unsupported_operation', 'protocol_mismatch', 'unavailable', 'authentication_required', 'busy', 'policy_pending',
       'request_conflict', 'stale_request', 'expired', 'not_found', 'forbidden', 'already_resolved', 'storage_failure',
-      'ownership_lost', 'resync_required', 'indeterminate', 'adoption_required', 'request_capacity', 'target_mismatch']);
+      'ownership_lost', 'resync_required', 'indeterminate', 'configuration_recovery_required', 'request_capacity', 'target_mismatch']);
     expect(Object.isFrozen(ERROR_CODES)).toBe(true);
     expectTypeOf<KnownErrorCode>().toEqualTypeOf<(typeof ERROR_CODES)[number]>();
     expectTypeOf<ProtocolError['code']>().toEqualTypeOf<string>();

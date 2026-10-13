@@ -99,9 +99,16 @@ function applyEvent(state: SessionState, event: SessionEvent): SessionState {
     case 'model.updated': next = { ...next, model: change.model, thinking: change.thinking }; break;
     case 'branch.updated': next = { ...next, branch: change.branch, history: { ...change.history, revision: event.rev }, activeStreams: [], completionOnlyStreams: [] }; break;
     case 'policy.updated': next.policy = change.policy; break;
+    case 'executions.changed': next.executionsGeneration = change.generation; break;
     case 'child.updated': next.children = upsert(next.children, change.child, item => item.session); break;
     case 'process.updated': next.processes = upsert(next.processes, change.process, item => item.id); break;
-    case 'presentation.updated': next.presentation = upsert(next.presentation, change.presentation, item => item.id); break;
+    case 'presentation.updated': {
+      const presentation = change.presentation;
+      const previous = next.presentation.find(item => item.id === presentation.id);
+      if (previous && ['document', 'view', 'progress', 'status'].includes(presentation.kind) && (previous.kind !== presentation.kind
+        || 'revision' in previous && 'revision' in presentation && presentation.revision <= previous.revision)) return buffer(state, event);
+      next.presentation = upsert(next.presentation, presentation, item => item.id); break;
+    }
     case 'presentation.removed': next.presentation = next.presentation.filter(item => item.id !== change.id); break;
     case 'catalog.updated': next.catalog = change.catalog; break;
     case 'stream.completion_only': next = completionOnly(next, { ...change.stream, offset: 0 }, change.stream.reason); break;

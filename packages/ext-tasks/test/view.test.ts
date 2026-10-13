@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskState } from '../src/contracts.js';
-import { assembleTaskView, createTaskViewPublication, MAX_TASK_VIEW_PAGES, parseTaskViewAction, parseTaskViewFrame, parseTaskViewRequest, TASK_VIEW_PAGE_BYTES } from '../src/view.js';
+import { assembleTaskView, createTaskViewPublication, MAX_TASK_VIEW_PAGES, parseTaskViewAction, parseTaskViewFrame, parseTaskViewRequest, TASK_VIEW_PAGE_BYTES } from '../src/data.js';
 
 function state(count = 2): TaskState {
   return { schemaVersion: 1, revision: 5, tasks: Array.from({ length: count }, (_, index) => ({

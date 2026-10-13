@@ -1,6 +1,5 @@
 import { CATEGORY_SUMMARIES, USED_CATEGORIES, formatTokens, formatPercent, type ContextReport, type MemoryBreakdown, type ExtensionDetail, type SkillDetail, type UsedEstimates, type UsedCategoryKey, type ContextViewPresentationHost } from "./report.js";
 import {
-	associateExtensionConfig,
 	formatSkillsForPrompt,
 	PROJECT_INSTRUCTIONS_CUSTOM_TYPE,
 	type BuildSystemPromptOptions,
@@ -15,18 +14,6 @@ import {
 	type SourceInfo,
 	type ToolInfo,
 } from "@felan-ai/agent-core";
-import {
-	CONTEXT_VIEW_CONFIG,
-	DEFAULT_CONTEXT_VIEW_DISPLAY_MODE,
-	type ContextViewDisplayMode,
-} from "./config.js";
-
-export {
-	CONTEXT_VIEW_CONFIG,
-	CONTEXT_VIEW_DISPLAY_MODES,
-	DEFAULT_CONTEXT_VIEW_DISPLAY_MODE,
-} from "./config.js";
-export type { ContextViewDisplayMode } from "./config.js";
 export type { ContextReport, MemoryBreakdown, ContextViewPresentationHost } from "./report.js";
 
 interface TextPart {
@@ -63,12 +50,11 @@ interface ToolEstimates {
 	extensionDetails: ExtensionDetail[];
 }
 
-export function createContextViewExtension(presentation?: ContextViewPresentationHost): FelanExtension {
+export function createContextViewExtension(presentation: ContextViewPresentationHost): FelanExtension {
 	const extension: FelanExtension = (pi) => {
 		let latestPromptOptions: BuildSystemPromptOptions | undefined;
 		let latestSystemPrompt: string | undefined;
 		let latestProjectInstructions: string | undefined;
-		const displayMode = resolveDisplayMode(pi.config.displayMode);
 		const lifetime = new AbortController();
 		const active = new Set<Promise<void>>();
 		pi.on("session_shutdown", async () => { lifetime.abort(); await Promise.all([...active]); });
@@ -101,29 +87,15 @@ export function createContextViewExtension(presentation?: ContextViewPresentatio
 					latestProjectInstructions,
 				);
 
-				if (!ctx.hasUI) {
-					ctx.ui.notify(formatCompactReport(report), "info");
-					return;
-				}
-
-				if (!presentation) throw Object.assign(new Error("Context view requires a compatible interactive client."), { code: "unsupported" });
-				const work = presentation.show(ctx.ui, report, displayMode, lifetime.signal)
+				const work = presentation.show(report, lifetime.signal)
 					.catch(error => { if (!lifetime.signal.aborted) throw error; });
 				active.add(work);
 				try { await work; } finally { active.delete(work); }
 			},
 		});
 	};
-	associateExtensionConfig(extension, CONTEXT_VIEW_CONFIG);
 	return extension;
 }
-const contextViewExtension = createContextViewExtension();
-export default contextViewExtension;
-
-function resolveDisplayMode(value: unknown): ContextViewDisplayMode {
-	return value === "overlay" ? "overlay" : DEFAULT_CONTEXT_VIEW_DISPLAY_MODE;
-}
-
 export function collectContextReport(
 	pi: ExtensionAPI | FelanExtensionAPI,
 	ctx: ExtensionCommandContext,
@@ -628,3 +600,5 @@ function formatModelLabel(ctx: ExtensionCommandContext): string | null {
 	const context = ctx.model.contextWindow ? `${formatTokens(ctx.model.contextWindow)} context` : "unknown context";
 	return `${name} (${context})`;
 }
+
+export { CONTEXT_DOCUMENT_HINT } from './ui.js';

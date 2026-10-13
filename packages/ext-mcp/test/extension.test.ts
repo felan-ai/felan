@@ -17,7 +17,7 @@ import {
 
 describe('MCP extension', () => {
   it('registers one fixed gateway and owns an injected OAuth session lifecycle', async () => {
-    const oauth = oauthSession({ status: 'pending', interactionId: 'web-1', message: 'Open the web app.' });
+    const oauth = oauthSession({ status: 'unavailable', message: 'Use a local console.' });
     const createSession = vi.fn(async () => oauth);
     const harness = createHarness({ createSession });
     expect([...harness.tools.keys()]).toEqual(['mcp']);
@@ -37,8 +37,8 @@ describe('MCP extension', () => {
       text: expect.stringContaining('use action \\"reconnect\\" with the server name'),
     });
     const pending = await harness.execute({ action: 'authenticate', server: 'docs' });
-    expect(pending.content[0]).toMatchObject({ text: expect.stringContaining('pending') });
-    expect(pending.details).toMatchObject({ interactionId: 'web-1' });
+    expect(pending.content[0]).toMatchObject({ text: expect.stringContaining('Use a local console.') });
+    expect(pending.details).toMatchObject({ status: 'unavailable' });
     expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }));
 
     await harness.shutdown();
@@ -341,7 +341,7 @@ describe('MCP extension', () => {
   });
 
   it('selects a server when /mcp auth is invoked without a server', async () => {
-    const oauth = oauthSession({ status: 'pending', message: 'Complete authentication.' });
+    const oauth = oauthSession({ status: 'unavailable', message: 'Complete authentication.' });
     const harness = createHarness({ createSession: async () => oauth });
     harness.select.mockResolvedValueOnce('docs — disconnected — 0 tools');
     await harness.start();

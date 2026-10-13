@@ -1,5 +1,5 @@
 import type { ExtensionContext, SessionEntry } from "@felan-ai/agent-core";
-import { fuzzyFilter } from "@earendil-works/pi-tui/dist/fuzzy.js";
+import { fuzzyFilter } from "@earendil-works/pi-tui";
 import { basename, normalize, resolve } from "node:path";
 import type {
 	PromptHistoryHost,
@@ -93,10 +93,13 @@ export async function searchPromptHistory(
 		sessions = [...await source.host.listSessions(source.sessionDirectory)]
 			.sort((left, right) => right.timestamp - left.timestamp);
 	} catch {
-		sessions = [];
+		const state = searchState([], false, 0, undefined, false);
+		onProgress(state);
+		return state;
 	}
 
 	let scanned = 0;
+	let failedRead = false;
 	let matches: PromptHistoryItem[] = [];
 	for (let index = 0; index < sessions.length && shouldContinue(); index += PROMPT_HISTORY_SEARCH_BATCH_SIZE) {
 		const batch = sessions.slice(index, index + PROMPT_HISTORY_SEARCH_BATCH_SIZE);
@@ -106,6 +109,7 @@ export async function searchPromptHistory(
 				if (!session || !matchesScope(source.cwd, session, scope)) return [];
 				return promptsFromSession(reference, session);
 			} catch {
+				failedRead = true;
 				return [];
 			}
 		}));
@@ -115,7 +119,7 @@ export async function searchPromptHistory(
 		if (matches.length >= MAX_PROMPT_HISTORY_RESULTS) break;
 	}
 
-	return searchState(matches, false, scanned, sessions.length, scanned >= sessions.length);
+	return searchState(matches, false, scanned, sessions.length, scanned >= sessions.length && !failedRead);
 }
 
 export function limitedPrompts(

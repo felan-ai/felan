@@ -13,9 +13,7 @@ import {
   type UpdateTaskInput,
 } from './contracts.js';
 import {
-  DEFAULT_TASKS_DISPLAY_MODE,
   TASKS_CONFIG,
-  type TasksDisplayMode,
 } from './config.js';
 import { hasOpenTasks } from './graph.js';
 import {
@@ -25,7 +23,8 @@ import {
   formatTaskMutation,
 } from './presentation.js';
 import { TaskStore } from './store.js';
-import type { TaskDataSource, TasksPresentationHost } from './host.js';
+import type { TaskDataSource } from './host.js';
+import { createTasksUi } from './portable-ui.js';
 
 const TaskId = Type.String({
   pattern: '^T-[A-Z0-9]{6}$',
@@ -100,10 +99,10 @@ type TaskUpdateParams = Static<typeof TaskUpdateParams>;
 type TaskListParams = Static<typeof TaskListParams>;
 type TaskGetParams = Static<typeof TaskGetParams>;
 
-export function createTasksExtension(host?: TasksPresentationHost): FelanExtension {
+export function createTasksExtension(): FelanExtension {
   const extension: FelanExtension = (pi) => {
     const store = new TaskStore(pi.runtime);
-    const displayMode = resolveDisplayMode(pi.config?.displayMode);
+    const ui = createTasksUi(pi.ui);
     let controlsRegistered = false;
     let unsubscribe: (() => void) | undefined;
     let statusContext: ExtensionContext | undefined;
@@ -138,7 +137,6 @@ export function createTasksExtension(host?: TasksPresentationHost): FelanExtensi
           details: { revision: result.state.revision, task: result.task },
         };
       },
-      ...(host?.renderCalls?.TaskCreate ? { renderCall: host.renderCalls.TaskCreate } : {}),
     });
 
     pi.registerTool({
@@ -172,7 +170,6 @@ export function createTasksExtension(host?: TasksPresentationHost): FelanExtensi
           details: { revision: result.state.revision, task: result.task },
         };
       },
-      ...(host?.renderCalls?.TaskUpdate ? { renderCall: host.renderCalls.TaskUpdate } : {}),
     });
 
     pi.registerTool({
@@ -195,7 +192,6 @@ export function createTasksExtension(host?: TasksPresentationHost): FelanExtensi
           },
         };
       },
-      ...(host?.renderCalls?.TaskList ? { renderCall: host.renderCalls.TaskList } : {}),
     });
 
     pi.registerTool({
@@ -211,7 +207,6 @@ export function createTasksExtension(host?: TasksPresentationHost): FelanExtensi
           details: { revision: result.state.revision, task: result.task },
         };
       },
-      ...(host?.renderCalls?.TaskGet ? { renderCall: host.renderCalls.TaskGet } : {}),
     });
 
     const setStatus = (state: TaskState): void => {
@@ -236,12 +231,10 @@ export function createTasksExtension(host?: TasksPresentationHost): FelanExtensi
 
     const openTasks = async (ctx: ExtensionContext): Promise<void> => {
       lifetime.signal.throwIfAborted();
-      if (!ctx.hasUI || !host) {
-        const message = 'Task presentation requires a compatible interactive client.';
-        ctx.ui.notify(message, 'warning');
-        throw Object.assign(new Error(message), { code: 'unsupported' });
-      }
-      const view = host.show(ctx.ui, source, displayMode, lifetime.signal)
+      const view = ui.show(source, lifetime.signal, {
+        create: (input, signal) => { signal.throwIfAborted(); return store.create(input); },
+        update: (input, signal) => { signal.throwIfAborted(); return store.update(input, ctx.sessionManager.getSessionId()); },
+      })
         .catch(error => { if (!lifetime.signal.aborted) throw error; });
       taskViews.add(view);
       try { await view; } finally { taskViews.delete(view); }
@@ -252,7 +245,7 @@ export function createTasksExtension(host?: TasksPresentationHost): FelanExtensi
       handler: async (_args, ctx) => openTasks(ctx),
     });
     const registerControls = (): void => {
-      if (controlsRegistered || !host) return;
+      if (controlsRegistered) return;
       controlsRegistered = true;
       pi.registerShortcut('ctrl+shift+t', {
         description: 'View session tasks and their dependency graph',
@@ -265,7 +258,7 @@ export function createTasksExtension(host?: TasksPresentationHost): FelanExtensi
       statusContext = ctx.hasUI ? ctx : undefined;
       unsubscribe = store.subscribe(setStatus);
       setStatus(await store.snapshot());
-      if (ctx.mode === 'tui') registerControls();
+      registerControls();
     });
 
     pi.on('session_tree', async (_event, ctx) => {
@@ -301,9 +294,6 @@ export function createTasksExtension(host?: TasksPresentationHost): FelanExtensi
 
 const tasksExtension = createTasksExtension();
 
-function resolveDisplayMode(value: unknown): TasksDisplayMode {
-  return value === 'overlay' ? 'overlay' : DEFAULT_TASKS_DISPLAY_MODE;
-}
 
 export {
   DEFAULT_TASKS_DISPLAY_MODE,
@@ -339,5 +329,5 @@ export {
   updateTask,
 } from './graph.js';
 export { TaskStore } from './store.js';
-export type { TaskDataSource, TasksPresentationHost } from './host.js';
+export type { TaskDataSource, TaskPresentationMutations } from './host.js';
 export default tasksExtension;

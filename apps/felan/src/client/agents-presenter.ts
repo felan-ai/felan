@@ -1,20 +1,18 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
-import { AGENT_VIEW_PRESENTER, parseAgentOpenRequest, type AgentViewTranscript } from '@felan-ai/ext-subagents/view';
+import { type AgentViewTranscript } from '../subagents/types.js';
 import { Key, matchesKey, type OverlayHandle } from '@earendil-works/pi-tui';
 import { AgentNavigator, AGENT_NAVIGATOR_OVERLAY_OPTIONS, type AgentNavigatorHost } from '../subagents/agent-navigator.js';
-import type { ClientInteractionPresenters } from './presenters.js';
 import { ClientAgentHost } from './agent-host.js';
 
-export { AGENT_VIEW_PRESENTER } from '@felan-ai/ext-subagents/view';
 type Ui = Pick<ExtensionContext['ui'], 'custom' | 'onTerminalInput' | 'notify'>;
 interface ActiveView { ready: Promise<void>; closed: Promise<void>; view?: AgentNavigator; finish?: () => void; overlay?: OverlayHandle }
 
 export function createClientAgentViews(
   client: ConstructorParameters<typeof ClientAgentHost>[0], parent: string,
-  presenters: Pick<ClientInteractionPresenters, 'registerCustom'> | undefined, ui: Ui,
+  ui: Ui,
   settings: () => AgentViewTranscript['settings'],
   toolPresentation?: AgentNavigatorHost['toolPresentation'],
-): { host: ClientAgentHost; open(agentId?: string): Promise<void>; present(data: unknown, signal: AbortSignal): Promise<{ opened: boolean } | undefined>; dispose(): Promise<void> } {
+): { host: ClientAgentHost; open(agentId?: string): Promise<void>; dispose(): Promise<void> } {
   const host = new ClientAgentHost(client, parent, settings, toolPresentation);
   const lifetime = new AbortController();
   let active: ActiveView | undefined;
@@ -47,22 +45,9 @@ export function createClientAgentViews(
     } catch (error) { lifetime.signal.removeEventListener('abort', abort); off(); active = undefined; fail(error); }
     return current.ready;
   };
-  const present = async (data: unknown, signal: AbortSignal) => {
-    const request = parseAgentOpenRequest(data);
-    if (signal.aborted) return undefined;
-    const opening = open(request.agentId);
-    await new Promise<void>((resolve, reject) => {
-      const abort = () => { active?.finish?.(); reject(signal.reason ?? new Error('Agent view opening cancelled.')); };
-      signal.addEventListener('abort', abort, { once: true });
-      void opening.then(() => { signal.removeEventListener('abort', abort); resolve(); }, error => { signal.removeEventListener('abort', abort); reject(error); });
-      if (signal.aborted) abort();
-    });
-    return { opened: true };
-  };
-  const remove = presenters?.registerCustom(AGENT_VIEW_PRESENTER, present);
-  return { host, open, present, dispose() {
+  return { host, open, dispose() {
     return disposing ??= (async () => {
-      lifetime.abort(); remove?.(); active?.finish?.();
+      lifetime.abort(); active?.finish?.();
       if (active?.view) await active.closed;
       await host.dispose();
     })();

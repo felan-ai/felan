@@ -3,7 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { readMessageDisplay, type SessionSnapshot } from '@felan-ai/session-protocol';
 import type { SessionClient } from '../client/client.js';
 import { accepted, createDaemonClient, DaemonRequestError, readCurrentDaemonHistory, readDaemonHistory, waitForDaemonRun, type DaemonClientOptions } from './daemon-session.js';
-import { AcpProtocolInteractions } from './protocol-interactions.js';
+import { ACP_UI_CAPABILITIES, AcpProtocolInteractions } from './protocol-interactions.js';
 import { AcpProtocolUpdates } from './protocol-updates.js';
 import { AcpToolCallIdRegistry, prepareAcpPrompt, sanitizeAcpErrorMessage } from './session-updates.js';
 
@@ -48,7 +48,7 @@ export class AcpSessionRegistry {
     return this.#track(async () => {
       const cwd = validateSessionRequest(params);
       const daemon = await this.#connect();
-      const { sessionId } = accepted(await daemon.request('sessions.create', { cwd, source: 'acp' }));
+      const { sessionId } = accepted(await daemon.request('sessions.create', { cwd, source: 'acp', requirePolicy: 'acp-strict' }));
       await this.#attach(sessionId, cwd, client);
       return { sessionId };
     });
@@ -67,8 +67,9 @@ export class AcpSessionRegistry {
   async #connect(): Promise<SessionClient> {
     this.#assertOpen();
     if (!this.#client) {
-      this.#client = createDaemonClient(this.options, 'acp', this.#supportsForms
-        ? ['tool_approval', 'select', 'confirm', 'input', 'editor', 'ask_user'] : ['tool_approval']);
+      this.#client = await createDaemonClient(this.options, 'acp', this.#supportsForms
+        ? ['tool_approval', 'select', 'confirm', 'input', 'editor', 'form', 'dependency'] : ['tool_approval'],
+        this.#supportsForms ? [...ACP_UI_CAPABILITIES] : ACP_UI_CAPABILITIES.filter(capability => capability !== 'ui.action'));
       this.#unsubscribe = this.#client.subscribe(() => this.#observe());
       this.#connecting = this.#client.connect();
     }
@@ -81,7 +82,7 @@ export class AcpSessionRegistry {
     const daemon = this.#client!;
     let active: ActiveAcpSession | undefined;
     try {
-      const { snapshot } = accepted(await daemon.attach(sessionId, { policyWaitMs: 0 }));
+      const { snapshot } = accepted(await daemon.attach(sessionId, { requirePolicy: 'acp-strict', policyWaitMs: 0 }));
       this.#assertOpen();
       if (!pathsEqual(snapshot.cwd, cwd)) throw RequestError.invalidParams({ sessionId, cwd }, 'Session cwd does not match the persisted session');
       const ids = new AcpToolCallIdRegistry();
@@ -89,7 +90,8 @@ export class AcpSessionRegistry {
       const updates = new AcpProtocolUpdates(sessionId, cwd, client, ids, () => !lifetime.signal.aborted && !this.#disposed);
       active = { sessionId, updates, lifetime, ready: false, cancelRequested: false,
         interactions: new AcpProtocolInteractions(daemon, sessionId, client, updates, this.#supportsForms,
-          error => this.#writeDiagnostic(sanitizeAcpErrorMessage(error))) };
+          error => this.#writeDiagnostic(sanitizeAcpErrorMessage(error)),
+          () => [...this.#sessions.values()].find(session => session.ready && !session.lifetime.signal.aborted)?.sessionId === sessionId) };
       this.#sessions.set(sessionId, active);
       await updates.replay(await readDaemonHistory(daemon, sessionId, snapshot));
       if (lifetime.signal.aborted) throw new Error('Session detached while loading');
@@ -111,8 +113,7 @@ export class AcpSessionRegistry {
     for (const active of this.#sessions.values()) {
       if (!active.ready || active.lifetime.signal.aborted) continue;
       const attachment = this.#client?.getAttachment(active.sessionId);
-      if (attachment?.state.status !== 'live' || !attachment.state.snapshot) continue;
-      active.updates.observe(attachment.state.snapshot);
+      if (attachment?.state.status === 'live' && attachment.state.snapshot) active.updates.observe(attachment.state.snapshot);
       active.interactions.reconcile();
     }
   }
@@ -158,6 +159,7 @@ export class AcpSessionRegistry {
     const active = this.#require(params.sessionId);
     this.#sessions.delete(params.sessionId);
     active.lifetime.abort(); active.interactions.close();
+    this.#observe();
     return this.#track(async () => { accepted(await this.#client!.detach(params.sessionId)); return {}; });
   }
 

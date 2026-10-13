@@ -10,7 +10,6 @@ const ApplyPatchParams = Type.Object({
 
 type ApplyPatchParams = Static<typeof ApplyPatchParams>;
 
-export type CodexToolRenderers = { apply_patch?: Pick<ToolDefinition<any, any, any>, 'renderCall' | 'renderResult'> };
 
 export const CODEX_TOOL_NAMES = ['apply_patch'] as const;
 

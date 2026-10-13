@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { initTheme } from '@earendil-works/pi-coding-agent';
 import { Text, stripTerminalSequences, type TUI } from '@earendil-works/pi-tui';
 import { readFileSync } from 'node:fs';
-import type { AgentViewTranscript } from '@felan-ai/ext-subagents/view';
+import type { AgentViewTranscript } from '../src/subagents/types.js';
 import { AgentTranscript, type AgentToolPresentation } from '../src/subagents/agent-transcript.js';
 import { createClientKeybindings } from '../src/tui/keybindings.js';
 import { projectTuiTranscript } from '../src/tui/transcript.js';

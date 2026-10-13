@@ -2,8 +2,9 @@
 
 The daemon package entrypoint now starts the owned service when executed by the
 installed launcher. Importing the package does not start a daemon. The service
-owns the local profile, credentials/model registry, control store, session
-registry, interaction broker, descendants and execution services.
+owns the control store, session registry, interaction broker, descendants and
+execution lifetime. Configured providers from the managing package own local
+credentials, model configuration, settings and runtime composition.
 
 ## Commands
 
@@ -65,13 +66,16 @@ only for session turns is not a complete writer barrier.
 
 Session activation occurs after its full registry binding exists; startup
 services never receive a fabricated AgentSession. Memory processing drains
-without abort during graceful shutdown. Defaults for existing non-deferred
-profiles remain unchanged. See [ADR 0029](../decisions/0029-activate-daemon-services-after-registration.md).
+without abort during graceful shutdown. See
+[ADR 0029](../decisions/0029-activate-daemon-services-after-registration.md) and
+[the current provider lifecycle](extension-services-and-ui.md).
 
 ## Verification scope
 
-Verification uses disposable mount-free containers and the pinned Node/pnpm
-toolchain. S1.15 recorded 3,941 passing assertions with 3 declared skips across
+Run daemon and client tests through `scripts/test-isolated.sh` with the pinned
+Node/pnpm toolchain; run `scripts/test-isolated.sh pnpm verify` for integration.
+The pre-services S1.15 baseline used disposable mount-free containers and
+recorded 3,941 passing assertions with 3 declared skips across
 352 file executions; literal `pnpm verify` passed. Daemon-only packaging covered
 27 packages without the client, and two foreground start/stop/ownership cycles
 passed. The evidence includes native ownership release, startup/foreground

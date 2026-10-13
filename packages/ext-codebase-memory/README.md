@@ -30,6 +30,11 @@ that status. It has no file watcher or periodic refresh. After edits, the model 
 `/codebase-memory refresh`. Direct file reads, grep, compiler output, and tests
 remain authoritative because an index can be stale.
 
+When `RUNTIME_LIFETIME_SERVICE` is available, indexing, setup and outstanding
+queries keep the session busy. An idle MCP frontend does not block daemon
+reload or eviction. The lifetime service releases its client lease and joins
+pending work before the session is disposed.
+
 When a known Codebase Memory coordination failure makes an index worker fail,
 current Felan sessions coordinate a bounded recovery wave through agent
 storage. They close only their own frontends, ask the reviewed binary to stop
@@ -60,6 +65,20 @@ verifies its SHA-256 digest, requests the pinned 0.11.0 release, passes
 `--skip-config`, and installs only into `AgentRuntime.storage('agent')`. It
 never edits agent or repository configuration. Cloud hosts must place the exact
 reviewed binary on `PATH` in the execution image.
+
+The default extension delegates `/codebase-memory install` to optional
+`RUNTIME_DEPENDENCIES_SERVICE` with `{ id: 'codebase-memory' }`. The trusted host
+provider owns authorization; session UI confirmation cannot authorize an
+installation. If the provider is absent, only installation is disabled.
+Existing tools and refresh operations remain available. Setup notifications use
+generic `pi.ui`; cancellation reaches the provider, and shutdown waits for
+outstanding setup. Successful setup rechecks the binary; restarting the session
+is still required to register tools when it was initially unavailable.
+
+Trusted providers can import `installManagedCodebaseMemory(runtime, onStatus?)`
+from `@felan-ai/ext-codebase-memory`. It returns the existing detection result,
+retains pinned downloads, digest checks, and cleanup, and performs no
+authorization. The default extension never invokes this installer directly.
 
 The first index after upgrading from 0.10.8 rebuilds the project once because
 0.11.0 changes the on-disk index format. Later indexes resume incrementally.
@@ -98,13 +117,23 @@ shallow-root protections remain in force.
 
 ## Public API
 
-The default export is the portable extension. Hosts may also use:
+The package root's default export is the portable, renderer-free extension.
+It does not attach terminal renderers, including when loaded in a TUI session.
+Hosts may also use:
 
 - `createCodebaseMemoryExtension({ telemetry, log })`
 - `CODEBASE_MEMORY_CONFIG`
 - `inspectCodebaseMemoryRuntime(runtime)`
 - `installManagedCodebaseMemory(runtime, onStatus)`
 - `MANAGED_CODEBASE_MEMORY_VERSION`
+
+Rich terminal renderers belong to `apps/felan`; this package exports no TUI entry
+or tool-presentation factory. The `./runtime` entry remains equivalent to the
+root. No service provider is required for standalone use; configured hosts can
+supply the optional runtime-lifetime and dependency-installation services.
+Configured hosts should import the root without rewriting it to `/runtime`.
+Choosing an entry point never authorizes installation or changes how
+the runtime locates the reviewed binary.
 
 The binary client, project coordination, and symbol services are internal
 implementation details. The package intentionally provides no LSP integration.

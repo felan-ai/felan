@@ -2,7 +2,6 @@ import type { ExtensionContext } from '@felan-ai/agent-core';
 import { Type } from 'typebox';
 
 export const PREWALK_PLAN_LIMIT = 32_000;
-export const PREWALK_REVIEW_PRESENTER = Object.freeze({ id: 'felan.prewalk.plan-review', version: '1' });
 export const APPROVE_PLAN_OPTION = 'Approve plan';
 export const FEEDBACK_PLAN_OPTION = 'Provide feedback';
 export const CANCEL_PREWALK_OPTION = 'Cancel Prewalk';
@@ -21,6 +20,8 @@ export interface PlanReviewResult {
 }
 
 export interface PrewalkHost {
+  autoApproveWithoutUi?: boolean;
+  confirmEntry?(context: Pick<ExtensionContext, 'ui' | 'mode'>, description: string, signal?: AbortSignal): Promise<boolean>;
   review(context: Pick<ExtensionContext, 'ui' | 'mode'>, plan: string, signal?: AbortSignal): Promise<PlanReviewResult | undefined>;
 }
 

@@ -10,7 +10,7 @@ export class MemoryRuntime implements AgentRuntime {
   readonly kind = 'host' as const;
   readonly cwd = '/workspace';
   readonly logger = createSilentLogger();
-  readonly files = new Map<string, Uint8Array>();
+  readonly fileContents = new Map<string, Uint8Array>();
   readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly #storage: AgentRuntimeStorage;
 
@@ -25,30 +25,30 @@ export class MemoryRuntime implements AgentRuntime {
     this.#storage = {
       root: storageRoot,
       readFile: async (path) => {
-        const value = this.files.get(path);
+        const value = this.fileContents.get(path);
         if (value === undefined) {
           throw Object.assign(new Error(`Missing ${path}`), { code: 'ENOENT' });
         }
         return value.slice();
       },
       writeFile: async (path, content) => {
-        this.files.set(path, content.slice());
+        this.fileContents.set(path, content.slice());
       },
       appendFile: async (path, content) => {
-        const existing = this.files.get(path);
+        const existing = this.fileContents.get(path);
         if (!existing) {
-          this.files.set(path, content.slice());
+          this.fileContents.set(path, content.slice());
           return;
         }
         const combined = new Uint8Array(existing.byteLength + content.byteLength);
         combined.set(existing, 0);
         combined.set(content, existing.byteLength);
-        this.files.set(path, combined);
+        this.fileContents.set(path, combined);
       },
-      listFiles: async (path) => [...this.files.keys()].filter((file) => file.startsWith(path)),
+      listFiles: async (path) => [...this.fileContents.keys()].filter((file) => file.startsWith(path)),
       mkdir: async () => {},
       remove: async (path) => {
-        this.files.delete(path);
+        this.fileContents.delete(path);
       },
     };
   }

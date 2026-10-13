@@ -38,7 +38,7 @@ it('retains an explicit submission while the previous local action settles', asy
   f.release(); await f.first;
   await vi.waitFor(() => expect(f.login).toHaveBeenCalledOnce());
   expect(f.submit).toHaveBeenCalledTimes(2);
-  expect(f.screen.editor.getExpandedText()).toBe('/login');
+  expect(f.screen.editor.getExpandedText()).toBe('');
   expect(f.transport.requests).toHaveLength(0);
 });
 
@@ -48,7 +48,7 @@ it.each(['edit', 'clear'] as const)('does not submit stale input after a queued 
   f.terminal.input(change === 'edit' ? ' changed' : '\x03');
   f.release(); await f.first;
   expect(f.login).not.toHaveBeenCalled(); expect(f.submit).toHaveBeenCalledTimes(1);
-  expect(f.screen.editor.getExpandedText()).toBe(change === 'edit' ? '/login changed' : '');
+  expect(f.screen.editor.getExpandedText()).toBe(change === 'edit' ? ' changed' : '');
   expect(f.transport.requests).toHaveLength(0);
 });
 

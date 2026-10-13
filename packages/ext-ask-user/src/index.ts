@@ -136,7 +136,6 @@ export function createAskUserExtension(host: AskUserHost): FelanExtension {
           return toolError(`Ask-user host failed: ${errorMessage(error)}`);
         }
       },
-      ...host.toolPresentation,
     };
 
     pi.registerTool(tool);
@@ -292,7 +291,6 @@ export type {
   AskUserSingleSelectLayout,
   AskUserToolDetails,
   AskUserToolErrorDetails,
-  AskUserToolPresentation,
 } from './contracts.js';
 export {
   ASK_USER_CONFIG,

@@ -1,8 +1,6 @@
 import type { FusionModelChoice, FusionReview } from './contracts.js';
 import { validateFusionReview } from './review-data.js';
 
-export const FUSION_PICKER_PRESENTER = Object.freeze({ id: 'felan.fusion.picker', version: '1' });
-export const FUSION_REVIEW_PRESENTER = Object.freeze({ id: 'felan.fusion.review', version: '1' });
 
 export interface FusionPickerRequest {
   readonly mode: 'lineup' | 'fusion';

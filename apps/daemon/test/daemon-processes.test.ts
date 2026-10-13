@@ -1,14 +1,130 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeProcess } from '@felan-ai/agent-core';
-import { BackgroundBashManager } from '@felan-ai/ext-background-bash';
+import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStdioProcess } from '@felan-ai/agent-core';
+import { RegistryProcesses } from '../src/daemon/processes.js';
+import { FakeBackgroundProcessProvider as BackgroundBashManager, fakeProcessAdapter } from './fixtures/process-provider.js';
 import { deferred, fixture, fixtures, supported } from './fixtures/registry.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 
 describe.skipIf(!supported)('registry process ownership', () => {
-  it('tracks real coordinator PTY handles and settles them on close, not detach', async () => {
+  it('evicts idle stdio transports, joining their readers, but retains in-flight writes', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const stopped = deferred(); const written = deferred(); f.releases.add(written.resolve);
+    let running = true;
+    const snapshot = () => ({ output: new Uint8Array(), nextOffset: 0, running, exitCode: 0 });
+    const read = async () => { await stopped.promise; return snapshot(); };
+    const handle: AgentRuntimeStdioProcess = {
+      pid: 42, read: async () => snapshot(), readStdout: read, readStderr: read,
+      write: async () => { await written.promise; }, closeInput: async () => {},
+      terminate: vi.fn(async () => { running = false; stopped.resolve(); }), dispose: vi.fn(async () => {}),
+    };
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, {
+      processes: { startShell: async () => handle, startStdio: async () => handle },
+    });
+    const process = await runtime.processes!.startStdio!('protocol-server', []);
+    const readers = Promise.all([process.readStdout(0), process.readStderr(0)]);
+    expect(f.registry.processes.blocksEviction(b.rootSessionId)).toBe(false);
+    const writing = process.write(new Uint8Array());
+    expect(await f.registry.evictIdle()).toEqual([]);
+    written.resolve(); await writing;
+    expect(await f.registry.evictIdle()).toEqual([b.sessionId]);
+    expect(await readers).toEqual([expect.objectContaining({ running: false }), expect.objectContaining({ running: false })]);
+    expect(handle.terminate).toHaveBeenCalledOnce(); expect(handle.dispose).toHaveBeenCalledOnce();
+    expect(f.store.snapshot().resources).toEqual([expect.objectContaining({ state: 'exited' })]);
+  });
+
+  it('forwards filesystem operations without outliving the owning session', async () => {
+    const f = await fixture();
+    const session = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = await wrappedRuntime(f, session.sessionId, session.rootSessionId, {});
+    await runtime.writeFile('journal', new TextEncoder().encode('entry'), { exclusive: true, noFollow: true });
+    const snapshot = await runtime.files!.snapshot('journal', 10);
+    expect(snapshot.info.size).toBe(5);
+    await runtime.files!.append('journal', new TextEncoder().encode('next'), snapshot.info);
+    await f.registry.close(session.sessionId);
+    await expect(runtime.files!.inspect('journal')).rejects.toThrow('closed to new work');
+    await expect(runtime.files!.snapshot('journal', 10)).rejects.toThrow('closed to new work');
+    await expect(runtime.files!.append('journal', new Uint8Array())).rejects.toThrow('closed to new work');
+  });
+
+  it('tracks and reads detached output in the directory declared by its provider', async () => {
+    const f = await fixture({}, fakeProcessAdapter('process-jobs'));
+    const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, {
+      shell: async () => ({ stdout: '', stderr: '', code: 0, killed: false }),
+    });
+    const job = await new BackgroundBashManager(runtime, 'process-jobs').start('synthetic detached');
+    await runtime.storage().writeFile(job.meta.logPath, new TextEncoder().encode('configured output'));
+    expect(f.store.snapshot().resources[0]).toMatchObject({ id: job.meta.id, reference: job.meta.infoPath });
+    const output = await f.registry.processes.read(b.sessionId, job.meta.id, 0, 1024);
+    expect(new TextDecoder().decode(output.data)).toBe('configured output');
+  });
+
+  it('reads and stops a detached process using only adapter-owned record metadata', async () => {
+    const stopped = vi.fn(async () => {});
+    const record = { id: 'worker-42', kind: 'detached' as const, status: 'running' as const,
+      command: 'worker', startedAt: Date.now(), startIdentity: 'unique-launch', commandIdentity: ['worker', 'unique-launch'] };
+    const adapter = { ...fakeProcessAdapter('workers'), stopDetached: stopped,
+      describeJob: (_runtime: AgentRuntime, path: string, bytes: Uint8Array) => path.endsWith('worker.record') && new TextDecoder().decode(bytes) === 'opaque record'
+        ? { ...record, outputPath: join(path, '..', 'stream.txt') } : undefined,
+      inspectDetached: async () => ({ status: 'running' as const, pid: 42 }),
+    };
+    const f = await fixture({}, adapter);
+    const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, {
+      exec: async () => ({ stdout: 'worker unique-launch', stderr: '', code: 0, killed: false }),
+    });
+    const storage = runtime.storage(); const directory = join(storage.root, 'workers');
+    await storage.mkdir(directory, { recursive: true });
+    await storage.writeFile(join(directory, 'worker.record'), new TextEncoder().encode('opaque record'));
+    await storage.writeFile(join(directory, 'stream.txt'), new TextEncoder().encode('streamed output'));
+    expect(f.registry.processes.list(b.rootSessionId)).toContainEqual(expect.objectContaining({ id: record.id, command: 'worker' }));
+    const output = await f.registry.processes.read(b.sessionId, record.id, 0, 1024);
+    expect(new TextDecoder().decode(output.data)).toBe('streamed output');
+    await f.registry.processes.stop(b.rootSessionId, record.id, 'SIGKILL');
+    expect(stopped).toHaveBeenCalledWith(runtime, record.id, 'SIGKILL');
+    const restarted = new RegistryProcesses({ store: f.store, processAdapter: adapter,
+      assertCurrent: () => f.owner.assertCurrent(), changed() {} });
+    restarted.wrap(runtime, { session: b.sessionId, root: b.rootSessionId });
+    await restarted.refresh(b.rootSessionId);
+    expect(restarted.list(b.rootSessionId)).toContainEqual(expect.objectContaining({ id: record.id, controllable: true }));
+    expect(new TextDecoder().decode((await restarted.read(b.sessionId, record.id, 0, 1024)).data)).toBe('streamed output');
+  });
+
+  it('exposes root-scoped interactive controls through the runtime without a job format', async () => {
+    const f = await fixture(); const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, rootSessionId: root.sessionId, parentSessionId: root.sessionId });
+    const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    let running = true;
+    const write = vi.fn(async () => {});
+    const handle: AgentRuntimeProcess = {
+      pid: 42, read: async () => ({ output: new TextEncoder().encode('output'), nextOffset: 6, running }),
+      write, terminate: async () => { running = false; }, dispose: async () => {},
+    };
+    const runtime = await wrappedRuntime(f, root.sessionId, root.sessionId, { terminals: { startShell: async () => handle } });
+    const childRuntime = await wrappedRuntime(f, child.sessionId, root.sessionId, {});
+    const otherRuntime = await wrappedRuntime(f, other.sessionId, other.sessionId, {});
+    const process = await runtime.terminals!.startShell('worker', { id: 'interactive-worker' });
+    expect(process).not.toBe(handle);
+    await expect(runtime.terminals!.startShell('worker', { id: 'interactive-worker' })).rejects.toThrow('already registered');
+    expect(runtime.terminals!.attach!('interactive-worker')).toBeDefined();
+    const attached = await f.registry.attach(root.sessionId, { principal: 'one', kind: 'tui' });
+    f.registry.detach(root.sessionId, attached.attachment);
+    expect(new TextDecoder().decode((await runtime.terminals!.attach!('interactive-worker')!.read(0)).output)).toBe('output');
+    await process.dispose();
+    expect(running).toBe(true);
+    await process.write(new TextEncoder().encode('input'));
+    expect(write).toHaveBeenCalledWith(new TextEncoder().encode('input'));
+    expect(new TextDecoder().decode((await childRuntime.terminals!.attach!('interactive-worker')!.read(0)).output)).toBe('output');
+    expect(otherRuntime.terminals!.attach!('interactive-worker')).toBeUndefined();
+    await process.terminate();
+    expect(running).toBe(false);
+    expect(await childRuntime.terminals!.attach!('interactive-worker')!.read(0)).toMatchObject({ signal: 'SIGTERM', running: false });
+  });
+
+  it('tracks addressable PTY handles and settles them on close, not detach', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     let running = true;
     const terminate = vi.fn(async () => { running = false; });
@@ -23,7 +139,7 @@ describe.skipIf(!supported)('registry process ownership', () => {
       return typeof value === 'function' ? value.bind(target) : value;
     } }) as AgentRuntime;
     const runtime = f.registry.processes.wrap(fake, { session: b.sessionId, root: b.sessionId });
-    const manager = new BackgroundBashManager(runtime, f.registry.processes.coordinator(b.sessionId, runtime));
+    const manager = new BackgroundBashManager(runtime);
     const { job } = await manager.startInteractive('synthetic pty');
     expect(f.registry.processes.list(b.sessionId)).toEqual([expect.objectContaining({ id: job.meta.id, kind: 'pty', state: 'running', controllable: true })]);
     expect(await f.registry.evictIdle()).toEqual([]);
@@ -100,7 +216,7 @@ describe.skipIf(!supported)('registry process ownership', () => {
         terminate: async () => { state.running = false; }, dispose: async () => {}, write: async () => {} };
       state.start.mockImplementation(async () => handle); handles.set(binding.sessionId, state);
       const runtime = await wrappedRuntime(f, binding.sessionId, root.sessionId, { terminals: { startShell: state.start } });
-      managers.set(binding.sessionId, new BackgroundBashManager(runtime, f.registry.processes.coordinator(root.sessionId, runtime)));
+      managers.set(binding.sessionId, new BackgroundBashManager(runtime));
     }
     await managers.get(child.sessionId)!.startInteractive('child PTY');
     await managers.get(sibling.sessionId)!.startInteractive('sibling PTY');

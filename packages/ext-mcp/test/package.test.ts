@@ -16,15 +16,23 @@ describe('@felan-ai/ext-mcp package boundary', () => {
       },
       peerDependencies: { '@felan-ai/agent-core': 'catalog:agent-core' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
+      exports: {
+        '.': { import: './dist/extension.js', types: './dist/extension.d.ts' },
+        './service': { import: './dist/service.js', types: './dist/service.d.ts' },
+      },
     });
   });
 
-  it('keeps local OAuth and ambient config behavior outside the portable source', async () => {
+  it('keeps native credential and callback I/O outside the portable source', async () => {
     const source = await readFile(join(packageRoot, 'src', 'index.ts'), 'utf8');
     const notice = await readFile(join(packageRoot, 'NOTICE'), 'utf8');
     expect(source).not.toContain('@napi-rs/keyring');
     expect(source).not.toContain("from 'open'");
-    expect(source).not.toContain('.mcp.json');
+    const oauth = await readFile(join(packageRoot, 'src', 'oauth-host.ts'), 'utf8');
+    const store = await readFile(join(packageRoot, 'src', 'oauth-store.ts'), 'utf8');
+    expect(oauth).not.toContain('process.env');
+    expect(oauth).not.toContain('node:http');
+    expect(store).not.toContain('@napi-rs/keyring');
     expect(notice).toContain('pi-mcp-adapter 2.21.0');
     expect(notice).toContain('eaf379782fddf836828811d1b71ad85d27bc70dd');
     expect(notice).toContain('pi-mcp-adapter 2.26.0');

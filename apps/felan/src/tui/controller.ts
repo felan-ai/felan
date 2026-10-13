@@ -23,7 +23,6 @@ export class TuiSessionController {
   private submitting = false;
   private uncertain: { session: string; text: string } | undefined;
   private selection: Promise<void> = Promise.resolve();
-  private inventoryComplete = true;
   private historyLoading: Promise<void> | undefined;
   private disposing: Promise<void> | undefined;
   notice = '';
@@ -56,9 +55,8 @@ export class TuiSessionController {
         const matches = sessions.filter(row => row.session === options.sessionId || row.session.startsWith(options.sessionId!));
         if (matches.length > 1) throw new Error('Session prefix is ambiguous. Choose a complete session ID.');
         id = matches[0]?.session;
-        if (!id && !this.inventoryComplete) throw new Error('Session inventory is incomplete; absence cannot be established.');
         if (!id) this.setNotice(`Session '${options.sessionId}' was not found. Starting a new session.`);
-      } else id = sessions.filter(row => row.adoption === 'adopted' && row.state === 'open').sort((a, b) => b.lastActivity - a.lastActivity)[0]?.session;
+      } else id = sessions.filter(row => row.state === 'open').sort((a, b) => b.lastActivity - a.lastActivity)[0]?.session;
     }
     if (this.closed) return;
     if (id) {
@@ -73,12 +71,10 @@ export class TuiSessionController {
   }
 
   async sessions(cwd?: string): Promise<SessionSummary[]> {
-    this.inventoryComplete = true;
     const entries: SessionSummary[] = []; const seen = new Set<string>(); let cursor: string | undefined;
     do {
       const result = await this.perform('sessions.list', { limit: LIMITS.pageEntries, ...(cwd ? { cwd } : {}), ...(cursor ? { cursor } : {}) });
       if (result.outcome !== 'accepted') throw new Error(this.notice);
-      if (result.result.inventory?.complete === false) this.inventoryComplete = false;
       entries.push(...result.result.entries.filter(row => row.root === row.session));
       cursor = result.result.cursor;
       if (cursor && (seen.has(cursor) || seen.size >= 64 || entries.length >= 4096)) throw new Error('Session listing exceeds the client limit. Narrow the current directory.');
@@ -113,7 +109,7 @@ export class TuiSessionController {
   }
 
   async create(options: TuiSessionOptions): Promise<void> {
-    const result = await this.perform('sessions.create', { cwd: options.cwd, source: 'tui',
+    const result = await this.perform('sessions.create', { cwd: options.cwd, source: 'tui', interactiveExtensions: true,
       ...(options.sessionDir ? { sessionDir: options.sessionDir } : {}),
       ...(options.extensions?.length ? { extensions: options.extensions } : {}), ...(options.config ? { config: options.config } : {}) });
     if (result.outcome !== 'accepted') throw new Error(this.notice);
@@ -125,12 +121,21 @@ export class TuiSessionController {
     this.selection = operation.then(() => {}, () => {});
     return operation;
   }
+  async reloadSession(session: string): Promise<boolean> {
+    const response = await this.perform('session.reload', {}, session);
+    if (response.outcome !== 'accepted') return false;
+    await this.attach(session);
+    return true;
+  }
 
   private async attachSelected(session: string): Promise<void> {
     if (this.closed || session === this.selected) return;
     const old = this.selected;
     const response = await this.client.attach(session);
-    if (response.outcome !== 'accepted') { this.setNotice(outcomeText(response)); throw new Error(this.notice); }
+    if (response.outcome !== 'accepted') {
+      this.setNotice(outcomeText(response));
+      throw Object.assign(new Error(this.notice), { code: response.error.code, sessionId: session });
+    }
     if (this.closed) return;
     this.selected = session; this.retained = undefined; this.mergeSnapshot(); this.emit();
     if (old && this.client.getAttachment(old)) await this.client.detach(old);

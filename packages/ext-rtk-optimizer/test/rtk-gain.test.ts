@@ -20,7 +20,7 @@ describe('session RTK gain segments', () => {
 
     expect(second?.databasePath).toBe(first?.databasePath);
     expect(other?.databasePath).not.toBe(first?.databasePath);
-    expect([...runtime.files.keys()]).toEqual(expect.arrayContaining([
+    expect([...runtime.fileContents.keys()]).toEqual(expect.arrayContaining([
       first!.relativeManifestPath,
       other!.relativeManifestPath,
     ]));
@@ -42,7 +42,7 @@ describe('session RTK gain segments', () => {
     const runtime = new MemoryRuntime(undefined, 'C:\\agent-storage');
 
     await expect(createRtkGainSegment(runtime, undefined)).resolves.toBeUndefined();
-    expect(runtime.files.size).toBe(0);
+    expect(runtime.fileContents.size).toBe(0);
   });
 
   it('reads only the session database with bounded literal argv and leaves cleanup explicit', async () => {
@@ -59,7 +59,7 @@ describe('session RTK gain segments', () => {
     })));
     const capture = await createRtkGainSegment(runtime, undefined, { now: () => NOW });
     for (const suffix of ['', '-wal', '-shm', '-journal']) {
-      runtime.files.set(`${capture!.relativeDatabasePath}${suffix}`, new Uint8Array([1]));
+      runtime.fileContents.set(`${capture!.relativeDatabasePath}${suffix}`, new Uint8Array([1]));
     }
 
     await expect(readRtkGainSegment(runtime, '/managed/rtk', capture!)).resolves.toEqual({
@@ -72,23 +72,23 @@ describe('session RTK gain segments', () => {
       args: [`RTK_DB_PATH=${capture!.databasePath}`, '/managed/rtk', 'gain', '--format', 'json'],
       options: { timeout: 5_000, maxOutputBytes: 64 * 1_024 },
     }]);
-    expect([...runtime.files.keys()]).toEqual(expect.arrayContaining([
+    expect([...runtime.fileContents.keys()]).toEqual(expect.arrayContaining([
       capture!.relativeDatabasePath,
       `${capture!.relativeDatabasePath}-wal`,
       `${capture!.relativeDatabasePath}-shm`,
       `${capture!.relativeDatabasePath}-journal`,
     ]));
     await discardRtkGainSegment(runtime, capture!);
-    expect(runtime.files.has(capture!.relativeDatabasePath)).toBe(false);
+    expect(runtime.fileContents.has(capture!.relativeDatabasePath)).toBe(false);
   });
 
   it('discovers persisted valid segments and removes malformed or orphaned entries', async () => {
     const runtime = new MemoryRuntime();
     const segment = await createRtkGainSegment(runtime, { provider: 'openai', id: 'gpt-4o' });
-    runtime.files.set('rtk-optimizer/gain/not-a-manifest.db', new Uint8Array([1]));
-    runtime.files.set('rtk-optimizer/gain/' + 'a'.repeat(64) + '.db', new Uint8Array([1]));
+    runtime.fileContents.set('rtk-optimizer/gain/not-a-manifest.db', new Uint8Array([1]));
+    runtime.fileContents.set('rtk-optimizer/gain/' + 'a'.repeat(64) + '.db', new Uint8Array([1]));
     expect(await discoverRtkGainSegments(runtime)).toEqual([segment]);
-    expect(runtime.files.has('rtk-optimizer/gain/' + 'a'.repeat(64) + '.db')).toBe(false);
+    expect(runtime.fileContents.has('rtk-optimizer/gain/' + 'a'.repeat(64) + '.db')).toBe(false);
     await discardRtkGainSegment(runtime, segment!);
     expect(await discoverRtkGainSegments(runtime)).toEqual([]);
   });
@@ -117,10 +117,10 @@ describe('session RTK gain segments', () => {
     ]) {
       const runtime = new MemoryRuntime(async () => response);
       const capture = await createRtkGainSegment(runtime, undefined, { now: () => NOW });
-      runtime.files.set(capture!.relativeDatabasePath, new Uint8Array([1]));
+      runtime.fileContents.set(capture!.relativeDatabasePath, new Uint8Array([1]));
 
       await expect(readRtkGainSegment(runtime, 'rtk', capture!)).resolves.toBeUndefined();
-      expect(runtime.files.has(capture!.relativeDatabasePath)).toBe(true);
+      expect(runtime.fileContents.has(capture!.relativeDatabasePath)).toBe(true);
     }
   });
 
@@ -132,13 +132,13 @@ describe('session RTK gain segments', () => {
     const oldSidecar = `${old}-wal`;
     const recent = `rtk-optimizer/gain/${recentTimestamp}-22222222-2222-4222-8222-222222222222.db`;
     const unrelated = 'rtk-optimizer/gain/keep.txt';
-    for (const path of [old, oldSidecar, recent, unrelated]) runtime.files.set(path, new Uint8Array([1]));
+    for (const path of [old, oldSidecar, recent, unrelated]) runtime.fileContents.set(path, new Uint8Array([1]));
 
     await createRtkGainSegment(runtime, undefined, { now: () => NOW });
 
-    expect(runtime.files.has(old)).toBe(false);
-    expect(runtime.files.has(oldSidecar)).toBe(false);
-    expect(runtime.files.has(recent)).toBe(true);
-    expect(runtime.files.has(unrelated)).toBe(true);
+    expect(runtime.fileContents.has(old)).toBe(false);
+    expect(runtime.fileContents.has(oldSidecar)).toBe(false);
+    expect(runtime.fileContents.has(recent)).toBe(true);
+    expect(runtime.fileContents.has(unrelated)).toBe(true);
   });
 });

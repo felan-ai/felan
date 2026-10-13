@@ -1,9 +1,11 @@
 # Session server integration
 
-The server implementation is being assembled in independent, nonshipping
-slices. The legacy application entrypoints remain unchanged. An unavailable
-handler must reject explicitly and must not appear in negotiated capabilities.
-This document records integration contracts, not completion of those handlers.
+Historical pre-services integration notes, not current API or completion
+guidance. Profile bindings, pending cutover work and settings ownership below
+have been superseded by [Services and UI](extension-services-and-ui.md),
+[registry ownership](session-daemon-registry.md) and
+[service lifecycle](session-daemon-service.md). An unavailable handler still
+must reject explicitly and must not appear in negotiated capabilities.
 
 ## Admission
 
@@ -104,41 +106,9 @@ S1.14. None may be implemented as a silently successful placeholder.
 
 ## Lifecycle and host-file boundaries
 
-Adoption selects only the daemon's bounded legacy inventory, never a client
-source path. The inventory includes the default session directory and configured
-session directories resolved from explicit launch, registered and discovered session cwds. An
-empty registry must receive its launch cwd through `RegistryOptions.inventoryCwds`;
-without any known cwd, inventory rejects instead of guessing process cwd. Project
-directories for other, undiscovered cwds are not enumerable. Writer checks cover
-registered transcripts, live/copy claims and foreign lifecycle reservations, but
-cannot detect every older binary. The separate literal-true legacy-risk
-acknowledgement accepts that residual risk; it does not replace backup or stopping
-known writers. Registration failure leaves the managed copy staged until another
-explicit adoption request.
-
-The managed adoption directory and its descendants never become inventory scan
-roots. Scans use asynchronous directory/file reads and yield between entries.
-A metadata-keyed cache (at most 128 entries and 1 MiB) avoids rereading unchanged
-transcript content. A bounded header scan identifies candidates before full
-hashing, even when their bodies are oversized or invalid. Full uncached reads
-retain the 64 MiB per-list budget; matching root/cwd rows are hashed first. Rows
-without a verified full read are listed without a fingerprint.
-Adoption rejects duplicate target IDs, unverifiable targets and genuinely unknown
-scan areas. Missing cwds (`ENOENT`/`ENOTDIR`) and unusable files produce diagnostics
-but do not block unrelated healthy targets. An unenumerated directory, unsafe
-configured scan root, or entry/depth limit remains a global uniqueness blocker.
-The `complete` flag describes directory/header coverage, not full fingerprint
-coverage. No diagnostic discloses a new path. Adoption independently rechecks its
-selected source in full before publication.
-
-Legacy list rows include the inventory's `sourceFingerprint`; owned rows omit it.
-The picker uses that digest without reading daemon files or obtaining a source
-path. Adoption still compares it with a newly scanned identity, so a stale or
-forged fingerprint cannot select newer bytes. Legacy reads open nonblocking and
-no-follow, reject non-regular files before reading, cap positional reads at the
-initial size plus one byte (at most 64 MiB plus one), and recheck file/path identity,
-size and modification/change timestamps. Normal copied bytes and fingerprints
-are unchanged.
+Session listing reads only registered daemon sessions. Pre-daemon transcripts are
+not discovered. Explicit import creates a fresh managed identity without changing
+the source; no adoption operation exists.
 
 Deletion requires an explicit close first, removes only the identity-checked
 managed transcript after a durable tombstone and never runs a trash program.
@@ -147,9 +117,8 @@ IDs are absent from session/child lists and cannot be restored; retained outcome
 remain available for retries.
 Owned list rows expose the current revision, including for closed sessions.
 Deletion clears obsolete projections and terminal outcomes expire normally;
-late expired IDs still cannot replay. A deleted adopted ID is retired permanently:
-its original remains untouched but cannot be re-adopted under that ID. Import can
-make a separate new-ID copy. Closed roots with unreconciled detached-job rows
+late expired IDs still cannot replay. Deleted IDs are retired permanently. Import
+can make a separate new-ID copy. Closed roots with unreconciled detached-job rows
 remain conservatively busy until host lifecycle reconciliation proves their state;
 deletion does not infer that an unobserved job finished.
 
@@ -167,10 +136,10 @@ the replacement subagent host through the current service factory after reload;
 disposing the old host alone is not a rebind.
 
 The daemon intentionally owns identity-checked host filesystem ports, as its
-existing persistence and adoption code does. Detached output reads use only
+existing persistence code does. Detached output reads use only
 verified retained job metadata and at most 64 KiB of positional binary I/O.
 Import accepts a bounded validated external JSONL snapshot, stages it privately
-and creates a new managed ID without modifying or adopting its source. Export
+and creates a new managed ID without modifying its source. Export
 uses the existing SDK renderer in private staging, then atomically publishes to
 an explicit destination outside every held store root; that output gains no
 executable store authority. Publication durability failures after rename are

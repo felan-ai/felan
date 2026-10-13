@@ -8,6 +8,21 @@ const event = (rev: number, change: unknown): SessionEvent => parseSessionEvent(
 const live = () => reduceSession(createSessionState('session'), { type: 'snapshot', snapshot: snapshot() });
 
 describe('declarative session reducer', () => {
+  it('recovers regressive UI element revisions while accepting revisionless status updates', () => {
+    const doc = { id: 'doc', kind: 'document', revision: 5, title: 'Document', markdown: 'Content', fallback: 'Document', actions: [] } as const;
+    let state = reduceSession(live(), { type: 'update', update: event(1, { type: 'presentation.updated', presentation: doc }) });
+    state = reduceSession(state, { type: 'update', update: event(2, { type: 'presentation.updated', presentation: { ...doc, revision: 4 } }) });
+    expect(state.status).toBe('recovering');
+    expect(state.snapshot?.presentation[0]).toMatchObject({ revision: 5 });
+    state = reduceSession(state, { type: 'snapshot', snapshot: { ...snapshot(2), presentation: [{ ...doc, revision: 6, actions: [] }] } });
+    expect(state.status).toBe('live');
+    const status = { id: 'status', kind: 'status', key: 'count', value: { kind: 'tokens', value: 1 }, fallback: 'One token' };
+    state = reduceSession(state, { type: 'update', update: event(3, { type: 'presentation.updated', presentation: status }) });
+    state = reduceSession(state, { type: 'update', update: event(4, { type: 'presentation.updated', presentation: { ...status, value: { kind: 'tokens', value: 2 } } }) });
+    expect(state.status).toBe('live');
+    expect(state.snapshot?.presentation.find(item => item.id === 'status')).toMatchObject({ value: { value: 2 } });
+  });
+
   it('converges on duplicates, unknown additions and coalesced tool replacements', () => {
     const tool = { id: 'tool', name: 'read', message: 'message', state: 'running', output: 'a', truncated: false };
     const events = [event(1, { type: 'future.optional', data: true }), event(2, { type: 'tool.updated', tool }),

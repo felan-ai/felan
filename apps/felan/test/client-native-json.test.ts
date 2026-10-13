@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { HEADLESS_JSON_PRESENTER } from '@felan-ai/session-protocol';
 import { SessionClient } from '../src/client/client.js';
-import { DaemonConfiguration } from '../../daemon/src/daemon/configuration.js';
+import { DaemonConfiguration } from '../src/providers/configuration.js';
 import { headlessJsonEvent } from '../../daemon/src/daemon/headless-json.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { serverFixture } from '../../daemon/test/fixtures/server.js';
@@ -18,7 +17,7 @@ it('streams the authoritative native header and print-mode events only to negoti
   await server.start();
   const connect = async (native: boolean) => {
     const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
-      kind: 'headless', clientVersion: 'fixture', presenters: native ? [HEADLESS_JSON_PRESENTER] : [], reconnectAttempts: 0 });
+      kind: 'headless', clientVersion: 'fixture', capabilities: native ? ['native.events'] : [], reconnectAttempts: 0 });
     clients.push(client); await client.connect(); return client;
   };
   const client = await connect(true); const other = await connect(false);

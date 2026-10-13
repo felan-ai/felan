@@ -14,6 +14,10 @@ entrypoint resolution. Runtime/store/model/settings/classifier/subagent-host
 constructors, `CliDependencies.openSession`, and headless host-runtime options
 are removed. Use the daemon service; there is no in-process fallback.
 
+Pre-daemon session files are not listed or resumable. `/import <path>` explicitly
+copies JSONL history into a new daemon session without changing the original;
+`/export` exports a daemon session. There is no legacy adoption workflow.
+
 ## Invocation
 
 ```text

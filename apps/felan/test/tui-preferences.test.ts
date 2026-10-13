@@ -99,3 +99,34 @@ it('does not apply a late preference reply after terminal disposal', async () =>
   const load = f.preferences.load(); await entry; f.preferences.dispose(); resolve({ outcome: 'accepted', result: defaults });
   expect(await load).toBe(false); expect(f.changed).not.toHaveBeenCalled();
 });
+
+it('reads, edits and saves execution defaults through global config with reload guidance', async () => {
+  const f = fixture(); await f.preferences.load(); const ui = dialogs();
+  Object.assign(f.controller, { snapshot: { catalog: { models: [{ provider: 'offline', id: 'classifier', label: 'Classifier' }] } } });
+  f.controller.perform.mockResolvedValueOnce({ outcome: 'accepted', result: { values: { classifierModel: 'auto', builtinExtensions: { memory: false } } } });
+  ui.select.mockResolvedValueOnce('execution').mockResolvedValueOnce('classifierModel').mockResolvedValueOnce('offline/classifier')
+    .mockResolvedValueOnce('builtin:memory').mockResolvedValueOnce('builtin:contextView').mockResolvedValueOnce('save').mockResolvedValueOnce('cancel');
+  await f.preferences.open(ui);
+  expect(f.controller.perform).toHaveBeenCalledWith('config.get', { scope: 'global' });
+  expect(ui.select.mock.calls[1]?.[1]).toContainEqual(expect.objectContaining({ value: 'builtin:memory', label: 'memory: disabled' }));
+  expect(f.controller.perform).toHaveBeenLastCalledWith('config.set', { scope: 'global', values: {
+    classifierModel: 'offline/classifier', builtinExtensions: { memory: true, contextView: false },
+  } });
+  expect(f.controller.notice).toContain('new sessions or use /reload');
+});
+
+it('does not persist cancelled execution changes and retains rejected changes for retry', async () => {
+  const f = fixture(); await f.preferences.load(); const ui = dialogs();
+  f.controller.perform.mockResolvedValueOnce({ outcome: 'accepted', result: { values: {} } });
+  ui.select.mockResolvedValueOnce('execution').mockResolvedValueOnce('builtin:memory').mockResolvedValueOnce('cancel').mockResolvedValueOnce('cancel');
+  await f.preferences.open(ui);
+  expect(f.controller.perform).not.toHaveBeenCalledWith('config.set', expect.anything());
+  f.controller.perform.mockResolvedValueOnce({ outcome: 'accepted', result: { values: {} } })
+    .mockResolvedValueOnce({ outcome: 'rejected', result: {} });
+  ui.select.mockResolvedValueOnce('execution').mockResolvedValueOnce('builtin:memory').mockResolvedValueOnce('save').mockResolvedValueOnce('save').mockResolvedValueOnce('cancel');
+  await f.preferences.open(ui);
+  expect(f.controller.perform.mock.calls.filter(([op]) => op === 'config.set')).toEqual([
+    ['config.set', { scope: 'global', values: { builtinExtensions: { memory: false } } }],
+    ['config.set', { scope: 'global', values: { builtinExtensions: { memory: false } } }],
+  ]);
+});

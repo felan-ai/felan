@@ -2,12 +2,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as wait } from 'node:timers/promises';
 import {
   CONTROL_VERSION, LIMITS, OPERATION_CATALOG, PROTOCOL_VERSION, canonicalRequestPayload, encodeFrame,
-  parseClientEnvelope, parseControlRequest, parseControlResponse, parseServerEnvelope, validateClientEligibility,
+  parseClientEnvelope, parseControlRequest, parseControlResponse, parseServerEnvelope,
   validateRequestId, type ClientEnvelope, type ControlRequest, type ControlResponse, type DaemonIdentity, type Interaction,
   type Operation, type OperationParams, type OperationResult, type PresentationEvent, type Response, type ResponseFor,
 } from '@felan-ai/session-protocol';
-import { spawnDetachedDaemon } from '@felan-ai/daemon/internal/daemon/supervisor';
-import { assertTargetIdentity, protocolTarget, resolveDaemonTarget, type DaemonTarget, type ResolvedDaemonTarget } from '@felan-ai/daemon/internal/daemon/target';
+import { spawnDetachedDaemon } from '@felan-ai/daemon/client';
+import { assertTargetIdentity, protocolTarget, resolveDaemonTarget, type DaemonTarget, type ResolvedDaemonTarget } from '@felan-ai/daemon/client';
 import { createSessionState, reduceSession, type SessionState } from './reducer.js';
 import { localConnector, type ClientTransport, type TransportConnector } from './transport.js';
 
@@ -36,12 +36,13 @@ export interface SessionClientOptions {
   target: DaemonTarget;
   clientVersion: string;
   expectedDaemonVersion?: string;
+  expectedComposition?: Pick<NonNullable<OperationResult<'hello'>['composition']>, 'managerPackage' | 'managerVersion' | 'providerDigest'>;
   kind: OperationParams<'hello'>['kind'];
   interactionKinds?: OperationParams<'hello'>['interactionKinds'];
-  presenters?: OperationParams<'hello'>['presenters'];
+  capabilities?: OperationParams<'hello'>['capabilities'];
   expected?: DaemonIdentity;
   connector?: TransportConnector;
-  launch?: { entrypoint: string; timeoutMs?: number; replacing?: DaemonIdentity };
+  launch?: { entrypoint: string; timeoutMs?: number; replacing?: DaemonIdentity; hostConfigPath?: string };
   requestTimeoutMs?: number;
   retries?: number;
   reconnectAttempts?: number;
@@ -84,7 +85,7 @@ export class SessionClient {
   private recovering = new Set<string>();
   private listeners = new Set<() => void>();
   private readonly presentationListeners = new Set<(event: PresentationEvent) => void>();
-  private readonly presentationSequences = new Map<string, Map<string, number>>();
+  private readonly presentationSequences = new Map<string, number>();
   private pinned: DaemonIdentity | undefined;
   private negotiated: OperationResult<'hello'> | undefined;
   private connectionState: 'disconnected' | 'connecting' | 'ready' | 'incompatible' | 'blocked' | 'closed' = 'disconnected';
@@ -92,7 +93,7 @@ export class SessionClient {
   constructor(private readonly options: SessionClientOptions) {
     this.options = { ...options, target: structuredClone(options.target),
       ...(options.launch ? { launch: structuredClone(options.launch) } : {}),
-      interactionKinds: [...(options.interactionKinds ?? [])], presenters: structuredClone(options.presenters ?? []) };
+      interactionKinds: [...(options.interactionKinds ?? [])], capabilities: [...(options.capabilities ?? [])] };
     this.target = resolveDaemonTarget(options.target);
     if (options.expectedDaemonVersion !== undefined && (!options.expectedDaemonVersion || Buffer.byteLength(options.expectedDaemonVersion) > 128)) throw new Error('Invalid expected daemon version.');
     this.connector = options.connector ?? localConnector(this.target);
@@ -201,7 +202,8 @@ export class SessionClient {
       }
       if (this.closed || epoch !== this.epoch) { this.transport?.close(); throw new Error('Connection was superseded'); }
       const hello = await this.exchange('hello', { clientVersion: this.options.clientVersion, protocol: PROTOCOL_VERSION,
-        kind: this.options.kind, interactionKinds: this.options.interactionKinds ?? [], presenters: this.options.presenters ?? [],
+        kind: this.options.kind, interactionKinds: this.options.interactionKinds ?? [],
+        capabilities: this.options.capabilities ?? [],
         target: protocolTarget(this.target) }, undefined, undefined, true);
       if (this.closed || epoch !== this.epoch) throw new Error('Connection was superseded');
       if (hello.outcome !== 'accepted') throw new Error('Daemon handshake rejected');
@@ -211,6 +213,12 @@ export class SessionClient {
       if (this.options.expectedDaemonVersion && result.daemonVersion !== this.options.expectedDaemonVersion) {
         this.connectionState = 'incompatible';
         throw new Error('Daemon version differs from the installed package. Explicit restart is required.');
+      }
+      if (this.options.expectedComposition && (this.options.expectedComposition.managerPackage !== result.composition?.managerPackage
+        || this.options.expectedComposition.managerVersion !== result.composition?.managerVersion
+        || this.options.expectedComposition.providerDigest !== result.composition?.providerDigest)) {
+        this.connectionState = 'incompatible';
+        throw new Error('Daemon provider configuration differs from the selected configuration. Explicit restart is required.');
       }
       this.negotiated = structuredClone(result);
       for (const interaction of this.queuedInteractions) this.acceptInteraction(interaction);
@@ -243,7 +251,6 @@ export class SessionClient {
     const id = OPERATION_CATALOG[op].mutation ? (suppliedId ?? newRequestId()).toLowerCase() : suppliedId ?? randomUUID();
     const previous = this.records.get(id);
     const envelope = parseClientEnvelope({ v: 1, id, op, params, ...(session === undefined ? {} : { session }) }, { checkFreshness: previous === undefined });
-    validateClientEligibility(envelope, this.options.kind);
     const canonical = canonicalRequestPayload(envelope, { checkFreshness: false });
     const payload = op === 'host.setup.answer' ? createHash('sha256').update(canonical).digest('hex') : canonical;
     if (previous) {
@@ -343,11 +350,10 @@ export class SessionClient {
       }
       if ('presentationEvent' in message) {
         if (!this.negotiated || !this.attachments.has(message.session)) throw new Error('Unbound presentation event.');
-        const event = message.presentationEvent; const key = JSON.stringify([event.presenter.id, event.presenter.version]);
-        if (!this.negotiated.presenters.some(p => p.id === event.presenter.id && p.version === event.presenter.version)) throw new Error('Unnegotiated presentation event.');
-        const sequences = this.presentationSequences.get(message.session) ?? new Map<string, number>();
-        if (event.sequence !== (sequences.get(key) ?? -1) + 1) throw new Error('Presentation event sequence gap.');
-        sequences.set(key, event.sequence); this.presentationSequences.set(message.session, sequences);
+        const event = message.presentationEvent;
+        if (!this.negotiated.capabilities?.includes('native.events')) throw new Error('Unnegotiated native event.');
+        if (event.sequence !== (this.presentationSequences.get(message.session) ?? -1) + 1) throw new Error('Native event sequence gap.');
+        this.presentationSequences.set(message.session, event.sequence);
         for (const listener of [...this.presentationListeners]) listener(structuredClone(message));
         return;
       }
@@ -360,9 +366,8 @@ export class SessionClient {
   }
 
   private acceptInteraction(interaction: Interaction): void {
-    if (!this.negotiated?.interactionKinds.includes(interaction.request.kind) || !interaction.eligibleClientKinds.includes(this.options.kind)) throw new Error('Ineligible interaction notification');
+    if (!this.negotiated?.interactionKinds.includes(interaction.request.kind)) throw new Error('Ineligible interaction notification');
     if (interaction.scope.kind === 'session' && !this.attachments.has(interaction.scope.session)) throw new Error('Unbound interaction notification');
-    if (interaction.scope.kind === 'host' && this.options.kind !== 'tui') throw new Error('Host interaction requires a local TUI');
     if (interaction.scope.kind === 'host' && interaction.scope.recipient !== undefined
       && interaction.scope.recipient !== this.negotiated.attachmentId) throw new Error('Host interaction targets another client');
     if (interaction.state === 'waiting' || interaction.state === 'deferred') this.interactionNotifications.set(interaction.id, interaction);
@@ -373,8 +378,7 @@ export class SessionClient {
   async attach(session: string, policy: { requirePolicy?: 'acp-strict'; policyWaitMs?: number } = {}): Promise<ResponseFor<'attach'>> {
     if (this.connectionState !== 'ready') throw new Error('Connect before attaching');
     if (this.attachments.has(session)) throw new Error('Session already attached');
-    const requirePolicy = this.options.kind === 'acp' ? 'acp-strict' : policy.requirePolicy;
-    const attachment = { id: randomUUID(), session, ...policy, ...(requirePolicy ? { requirePolicy } : {}), state: createSessionState(session) };
+    const attachment = { id: randomUUID(), session, ...policy, state: createSessionState(session) };
     this.attachments.set(session, attachment);
     const response = await this.restore(session);
     if (response.outcome === 'rejected' && this.attachments.get(session)?.id === attachment.id) this.attachments.delete(session);

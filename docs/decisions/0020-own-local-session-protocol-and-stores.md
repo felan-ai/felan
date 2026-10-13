@@ -22,7 +22,8 @@ headless to the same local endpoint in the same shipping cutover.
 One production daemon per OS account holds kernel-lifetime ownership of its actual canonical
 session, task, memory and child/process roots, including custom session paths.
 Keep Pi transcripts as content authority and add bounded control metadata, not
-a competing transcript backend. Explicit adoption is required for legacy data.
+a competing transcript backend. The final review removed legacy adoption:
+pre-daemon data is not listed or resumable; explicit import creates a new ID.
 This supersedes **only ADR 0004's in-process runtime/store ownership**; native
 ACP in `apps/tui`, stdio discipline, authentication and capability limits remain.
 Explicit isolated test/CI namespaces are permitted only with disposable roots

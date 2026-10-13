@@ -28,7 +28,7 @@ if (result.error) {
   process.exit(1);
 }
 if (result.status !== 0) {
-  process.stderr.write(result.stderr ?? 'Unable to collect production dependency licenses\n');
+  process.stderr.write(result.stderr || result.stdout || `Unable to collect production dependency licenses (exit ${result.status ?? 'unknown'})\n`);
   process.exit(result.status ?? 1);
 }
 

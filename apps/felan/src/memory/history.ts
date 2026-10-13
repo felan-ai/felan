@@ -1,10 +1,1 @@
-export {
-  listLocalSessionHistory,
-  readMemoryHistorySnapshot,
-  safeMemoryText,
-  validMemoryRunId,
-  type LocalSessionHistory,
-  type MemoryHistoryOptions,
-  type MemoryHistorySession,
-  type MemoryHistorySnapshot,
-} from '@felan-ai/daemon/internal/memory/history';
+export type { LocalSessionHistory, MemoryHistoryOptions, MemoryHistorySession, MemoryHistorySnapshot } from '@felan-ai/ext-memory/data';

@@ -103,6 +103,7 @@ export class CbmClient {
   #session: CbmMcpSession | undefined;
   #sessionStart: Promise<CbmMcpSession> | undefined;
   #closed = false;
+  readonly #calls = new Set<Promise<CbmCallResult>>();
   readonly #recovery: RecoveryCoordinator | undefined;
   readonly #cacheStorageScope: 'agent' | 'session';
 
@@ -127,8 +128,17 @@ export class CbmClient {
     }
   }
 
-  async call(command: string, args: Record<string, unknown>, options: CbmCallOptions = {}): Promise<CbmCallResult> {
-    return this.#callWithRecovery(command, args, options, true);
+  call(command: string, args: Record<string, unknown>, options: CbmCallOptions = {}): Promise<CbmCallResult> {
+    const call = this.#callWithRecovery(command, args, options, true);
+    this.#calls.add(call);
+    void call.then(() => this.#calls.delete(call), () => this.#calls.delete(call));
+    return call;
+  }
+
+  hasPendingWork(): boolean { return this.#calls.size > 0; }
+
+  async waitForIdle(): Promise<void> {
+    while (this.#calls.size) await Promise.allSettled([...this.#calls]);
   }
 
   async #callWithRecovery(command: string, args: Record<string, unknown>, options: CbmCallOptions, allowRecovery: boolean): Promise<CbmCallResult> {
@@ -157,6 +167,7 @@ export class CbmClient {
     this.#closed = true;
     await this.#recovery?.stop();
     await this.#closeSession();
+    await this.waitForIdle();
   }
 
   async measureCacheBytes(): Promise<number> {

@@ -1,6 +1,6 @@
-import { AGENT_VIEW_PRESENTER, parseAgentCatalogSignal, type AgentViewTranscript } from '@felan-ai/ext-subagents/view';
+import type { AgentViewTranscript } from '../subagents/types.js';
 import { COMPACTION_MESSAGE_TYPE, parseCompactionPresentation } from '@felan-ai/ext-session-compaction/view';
-import type { AgentSummary, Message } from '@felan-ai/session-protocol';
+import type { Execution, Message } from '@felan-ai/session-protocol';
 import type { AgentNavigatorHost, AgentNavigatorRecord } from '../subagents/agent-navigator.js';
 import type { SessionClient } from './client.js';
 import { projectedNativeMessage, projectedStreamingMessage } from './message-display.js';
@@ -20,8 +20,8 @@ export class ClientAgentHost implements AgentNavigatorHost {
   private readonly cleanupErrors: unknown[] = [];
   private readonly unsubscribe: () => void;
   private selected: string | undefined;
-  private generation: string | undefined;
   private attempted: string | undefined;
+  private refreshPending = false;
   private refreshing: Promise<void> | undefined;
   private closed = false;
   private status = 'Loading agents…';
@@ -47,7 +47,7 @@ export class ClientAgentHost implements AgentNavigatorHost {
     this.reconcile();
     if (id) {
       const row = this.records.get(id);
-      if (row?.result === undefined && row?.status !== 'queued') this.track(this.readResult(id).catch(error => {
+      if (row?.result === undefined && row?.state !== 'queued') this.track(this.readResult(id).catch(error => {
         if (!this.closed) { this.status = errorText(error); this.emit(); }
       }));
     }
@@ -59,7 +59,14 @@ export class ClientAgentHost implements AgentNavigatorHost {
     if (this.refreshing) return this.refreshing;
     const work = this.readCatalog().catch(error => { this.status = errorText(error); this.emit(); });
     this.refreshing = work;
-    const finished = () => { if (this.refreshing === work) this.refreshing = undefined; };
+    const finished = () => {
+      if (this.refreshing !== work) return;
+      this.refreshing = undefined;
+      if (this.refreshPending) {
+        this.refreshPending = false;
+        if (!this.closed && this.client.status === 'ready') void this.refresh();
+      }
+    };
     void work.then(finished, finished);
     return work;
   }
@@ -72,20 +79,18 @@ export class ClientAgentHost implements AgentNavigatorHost {
 
   async cancel(id: string, reason?: string): ReturnType<AgentNavigatorHost['cancel']> {
     if (this.closed) return unavailable();
-    const response = await this.client.request('agents.cancel', { agentId: id, ...(reason === undefined ? {} : { reason }) }, { session: this.parent });
+    const response = await this.client.request('executions.cancel', { executionId: id, ...(reason === undefined ? {} : { reason }) }, { session: this.parent });
     if (response.outcome !== 'accepted') return unavailable(response.outcome === 'indeterminate' ? 'Stop outcome is uncertain. Reload agent state before retrying.' : response.error.message);
-    if (!response.result.ok) return response.result;
-    this.updateRecord(response.result.agent); this.reconcile(); this.emit();
-    return { ok: true, value: response.result.agent };
+    this.updateRecord(viewRecord(response.result)); this.reconcile(); this.emit();
+    return { ok: true, value: viewRecord(response.result) };
   }
 
   async steer(id: string, message: string): ReturnType<AgentNavigatorHost['steer']> {
     if (this.closed) return unavailable();
-    const response = await this.client.request('agents.steer', { agentId: id, message }, { session: this.parent });
+    const response = await this.client.request('executions.steer', { executionId: id, message }, { session: this.parent });
     if (response.outcome !== 'accepted') return unavailable(response.outcome === 'indeterminate' ? 'Message outcome is uncertain. Reload agent state before retrying.' : response.error.message);
-    if (!response.result.ok) return response.result;
-    this.updateRecord(response.result.agent); this.emit();
-    return { ok: true, value: response.result.agent };
+    this.updateRecord(viewRecord(response.result)); this.emit();
+    return { ok: true, value: viewRecord(response.result) };
   }
 
   dispose(): Promise<void> { return this.disposing ??= this.disposeOnce(); }
@@ -106,64 +111,63 @@ export class ClientAgentHost implements AgentNavigatorHost {
     if (!ready) { this.wasReady = false; this.status = 'Agent connection unavailable.'; this.emit(); return; }
     if (!this.wasReady) { this.wasReady = true; this.attempted = undefined; this.reconcile(); }
     const root = this.client.getAttachment(this.parent)?.state;
-    const signal = root?.snapshot?.presentation.find(item => item.id === AGENT_VIEW_PRESENTER.id);
-    if (root?.status === 'live' && signal?.kind === 'custom' && signal.presenter.id === AGENT_VIEW_PRESENTER.id
-      && signal.presenter.version === AGENT_VIEW_PRESENTER.version) {
-      try {
-        const { generation } = parseAgentCatalogSignal(signal.data);
-        if (generation !== this.generation && generation !== this.attempted && !this.refreshing) {
-          this.attempted = generation; void this.refresh();
-        }
-      } catch (error) { this.status = errorText(error); }
+    if (root?.status === 'live') {
+      const revision = root.snapshot?.executionsGeneration ?? '';
+      if (revision !== this.attempted) {
+        this.attempted = revision;
+        if (this.refreshing) this.refreshPending = true;
+        else void this.refresh();
+      }
     }
     this.updateViews();
   }
 
   private async readCatalog(): Promise<void> {
     if (this.client.status !== 'ready') throw new Error('Agent connection unavailable.');
-    if (!this.client.capabilities?.operations.includes('agents.list')) throw new Error('This daemon does not support agent views.');
+    if (!this.client.capabilities?.operations.includes('executions.list')) throw new Error('This daemon does not support agent views.');
     for (let attempt = 0; attempt < 3; attempt++) {
-      let cursor: string | undefined; let generation: string | undefined; const rows: AgentSummary[] = []; const cursors = new Set<string>();
+      let cursor: string | undefined; const rows: Execution[] = []; const cursors = new Set<string>();
+      const generation = this.client.getAttachment(this.parent)?.state.snapshot?.executionsGeneration;
       let retry = false;
       do {
-        const response = await this.client.request('agents.list', { limit: 100, ...(cursor === undefined ? {} : { cursor }) }, { session: this.parent });
+        const response = await this.client.request('executions.list', { limit: 100, ...(cursor === undefined ? {} : { cursor }) }, { session: this.parent });
         if (this.closed) return;
         if (response.outcome !== 'accepted') {
           if (response.error.code === 'resync_required') { retry = true; break; }
           throw new Error(response.error.message);
         }
-        if (generation !== undefined && generation !== response.result.generation) { retry = true; break; }
-        generation = response.result.generation; rows.push(...response.result.entries);
-        if (rows.length > 4096 || new Set(rows.map(row => row.agentId)).size !== rows.length) throw new Error('Agent catalog exceeds its bound or repeats an identity.');
-        cursor = response.result.cursor;
-        if (cursor) { if (cursors.has(cursor)) throw new Error('Agent catalog cursor did not advance.'); cursors.add(cursor); }
+        rows.push(...response.result.items);
+        if (rows.length > 4096 || new Set(rows.map(row => row.id)).size !== rows.length) throw new Error('Execution catalog exceeds its bound or repeats an identity.');
+        cursor = response.result.nextCursor;
+        if (cursor) { if (cursors.has(cursor)) throw new Error('Execution catalog cursor did not advance.'); cursors.add(cursor); }
       } while (cursor);
-      if (retry) continue;
+      if (retry || generation !== this.client.getAttachment(this.parent)?.state.snapshot?.executionsGeneration) continue;
+      this.refreshPending = false;
       const old = this.records; this.records = new Map();
-      for (const row of rows) this.records.set(row.agentId, viewRecord(row, old.get(row.agentId)));
-      this.generation = generation; this.status = ''; this.reconcile(); this.updateViews(); return;
+      for (const row of rows) this.records.set(row.id, viewRecord(row, old.get(row.id)));
+      this.status = ''; this.reconcile(); this.updateViews(); return;
     }
     throw new Error('Agent catalog changed while loading. Open the view again to retry.');
   }
 
-  private updateRecord(row: AgentSummary): void {
+  private updateRecord(row: AgentNavigatorRecord): void {
     if (this.closed) return;
-    this.records.set(row.agentId, viewRecord(row, this.records.get(row.agentId)));
+    this.records.set(row.id, row);
   }
 
   private async readResult(id: string): Promise<void> {
-    const response = await this.client.request('agents.read', { agentId: id }, { session: this.parent });
+    const response = await this.client.request('executions.read', { executionId: id }, { session: this.parent });
     if (this.closed || !this.records.has(id)) return;
     if (response.outcome !== 'accepted') { this.status = response.error.message; this.emit(); return; }
-    this.updateRecord(response.result.agent);
-    if (response.result.result !== undefined) this.records.set(id, { ...this.records.get(id)!, result: response.result.result });
+    this.updateRecord(viewRecord(response.result));
+
     this.reconcile(); this.updateViews();
   }
 
   private reconcile(): void {
     if (this.closed) return;
-    const desired = new Set([...this.records.values()].filter(row => row.agentId === this.selected || row.status === 'running' || row.status === 'queued')
-      .flatMap(row => row.sessionId ? [row.sessionId] : []));
+    const desired = new Set([...this.records.values()].filter(row => row.id === this.selected || row.state === 'running' || row.state === 'queued')
+      .flatMap(row => row.session?.id ? [row.session?.id] : []));
     for (const [session, attachment] of this.attachments) if (!desired.has(session)) {
       this.attachments.delete(session); this.track(this.release(session, attachment));
       this.histories.delete(session); this.projections.delete(session);
@@ -201,14 +205,14 @@ export class ClientAgentHost implements AgentNavigatorHost {
   private updateViews(): void {
     if (this.closed) return;
     for (const [id, original] of this.records) {
-      const state = original.sessionId ? this.client.getAttachment(original.sessionId)?.state : undefined;
+      const state = original.session?.id ? this.client.getAttachment(original.session?.id)?.state : undefined;
       const snapshot = state?.snapshot;
       const row: MutableRecord = { ...original };
       if (snapshot && state?.status === 'live') {
         row.activity = snapshot.tools.some(tool => tool.state === 'running') ? `using ${snapshot.tools.filter(tool => tool.state === 'running').map(tool => tool.name).join(', ')}…`
           : snapshot.activeStreams.filter(stream => stream.kind === 'assistant').map(stream => stream.text).join('').split(/\r?\n/u).find(line => line.trim()) ?? 'thinking…';
-        if (id === this.selected && original.sessionId) {
-          const session = original.sessionId;
+        if (id === this.selected && original.session?.id) {
+          const session = original.session?.id;
           let history = this.histories.get(session);
           if (!history) { history = { branch: snapshot.branch, entries: snapshot.history.entries, loaded: !snapshot.history.cursor }; this.histories.set(session, history); }
           const last = history.entries.at(-1)?.id;
@@ -252,7 +256,7 @@ export class ClientAgentHost implements AgentNavigatorHost {
             row.projection = projection.value; delete row.transcriptStatus;
           } else { row.transcriptStatus = 'Loading transcript history…'; delete row.projection; }
         }
-      } else if (original.sessionId) { row.transcriptStatus = state?.status === 'blocked' ? 'Transcript recovery is blocked.' : 'Waiting for the child connection…'; delete row.projection; }
+      } else if (original.session?.id) { row.transcriptStatus = state?.status === 'blocked' ? 'Transcript recovery is blocked.' : 'Waiting for the child connection…'; delete row.projection; }
       this.records.set(id, row);
     }
     this.emit();
@@ -292,8 +296,6 @@ function unavailable(message = 'Agent view is closed.') { return { ok: false as 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function plainMessage(message: Message): string { return message.content.flatMap(part => part.type === 'text' || part.type === 'thinking' || part.type === 'tool_result'
   ? [part.text] : part.type === 'resource_link' ? [part.uri] : part.type === 'image' ? ['[Image]'] : []).join('\n'); }
-function viewRecord(row: AgentSummary, previous?: AgentNavigatorRecord): AgentNavigatorRecord {
-  const same = previous?.sessionId === row.sessionId;
-  return { ...row, ...(same && previous?.projection ? { projection: previous.projection } : {}),
-    ...(row.resultAvailable && previous?.result !== undefined ? { result: previous.result } : {}) };
+function viewRecord(row: Execution, previous?: AgentNavigatorRecord): AgentNavigatorRecord {
+  return { ...row, ...(previous?.session?.id === row.session?.id && previous?.projection ? { projection: previous.projection } : {}) };
 }

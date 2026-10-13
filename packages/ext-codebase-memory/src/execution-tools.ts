@@ -20,7 +20,6 @@ const ProxyCommand = Type.Union([
 ]);
 const PROXY_COMMANDS: ReadonlySet<string> = new Set(ProxyCommand.anyOf.map((entry) => entry.const));
 
-export type CodebaseMemoryToolPresenter = (mode: CodebaseMemoryMode, name: string) => Pick<ToolDefinition, 'renderCall' | 'renderResult'>;
 
 export function registerExecutionTools(
   pi: FelanExtensionAPI,
@@ -28,7 +27,6 @@ export function registerExecutionTools(
   projects: ProjectService,
   symbols: SymbolService,
   mode: CodebaseMemoryMode = 'curated',
-  presentation?: CodebaseMemoryToolPresenter,
 ): void {
   if (mode !== 'curated') {
     const entries = mode === 'proxy' ? [RAW_TOOL_CATALOG[0]!] : RAW_TOOL_CATALOG;
@@ -55,7 +53,6 @@ export function registerExecutionTools(
           }
           return toolResult(await dispatchRawCommand(client, projects, entry.name, params, signal));
         },
-        ...presentation?.(mode, mode === 'proxy' ? 'codebase_memory' : entry.name),
       });
     }
     return;
@@ -151,7 +148,7 @@ export function registerExecutionTools(
       },
     },
   ];
-  for (const tool of tools) pi.registerTool({ ...tool, ...presentation?.(mode, tool.name) });
+  for (const tool of tools) pi.registerTool(tool);
 }
 
 function toolResult(data: unknown) {

@@ -34,7 +34,6 @@ export const ConfigValuesSchema = Type.Object({
   'ask-user-display-mode': Type.Optional(enumOf(['overlay', 'inline'] as const)),
   'ask-user-single-select-layout': Type.Optional(enumOf(['auto', 'list'] as const)),
   'tasks-display-mode': Type.Optional(enumOf(['overlay', 'inline'] as const)),
-  'context-view-display-mode': Type.Optional(enumOf(['overlay', 'inline'] as const)),
   'prompt-history-display-mode': Type.Optional(enumOf(['overlay', 'inline'] as const)),
   'prewalk-target-thinking': Type.Optional(enumOf(['off', 'low', 'medium', 'high', 'xhigh', 'max'] as const)),
   'prewalk-entry-approval': Type.Optional(enumOf(['ask', 'allow', 'deny'] as const)),
@@ -60,6 +59,8 @@ export const ConfigValuesSchema = Type.Object({
   scopedModels: Type.Optional(Type.Array(IdSchema, { maxItems: LIMITS.catalogEntries, uniqueItems: true })),
   defaultModel: Type.Optional(IdSchema),
   defaultThinking: Type.Optional(ThinkingSchema),
+  classifierModel: Type.Optional(IdSchema),
+  builtinExtensions: Type.Optional(Type.Record(Type.String({ pattern: `^[A-Za-z][A-Za-z0-9_-]{0,${LIMITS.idBytes - 1}}$` }), Type.Boolean(), { additionalProperties: false, maxProperties: LIMITS.catalogEntries })),
 }, { additionalProperties: false, 'x-maxEncodedBytes': LIMITS.structuredBytes });
 
 export const ConfigScopeSchema = enumOf(['session', 'project', 'global'] as const);

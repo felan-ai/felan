@@ -5,10 +5,7 @@ import {
   type Theme,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import {
-  SUBAGENT_COMPLETION_MESSAGE_TYPE,
-  type SubagentCompletionNotice,
-} from '@felan-ai/ext-subagents';
+import { SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE, type ExecutionCompletionNotice } from '../src/execution-completion.js';
 import {
   KeybindingsManager as TuiKeybindingsManager,
   TuiAltScreen,
@@ -30,7 +27,7 @@ import {
   type AgentRailRenderer,
   type LocalSubagentNavigatorHost,
 } from '../src/subagents/agent-navigator.js';
-import type { LocalSubagentView } from '@felan-ai/daemon/internal/subagents/host';
+import type { AgentNavigatorRecord as LocalSubagentView } from '../src/subagents/agent-navigator.js';
 
 const theme = defaultClientTheme();
 
@@ -61,8 +58,8 @@ describe('AgentNavigator', () => {
   });
 
   it('switches between subagents and sends steering input to the selection', async () => {
-    const first = record('agent-1', 'running', { type: 'reviewer' });
-    const second = record('agent-2', 'running', { type: 'developer' });
+    const first = record('agent-1', 'running', { label: 'reviewer' });
+    const second = record('agent-2', 'running', { label: 'developer' });
     const harness = createHarness([first, second]);
 
     harness.navigator.handleInput('\x1b[B');
@@ -72,17 +69,17 @@ describe('AgentNavigator', () => {
     harness.navigator.handleInput('\r');
 
     await vi.waitFor(() => {
-      expect(harness.host.steer).toHaveBeenCalledWith(second.agentId, 'focus here');
+      expect(harness.host.steer).toHaveBeenCalledWith(second.id, 'focus here');
     });
     harness.navigator.dispose();
   });
 
   it('shows the resolved model in selected metadata and list rows', () => {
     const withModel = record('agent-1', 'running', {
-      type: 'explore',
-      model: 'provider/child-model',
+      label: 'explore',
+      model: { provider: 'provider', id: 'child-model' },
     });
-    const withoutModel = record('agent-2', 'queued', { type: 'reviewer' });
+    const withoutModel = record('agent-2', 'queued', { label: 'reviewer' });
     const harness = createHarness([withModel, withoutModel], 10, 80);
 
     const lines = visibleLines(harness.navigator, 80);
@@ -97,7 +94,7 @@ describe('AgentNavigator', () => {
 
   it('shows each subagent cost beside its elapsed time', () => {
     const withCost = record('agent-1', 'completed', {
-      type: 'explore',
+      label: 'explore',
       completedAt: '2026-01-01T00:00:03.000Z',
       usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 0, cost: 0.05134808 },
     });
@@ -142,7 +139,7 @@ describe('AgentNavigator', () => {
       model: { provider: 'default-provider', id: 'default-model' },
     });
     const harness = createHarness([
-      record('agent-1', 'running', { type: 'general', session }),
+      record('agent-1', 'running', { label: 'general', liveSession: session }),
     ], 10, 80);
 
     const lines = visibleLines(harness.navigator, 80);
@@ -162,7 +159,7 @@ describe('AgentNavigator', () => {
         listener = next;
       },
     );
-    const harness = createHarness([record('agent-1', 'running', { session })]);
+    const harness = createHarness([record('agent-1', 'running', { liveSession: session })]);
     harness.tui.requestRender.mockClear();
 
     listener({
@@ -186,7 +183,7 @@ describe('AgentNavigator', () => {
       () => {},
     );
     const harness = createHarness([
-      record('agent-1', 'running', { session }),
+      record('agent-1', 'running', { liveSession: session }),
       record('agent-2', 'completed'),
     ], 12, 80);
 
@@ -216,7 +213,7 @@ describe('AgentNavigator', () => {
       })),
       () => {},
     );
-    const harness = createHarness([record('agent-1', 'running', { session })], 12, 80);
+    const harness = createHarness([record('agent-1', 'running', { liveSession: session })], 12, 80);
 
     const first = visibleLines(harness.navigator, 80).join('\n');
     harness.tui.requestRender.mockClear();
@@ -244,7 +241,7 @@ describe('AgentNavigator', () => {
       })),
       () => {},
     );
-    const host = navigatorHost(() => [record('agent-1', 'running', { session })]);
+    const host = navigatorHost(() => [record('agent-1', 'running', { liveSession: session })]);
     const navigator = new AgentNavigator(
       tui,
       host,
@@ -408,8 +405,8 @@ describe('AgentNavigator', () => {
 describe('AgentRailEditor', () => {
   it('shows only active subagents and moves focus through the rail from prompt history', () => {
     const records = [
-      record('agent-1', 'running', { type: 'explore', model: 'provider/explore-model' }),
-      record('agent-2', 'queued', { type: 'developer' }),
+      record('agent-1', 'running', { label: 'explore', model: { provider: 'provider', id: 'explore-model' } }),
+      record('agent-2', 'queued', { label: 'developer' }),
       record('agent-3', 'completed', { type: 'finished' }),
     ];
     const host = navigatorHost(() => records);
@@ -461,10 +458,10 @@ describe('AgentRailEditor', () => {
     const activity = `Reviewing ${'detailed output '.repeat(4)}VISIBLE-END`;
     const startedAt = new Date().toISOString();
     const host = navigatorHost(() => [record('agent-1', 'running', {
-      type: 'explore',
+      label: 'explore',
       createdAt: startedAt,
       startedAt,
-      session: sessionWithStreamingText(activity),
+      liveSession: sessionWithStreamingText(activity),
     })]);
     const editor = new AgentRailEditor(
       { terminal: { rows: 20, columns: 120 }, requestRender: vi.fn() } as never,
@@ -542,7 +539,7 @@ describe('registerLocalSubagentNavigator', () => {
     handlers.get('session_start')![0]!({}, context);
 
     expect(commands.has('agents')).toBe(true);
-    expect(messageRenderers.has(SUBAGENT_COMPLETION_MESSAGE_TYPE)).toBe(true);
+    expect(messageRenderers.has(SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE)).toBe(true);
     expect(shortcuts).toHaveLength(1);
     expect(setEditorComponent).toHaveBeenCalledOnce();
     expect(editor && visibleLines(editor, 80).join('\n')).not.toContain('reviewer');
@@ -560,18 +557,18 @@ describe('registerLocalSubagentNavigator', () => {
       registerShortcut: vi.fn(),
     };
     registerLocalSubagentNavigator(pi as never, navigatorHost(() => []));
-    const renderer = messageRenderers.get(SUBAGENT_COMPLETION_MESSAGE_TYPE)!;
-    const notice: SubagentCompletionNotice = {
+    const renderer = messageRenderers.get(SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE)!;
+    const notice: ExecutionCompletionNotice = {
       deliveryId: 'delivery-1',
       parentSessionId: 'parent-1',
-      agentId: '844e8bcc-1c51-40f5-8ef0-791604e69f58',
-      type: 'explore',
+      executionId: '844e8bcc-1c51-40f5-8ef0-791604e69f58',
+      label: 'explore',
       status: 'completed',
       summary: '\u001b[31m## Summary\u0007\u0008 heading\u001b[0m\nsecond detail\nthird detail\nfourth detail',
     };
     const message = {
       role: 'custom',
-      customType: SUBAGENT_COMPLETION_MESSAGE_TYPE,
+      customType: SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE,
       content: `Subagent completion: ${notice.summary}`,
       display: true,
       details: { notice },
@@ -604,28 +601,28 @@ describe('registerLocalSubagentNavigator', () => {
       registerShortcut: vi.fn(),
     };
     registerLocalSubagentNavigator(pi as never, navigatorHost(() => []));
-    const renderer = messageRenderers.get(SUBAGENT_COMPLETION_MESSAGE_TYPE)!;
-    const notices: SubagentCompletionNotice[] = [
+    const renderer = messageRenderers.get(SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE)!;
+    const notices: ExecutionCompletionNotice[] = [
       {
         deliveryId: 'delivery-one',
         parentSessionId: 'parent-1',
-        agentId: '11111111-1111-1111-1111-111111111111',
-        type: 'explore',
+        executionId: '11111111-1111-1111-1111-111111111111',
+        label: 'explore',
         status: 'completed',
         summary: 'first result',
       },
       {
         deliveryId: 'delivery-two',
         parentSessionId: 'parent-1',
-        agentId: '22222222-2222-2222-2222-222222222222',
-        type: 'reviewer',
+        executionId: '22222222-2222-2222-2222-222222222222',
+        label: 'reviewer',
         status: 'completed',
         summary: 'second result',
       },
     ];
     const message = {
       role: 'custom' as const,
-      customType: SUBAGENT_COMPLETION_MESSAGE_TYPE,
+      customType: SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE,
       content: 'Subagent completions',
       display: true,
       details: { notices },
@@ -650,7 +647,7 @@ type CompletionRenderer = (
     customType: string;
     content: string;
     display: boolean;
-    details: { notice?: SubagentCompletionNotice; notices?: readonly SubagentCompletionNotice[] };
+    details: { notice?: ExecutionCompletionNotice; notices?: readonly ExecutionCompletionNotice[] };
     timestamp: number;
   },
   options: { expanded: boolean; outputPad: number },
@@ -692,15 +689,15 @@ function navigatorHost(records: () => LocalSubagentView[]): LocalSubagentNavigat
   return {
     listLocalSubagents: vi.fn(() => records()),
     getLocalSubagent: vi.fn((agentId: string) => (
-      records().find((candidate) => candidate.agentId === agentId)
+      records().find((candidate) => candidate.id === agentId)
     )),
     steer: vi.fn(async (agentId: string) => ({
       ok: true as const,
-      value: records().find((candidate) => candidate.agentId === agentId)!,
+      value: records().find((candidate) => candidate.id === agentId)!,
     })),
     cancel: vi.fn(async (agentId: string) => ({
       ok: true as const,
-      value: records().find((candidate) => candidate.agentId === agentId)!,
+      value: records().find((candidate) => candidate.id === agentId)!,
     })),
   };
 }
@@ -729,16 +726,15 @@ class TestTerminal implements Terminal {
 
 function record(
   agentId: string,
-  status: LocalSubagentView['status'] = 'running',
+  status: LocalSubagentView['state'] = 'running',
   overrides: Partial<LocalSubagentView> = {},
 ): LocalSubagentView {
   return {
-    agentId,
-    parentSessionId: 'root',
-    rootSessionId: 'root',
-    type: 'reviewer',
+    id: agentId,
+    parent: 'root',
+    label: 'reviewer',
     description: `agent ${agentId}`,
-    status,
+    state: status,
     createdAt: '2026-01-01T00:00:00.000Z',
     startedAt: '2026-01-01T00:00:01.000Z',
     ...overrides,

@@ -17,6 +17,27 @@ afterEach(async () => {
 });
 
 describe('CbmClient stdio transport', () => {
+  it.each([false, true])('reports pending calls until they settle (reject: %s)', async reject => {
+    const gate = deferred();
+    const runtime = new MemoryRuntime('daytona', true, async () => {
+      await gate.promise;
+      if (reject) throw new Error('request failed');
+      return result(envelope({ projects: [] }));
+    });
+    const client = new CbmClient(runtime, { command: 'codebase-memory-mcp', version: '0.11.0', source: 'path' });
+    const call = client.call('list_projects', {});
+    expect(client.hasPendingWork()).toBe(true);
+    let idle = false;
+    const waiting = client.waitForIdle().then(() => { idle = true; });
+    await Promise.resolve(); expect(idle).toBe(false);
+    gate.resolve();
+    if (reject) await expect(call).rejects.toThrow('request failed');
+    else await call;
+    await waiting;
+    expect(client.hasPendingWork()).toBe(false);
+    await client.close();
+  });
+
   it('uses session-visible cache storage for one-shot cloud calls', async () => {
     const runtime = new (class extends MemoryRuntime {
       override async shell(command: string, options?: Record<string, unknown>) {
@@ -38,9 +59,12 @@ describe('CbmClient stdio transport', () => {
     const runtime = new HostAgentRuntime(workspace, { sessionStorageRoot: session, agentStorageRoot: agent });
     const client = new CbmClient(runtime, { command: script, version: '0.11.0', source: 'managed' });
 
-    await expect(client.call('list_projects', {})).resolves.toMatchObject({
+    const request = client.call('list_projects', {});
+    expect(client.hasPendingWork()).toBe(true);
+    await expect(request).resolves.toMatchObject({
       data: { projects: [{ name: 'fixture' }] },
     });
+    expect(client.hasPendingWork()).toBe(false);
     await expect(client.call('list_projects', {})).resolves.toMatchObject({
       data: { projects: [{ size_bytes: 7 }] },
     });

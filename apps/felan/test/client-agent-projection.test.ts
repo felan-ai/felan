@@ -1,6 +1,6 @@
 import { beforeAll, expect, it, vi } from 'vitest';
 import { KeybindingsManager, TUI_KEYBINDINGS, setKeybindings, stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
-import type { AgentViewTranscript } from '@felan-ai/ext-subagents/view';
+import type { AgentViewTranscript } from '../src/subagents/types.js';
 import { AgentNavigator, type AgentNavigatorHost, type AgentNavigatorRecord } from '../src/subagents/agent-navigator.js';
 import { AgentTranscript } from '../src/subagents/agent-transcript.js';
 import { defaultClientTheme } from '../src/tui/theme.js';
@@ -14,14 +14,14 @@ function projection(): AgentViewTranscript {
     pendingTools: [], settings: { hideThinking: false, showImages: false, imageWidthCells: 60, outputPad: 1, toolMode: 'grouped' } };
 }
 function record(value = projection()): AgentNavigatorRecord {
-  return { agentId: 'agent', parentSessionId: 'root', rootSessionId: 'root', type: 'reviewer', description: 'Check changes',
-    status: 'running', createdAt: new Date(0).toISOString(), model: 'offline/fixture', activity: 'Checking changes…',
+  return { id: 'agent', parent: 'root', label: 'reviewer', description: 'Check changes',
+    state: 'running', createdAt: new Date(0).toISOString(), model: { provider: 'offline', id: 'fixture' }, activity: 'Checking changes…',
     usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cost: 0.025 }, projection: value };
 }
 function setup(initial = record(), toolPresentation?: AgentNavigatorHost['toolPresentation']) {
   let current = initial; const listeners = new Set<() => void>(); const unsubscribe = vi.fn();
   const host: AgentNavigatorHost = {
-    listLocalSubagents: () => [current], getLocalSubagent: id => id === current.agentId ? current : undefined,
+    listLocalSubagents: () => [current], getLocalSubagent: id => id === current.id ? current : undefined,
     cancel: vi.fn(async () => ({ ok: true, value: current })), steer: vi.fn(async () => ({ ok: true, value: current })),
     selectAgent: vi.fn(), subscribe: callback => { listeners.add(callback); return () => { listeners.delete(callback); unsubscribe(); }; },
     ...(toolPresentation ? { toolPresentation } : {}),

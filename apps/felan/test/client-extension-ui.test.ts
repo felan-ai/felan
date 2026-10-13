@@ -1,8 +1,9 @@
+import { sessionUiPort } from './session-ui-fixture.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { SessionClient } from '../src/client/client.js';
 import { createRegistryInteractionBroker } from '../../daemon/src/daemon/broker.js';
 import { createSessionExtensionUi } from '../../daemon/src/daemon/extension-ui.js';
-import { DaemonConfiguration } from '../../daemon/src/daemon/configuration.js';
+import { DaemonConfiguration } from '../src/providers/configuration.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { serverFixture } from '../../daemon/test/fixtures/server.js';
 
@@ -12,7 +13,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 it('shares an extension dialog and buffered presentation across client detach', async () => {
   const f = await serverFixture({ now: () => Date.now() });
   const broker = createRegistryInteractionBroker(f.registry);
-  const bridge = createSessionExtensionUi({ broker, scope: { kind: 'session', session: f.root.sessionId, root: f.root.rootSessionId } });
+  const bridge = createSessionExtensionUi({ port: sessionUiPort(broker, { kind: 'session', session: f.root.sessionId, root: f.root.rootSessionId }) });
   const configuration = new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() });
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'fixture', broker });
   const clients: SessionClient[] = [];
@@ -43,7 +44,7 @@ it('executes a registered command in the daemon and answers its bound UI through
   const f = await serverFixture({ now: () => Date.now(),
     extensionUi(context, registry) {
       broker ??= createRegistryInteractionBroker(registry);
-      bridge = createSessionExtensionUi({ broker, scope: { kind: 'session', session: context.sessionManager.getSessionId(), root: context.rootSessionId } });
+      bridge = createSessionExtensionUi({ port: sessionUiPort(broker, { kind: 'session', session: context.sessionManager.getSessionId(), root: context.rootSessionId }) });
       return bridge;
     },
     extension(pi) {
@@ -62,7 +63,7 @@ it('executes a registered command in the daemon and answers its bound UI through
   bridge.activate(update => f.registry.projection(f.root.sessionId).setPresentation(update));
   await server.start(); await client.connect(); await client.attach(f.root.sessionId);
   expect(client.getAttachment(f.root.sessionId)?.state.snapshot?.catalog.commands).toContainEqual(expect.objectContaining({ name: 'choose' }));
-  expect(client.getAttachment(f.root.sessionId)?.state.snapshot?.presentation).toContainEqual(expect.objectContaining({ text: 'Registered' }));
+  expect(client.getAttachment(f.root.sessionId)?.state.snapshot?.presentation).toContainEqual(expect.objectContaining({ kind: 'status', value: { kind: 'text', text: 'Registered' } }));
   expect(await client.request('command.invoke', { name: 'choose', arguments: '' }, { session: f.root.sessionId }))
     .toMatchObject({ outcome: 'accepted', result: { status: 'started' } });
   const interaction = f.store.snapshot().interactions.at(-1)!;

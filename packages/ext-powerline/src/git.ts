@@ -32,6 +32,7 @@ export class GitCache {
   private details: GitDetails | undefined;
   private inFlight: Promise<void> | undefined;
   private disposed = false;
+  private readonly lifetime = new AbortController();
 
   constructor(
     private readonly pi: Pick<FelanExtensionAPI, 'exec'>,
@@ -54,10 +55,11 @@ export class GitCache {
 
   dispose(): void {
     this.disposed = true;
+    this.lifetime.abort();
   }
 
   private async refreshNow(): Promise<void> {
-    const root = await runGit(this.pi, ['rev-parse', '--show-toplevel'], this.cwd);
+    const root = await runGit(this.pi, ['rev-parse', '--show-toplevel'], this.cwd, this.lifetime.signal);
     if (this.disposed) return;
     if (!root) {
       this.details = undefined;
@@ -65,10 +67,10 @@ export class GitCache {
     }
 
     const [sha, status, tag, commitTimestamp] = await Promise.all([
-      runGit(this.pi, ['rev-parse', '--short', 'HEAD'], this.cwd),
-      runGit(this.pi, ['status', '--porcelain=v2', '--branch', '--show-stash'], this.cwd),
-      runGit(this.pi, ['describe', '--tags', '--exact-match'], this.cwd),
-      runGit(this.pi, ['log', '-1', '--format=%ct'], this.cwd),
+      runGit(this.pi, ['rev-parse', '--short', 'HEAD'], this.cwd, this.lifetime.signal),
+      runGit(this.pi, ['status', '--porcelain=v2', '--branch', '--show-stash'], this.cwd, this.lifetime.signal),
+      runGit(this.pi, ['describe', '--tags', '--exact-match'], this.cwd, this.lifetime.signal),
+      runGit(this.pi, ['log', '-1', '--format=%ct'], this.cwd, this.lifetime.signal),
     ]);
     if (this.disposed) return;
 
@@ -105,9 +107,11 @@ export async function runGit(
   pi: Pick<FelanExtensionAPI, 'exec'>,
   args: string[],
   cwd: string,
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
   try {
-    const result = await pi.exec('git', args, { cwd, timeout: GIT_TIMEOUT_MS });
+    if (signal?.aborted) return undefined;
+    const result = await pi.exec('git', args, { cwd, timeout: GIT_TIMEOUT_MS, ...(signal === undefined ? {} : { signal }) });
     if (result.code !== 0 || result.killed) return undefined;
     return result.stdout.trim() || undefined;
   } catch {

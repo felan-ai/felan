@@ -1,4 +1,5 @@
-export * from './daemon/profile.js';
+export { SESSION_RUNTIME_SERVICE } from './daemon/session-runtime.js';
+export type { SessionRuntime, SessionComposition, SessionCompositionRequest, SessionEnvironment } from './daemon/session-runtime.js';
 export { DAEMON_VERSION } from './version.js';
 
 if (process.argv[1] && import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]).href) {

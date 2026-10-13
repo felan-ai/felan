@@ -68,7 +68,7 @@ import {
   type PrewalkHost,
 } from './plan-review-contracts.js';
 export type { PrewalkHost, PlanReviewResult, PlanReviewAction } from './plan-review-contracts.js';
-export { PREWALK_PLAN_LIMIT, PREWALK_REVIEW_PRESENTER, PlanReviewRequestSchema, PlanReviewResultSchema } from './plan-review-contracts.js';
+export { PREWALK_PLAN_LIMIT, PlanReviewRequestSchema, PlanReviewResultSchema } from './plan-review-contracts.js';
 
 type PlannerModel = NonNullable<ExtensionContext['model']>;
 type PlannerThinkingLevel = ReturnType<FelanExtensionAPI['getThinkingLevel']>;
@@ -730,12 +730,20 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
     notify(ctx, 'Prewalk is off.');
   }
 
-  async function approveModelEntry(ctx: ExtensionContext): Promise<{ approved: true } | { approved: false; reason: string }> {
+  async function approveModelEntry(ctx: ExtensionContext, signal?: AbortSignal): Promise<{ approved: true } | { approved: false; reason: string }> {
     if (config.entryApproval === 'allow') return { approved: true };
     if (config.entryApproval === 'deny') {
       return {
         approved: false,
         reason: 'Model-requested Prewalk entry is disabled. Continue the current task without Prewalk.',
+      };
+    }
+    const description = `The model wants to enter Prewalk for this task. Prewalk will establish a capable same-provider planner at high effort or above, then use the configured ${targetModel.key} target at ${config.targetThinking} thinking for implementation.`;
+    if (host?.confirmEntry) {
+      const approved = await host.confirmEntry(ctx, description, signal);
+      return approved ? { approved: true } : {
+        approved: false,
+        reason: 'Prewalk entry was not approved. Continue the current task without Prewalk.',
       };
     }
     if (!ctx.hasUI) {
@@ -747,7 +755,7 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
 
     const approved = await ctx.ui.confirm(
       'Enter Prewalk?',
-      `The model wants to enter Prewalk for this task. Prewalk will establish a capable same-provider planner at high effort or above, then use the configured ${targetModel.key} target at ${config.targetThinking} thinking for implementation.`,
+      description,
     );
     return approved
       ? { approved: true }
@@ -809,7 +817,7 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
     promptSnippet: 'Enter Prewalk for complex repository work before mutation',
     executionMode: 'sequential',
     parameters: EnterPrewalkParams,
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
       if (state.phase === 'idle') refreshConfig();
       publishConfigWarning(ctx);
 
@@ -822,7 +830,8 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
       const validation = validateArmingTools(pi.getActiveTools());
       if (!validation.ok) return prewalkToolError(validation.reason);
       if (!ctx.model) return prewalkToolError('Prewalk requires a selected planner model.');
-      const approval = await approveModelEntry(ctx);
+      const approval = await approveModelEntry(ctx, signal);
+      signal?.throwIfAborted();
       if (!approval.approved) return prewalkToolError(approval.reason);
 
       if (!await startRun(ctx, false)) return prewalkToolError('Prewalk could not establish a capable planning profile. Continue without Prewalk.');
@@ -882,7 +891,7 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
         return prewalkToolError('Prewalk could not enter plan review from the current state.');
       }
 
-      if (!ctx.hasUI) {
+      if (!ctx.hasUI && (!host || host.autoApproveWithoutUi === true)) {
         notify(ctx, `Prewalk auto-approved plan review because interactive input is unavailable in ${ctx.mode} mode.`, 'warning');
         if (!resumePlanningAfterReview(ctx, reviewRun, true)) {
           return stalePlanReviewResult(state.phase);
@@ -892,6 +901,7 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
 
       try {
         const review = await (host ? host.review(ctx, params.plan, signal) : reviewPlanWithDialogs(ctx, params.plan, signal));
+        signal?.throwIfAborted();
         const action = review?.action;
 
         if (action === APPROVE_PLAN_OPTION) {

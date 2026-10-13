@@ -1,19 +1,26 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { closeSync, constants as fsConstants, fstatSync, openSync } from 'node:fs';
 import {
   access,
   appendFile,
+  chmod,
   lstat,
   mkdir,
   open,
   opendir,
   readFile,
   readlink,
+  readdir,
   realpath,
+  rename,
   rm,
+  rmdir,
+  stat,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
-import { constants as osConstants } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { constants as osConstants, homedir } from 'node:os';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { IDisposable, IPty } from '@lydell/node-pty';
 import type {
   AgentRuntime,
@@ -39,10 +46,12 @@ import type {
 import { fileListingGlobMatcher, normalizeFileListingPath } from './file-listing.js';
 import type { Classifier } from './classifier/index.js';
 import { createSilentLogger, type Logger } from './logger.js';
+import type { RuntimeFiles, RuntimeFileInfo } from './runtime-files.js';
 
 export type HostShellOptions = AgentRuntimeShellOptions;
 
 export interface HostAgentRuntimeOptions {
+  readonly host?: { readonly name: string; readonly version: string };
   readonly sessionStorageRoot: string;
   readonly agentStorageRoot: string;
   readonly agentDir?: string;
@@ -53,6 +62,7 @@ export interface HostAgentRuntimeOptions {
 }
 
 export class HostAgentRuntime implements AgentRuntime {
+  readonly host?: { readonly name: string; readonly version: string };
   readonly #cwd: string;
   readonly #sessionStorage: AgentRuntimeStorage;
   readonly #agentStorage: AgentRuntimeStorage;
@@ -67,12 +77,16 @@ export class HostAgentRuntime implements AgentRuntime {
   readonly processes: AgentRuntimeProcesses;
   readonly privateRuntime: AgentRuntimePrivateRuntime;
   readonly terminals: AgentRuntimeTerminals;
+  readonly userHome?: string;
+  readonly files: RuntimeFiles;
 
   constructor(cwd: string, options: HostAgentRuntimeOptions) {
+    if (options.host) this.host = Object.freeze({ ...options.host });
     if (cwd.includes('\0')) {
       throw new Error('Runtime cwd cannot contain NUL bytes');
     }
     this.#cwd = resolve(cwd);
+    if (options.pathAccess === 'host') this.userHome = homedir();
     this.#sessionStorageRoot = resolveStorageRoot(options.sessionStorageRoot);
     this.#agentStorageRoot = resolveStorageRoot(options.agentStorageRoot);
     this.#agentDir = options.agentDir === undefined ? undefined : resolveStorageRoot(options.agentDir);
@@ -90,6 +104,53 @@ export class HostAgentRuntime implements AgentRuntime {
     this.terminals = {
       startShell: async (command, terminalOptions) => this.#startShellTerminal(command, terminalOptions),
     };
+    const path = (value: string, allowRoot = true) => this.#resolveFilePath(value, allowRoot);
+    this.files = {
+      inspect: async value => fileInfo(await lstat(await path(value))),
+      canonicalPath: async value => realpath(await path(value)),
+      move: async (source, target) => rename(await path(source, false), await path(target, false)),
+      removeEmptyDirectory: async value => rmdir(await path(value, false)),
+      touch: async (value, modifiedAt) => utimes(await path(value), modifiedAt / 1000, modifiedAt / 1000),
+      ensurePrivateDirectory: async (value, options) => {
+        const resolved = await path(value);
+        await mkdir(resolved, { recursive: options?.recursive ?? false, mode: 0o700 });
+        if (!(await lstat(resolved)).isDirectory()) throw new Error('Expected a private directory');
+        await chmod(resolved, 0o700);
+      },
+      snapshot: async (value, maxBytes) => {
+        if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new Error('Invalid snapshot byte limit');
+        const resolved = await path(value);
+        const handle = await open(resolved, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+        try {
+          const info = fileInfo(await handle.stat());
+          if (info.kind !== 'file') throw new Error('Expected a regular file');
+          const content = Buffer.alloc(Math.min(info.size, maxBytes));
+          let length = 0;
+          while (length < content.length) {
+            const { bytesRead } = await handle.read(content, length, content.length - length, length);
+            if (!bytesRead) break;
+            length += bytesRead;
+          }
+          const current = fileInfo(await lstat(resolved));
+          if (!sameFileInfo(info, current) || length !== content.length) throw new Error('File changed while reading');
+          return { info, content: new Uint8Array(content), truncated: info.size > maxBytes };
+        } finally { await handle.close(); }
+      },
+      append: async (value, content, expected) => {
+        const handle = await open(await path(value), fsConstants.O_WRONLY | fsConstants.O_APPEND
+          | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | (expected ? 0 : fsConstants.O_CREAT), 0o600);
+        try {
+          const info = fileInfo(await handle.stat());
+          if (info.kind !== 'file' || expected && !sameFileInfo(info, expected)) throw new Error('File changed before append');
+          await handle.writeFile(content);
+        } finally { await handle.close(); }
+      },
+    };
+  }
+
+  getEnvironmentVariable(name: string): string | undefined {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) throw new Error('Invalid environment variable name.');
+    return process.env[name];
   }
 
   get kind(): 'host' {
@@ -181,8 +242,20 @@ export class HostAgentRuntime implements AgentRuntime {
     options?: AgentRuntimeFileWriteOptions,
   ): Promise<void> {
     const copiedContent = content.slice();
-    const resolvedPath = await this.#resolvePath(path);
-    await writeFile(resolvedPath, copiedContent, options?.exclusive ? { flag: 'wx' } : undefined);
+    const resolvedPath = options?.noFollow || options?.readOnly
+      ? await this.#resolveFilePath(path) : await this.#resolvePath(path);
+    if (!options?.noFollow && !options?.readOnly) {
+      await writeFile(resolvedPath, copiedContent, options?.exclusive ? { flag: 'wx' } : undefined);
+      return;
+    }
+    const handle = await open(resolvedPath, fsConstants.O_WRONLY | fsConstants.O_CREAT
+      | (options.exclusive ? fsConstants.O_EXCL : 0) | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+      options.readOnly ? 0o400 : 0o600);
+    try {
+      if (!(await handle.stat()).isFile()) throw new Error('Expected a regular file');
+      await handle.truncate(0);
+      await handle.writeFile(copiedContent);
+    } finally { await handle.close(); }
   }
 
   async listFiles(path: string, options?: AgentRuntimeListFilesOptions): Promise<string[]> {
@@ -297,7 +370,25 @@ export class HostAgentRuntime implements AgentRuntime {
       rows: 24,
       encoding: null,
     });
-    return new HostRuntimeTerminal(terminal);
+    const handle = new HostRuntimeTerminal(terminal);
+    try {
+      handle.retainLinuxSlave();
+      return handle;
+    } catch (error) {
+      const errors = [error];
+      try { await handle.terminate('SIGKILL'); } catch (failure) { if (!errors.includes(failure)) errors.push(failure); }
+      try { await handle.dispose(); } catch (failure) { if (!errors.includes(failure)) errors.push(failure); }
+      if (errors.length > 1) throw new AggregateError(errors, 'Failed to clean up PTY startup.');
+      throw error;
+    }
+  }
+
+  async #resolveFilePath(path: string, allowRoot = true): Promise<string> {
+    const absolute = resolveHostPath(this.#cwd, path);
+    if (this.#pathAccess === 'host') return absolute;
+    if (absolute === this.#cwd) return this.#resolvePath(path, allowRoot);
+    const parent = await this.#resolvePath(dirname(absolute));
+    return join(parent, basename(absolute));
   }
 
   async #resolvePath(path: string, allowRoot = true): Promise<string> {
@@ -585,6 +676,8 @@ class HostRuntimeTerminal extends HostBufferedProcess {
   readonly #exitSubscription: IDisposable;
   #startupOutput = process.platform === 'win32';
   readonly #decoder = new TextDecoder();
+  #slave: number | undefined;
+  #slaveCloseError: unknown;
 
   constructor(terminal: IPty) {
     super();
@@ -599,8 +692,26 @@ class HostRuntimeTerminal extends HostBufferedProcess {
       if (output) this.appendOutput(Buffer.from(output));
     });
     this.#exitSubscription = terminal.onExit(({ exitCode, signal }) => {
+      this.#releaseSlave();
       this.complete(signal ? 128 + signal : exitCode);
     });
+  }
+
+  retainLinuxSlave(): void {
+    if (process.platform !== 'linux') return;
+    const path: unknown = Reflect.get(this.#terminal, '_pty');
+    if (typeof path !== 'string' || !/^\/dev\/pts\/\d+$/u.test(path)) throw new Error('PTY slave path is unavailable.');
+    const fd = openSync(path, fsConstants.O_RDWR | fsConstants.O_NOCTTY | fsConstants.O_NOFOLLOW);
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isCharacterDevice() || stat.uid !== process.getuid?.()) throw new Error('PTY slave ownership is invalid.');
+      // Linux can discard pending output on the last slave close, before the master reader drains it.
+      this.#slave = fd;
+    } catch (error) {
+      try { closeSync(fd); }
+      catch (failure) { throw new AggregateError([...new Set([error, failure])], 'PTY slave validation and cleanup failed.'); }
+      throw error;
+    }
   }
 
   get pid(): number {
@@ -632,8 +743,18 @@ class HostRuntimeTerminal extends HostBufferedProcess {
   }
 
   protected override onDispose(): void {
+    this.#releaseSlave();
     this.#dataSubscription.dispose();
     this.#exitSubscription.dispose();
+    if (this.#slaveCloseError !== undefined) throw this.#slaveCloseError;
+  }
+
+  #releaseSlave(): void {
+    const fd = this.#slave;
+    this.#slave = undefined;
+    if (fd !== undefined) {
+      try { closeSync(fd); } catch (error) { this.#slaveCloseError = error; }
+    }
   }
 }
 
@@ -799,7 +920,7 @@ async function listHostFiles(
     const directory = await opendir(absoluteDirectory);
     for await (const entry of directory) {
       throwIfListingAborted(options.signal);
-      if (!entry.isDirectory() && !entry.isFile()) continue;
+      if (!entry.isDirectory() && !entry.isFile() && !options.includeOther) continue;
       const relativePath = relativeDirectory
         ? join(relativeDirectory, entry.name)
         : entry.name;
@@ -1172,4 +1293,13 @@ async function readBoundedFile(path: string, maxBytes: number): Promise<Buffer> 
   } finally {
     await handle.close();
   }
+}
+
+function fileInfo(value: import('node:fs').Stats): RuntimeFileInfo {
+  return { kind: value.isFile() ? 'file' : value.isDirectory() ? 'directory' : value.isSymbolicLink() ? 'symlink' : 'other',
+    identity: `${value.dev}:${value.ino}:${value.birthtimeMs}`, size: value.size, modifiedAt: value.mtimeMs };
+}
+
+function sameFileInfo(left: RuntimeFileInfo, right: RuntimeFileInfo): boolean {
+  return left.identity === right.identity && left.size === right.size && left.modifiedAt === right.modifiedAt;
 }

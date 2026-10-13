@@ -83,6 +83,10 @@ update` command. See [Getting started](docs/getting-started.md) for first-run
 setup and [Local CLI](docs/user-guide/local-cli.md) for commands, daemon
 lifecycle, and local state.
 
+Pre-daemon session files are not listed or resumable through the daemon. To use
+one, explicitly import its JSONL transcript with `/import`; this creates a new
+session ID and leaves the original file unchanged. `/export` remains available.
+
 ## Efficient by design
 
 Felan Code treats correctness as the constraint and cost as the optimization target.
@@ -186,10 +190,13 @@ Felan owns the host contracts, feature behavior, policy, storage, and
 presentation around them.
 
 Behavior stays in its owning layer: `apps/felan` owns CLI, TUI, ACP, headless,
-and client-local themes; `apps/daemon` owns credentials, settings, local policy,
-profiles, session/process execution, and storage. `ext-*` packages own portable
-feature behavior, and Agent Core owns adapter-neutral runtime contracts and base
+client-local themes, local service providers and the default `host.json`.
+`apps/daemon` owns admission, canonical session/process lifetime, persistence
+and interaction arbitration. Providers supply local configuration, credentials
+and runtime behavior through explicit contracts. `ext-*` packages own portable
+feature behavior, and Agent Core owns adapter-neutral contracts and base
 composition. Clients depend on the daemon; the daemon never depends on clients.
+See [Extension services and generic UI](docs/maintainers/extension-services-and-ui.md).
 
 ## Documentation
 
@@ -214,7 +221,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 | Package | Purpose | Documentation |
 | --- | --- | --- |
 | [`@felan-ai/felan`](apps/felan/README.md) | Felan Code and the `felan` binary | [Local CLI](docs/user-guide/local-cli.md) |
-| [`@felan-ai/daemon`](apps/daemon/README.md) | Session daemon, local execution and profile contract | [Daemon implementation](docs/maintainers/session-daemon-implementation.md) |
+| [`@felan-ai/daemon`](apps/daemon/README.md) | Session daemon, admission and canonical execution lifetime | [Services and UI](docs/maintainers/extension-services-and-ui.md) |
 | [`@felan-ai/agent-core`](packages/agent-core/README.md) | Portable runtime contracts, prompt, tools, model tiers, and Pi composition | [Architecture](docs/concepts/architecture.md) |
 | [`@felan-ai/ext-subagents`](packages/ext-subagents/README.md) | Tracked asynchronous subagent protocol | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
 | [`@felan-ai/ext-tasks`](packages/ext-tasks/README.md) | Dependency-aware root-session task graph | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
@@ -256,7 +263,7 @@ Run the complete build, type-check, test, license, packaging, and packed
 installation suite with:
 
 ```sh
-pnpm verify
+scripts/test-isolated.sh pnpm verify
 ```
 
 To review the Felan Code Pi themes in a browser, run `pnpm theme:preview` and open

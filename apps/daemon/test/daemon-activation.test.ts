@@ -1,8 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { prepareRegistrySubagentHost } from '../src/daemon/runtime-bridge.js';
 import { fixture, fixtures, requestId } from './fixtures/registry.js';
 import { gate, serverFixture } from './fixtures/server.js';
-import type { LocalSubagentNavigatorHost } from '../src/subagents/presentation.js';
+import { registrySessionExecutions } from '../src/daemon/session-services.js';
 
 afterEach(async () => { for (const dispose of fixtures.splice(0)) await dispose(); });
 
@@ -16,7 +15,7 @@ it('activates extensions once after the real session is registered', async () =>
   current = f; fixtures.push(() => f.dispose());
   const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
   expect(starts).toBe(2); expect(registered).toEqual([true]); await root.activate?.(); expect(starts).toBe(2);
-  await f.registry.shutdown(); await expect(root.activate?.()).rejects.toThrow('disposed');
+  await f.registry.shutdown(); await expect(root.activate?.()).rejects.toThrow('Session binding is disposing.');
 });
 
 it('cleans up activated services before removing a failed opening', async () => {
@@ -37,14 +36,13 @@ it('cleans up activated services before removing a failed opening', async () => 
 
 it('binds a replacement view inside activation while keeping reload dispatch and external binding fenced', async () => {
   const f = await fixture(); const entered = gate(); const release = gate();
-  const host = { listLocalSubagents: () => [] } as unknown as LocalSubagentNavigatorHost;
   const original = vi.mocked(f.profile.openSession).getMockImplementation()!;
   let reloading = false;
   vi.mocked(f.profile.openSession).mockImplementation(async request => {
     const binding = await original(request);
     return { ...binding, activate: async () => {
       if (!reloading) return;
-      f.registry.bindSubagentView(binding.sessionId, host);
+      expect(f.registry.executionHost(binding.sessionId)).toBeDefined();
       expect(() => f.registry.assertDispatch(binding.sessionId)).toThrow('lifecycle operation');
       entered.resolve(); await release.promise;
     } };
@@ -55,22 +53,9 @@ it('binds a replacement view inside activation while keeping reload dispatch and
   const reload = f.registry.reloadAdmitted(id, root.sessionId);
   try {
     await Promise.race([entered.promise, reload.then(() => { throw new Error('Reload completed before the activation barrier'); })]);
-    expect(() => f.registry.bindSubagentView(root.sessionId, host)).toThrow('lifecycle operation');
+    expect(() => registrySessionExecutions(f.registry, root.sessionId)).toThrow('lifecycle operation');
     expect(() => f.registry.assertDispatch(root.sessionId)).toThrow('lifecycle operation');
   } finally { release.resolve(); }
   await reload;
-  expect(f.registry.subagentView(root.sessionId)).toBe(host);
-});
-
-it('prepares subagent declarations without publishing or dispatching before activation', async () => {
-  const f = await serverFixture(); fixtures.push(() => f.dispose());
-  const prepared = await prepareRegistrySubagentHost(f.registry, f.root.sessionId, {
-    cwd: f.cwd, agentDir: f.owner.target.agentDir, homeDir: f.directory,
-    modelRuntime: f.root.runtime.session.modelRuntime, settingsManager: f.root.runtime.session.settingsManager,
-    extensionPackages: [], importExtension: async () => ({ default() {} }),
-  });
-  fixtures.unshift(() => prepared.host.shutdown());
-  await expect(prepared.host.spawn({ type: 'general', description: 'not active', prompt: 'never execute' })).rejects.toThrow('not active');
-  expect(f.store.snapshot().resources).toEqual([]);
-  prepared.bind(); prepared.bind(); expect(f.registry.subagentView(f.root.sessionId)).toBe(prepared.host);
+  expect(await registrySessionExecutions(f.registry, root.sessionId).executions()).toEqual({ items: [] });
 });

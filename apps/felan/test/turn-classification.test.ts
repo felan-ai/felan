@@ -13,12 +13,13 @@ import {
   type Classifier,
   type ClassifierAnswers,
   type ClassifierQuestions,
-  type FelanExtension,
+  type ConfiguredFelanExtension,
   type StreamFunction,
+  type SessionsService,
   type TranscriptContext,
 } from '@felan-ai/agent-core';
 import prewalkExtension from '@felan-ai/ext-prewalk';
-import { createSubagentsExtension, type SubagentHost } from '@felan-ai/ext-subagents';
+import { createSubagentsExtension } from '@felan-ai/ext-subagents';
 import tasksExtension from '@felan-ai/ext-tasks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -102,7 +103,7 @@ describe('composed turn classification', () => {
     expect(session.thinkingLevel).toBe('low');
     expect(selectionDefaults(settings)).toEqual(defaults);
     expect(streams.every(stream => JSON.stringify(stream.defaults) === JSON.stringify(defaults))).toBe(true);
-    expect(host.spawn).not.toHaveBeenCalled();
+    expect(host.create).not.toHaveBeenCalled();
 
     harness.script(() => 'final');
     await session.prompt('Summarize the verified change without modifying anything.');
@@ -113,8 +114,8 @@ describe('composed turn classification', () => {
     expect(streams.at(-1)).toMatchObject({ model: high.id, thinking: 'low' });
     expect(contextText(streams.at(-1)!.context)).not.toContain('Exploration depth: targeted');
     expect(selectionDefaults(settings)).toEqual(defaults);
-    expect(host.list).toHaveBeenCalledTimes(2);
-    expect(host.spawn).not.toHaveBeenCalled();
+    expect(host.executions).toHaveBeenCalledTimes(2);
+    expect(host.create).not.toHaveBeenCalled();
   });
 
   it('keeps discovery guidance when command-armed Prewalk promotes the model before other consumers run', async () => {
@@ -145,8 +146,8 @@ describe('composed turn classification', () => {
     expect(session.model?.id).toBe(low.id);
     expect(session.thinkingLevel).toBe('medium');
     expect(selectionDefaults(settings)).toEqual(defaults);
-    expect(host.list).toHaveBeenCalledTimes(1);
-    expect(host.spawn).not.toHaveBeenCalled();
+    expect(host.executions).toHaveBeenCalledTimes(1);
+    expect(host.create).not.toHaveBeenCalled();
   });
 
   it('honors manual thinking opt-out without disabling the other classification producers', async () => {
@@ -168,7 +169,7 @@ describe('composed turn classification', () => {
     expect(contextText(streams.at(-1)!.context)).not.toContain('Exploration depth: targeted');
     expect(discoveryGuidance(streams.at(-1)!.context)).toContain('Delegate that discovery to `explore`');
     expect(selectionDefaults(settings)).toEqual(manualDefaults);
-    expect(host.spawn).not.toHaveBeenCalled();
+    expect(host.create).not.toHaveBeenCalled();
   });
 
   it('cancels command-armed promotion after a manual model selection', async () => {
@@ -187,7 +188,7 @@ describe('composed turn classification', () => {
     expect(contextText(streams[0]!.context)).not.toContain('Exploration depth: targeted');
     expect(discoveryGuidance(streams[0]!.context)).toContain('Delegate that discovery to `explore`');
     expect(selectionDefaults(settings)).toEqual(manualDefaults);
-    expect(host.spawn).not.toHaveBeenCalled();
+    expect(host.create).not.toHaveBeenCalled();
   });
 
   it('cancels planning when the user explicitly reselects its current high effort', async () => {
@@ -312,18 +313,14 @@ async function createHarness(options: { startLow?: boolean } = {}) {
     agentDir,
     classifier,
   });
-  const host = {
-    descriptors: [{ id: 'explore', description: 'Read-only investigation', allowNesting: false }],
-    policy: { maxPromptBytes: 10_000, maxDescriptionBytes: 1_000, maxSteerBytes: 1_000 },
-    attachParent: vi.fn(() => () => {}),
-    spawn: vi.fn(async () => { throw new Error('Child execution is prohibited in this fixture'); }),
-    list: vi.fn(async () => ({ ok: true as const, value: [] })),
-    getResult: vi.fn(), steer: vi.fn(), cancel: vi.fn(),
-  };
-  const extensions: Record<string, FelanExtension> = {
-    '@felan-ai/ext-codex': () => {},
+  const host = { executions: vi.fn(async () => ({ items: [] })), create: vi.fn(async () => { throw new Error('Child execution is prohibited in this fixture'); }) };
+  const extensions: Record<string, ConfiguredFelanExtension> = {
+    // The scripted provider supports effort changes without replacing edit/write.
+    '@felan-ai/test-native-thinking': Object.assign(() => {}, {
+      execution: () => ({ supportsNativeThinkingUpdates: () => true }),
+    }),
     '@felan-ai/ext-prewalk': prewalkExtension,
-    '@felan-ai/ext-subagents': createSubagentsExtension(host as unknown as SubagentHost),
+    '@felan-ai/ext-subagents': createSubagentsExtension(host as unknown as SessionsService, [{ descriptor: { id: 'explore', description: 'Read-only investigation', allowNesting: false }, prompt: 'Inspect' }]),
     '@felan-ai/ext-tasks': tasksExtension,
   };
   const initial = options.startLow ? low : high;
