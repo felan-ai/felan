@@ -5,14 +5,21 @@ import { TuiSessionController } from '../src/tui/controller.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
 import { createCommandAutocomplete, submitTuiInput } from '../src/tui/commands.js';
 import type { TuiDialogHost } from '../src/tui/dialogs.js';
-import { DaemonConfiguration } from '../../daemon/src/daemon/configuration.js';
-import { DaemonTuiPreferences } from '../../daemon/src/daemon/tui-preferences.js';
+import { DaemonConfiguration } from '../src/providers/configuration.js';
+import { DaemonTuiPreferences } from '../src/providers/tui-preferences.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { gate, serverFixture } from '../../daemon/test/fixtures/server.js';
+import { computeControlConfigurationSnapshotIdentity } from '../../daemon/src/daemon/control-state.js';
+import { parseSessionConfiguration } from '../../daemon/src/daemon/session-configuration.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 beforeAll(() => setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS)));
 afterEach(async () => { for (const finish of cleanup.splice(0).reverse()) await finish(); });
+
+function screenText(tui: TuiAltScreen): string {
+  tui.renderNow(true);
+  return stripTerminalSequences(tui.getScreenLines().join('\n'));
+}
 
 async function fixture(onStream?: () => Promise<void>) {
   const f = await serverFixture({ now: Date.now, ...(onStream ? { onStream } : {}) });
@@ -22,7 +29,10 @@ async function fixture(onStream?: () => Promise<void>) {
     configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() }) });
   await server.start();
   const controllers: TuiSessionController[] = [];
-  cleanup.push(async () => { for (const controller of controllers) await controller.dispose(); server.close(); await f.dispose(); });
+  cleanup.push(async () => {
+    for (const controller of controllers) await controller.dispose();
+    server.close(); await server.settleCommands(); await f.dispose();
+  });
   function controller() {
     const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
       expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui' });
@@ -86,6 +96,22 @@ it('preserves an existing attachment when another selection is rejected', async 
   expect(controller.sessionId).toBe(f.root.sessionId); expect(controller.client.getAttachment(f.root.sessionId)).toBeDefined();
 });
 
+it('requires an explicit reload to recover a saved session before attachment', async () => {
+  const f = await fixture(); const id = f.root.sessionId;
+  const saved = f.store.configuration(id)!;
+  const snapshot = { ...parseSessionConfiguration(saved.snapshot), composition: 'previous-composition' };
+  f.store.updateSession(id, {}, { sessionId: id, snapshot, identity: computeControlConfigurationSnapshotIdentity(snapshot) });
+  await f.registry.evictIdle();
+  const controller = f.controller();
+  await expect(controller.start({ cwd: f.cwd, sessionId: id })).rejects.toMatchObject({ code: 'configuration_recovery_required', sessionId: id });
+  expect(controller.sessionId).toBeUndefined();
+  expect(f.store.configuration(id)!.snapshot).toEqual(snapshot);
+  expect(await submitTuiInput(controller, {} as TuiDialogHost, `/reload ${id}`, { cwd: f.cwd, exit() {} })).toBe(true);
+  expect(controller.sessionId).toBe(id);
+  expect(controller.snapshot?.run.state).toBe('idle');
+  expect(f.store.configuration(id)!.snapshot).not.toEqual(snapshot);
+});
+
 it('does not silently apply or discard new extension paths when attaching an existing session', async () => {
   const f = await fixture(); const controller = f.controller();
   await expect(controller.start({ cwd: f.cwd, sessionId: f.root.sessionId, extensions: ['/untrusted/new-extension.ts'] })).rejects.toThrow('cannot replace');
@@ -126,8 +152,8 @@ it('keeps an editor draft when the model shortcut opens and cancels its selector
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     const before = f.root.runtime.session.messages.length;
     terminal.input('unsubmitted draft'); terminal.input('\x0c');
-    await vi.waitFor(() => expect(tui.hasOverlay()).toBe(true));
-    terminal.input('\x1b'); await vi.waitFor(() => expect(tui.hasOverlay()).toBe(false));
+    await vi.waitFor(() => expect(screenText(tui)).toContain('Filter choices'));
+    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('Filter choices'));
     tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('unsubmitted draft');
     expect(f.root.runtime.session.messages).toHaveLength(before);
     terminal.input('\x03'); terminal.input('\x04'); await running;
@@ -168,16 +194,16 @@ it('uses daemon shortcuts in the active terminal and preserves a rejected settin
   try {
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     terminal.input('retained draft'); terminal.input('\x1bm');
-    await vi.waitFor(() => expect(tui.hasOverlay()).toBe(true));
-    terminal.input('\x1b'); await vi.waitFor(() => expect(tui.hasOverlay()).toBe(false));
+    await vi.waitFor(() => expect(screenText(tui)).toContain('Filter choices'));
+    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('Filter choices'));
     tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('retained draft');
     terminal.input('\x03');
     vi.spyOn(f.preferences, 'set').mockRejectedValueOnce(new Error('cannot write preferences'));
     terminal.input('/settings'); terminal.input('\r');
-    await vi.waitFor(() => expect(tui.hasOverlay()).toBe(true));
+    await vi.waitFor(() => expect(screenText(tui)).toContain('Filter choices'));
     terminal.input('Thinking'); terminal.input('\r');
     await vi.waitFor(() => { tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('Thinking: hidden'); });
-    terminal.input('Save changes'); terminal.input('\r');
+    terminal.input('Save display changes'); terminal.input('\r');
     await vi.waitFor(() => {
       expect(controller.notice).toBe('Outcome uncertain: Operation did not complete. Inspect the current session before retrying.');
       tui.renderNow(true);
@@ -185,8 +211,8 @@ it('uses daemon shortcuts in the active terminal and preserves a rejected settin
       expect(visible).toContain('Outcome uncertain: Operation did not complete.');
       expect(visible).toContain('Thinking: hidden');
     });
-    terminal.input('\x1b'); await vi.waitFor(() => expect(tui.hasOverlay()).toBe(false));
-    tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('/settings');
+    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('Filter choices'));
+    expect(screenText(tui)).not.toContain('/settings');
     expect((await f.preferences.get()).hideThinking).toBe(false);
     terminal.input('\x03'); terminal.input('\x04'); expect(terminal.active).toBe(true);
     terminal.input('\x1bx'); await running; expect(terminal.active).toBe(false);
@@ -209,7 +235,7 @@ it('routes login and dependency commands locally without attaching or adding cre
   await expect(submitTuiInput(controller, fakeDialogs(), '/login secret-in-command', options)).rejects.toThrow('Usage: /login');
   expect(login).toHaveBeenCalledOnce();
   const completions = await createCommandAutocomplete(controller).getSuggestions(['/dep'], 0, 4, { signal: new AbortController().signal });
-  expect(completions?.items).toContainEqual({ value: '/dependencies ', label: '/dependencies' });
+  expect(completions?.items).toContainEqual({ value: 'dependencies', label: 'dependencies', description: 'Set up runtime dependencies' });
 });
 
 it('routes model, thinking and rename through advertised commands, preserving argument whitespace', async () => {
@@ -323,7 +349,7 @@ it('offers command completion from client commands without accessing workspace f
   const f = await fixture(); const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
   const provider = createCommandAutocomplete(controller);
   const result = await provider.getSuggestions(['/mo'], 0, 3, { signal: new AbortController().signal });
-  expect(result?.items).toContainEqual({ value: '/model ', label: '/model' });
+  expect(result?.items).toContainEqual({ value: 'model', label: 'model', description: 'Select model (opens selector UI)' });
   expect(provider.applyCompletion(['/mo'], 0, 3, result!.items[0]!, result!.prefix)).toEqual({ lines: ['/model '], cursorLine: 0, cursorCol: 7 });
 });
 

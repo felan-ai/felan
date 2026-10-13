@@ -1,3 +1,4 @@
+import type { SessionExecution } from '@felan-ai/agent-core';
 import type { SubagentError, SubagentRecord } from './contracts.js';
 
 export function renderRecord(record: SubagentRecord): string {
@@ -8,7 +9,7 @@ export function renderRecord(record: SubagentRecord): string {
     `description: ${record.description}`,
   ];
   if (record.result !== undefined) lines.push(`result:\n${record.result}`);
-  if (record.error !== undefined) lines.push(`error: ${record.error.code} — ${record.error.message}`);
+  if (record.error !== undefined) lines.push(`error: ${record.error}`);
   return lines.join('\n');
 }
 
@@ -38,4 +39,12 @@ function renderStatusRecord(record: SubagentRecord): string {
 
 export function renderError(error: SubagentError): string {
   return `Subagent error: ${error.code} — ${error.message}`;
+}
+
+export function executionRecord(row: SessionExecution): SubagentRecord {
+  return { agentId: row.id, parentSessionId: row.parent ?? '', rootSessionId: row.session?.root ?? '',
+    type: row.label ?? 'session', description: row.description ?? '', status: row.result?.error?.startsWith('timed_out:') ? 'timed_out' : row.state,
+    createdAt: row.createdAt ?? '', ...(row.startedAt ? { startedAt: row.startedAt } : {}), ...(row.completedAt ? { completedAt: row.completedAt } : {}),
+    ...(row.result ? { result: row.result.text } : {}),
+    ...(row.result?.error ? { error: row.result.error } : {}) };
 }

@@ -8,8 +8,9 @@ and `explanatory` styles plus a `custom` style for caller-provided instructions.
 `concise` is the default. It minimizes prose while preserving clarity, exact
 technical content, conditions, caveats, verification, and blockers, and it
 expands for ambiguity, safety-sensitive actions, errors, and complex plans.
-`createOutputStyleExtension` accepts instruction text only. Hosts may resolve
-`extensionConfig.outputStyle.instructionsFile` to that text before activation.
+`createOutputStyleExtension` accepts instruction text only. The package root
+resolves configured files through `AgentRuntime`, with an optional trusted
+instruction-loader service override.
 
 ```ts
 import { createOutputStyleExtension } from '@felan-ai/ext-output-style';
@@ -45,10 +46,13 @@ instructions use exactly one of `extensionConfig.outputStyle.instructions` or
 }
 ```
 
-The local TUI, CLI, and `/settings` resolve these fields before activating the
-extension for root and child sessions. A custom style requires non-empty inline
-instructions or a host-loaded instruction file. This package does not read the
-file; the host passes the contents to `createOutputStyleExtension`.
+The root execution entry consumes these fields before activation. A custom style
+requires non-empty inline instructions or a configured instruction file. Relative
+paths resolve from `pi.agentDir`; absolute paths and `~/` paths remain subject to
+the runtime's path authority. No direct local filesystem read is performed.
+
+The loader uses `runtime.readFile` and registers the prompt section only after
+successful loading.
 
 ## Savings measurement
 
@@ -75,10 +79,10 @@ supported baseline and never contribute savings.
 ## Package boundary and requirements
 
 The package owns the supported style names, built-in instructions, custom-source
-validation, and prompt-section formatting. A host owns style selection,
-built-in enablement, instruction-file loading, and session lifecycle. The package
-requires a compatible `@felan-ai/agent-core` peer and does not read settings,
-prompt files, or ambient resources itself.
+validation, runtime-backed instruction loading, and prompt-section formatting.
+A host owns runtime path policy, style selection, built-in enablement, and session
+lifecycle. The package requires a compatible `@felan-ai/agent-core` peer and does
+not discover settings, prompt files, or ambient resources itself.
 
 ## Development
 

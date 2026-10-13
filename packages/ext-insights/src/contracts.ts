@@ -4,9 +4,9 @@ import type { Analytics, InsightsSavingsReport, InsightsSessionReference } from 
 export type { InsightsSessionReference } from './types.js';
 
 export interface InsightsHost {
-  readonly listSessions: (runtime: AgentRuntime) => Promise<readonly InsightsSessionReference[]>;
-  readonly readSession: (runtime: AgentRuntime, reference: InsightsSessionReference) => Promise<string | undefined>;
-  readonly readSessionLines?: (runtime: AgentRuntime, reference: InsightsSessionReference) => AsyncIterable<string>;
+  readonly listSessions: (runtime: AgentRuntime, signal?: AbortSignal) => Promise<readonly InsightsSessionReference[]>;
+  readonly readSession: (runtime: AgentRuntime, reference: InsightsSessionReference, signal?: AbortSignal) => Promise<string | undefined>;
+  readonly readSessionLines?: (runtime: AgentRuntime, reference: InsightsSessionReference, signal?: AbortSignal) => AsyncIterable<string>;
   readonly writeReport: (runtime: AgentRuntime, fileName: string, content: string) => Promise<string>;
   readonly openReport?: (runtime: AgentRuntime, reportPath: string, signal?: AbortSignal) => Promise<void>;
   readonly writeMarkdown?: (runtime: AgentRuntime, fileName: string, content: string) => Promise<string>;

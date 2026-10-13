@@ -1,6 +1,7 @@
 import type { ExtensionCommandContext, FelanExtensionAPI, Model, SessionEntry } from '@felan-ai/agent-core';
+import { MODELS_SERVICE, createExtensionServiceAccess, createFelanServiceRegistry, getExtensionConfigDefinition } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import { createFusionExtension, FUSION_CONFIG } from '../src/index.js';
+import fusionExtension, { createFusionExtension, FUSION_CONFIG } from '../src/index.js';
 import type { FusionHost, FusionReview, FusionReviewActions } from '../src/contracts.js';
 
 const model = (provider: string, id: string): Model<any> => ({
@@ -61,6 +62,78 @@ function harness(overrides: { mode?: 'tui' | 'print'; hasUI?: boolean; idle?: bo
   } as unknown as ExtensionCommandContext;
   return { api, ctx, entries, requests, messages, notifications, handlerStore, events };
 }
+
+describe('Fusion service-backed root entry', () => {
+  it('declares optional Models and preserves configuration metadata and legacy exports', () => {
+    expect(fusionExtension.serviceRequirements).toEqual({ optional: [MODELS_SERVICE] });
+    expect(getExtensionConfigDefinition(fusionExtension)).toBe(FUSION_CONFIG);
+    expect(getExtensionConfigDefinition(createFusionExtension())).toBe(FUSION_CONFIG);
+  });
+
+  it('registers commands without an optional runtime and warns without executing', async () => {
+    const h = harness();
+    const services = createExtensionServiceAccess(createFelanServiceRegistry(), fusionExtension.serviceRequirements!);
+    const notify = vi.fn(async () => {});
+    await fusionExtension(Object.assign(h.api, { services, ui: { notify } }));
+    await h.handlerStore.handler!('question', h.ctx);
+    await h.handlerStore.handlers['fusion-models']!('', h.ctx);
+    expect(h.requests).toHaveLength(0);
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(notify).toHaveBeenCalledWith({ level: 'warning', text: 'Fusion requires a configured Models service.' });
+  });
+
+  it('the named legacy factory awaits review before completing the command', async () => {
+    const h = harness({ participants: ['openai/one', 'other/two'] });
+    let finishReview!: () => void;
+    const reviewDone = new Promise<void>((resolve) => { finishReview = resolve; });
+    let actions!: FusionReviewActions;
+    const host: FusionHost = {
+      confirm: vi.fn(async () => true),
+      configure: vi.fn(async () => undefined),
+      review: vi.fn(async (_ctx: ExtensionCommandContext, _get: () => FusionReview, nextActions: FusionReviewActions) => {
+        actions = nextActions;
+        await reviewDone;
+      }),
+    };
+    createFusionExtension(host)(h.api);
+    expect(h.requests).toHaveLength(0);
+    let settled = false;
+    const command = h.handlerStore.handler!('compare', h.ctx).then(() => { settled = true; });
+    try {
+      await vi.waitFor(() => expect(host.review).toHaveBeenCalledOnce());
+      expect(settled).toBe(false);
+      expect(h.requests).toHaveLength(3);
+      expect(h.messages).toHaveLength(0);
+      await actions.fuse();
+      expect(h.requests).toHaveLength(4);
+      expect(h.messages).toHaveLength(1);
+    } finally {
+      finishReview();
+      await command;
+    }
+    expect(settled).toBe(true);
+  });
+
+  it('the named legacy factory ignores selection that resolves after session shutdown', async () => {
+    const h = harness();
+    let finishSelection!: (value: { participants: string[]; fusionModel: string }) => void;
+    const selection = new Promise<{ participants: string[]; fusionModel: string }>((resolve) => { finishSelection = resolve; });
+    const host: FusionHost = {
+      confirm: vi.fn(async () => true),
+      configure: vi.fn(() => selection),
+      review: vi.fn(async () => {}),
+    };
+    createFusionExtension(host)(h.api);
+    const command = h.handlerStore.handler!('compare', h.ctx);
+    expect(host.configure).toHaveBeenCalledOnce();
+    for (const listener of h.events.get('session_shutdown') ?? []) listener();
+    finishSelection({ participants: ['openai/one', 'other/two'], fusionModel: 'inherit' });
+    await command;
+    expect(host.confirm).not.toHaveBeenCalled();
+    expect(host.review).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(0);
+  });
+});
 
 describe('Fusion slash command', () => {
   it('offers the saved lineup, preselects it on change, and waits for approval', async () => {

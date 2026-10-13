@@ -39,7 +39,13 @@ startup or a model-initiated read. If no compatible command is available, run:
 ```
 
 This explicit command requires Python 3.10 or newer and installs the reviewed
-`markitdown` 0.1.7 PDF and document extras into Felan's agent storage. `/markitdown`
+`markitdown` 0.1.7 PDF and document extras into Felan's agent storage. The default
+extension requests this through optional `RUNTIME_DEPENDENCIES_SERVICE` using
+`{ id: 'markitdown' }`. The host provider owns authorization and installation;
+session UI confirmation is not installation authority. Without that provider,
+only installation is unavailable: existing converters and status checks still
+work. Setup notifications use generic `pi.ui`, cancellation reaches the provider,
+and successful setup refreshes converter detection. `/markitdown`
 shows status, limits, formats, and cache location. When no compatible converter
 is available, Office reads bypass interception instead of invoking an
 unavailable executable. PDF reads fail closed with `/markitdown install`
@@ -47,6 +53,12 @@ guidance so another PDF handler cannot silently take over. The first
 verification can take up to a minute while
 Python loads the newly installed document libraries; later checks are normally
 much faster.
+
+Trusted providers can import `installManagedMarkitdown(runtime, onStatus)` from
+`@felan-ai/ext-markitdown`; it returns `Promise<MarkitdownDetection>`. This
+low-level installer does not perform authorization and is never called by the
+default extension. Its existing bounded probes, pinned version, and cleanup
+remain unchanged.
 
 ## Safety boundary
 

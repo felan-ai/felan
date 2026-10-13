@@ -1,5 +1,7 @@
 import {
   StringEnum,
+  type FelanPlatformService,
+  type FelanApiQueryValue,
   type FelanExtension,
   type ToolDefinition,
 } from '@felan-ai/agent-core';
@@ -16,7 +18,6 @@ import {
   configuredFelanApiKey,
   executeFelanApiRequest,
   resolveFelanApiConfig,
-  type FelanApiQueryValue,
 } from './request.js';
 
 export type {
@@ -72,6 +73,16 @@ export function createFelanApiExtension(
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     });
     const teamSlug = configuredTeamSlug(options.teamSlug);
+    return createFelanPlatformExtension({
+      ...(teamSlug === undefined ? {} : { teamSlug }),
+      execute: (request, signal) => executeFelanApiRequest(config, request, signal),
+    })(pi);
+  };
+}
+
+export function createFelanPlatformExtension(service: FelanPlatformService): FelanExtension {
+  return (pi) => {
+    const teamSlug = configuredTeamSlug(service.teamSlug ?? '');
     const teamGuidance = teamSlug
       ? `The configured team slug is ${JSON.stringify(teamSlug)}; use it in team-scoped API paths.`
       : 'Most operations require the team slug shown in Felan dashboard URLs or Team Settings.';
@@ -104,7 +115,7 @@ export function createFelanApiExtension(
       executionMode: 'sequential',
       parameters: FelanApiParameters,
       async execute(_toolCallId, params, signal) {
-        return executeFelanApiRequest(config, {
+        return service.execute({
           ...(params.path === undefined ? {} : { path: params.path }),
           ...(params.target === undefined ? {} : { target: params.target as FelanApiTarget }),
           ...(params.method === undefined ? {} : { method: params.method }),

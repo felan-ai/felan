@@ -8,8 +8,8 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { userInfo } from 'node:os';
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { pnpmPackageVersions, pnpmPinnedVersions } from './felan-shrinkwrap.mjs';
@@ -17,9 +17,10 @@ import { packagePaths } from './package-paths.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const artifacts = resolve(root, '.artifacts');
-const installDir = realpathSync(mkdtempSync(join(tmpdir(), 'felan-packed-bin-')));
+// Provider configuration must not inherit a world-writable temporary ancestor.
+const packedTemporaryRoot = realpathSync(userInfo().homedir);
+const installDir = mkdtempSync(join(packedTemporaryRoot, 'felan-packed-bin-'));
 const cleanHome = join(installDir, 'home');
-const cacheDir = process.env.npm_config_cache ?? process.env.NPM_CONFIG_CACHE ?? join(installDir, 'npm-cache');
 const workspace = join(installDir, 'workspace');
 const agentDir = join(cleanHome, '.felan');
 const daemonRuntime = join(installDir, 'daemon');
@@ -28,6 +29,7 @@ const npm = process.platform === 'win32' ? process.execPath : 'npm';
 const npmArguments = process.platform === 'win32'
   ? [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')]
   : [];
+const cacheDir = process.env.npm_config_cache ?? process.env.NPM_CONFIG_CACHE ?? configuredNpmCache();
 const binDirectory = join(installDir, 'node_modules', '.bin');
 const felan = process.platform === 'win32'
   ? process.execPath
@@ -50,6 +52,15 @@ const cleanEnvironment = Object.fromEntries(
     !/(TOKEN|API_KEY|AUTH|PASSWORD|SECRET|CREDENTIAL|COOKIE|SESSION|(^|_)KEY$)/i.test(name)
   )),
 );
+
+function configuredNpmCache() {
+  const result = spawnSync(npm, [...npmArguments, 'config', 'get', 'cache'], { encoding: 'utf8' });
+  const cache = result.stdout?.trim();
+  if (result.status !== 0 || !cache || !isAbsolute(cache) || cache.includes('\0')) {
+    throw new Error('Cannot resolve the configured npm cache.');
+  }
+  return cache;
+}
 Object.assign(cleanEnvironment, {
   HOME: cleanHome,
   USERPROFILE: cleanHome,
@@ -94,6 +105,7 @@ try {
   assertPackedFelanOutputStyleDependency();
   assertPackedFelanAcpPackage();
   assertPackedFelanShrinkwrap();
+  assertPinnedPiInstallation();
   assertPackedDaemonBoundary();
   assertSingleAgentCoreInstallation();
   assertPackedToolBoundary();
@@ -103,6 +115,7 @@ try {
     '--input-type=module',
     '--eval',
     `
+      import { readFile } from 'node:fs/promises';
       const packageNames = ${JSON.stringify(packageNames)};
       await Promise.all(packageNames.map((name) => import(name)));
       const agentCore = await import('@felan-ai/agent-core');
@@ -139,7 +152,7 @@ try {
       {
         const { createModelToolsExtension } = await import('@felan-ai/ext-model-tools');
         const imageModel = { type: 'image', provider: 'test', api: 'openai-images', id: 'test-image', name: 'Offline image',
-          baseUrl: 'https://not-used.invalid', input: ['text', 'image'], output: ['image'],
+          input: ['text', 'image'], output: ['image'],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
         const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT1sAAAAASUVORK5CYII=';
         const imageRuntime = {
@@ -148,8 +161,9 @@ try {
             return [imageModel];
           },
           generateImages: async (selected, context) => {
-            if (selected !== imageModel || context.input[0]?.text !== 'Offline packed image') throw new Error('Invalid packed image dispatch');
-            return { api: selected.api, provider: selected.provider, model: selected.id, stopReason: 'stop', timestamp: 0,
+            if (selected.provider !== imageModel.provider || selected.id !== imageModel.id || Object.keys(selected).some(key => !['provider', 'id'].includes(key))
+              || context.input[0]?.text !== 'Offline packed image') throw new Error('Invalid packed image dispatch');
+            return { api: imageModel.api, provider: selected.provider, model: selected.id, stopReason: 'stop', timestamp: 0,
               output: [{ type: 'image', mimeType: 'image/png', data: imageData }] };
           },
         };
@@ -190,10 +204,11 @@ try {
         if (name in app) throw new Error('Client package still exposes host ownership: ' + name);
       }
       if (typeof app.SessionClient !== 'function' || typeof app.runDaemonFelan !== 'function') throw new Error('Packed client APIs are missing');
-      const hostExtensions = await import('@felan-ai/daemon/internal/extensions');
-      if (!hostExtensions.localExtensionPackages.includes('@felan-ai/ext-model-tools')) throw new Error('Packed daemon omitted model tools');
-      if (!hostExtensions.localExtensionPackages.includes('@felan-ai/ext-fusion')) throw new Error('Packed daemon omitted Fusion');
-      for (const packageName of hostExtensions.localExtensionPackages) {
+      const hostExtensions = await import(new URL('./providers/extensions.js', import.meta.resolve('@felan-ai/felan')).href);
+      const configuredPackages = JSON.parse(await readFile(new URL('./host.json', import.meta.resolve('@felan-ai/felan')), 'utf8')).extensions.map(extension => extension.package);
+      if (!configuredPackages.includes('@felan-ai/ext-model-tools')) throw new Error('Packed daemon omitted model tools');
+      if (!configuredPackages.includes('@felan-ai/ext-fusion')) throw new Error('Packed daemon omitted Fusion');
+      for (const packageName of configuredPackages) {
         const extension = await hostExtensions.importLocalExtension(packageName);
         if (packageName === '@felan-ai/ext-subagents') {
           if (typeof extension.createSubagentsExtension !== 'function') throw new Error(packageName + ' has no configured extension factory');
@@ -215,14 +230,6 @@ try {
           if (SESSION_COMPACTION_CONFIG?.fields?.method?.default !== 'classifier') throw new Error(packageName + ' must default to classifier compaction');
         } else if (typeof extension.default !== 'function') {
           throw new Error(packageName + ' has no extension factory');
-        }
-      }
-      for (const packageName of ['@felan-ai/agent-core', '@felan-ai/unlisted-extension']) {
-        try {
-          await hostExtensions.importLocalExtension(packageName);
-          throw new Error(packageName + ' loaded without a list entry');
-        } catch (error) {
-          if (!String(error).includes('Unknown local extension package')) throw error;
         }
       }
       const outputStyle = await import('@felan-ai/ext-output-style');
@@ -260,9 +267,12 @@ try {
       const codebaseMemoryTools = [];
       const codebaseMemoryCapabilities = [];
       const codebaseMemoryLogs = [];
-      await codebaseMemory.createCodebaseMemoryExtension({
+      const codebaseMemoryExtension = codebaseMemory.createCodebaseMemoryExtension({
         log: (level, message) => codebaseMemoryLogs.push({ level, message }),
-      })({
+      });
+      await codebaseMemoryExtension({
+        ui: agentCore.createUnavailableExtensionUi(),
+        services: agentCore.createExtensionServiceAccess(agentCore.createFelanServiceRegistry(), codebaseMemoryExtension.serviceRequirements),
         runtime: {
           kind: 'docker',
           cwd: process.env.PACKED_SMOKE_WORKSPACE,
@@ -284,19 +294,14 @@ try {
       const subagents = await import('@felan-ai/ext-subagents');
       const canonicalTools = [];
       const canonicalCapabilities = [];
-      const host = {
-          descriptors: [{
+      subagents.createSubagentsExtension({}, [{
+          descriptor: {
             id: 'general',
             description: 'General agent',
             allowNesting: true,
-          }],
-          policy: {
-            maxPromptBytes: 1024,
-            maxDescriptionBytes: 128,
-            maxSteerBytes: 1024,
           },
-        };
-      subagents.createSubagentsExtension(host)({
+          prompt: 'Complete the assigned task.',
+        }])({
         registerCapability: (capability) => canonicalCapabilities.push(capability.id),
         registerTool: (tool) => canonicalTools.push(tool.name),
       });
@@ -314,10 +319,10 @@ try {
         throw new Error('Packed subagent extension capability is unavailable');
       }
       const askUser = await import('@felan-ai/ext-ask-user');
-      const askUserTui = await import('@felan-ai/ext-ask-user/tui');
       const askUserTools = [];
       const askUserCapabilities = [];
-      askUser.createAskUserExtension(askUserTui.createTuiAskUserHost())({
+      askUser.default({
+        ui: agentCore.createUnavailableExtensionUi(),
         registerCapability: (capability) => askUserCapabilities.push(capability.id),
         registerTool: (tool) => askUserTools.push(tool.name),
       });
@@ -373,6 +378,7 @@ try {
       const taskCapabilities = [];
       const taskCommands = [];
       tasks.default({
+        ui: agentCore.createUnavailableExtensionUi(),
         runtime: {
           kind: 'packed-test',
           storage: () => ({ root: '/tmp/felan-packed-tasks' }),
@@ -438,6 +444,8 @@ try {
       const browserCapabilities = [];
       const browserEvents = [];
       browser.default({
+        ui: agentCore.createUnavailableExtensionUi(),
+        services: agentCore.createExtensionServiceAccess(agentCore.createFelanServiceRegistry(), browser.default.serviceRequirements),
         runtime: {
           kind: 'packed-test',
           cwd: process.env.PACKED_SMOKE_WORKSPACE,
@@ -463,6 +471,8 @@ try {
       const markitdownCommands = [];
       const markitdownEvents = [];
       markitdown.default({
+        ui: agentCore.createUnavailableExtensionUi(),
+        services: agentCore.createExtensionServiceAccess(agentCore.createFelanServiceRegistry(), markitdown.default.serviceRequirements),
         runtime: {
           kind: 'packed-test',
           cwd: process.env.PACKED_SMOKE_WORKSPACE,
@@ -585,12 +595,17 @@ try {
         throw new Error('Packed HostAgentRuntime PTY smoke failed: ' + terminalOutput);
       }
       const { fileURLToPath } = await import('node:url');
-      const llamaPath = fileURLToPath(import.meta.resolve('@felan-ai/daemon/internal/llama/extension'));
+      const llamaPath = fileURLToPath(import.meta.resolve('@felan-ai/felan/internal/llama/extension'));
       const { startDaemonService } = await import(new URL('./daemon/service.js', import.meta.resolve('@felan-ai/daemon')).href);
-      const service = await startDaemonService(app.clientDaemonTarget({ daemonRuntime: process.env.PACKED_SMOKE_WORKSPACE + '/host-smoke' }));
+      const managerEntry = import.meta.resolve('@felan-ai/felan/daemon-host');
+      const service = await startDaemonService(app.clientDaemonTarget({ daemonRuntime: process.env.PACKED_SMOKE_WORKSPACE + '/host-smoke' }), {
+        manager: { packageName: '@felan-ai/felan', version: app.FELAN_VERSION, resolveFrom: managerEntry,
+          resolveProvider: specifier => import.meta.resolve(specifier),
+          packagedDefaultPath: fileURLToPath(new URL('./host.json', managerEntry)) },
+      });
       let hostFailure;
       try {
-        const binding = await service.registry.create({ cwd: process.env.PACKED_SMOKE_WORKSPACE, source: 'tui',
+        const binding = await service.registry.create({ cwd: process.env.PACKED_SMOKE_WORKSPACE, source: 'tui', interactiveExtensions: true,
           target: { kind: 'new' }, extensionPaths: [explicitExtensionPath, llamaPath] });
         const runtime = binding.runtime;
         if (!runtime.services.resourceLoader.getExtensions().extensions.some((extension) => (
@@ -636,30 +651,20 @@ try {
         if (prompt.includes('### web-access')) {
           throw new Error('Packed runtime retained a Web Access capability heading');
         }
-        const capabilityPositions = ['### subagents', '### ask-user', '### tasks', '### prewalk', '### browser', '### markitdown', '### progressive-context']
+        const capabilityPositions = ['### ask-user', '### subagents', '### tasks', '### prewalk', '### browser', '### markitdown', '### progressive-context']
           .map((heading) => prompt.indexOf(heading));
         if (capabilityPositions.some((position) => position < 0)
           || capabilityPositions.some((position, index) => index > 0 && position <= capabilityPositions[index - 1])) {
-          throw new Error('Packed runtime capability order is incorrect');
+          throw new Error('Packed runtime capability order is incorrect: ' + capabilityPositions.join(', '));
         }
         const { testBackgroundBashTools } = await import(${JSON.stringify(new URL('./test-background-bash-tools.mjs', import.meta.url).href)});
-        const reloadErrors = [];
-        const reloadAdmitted = service.registry.reloadAdmitted.bind(service.registry);
-        service.registry.reloadAdmitted = async (...args) => {
-          try { return await reloadAdmitted(...args); }
-          catch (error) { reloadErrors.push(error); throw error; }
-        };
         const toolClient = new app.SessionClient({ target: app.clientDaemonTarget({ daemonRuntime: process.env.PACKED_SMOKE_WORKSPACE + '/host-smoke' }),
           clientVersion: app.FELAN_VERSION, kind: 'tui' });
         try {
           await toolClient.connect();
           await toolClient.attach(binding.sessionId);
           await testBackgroundBashTools(runtime, process.env.PACKED_SMOKE_WORKSPACE,
-            async () => {
-              const response = await toolClient.request('session.reload', {}, { session: binding.sessionId });
-              if (response.outcome === 'indeterminate') throw new AggregateError(reloadErrors, JSON.stringify(response));
-              return response;
-            });
+            () => toolClient.request('session.reload', {}, { session: binding.sessionId }));
         } finally { await toolClient.close(); }
       } catch (error) {
         hostFailure = error;
@@ -754,16 +759,16 @@ function stopPackedDaemon() {
 }
 
 async function assertPackedDaemonOnly(tarballs) {
-  const { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
+  const { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
   const { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } = await import('node:path');
   const { spawn, spawnSync } = await import('node:child_process');
-  const prefix = realpathSync(mkdtempSync(join(tmpdir(), 'dpk-')));
+  const prefix = realpathSync(mkdtempSync(join(packedTemporaryRoot, 'dpk-')));
   const records = [];
   let probe;
   let environment;
   let failure;
   let report;
+  let runtimeDirectory;
   const deadline = (promise, label, milliseconds) => {
     let timer;
     return Promise.race([promise, new Promise((_, reject) => {
@@ -808,7 +813,16 @@ async function assertPackedDaemonOnly(tarballs) {
       record.listeners.add(check); check();
     });
     try { await deadline(work, 'readiness', 15_000); }
-    catch (error) { throw new Error(`${error.message}\n${record.stdout.slice(-4096)}\n${record.stderr.slice(-4096)}`, { cause: error }); }
+    catch (error) {
+      const diagnostics = runtimeDirectory ? ['stderr.log', 'stdout.log'].flatMap(name => {
+        const path = join(runtimeDirectory, name);
+        if (!existsSync(path)) return [];
+        const stat = lstatSync(path);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 65_536) return [];
+        return [`${name}: ${readFileSync(path).subarray(-4096).toString('utf8')}`];
+      }).join('\n') : '';
+      throw new Error(`${error.message}\n${record.stdout.slice(-4096)}\n${record.stderr.slice(-4096)}\n${diagnostics}`, { cause: error });
+    }
     finally { record.listeners.delete(check); }
   };
   try {
@@ -819,10 +833,11 @@ async function assertPackedDaemonOnly(tarballs) {
       `${name.replace(/^@/u, '').replaceAll('/', '-')}-${manifest.version}.tgz`, name,
     ]));
     const seen = new Set(); const selected = [];
+    const selectedNames = new Set(['@felan-ai/daemon', '@felan-ai/agent-core', '@felan-ai/session-protocol']);
     for (const tarball of tarballs) {
       const name = names.get(basename(tarball));
       if (!name || seen.has(name)) throw new Error(`Unexpected or duplicate packed artifact: ${basename(tarball)}`);
-      seen.add(name); if (name !== '@felan-ai/felan') selected.push(realpathSync(tarball));
+      seen.add(name); if (selectedNames.has(name)) selected.push(realpathSync(tarball));
     }
     if (seen.size !== sourcePackagesByName.size || !seen.has('@felan-ai/felan')) throw new Error('Daemon-only check requires the complete packed artifact set');
     const home = join(prefix, 'h'); const temporary = join(prefix, 't');
@@ -854,13 +869,45 @@ async function assertPackedDaemonOnly(tarballs) {
     const npmPrefix = process.platform === 'win32' ? [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')] : [];
     runHere(npmCommand, [...npmPrefix, 'install', '--offline', '--ignore-scripts', '--no-fund', '--no-audit', '--prefix', prefix, ...selected], 180_000);
     for (const [name, expected] of sourcePackagesByName) {
-      if (name === '@felan-ai/felan') continue;
+      if (!selectedNames.has(name)) continue;
       const installed = JSON.parse(readFileSync(join(prefix, 'node_modules', ...name.split('/'), 'package.json'), 'utf8'));
       if (installed.name !== name || installed.version !== expected.version) throw new Error(`Wrong daemon-only package: ${name}`);
     }
     if (existsSync(join(prefix, 'node_modules', '@felan-ai', 'felan'))) throw new Error('Client package was installed in the daemon-only prefix');
+    for (const name of sourcePackagesByName.keys()) {
+      if (name.startsWith('@felan-ai/ext-') && existsSync(join(prefix, 'node_modules', ...name.split('/')))) {
+        throw new Error('An extension was installed in the generic daemon-only prefix: ' + name);
+      }
+    }
     const lock = JSON.parse(readFileSync(join(prefix, 'package-lock.json'), 'utf8'));
     if (Object.keys(lock.packages ?? {}).some(path => /(?:^|\/)node_modules\/@felan-ai\/felan$/u.test(path))) throw new Error('Client package was installed transitively');
+    const providerDirectory = join(prefix, 'node_modules', '@fixture', 'host');
+    mkdirSync(providerDirectory, { recursive: true });
+    writeFileSync(join(providerDirectory, 'package.json'), JSON.stringify({ name: '@fixture/host', version: '0.0.0', type: 'module', exports: { './providers': './providers.mjs' } }));
+    writeFileSync(join(providerDirectory, 'providers.mjs'), `
+      import { HOST_RUNTIME_SERVICE, HostAgentRuntime, ModelRuntime } from '@felan-ai/agent-core';
+      import { join } from 'node:path';
+      import { SESSION_RUNTIME_SERVICE } from '@felan-ai/daemon/session-runtime';
+      import { defineServiceProvider } from '@felan-ai/daemon/provider';
+      const unavailable = () => { throw new Error('Session execution and setup are outside this lifecycle-only probe'); };
+      export default defineServiceProvider({ provides: [HOST_RUNTIME_SERVICE, SESSION_RUNTIME_SERVICE], async create() {
+        return { implementations: [
+          { contract: HOST_RUNTIME_SERVICE, value: { create: (cwd, options) => new HostAgentRuntime(cwd, options) } },
+          { contract: SESSION_RUNTIME_SERVICE, value: { configuration: async () => [],
+            createModelRuntime: agentDir => ModelRuntime.create({ authPath: join(agentDir, 'auth.json'), modelsPath: join(agentDir, 'models.json') }),
+            secretStorage: { read: unavailable, write: unavailable, remove: unavailable },
+            createHostServices: async () => ({
+              configuration: { get: unavailable, set: unavailable, prepare: unavailable, sessionOverrides: unavailable, sessionValues: unavailable },
+              setup: { dependency: unavailable, installApprovedDependency: unavailable, catalog: unavailable,
+                validateStart: unavailable, start: unavailable, read: unavailable, answer: unavailable,
+                cancel: unavailable, prepareOpenLink: unavailable, disconnected() {}, beginDrain() {}, async drain() {} },
+            }),
+            validateConfiguration: async () => {},
+            resolveEnvironment: async () => { throw new Error('Session execution is outside this lifecycle-only probe'); },
+            prepare: async () => { throw new Error('Session execution is outside this lifecycle-only probe'); } } },
+        ], async dispose() {} };
+      } });
+    `);
     probe = join(prefix, 'probe.mjs');
     writeFileSync(probe, `
       import { existsSync, realpathSync, writeFileSync } from 'node:fs';
@@ -885,17 +932,20 @@ async function assertPackedDaemonOnly(tarballs) {
       const protocol = await import('@felan-ai/session-protocol');
       if (daemon.DAEMON_VERSION !== ${JSON.stringify(sourcePackagesByName.get('@felan-ai/daemon').version)} || protocol.PROTOCOL_VERSION !== 1 || typeof protocol.encodeFrame !== 'function') throw new Error('Packed daemon/protocol imports are incomplete');
       if (process.argv[2] === 'inspect') {
-        const { builtinExtensionPackages } = await import('@felan-ai/daemon/internal/extensions');
-        const { acquireDaemonOwnership } = await import('@felan-ai/daemon/internal/daemon/ownership');
+        const { acquireDaemonOwnership } = await import(new URL('./daemon/ownership.js', import.meta.resolve('@felan-ai/daemon')));
         const owner = await acquireDaemonOwnership(target);
+        const runtimeDirectory = owner.target.runtimeDirectory;
         try {
-          writeFileSync(join(owner.target.agentDir, 'settings.json'), JSON.stringify({ builtinExtensions: Object.fromEntries(Object.keys(builtinExtensionPackages).map(name => [name, false])) }), { mode: 0o600 });
+          writeFileSync(join(owner.target.agentDir, 'host.json'), JSON.stringify({ version: 1, services: [
+            { id: 'felan.runtime', major: 1, use: '@fixture/host/providers' },
+            { id: 'felan.session-runtime', major: 1, use: '@fixture/host/providers' },
+          ], extensions: [], policy: { projectTrust: 'ask', dependencyInstalls: 'ask', requireLocalConsole: true } }), { mode: 0o600 });
         } finally { await owner.release(); }
         const piTui = realpathSync(createRequire(paths['@felan-ai/daemon']).resolve('@earendil-works/pi-tui'));
         if (!piTui.startsWith(join(prefix, 'node_modules') + sep)) throw new Error('Escaped Pi TUI dependency resolution');
-        console.log(JSON.stringify({ entrypoint: paths['@felan-ai/daemon'], version: daemon.DAEMON_VERSION, piTui: true }));
+        console.log(JSON.stringify({ entrypoint: paths['@felan-ai/daemon'], version: daemon.DAEMON_VERSION, piTui: true, runtimeDirectory }));
       } else {
-        const { acquireDaemonOwnership } = await import('@felan-ai/daemon/internal/daemon/ownership');
+        const { acquireDaemonOwnership } = await import(new URL('./daemon/ownership.js', import.meta.resolve('@felan-ai/daemon')));
         let owner;
         try { owner = await acquireDaemonOwnership(target); }
         catch (error) { if (process.argv[2] !== 'busy' || error.code !== 'owner_running') throw error; console.log('busy'); }
@@ -908,6 +958,8 @@ async function assertPackedDaemonOnly(tarballs) {
       }
     `, { mode: 0o600 });
     const installed = JSON.parse(runHere(process.execPath, [probe, 'inspect']));
+    if (typeof installed.runtimeDirectory !== 'string' || !installed.runtimeDirectory.startsWith(`${prefix}${sep}`)) throw new Error('Daemon diagnostic directory escaped the isolated prefix');
+    runtimeDirectory = installed.runtimeDirectory;
     for (let cycle = 0; cycle < 2; cycle++) {
       const record = start(installed.entrypoint, target);
       await ready(record, installed.version);
@@ -1025,6 +1077,23 @@ function assertSingleAgentCoreInstallation() {
   }
 }
 
+function assertPinnedPiInstallation() {
+  const core = JSON.parse(readFileSync(join(installDir, 'node_modules', '@felan-ai', 'agent-core', 'package.json'), 'utf8'));
+  const expected = core.dependencies['@earendil-works/pi-coding-agent'];
+  const packages = ['pi-agent-core', 'pi-ai', 'pi-codemode', 'pi-coding-agent', 'pi-mcp', 'pi-protocol', 'pi-server', 'pi-telemetry', 'pi-tui'];
+  for (const name of packages) {
+    if (core.dependencies[`@earendil-works/${name}`] !== expected) {
+      throw new Error(`Agent Core must pin ${name} to ${expected}`);
+    }
+  }
+  const lock = JSON.parse(readFileSync(join(installDir, 'package-lock.json'), 'utf8'));
+  for (const [path, metadata] of Object.entries(lock.packages)) {
+    if (/(?:^|\/)node_modules\/@earendil-works\/pi-[^/]+$/.test(path) && metadata.version !== expected) {
+      throw new Error(`Packed Pi dependency ${path} is ${metadata.version}, expected ${expected}`);
+    }
+  }
+}
+
 function filesBelow(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
@@ -1051,6 +1120,16 @@ function validateInstalledPackage(sourcePackage) {
   }
   if (!existsSync(join(packageRoot, 'dist'))) {
     throw new Error(`${manifest.name} packed artifact is missing dist`);
+  }
+  if (JSON.stringify(manifest.exports) !== JSON.stringify(sourcePackage.exports)) {
+    throw new Error(`${manifest.name} packed exports differ from its source manifest`);
+  }
+  for (const [subpath, entry] of Object.entries(manifest.exports ?? {})) {
+    for (const file of [entry.types, entry.import]) {
+      if (!file || !existsSync(join(packageRoot, file))) {
+        throw new Error(`${manifest.name} packed export ${subpath} is missing ${file}`);
+      }
+    }
   }
   const allowedEntries = ['dist', 'LICENSE', 'NOTICE', 'README.md', 'node_modules', 'package.json'];
   if (manifest.name === '@felan-ai/felan') {
@@ -1079,6 +1158,11 @@ function validateInstalledPackage(sourcePackage) {
   }
 
   if (manifest.name.startsWith('@felan-ai/ext-')) {
+    if (manifest.exports?.['./tui']) throw new Error(`${manifest.name} still exports client-owned TUI rendering`);
+    const dataOnlyPackages = ['ext-memory', 'ext-subagents', 'ext-tasks', 'ext-context-view', 'ext-insights', 'ext-prompt-history', 'ext-background-bash', 'ext-powerline'];
+    if (dataOnlyPackages.includes(manifest.name.slice('@felan-ai/'.length)) && manifest.exports?.['./view']) {
+      throw new Error(`${manifest.name} still exports the removed view contract`);
+    }
     if (manifest.dependencies?.['@felan-ai/agent-core'] !== undefined) {
       throw new Error(`${manifest.name} packed Agent Core as a direct dependency`);
     }
@@ -1094,12 +1178,6 @@ function validateInstalledPackage(sourcePackage) {
     }
   }
 
-  if (manifest.name === '@felan-ai/daemon') {
-    const extensionSource = readFileSync(join(packageRoot, 'dist', 'extension-catalog.js'), 'utf8');
-    if (!/import\(packageName\)/.test(extensionSource)) {
-      throw new Error('Packed daemon did not preserve its app-anchored native dynamic importer');
-    }
-  }
 }
 
 function assertPackedDaemonBoundary() {
@@ -1109,25 +1187,31 @@ function assertPackedDaemonBoundary() {
   if (client.dependencies?.['@felan-ai/daemon'] !== daemon.version) {
     throw new Error('Packed client must depend on the exact daemon version');
   }
-  if (daemon.dependencies?.['@felan-ai/felan'] || client.exports?.['./daemon-profile']) {
+  if (daemon.dependencies?.['@felan-ai/felan'] || client.exports?.['./daemon-profile'] || daemon.exports?.['./daemon-profile']) {
     throw new Error('Packed daemon/client ownership is reversed');
   }
-  const profile = daemon.exports?.['./daemon-profile'];
-  if (profile?.types !== './dist/daemon/profile.d.ts' || profile?.import !== './dist/daemon/profile.js') {
-    throw new Error('Packed daemon profile export is missing');
+  if (Object.keys(daemon.dependencies ?? {}).some(name => name.startsWith('@felan-ai/ext-'))) {
+    throw new Error('Packed daemon depends on an extension implementation');
+  }
+  if (Object.keys(daemon.exports ?? {}).some(path => path.startsWith('./internal/'))) {
+    throw new Error('Packed daemon exposes private implementation modules');
+  }
+  const runtime = daemon.exports?.['./session-runtime'];
+  if (runtime?.types !== './dist/daemon/session-runtime.d.ts' || runtime?.import !== './dist/daemon/session-runtime.js') {
+    throw new Error('Packed daemon session runtime contract is missing');
   }
   for (const path of filesBelow(join(packageRoot, 'dist')).filter(path => path.endsWith('.js'))) {
-    if (/(?:from\s*|import\s*\()\s*['"][^'"]*(?:@felan-ai\/felan(?:\/|['"])|felan\/src\/)/.test(readFileSync(path, 'utf8'))) {
-      throw new Error('Packed daemon imports the client application');
+    if (/(?:from\s*|import\s*\()\s*['"][^'"]*(?:@felan-ai\/(?:felan|ext-[a-z-]+)(?:\/|['"])|felan\/src\/)/.test(readFileSync(path, 'utf8'))) {
+      throw new Error('Packed daemon imports a client or extension implementation');
     }
   }
   run(process.execPath, ['--input-type=module', '--eval', `
     import { resolveInstalledDaemonEntrypoint } from '@felan-ai/felan';
     import { fileURLToPath } from 'node:url';
-    import { DAEMON_PROFILE_API_VERSION } from '@felan-ai/daemon/daemon-profile';
+    import { SESSION_RUNTIME_SERVICE } from '@felan-ai/daemon/session-runtime';
     process.chdir(${JSON.stringify(workspace)});
-    if (resolveInstalledDaemonEntrypoint() !== fileURLToPath(import.meta.resolve('@felan-ai/daemon'))) throw new Error('Daemon entrypoint resolution depends on cwd');
-    if (DAEMON_PROFILE_API_VERSION !== 1) throw new Error('Daemon profile version changed');
+    if (resolveInstalledDaemonEntrypoint() !== fileURLToPath(import.meta.resolve('@felan-ai/felan/daemon-host'))) throw new Error('Managing daemon entrypoint resolution depends on cwd');
+    if (SESSION_RUNTIME_SERVICE.key !== 'felan.session-runtime@1') throw new Error('Daemon session runtime contract changed');
   `], cleanEnvironment);
 }
 
@@ -1154,8 +1238,10 @@ function assertPackedFelanAcpPackage() {
     );
   }
   for (const file of [
-    'dist/acp/interactions.js',
+    'dist/acp/daemon-session.js',
     'dist/acp/login.js',
+    'dist/acp/protocol-interactions.js',
+    'dist/acp/protocol-updates.js',
     'dist/acp/server.js',
     'dist/acp/session-registry.js',
     'dist/acp/session-updates.js',
@@ -1165,8 +1251,10 @@ function assertPackedFelanAcpPackage() {
       throw new Error(`Packed TUI is missing compiled ACP module ${file}`);
     }
   }
-  if (existsSync(join(packageRoot, 'dist/acp/session-mcp.js'))) {
-    throw new Error('Packed TUI contains the removed ACP session MCP implementation');
+  for (const file of ['dist/acp/interactions.js', 'dist/acp/session-mcp.js', 'dist/safe-tools.js']) {
+    if (existsSync(join(packageRoot, file))) {
+      throw new Error(`Packed TUI contains removed module ${file}`);
+    }
   }
 }
 

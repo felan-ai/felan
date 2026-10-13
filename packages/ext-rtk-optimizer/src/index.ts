@@ -1,9 +1,8 @@
 import type { AgentRuntime, ExtensionContext, FelanExtension } from '@felan-ai/agent-core';
 import { registerRtkCommand } from './command.js';
 import { computeRewriteDecision, inspectRtkRuntime } from './command-rewriter.js';
-import { associateExtensionConfig } from '@felan-ai/agent-core';
+import { associateExtensionConfig, RUNTIME_DEPENDENCIES_SERVICE, type RuntimeDependencyInstallResult } from '@felan-ai/agent-core';
 import { RTK_OPTIMIZER_CONFIG, rtkOptimizerConfigFromSettings } from './config.js';
-import { installManagedRtk } from './installer.js';
 import { addRecoveryPath, compactToolResult, type ToolResultCompactionMetadata } from './output-compactor.js';
 import { persistRecoveryArtifact } from './recovery.js';
 import {
@@ -40,6 +39,9 @@ export async function refreshActiveRtkRuntime(runtime: AgentRuntime): Promise<Ru
 }
 
 const rtkOptimizerExtension: FelanExtension = async (pi) => {
+  const dependencies = pi.services.get(RUNTIME_DEPENDENCIES_SERVICE);
+  const setupController = new AbortController();
+  let installJob: Promise<RuntimeStatus | RuntimeDependencyInstallResult> | undefined;
   const config = rtkOptimizerConfigFromSettings(pi.config ?? {});
   let runtimeStatus: RuntimeStatus = { rtkAvailable: false };
   let statusRefresh: Promise<RuntimeStatus> | undefined;
@@ -94,13 +96,25 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
     getConfig: () => config,
     getRuntimeStatus: () => runtimeStatus,
     refreshRuntimeStatus,
-    install: async (onStatus) => {
-      const status = await installManagedRtk(pi.runtime, onStatus);
-      runtimeStatus = status;
-      if (status.rtkAvailable) missingRtkWarningShown = false;
-      return status;
-    },
-  });
+    ...(dependencies ? { install: async (_onStatus: (message: string) => void, callerSignal?: AbortSignal): Promise<RuntimeStatus | RuntimeDependencyInstallResult> => {
+      if (installJob) return { status: 'unavailable', message: 'RTK installation is already in progress.' };
+      const signal = AbortSignal.any([setupController.signal, ...(callerSignal ? [callerSignal] : [])]);
+      const job = (async () => {
+        signal.throwIfAborted();
+        const outcome = await dependencies.install({ id: 'rtk' }, { signal }).catch((error: unknown) => {
+          if (signal.aborted && (error === signal.reason || error instanceof Error && error.name === 'AbortError')) {
+            return { status: 'cancelled' as const, message: 'RTK setup request cancelled.' };
+          }
+          throw error;
+        });
+        if (outcome.status !== 'installed') return outcome;
+        await statusRefresh;
+        return refreshRuntimeStatus();
+      })();
+      installJob = job;
+      try { return await job; } finally { if (installJob === job) installJob = undefined; }
+    } } : {}),
+  }, pi.ui);
 
   pi.on('session_start', async (_event, ctx) => {
     warnedMessages.reset();
@@ -117,15 +131,20 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
   });
 
   pi.on('session_shutdown', async () => {
-    if (activeRuntimeRefreshers.get(pi.runtime) === refreshRuntimeStatus) {
-      activeRuntimeRefreshers.delete(pi.runtime);
+    setupController.abort();
+    try {
+      await installJob;
+    } finally {
+      if (activeRuntimeRefreshers.get(pi.runtime) === refreshRuntimeStatus) {
+        activeRuntimeRefreshers.delete(pi.runtime);
+      }
+      codexSessionCommands.clear();
+      codexSessionModels.clear();
+      toolCallModels.clear();
+      activeCodexCommands.clear();
+      rtkSegments.clear();
+      await flushRtkGainSegments(pi, runtimeStatus.command ?? 'rtk');
     }
-    codexSessionCommands.clear();
-    codexSessionModels.clear();
-    toolCallModels.clear();
-    activeCodexCommands.clear();
-    rtkSegments.clear();
-    await flushRtkGainSegments(pi, runtimeStatus.command ?? 'rtk');
   });
 
   pi.on('agent_end', () => {
@@ -555,5 +574,5 @@ export type {
   RtkSourceFilterLevel,
   RuntimeStatus,
 } from './types.js';
-export default rtkOptimizerExtension;
+export default Object.assign(rtkOptimizerExtension, { serviceRequirements: { optional: [RUNTIME_DEPENDENCIES_SERVICE] } });
 associateExtensionConfig(rtkOptimizerExtension, RTK_OPTIMIZER_CONFIG);

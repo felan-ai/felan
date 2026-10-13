@@ -35,6 +35,23 @@ The Fusion integration uses original MIT-licensed Felan code from
 reviewed revision recorded in the extension's NOTICE; no upstream source or
 prompt text is copied. Its package-level LICENSE and NOTICE contain details.
 
+The client-owned ask-user wizard adapts the MIT-licensed pi-ask-user by
+Enzo Lucchesi, via packages/pi-ask-user in https://github.com/mslavov/pi-extensions
+at 7e72e509fe45a5a87c4c2e176cb711de994a8c1d and pi-ask-user 0.14.0 at
+2de7e145227f7a527e995e323a50e7ee9bf88b0e.
+Copyright (c) 2026 Enzo Lucchesi.
+
+The client-owned context and Powerline renderers adapt MIT-licensed
+packages/pi-context and packages/pi-powerline from the same pi-extensions
+revision. Copyright (c) 2026 Milko Slavov. The Powerline source also credits
+packages/sub-core from https://github.com/marckrenn/pi-sub.
+Copyright (c) 2026 Marc Krenn.
+
+The client-owned Codex tool labels adapt @howaboua/pi-codex-conversion 3.0.8
+at 62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91 from
+https://github.com/IgorWarzocha/howaboua-pi-stuff, licensed under the MIT License.
+Copyright (c) 2026 Umberto B.
+
 The terminal application uses @earendil-works/pi-coding-agent and
 @earendil-works/pi-tui from https://github.com/earendil-works/pi,
 licensed under the MIT License.

@@ -1,5 +1,4 @@
-import type { ExtensionContext, SessionEntry } from "@felan-ai/agent-core";
-import type { PromptHistoryDisplayMode } from "./config.js";
+import type { SessionEntry } from "@felan-ai/agent-core";
 
 export const PROMPT_HISTORY_SCOPES = ["session", "project", "all"] as const;
 export type PromptHistoryScope = (typeof PROMPT_HISTORY_SCOPES)[number];
@@ -23,11 +22,6 @@ export type PromptHistorySearch = (
 	onProgress: (state: PromptHistorySearchState) => void,
 	shouldContinue: () => boolean,
 ) => Promise<PromptHistorySearchState>;
-export interface PromptHistoryPresentationHost {
-	show(ui: Pick<ExtensionContext["ui"], "custom" | "setEditorText">,
-		search: PromptHistorySearch, displayMode: PromptHistoryDisplayMode, signal: AbortSignal): Promise<void>;
-}
-
 export interface PromptHistorySessionReference {
 	/** Opaque host identifier passed back to readSession. */
 	readonly id: string;

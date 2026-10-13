@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { DAEMON_PROFILE_API_VERSION, DAEMON_VERSION } from '../src/index.js';
+import { SESSION_RUNTIME_SERVICE, DAEMON_VERSION } from '../src/index.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -15,13 +15,17 @@ function sourceFiles(directory: string): string[] {
 }
 
 describe('daemon distribution boundary', () => {
-  it('owns the profile contract and independent package version', () => {
+  it('owns the runtime and provider contracts and independent package version', () => {
     expect(manifest.name).toBe('@felan-ai/daemon');
     expect(DAEMON_VERSION).toBe(manifest.version);
-    expect(DAEMON_PROFILE_API_VERSION).toBe(1);
-    expect(manifest.exports['./daemon-profile']).toEqual({
-      types: './dist/daemon/profile.d.ts', import: './dist/daemon/profile.js',
+    expect(SESSION_RUNTIME_SERVICE.key).toBe('felan.session-runtime@1');
+    expect(manifest.exports['./session-runtime']).toEqual({
+      types: './dist/daemon/session-runtime.d.ts', import: './dist/daemon/session-runtime.js',
     });
+    expect(manifest.exports['./provider']).toEqual({
+      types: './dist/daemon/provider.d.ts', import: './dist/daemon/provider.js',
+    });
+    expect(manifest.exports).not.toHaveProperty('./daemon-profile');
   });
 
   it('has no dependency or source import back into the client application', () => {
@@ -31,11 +35,13 @@ describe('daemon distribution boundary', () => {
     for (const path of sourceFiles(join(root, 'src'))) {
       const source = readFileSync(path, 'utf8');
       expect(source, path).not.toMatch(/(?:from\s*|import\s*\()\s*['"][^'"]*(?:@felan-ai\/felan(?:\/|['"])|felan\/src\/)/u);
+      expect(source, path).not.toMatch(/(?:from\s*|import\s*\()\s*['"]@felan-ai\/ext-/u);
     }
   });
 
-  it('keeps native ownership and the current mixed presenters in the daemon', () => {
+  it('keeps native ownership without direct feature or renderer dependencies', () => {
     expect(manifest.dependencies.koffi).toBe('3.3.2');
-    expect(manifest.dependencies['@earendil-works/pi-tui']).toBe('catalog:pi');
+    expect(manifest.dependencies).not.toHaveProperty('@earendil-works/pi-tui');
+    expect(Object.keys(manifest.dependencies).filter(name => name.startsWith('@felan-ai/ext-'))).toEqual([]);
   });
 });

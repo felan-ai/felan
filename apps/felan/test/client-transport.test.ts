@@ -7,8 +7,8 @@ import type { Socket } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, encodeFrame } from '@felan-ai/session-protocol';
 import { localConnector, socketTransport } from '../src/client/transport.js';
-import { acquireDaemonOwnership } from '@felan-ai/daemon/internal/daemon/ownership';
-import { listenLocalIpc } from '@felan-ai/daemon/internal/daemon/ipc';
+import { acquireDaemonOwnership } from '../../daemon/src/daemon/ownership.js';
+import { listenLocalIpc } from '../../daemon/src/daemon/ipc.js';
 
 class Wire extends EventEmitter {
   writableLength = 0;

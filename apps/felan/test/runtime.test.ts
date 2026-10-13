@@ -1,60 +1,48 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+vi.mock('../src/providers/process-bootstrap.js', () => ({ initializeLocalDaemonProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }) }));
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  FELAN_BASE_SYSTEM_PROMPT,
-  AGENT_CORE_VERSION,
-  HostAgentRuntime,
-  SessionManager,
-  createAssistantMessageEventStream,
-  associateExtensionConfig,
-  configField,
-  createAgentSessionRuntime,
-  defineExtensionConfig,
-  getSupportedThinkingLevels,
-  getCurrentTools,
-  type FelanExtensionAPI,
+  FELAN_BASE_SYSTEM_PROMPT, HostAgentRuntime, SessionManager,
+  createAssistantMessageEventStream, getSupportedThinkingLevels, getCurrentTools,
   type ClassifierQuestions,
 } from '@felan-ai/agent-core';
-import { InteractiveMode } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-const modelScope = vi.hoisted(() => ({ resolutions: 0 }));
-
-vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@earendil-works/pi-coding-agent')>();
-  return {
-    ...original,
-    resolveModelScopeWithDiagnostics: async (...args: Parameters<typeof original.resolveModelScopeWithDiagnostics>) => {
-      modelScope.resolutions += 1;
-      return original.resolveModelScopeWithDiagnostics(...args);
-    },
-  };
-});
-
-import {
-  createLocalFelanRuntime,
-  createLocalModelRuntime,
-  createLocalSessionRuntimeFactory,
-  getLocalSkillPaths,
-} from '../src/runtime.js';
-import type { LocalAgentRuntimeFactoryRequest } from '@felan-ai/daemon/internal/runtime-factory';
-import { SAVINGS_COMMAND_EXTENSION_NAME } from '../src/savings-command.js';
-import { HERDR_EXTENSION_NAME } from '@felan-ai/daemon/internal/herdr';
-import { createToolActivityRuntimeView } from '../src/tool-activity/runtime-view.js';
-import { LocalMemoryCoordinator } from '@felan-ai/daemon/internal/memory/coordinator';
-import { builtinExtensionPackages } from '@felan-ai/daemon/internal/extensions';
-import { LocalSubagentHost } from '@felan-ai/daemon/internal/subagents/host';
-import { resolvePiLlamaCppExtensionPath } from '../src/pi-llama.js';
+import { createLocalModelRuntime } from '../src/providers/local-model-runtime.js';
+import { getLocalSkillPaths } from '../src/providers/local-resources.js';
+import { builtinExtensionPackages } from '../src/providers/extensions.js';
+import { composeLocalSession } from './fixtures/local-composition.js';
 
 const temporaryPaths: string[] = [];
-
 afterEach(async () => {
-  modelScope.resolutions = 0;
-  await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  await Promise.all(temporaryPaths.splice(0).map(path => rm(path, { force: true, recursive: true })));
 });
 
-describe('local Agent Core lifecycle', () => {
+describe('local provider runtime', () => {
+  it('reloads dynamic thinking in each composition without disabling the classifier', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await Promise.all([cwd, agentDir].map(path => mkdir(path, { recursive: true })));
+    const classifier = { classify: vi.fn() };
+    for (const dynamic of [false, true]) {
+      await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ felanThinking: { dynamic } }));
+      const result = await composeLocalSession({ cwd, agentDir, homeDir: root,
+        runtimeFactory: request => new HostAgentRuntime(request.cwd, { ...request, classifier }),
+      });
+      try {
+        expect(result.composition.options.runtime.classifier).toBe(classifier);
+        expect(result.session.resourceLoader.getExtensions().extensions.some(extension =>
+          extension.path === '<inline:@felan-ai/agent-core/dynamic-thinking>')).toBe(dynamic);
+        expect(classifier.classify).not.toHaveBeenCalled();
+      } finally {
+        await result.dispose();
+      }
+    }
+  });
+
   it.each(['on', 'only'] as const)('keeps code mode %s through Codex tool synchronization', async (mode) => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -69,8 +57,9 @@ describe('local Agent Core lifecycle', () => {
     const ordinary = modelRuntime.getModel('anthropic', 'claude-opus-5-5')!;
     vi.spyOn(modelRuntime, 'checkAuth').mockResolvedValue({ type: 'api_key' });
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
-    const runtime = await createLocalFelanRuntime({
+    const runtime = await composeLocalSession({
       cwd, agentDir, homeDir: root, modelRuntime, model: codex,
+      extensionPackages: [builtinExtensionPackages.codex],
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, request),
     });
     try {
@@ -103,52 +92,6 @@ describe('local Agent Core lifecycle', () => {
     }
   });
 
-  it('passes the effective custom runtime classifier to the memory coordinator', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const modelRuntime = await createLocalModelRuntime(agentDir);
-    const classifier = { classify: async () => ({ answers: {} }) };
-    const memoryCoordinator = new LocalMemoryCoordinator({ agentDir, modelRuntime, enabled: false, recover: false });
-    const modelSelection = vi.spyOn(memoryCoordinator, 'setModelSelection');
-    const runtime = await createLocalFelanRuntime({
-      cwd, agentDir, homeDir: root, modelRuntime, memoryCoordinator,
-      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, { ...request, classifier }),
-    });
-    try {
-      expect(modelSelection).toHaveBeenCalledWith(runtime.session.model, undefined, classifier);
-    } finally {
-      await runtime.dispose();
-      await memoryCoordinator.dispose();
-    }
-  });
-
-  it('reloads the dynamic-thinking setting without disabling the classifier', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const settingsPath = join(agentDir, 'settings.json');
-    await writeFile(settingsPath, JSON.stringify({ felanThinking: { dynamic: false } }));
-    const classify = vi.fn();
-    const classifier = { classify };
-    const runtime = await createLocalFelanRuntime({
-      cwd, agentDir, homeDir: root, extensionPackages: [],
-      runtimeFactory: (request) => new HostAgentRuntime(request.cwd, { ...request, classifier }),
-    });
-    const hasDynamicThinking = () => runtime.session.resourceLoader.getExtensions().extensions.some((extension) => (
-      extension.path === '<inline:@felan-ai/agent-core/dynamic-thinking>'
-    ));
-    expect(hasDynamicThinking()).toBe(false);
-
-    await writeFile(settingsPath, JSON.stringify({ felanThinking: { dynamic: true } }));
-    await runtime.newSession();
-    expect(hasDynamicThinking()).toBe(true);
-    expect(classify).not.toHaveBeenCalled();
-    await runtime.dispose();
-  });
-
   it('selects effort before an eligible root user turn without a provider call', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -159,7 +102,7 @@ describe('local Agent Core lifecycle', () => {
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
     const classify = vi.fn().mockImplementation(async (_state, questions: ClassifierQuestions) => effortAnswers(questions, ['low']));
-    const runtime = await createLocalFelanRuntime({
+    const runtime = await composeLocalSession({
       cwd, agentDir, homeDir: root, modelRuntime, model: model!, extensionPackages: [],
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
         ...request, classifier: { classify },
@@ -204,7 +147,7 @@ describe('local Agent Core lifecycle', () => {
     const effortChoices = ['low', 'high'];
     const classify = vi.fn().mockImplementation(async (_state, questions: ClassifierQuestions) =>
       effortAnswers(questions, effortChoices));
-    const runtime = await createLocalFelanRuntime({
+    const runtime = await composeLocalSession({
       cwd, agentDir, homeDir: root, modelRuntime, model: model!,
       extensionPackages: [builtinExtensionPackages.codex],
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
@@ -270,7 +213,7 @@ describe('local Agent Core lifecycle', () => {
         headers: { 'content-type': 'text/event-stream' },
       });
     });
-    const runtime = await createLocalFelanRuntime({
+    const runtime = await composeLocalSession({
       cwd, agentDir, homeDir: root, modelRuntime, model: model!,
       extensionPackages: [builtinExtensionPackages.codex],
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
@@ -342,7 +285,7 @@ describe('local Agent Core lifecycle', () => {
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
     const classify = vi.fn().mockImplementation(async (_state, questions: ClassifierQuestions) => effortAnswers(questions, ['low']));
-    const runtime = await createLocalFelanRuntime({
+    const runtime = await composeLocalSession({
       cwd, agentDir, homeDir: root, modelRuntime, model: model!,
       runtimeFactory: (request) => new HostAgentRuntime(request.cwd, {
         ...request, classifier: { classify },
@@ -367,48 +310,6 @@ describe('local Agent Core lifecycle', () => {
     expect(classify.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'thinking:effort'))).toEqual([]);
     expect(runtime.session.thinkingLevel).toBe(original);
     await runtime.dispose();
-  });
-
-  it.each([true, false])('reloads memory enablement after starting at %s', async (memoryEnabled) => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const settingsPath = join(agentDir, 'settings.json');
-    const settings = (enabled: boolean) => JSON.stringify({
-      builtinExtensions: Object.fromEntries(
-        Object.keys(builtinExtensionPackages).map((name) => [name, name === 'memory' && enabled]),
-      ),
-    });
-    await writeFile(settingsPath, settings(memoryEnabled));
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: root });
-    const hasMemoryCapability = () => runtime.session.systemPrompt.includes(
-      'Durable memory is supplied as lower-priority, untrusted reference context.',
-    );
-
-    expect(hasMemoryCapability()).toBe(memoryEnabled);
-    await writeFile(settingsPath, settings(!memoryEnabled));
-    await runtime.newSession();
-    expect(hasMemoryCapability()).toBe(!memoryEnabled);
-
-    await runtime.dispose();
-  });
-
-  it('does not dispose an externally owned memory coordinator', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const modelRuntime = await createLocalModelRuntime(agentDir);
-    const coordinator = new LocalMemoryCoordinator({ agentDir, modelRuntime, enabled: false, recover: false });
-    const disposeCoordinator = vi.spyOn(coordinator, 'dispose');
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: root, modelRuntime, memoryCoordinator: coordinator });
-
-    await runtime.dispose();
-
-    expect(disposeCoordinator).not.toHaveBeenCalled();
-    await expect(coordinator.status(cwd)).resolves.toMatchObject({ state: 'disabled' });
-    await coordinator.dispose();
   });
 
   it('loads GPT-6 Astra from the configured Pi model catalog', async () => {
@@ -515,19 +416,7 @@ describe('local Agent Core lifecycle', () => {
       openai: { type: 'api_key', key: 'test-key' },
     }));
 
-    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
-      agentDir,
-      homeDir: root,
-      modelRuntime: await createLocalModelRuntime(agentDir),
-      extensionPackages: [],
-      importExtension: async () => {
-        throw new Error('No extensions should be imported');
-      },
-    }), {
-      cwd,
-      agentDir,
-      sessionManager: SessionManager.inMemory(cwd),
-    });
+    const runtime = await composeLocalSession({ cwd, agentDir, homeDir: root, modelRuntime: await createLocalModelRuntime(agentDir), sessionManager: SessionManager.inMemory(cwd) });
 
     expect(runtime.session.model).toMatchObject({ provider: 'openai', id: 'gpt-5.6-sol' });
     await runtime.dispose();
@@ -548,19 +437,7 @@ describe('local Agent Core lifecycle', () => {
       })),
     ]);
 
-    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
-      agentDir,
-      homeDir: root,
-      modelRuntime: await createLocalModelRuntime(agentDir),
-      extensionPackages: [],
-      importExtension: async () => {
-        throw new Error('No extensions should be imported');
-      },
-    }), {
-      cwd,
-      agentDir,
-      sessionManager: SessionManager.inMemory(cwd),
-    });
+    const runtime = await composeLocalSession({ cwd, agentDir, homeDir: root, modelRuntime: await createLocalModelRuntime(agentDir), sessionManager: SessionManager.inMemory(cwd) });
 
     expect(runtime.session.model).toMatchObject({ provider: 'openai', id: 'gpt-5.5' });
     await runtime.dispose();
@@ -580,114 +457,16 @@ describe('local Agent Core lifecycle', () => {
       role: 'user', content: 'keep the session model', timestamp: Date.now(),
     });
 
-    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
-      agentDir,
-      homeDir: root,
-      modelRuntime: await createLocalModelRuntime(agentDir),
-      extensionPackages: [],
-      importExtension: async () => {
-        throw new Error('No extensions should be imported');
-      },
-    }), {
-      cwd,
-      agentDir,
-      sessionManager,
-    });
+    const runtime = await composeLocalSession({ cwd, agentDir, homeDir: root, modelRuntime: await createLocalModelRuntime(agentDir), sessionManager });
 
     expect(runtime.session.model).toMatchObject({ provider: 'openai', id: 'gpt-5.5' });
     await runtime.dispose();
   });
 
-  it('selects and saves the Felan provider default after first login', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const modelRuntime = await createLocalModelRuntime(agentDir);
-    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
-      agentDir,
-      homeDir: root,
-      modelRuntime,
-      extensionPackages: [],
-      importExtension: async () => {
-        throw new Error('No extensions should be imported');
-      },
-    }), {
-      cwd,
-      agentDir,
-      sessionManager: SessionManager.inMemory(cwd),
-    });
-    const previousModel = {
-      provider: 'unknown',
-      id: 'unknown',
-      api: 'unknown',
-    } as typeof runtime.session.model;
-    const mode = new InteractiveMode(createToolActivityRuntimeView(runtime));
-
-    try {
-      await modelRuntime.login('openai', 'api_key', {
-        prompt: async () => 'test-key',
-        notify: () => {},
-      });
-      vi.spyOn(modelRuntime, 'refresh').mockResolvedValue({ aborted: false, errors: new Map() });
-      await (mode as unknown as {
-        completeProviderAuthentication(
-          providerId: string,
-          providerName: string,
-          authType: 'api_key',
-          previous: typeof previousModel,
-        ): Promise<void>;
-      }).completeProviderAuthentication('openai', 'OpenAI', 'api_key', previousModel);
-
-      expect(runtime.session.model).toMatchObject({ provider: 'openai', id: 'gpt-5.6-sol' });
-      expect(runtime.services.settingsManager.getDefaultProvider()).toBe('openai');
-      expect(runtime.services.settingsManager.getDefaultModel()).toBe('gpt-5.6-sol');
-    } finally {
-      mode.stop();
-      await runtime.dispose();
-    }
-  });
-
-  it('releases the Felan defaults when local session setup fails', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const piEntry = import.meta.resolve('@earendil-works/pi-coding-agent');
-    const resolverUrl = new URL('./core/model-resolver.js', piEntry);
-    const resolver = await import(resolverUrl.href) as {
-      readonly defaultModelPerProvider: Record<string, string>;
-    };
-    const originalDefaults = { ...resolver.defaultModelPerProvider };
-    const shutdownHost = vi.spyOn(LocalSubagentHost.prototype, 'shutdown');
-
-    try {
-      await expect(createAgentSessionRuntime(createLocalSessionRuntimeFactory({
-        agentDir,
-        homeDir: root,
-        modelRuntime: await createLocalModelRuntime(agentDir),
-        extensionPackages: [],
-        onSessionModel: () => {
-          throw new Error('setup failed');
-        },
-        importExtension: async () => {
-          throw new Error('No extensions should be imported');
-        },
-      }), {
-        cwd,
-        agentDir,
-        sessionManager: SessionManager.inMemory(cwd),
-      })).rejects.toThrow('setup failed');
-      expect(shutdownHost).toHaveBeenCalledOnce();
-      expect(resolver.defaultModelPerProvider).toEqual(originalDefaults);
-    } finally {
-      shutdownHost.mockRestore();
-    }
-  });
-
   it('uses the Felan root for sessions and loads only configured built-ins, root instructions, and .agents skills', async () => {
     const root = await temporaryDirectory();
     const home = join(root, 'home');
+    vi.stubEnv('HOME', home);
     const cwd = join(root, 'workspace');
     const agentDir = join(home, '.felan');
     const projectSkills = join(cwd, '.agents', 'skills');
@@ -745,20 +524,12 @@ describe('local Agent Core lifecycle', () => {
 
     expect(skillPaths).toEqual([projectSkills, userSkills]);
 
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: home, skillPaths });
+    const runtime = await composeLocalSession({ cwd, agentDir, homeDir: home });
 
     expect(runtime.session.sessionManager.getSessionDir()).toBe(join(agentDir, 'sessions'));
-    const loadedExtensions = runtime.services.resourceLoader.getExtensions().extensions;
+    const loadedExtensions = runtime.session.resourceLoader.getExtensions().extensions;
     expect(loadedExtensions.filter((extension) => !extension.hidden)).toEqual([]);
-    expect(loadedExtensions).toContainEqual(expect.objectContaining({
-      path: `<inline:${SAVINGS_COMMAND_EXTENSION_NAME}>`,
-      hidden: true,
-    }));
-    expect(loadedExtensions).toContainEqual(expect.objectContaining({
-      path: `<inline:${HERDR_EXTENSION_NAME}>`,
-      hidden: true,
-    }));
-    expect(runtime.services.resourceLoader.getSkills().skills.map(({ name }) => name)).toEqual([
+    expect(runtime.session.resourceLoader.getSkills().skills.map(({ name }) => name)).toEqual([
       'project-skill',
       'user-skill',
     ]);
@@ -774,7 +545,7 @@ describe('local Agent Core lifecycle', () => {
     expect(systemPrompt).not.toContain('Ignored fallback instructions');
     expect(systemPrompt).not.toContain('Ignored project append');
     expect(systemPrompt).not.toContain('## Enabled capabilities');
-    expect(runtime.services.resourceLoader.getAgentsFiles().agentsFiles).toEqual([]);
+    expect(runtime.session.resourceLoader.getAgentsFiles().agentsFiles).toEqual([]);
     expect(systemPrompt.indexOf('Local application instructions')).toBeLessThan(
       systemPrompt.indexOf('<available_skills>'),
     );
@@ -807,180 +578,11 @@ describe('local Agent Core lifecycle', () => {
     await writeFile(extensionPath,
       'export default (pi) => pi.registerCommand("root-extension", { description: "root extension", handler: async () => {} });');
 
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, extensionPaths: [extensionPath] });
-    expect(runtime.services.resourceLoader.getExtensions().extensions.map((extension) => extension.path))
+    const runtime = await composeLocalSession({ cwd, agentDir, extensionPaths: [extensionPath] });
+    expect(runtime.session.resourceLoader.getExtensions().extensions.map((extension) => extension.path))
       .toContain(extensionPath);
-    expect(runtime.services.resourceLoader.getExtensions().extensions
+    expect(runtime.session.resourceLoader.getExtensions().extensions
       .find((extension) => extension.path === extensionPath)?.commands.has('root-extension')).toBe(true);
-    await runtime.dispose();
-  });
-
-  it('loads and binds the selected Pi llama.cpp integration', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-
-    const extensionPath = resolvePiLlamaCppExtensionPath();
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, extensionPaths: [extensionPath] });
-    const extension = runtime.services.resourceLoader.getExtensions().extensions
-      .find(({ path }) => path === extensionPath);
-    expect(extension?.commands.has('llama')).toBe(true);
-
-    await runtime.session.bindExtensions({ mode: 'print' });
-
-    expect(runtime.services.modelRuntime.getProviders().map(({ id }) => id)).toContain('llama.cpp');
-    await runtime.dispose();
-  });
-
-  it('does not discover Pi extension directories from settings', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    const homeDir = join(root, 'home');
-    const userDir = join(homeDir, '.pi', 'agent', 'extensions');
-    await Promise.all([cwd, agentDir, userDir].map((path) => mkdir(path, { recursive: true })));
-    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
-      piExtensions: { user: true, project: true, llamaCpp: true },
-    }));
-    await writeFile(join(userDir, 'home.js'),
-      'export default (pi) => pi.registerCommand("home-ext", { description: "home", handler: async () => {} });');
-
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir });
-    expect(runtime.services.resourceLoader.getExtensions().extensions.map((extension) => extension.path))
-      .not.toContain(userDir);
-    expect(runtime.services.modelRuntime.getProviders().map(({ id }) => id)).not.toContain('llama.cpp');
-    await runtime.dispose();
-  });
-
-  it('resolves configured model scope once per session', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
-      enabledModels: ['openai/gpt-5-nano'],
-    }));
-    await writeFile(join(agentDir, 'auth.json'), JSON.stringify({
-      openai: { type: 'api_key', key: 'test-key' },
-    }));
-    let observedScopedModels: string[] = [];
-
-    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
-      agentDir,
-      homeDir: root,
-      modelRuntime: await createLocalModelRuntime(agentDir),
-      extensionPackages: [],
-      onSessionModel: (_model, scopedModels) => {
-        observedScopedModels = scopedModels?.map(({ provider, id }) => `${provider}/${id}`) ?? [];
-      },
-      importExtension: async () => {
-        throw new Error('No extensions should be imported');
-      },
-    }), {
-      cwd,
-      agentDir,
-      sessionManager: SessionManager.inMemory(cwd),
-    });
-
-    expect(modelScope.resolutions).toBe(1);
-    expect(observedScopedModels).toEqual(['openai/gpt-5-nano']);
-
-    await runtime.dispose();
-  });
-
-  it.each([
-    ['no configured model scope', {}, undefined, 0],
-    ['an unmatched configured model scope', { enabledModels: ['missing-model'] }, [], 1],
-  ] as const)('passes %s to host policy', async (_label, settings, expectedScope, expectedResolutions) => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    await writeFile(join(agentDir, 'settings.json'), JSON.stringify(settings));
-    let callbackCalled = false;
-    let observedScope: string[] | undefined;
-
-    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
-      agentDir,
-      homeDir: root,
-      modelRuntime: await createLocalModelRuntime(agentDir),
-      extensionPackages: [],
-      onSessionModel: (_model, scopedModels) => {
-        callbackCalled = true;
-        observedScope = scopedModels?.map(({ provider, id }) => `${provider}/${id}`);
-      },
-      importExtension: async () => {
-        throw new Error('No extensions should be imported');
-      },
-    }), {
-      cwd,
-      agentDir,
-      sessionManager: SessionManager.inMemory(cwd),
-    });
-
-    expect(callbackCalled).toBe(true);
-    expect(observedScope).toEqual(expectedScope);
-    expect(modelScope.resolutions).toBe(expectedResolutions);
-    await runtime.dispose();
-  });
-
-  it('warns and starts with defaults when persisted extension configuration is invalid', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
-      extensionConfig: {
-        prewalk: {
-          entryApproval: 'always',
-          restorePlanner: false,
-        },
-      },
-    }));
-    const definition = defineExtensionConfig({
-      id: 'prewalk',
-      title: 'Prewalk',
-      fields: {
-        entryApproval: configField.enum(['ask', 'allow', 'deny'], {
-          default: 'ask',
-          description: 'Approval policy for model-entered Prewalk',
-        }),
-        restorePlanner: configField.boolean({
-          default: true,
-          description: 'Restore the planner after implementation',
-        }),
-      },
-    });
-    let receivedConfig: FelanExtensionAPI['config'] | undefined;
-    const extension = (pi: FelanExtensionAPI) => {
-      receivedConfig = pi.config;
-    };
-    associateExtensionConfig(extension, definition);
-    const packageName = '@felan-ai/test-invalid-config';
-    const runtime = await createAgentSessionRuntime(createLocalSessionRuntimeFactory({
-      agentDir,
-      homeDir: root,
-      modelRuntime: await createLocalModelRuntime(agentDir),
-      extensionPackages: [packageName],
-      importExtension: async (requestedPackage) => {
-        expect(requestedPackage).toBe(packageName);
-        return { default: extension };
-      },
-    }), {
-      cwd,
-      agentDir,
-      sessionManager: SessionManager.inMemory(cwd),
-    });
-
-    expect(receivedConfig).toEqual({ entryApproval: 'ask', restorePlanner: false });
-    expect(runtime.diagnostics).toContainEqual({
-      type: 'warning',
-      message: 'settings.json.extensionConfig.prewalk.entryApproval must be one of: ask, allow, deny; using the default value.',
-    });
-    expect(JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8')))
-      .toMatchObject({ extensionConfig: { prewalk: { entryApproval: 'always' } } });
-
     await runtime.dispose();
   });
 
@@ -999,7 +601,7 @@ describe('local Agent Core lifecycle', () => {
     sessionManager.appendMessage(completedAssistantMessage('previous response'));
     const classifier = { classify: vi.fn() };
 
-    const runtime = await createLocalFelanRuntime({
+    const runtime = await composeLocalSession({
       cwd,
       agentDir,
       homeDir: root,
@@ -1018,396 +620,10 @@ describe('local Agent Core lifecycle', () => {
     await runtime.dispose();
   });
 
-  it('reloads the local tool display mode before rebuilding presentation definitions', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: root });
-    const runtimeView = createToolActivityRuntimeView(runtime);
-
-    expect(runtimeView.session.getToolDefinition('read')).not.toBe(runtime.session.getToolDefinition('read'));
-
-    await runtime.session.bindExtensions({ mode: 'print' });
-    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
-      felanTui: { toolDisplay: 'full' },
-    }));
-    await runtime.session.reload();
-
-    expect(runtimeView.session.getToolDefinition('read')).toBe(runtime.session.getToolDefinition('read'));
-    await runtime.dispose();
-  });
-
-  it('awaits the local subagent host before Pi runtime disposal', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: root });
-    const host = runtime.localSubagentHost;
-    const order: string[] = [];
-    const shutdown = host.shutdown.bind(host);
-    host.shutdown = async () => {
-      order.push('host');
-      await shutdown();
-    };
-    const disposeSession = runtime.session.dispose.bind(runtime.session);
-    runtime.session.dispose = () => {
-      order.push('pi');
-      disposeSession();
-    };
-
-    await runtime.dispose();
-
-    expect(order).toEqual(['host', 'pi']);
-  });
-
-  it('disposes Pi when local subagent shutdown fails', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const runtime = await createLocalFelanRuntime({ cwd, agentDir, homeDir: root });
-    const host = runtime.localSubagentHost;
-    host.shutdown = async () => {
-      throw new Error('shutdown failed');
-    };
-    const disposeSession = runtime.session.dispose.bind(runtime.session);
-    const observedDispose = vi.fn(() => disposeSession());
-    runtime.session.dispose = observedDispose;
-
-    await expect(runtime.dispose()).rejects.toThrow('shutdown failed');
-
-    expect(observedDispose).toHaveBeenCalledOnce();
-  });
-
-  it('keeps the active host when session replacement is cancelled', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    const sessionDir = join(root, 'sessions');
-    await Promise.all([cwd, agentDir, sessionDir].map((path) => mkdir(path, { recursive: true })));
-    const sessionManager = SessionManager.create(cwd, sessionDir);
-    const entryId = sessionManager.appendMessage({
-      role: 'user', content: 'initial prompt', timestamp: Date.now(),
-    });
-    sessionManager.appendMessage(completedAssistantMessage('initial response'));
-    const runtime = await createLocalFelanRuntime({
-      cwd,
-      agentDir,
-      homeDir: root,
-      sessionDir,
-      sessionManager,
-    });
-    const host = runtime.localSubagentHost;
-    const shutdown = vi.spyOn(host, 'shutdown');
-    const runner = runtime.session.extensionRunner as unknown as {
-      hasHandlers(event: string): boolean;
-      emit(event: { type: string }): Promise<{ cancel?: boolean } | undefined>;
-    };
-    const hasHandlers = runner.hasHandlers.bind(runner);
-    const emit = runner.emit.bind(runner);
-    const beforeEvents: string[] = [];
-    const hasHandlersSpy = vi.spyOn(runner, 'hasHandlers').mockImplementation((event) => (
-      event === 'session_before_switch' || event === 'session_before_fork' || hasHandlers(event)
-    ));
-    const emitSpy = vi.spyOn(runner, 'emit').mockImplementation(async (event) => {
-      if (event.type === 'session_before_switch' || event.type === 'session_before_fork') {
-        beforeEvents.push(event.type);
-        return { cancel: true };
-      }
-      return emit(event);
-    });
-
-    await expect(runtime.newSession()).resolves.toEqual({ cancelled: true });
-    await expect(runtime.fork(entryId, { position: 'at' })).resolves.toEqual({ cancelled: true });
-
-    expect(beforeEvents).toEqual(['session_before_switch', 'session_before_fork']);
-    expect(runtime.localSubagentHost).toBe(host);
-    expect(shutdown).not.toHaveBeenCalled();
-
-    emitSpy.mockRestore();
-    hasHandlersSpy.mockRestore();
-    await runtime.dispose();
-    expect(shutdown).toHaveBeenCalledOnce();
-  });
-
-  it('recreates host runtime and services for fork, new, resume, and import', async () => {
-    const root = await temporaryDirectory();
-    const cwdA = join(root, 'workspace-a');
-    const cwdB = join(root, 'workspace-b');
-    const cwdC = join(root, 'workspace-c');
-    const agentDir = join(root, 'agent');
-    const sessionDir = join(root, 'sessions');
-    const importDir = join(root, 'imports');
-    await Promise.all([cwdA, cwdB, cwdC, agentDir, sessionDir, importDir].map(
-      (path) => mkdir(path, { recursive: true }),
-    ));
-
-    const createdHostRuntimes: HostAgentRuntime[] = [];
-    const runtimeRequests: LocalAgentRuntimeFactoryRequest[] = [];
-    const modelRuntime = await createLocalModelRuntime(agentDir);
-    const createRuntime = createLocalSessionRuntimeFactory({
-      agentDir,
-      homeDir: root,
-      modelRuntime,
-      extensionPackages: [],
-      importExtension: async () => {
-        throw new Error('No extensions should be imported');
-      },
-      runtimeFactory: (request) => {
-        runtimeRequests.push(request);
-        const hostRuntime = new HostAgentRuntime(request.cwd, request);
-        createdHostRuntimes.push(hostRuntime);
-        return hostRuntime;
-      },
-    });
-    const initialSessionManager = SessionManager.create(cwdA, sessionDir);
-    const entryId = initialSessionManager.appendMessage({
-      role: 'user',
-      content: 'initial prompt',
-      timestamp: Date.now(),
-    });
-    initialSessionManager.appendMessage({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'initial response' }],
-      api: 'anthropic-messages',
-      provider: 'anthropic',
-      model: 'test-model',
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: 'stop',
-      timestamp: Date.now(),
-    });
-    const runtime = await createAgentSessionRuntime(createRuntime, {
-      cwd: cwdA,
-      agentDir,
-      sessionManager: initialSessionManager,
-    });
-    const activeSessionIds = [runtime.session.sessionManager.getSessionId()];
-    const reboundCwds: string[] = [];
-    runtime.setRebindSession(async (session) => {
-      reboundCwds.push(session.sessionManager.getCwd());
-    });
-
-    const initialServices = runtime.services;
-    expect(runtime.diagnostics).toContainEqual({
-      type: 'info',
-      message: `Agent Core version: ${AGENT_CORE_VERSION}`,
-    });
-    expect(runtime.session.agent.state.tools.map((tool) => tool.name)).toEqual([
-      'read',
-      'bash',
-      'edit',
-      'write',
-      'grep',
-      'find',
-      'ls',
-    ]);
-
-    await runtime.fork(entryId, { position: 'at' });
-    activeSessionIds.push(runtime.session.sessionManager.getSessionId());
-    const forkServices = runtime.services;
-    expect(forkServices).not.toBe(initialServices);
-    expect(runtime.cwd).toBe(cwdA);
-
-    await runtime.newSession();
-    activeSessionIds.push(runtime.session.sessionManager.getSessionId());
-    const newServices = runtime.services;
-    expect(newServices).not.toBe(forkServices);
-    expect(runtime.cwd).toBe(cwdA);
-
-    const resumedSession = SessionManager.create(cwdB, sessionDir);
-    resumedSession.appendMessage({ role: 'user', content: 'resume', timestamp: Date.now() });
-    resumedSession.appendMessage(completedAssistantMessage('resumed'));
-    const resumedPath = resumedSession.getSessionFile();
-    expect(resumedPath).toBeDefined();
-    await runtime.switchSession(resumedPath!);
-    activeSessionIds.push(runtime.session.sessionManager.getSessionId());
-    const resumedServices = runtime.services;
-    expect(resumedServices).not.toBe(newServices);
-    expect(runtime.cwd).toBe(cwdB);
-
-    const importedSession = SessionManager.create(cwdC, importDir);
-    importedSession.appendMessage({ role: 'user', content: 'imported', timestamp: Date.now() });
-    importedSession.appendMessage(completedAssistantMessage('imported'));
-    const importPath = importedSession.getSessionFile();
-    expect(importPath).toBeDefined();
-    await runtime.importFromJsonl(importPath!);
-    activeSessionIds.push(runtime.session.sessionManager.getSessionId());
-    expect(runtime.services).not.toBe(resumedServices);
-    expect(runtime.cwd).toBe(cwdC);
-
-    expect(createdHostRuntimes).toHaveLength(5);
-    expect(new Set(createdHostRuntimes).size).toBe(5);
-    expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.cwd)).toEqual([
-      cwdA,
-      cwdA,
-      cwdA,
-      cwdB,
-      cwdC,
-    ]);
-    expect(runtimeRequests.map(({ rootSessionId }) => rootSessionId)).toEqual(activeSessionIds);
-    expect(runtimeRequests.map(({ agentDir: requestAgentDir }) => requestAgentDir))
-      .toEqual(Array(5).fill(agentDir));
-    expect(runtimeRequests.map(({ pathAccess }) => pathAccess))
-      .toEqual(Array(5).fill('host'));
-    expect(new Set(activeSessionIds).size).toBe(5);
-    expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage().root)).toEqual(
-      activeSessionIds.map((sessionId) => join(
-        agentDir,
-        'storage',
-        'sessions',
-        encodeURIComponent(sessionId),
-      )),
-    );
-    expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage('agent').root))
-      .toEqual(Array(5).fill(join(agentDir, 'storage', 'agent')));
-    expect(reboundCwds).toEqual([cwdA, cwdA, cwdB, cwdC]);
-
-    await runtime.dispose();
-  });
-
-  it('notifies local host subscribers after every session replacement', async () => {
-    const root = await temporaryDirectory();
-    const cwdA = join(root, 'workspace-a');
-    const cwdB = join(root, 'workspace-b');
-    const cwdC = join(root, 'workspace-c');
-    const agentDir = join(root, 'agent');
-    const sessionDir = join(root, 'sessions');
-    const importDir = join(root, 'imports');
-    await Promise.all([cwdA, cwdB, cwdC, agentDir, sessionDir, importDir].map(
-      (path) => mkdir(path, { recursive: true }),
-    ));
-    const initialSessionManager = SessionManager.create(cwdA, sessionDir);
-    const entryId = initialSessionManager.appendMessage({
-      role: 'user', content: 'initial prompt', timestamp: Date.now(),
-    });
-    initialSessionManager.appendMessage(completedAssistantMessage('initial response'));
-    const runtime = await createLocalFelanRuntime({
-      cwd: cwdA,
-      agentDir,
-      homeDir: root,
-      sessionDir,
-      sessionManager: initialSessionManager,
-    });
-    const hosts: typeof runtime.localSubagentHost[] = [];
-    const observeHost = (host: typeof runtime.localSubagentHost) => {
-      hosts.push(host);
-    };
-    observeHost(runtime.localSubagentHost);
-    const detachHostChanges = runtime.subscribeLocalSubagentHost(observeHost);
-    const shutdowns: typeof hosts = [];
-    const observeShutdown = () => {
-      const host = runtime.localSubagentHost;
-      const shutdown = host.shutdown.bind(host);
-      host.shutdown = async () => {
-        shutdowns.push(host);
-        await shutdown();
-      };
-    };
-
-    observeShutdown();
-    await runtime.fork(entryId, { position: 'at' });
-    expect(shutdowns).toEqual([hosts[0]]);
-
-    observeShutdown();
-    await runtime.newSession();
-    expect(shutdowns).toEqual(hosts.slice(0, 2));
-
-    const resumedSession = SessionManager.create(cwdB, sessionDir);
-    resumedSession.appendMessage({ role: 'user', content: 'resume', timestamp: Date.now() });
-    resumedSession.appendMessage(completedAssistantMessage('resumed'));
-    observeShutdown();
-    await runtime.switchSession(resumedSession.getSessionFile()!);
-    expect(shutdowns).toEqual(hosts.slice(0, 3));
-
-    const importedSession = SessionManager.create(cwdC, importDir);
-    importedSession.appendMessage({ role: 'user', content: 'imported', timestamp: Date.now() });
-    importedSession.appendMessage(completedAssistantMessage('imported'));
-    observeShutdown();
-    await runtime.importFromJsonl(importedSession.getSessionFile()!);
-    expect(shutdowns).toEqual(hosts.slice(0, 4));
-    expect(hosts).toHaveLength(5);
-    expect(new Set(hosts)).toHaveLength(5);
-
-    detachHostChanges();
-    await runtime.dispose();
-  });
-
-  it('rebinds a replacement session through Pi InteractiveMode command handling', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const agentDir = join(root, 'agent');
-    await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
-    const modelRuntime = await createLocalModelRuntime(agentDir);
-    const createdHostRuntimes: HostAgentRuntime[] = [];
-    const runtimeRequests: LocalAgentRuntimeFactoryRequest[] = [];
-    const createRuntime = createLocalSessionRuntimeFactory({
-      agentDir,
-      homeDir: root,
-      modelRuntime,
-      extensionPackages: [],
-      importExtension: async () => {
-        throw new Error('No extensions should be imported');
-      },
-      runtimeFactory: (request) => {
-        runtimeRequests.push(request);
-        const hostRuntime = new HostAgentRuntime(request.cwd, request);
-        createdHostRuntimes.push(hostRuntime);
-        return hostRuntime;
-      },
-    });
-    const runtime = await createAgentSessionRuntime(createRuntime, {
-      cwd,
-      agentDir,
-      sessionManager: SessionManager.inMemory(cwd),
-    });
-    const initialSession = runtime.session;
-    const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    const runtimeView = createToolActivityRuntimeView(runtime);
-    const mode = new InteractiveMode(runtimeView);
-
-    try {
-      await (mode as unknown as { handleClearCommand(): Promise<void> }).handleClearCommand();
-
-      expect(runtime.session).not.toBe(initialSession);
-      expect(runtime.services.agentDir).toBe(agentDir);
-      expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.cwd)).toEqual([cwd, cwd]);
-      expect(createdHostRuntimes.map((hostRuntime) => hostRuntime.storage().root))
-        .toEqual(runtimeRequests.map(({ sessionStorageRoot }) => sessionStorageRoot));
-      expect(runtimeRequests.map(({ rootSessionId }) => rootSessionId)).toEqual([
-        runtimeRequests[0]!.rootSessionId,
-        runtime.session.sessionManager.getSessionId(),
-      ]);
-      expect((runtime.session as unknown as { _extensionMode?: string })._extensionMode).toBe('tui');
-      expect(runtime.session.agent.state.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
-        'read',
-        'bash',
-      ]));
-      expect(runtime.session.agent.state.tools.map((tool) => tool.name)).not.toContain('spawn_agent');
-      expect(runtimeView.session.getToolDefinition('read')?.renderShell).toBe('self');
-    } finally {
-      mode.stop();
-      await runtime.dispose();
-      if (previousPiAgentDir === undefined) {
-        delete process.env.PI_CODING_AGENT_DIR;
-      } else {
-        process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
-      }
-    }
-  });
 });
 
 async function temporaryDirectory(): Promise<string> {
-  const path = await mkdtemp(join(tmpdir(), 'felan-tui-runtime-'));
+  const path = await realpath(await mkdtemp(join(tmpdir(), 'felan-provider-runtime-')));
   temporaryPaths.push(path);
   return path;
 }

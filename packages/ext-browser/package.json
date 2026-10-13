@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-browser",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Portable agent-browser tool integration for Felan",
   "license": "MIT",
   "type": "module",
@@ -20,12 +20,16 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
     },
     "./presentation": {
       "types": "./dist/presentation.d.ts",
       "import": "./dist/presentation.js"
+    },
+    "./service": {
+      "types": "./dist/service.d.ts",
+      "import": "./dist/service.js"
     }
   },
   "scripts": {

@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { SessionClient } from '../../felan/src/client/client.js';
-import { DaemonConfiguration } from '../src/daemon/configuration.js';
+import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 import { HostLifecycle } from '../src/daemon/lifecycle.js';
 import { SessionServer } from '../src/daemon/server.js';
 import { gate, serverFixture } from './fixtures/server.js';
@@ -13,7 +13,7 @@ async function fixture(held = false) {
   const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity,
     beginDrain: () => f.registry.beginDrain(), settle: async () => { if (held) await settled.promise; }, complete });
   const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture',
-    configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.owner.assertCurrent() }),
+    configuration: new DaemonConfiguration({ definitions: [], assertCurrent: () => f.owner.assertCurrent() }),
     management: { lifecycle, logs: () => ({ entries: [{ timestamp: 1, level: 'info', message: 'Daemon ready.' }] }) } });
   const clients: SessionClient[] = [];
   cleanup.push(async () => { settled.resolve(); for (const client of clients) client.close(); server.close(); await f.dispose(); });
@@ -26,11 +26,13 @@ async function fixture(held = false) {
   return { ...f, client, lifecycle, complete, settled };
 }
 
-it('advertises only eligible management operations and exposes bounded log data', async () => {
-  const f = await fixture(); const tui = await f.client(); const acp = await f.client('acp');
-  expect(tui.capabilities?.operations).toEqual(expect.arrayContaining(['host.stop', 'host.restart', 'host.logs']));
-  expect(acp.capabilities?.operations).not.toContain('host.stop'); expect(acp.capabilities?.operations).not.toContain('host.logs');
-  expect(await tui.request('host.logs', { limit: 5 })).toMatchObject({ outcome: 'accepted', result: { entries: [{ message: 'Daemon ready.' }] } });
+it('advertises management operations to every verified local client and exposes bounded log data', async () => {
+  const f = await fixture();
+  for (const kind of ['tui', 'acp', 'headless'] as const) {
+    const client = await f.client(kind);
+    expect(client.capabilities?.operations).toEqual(expect.arrayContaining(['host.stop', 'host.restart', 'host.logs']));
+    expect(await client.request('host.logs', { limit: 5 })).toMatchObject({ outcome: 'accepted', result: { entries: [{ message: 'Daemon ready.' }] } });
+  }
 });
 
 it('uses the identity-verified control connection for consented restart', async () => {

@@ -1,24 +1,26 @@
 import {
   associateExtensionConfig,
   type Api,
+  type ConfiguredFelanExtension,
   type FelanExtension,
   type Model,
 } from '@felan-ai/agent-core';
 import { CODEX_CONFIG, DEFAULT_CODEX_CONFIG } from './config.js';
 import { registerPostAgentRunCompaction } from './compaction.js';
-import { supportsCodexModel } from './model-policy.js';
+import { supportsCodexModel, supportsCodexResponsesRequest } from './model-policy.js';
+import { createCodexStreamFunctionWrapper } from './transport.js';
 import { registerReasoningUpdates } from './reasoning-updates.js';
 import { applyCodexRequestOptions } from './request-options.js';
-import { CODEX_TOOL_NAMES, createCodexExecutionTools, registerPatchResultEvent, type CodexToolRenderers } from './execution-tools.js';
+import { CODEX_TOOL_NAMES, createCodexExecutionTools, registerPatchResultEvent } from './execution-tools.js';
 
 const REPLACED_TOOL_NAMES: ReadonlySet<string> = new Set(['edit', 'write']);
 const CODEX_TOOL_NAME_SET: ReadonlySet<string> = new Set(CODEX_TOOL_NAMES);
-export function createCodexExtension(renderers?: CodexToolRenderers): FelanExtension {
+export function createCodexExtension(): ConfiguredFelanExtension {
   const codexExtension: FelanExtension = async (pi) => {
     const config = { ...DEFAULT_CODEX_CONFIG, ...pi.config } as import('./config.js').CodexConfig;
     registerPostAgentRunCompaction(pi, config);
     const reasoningUpdates = registerReasoningUpdates(pi);
-    for (const tool of createCodexExecutionTools(pi.runtime)) pi.registerTool({ ...tool, ...renderers?.apply_patch });
+    for (const tool of createCodexExecutionTools(pi.runtime)) pi.registerTool(tool);
     registerPatchResultEvent(pi);
 
     let ordinaryTools: string[] | undefined;
@@ -50,7 +52,12 @@ export function createCodexExtension(renderers?: CodexToolRenderers): FelanExten
   };
 
   associateExtensionConfig(codexExtension, CODEX_CONFIG);
-  return codexExtension;
+  return Object.assign(codexExtension, {
+    execution: (({ config }) => ({
+      wrapStreamFunction: createCodexStreamFunctionWrapper({ ...DEFAULT_CODEX_CONFIG, ...config } as import('./config.js').CodexConfig),
+      supportsNativeThinkingUpdates: supportsCodexResponsesRequest,
+    })) satisfies NonNullable<ConfiguredFelanExtension['execution']>,
+  });
 }
 
 const codexExtension = createCodexExtension();
@@ -60,8 +67,7 @@ export type { CodexConfig, CodexPriority, CodexVerbosity } from './config.js';
 export { supportsCodexModel, supportsCodexResponsesRequest } from './model-policy.js';
 export { registerPostAgentRunCompaction } from './compaction.js';
 export { applyCodexRequestOptions } from './request-options.js';
-export { CODEX_TOOL_NAMES, createCodexExecutionTools } from './execution-tools.js';
-export type { CodexToolRenderers } from './execution-tools.js';
+export { CODEX_TOOL_NAMES, createCodexExecutionTools, createCodexExecutionTools as createCodexTools } from './execution-tools.js';
 export {
   createCodexStreamFunctionWrapper,
   resolveCodexStreamOptions,

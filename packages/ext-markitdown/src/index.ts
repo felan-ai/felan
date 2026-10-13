@@ -2,6 +2,7 @@ import type {
   AgentRuntime,
   FelanExtension,
 } from '@felan-ai/agent-core';
+import { RUNTIME_DEPENDENCIES_SERVICE } from '@felan-ai/agent-core';
 import {
   convertDocument,
   convertPdfBytes,
@@ -21,7 +22,6 @@ import {
 } from './formats.js';
 import {
   detectMarkitdown,
-  installManagedMarkitdown,
   type MarkitdownDetection,
   type MarkitdownInvocation,
 } from './installer.js';
@@ -58,16 +58,18 @@ interface RewrittenRead extends MarkitdownConversion {
 
 type InstallationState =
   | { readonly status: 'idle' }
-  | { readonly status: 'checking' | 'installing' }
+  | { readonly status: 'checking' }
   | { readonly status: 'ready'; readonly invocation: MarkitdownInvocation }
   | { readonly status: 'unavailable'; readonly reason: string };
 
 const markitdownExtension: FelanExtension = (pi) => {
+  const dependencies = pi.services.get(RUNTIME_DEPENDENCIES_SERVICE);
   let active = true;
   let installation: InstallationState = { status: 'idle' };
   let installationPromise: Promise<MarkitdownDetection> | undefined;
   let conversionQueue = Promise.resolve();
   const eventJobController = new AbortController();
+  let installJob: Promise<void> | undefined;
   const rewrittenReads = new Map<string, RewrittenRead>();
   activeMarkitdownControllers.set(pi.runtime, (enabled) => {
     active = enabled;
@@ -160,24 +162,10 @@ const markitdownExtension: FelanExtension = (pi) => {
     }
   });
 
-  pi.on('session_shutdown', () => {
+  pi.on('session_shutdown', async () => {
     eventJobController.abort(new Error('MarkItDown PDF conversion was cancelled by session shutdown'));
+    await installJob;
   });
-
-  const install = async (): Promise<MarkitdownDetection> => {
-    if (installationPromise) await installationPromise;
-    installation = { status: 'installing' };
-    installationPromise = installManagedMarkitdown(pi.runtime, () => undefined)
-      .catch((error): MarkitdownDetection => ({
-        available: false,
-        reason: `Managed MarkItDown installation failed: ${sanitizeDiagnostic(errorMessage(error))}`,
-      }))
-      .then(applyDetection)
-      .finally(() => {
-        installationPromise = undefined;
-      });
-    return installationPromise;
-  };
 
   pi.on('tool_call', async (event, ctx) => {
     if (!active || event.toolName !== 'read') return undefined;
@@ -238,15 +226,46 @@ const markitdownExtension: FelanExtension = (pi) => {
     handler: async (args, ctx) => {
       const action = args.trim().toLowerCase();
       if (action && action !== 'install') {
-        ctx.ui.notify('Usage: /markitdown [install]', 'warning');
+        await pi.ui.notify({ text: 'Usage: /markitdown [install]', level: 'warning' });
         return;
       }
 
-      const result = action === 'install' ? await install() : await detect(true);
+      if (action === 'install') {
+        if (!dependencies) {
+          await pi.ui.notify({ text: 'MarkItDown installation is unavailable: no runtime-dependencies provider is configured.', level: 'warning' });
+          return;
+        }
+        if (installJob) {
+          await pi.ui.notify({ text: 'MarkItDown installation is already in progress.', level: 'warning' });
+          return;
+        }
+        const signal = AbortSignal.any([eventJobController.signal, ...(ctx.signal ? [ctx.signal] : [])]);
+        const job = (async () => {
+          signal.throwIfAborted();
+          const outcome = await dependencies.install({ id: 'markitdown' }, { signal }).catch((error: unknown) => {
+            if (signal.aborted && (error === signal.reason || error instanceof Error && error.name === 'AbortError')) {
+              return { status: 'cancelled' as const, message: 'MarkItDown setup request cancelled.' };
+            }
+            throw error;
+          });
+          if (outcome.status !== 'installed') {
+            await pi.ui.notify({ text: outcome.message, level: 'warning' });
+            return;
+          }
+          const result = await detect(true);
+          await pi.ui.notify({ text: result.available
+            ? `MarkItDown installed (${result.invocation.source}, version ${result.invocation.version}).`
+            : `MarkItDown installation could not be verified: ${sanitizeDiagnostic(result.reason)}`, level: result.available ? 'info' : 'warning' });
+        })();
+        installJob = job;
+        try { await job; } finally { if (installJob === job) installJob = undefined; }
+        return;
+      }
+      const result = await detect(true);
       const status = result.available
         ? `ready (${result.invocation.source}, version ${result.invocation.version})`
         : `unavailable (${result.reason})`;
-      ctx.ui.notify([
+      await pi.ui.notify({ text: [
         'MarkItDown document reader',
         `Status: ${status}`,
         `Converted: ${MARKITDOWN_EXTENSIONS.join(', ')}`,
@@ -257,7 +276,7 @@ const markitdownExtension: FelanExtension = (pi) => {
         `Session cache: ${getMarkitdownCacheDirectory(pi.runtime)}`,
         '',
         'Installation is never automatic. Use /markitdown install to install the managed version.',
-      ].join('\n'), result.available ? 'info' : 'warning');
+      ].join('\n'), level: result.available ? 'info' : 'warning' });
     },
   });
 
@@ -405,4 +424,4 @@ export type {
   MarkitdownPdfConversion,
 } from './conversion.js';
 export type { MarkitdownDetection, MarkitdownInvocation } from './installer.js';
-export default markitdownExtension;
+export default Object.assign(markitdownExtension, { serviceRequirements: { optional: [RUNTIME_DEPENDENCIES_SERVICE] } });

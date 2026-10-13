@@ -1,102 +1,104 @@
-import { PREWALK_REVIEW_PRESENTER } from '@felan-ai/ext-prewalk/tui';
-import { FUSION_PICKER_PRESENTER, FUSION_REVIEW_PRESENTER } from '@felan-ai/ext-fusion/tui';
-import { TASKS_PRESENTER } from '@felan-ai/ext-tasks/view';
-import { PROCESS_VIEW_PRESENTER } from '@felan-ai/ext-background-bash/view';
-import { CONTEXT_VIEW_PRESENTER } from '@felan-ai/ext-context-view/view';
-import { MEMORY_VIEW_PRESENTER } from '@felan-ai/ext-memory/view';
-import { PROMPT_HISTORY_PRESENTER } from '@felan-ai/ext-prompt-history/view';
-import { AGENT_VIEW_PRESENTER, type AgentViewTranscript } from '@felan-ai/ext-subagents/view';
-import { POWERLINE_PRESENTER } from '@felan-ai/ext-powerline/view';
-import { BROWSER_SETUP_PRESENTER, BrowserSetupRequestSchema } from '@felan-ai/ext-browser/presentation';
-import { INSIGHTS_REPORT_PRESENTER, parseInsightsReportRequest } from '@felan-ai/ext-insights/view';
-import { RUNTIME_UI_PRESENTER, parseSchema, type Interaction } from '@felan-ai/session-protocol';
-import { ClientInteractionPresenters, type InteractionPresenterUi, type PresentationUpdates } from '../client/presenters.js';
-import { registerPrewalkPresenter } from '../client/prewalk-presenter.js';
-import { registerFusionPresenters } from '../client/fusion-presenter.js';
-import { registerTasksPresenter } from '../client/tasks-presenter.js';
-import { registerProcessesPresenter } from '../client/processes-presenter.js';
-import { registerContextViewPresenter } from '../client/context-view-presenter.js';
-import { registerMemoryPresenter } from '../client/memory-presenter.js';
-import { registerPromptHistoryPresenter } from '../client/prompt-history-presenter.js';
+import { FUSION_PICKER_HINT, FUSION_REVIEW_HINT } from '@felan-ai/ext-fusion/data';
+import { presentFusionPickerView, presentFusionReviewDocument } from './renderers/fusion.js';
+import { ASK_USER_FORM_HINT, presentAskUserForm } from './renderers/ask-user.js';
+import { PREWALK_FORM_HINT, presentPrewalkForm } from './renderers/prewalk.js';
+import { CONTEXT_DOCUMENT_HINT } from '@felan-ai/ext-context-view/data';
+import { presentContextDocument } from './renderers/context-view.js';
+import { TASKS_HINT, presentTasksElement } from './renderers/tasks.js';
+import { PROCESSES_HINT, presentProcessesElement } from './renderers/processes.js';
+import { PROMPT_HISTORY_HINT, presentPromptHistoryElement } from './renderers/prompt-history.js';
+import { type AgentViewTranscript } from '../subagents/types.js';
+import { INSIGHTS_DOCUMENT_HINT } from '@felan-ai/ext-insights/data';
+import { presentInsightsDocument } from './renderers/insights.js';
+import { type Execution, type UiPresentation } from '@felan-ai/session-protocol';
+import { presentUiElement } from '../client/ui.js';
+import { createGenericTuiDriver } from './generic-ui.js';
+import { ClientInteractionPresenters, type InteractionPresenterUi } from '../client/presenters.js';
+import { MEMORY_HISTORY_HINT, presentMemoryHistory } from './renderers/memory.js';
 import { createClientAgentViews } from '../client/agents-presenter.js';
 import type { AgentToolPresentation } from '../subagents/agent-transcript.js';
 import type { TuiSessionController } from './controller.js';
-
-export const TERMINAL_PRESENTERS = [RUNTIME_UI_PRESENTER, POWERLINE_PRESENTER, PREWALK_REVIEW_PRESENTER,
-  FUSION_PICKER_PRESENTER, FUSION_REVIEW_PRESENTER, TASKS_PRESENTER, PROCESS_VIEW_PRESENTER,
-  CONTEXT_VIEW_PRESENTER, MEMORY_VIEW_PRESENTER, PROMPT_HISTORY_PRESENTER, AGENT_VIEW_PRESENTER,
-  BROWSER_SETUP_PRESENTER, INSIGHTS_REPORT_PRESENTER];
 
 export function createTerminalPresenters(controller: TuiSessionController, ui: InteractionPresenterUi, options: {
   setEditorText(text: string): void;
   settings(): AgentViewTranscript['settings'];
   toolPresentation(name: string): AgentToolPresentation | undefined;
-}): { presenters: ClientInteractionPresenters; dispose(): Promise<void> } {
+  executionsChanged?(executions: readonly Execution[]): void;
+}): { presenters: ClientInteractionPresenters; openExecutions(id?: string): Promise<void>; dispose(): Promise<void> } {
   const lifetime = new AbortController();
-  const open = async (title: string, message: string, caller: AbortSignal, interaction?: Interaction): Promise<boolean> => {
-    const signal = AbortSignal.any([caller, lifetime.signal]);
-    if (signal.aborted) return false;
-    if (!interaction) throw new Error('The daemon opening request has no interaction identity.');
-    if (!controller.client.capabilities?.operations.includes('host.open_interaction')) throw new Error('This daemon does not support host.open_interaction.');
-    if (!await ui.confirm(title, message, { signal }) || signal.aborted) return false;
-    const result = await controller.perform('host.open_interaction', { interactionId: interaction.id, confirmed: true });
-    if (result.outcome !== 'accepted') throw new Error('The daemon could not confirm opening this item.');
-    return !signal.aborted;
+  const presenters = new ClientInteractionPresenters(ui);
+  const presentationSettings = async () => {
+    if (!controller.sessionId || !controller.client.capabilities?.operations.includes('config.get')) return {};
+    const response = await controller.perform('config.get', { scope: 'session' }, controller.sessionId);
+    if (response.outcome !== 'accepted') throw new Error(controller.notice);
+    return response.result.values;
   };
-  const presenters = new ClientInteractionPresenters(ui, {
-    openOAuthUrl: (url, signal, interaction) => open('Open OAuth authorization on the daemon host?', url, signal, interaction),
-  });
-  const updates = (interaction: Interaction): PresentationUpdates => {
-    if (interaction.scope.kind !== 'session') throw new Error('This view requires a session.');
-    const session = interaction.scope.session;
-    return {
-      read: () => {
-        const state = controller.client.getAttachment(session)?.state;
-        return state?.status === 'live' ? state.snapshot?.presentation ?? [] : [];
-      },
-      subscribe: listener => controller.client.subscribe(listener),
-    };
+  const genericActions = (source: UiPresentation, signal: AbortSignal, actionId?: string, itemId?: string) => {
+    const { hint, ...element } = source;
+    return presentUiElement(element, createGenericTuiDriver(ui), signal, true, undefined, actionId ? { actionId, ...(itemId ? { itemId } : {}) } : undefined);
   };
-  const remove = [registerPrewalkPresenter(presenters, ui), registerFusionPresenters(presenters, ui),
-    registerTasksPresenter(presenters, ui, updates), registerProcessesPresenter(presenters, ui),
-    registerContextViewPresenter(presenters, ui), registerMemoryPresenter(presenters, ui, updates),
-    registerPromptHistoryPresenter(presenters, { ...ui, setEditorText: options.setEditorText }, updates),
-    presenters.registerCustom(BROWSER_SETUP_PRESENTER, async (data, signal, _document, interaction) => {
-      const request = parseSchema(BrowserSetupRequestSchema, data);
-      return { opened: await open('Open browser setup on the daemon host?', request.applicationPath, signal, interaction) };
-    }),
-    presenters.registerCustom(INSIGHTS_REPORT_PRESENTER, async (data, signal, _document, interaction) => {
-      const request = parseInsightsReportRequest(data);
-      return { opened: await open('Open insights report on the daemon host?', request.path, signal, interaction) };
-    })];
+  const remove = [
+    presenters.hints.register(ASK_USER_FORM_HINT, { form: async (form, signal) => {
+      const settings = await presentationSettings();
+      return presentAskUserForm(form, { ui, signal }, {
+        displayMode: settings['ask-user-display-mode'] ?? 'inline',
+        singleSelectLayout: settings['ask-user-single-select-layout'] ?? 'auto',
+        ...(settings['ask-user-overlay-toggle-key'] === undefined ? {} : { overlayToggleKey: settings['ask-user-overlay-toggle-key'] }),
+        ...(settings['ask-user-comment-toggle-key'] === undefined ? {} : { commentToggleKey: settings['ask-user-comment-toggle-key'] }),
+      });
+    } }),
+    presenters.hints.register(PREWALK_FORM_HINT, { form: (form, signal) => presentPrewalkForm(form, ui, signal) }),
+    presenters.hints.register(CONTEXT_DOCUMENT_HINT, { presentation: (element, signal) => presentContextDocument(element, ui, signal) }),
+    presenters.hints.register(MEMORY_HISTORY_HINT, { presentation: (element, signal) => presentMemoryHistory(element, ui, signal) }),
+    presenters.hints.register(INSIGHTS_DOCUMENT_HINT, { presentation: (element, signal) => presentInsightsDocument(element, ui, signal) }),
+    presenters.hints.register(FUSION_PICKER_HINT, { presentation: (element, signal) => presentFusionPickerView(element, ui, signal) }),
+    presenters.hints.register(FUSION_REVIEW_HINT, { presentation: (element, signal) => presentFusionReviewDocument(element, ui, signal) }),
+    presenters.hints.register(TASKS_HINT, { presentation: async (element, signal) => presentTasksElement(element, ui, signal, genericActions,
+      (await presentationSettings())['tasks-display-mode'] ?? 'inline') }),
+    presenters.hints.register(PROCESSES_HINT, { presentation: (element, signal) => presentProcessesElement(element, ui, signal, genericActions) }),
+    presenters.hints.register(PROMPT_HISTORY_HINT, { presentation: async (element, signal) => presentPromptHistoryElement(element, ui, signal, genericActions, options.setEditorText,
+      (await presentationSettings())['prompt-history-display-mode'] ?? 'inline') }),
+  ];
   const agents = new Map<string, ReturnType<typeof createClientAgentViews>>();
+  const subscriptions = new Map<string, () => void>();
   const closing = new Set<Promise<void>>(); const errors: unknown[] = [];
-  let root = controller.sessionId; let closed = false;
+  let root = controller.sessionId; let closed = false; let creatingAgents = false;
   const release = (view: ReturnType<typeof createClientAgentViews>) => {
     const work = view.dispose().catch(error => { errors.push(error); });
     closing.add(work); void work.then(() => closing.delete(work));
   };
-  remove.push(presenters.registerCustom(AGENT_VIEW_PRESENTER, async (data, signal, _document, interaction) => {
-    if (closed || signal.aborted) return undefined;
-    if (interaction?.scope.kind !== 'session' || interaction.scope.root !== controller.sessionId) throw new Error('Agent view is no longer attached to this root.');
-    const parent = interaction.scope.session;
+  const ensureAgents = (parent: string) => {
     let view = agents.get(parent);
     if (!view) {
-      if (agents.size >= 8) throw new Error('Close another agent view before opening more nested views.');
-      view = createClientAgentViews(controller.client, parent, undefined, ui, options.settings, options.toolPresentation);
+      creatingAgents = true;
+      try { view = createClientAgentViews(controller.client, parent, ui, options.settings, options.toolPresentation); }
+      finally { creatingAgents = false; }
       agents.set(parent, view);
+      const host = view.host;
+      subscriptions.set(parent, host.subscribe(() => options.executionsChanged?.(host.listLocalSubagents())));
+      options.executionsChanged?.(host.listLocalSubagents());
     }
-    return view.present(data, signal);
-  }));
+    return view;
+  };
+  const openExecutions = async (id?: string) => {
+    const parent = controller.sessionId;
+    if (closed || !parent) throw new Error('No session is attached.');
+    await ensureAgents(parent).open(id);
+  };
   const unsubscribe = controller.subscribe(() => {
-    if (controller.sessionId === root) return;
-    root = controller.sessionId;
-    for (const view of agents.values()) release(view);
-    agents.clear();
+    if (controller.sessionId !== root) {
+      root = controller.sessionId;
+      for (const off of subscriptions.values()) off(); subscriptions.clear();
+      for (const view of agents.values()) release(view);
+      agents.clear(); options.executionsChanged?.([]);
+    }
+    if (!creatingAgents && root && controller.client.capabilities?.operations.includes('executions.list')) ensureAgents(root);
   });
-  return { presenters, async dispose() {
+  if (root && controller.client.capabilities?.operations.includes('executions.list')) ensureAgents(root);
+  return { presenters, openExecutions, async dispose() {
     if (closed) return;
     closed = true; lifetime.abort(); unsubscribe(); for (const unregister of remove.reverse()) unregister();
+    for (const off of subscriptions.values()) off(); subscriptions.clear();
     for (const view of agents.values()) release(view);
     agents.clear(); await Promise.all([...closing]);
     if (errors.length) throw new AggregateError(errors, 'Agent presentation cleanup failed.');

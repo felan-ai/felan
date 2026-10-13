@@ -11,12 +11,11 @@ export const prompt = { text: 'hello', attachments: [{ type: 'resource_link' as 
 export const message = { id: 'message', entryId: 'entry', role: 'assistant' as const, content: [{ type: 'text' as const, text: 'answer' }], timestamp: now, origin };
 export const history = { revision: 7, branch: 'branch', entries: [message] };
 export const policy = { effective: 'host-default' as const, generation: 0 };
-export const agent = { agentId: 'child', parentSessionId: 'session', rootSessionId: 'session', type: 'general', description: 'fixture',
-  status: 'running' as const, createdAt: new Date(now).toISOString(), resultAvailable: false };
+export const execution = { id: 'child', parent: 'session', label: 'general', description: 'fixture', state: 'queued' as const, createdAt: new Date(now).toISOString() };
 export const interaction = {
   id: 'question', scope: { kind: 'session' as const, session: 'session', root: 'session' },
   request: { kind: 'confirm' as const, title: 'Continue?', message: 'Confirm a local action' },
-  eligibleClientKinds: ['tui' as const], createdAt: now, state: 'waiting' as const,
+  createdAt: now, state: 'waiting' as const,
 };
 export const tool = { id: 'tool-call', name: 'read', message: 'message', state: 'running' as const, output: 'partial', truncated: false };
 export const process = { id: 'resource', session: 'session', root: 'session', kind: 'pty' as const, state: 'running' as const,
@@ -31,14 +30,15 @@ export const snapshot: SessionSnapshot = {
   completionOnlyStreams: [],
 };
 export const commandParams = {
-  hello: { clientVersion: '0.1.0', protocol: 1, kind: 'tui', interactionKinds: ['confirm'], presenters: [], target: { kind: 'production' } },
+  hello: { clientVersion: '0.1.0', protocol: 1, kind: 'tui', interactionKinds: ['confirm'], target: { kind: 'production' } },
   'host.status': {}, 'sessions.list': { cwd: '/fixture' },
   'sessions.create': { cwd: '/fixture', source: 'tui' },
-  attach: { expected: identity }, 'session.adopt': { expected: identity, sourceFingerprint: 'sha256:fixture', backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true },
+  attach: { expected: identity },
   detach: { attachmentId: 'attachment' }, close: {}, prompt, steer: prompt, follow_up: prompt, cancel: {},
   set_model: { provider: 'fixture', id: 'fake' }, set_thinking: { thinking: 'high' }, compact: { method: 'classifier' },
   fork: { from: { kind: 'entry', entryId: 'entry' } }, 'command.invoke': { name: 'tasks', arguments: '' },
   'interaction.answer': { interactionId: 'question', answer: { kind: 'confirm', confirmed: true } },
+  'ui.action': { elementId: 'document', revision: 1, actionId: 'open', outcome: 'submit', values: {} },
   'session.rename': { name: 'renamed' }, 'session.tree': {}, 'session.branch.select': { entryId: 'entry', expectedRevision: 7 },
   'session.entry.label': { entryId: 'entry', label: 'label', expectedRevision: 7 }, 'session.clone': {},
   'session.import': { path: '/fixture/selected.jsonl', cwd: '/fixture', confirmed: true },
@@ -54,7 +54,7 @@ export const commandParams = {
   'session.reload': {},
   'processes.list': { root: 'session' }, 'processes.read': { root: 'session', resourceId: 'resource', offset: 0, limit: 64 },
   'processes.write': { root: 'session', resourceId: 'resource', data: 'Aw==' }, 'processes.stop': { root: 'session', resourceId: 'resource', signal: 'SIGTERM' },
-  'agents.list': {}, 'agents.read': { agentId: 'child' }, 'agents.steer': { agentId: 'child', message: 'Continue' }, 'agents.cancel': { agentId: 'child' },
+  'executions.list': {}, 'executions.read': { executionId: 'child' }, 'executions.steer': { executionId: 'child', message: 'Continue' }, 'executions.cancel': { executionId: 'child' },
   'host.stop': { expected: identity, confirmed: true, mode: 'drain' }, 'host.restart': { expected: identity, confirmed: true, mode: 'force' }, 'host.logs': {},
 } satisfies Record<Operation, object>;
 export function request(op: Operation, params: object = commandParams[op]) {
@@ -63,12 +63,13 @@ export function request(op: Operation, params: object = commandParams[op]) {
 
 export const results = {
   hello: { attachmentId: 'attachment', principal: 'principal', daemonVersion: '0.1.0', protocol: 1, identity,
-    operations: Object.keys(commandParams), interactionKinds: ['confirm'], presenters: [] },
+    operations: Object.keys(commandParams), interactionKinds: ['confirm'] },
   'host.status': { state: 'ready', identity, daemonVersion: '0.1.0', protocol: 1, active: { sessions: 1, runs: 1, attachments: 1 }, setupNeeds: [] },
   'sessions.list': { entries: [] }, 'sessions.create': { sessionId: 'session' },
-  attach: { attachmentId: 'attachment', snapshot }, 'session.adopt': { sessionId: 'session', adoptionId: 'adoption' }, detach: {}, close: {},
+  attach: { attachmentId: 'attachment', snapshot }, detach: {}, close: {},
   prompt: { runId: 'run' }, steer: { itemId: 'item' }, follow_up: { itemId: 'item' }, cancel: {}, set_model: {}, set_thinking: {}, compact: { runId: 'run' },
   fork: { sessionId: 'fork' }, 'command.invoke': { status: 'completed' }, 'interaction.answer': {}, 'session.rename': {}, 'session.tree': { ...history, entries: [] },
+  'ui.action': {},
   'session.branch.select': {}, 'session.entry.label': {}, 'session.clone': { sessionId: 'clone' }, 'session.import': { sessionId: 'import' },
   'session.export': { destination: '/fixture/export.jsonl' }, 'session.delete': {}, 'session.history': history, 'queue.update': {},
   'shell.execute': { resourceId: 'resource', runId: 'run' }, 'config.get': { values: { 'codex-priority': 'fast' } }, 'config.set': {},
@@ -80,6 +81,6 @@ export const results = {
   'session.reload': {}, 'processes.list': { entries: [process] },
   'processes.read': { resourceId: 'resource', offset: 0, nextOffset: 1, data: 'YQ==', state: 'running' }, 'processes.write': { writtenBytes: 1 },
   'processes.stop': {}, 'host.stop': { state: 'draining' }, 'host.restart': { state: 'draining' }, 'host.logs': { entries: [] },
-  'agents.list': { generation: 'a'.repeat(64), entries: [agent] }, 'agents.read': { agent },
-  'agents.steer': { ok: true, agent }, 'agents.cancel': { ok: true, agent },
+  'executions.list': { items: [execution] }, 'executions.read': execution,
+  'executions.steer': execution, 'executions.cancel': execution,
 } satisfies Record<Operation, object>;

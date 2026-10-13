@@ -1,20 +1,23 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { TuiAltScreen, stripTerminalSequences, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
-import { identityFor } from '@felan-ai/daemon/internal/daemon/target';
+import { identityFor } from '../../daemon/src/daemon/target.js';
 import type { Interaction, Operation, SetupJob } from '@felan-ai/session-protocol';
 import { SessionClient } from '../src/client/client.js';
 import { TuiSessionController } from '../src/tui/controller.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
-import { TERMINAL_INTERACTION_KINDS, TERMINAL_PRESENTERS } from '../src/tui/interactions.js';
+import { TERMINAL_INTERACTION_KINDS } from '../src/tui/interactions.js';
 import { FakeTransport, snapshot } from './client-fixtures.js';
+import { checkForFelanUpdate } from '../src/update.js';
+
+vi.mock('../src/update.js', () => ({ checkForFelanUpdate: vi.fn() }));
+beforeEach(() => { vi.mocked(checkForFelanUpdate).mockResolvedValue(undefined); });
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
-const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, createdAt: 1, state: 'waiting', eligibleClientKinds: ['tui'],
-  request: { kind: 'ask_user', questions: [{ id: 'question', question: 'Model question must wait', allowFreeform: true }] } };
+const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, createdAt: 1, state: 'waiting', request: { kind: 'input', title: 'Model question must wait' } };
 
 async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tui-startup-')); const fake = new FakeTransport();
@@ -22,7 +25,7 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
     'host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link',
     ...(options.statusAvailable === false ? [] : ['host.status' as const])];
   const client = new SessionClient({ target: { kind: 'isolated', directory, namespaceId: 'startup-test' }, kind: 'tui', clientVersion: 'fixture',
-    interactionKinds: [...TERMINAL_INTERACTION_KINDS], presenters: [...TERMINAL_PRESENTERS], connector: fake.connector, retries: 0 });
+    interactionKinds: [...TERMINAL_INTERACTION_KINDS], connector: fake.connector, retries: 0 });
   const identity = identityFor(client.target, 'instance'); const controller = new TuiSessionController(client);
   const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal); const abort = new AbortController();
   let loggedIn = options.provider ?? false;
@@ -31,7 +34,7 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
   fake.onSend = (request, connection) => {
     switch (request.op) {
       case 'hello': fake.reply(request, { attachmentId: 'client', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
-        identity, operations, interactionKinds: [...TERMINAL_INTERACTION_KINDS], presenters: [...TERMINAL_PRESENTERS] }, connection); break;
+        identity, operations, interactionKinds: [...TERMINAL_INTERACTION_KINDS] }, connection); break;
       case 'host.status': fake.reply(request, { identity, daemonVersion: 'fixture', protocol: 1, state: 'ready',
         active: { sessions: 0, runs: 0, attachments: 0 }, setupNeeds: loggedIn ? [] : [{ code: 'provider', message: 'No model available' }] }, connection); break;
       case 'tui.preferences.get': fake.reply(request, { hideThinking: false, showImages: false, imageWidthCells: 60, outputPad: 1, toolDisplay: 'grouped', keybindings: {} }, connection); break;
@@ -71,6 +74,32 @@ async function openLogin(f: Awaited<ReturnType<typeof fixture>>) {
   await vi.waitFor(() => expect(f.text()).toContain('Secret API key'));
 }
 
+it('shows an update notice without waiting for the version check before attaching', async () => {
+  let complete!: (version: string) => void;
+  vi.mocked(checkForFelanUpdate).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+  const f = await fixture({ provider: true }); f.start();
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  expect(f.terminal.active).toBe(true);
+  await vi.waitFor(() => expect(checkForFelanUpdate).toHaveBeenCalled());
+  complete('99.0.0');
+  await vi.waitFor(() => expect(f.text()).toContain('Felan 99.0.0 is available'));
+  expect(f.text()).toContain('felan update');
+});
+
+it('cancels the update check on exit and ignores late results', async () => {
+  let complete!: (version: string) => void; let signal!: AbortSignal;
+  vi.mocked(checkForFelanUpdate).mockImplementationOnce(options => {
+    signal = options!.signal!;
+    return new Promise(resolve => { complete = resolve; });
+  });
+  const f = await fixture({ provider: true }); const running = f.start();
+  await vi.waitFor(() => expect(signal).toBeDefined());
+  f.abort.abort(); await running;
+  expect(signal.aborted).toBe(true);
+  complete('99.0.0'); await Promise.resolve();
+  expect(f.controller.notice).not.toContain('99.0.0');
+});
+
 it('keeps first-run startup connected without creating or submitting and retains both initial inputs', async () => {
   const f = await fixture(); f.start({ initialDraft: 'retained draft', initialMessage: 'original prompt' });
   await vi.waitFor(() => expect(f.controller.notice).toContain('No model is available'));
@@ -102,7 +131,7 @@ it('keeps initial input recoverable and never submits it when login is cancelled
   await vi.waitFor(() => expect(f.controller.notice).toContain('No model is available'));
   await openLogin(f); f.terminal.input('\x1b');
   await vi.waitFor(() => expect(f.fake.requests.some(request => request.op === 'host.setup.cancel')).toBe(true));
-  f.terminal.input('\x03'); f.terminal.input('\x1b[A');
+  f.terminal.input('\x03'); f.terminal.input('\x1b[A'); f.terminal.input('\x1b[A');
   expect(f.text()).toContain('unsent initial request');
   expect(f.fake.requests.some(request => request.op === 'sessions.create' || request.op === 'prompt')).toBe(false);
 });

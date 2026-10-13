@@ -1,11 +1,11 @@
-import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
+import type { ExtensionUi, FelanExtensionAPI, RuntimeDependencyInstallResult } from '@felan-ai/agent-core';
 import type { RtkOptimizerConfig, RuntimeStatus } from './types.js';
 
 export interface RtkOptimizerController {
   getConfig(): RtkOptimizerConfig;
   getRuntimeStatus(): RuntimeStatus;
   refreshRuntimeStatus(): Promise<RuntimeStatus>;
-  install(onStatus: (message: string) => void): Promise<RuntimeStatus>;
+  install?(onStatus: (message: string) => void, signal?: AbortSignal): Promise<RuntimeStatus | RuntimeDependencyInstallResult>;
 }
 
 const USAGE = 'Usage: /rtk [show|verify|install|help]';
@@ -16,53 +16,65 @@ const SUBCOMMANDS = [
   ['help', 'Show command usage'],
 ] as const;
 
-export function registerRtkCommand(pi: FelanExtensionAPI, controller: RtkOptimizerController): void {
+export function registerRtkCommand(pi: FelanExtensionAPI, controller: RtkOptimizerController, ui?: Pick<ExtensionUi, 'notify'>): void {
   pi.registerCommand('rtk', {
     description: 'Configure RTK rewriting and output compaction',
     getArgumentCompletions: (prefix) => {
       const normalized = prefix.trimStart().toLowerCase();
       if (normalized.includes(' ')) return null;
-      const matches = SUBCOMMANDS.filter(([name]) => name.startsWith(normalized));
+      const matches = SUBCOMMANDS.filter(([name]) => name.startsWith(normalized) && (name !== 'install' || controller.install));
       return matches.length === 0
         ? null
         : matches.map(([name, description]) => ({ value: name, label: name, description }));
     },
     handler: async (args, ctx) => {
+      const notify = async (text: string, level: 'info' | 'warning' | 'error') => {
+        if (ui) await ui.notify({ text, level });
+        else ctx.ui.notify(text, level);
+      };
       const subcommand = args.trim().toLowerCase();
       if (!subcommand) {
-        ctx.ui.notify('Configure RTK through /settings. Use /rtk show to inspect the resolved settings.', 'info');
+        await notify('Configure RTK through /settings. Use /rtk show to inspect the resolved settings.', 'info');
         return;
       }
 
       if (subcommand === 'help') {
-        ctx.ui.notify(USAGE, 'info');
+        await notify(USAGE, 'info');
       } else if (subcommand === 'show') {
-        ctx.ui.notify(formatSummary(controller.getConfig(), controller.getRuntimeStatus()), 'info');
+        await notify(formatSummary(controller.getConfig(), controller.getRuntimeStatus()), 'info');
       } else if (subcommand === 'verify') {
         const status = await controller.refreshRuntimeStatus();
-        ctx.ui.notify(
+        await notify(
           status.rtkAvailable
             ? `RTK is available${status.version ? ` (${status.version})` : ''}.`
             : `RTK is unavailable${status.lastError ? `: ${status.lastError}` : '.'}`,
           status.rtkAvailable ? 'info' : 'warning',
         );
       } else if (subcommand === 'install') {
-        ctx.ui.setStatus('rtk-install', '… Installing RTK');
+        if (!controller.install) {
+          await notify('RTK installation is unavailable: no runtime-dependencies provider is configured.', 'warning');
+          return;
+        }
+        if (!ui) ctx.ui.setStatus('rtk-install', '… Installing RTK');
         try {
           const status = await controller.install((message) => {
-            ctx.ui.setStatus('rtk-install', `… ${message}`);
-          });
-          ctx.ui.notify(
+            if (!ui) ctx.ui.setStatus('rtk-install', `… ${message}`);
+          }, ctx.signal);
+          if ('status' in status) {
+            await notify(status.status === 'installed' ? 'RTK installed successfully.' : status.message, status.status === 'installed' ? 'info' : 'warning');
+            return;
+          }
+          await notify(
             status.rtkAvailable
               ? `RTK installed successfully${status.version ? ` (${status.version})` : ''}.`
               : `RTK installation failed${status.lastError ? `: ${status.lastError}` : '.'}`,
             status.rtkAvailable ? 'info' : 'error',
           );
         } finally {
-          ctx.ui.setStatus('rtk-install', undefined);
+          if (!ui) ctx.ui.setStatus('rtk-install', undefined);
         }
       } else {
-        ctx.ui.notify(USAGE, 'warning');
+        await notify(USAGE, 'warning');
       }
     },
   });

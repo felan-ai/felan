@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { connectLocalIpc } from '@felan-ai/daemon/internal/daemon/ipc';
+import { connectLocalIpc } from '@felan-ai/daemon/client';
 import type { SessionClient } from './client.js';
 
 export async function waitForDaemonStop(client: SessionClient, signal?: AbortSignal): Promise<void> {

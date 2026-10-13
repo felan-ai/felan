@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { identityFor } from '@felan-ai/daemon/internal/daemon/target';
+import { identityFor } from '../../daemon/src/daemon/target.js';
 import type { ClientEnvelope, Operation, OperationParams, OperationResult, SetupCatalog, SetupJob } from '@felan-ai/session-protocol';
 import { NodeAcpLoginTerminal, runLocalFelanAcpLogin, type AcpLoginChoice, type AcpLoginTerminal, type RunLocalFelanAcpLoginOptions } from '../src/acp/login.js';
 import { SessionClient, type SessionClientOptions } from '../src/client/client.js';
@@ -34,7 +34,7 @@ async function fixture(overrides: Partial<Endpoints> = {}) {
       requests.push(request);
       if (request.op === 'hello') {
         fake.reply(request, { attachmentId: 'client', principal: 'principal', daemonVersion: options.expectedDaemonVersion ?? options.clientVersion,
-          protocol: 1, identity, operations: Object.keys(endpoints), interactionKinds: [], presenters: [] }, connection); return;
+          protocol: 1, identity, operations: Object.keys(endpoints), interactionKinds: [] }, connection); return;
       }
       const endpoint = endpoints[request.op as SetupOperation] as (params: unknown) => unknown;
       void Promise.resolve().then(() => endpoint(request.params)).then(result => fake.reply(request, result, connection), error => {
@@ -66,7 +66,7 @@ describe('finite ACP daemon login', () => {
     expect(terminal.lines.join('\n')).not.toContain('test-private-key'); expect(f.errors).toEqual([]);
     expect(terminal.lines).toContain('Authentication saved by the daemon.');
     expect(f.clients[0]?.status).toBe('closed');
-    expect(f.settings[0]).toMatchObject({ kind: 'tui', target: { kind: 'isolated', directory: f.directory }, interactionKinds: [], presenters: [] });
+    expect(f.settings[0]).toMatchObject({ kind: 'tui', target: { kind: 'isolated', directory: f.directory }, interactionKinds: [] });
     expect(isAbsolute(f.settings[0]!.launch!.entrypoint)).toBe(true);
   });
 

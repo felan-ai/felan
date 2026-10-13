@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { HostAgentRuntime } from '@felan-ai/agent-core';
 import type { InlineExtension } from '@felan-ai/agent-core';
-import { SavingsService, formatSavingsReport, type SavingsQuery, type SavingsScope } from '@felan-ai/daemon/internal/savings';
+import { SavingsService, formatSavingsReport, type SavingsQuery, type SavingsScope } from './providers/savings.js';
 
 export const SAVINGS_COMMAND_EXTENSION_NAME = '@felan-ai/felan/savings';
 

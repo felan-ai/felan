@@ -43,6 +43,19 @@ required and compound rewrites can resolve every `rtk` invocation. Use
 `/rtk verify` to check the same `AgentRuntime` used by coding tools. Installation
 never runs during extension startup or from a model-initiated tool call.
 
+The default `/rtk install` delegates `{ id: 'rtk' }` to optional
+`RUNTIME_DEPENDENCIES_SERVICE`. Authorization belongs to the trusted host
+provider, not session UI confirmation. Without a provider, only installation is
+disabled; rewriting, compaction, verification, and configuration remain usable.
+Setup uses generic `pi.ui` notifications, forwards cancellation, and refreshes
+the active optimizer status after successful installation.
+
+Trusted providers can import `installManagedRtk(runtime, onStatus?)` from
+`@felan-ai/ext-rtk-optimizer`; it returns `Promise<RuntimeStatus>`. This low-level
+helper retains the pinned download, digest validation, version verification,
+and cleanup, but performs no authorization and is not called by the default
+extension.
+
 ## Configuration
 
 The extension receives portable configuration from:

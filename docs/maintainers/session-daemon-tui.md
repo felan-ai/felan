@@ -54,11 +54,12 @@ installed daemon package and retains its canonical target/identity checks.
 
 ## Built-in presentation and local setup
 
-The terminal registers versioned presenters for questions, Prewalk and Fusion
-reviews, Tasks, Processes, Context, Memory, Prompt History, Agent Navigator,
-Powerline, and local browser/report opening. Streamed views read their own
-interaction's session, not whichever root happens to be selected. Unknown
-presenters fail visibly; unknown tools retain the generic renderer.
+The terminal renders shared forms, documents, views, progress and statuses.
+Optional versioned hints enhance presentation without changing data or actions;
+unknown hints use the generic renderer. There is no custom interaction registry.
+Streamed views read their own interaction's session, not whichever root happens
+to be selected. Agent navigation uses scoped `executions.*` operations; tool
+renderers live in `apps/felan`, not extension TUI entrypoints.
 
 `/settings` changes visual preferences. The terminal keeps drafts
 while dialogs are active and applies accepted display/keybinding changes
@@ -86,7 +87,10 @@ uses the service described in [session-daemon-service.md](session-daemon-service
 
 ## Acceptance boundaries
 
-S1.15 completed Story 1 offline, multi-client, restart, failure-injection, ACP,
+Run client and daemon tests through `scripts/test-isolated.sh`, including
+`scripts/test-isolated.sh pnpm verify` for the full gate.
+
+The pre-services S1.15 baseline completed offline, multi-client, restart, failure-injection, ACP,
 and headless acceptance. The recorded aggregate is 3,941 passing assertions with
 3 declared skips across 352 file executions; literal `pnpm verify` passed.
 Daemon-only packaging covered 27 packages without the client, with two

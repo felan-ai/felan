@@ -4,12 +4,11 @@ import {
 	type FelanExtension,
 } from "@felan-ai/agent-core";
 import {
-	DEFAULT_PROMPT_HISTORY_DISPLAY_MODE,
 	PROMPT_HISTORY_CONFIG,
-	type PromptHistoryDisplayMode,
 } from "./config.js";
-import type { PromptHistoryHost, PromptHistoryPresentationHost } from "./contracts.js";
+import type { PromptHistoryHost, PromptHistorySearch } from "./contracts.js";
 import { createPromptHistorySource, searchPromptHistory } from "./history.js";
+import { createCommonPromptHistory } from "./common-ui.js";
 
 export {
 	DEFAULT_PROMPT_HISTORY_DISPLAY_MODE,
@@ -21,22 +20,20 @@ export type {
 	PromptHistoryHost,
 	PromptHistorySession,
 	PromptHistorySessionReference,
-	PromptHistoryPresentationHost,
 	PromptHistorySearch,
 	PromptHistorySearchState,
 } from "./contracts.js";
 
-export function createPromptHistoryExtension(host: PromptHistoryHost, presentation?: PromptHistoryPresentationHost): FelanExtension {
+export function createPromptHistoryExtension(host: PromptHistoryHost): FelanExtension {
 	const extension: FelanExtension = (pi) => {
-		const displayMode = resolveDisplayMode(pi.config.displayMode);
 		const lifetime = new AbortController();
 		const views = new Set<Promise<void>>();
+		const common = createCommonPromptHistory(pi.ui);
 		const open = async (ctx: ExtensionContext): Promise<void> => {
-			if (ctx.mode !== "tui" && !presentation) return;
 			lifetime.signal.throwIfAborted();
 			const source = createPromptHistorySource(ctx, host);
-			const target = presentation ?? (await import("./tui.js")).createTuiPromptHistoryHost();
-			const view = target.show(ctx.ui, (...args) => searchPromptHistory(source, ...args), displayMode, lifetime.signal)
+			const search: PromptHistorySearch = (...args) => searchPromptHistory(source, ...args);
+			const view = common.show(search, lifetime.signal)
 				.catch(error => { if (!lifetime.signal.aborted) throw error; });
 			views.add(view);
 			try { await view; } finally { views.delete(view); }
@@ -51,7 +48,7 @@ export function createPromptHistoryExtension(host: PromptHistoryHost, presentati
 			description: "Search prompt history",
 			handler: open,
 		});
-		pi.on("session_shutdown", async () => { lifetime.abort(); await Promise.all([...views]); });
+		pi.on("session_shutdown", async () => { lifetime.abort(); await Promise.all([...views]); await common.dispose(); });
 	};
 	associateExtensionConfig(extension, PROMPT_HISTORY_CONFIG);
 	return extension;
@@ -60,6 +57,3 @@ export function createPromptHistoryExtension(host: PromptHistoryHost, presentati
 associateExtensionConfig(createPromptHistoryExtension, PROMPT_HISTORY_CONFIG);
 export default createPromptHistoryExtension;
 
-function resolveDisplayMode(value: unknown): PromptHistoryDisplayMode {
-	return value === "overlay" ? "overlay" : DEFAULT_PROMPT_HISTORY_DISPLAY_MODE;
-}

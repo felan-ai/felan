@@ -22,7 +22,7 @@ describe('browser screenshot image bridge', () => {
       wasResized: true,
     });
     const runtime = new BrowserTestRuntime();
-    runtime.files.set(GENERATED_SCREENSHOT, VALID_PNG_HEADER);
+    runtime.fileContents.set(GENERATED_SCREENSHOT, VALID_PNG_HEADER);
 
     const result = await readBrowserImage(runtime, GENERATED_SCREENSHOT, true);
 
@@ -45,7 +45,7 @@ describe('browser screenshot image bridge', () => {
 
   it('does not read empty paths or images for text-only models', async () => {
     const runtime = new BrowserTestRuntime();
-    runtime.files.set(GENERATED_SCREENSHOT, VALID_PNG_HEADER);
+    runtime.fileContents.set(GENERATED_SCREENSHOT, VALID_PNG_HEADER);
 
     await expect(readBrowserImage(runtime, '', true)).resolves.toMatchObject({
       details: { delivered: false, reason: expect.stringContaining('empty') },
@@ -58,12 +58,12 @@ describe('browser screenshot image bridge', () => {
 
   it('rejects unsupported bytes and turns decoder failures into a text fallback', async () => {
     const runtime = new BrowserTestRuntime();
-    runtime.files.set(GENERATED_SCREENSHOT, new TextEncoder().encode('not an image'));
+    runtime.fileContents.set(GENERATED_SCREENSHOT, new TextEncoder().encode('not an image'));
     await expect(readBrowserImage(runtime, GENERATED_SCREENSHOT, true)).resolves.toMatchObject({
       details: { delivered: false, reason: expect.stringContaining('supported') },
     });
 
-    runtime.files.set(GENERATED_SCREENSHOT, VALID_PNG_HEADER);
+    runtime.fileContents.set(GENERATED_SCREENSHOT, VALID_PNG_HEADER);
     resizeImageMock.mockRejectedValueOnce(new Error('decode failed\u0000'));
     await expect(readBrowserImage(runtime, GENERATED_SCREENSHOT, true)).resolves.toMatchObject({
       details: { delivered: false, reason: expect.stringContaining('decode failed') },

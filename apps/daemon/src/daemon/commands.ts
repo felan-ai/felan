@@ -1,15 +1,13 @@
-import type { AgentSession, ModelRuntime } from '@felan-ai/agent-core';
+import type { HostConfiguration, HostPreferences, HostSetup } from './host-services.js';
+import { registrySessionExecutions } from './session-services.js';
+import { SessionsServiceError, type AgentSession, type ModelRuntime } from '@felan-ai/agent-core';
 import { LIMITS, parseOperationResult, type ClientEnvelope, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
 import type { SessionRegistry } from './registry.js';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
-import type { DaemonConfiguration } from './configuration.js';
 import { boundedText, digest } from './projection.js';
-import { agentSummary } from './agent-view.js';
 import { prepareExport, prepareImport, publishExport, stageImport } from './session-files.js';
 import { sha256 } from './persistence.js';
 import { join } from 'node:path';
-import type { DaemonTuiPreferences } from './tui-preferences.js';
-import type { HostSetupManager } from '../setup/manager.js';
 
 export async function forkSession(
   registry: SessionRegistry,
@@ -22,13 +20,13 @@ export async function forkSession(
 }
 
 export interface RootPreparation { cwd: string; extensionPaths: readonly string[] }
-export interface CommandContext { origin: Origin; signal?: AbortSignal; rootPreparation?: RootPreparation; invalidateAfterResponse?(revisions: Readonly<Record<string, number>>): void }
+export interface CommandContext { origin: Origin; localConsole?: boolean; signal?: AbortSignal; rootPreparation?: RootPreparation; invalidateAfterResponse?(revisions: Readonly<Record<string, number>>): void }
 export interface CommandOptions {
   registry: SessionRegistry;
-  configuration: DaemonConfiguration;
+  configuration: HostConfiguration;
   models: Pick<ModelRuntime, 'getAvailable'>;
-  preferences?: DaemonTuiPreferences;
-  setup?: HostSetupManager;
+  preferences?: HostPreferences;
+  setup?: HostSetup;
   prepareOpenInteraction?(id: string, client: string, signal: AbortSignal): () => Promise<void>;
   invalidated(revisions: Readonly<Record<string, number>>): void;
 }
@@ -36,15 +34,15 @@ export interface CommandOptions {
 export class SessionCommands {
   readonly operations = new Set<Operation>(['sessions.list', 'sessions.create', 'close', 'prompt', 'steer', 'follow_up', 'cancel', 'set_model', 'set_thinking',
     'compact', 'fork', 'command.invoke', 'session.rename', 'session.tree', 'session.branch.select', 'session.entry.label', 'session.history', 'session.clone', 'shell.execute',
-    'config.get', 'config.set', 'processes.list', 'processes.read', 'processes.write', 'processes.stop', 'agents.list', 'agents.read', 'agents.steer', 'agents.cancel',
-    'session.adopt', 'session.delete', 'session.reload', 'session.import', 'session.export']);
+    'config.get', 'config.set', 'processes.list', 'processes.read', 'processes.write', 'processes.stop', 'executions.list', 'executions.read', 'executions.steer', 'executions.cancel',
+    'session.delete', 'session.reload', 'session.import', 'session.export', 'ui.action']);
   constructor(private readonly options: CommandOptions) {
     if (options.preferences) { this.operations.add('tui.preferences.get'); this.operations.add('tui.preferences.set'); }
     if (options.setup) for (const op of ['host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link'] as const) this.operations.add(op);
     if (options.prepareOpenInteraction) this.operations.add('host.open_interaction');
   }
 
-  async read(request: ClientEnvelope, client?: string): Promise<Response> {
+  async read(request: ClientEnvelope, client?: string, localConsole = false): Promise<Response> {
     const { registry, configuration } = this.options;
     switch (request.op) {
       case 'host.setup.catalog': {
@@ -55,41 +53,39 @@ export class SessionCommands {
         if (!this.options.setup || !client) throw commandError('unavailable');
         return accepted(request, this.options.setup.read(request.params.jobId, client));
       }
+      case 'host.setup.answer': {
+        if (!localConsole) throw commandError('forbidden');
+        if (!this.options.setup || !client) throw commandError('unavailable');
+        await this.options.setup.answer(request.params.jobId, request.params.promptId, request.params.text, client);
+        return accepted(request, {});
+      }
+      case 'host.setup.cancel': {
+        if (!localConsole) throw commandError('forbidden');
+        if (!this.options.setup || !client) throw commandError('unavailable');
+        this.options.setup.cancel(request.params.jobId, client);
+        return accepted(request, {});
+      }
       case 'tui.preferences.get': {
         if (!this.options.preferences) throw commandError('unavailable');
         return accepted(request, await this.options.preferences.get());
       }
       case 'sessions.list': {
-        const legacy = await registry.legacyInventory(request.params);
         const keys = new WeakMap<object, string>();
         const entries = [...registry.list().map(row => {
           const entry = { session: row.id, root: row.root, ...(row.parent ? { parent: row.parent } : {}), cwd: row.cwd,
-          adoption: 'adopted', revision: row.revision, state: row.state, residency: row.residency, title: row.title, ...(row.model ? { model: row.model } : {}), lastActivity: row.updatedAt, run: row.run, policy: row.policy };
-          keys.set(entry, JSON.stringify([row.id, 'adopted'])); return entry;
-        }), ...legacy.entries.map(row => {
-          const entry = { session: row.session, root: row.session, cwd: row.cwd, ...(row.fingerprint ? { sourceFingerprint: row.fingerprint } : {}), adoption: 'legacy', state: 'closed', residency: 'evicted',
-          title: 'Legacy session', lastActivity: 0, run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 } };
-          keys.set(entry, JSON.stringify([row.session, 'legacy', sha256(row.source)])); return entry;
+          revision: row.revision, state: row.state, residency: row.residency, title: row.title, ...(row.model ? { model: row.model } : {}), lastActivity: row.updatedAt, run: row.run, policy: row.policy };
+          keys.set(entry, row.id); return entry;
         })]
           .filter(row => (!request.params.cwd || row.cwd === request.params.cwd) && (!request.params.root || row.root === request.params.root));
-        return accepted(request, { ...keysetPage(entries, request.params, JSON.stringify(['sessions', request.params.cwd ?? null, request.params.root ?? null]), row => keys.get(row)!),
-          inventory: { complete: legacy.complete, diagnostics: legacy.diagnostics } });
+        return accepted(request, { ...keysetPage(entries, request.params, JSON.stringify(['sessions', request.params.cwd ?? null, request.params.root ?? null]), row => keys.get(row)!) });
       }
       case 'config.get': {
         if (request.params.scope !== 'session') return accepted(request, await configuration.get(request.params.scope));
         if (!request.session) throw commandError('invalid_request');
         return accepted(request, await configuration.sessionValues(registry.options.store.session(request.session).profile?.extensionConfigOverrides ?? []));
       }
-      case 'agents.list': {
-        const rows = registry.subagentView(request.session).listLocalSubagents().map(agentSummary);
-        const generation = digest(rows);
-        return accepted(request, { generation, ...keysetPage(rows, request.params, JSON.stringify(['agents', request.session, generation]), row => JSON.stringify([row.createdAt, row.agentId])) });
-      }
-      case 'agents.read': {
-        const row = registry.subagentView(request.session).getLocalSubagent(request.params.agentId);
-        if (!row) throw commandError('not_found');
-        return accepted(request, { agent: agentSummary(row), ...(row.result === undefined ? {} : { result: row.result }) });
-      }
+      case 'executions.list': return accepted(request, await executionRequest(() => registrySessionExecutions(registry, request.session).executions(request.params)));
+      case 'executions.read': return accepted(request, await executionRequest(() => registrySessionExecutions(registry, request.session).execution(request.params.executionId)));
       case 'session.history': {
         const projection = registry.projection(request.session); const snapshot = projection.snapshot();
         if (snapshot.revision !== request.params.revision || snapshot.branch !== request.params.branch) throw commandError('resync_required');
@@ -120,28 +116,37 @@ export class SessionCommands {
 
   async prepare(command: AdmittedCommand, context: CommandContext): Promise<AdmissionOutcome> {
     const { request } = command; const { registry, configuration } = this.options;
-    const localTui = context.origin.kind === 'tui' ? context.origin.attachment : undefined;
+    const localClient = context.localConsole && 'attachment' in context.origin ? context.origin.attachment : undefined;
     switch (request.op) {
+      case 'ui.action': {
+        const execute = registry.prepareUiAction(request.session, request.params);
+        command.assertDispatch();
+        return { response: registry.mutateAdmitted(request.id, request.session, async ({ assertCurrent }) => {
+          assertCurrent();
+          await execute({ requestId: request.id, signal: context.signal ?? new AbortController().signal });
+          assertCurrent();
+        }).then(() => accepted(request, {})) };
+      }
       case 'host.setup.start': {
-        if (!localTui) throw commandError('forbidden');
+        if (!localClient) throw commandError('forbidden');
         if (!this.options.setup) throw commandError('unavailable');
         this.options.setup.validateStart(request.params);
-        return { response: command.dispatch(() => accepted(request, this.options.setup!.start(request.params, localTui))) };
+        return { response: command.dispatch(() => accepted(request, this.options.setup!.start(request.params, localClient))) };
       }
       case 'host.setup.open_link': {
-        if (!localTui) throw commandError('forbidden');
+        if (!localClient) throw commandError('forbidden');
         if (!this.options.setup) throw commandError('unavailable');
-        const open = this.options.setup.prepareOpenLink(request.params.jobId, request.params.index, localTui);
+        const open = this.options.setup.prepareOpenLink(request.params.jobId, request.params.index, localClient);
         return { response: command.dispatch(open).then(() => accepted(request, {})) };
       }
       case 'host.open_interaction': {
-        if (!localTui) throw commandError('forbidden');
+        if (!localClient) throw commandError('forbidden');
         if (!this.options.prepareOpenInteraction || !context.signal) throw commandError('unavailable');
-        const open = this.options.prepareOpenInteraction(request.params.interactionId, localTui, context.signal);
+        const open = this.options.prepareOpenInteraction(request.params.interactionId, localClient, context.signal);
         return { response: command.dispatch(open).then(() => accepted(request, {})) };
       }
       case 'tui.preferences.set': {
-        if (!localTui) throw commandError('forbidden');
+        if (!localClient) throw commandError('forbidden');
         if (!this.options.preferences) throw commandError('unavailable');
         return { response: command.dispatch(() => this.options.preferences!.set(request.params.values)).then(() => accepted(request, {})) };
       }
@@ -149,12 +154,13 @@ export class SessionCommands {
         const overrides = request.params.config && Object.keys(request.params.config).length ? configuration.sessionOverrides(request.params.config) : [];
         const model = request.params.model && await this.model(request.params.model);
         if (!request.params.model && !(await this.options.models.getAvailable()).length) throw commandError('authentication_required');
-        const resources = await registry.options.profile.resolveResources({ cwd: request.params.cwd, ...(request.params.sessionDir ? { sessionDir: request.params.sessionDir } : {}) });
+        const resources = await registry.options.lifecycle.resolveResources({ cwd: request.params.cwd, ...(request.params.sessionDir ? { sessionDir: request.params.sessionDir } : {}) });
         if (context.rootPreparation && context.rootPreparation.cwd !== resources.cwd) throw commandError('target_mismatch');
         registry.assertClientSessionDirectory(resources);
         const extensionPaths = context.rootPreparation?.extensionPaths ?? request.params.extensions;
-        const creation = { cwd: resources.cwd, target: { kind: 'new' as const }, source: request.params.source, clientRoot: true as const,
-          sessionDir: resources.sessionDir, ...(context.origin.kind === 'acp' ? { policy: { mode: 'acp-strict', pendingTightening: false, generation: 0 } as const } : {}), ...(model ? { model } : {}),
+        if ((request.params.interactiveExtensions || extensionPaths?.length) && !localClient) throw commandError('forbidden');
+        const creation = { interactiveExtensions: request.params.interactiveExtensions === true, cwd: resources.cwd, target: { kind: 'new' as const }, source: request.params.source, clientRoot: true as const,
+          sessionDir: resources.sessionDir, ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', pendingTightening: false, generation: 0 } as const } : {}), ...(model ? { model } : {}),
           ...(request.params.thinking ? { thinkingLevel: request.params.thinking } : {}), ...(extensionPaths ? { extensionPaths } : {}),
           ...(overrides.length ? { extensionConfigOverrides: overrides } : {}) };
         await registry.validateConfiguration(creation, resources);
@@ -172,38 +178,27 @@ export class SessionCommands {
           return { response: registry.reloadAdmitted(request.id, request.session, { values: request.params.values, overrides }).then(() => accepted(request, {})) };
         }
         if (request.params.scope !== 'global') throw commandError('unavailable');
+        if (!localClient) throw commandError('forbidden');
         configuration.prepare(request.params.scope, request.params.values);
         return { response: command.dispatch(() => configuration.set(request.params.scope, request.params.values)).then(() => accepted(request, {})) };
       }
       case 'close': return { response: registry.closeAdmitted(request.id, request.session).then(() => accepted(request, {})) };
       case 'session.delete': return { response: registry.deleteAdmitted(request.id, request.session, request.params.expectedRevision).then(() => accepted(request, {})) };
       case 'session.reload': return { response: registry.reloadAdmitted(request.id, request.session).then(() => accepted(request, {})) };
-      case 'session.adopt': {
-        const inventory = await registry.legacyInventory({ root: request.session });
-        const matches = inventory.entries.filter(row => row.session === request.session);
-        const registered = registry.options.store.snapshot().adoptions.find(row => row.session === request.session && row.phase === 'complete');
-        if (matches.length > 1) throw commandError('request_conflict');
-        if (!inventory.complete) throw commandError('adoption_required');
-        const selected = matches[0] ?? (registered ? { session: registered.session, source: registered.source, cwd: registered.cwd, fingerprint: registered.fingerprint, bytes: 0 } : undefined);
-        if (!selected) throw commandError('not_found');
-        if (!selected.fingerprint || selected.bytes === undefined) throw commandError('adoption_required');
-        try { await registry.options.profile.resolveResources({ cwd: selected.cwd }); }
-        catch { throw commandError('adoption_required'); }
-        command.assertDispatch();
-        return { response: registry.adoptAdmitted(request.id, request.session, request.params, { ...selected, fingerprint: selected.fingerprint, bytes: selected.bytes }, inventory.directories).then(value => accepted(request, value)) };
-      }
       case 'session.import': {
-        const resources = await registry.options.profile.resolveResources({ cwd: request.params.cwd });
+        const resources = await registry.options.lifecycle.resolveResources({ cwd: request.params.cwd });
         for (const root of resources.writableRoots) registry.options.owner.assertOwnsPath(root);
         registry.assertClientSessionDirectory(resources);
         const state = registry.options.store.snapshot();
-        const excluded = [...state.sessions.map(row => row.piPath), ...state.adoptions.map(row => row.destination), join(registry.options.owner.target.agentDir, 'adopted-sessions')];
+        const excluded = state.sessions.map(row => row.piPath);
         const prepared = preflight(() => prepareImport(registry.options.owner, request.params.path, excluded));
         command.assertDispatch();
         return { response: command.dispatch(async () => {
           const staged = stageImport(registry.options.owner, resources.sessionDir, request.params.path, excluded, prepared);
           try {
-            const binding = await registry.create({ cwd: resources.cwd, sessionDir: resources.sessionDir, target: { kind: 'import', sessionFile: staged.path }, source: 'tui', clientRoot: true });
+            const binding = await registry.create({ cwd: resources.cwd, sessionDir: resources.sessionDir, target: { kind: 'import', sessionFile: staged.path },
+              source: context.origin.kind === 'acp' ? 'acp' : context.origin.kind === 'headless' ? 'headless' : 'tui', clientRoot: true,
+              ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', pendingTightening: false, generation: 0 } as const } : {}) });
             return accepted(request, { sessionId: binding.sessionId });
           } finally { staged.dispose(); }
         }) };
@@ -218,15 +213,14 @@ export class SessionCommands {
         }) };
       }
       case 'cancel': return { response: registry.cancelAdmitted(request.id, request.session, request.params.runId).then(() => accepted(request, {})) };
-      case 'agents.steer': case 'agents.cancel': {
-        const host = registry.subagentView(request.session);
-        if (!host.getLocalSubagent(request.params.agentId)) throw commandError('not_found');
+      case 'executions.steer': case 'executions.cancel': {
+        const executions = registrySessionExecutions(registry, request.session);
+        await executionRequest(() => executions.execution(request.params.executionId));
         return { response: registry.mutateAdmitted(request.id, request.session, async ({ assertCurrent }) => {
-          const result = request.op === 'agents.steer' ? await host.steer(request.params.agentId, request.params.message)
-            : await host.cancel(request.params.agentId, request.params.reason);
+          if (request.op === 'executions.steer') await executionRequest(() => executions.steer(request.params.executionId, request.params.message));
+          else await executionRequest(() => executions.cancel(request.params.executionId, request.params.reason));
           assertCurrent();
-          return accepted(request, result.ok ? { ok: true, agent: agentSummary(host.getLocalSubagent(result.value.agentId) ?? result.value) }
-            : { ok: false, error: result.error });
+          return accepted(request, await executions.execution(request.params.executionId));
         }) };
       }
       case 'fork': return { response: forkSession(registry, request.id, request.session, request.params).then(value => accepted(request, value)) };
@@ -410,4 +404,13 @@ function promptInput(prompt: OperationParams<'prompt'>) {
     else text.push(part.type === 'text' ? part.text : `${part.name ?? 'Resource'}: ${part.uri}${part.description ? `\n${part.description}` : ''}`);
   }
   return { text: text.join('\n'), images };
+}
+
+async function executionRequest<T>(operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); }
+  catch (error) {
+    if (!(error instanceof SessionsServiceError)) throw error;
+    throw commandError(error.code === 'stale' ? 'resync_required' : error.code === 'inaccessible' ? 'forbidden'
+      : error.code === 'unsupported' ? 'unavailable' : 'invalid_request');
+  }
 }

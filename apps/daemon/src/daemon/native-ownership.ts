@@ -42,7 +42,12 @@ function loadApi() {
 function native() { return api ??= loadApi(); }
 function failure(operation: string): never {
   const errno = koffi.errno();
-  throw new DaemonSecurityError(operation === 'connect' && errno === koffi.os.errno.ECONNREFUSED ? 'stale_endpoint' : 'native_failure', `${operation} failed (errno ${errno}).`);
+  let code = 'native_failure';
+  if (operation === 'connect') {
+    if (errno === koffi.os.errno.ECONNREFUSED) code = 'stale_endpoint';
+    else if (errno === koffi.os.errno.ENOENT) code = 'unavailable';
+  }
+  throw new DaemonSecurityError(code, `${operation} failed (errno ${errno}).`);
 }
 
 export function tryKernelLock(fd: number): boolean {

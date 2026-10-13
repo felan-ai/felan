@@ -187,7 +187,7 @@ route the CLI through the daemon; no exemption follows merely from its name.
    restart for proxy changes. The original per-session environment isolation
    blocker is superseded by the user's explicit scope change.
 3. **S1.15/16:** real multi-process Story 1 acceptance, offline network denial,
-   forced/interrupted recovery, safe adoption/downgrade and packed client-only
+   forced/interrupted recovery, explicit import/downgrade and packed client-only
    entrypoints. Also run the real private HTTP bootstrap and `./daemon-profile`
    import in a packed install against the pinned Pi version; the source smoke
    (`FELAN_TEST_DIST_SMOKE=1` after build) is not a packed-install substitute.

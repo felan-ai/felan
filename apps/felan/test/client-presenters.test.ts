@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { RUNTIME_UI_PRESENTER, parseInteraction, type Interaction } from '@felan-ai/session-protocol';
-import { ClientInteractionPresenters, runtimeUiState, type InteractionPresenterUi } from '../src/client/presenters.js';
+import { parseInteraction, type Interaction } from '@felan-ai/session-protocol';
+import { ClientInteractionPresenters, type InteractionPresenterUi } from '../src/client/presenters.js';
 
 function fixture() {
   const ui = { select: vi.fn(async (..._args: unknown[]): Promise<string | undefined> => undefined), confirm: vi.fn(async () => false),
@@ -12,10 +11,20 @@ function fixture() {
 
 function interaction(request: Interaction['request']): Interaction {
   return parseInteraction({ id: 'interaction', state: 'waiting', scope: { kind: 'session', session: 'session', root: 'session' },
-    createdAt: Date.now(), eligibleClientKinds: ['tui'], request });
+    createdAt: Date.now(), request });
 }
 
 describe('client interaction presenters', () => {
+  it('renders supported broker-approved interactions without treating legacy kind labels as authority', async () => {
+    const f = fixture();
+    const item = { ...interaction({ kind: 'confirm', title: 'Owner approval', message: 'Continue?' }),
+      authority: 'owner' as const };
+    await expect(f.presenters.present(item, f.signal)).resolves.toMatchObject({ state: 'answered', answer: { kind: 'confirm', confirmed: false } });
+    expect(f.ui.confirm).toHaveBeenCalledOnce();
+    await expect(f.presenters.present({ ...item, state: 'cancelled', resolvedAt: Date.now(), result: { cancelled: true, reason: 'user' } }, f.signal)).resolves.toMatchObject({ state: 'unsupported' });
+    expect(f.ui.confirm).toHaveBeenCalledOnce();
+  });
+
   it('preserves choice identity even when displayed labels repeat', async () => {
     const f = fixture(); f.ui.select.mockImplementation(async (_title, labels) => (labels as string[])[1]);
     const item = interaction({ kind: 'select', title: 'Pick', multiple: false, choices: [{ id: 'first', title: 'Same' }, { id: 'second', title: 'Same' }] });
@@ -41,29 +50,11 @@ describe('client interaction presenters', () => {
     expect(f.ui.select.mock.calls[0]?.[1]).toEqual(['1. Reject']);
   });
 
-  it('maps rich wizard and multi-select answers back to protocol IDs', async () => {
+  it('maps multi-select answers back to protocol IDs', async () => {
     const f = fixture();
-    f.ui.custom.mockResolvedValueOnce([{ questionId: 'q', response: { kind: 'selection', selections: ['2. Same'], comment: 'why' } }]);
-    await expect(f.presenters.present(interaction({ kind: 'ask_user', questions: [{ id: 'q', question: 'Pick?', allowComment: true,
-      options: [{ id: 'a', title: 'Same' }, { id: 'b', title: 'Same' }] }] }), f.signal)).resolves.toMatchObject({ answer: { kind: 'ask_user', answers: [{ questionId: 'q', choices: ['b'], comment: 'why' }] } });
     f.ui.custom.mockResolvedValueOnce([{ questionId: 'selection', response: { kind: 'selection', selections: ['1. Same', '2. Same'] } }]);
     await expect(f.presenters.present(interaction({ kind: 'select', title: 'Pick', multiple: true,
       choices: [{ id: 'a', title: 'Same' }, { id: 'b', title: 'Same' }] }), f.signal)).resolves.toMatchObject({ answer: { kind: 'select', choices: ['a', 'b'] } });
-  });
-
-  it('negotiates exact custom versions and rejects missing handlers visibly', async () => {
-    const f = fixture(); const custom = vi.fn(async () => ({ selected: 'yes' }));
-    expect(f.presenters.interactionKinds).not.toContain('custom');
-    const remove = f.presenters.registerCustom({ id: 'test', version: '1' }, custom);
-    expect(f.presenters.interactionKinds).toContain('custom');
-    expect(f.presenters.presenters).toContainEqual({ id: 'test', version: '1' });
-    await expect(f.presenters.present(interaction({ kind: 'custom', presenter: { version: '1', id: 'test' }, data: {} }), f.signal))
-      .resolves.toMatchObject({ state: 'answered', answer: { data: { selected: 'yes' } } });
-    await expect(f.presenters.present(interaction({ kind: 'custom', presenter: { id: 'test', version: '2' }, data: {} }), f.signal))
-      .resolves.toMatchObject({ state: 'unsupported' });
-    expect(custom).toHaveBeenCalledTimes(1); expect(f.ui.notify).toHaveBeenCalled();
-    remove(); expect(f.presenters.interactionKinds).not.toContain('custom');
-    expect(() => f.presenters.registerCustom(RUNTIME_UI_PRESENTER, custom)).toThrow('already registered');
   });
 
   it('distinguishes abort, expiry, user cancellation and unsupported workflows', async () => {
@@ -73,15 +64,5 @@ describe('client interaction presenters', () => {
     await expect(f.presenters.present({ ...item, createdAt: 0, expiresAt: 1 }, f.signal)).resolves.toEqual({ state: 'cancelled', reason: 'timeout' });
     expect(f.ui.input).not.toHaveBeenCalled();
     await expect(f.presenters.present(item, f.signal)).resolves.toEqual({ state: 'cancelled', reason: 'user' });
-    await expect(f.presenters.present(interaction({ kind: 'oauth', provider: 'fixture', provisioningId: 'setup', url: 'https://example.invalid', instructions: 'Sign in' }), f.signal))
-      .resolves.toMatchObject({ state: 'unsupported' });
-  });
-
-  it('parses only the supported runtime presentation version', () => {
-    expect(runtimeUiState({ id: 'state', kind: 'custom', presenter: RUNTIME_UI_PRESENTER, data: { workingVisible: false } })).toEqual({ workingVisible: false });
-    expect(runtimeUiState({ id: 'state', kind: 'custom', presenter: { ...RUNTIME_UI_PRESENTER, version: '2' }, data: {} })).toBeUndefined();
-    expect(() => runtimeUiState({ id: 'state', kind: 'custom', presenter: RUNTIME_UI_PRESENTER, data: { unknown: true } })).toThrow();
-    expect(readFileSync(new URL('../src/client/presenters.ts', import.meta.url), 'utf8')).not.toMatch(/from\s+['"][^'"]*(?:daemon|\/runtime)/);
-    expect(readFileSync(new URL('../src/client/index.ts', import.meta.url), 'utf8')).not.toContain('presenters.js');
   });
 });

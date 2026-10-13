@@ -1,5 +1,5 @@
 import type { KeybindingsManager, Theme } from '@earendil-works/pi-coding-agent';
-import { formatMemoryText as safeMemoryText } from '@felan-ai/ext-memory/view';
+import { formatMemoryText as safeMemoryText } from '@felan-ai/ext-memory/data';
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable, type TUI } from '@earendil-works/pi-tui';
 import { LocalSessionPicker, type SessionPickerNavigation } from '../session-picker.js';
 import { AgentTranscript } from '../subagents/agent-transcript.js';

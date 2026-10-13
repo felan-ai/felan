@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-codebase-memory",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Portable Codebase Memory tools and grep augmentation for Felan",
   "license": "MIT",
   "type": "module",
@@ -26,10 +26,6 @@
     "./runtime": {
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js"
-    },
-    "./tui": {
-      "types": "./dist/tui.d.ts",
-      "import": "./dist/tui.js"
     }
   },
   "scripts": {
@@ -39,7 +35,6 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "catalog:pi",
     "typebox": "1.1.38"
   },
   "peerDependencies": {

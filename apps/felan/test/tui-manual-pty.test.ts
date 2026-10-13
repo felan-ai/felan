@@ -7,11 +7,11 @@ import { expect, it } from 'vitest';
 import { getTerminalColorMode, stripTerminalSequences } from '@earendil-works/pi-tui';
 import { createAssistantMessageEventStream, type ModelRuntime } from '@felan-ai/agent-core';
 import { clientDaemonTarget } from '../src/client-application.js';
+import { resolveClientHostComposition } from '../src/daemon-entrypoint.js';
 import { bundledClientThemes } from '../src/tui/theme.js';
-import { DaemonConfiguration } from '../../daemon/src/daemon/configuration.js';
-import { DaemonTuiPreferences } from '../../daemon/src/daemon/tui-preferences.js';
+import { DaemonConfiguration } from '../src/providers/configuration.js';
+import { DaemonTuiPreferences } from '../src/providers/tui-preferences.js';
 import { createRegistryInteractionBroker } from '../../daemon/src/daemon/broker.js';
-import { SESSION_UI_PRESENTERS } from '../../daemon/src/daemon/extension-ui.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { DAEMON_VERSION } from '../../daemon/src/version.js';
 import { gate, serverFixture } from '../../daemon/test/fixtures/server.js';
@@ -110,9 +110,11 @@ async function captureManualTerminal(output: string): Promise<void> {
     if (target.kind !== 'isolated') throw new Error('Expected isolated target');
     return target.namespaceId;
   } });
-  const broker = createRegistryInteractionBroker(f.registry, { presenters: SESSION_UI_PRESENTERS });
+  const broker = createRegistryInteractionBroker(f.registry, {  });
   const preferences = new DaemonTuiPreferences({ agentDir: f.owner.target.agentDir, assertCurrent: () => f.registry.assertAdmission() });
-  const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: DAEMON_VERSION, broker, preferences,
+  const daemonTarget = clientDaemonTarget({ daemonRuntime: f.directory });
+  const composition = await resolveClientHostComposition(daemonTarget);
+  const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: DAEMON_VERSION, broker, preferences, composition,
     configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() }) });
   let pty: Capture | undefined;
   let failure: unknown;
@@ -148,9 +150,10 @@ async function captureManualTerminal(output: string): Promise<void> {
     await writeFile(join(f.directory, 'client', 'tui', 'settings.json'), JSON.stringify({ theme: 'felan-dark' }), { mode: 0o600 });
     await preferences.set({ keybindings: { 'app.model.select': 'alt+m', 'app.exit': 'alt+x' } });
     await server.start(); pty = new Capture(output, checkpoints, f.directory, f.cwd, f.root.sessionId); const terminal = pty;
-    const idle = () => terminal.screen.includes('live · idle');
+    const idle = () => f.store.session(f.root.sessionId).run.state === 'idle' && !terminal.screen.includes('Working');
     const filter = () => terminal.screen.includes('Filter choices');
-    await terminal.wait('initial connected frame', () => idle() && terminal.screen.includes('offline/fixture'));
+    await terminal.wait('initial connected frame', () => idle() && terminal.screen.includes('Felan Code')
+      && terminal.screen.split('\n').at(-2) === '─'.repeat(terminal.grid.screenColumns));
     expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getFgAnsi('text'));
     expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getBgAnsi('customMessageBg'));
     expect(terminal.screen.split('\n').at(-2)).toBe('─'.repeat(terminal.grid.screenColumns));
@@ -168,7 +171,7 @@ async function captureManualTerminal(output: string): Promise<void> {
     terminal.send('/settings\r'); await terminal.wait('settings opened', () => filter() && terminal.screen.includes('Settings'));
     await terminal.snapshot('04-dark-settings');
     terminal.send('Thinking\r'); await terminal.wait('thinking draft toggled', () => terminal.screen.includes('Thinking: hidden'));
-    terminal.send('Save changes\r'); await terminal.wait('preferences saved', () => !filter() && terminal.screen.includes('Display preferences saved'));
+    terminal.send('Save display changes\r'); await terminal.wait('preferences saved', () => !filter() && terminal.screen.includes('Display preferences saved'));
     expect((await preferences.get()).hideThinking).toBe(true);
     await terminal.snapshot('05-settings-saved');
 
@@ -177,7 +180,7 @@ async function captureManualTerminal(output: string): Promise<void> {
     await terminal.snapshot('06-local-theme-picker');
     terminal.send('felan-light\r'); await terminal.wait('light theme draft', () => terminal.screen.includes('Theme: felan-light'));
     const paletteOffset = terminal.frameRaw.length;
-    terminal.send('Save changes\r'); await terminal.wait('light palette applied', () => !filter() && terminal.screen.includes('Display preferences saved')
+    terminal.send('Save display changes\r'); await terminal.wait('light palette applied', () => !filter() && terminal.screen.includes('Display preferences saved')
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getFgAnsi('text'))
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg')));
     expect(JSON.parse(await readFile(join(f.directory, 'client', 'tui', 'settings.json'), 'utf8')).theme).toBe('felan-light');
@@ -191,10 +194,10 @@ async function captureManualTerminal(output: string): Promise<void> {
     terminal.send('/settings\r'); await terminal.wait('narrow settings', () => filter() && terminal.screen.includes('Settings'));
     await terminal.snapshot('09-light-narrow-settings');
     terminal.send('\x1b'); await terminal.wait('settings dismissed without approval', () => !filter());
-    terminal.send('\x03'); await terminal.wait('cancelled command cleared', () => !terminal.screen.includes('/settings'));
+    await terminal.wait('cancelled command cleared', () => !terminal.screen.includes('/settings'));
 
     terminal.send('QA streamed model run\r'); await bounded(firstDelta.promise, 'first provider delta');
-    await terminal.wait('first delta rendered while provider held', () => terminal.screen.includes('live · running') && terminal.screen.includes('QA_STREAM_FIRST'));
+    await terminal.wait('first delta rendered while provider held', () => terminal.screen.includes('Working') && terminal.screen.includes('QA_STREAM_FIRST'));
     expect(terminal.screen).not.toContain('QA_STREAM_SECOND');
     expect(f.store.session(f.root.sessionId).run.state).toBe('running');
     await terminal.snapshot('10a-narrow-first-delta', { runState: f.store.session(f.root.sessionId).run.state,
@@ -218,7 +221,7 @@ async function captureManualTerminal(output: string): Promise<void> {
       pendingInteractions: broker.pending().length, providerEventCount: providerEvents.length });
     terminal.send('\r');
     expect(await bounded(question, 'broker answer')).toMatchObject({ state: 'answered', answer: { kind: 'input', text: 'focus-kept-after-delta' } });
-    await terminal.wait('dialog answered, model still running', () => !terminal.screen.includes('QA pending question') && terminal.screen.includes('live · running'));
+    await terminal.wait('dialog answered, model still running', () => !terminal.screen.includes('QA pending question') && terminal.screen.includes('Working'));
     expect(providerEvents.some(event => event.type === 'done')).toBe(false);
     const userMessages = f.root.runtime.session.messages.filter(message => message.role === 'user');
     expect(userMessages).toHaveLength(1); expect(JSON.stringify(userMessages)).not.toContain('focus-kept');

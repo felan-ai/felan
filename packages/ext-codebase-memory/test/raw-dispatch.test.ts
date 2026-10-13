@@ -64,7 +64,7 @@ describe('raw Codebase Memory dispatch', () => {
       command: expect.stringContaining('"repo_path":"/Users/alice","mode":"full"'),
       options: { timeout: INDEX_TIMEOUT_MS },
     });
-    expect(runtime.files.has('codebase-memory/lru.json')).toBe(true);
+    expect(runtime.storedFiles.has('codebase-memory/lru.json')).toBe(true);
     await expect(call('index_status')).resolves.toBeDefined();
   });
 

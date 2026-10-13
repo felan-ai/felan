@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import type { BackgroundBashJob } from '../src/job-store.js';
 import { PROCESS_VIEW_BYTES, PROCESS_VIEW_PAGE_SIZE, clipProcessText, parseProcessViewAction,
-  parseProcessViewRequest, processViewAction, processViewJob, splitProcessLog, type ProcessViewRequest } from '../src/view.js';
+  parseProcessViewRequest, processViewAction, processViewJob, splitProcessLog, type ProcessViewRequest } from '../src/data.js';
 
 function request(): ProcessViewRequest {
   return { viewId: 'view', sequence: 1, offset: 0, total: 1, running: 1, selectedId: 'job-1',

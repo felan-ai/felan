@@ -19,9 +19,10 @@ describe('@felan-ai/ext-tasks package boundary', () => {
         directory: 'packages/ext-tasks',
       },
       publishConfig: { access: 'public', provenance: true },
-      exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
+      exports: { '.': { import: './dist/extension.js', types: './dist/extension.d.ts' } },
     });
-    expect(manifest.exports['./tui']).toEqual({ import: './dist/tui.js', types: './dist/tui.d.ts' });
+    expect(manifest.exports).not.toHaveProperty('./tui');
+    expect(manifest.exports).not.toHaveProperty('./service');
     expect(license).toContain('MIT License');
     expect(notice).toContain('9571293d422db11de893fa80ed0fc3e39945c657');
     expect(notice).toContain('No source code was copied');
@@ -31,8 +32,7 @@ describe('@felan-ai/ext-tasks package boundary', () => {
   it('keeps the execution entrypoint free of renderer imports', async () => {
     const source = await readFile(join(packageRoot, 'src/index.ts'), 'utf8');
     expect(source).not.toMatch(/from ['"][^'"]*(?:pi-tui|tasks-overlay|\/tui)/u);
-    const renderer = await readFile(join(packageRoot, 'src/tui.ts'), 'utf8');
-    expect(renderer).not.toMatch(/from ['"]\.\/(?:index|store)/u);
+    expect(source).not.toContain('@earendil-works/pi-tui');
   });
 
   it('routes persistence through AgentRuntime without cloud or subagent coupling', async () => {

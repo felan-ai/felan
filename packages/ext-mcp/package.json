@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-mcp",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Portable OAuth-only MCP gateway for Felan",
   "license": "MIT",
   "type": "module",
@@ -20,8 +20,12 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
+    },
+    "./service": {
+      "types": "./dist/service.d.ts",
+      "import": "./dist/service.js"
     }
   },
   "scripts": {

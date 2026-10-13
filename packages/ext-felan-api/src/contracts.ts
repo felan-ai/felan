@@ -18,21 +18,4 @@ export interface CreateFelanApiExtensionOptions {
   readonly timeoutMs?: number;
 }
 
-export type FelanApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-export type FelanApiTarget = 'api' | 'docs';
-
-export interface FelanApiResultDetails {
-  readonly method: FelanApiMethod;
-  readonly target?: FelanApiTarget;
-  readonly path: string;
-  readonly ok: boolean;
-  readonly truncated: boolean;
-  readonly status?: number;
-  readonly error?:
-    | 'invalid_request'
-    | 'request_too_large'
-    | 'timeout'
-    | 'network_error'
-    | 'response_error'
-    | 'http_error';
-}
+export type { FelanApiMethod, FelanApiTarget, FelanApiResultDetails } from '@felan-ai/agent-core';

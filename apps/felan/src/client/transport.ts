@@ -1,7 +1,7 @@
 import type { Socket } from 'node:net';
 import { JsonLineDecoder, LIMITS, encodeFrame } from '@felan-ai/session-protocol';
-import { connectLocalIpc } from '@felan-ai/daemon/internal/daemon/ipc';
-import type { ResolvedDaemonTarget } from '@felan-ai/daemon/internal/daemon/target';
+import { connectLocalIpc } from '@felan-ai/daemon/client';
+import type { ResolvedDaemonTarget } from '@felan-ai/daemon/client';
 
 export interface TransportReceiver {
   frame(value: unknown): void;

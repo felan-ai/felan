@@ -88,10 +88,8 @@ describe('safe data and immutable parser contracts', () => {
     expect(Object.isFrozen(OPERATION_CATALOG)).toBe(true);
     for (const definition of Object.values(OPERATION_CATALOG)) {
       expect(Object.isFrozen(definition)).toBe(true);
-      expect(Object.isFrozen(definition.clients)).toBe(true);
     }
     expect(Reflect.set(OPERATION_CATALOG.prompt, 'mutation', false)).toBe(false);
-    expect(Reflect.set(OPERATION_CATALOG.prompt.clients, '0', 'acp')).toBe(false);
     expect(() => parseClientEnvelope({ ...request('prompt'), id: requestId(now - LIMITS.requestRetentionMs - 1) }, { now })).toThrow();
   });
   it('requires host envelopes to omit session targets at compile time and runtime', () => {

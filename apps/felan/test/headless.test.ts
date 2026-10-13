@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runLocalFelanHeadless } from '../src/application.js';
+import { runLocalFelanHeadless } from '../src/headless.js';
 import { HeadlessJsonWriter, resolveHeadlessModel } from '../src/headless.js';
-import { HEADLESS_JSON_PRESENTER, type PresentationEvent } from '@felan-ai/session-protocol';
+import { type PresentationEvent } from '@felan-ai/session-protocol';
 import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 import { gate } from '../../daemon/test/fixtures/server.js';
 import { acpDaemonFixture } from './acp-daemon-fixture.js';
@@ -181,7 +181,7 @@ describe('daemon headless application', () => {
     let listener: ((event: PresentationEvent) => void) | undefined;
     const createClient: typeof f.createClient = options => {
       const client = f.createClient(options);
-      if (options.presenters?.some(presenter => presenter.id === HEADLESS_JSON_PRESENTER.id)) {
+      if (options.capabilities?.includes('native.events')) {
         const subscribe = client.subscribePresentation.bind(client);
         vi.spyOn(client, 'subscribePresentation').mockImplementation(callback => { listener = callback; return subscribe(callback); });
       }
@@ -189,7 +189,7 @@ describe('daemon headless application', () => {
     };
     const running = runLocalFelanHeadless({ ...f.settings, createClient, mode: 'json', initialMessage: 'keep running', sessionId: f.root.sessionId });
     await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('running'));
-    listener!({ v: 1, session: f.root.sessionId, presentationEvent: { presenter: HEADLESS_JSON_PRESENTER, sequence: 999, data: {} } });
+    listener!({ v: 1, session: f.root.sessionId, presentationEvent: { sequence: 999, data: {} } });
     expect(await running).toBe(1);
     expect(f.errors.join('\n')).toContain('sequence was interrupted');
     expect(f.store.session(f.root.sessionId).run.state).toBe('running');
@@ -204,7 +204,7 @@ describe('daemon headless application', () => {
     await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('running'));
     f.clients.at(-1)!.close();
     expect(await running).toBe(1);
-    expect(f.errors.join('\n')).toContain('connection was interrupted');
+    expect(f.errors.join('\n')).toContain('Client detached; execution may still be running');
     expect(f.store.session(f.root.sessionId).run.state).toBe('running');
     stream.resolve();
   });

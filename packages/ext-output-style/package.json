@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-output-style",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Portable output-style system prompt extension for Felan",
   "license": "MIT",
   "type": "module",
@@ -20,8 +20,12 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
+    },
+    "./extension": {
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
     }
   },
   "scripts": {
@@ -31,7 +35,7 @@
     "prepack": "pnpm build"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "catalog:agent-core"
+    "@felan-ai/agent-core": "^0.13.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

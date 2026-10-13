@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import type { DaemonIdentity, Operation, OperationParams, OperationResult, ResponseFor, SessionSnapshot } from '@felan-ai/session-protocol';
-import { acquireDaemonOwnership } from '@felan-ai/daemon/internal/daemon/ownership';
-import { builtinExtensionPackages } from '@felan-ai/daemon/internal/extensions';
+import { acquireDaemonOwnership } from '../../daemon/src/daemon/ownership.js';
+import { builtinExtensionPackages } from '../src/providers/extensions.js';
 import { clientDaemonTarget } from '../src/client-application.js';
 import { newRequestId, type AttachmentState } from '../src/client/client.js';
 
@@ -125,12 +125,19 @@ afterEach(async () => { const results = await Promise.allSettled(fixtures.splice
   const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
   if (errors.length) throw new AggregateError(errors, 'Process fixtures failed to clean up'); });
 
-async function fixture(): Promise<ProcessFixture> {
-  const f = new ProcessFixture(await realpath(await mkdtemp(join(tmpdir(), 'pc-')))); fixtures.push(f);
+async function fixture(usage = true): Promise<ProcessFixture> {
+  const f = new ProcessFixture(await realpath(await mkdtemp(join(usage ? tmpdir() : process.cwd(), '.pc-')))); fixtures.push(f);
   const owner = await acquireDaemonOwnership(f.target);
   try { await writeFile(join(owner.target.agentDir, 'settings.json'), JSON.stringify({ defaultProvider: 'offline', defaultModel: 'fixture',
     builtinExtensions: Object.fromEntries(Object.keys(builtinExtensionPackages).map(key => [key, false])) }), { mode: 0o600 }); }
   finally { await owner.release(); }
+  if (!usage) {
+    const config = JSON.parse(await readFile(new URL('../src/host.json', import.meta.url), 'utf8'));
+    config.services = config.services.filter((service: { id: string }) => service.id !== 'felan.usage');
+    const owner = await acquireDaemonOwnership(f.target);
+    try { await writeFile(join(owner.target.agentDir, 'host.json'), JSON.stringify(config), { mode: 0o600 }); }
+    finally { await owner.release(); }
+  }
   await writeFile(join(f.directory, 'provider-calls.jsonl'), '', { mode: 0o600 });
   return f;
 }
@@ -158,8 +165,8 @@ async function environment(worker: Worker, session: string): Promise<string> {
   expect(output.state).toBe('exited'); return Buffer.from(output.data, 'base64').toString('utf8');
 }
 
-it('runs offline with two OS clients, owns its launch environment, and completes a shared stream after its sender is killed', async () => {
-  const f = await fixture(); const daemon = await f.daemon('daemon-first');
+it('runs without felan.usage, owns its launch environment, and completes a shared stream after its sender is killed', async () => {
+  const f = await fixture(false); const daemon = await f.daemon('daemon-first');
   const a = await f.client('client-a'); const b = await f.client('client-b');
   expect(new Set([process.pid, daemon.ready.pid, a.ready.pid, b.ready.pid]).size).toBe(4);
   expect(a.ready.environment).toBe('client-a'); expect(b.ready.environment).toBe('client-b');

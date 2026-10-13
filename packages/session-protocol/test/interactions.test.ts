@@ -7,41 +7,47 @@ const cases = [
   [{ kind: 'confirm', title: 'Proceed', message: '' }, { kind: 'confirm', confirmed: true }],
   [{ kind: 'input', title: 'Input' }, { kind: 'input', text: 'text' }],
   [{ kind: 'editor', title: 'Edit', initialValue: 'before' }, { kind: 'editor', text: 'after' }],
-  [{ kind: 'ask_user', questions: [{ id: 'q', question: 'Which?', options: [{ id: 'a', title: 'A' }] }] }, { kind: 'ask_user', answers: [{ questionId: 'q', choices: ['a'] }] }],
   [{ kind: 'tool_approval', toolCallId: 'call', toolName: 'bash', summary: 'Command', options: [{ id: 'once', title: 'Allow once' }] }, { kind: 'tool_approval', optionId: 'once' }],
-  [{ kind: 'oauth', provider: 'fixture', url: 'https://example.invalid/authorize', instructions: 'Sign in', provisioningId: 'private-ref' }, { kind: 'oauth', provisioningId: 'private-ref' }],
-  [{ kind: 'trust', cwd: '/fixture', message: 'Trust?' }, { kind: 'trust', trusted: true }],
   [{ kind: 'dependency', dependency: 'fixture', message: 'Install?' }, { kind: 'dependency', approved: false }],
-  [{ kind: 'custom', presenter: { id: 'fixture', version: '1' }, data: { title: 'Fixture' } }, { kind: 'custom', presenter: { id: 'fixture', version: '1' }, data: { selected: 'a' } }],
+  [{ kind: 'form', form: { title: 'Choose', fallback: 'Choose an action', input: { fields: [] }, actions: [{ id: 'cancel', label: 'Cancel', target: 'element', outcome: 'cancel' }] } }, { kind: 'form', actionId: 'cancel', outcome: 'cancel', values: {} }],
 ] as const;
 
 describe('declarative interactions', () => {
+  it('preserves optional approval authority without changing legacy interactions', () => {
+    expect(parseInteraction(interaction)).not.toHaveProperty('authority');
+    for (const authority of ['owner', 'local-console'] as const) {
+      expect(parseInteraction({ ...interaction, authority })).toMatchObject({ authority });
+    }
+    for (const authority of ['tui', 'acp', true, null, { owner: true }]) {
+      expect(() => parseInteraction({ ...interaction, authority })).toThrow();
+    }
+  });
+
   it.each(cases)('round trips $kind request and typed answer', (request, result) => {
     const value = { ...interaction, request };
     expect(validateInteractionAnswer(parseInteraction(value), result)).toEqual(result);
     expect(parseInteraction({ ...value, state: 'answered', responder: 'assigned-principal', resolvedAt: now + 1, result })).toMatchObject({ state: 'answered' });
   });
+  it('validates explicit deferral independently of request kind', () => {
+    for (const [request] of cases) {
+      const value = { ...interaction, request };
+      expect(parseInteraction({ ...value, deferrable: true }).deferrable).toBe(true);
+      expect(parseInteraction({ ...value, deferrable: false }).deferrable).toBe(false);
+      expect(parseInteraction(value).deferrable).toBeUndefined();
+      expect(() => parseInteraction({ ...value, deferrable: 'true' })).toThrow();
+    }
+  });
   it('covers exactly the negotiated kinds', () => {
     expect(cases.map(([request]) => request.kind)).toEqual(INTERACTION_KINDS);
   });
-  it('rejects mismatched kinds, invalid choices and custom presenter versions', () => {
+  it('rejects mismatched kinds and invalid choices', () => {
     expect(() => validateInteractionAnswer(interaction, { kind: 'input', text: 'not approval' })).toThrow();
     const select = parseInteraction({ ...interaction, request: cases[0]![0] });
     expect(() => validateInteractionAnswer(select, { kind: 'select', choices: ['unknown'] })).toThrow();
-    const custom = parseInteraction({ ...interaction, request: cases[9]![0] });
-    expect(() => validateInteractionAnswer(custom, { kind: 'custom', presenter: { id: 'fixture', version: '2' }, data: {} })).toThrow();
   });
-  it('requires complete unique wizard answers and enforces freeform/comment permissions', () => {
-    const wizard = parseInteraction({ ...interaction, request: { kind: 'ask_user', questions: [
-      { id: 'a', question: 'A?', allowFreeform: false, options: [{ id: 'x', title: 'X' }] },
-      { id: 'b', question: 'B?', allowFreeform: true },
-    ] } });
-    const good = { kind: 'ask_user', answers: [{ questionId: 'a', choices: ['x'] }, { questionId: 'b', choices: [], text: 'text' }] };
-    expect(validateInteractionAnswer(wizard, good)).toEqual(good);
-    expect(() => validateInteractionAnswer(wizard, { ...good, answers: [good.answers[0]] })).toThrow();
-    expect(() => validateInteractionAnswer(wizard, { ...good, answers: [good.answers[0], good.answers[0]] })).toThrow();
-    expect(() => validateInteractionAnswer(wizard, { ...good, answers: [{ questionId: 'a', choices: [], text: 'forbidden' }, good.answers[1]] })).toThrow();
-    expect(() => validateInteractionAnswer(wizard, { ...good, answers: [{ ...good.answers[0], comment: 'forbidden' }, good.answers[1]] })).toThrow();
+  it.each(['ask_user', 'custom', 'oauth', 'trust'])('rejects removed interaction kind %s', kind => {
+    expect(() => parseInteraction({ ...interaction, request: { kind } })).toThrow();
+    expect(() => validateInteractionAnswer(interaction, { kind })).toThrow();
   });
   it('retains waiting and deferred requests without inventing answers on detach', () => {
     expect(parseInteraction(interaction).state).toBe('waiting');
@@ -58,26 +64,4 @@ describe('declarative interactions', () => {
     expect(() => parseInteraction({ ...interaction, request: { kind: 'custom', presenter: { id: 'p', version: '1' }, data: 'x'.repeat(LIMITS.structuredBytes) } })).toThrow();
   });
 
-  it.each([
-    { name: 'Unicode', text: '界'.repeat(32_000) },
-    { name: 'astral Unicode', text: '😀'.repeat(16_000) },
-    { name: 'escaped controls', text: '\u0000'.repeat(32_000) },
-  ])('preserves large custom document text independently of metadata bounds: $name', ({ text }) => {
-    const value = { ...interaction, request: { kind: 'custom', presenter: { id: 'document', version: '1' }, data: null, document: text } };
-    expect(parseInteraction(value).request).toEqual(value.request);
-  });
-
-  it('keeps the overall interaction ceiling on custom document text', () => {
-    expect(() => parseInteraction({ ...interaction, request: {
-      kind: 'custom', presenter: { id: 'document', version: '1' }, data: null, document: 'x'.repeat(LIMITS.interactionBytes),
-    } })).toThrow();
-  });
-
-  it('retains bounded structured documents without relaxing ordinary metadata limits', () => {
-    const document = { answers: [{ model: 'fixture/model', text: 'answer '.repeat(30_000) }], complete: true };
-    const request = { kind: 'custom', presenter: { id: 'structured-review', version: '1' }, data: null, document };
-    expect(parseInteraction({ ...interaction, request }).request).toEqual(request);
-    expect(() => parseInteraction({ ...interaction, request: { kind: 'custom', presenter: request.presenter, data: document } })).toThrow();
-    expect(() => parseInteraction({ ...interaction, request: { ...request, document: Array(LIMITS.catalogEntries + 1).fill(null) } })).toThrow();
-  });
 });

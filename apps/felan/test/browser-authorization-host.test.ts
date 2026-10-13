@@ -1,10 +1,11 @@
 import type { AgentRuntime, ExtensionContext } from '@felan-ai/agent-core';
 import type { BrowserAuthorizationRequest } from '@felan-ai/ext-browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChromePreflight } from '../../daemon/src/browser/chrome-devtools.js';
+import type { ChromePreflight } from '../src/providers/browser/chrome-devtools.js';
 
-import { createLocalBrowserAuthorizationHost } from '../../daemon/src/browser/authorization-host.js';
-import { createLegacyBrowserPresentation } from '../src/browser-presentation.js';
+import { createLocalBrowserAuthorizationHost } from '../src/providers/browser/authorization-host.js';
+import { openBrowserSetup } from '../src/providers/setup-open.js';
+import { CHROME_ACCESS_MESSAGE } from '@felan-ai/ext-browser/presentation';
 
 const openTarget = vi.fn(async () => ({ stdout: '', stderr: '', code: 0, killed: false }));
 const APPLICATION = '/Applications/Google Chrome.app';
@@ -96,8 +97,8 @@ describe('local browser authorization host', () => {
     expect(replaced.attach).not.toHaveBeenCalled();
   });
 
-  it.each(['print', 'rpc', 'acp'])('fails closed outside the interactive TUI in %s mode', async mode => {
-    const f = fixture(mode);
+  it.each(['print', 'rpc', 'acp'])('fails closed without a presentation provider in %s mode', async mode => {
+    const f = fixture(mode, { unavailable: true });
     await expect(f.authorize()).resolves.toMatchObject({ status: 'unavailable' });
     expect(f.confirm).not.toHaveBeenCalled();
     expect(f.inspect).not.toHaveBeenCalled();
@@ -164,7 +165,7 @@ describe('local browser authorization host', () => {
 
 const READY = { state: 'ready', processId: 123, connection: { port: 4141, webSocketPath: '/devtools/browser' } } as const;
 
-function fixture(mode = 'tui', options: { selected?: string; policy?: 'ask' | 'always-allow'; persistFailure?: boolean; reason?: string } = {}) {
+function fixture(mode = 'tui', options: { selected?: string; policy?: 'ask' | 'always-allow'; persistFailure?: boolean; reason?: string; unavailable?: boolean } = {}) {
   const controller = new AbortController();
   const leaseController = new AbortController();
   const state = { connected: true };
@@ -193,6 +194,27 @@ function fixture(mode = 'tui', options: { selected?: string; policy?: 'ask' | 'a
   };
   return { controller, state, lease, confirm, select, persist, inspect, createLease, attach, status, attention,
     authorize: () => createLocalBrowserAuthorizationHost({ runtime, inspect, createLease, onAttention: attention,
-      presentation: createLegacyBrowserPresentation(runtime),
+      presentation: () => options.unavailable ? undefined : {
+        async consent(origin, reason, signal) {
+          const message = `${origin}\n${reason ?? ''}\n${CHROME_ACCESS_MESSAGE}`;
+          if (options.selected === undefined) return await confirm('Authorize existing Chrome?', message, { signal }) ? 'once' : undefined;
+          const choice = await select(message, ['Allow once', 'Always allow', 'Deny'], { signal });
+          return choice === 'Always allow' ? 'always' : choice === 'Allow once' ? 'once' : undefined;
+        },
+        async openSetup(path, signal) { await openBrowserSetup(runtime, path, signal); return true; },
+        ready: signal => confirm('Continue Chrome authorization?', '', { signal }),
+      },
       ...(options.policy === undefined ? {} : { authorizationPolicy: options.policy }), persistAuthorizationPolicy: persist }).authorize(request) };
 }
+
+beforeEach(() => openTarget.mockClear());
+
+it.each(['relative.app', '/Applications/Chrome.app\n'])('rejects invalid native application paths: %j', async path => {
+  await expect(openBrowserSetup({ kind: 'host', exec: openTarget } as unknown as AgentRuntime, path, new AbortController().signal)).rejects.toThrow('valid local application');
+  expect(openTarget).not.toHaveBeenCalled();
+});
+
+it('refuses Chrome setup on non-host runtimes', async () => {
+  await expect(openBrowserSetup({ kind: 'docker', exec: openTarget } as unknown as AgentRuntime, APPLICATION, new AbortController().signal)).rejects.toThrow('valid local application');
+  expect(openTarget).not.toHaveBeenCalled();
+});

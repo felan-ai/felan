@@ -1034,7 +1034,7 @@ describe('browser extension', () => {
           if (change === 'scheme') session.currentURL = 'file:///private';
           else session.targetId = 'unexpected-target';
           const path = args.find((arg) => arg.endsWith('.png'))!;
-          runtime.files.set(path, VALID_PNG_HEADER);
+          runtime.fileContents.set(path, VALID_PNG_HEADER);
           return jsonSuccess({ path, text: 'PRIVATE_BROWSER_RESPONSE' });
         },
       },
@@ -1275,7 +1275,7 @@ async function createHarness(options: {
       if (key === 'get url') return jsonSuccess({ url: session.currentURL });
       if (args[0] === 'screenshot') {
         const path = args.find((arg, index) => index > 0 && arg.endsWith('.png'))!;
-        runtime.files.set(path, VALID_PNG_HEADER);
+        runtime.fileContents.set(path, VALID_PNG_HEADER);
         return jsonSuccess({ path });
       }
       if (args[0] === 'open' && args.includes('--cdp') && options.failAttachment) {

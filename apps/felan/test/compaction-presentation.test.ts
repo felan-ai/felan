@@ -8,6 +8,7 @@ import {
   projectedCompactionComponent,
 } from '../src/compaction-presentation.js';
 import { projectPiMessage } from '../../daemon/src/daemon/projection.js';
+import { createLocalSessionRuntime } from '../src/providers/session-runtime.js';
 
 beforeAll(() => {
   initTheme('dark', false);
@@ -15,9 +16,11 @@ beforeAll(() => {
 
 describe('compaction presentation', () => {
   it('renders the same method and full summary from a serialized protocol message', () => {
-    const message = projectPiMessage({ type: 'compaction', id: 'c', parentId: null, timestamp: new Date(0).toISOString(),
+    const entry = { type: 'compaction' as const, id: 'c', parentId: null, timestamp: new Date(0).toISOString(),
       firstKeptEntryId: 'f', summary: '## Goal\nPreserve this summary.', tokensBefore: 12345, fromHook: true,
-      details: { namespace: 'felan.session-compaction', schemaVersion: 1, method: 'classifier' } });
+      details: { namespace: 'felan.session-compaction', schemaVersion: 1, method: 'classifier' } };
+    const runtime = createLocalSessionRuntime({ runtimeService: { create() { throw new Error('Unexpected runtime creation'); } } });
+    const message = runtime.projectMessage!(entry, projectPiMessage(entry));
     const component = projectedCompactionComponent(JSON.parse(JSON.stringify(message)), getMarkdownTheme(), 1);
     expect(component).toBeDefined(); expect(component!.render(100).join('\n')).toContain('Context compacted · Classifier');
     component!.setExpanded(true); expect(component!.render(100).join('\n')).toContain('Compacted from 12,345 tokens');

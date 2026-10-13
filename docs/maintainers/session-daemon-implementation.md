@@ -1,9 +1,10 @@
 # Story 1 implementation handoff
 
-Status: Story 1 local daemon/client implementation complete. This handoff
-retains its design and acceptance rationale; it is not a cloud-platform plan.
-Node `22.20.0` and pnpm `9.15.5` remain the release toolchain. Independent review
-is paused; do not claim one occurred.
+Historical pre-services handoff. The services migration supersedes the profile
+and presenter seams below; see [ADR 0036](../decisions/0036-configure-extension-services-through-trusted-providers.md)
+and [the current guide](extension-services-and-ui.md). This document retains
+the original rationale, not current release acceptance. Node `22.20.0` and
+pnpm `9.15.5` remain the release toolchain.
 
 The approved source is [shared-session-daemon/design.html](../../../felan-platform/docs/architecture/shared-session-daemon/design.html),
 especially `#delivery`, `#protocol`, `#extensions`, `#guarantees` and R1–R5/R10.
@@ -53,8 +54,8 @@ The subsequent distribution decision is recorded in
   identity, never production discovery. See the explicit
   [target contract](session-daemon-contracts.md#production-and-isolated-runtime-targets).
   No idle self-termination is inferred from zero clients.
-- Existing files remain visible. Resuming legacy data requires an explicit,
-  backed-up adoption after known legacy owners are stopped. No automatic takeover.
+- Only registered daemon sessions are visible or resumable. Explicit import
+  copies pre-daemon history to a new ID without changing the source.
 
 ## Completion evidence and limits
 
@@ -162,7 +163,8 @@ review findings are not additional product requirements.
 
 The user has paused code reviews for now. Continue implementation and relevant
 tests without starting reviewers or claiming review approval. Reuse the approved
-isolated runner and retain its safety checks. Optional improvements stay deferred
+`scripts/test-isolated.sh` wrapper for daemon/client tests, including
+`scripts/test-isolated.sh pnpm verify`. Do not use the historical freeze-checkpoint runner. Optional improvements stay deferred
 unless they block required behavior, correctness or safety. Earlier per-task
 review gates below describe the original workflow and are suspended by this
 instruction; source snapshots, test evidence and ownership rules still apply.
@@ -177,7 +179,7 @@ Dependencies permit sequential transfer, never simultaneous shared-file edits.
 | S1.01 `T-A4BB2A` | These four `session-daemon-*.md` documents, `docs/maintainers/probes/session-daemon-*`, ADRs 0020–0023, status annotation in ADR 0004. No application implementation. |
 | S1.02 `T-B7380C` | New `packages/session-protocol/**`; root `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `scripts/package-paths.mjs`, protocol package-list/packed/license wiring only. Sole root dependency/lockfile editor while S1.02 and S1.05 run in parallel; no app `./daemon-profile` export. |
 | S1.03 `T-949435` | `apps/tui/src/daemon/{ownership,ipc,supervisor,native-ownership}.ts`; native helper assets if proven necessary; `test/daemon-ownership.test.ts`, `test/daemon-ipc.test.ts`. Owns native dependency/notice wiring **after** S1.02's manifest handoff. No registry/broker. |
-| S1.04 `T-20E0D2` | `daemon/{store,legacy-adoption}.ts`, `test/daemon-store.test.ts`, fault fixtures. No new transcript backend. |
+| S1.04 `T-20E0D2` | `daemon/control-store.ts`, `test/daemon-store.test.ts`, fault fixtures. No new transcript backend. |
 | S1.05 `T-1FD98F` | `daemon/{profile,local-profile,process-bootstrap,execution-policy}.ts`; `local-resources.ts`, `extension-catalog.ts`, `runtime.ts`, `extensions.ts`, `settings.ts`, `codex.ts`; type-only `agent-core/src/index.ts` export and focused tests. Narrow shared `safe-tools.ts` extraction and ACP import preserve existing ACP behavior. Owns only `apps/tui/package.json`'s existing `./daemon-profile` export; S1.03 holds the temporary dependency/native-build/root-lock lease. No new environment accessor or provider adaptation. Legacy `application.ts` lifecycle remains unchanged; daemon startup wiring belongs to the cutover tasks. Hands execution/presenter splitting to S1.09. |
 | S1.06 `T-19A785` | `daemon/{registry,projection,processes}.ts`; `subagents/{host,store}.ts`, memory lifetime adaptations. Sequentially receives `runtime.ts`/`runtime-factory.ts` from S1.05. No `ext-subagents` overwrite: preserve original user delta. |
 | S1.07 `T-66A5A5` | `daemon/{admission,server}.ts`, corresponding server/admission tests. Injected broker port only; unwired calls reject `unavailable`. |
@@ -227,13 +229,13 @@ evidence; later owners compare against that baseline and preserve the delta.
 No commit, push, publish, reset, linked database activity or live-daemon operation
 is authorized by this plan.
 
-## Safe cutover, legacy adoption and rollback
+## Safe cutover and rollback
 
 Keep the work on a nonshipping integration branch/worktree until S1.15 passes
 and S1.16 approves release readiness. Intermediate modules can coexist in source,
 but never advertise partial single-writer behavior or ship a mixed entrypoint.
 
-1. Before testing adoption, stop **only disposable fixture** owners. For a real
+1. Before testing cutover, stop **only disposable fixture** owners. For a real
    release, the operator explicitly stops all old Felan/TUI/ACP/headless/memory
    workers and verifies their descendants; do not kill arbitrary processes by
    name. Detection is best-effort for old binaries, not a fence.
@@ -243,11 +245,8 @@ but never advertise partial single-writer behavior or ship a mixed entrypoint.
    files is not a consistent backup; explicitly stop detached jobs too before
    claiming a quiescent full backup. Never put credentials in review artifacts.
 3. New daemon acquires account singleton and all canonical root locks **before**
-   opening a writer. Existing files list as legacy/unadopted. Explicit selected
-   resume confirms source, cwd and absence of known owners, then copies the
-   unchanged legacy JSONL into the managed namespace and records adoption.
-   ACP/headless instead report typed `adoption_required` until that one-time
-   TUI management flow is complete; never take over during discovery or load.
+   opening a writer. Pre-daemon files are not listed or resumable. Explicit
+   import creates a fresh managed ID without changing the source.
 4. Cut over TUI, ACP and headless together. Tests must prove client imports cannot
    construct/open SessionManager or start local runtime execution. `acp login`
    alone may update `auth.json` using its existing lock; it is not a session writer.
@@ -268,7 +267,7 @@ but never advertise partial single-writer behavior or ship a mixed entrypoint.
    launches or ambiguous process identity block affected writes until resolved.
    Never silently rerun a shell, prompt or continuation.
 
-Downgrade/adoption are acceptance fixtures, not actions to perform on this
+Downgrade/import are acceptance fixtures, not actions to perform on this
 developer's stores. Network filesystems without verified lock/identity semantics
 are unsupported for canonical writable roots; fail closed rather than fall back
 to mtime leases. Old noncooperating binaries can still ignore locks: disclose this

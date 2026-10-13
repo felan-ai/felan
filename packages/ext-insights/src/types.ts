@@ -122,7 +122,8 @@ export interface ParsedSession {
 export interface InsightsSessionReference {
   readonly id: string;
   readonly path: string;
-  readonly size: number;
+  readonly size?: number;
+  readonly contentVersion?: string;
   readonly modifiedAtMs: number;
   readonly rootSessionId?: string;
   readonly isAgent?: boolean;

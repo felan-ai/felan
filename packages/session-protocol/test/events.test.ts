@@ -52,7 +52,7 @@ describe('durable revisions and coalesced state changes', () => {
     { type: 'metadata.updated', title: 'title', state: 'open', residency: 'evicted' },
     { type: 'model.updated', model: snapshot.model, thinking: 'high' }, { type: 'branch.updated', branch: 'branch', history },
     { type: 'policy.updated', policy }, { type: 'child.updated', child: { session: 'child', parent: 'session', root: 'session', title: 'child', run: { state: 'idle' }, state: 'open' } },
-    { type: 'process.updated', process }, { type: 'presentation.updated', presentation: { id: 'status', kind: 'status', text: 'working' } },
+    { type: 'process.updated', process }, { type: 'presentation.updated', presentation: { id: 'status', kind: 'status', key: 'working', value: { kind: 'text', text: 'working' }, fallback: 'Status' } },
     { type: 'presentation.removed', id: 'status' }, { type: 'catalog.updated', catalog: snapshot.catalog },
     { type: 'stream.completion_only', stream: { message: 'message', id: 'stream', kind: 'thinking', reason: 'limit' } },
   ];
@@ -66,7 +66,7 @@ describe('durable revisions and coalesced state changes', () => {
   it('bounds replacement tool/status projections and preserves authoritative completion', () => {
     expect(parseSessionEvent({ v: 1, session: 'session', rev: 8, change: { type: 'tool.updated', tool: { ...tool, state: 'completed', output: 'final' } } })).toBeTruthy();
     expect(() => parseSessionEvent({ v: 1, session: 'session', rev: 8, change: { type: 'tool.updated', tool: { ...tool, output: 'a'.repeat(LIMITS.statusTextBytes + 1) } } })).toThrow();
-    expect(() => parseSessionEvent({ v: 1, session: 'session', rev: 8, change: { type: 'presentation.updated', presentation: { id: 's', kind: 'status', text: 'a'.repeat(LIMITS.structuredBytes) } } })).toThrow();
+    expect(() => parseSessionEvent({ v: 1, session: 'session', rev: 8, change: { type: 'presentation.updated', presentation: { id: 's', kind: 'status', key: 'working', value: { kind: 'text', text: 'a'.repeat(LIMITS.structuredBytes) }, fallback: 'Status' } } })).toThrow();
     expect(parseSessionEvent({ v: 1, session: 'session', rev: 9, change: { type: 'message.completed', message } })).toMatchObject({ rev: 9 });
   });
   it('ignores unknown additive event kinds without forgiving malformed known kinds', () => {

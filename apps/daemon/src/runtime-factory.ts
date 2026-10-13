@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import type { AgentRuntime } from '@felan-ai/agent-core';
 
-export interface LocalAgentRuntimeFactoryRequest {
+export interface RuntimeStorageRequest {
   readonly cwd: string;
   readonly agentDir: string;
   readonly rootSessionId: string;
@@ -10,15 +10,15 @@ export interface LocalAgentRuntimeFactoryRequest {
   readonly pathAccess: 'host';
 }
 
-export type LocalAgentRuntimeFactory = (
-  request: LocalAgentRuntimeFactoryRequest,
+export type RuntimeFactory = (
+  request: RuntimeStorageRequest,
 ) => AgentRuntime;
 
-export function createLocalAgentRuntimeFactoryRequest(
+export function createRuntimeStorageRequest(
   cwd: string,
   agentDir: string,
   rootSessionId: string,
-): LocalAgentRuntimeFactoryRequest {
+): RuntimeStorageRequest {
   return {
     cwd,
     agentDir,

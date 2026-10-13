@@ -60,9 +60,9 @@ describe.skipIf(!supported)('daemon session registry', () => {
     expect(JSON.stringify(f.store.snapshot())).not.toContain('not yet consumed');
   });
 
-  it('never evicts live child, PTY or detached-job references; these do not block policy activation', async () => {
+  it('never evicts live PTY or detached-job references; these do not block policy activation', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
-    for (const kind of ['child', 'pty', 'detached'] as const) {
+    for (const kind of ['pty', 'detached'] as const) {
       f.store.putResource({ id: kind, session: b.sessionId, root: b.sessionId, kind, state: 'running', updatedAt: now });
       expect(await f.registry.evictIdle()).toEqual([]);
     }
@@ -71,7 +71,7 @@ describe.skipIf(!supported)('daemon session registry', () => {
 
   it('holds nondeferred interaction runtime, allows deferred waits to survive eviction', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
-    f.store.putInteraction({ id: 'ask', scope: { kind: 'session', session: b.sessionId, root: b.sessionId }, request: { kind: 'ask_user', questions: [{ id: 'q', question: 'Continue?' }] }, eligibleClientKinds: ['tui'], state: 'waiting', createdAt: now });
+    f.store.putInteraction({ id: 'ask', scope: { kind: 'session', session: b.sessionId, root: b.sessionId }, request: { kind: 'input', title: 'Continue?' }, deferrable: true, state: 'waiting', createdAt: now });
     expect(await f.registry.evictIdle()).toEqual([]);
     f.store.deferInteraction('ask'); expect(await f.registry.evictIdle()).toEqual([b.sessionId]);
     await f.registry.restore(b.sessionId);

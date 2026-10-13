@@ -100,12 +100,12 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
     expect(() => reloaded.recover()).toThrow(/only valid/);
     expect(reloaded.session('s').projections.find(item => item.value.type === 'tool')?.value).toMatchObject({ tool: { state: 'interrupted' } });
   });
-  it('retains process identities but never recreates a PTY, foreground process or child', async () => {
+  it('retains process identities but never recreates a PTY or foreground process', async () => {
     const { owner, store } = await open();
-    for (const kind of ['pty', 'foreground', 'detached', 'child'] as const) store.putResource({ id: kind, session: 's', root: 's', kind, state: 'running', pid: 12345, startIdentity: 'fake-birth', reference: join(owner.target.agentDir, `${kind}.record`), updatedAt: now });
+    for (const kind of ['pty', 'foreground', 'detached'] as const) store.putResource({ id: kind, session: 's', root: 's', kind, state: 'running', pid: 12345, startIdentity: 'fake-birth', reference: join(owner.target.agentDir, `${kind}.record`), updatedAt: now });
     store.close(); const reloaded = reopen(owner); const plan = reloaded.recover().value;
-    expect(plan.reconcileDetached).toEqual(['detached']); expect(plan.missingResources).toEqual(['pty', 'foreground', 'child']);
-    expect(reloaded.snapshot().resources.map(item => [item.id, item.state, item.pid])).toEqual([['pty', 'missing', 12345], ['foreground', 'missing', 12345], ['detached', 'reconciling', 12345], ['child', 'interrupted', 12345]]);
+    expect(plan.reconcileDetached).toEqual(['detached']); expect(plan.missingResources).toEqual(['pty', 'foreground']);
+    expect(reloaded.snapshot().resources.map(item => [item.id, item.state, item.pid])).toEqual([['pty', 'missing', 12345], ['foreground', 'missing', 12345], ['detached', 'reconciling', 12345]]);
     expect(() => reloaded.putResource({ ...reloaded.snapshot().resources[0], pid: 999 })).toThrow(/identity/);
   });
   for (const boundary of ['before_write', 'after_write', 'after_file_sync', 'before_rename', 'after_rename', 'after_directory_sync'] as PersistenceBoundary[]) {
@@ -153,7 +153,7 @@ describe.skipIf(!supported)('real crashed-process recovery without execution rep
       expect(store.session('session').revision).toBeGreaterThan(before); expect(store.session('session').run.state).toBe('interrupted');
       if (mode.startsWith('answer')) {
         expect(store.snapshot().interactions[0]?.state).toBe('answered');
-        expect(store.snapshot().interactions[0]).toMatchObject({ result: { answers: [{ text: 'yes' }] } });
+        expect(store.snapshot().interactions[0]).toMatchObject({ result: { kind: 'input', text: 'yes' } });
         expect(plan.resumableContinuations).toEqual(mode === 'answer-ready' ? ['continuation'] : []);
         expect(store.snapshot().continuations[0]?.phase).toBe(mode === 'answer-ready' ? 'ready' : mode === 'answer-completed' ? 'completed' : 'indeterminate');
       } else if (mode.startsWith('pi-')) {
@@ -168,35 +168,34 @@ describe.skipIf(!supported)('real crashed-process recovery without execution rep
 });
 
 describe.skipIf(!supported)('atomic interaction winners and continuation intents', () => {
-  const answer = { kind: 'ask_user' as const, answers: [{ questionId: 'q', choices: [], text: 'yes' }] };
-  function ask(createdAt = now) { return { id: 'ask', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'ask_user', questions: [{ id: 'q', question: 'Continue?' }] }, eligibleClientKinds: ['tui', 'acp'], state: 'waiting', createdAt }; }
+  const answer = { kind: 'input' as const, text: 'yes' };
+  function ask(createdAt = now) { return { id: 'ask', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'input', title: 'Continue?' }, deferrable: true, state: 'waiting', createdAt }; }
   it('commits one answer, its request outcome, continuation and revision in a single snapshot', async () => {
     const { owner, store } = await open(); store.putInteraction(ask());
     const id = requestId(); store.admit({ v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'ask', answer } }, 'winner');
     const revision = store.session('s').revision;
-    const result = store.answerInteraction(id, answer, 'tui', 'continue');
+    const result = store.answerInteraction(id, answer, 'continue');
     expect(result.revisions.s).toBe(revision + 1);
     expect(store.snapshot().requests[0]?.response?.outcome).toBe('accepted');
     expect(store.snapshot().continuations[0]?.phase).toBe('ready');
     const other = requestId(); store.admit({ v: 1, id: other, op: 'interaction.answer', session: 's', params: { interactionId: 'ask', answer } }, 'loser');
-    expect(() => store.answerInteraction(other, answer, 'acp', 'duplicate')).toThrow(/already resolved/);
+    expect(() => store.answerInteraction(other, answer, 'duplicate')).toThrow(/already resolved/);
     store.close(); const reloaded = reopen(owner); expect(reloaded.recover().value.resumableContinuations).toEqual(['continue']);
     expect(reloaded.snapshot().interactions[0]).toMatchObject({ state: 'answered', responder: 'winner', result: answer });
     reloaded.transitionContinuation('continue', 'dispatch_intent');
     expect(() => reloaded.transitionContinuation('continue', 'dispatch_intent')).toThrow(/twice/);
   });
-  it('validates answers and eligibility before committing any winner or revision', async () => {
+  it('validates admitted answers before committing any winner or revision', async () => {
     const { store } = await open(); store.putInteraction(ask());
     const id = requestId(); store.admit({ v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'ask', answer } }, 'winner');
     const before = store.snapshot();
-    expect(() => store.answerInteraction(id, answer, 'headless', 'continue')).toThrow(/eligible/);
-    expect(() => store.answerInteraction(id, { ...answer, answers: [{ questionId: 'other', choices: [], text: 'no' }] }, 'tui', 'continue')).toThrow(/differs/);
+    expect(() => store.answerInteraction(id, { ...answer, text: 'no' }, 'continue')).toThrow(/differs/);
     expect(store.snapshot()).toEqual(before);
   });
   it('defers ask-user with a bounded default expiry, cancels nonreplayable waits and excludes OAuth secrets', async () => {
     const { owner, store } = await open(); store.putInteraction(ask());
-    store.putInteraction({ id: 'approval', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'confirm', title: 'Run tool?', message: '' }, eligibleClientKinds: ['tui'], state: 'waiting', createdAt: now });
-    expect(() => store.putInteraction({ id: 'oauth', scope: { kind: 'host' }, request: { kind: 'oauth', provider: 'fake', url: 'https://invalid/?token=secret', instructions: '', provisioningId: 'fake' }, eligibleClientKinds: ['tui'], state: 'waiting', createdAt: now })).toThrow(/transient/);
+    store.putInteraction({ id: 'approval', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'confirm', title: 'Run tool?', message: '' }, state: 'waiting', createdAt: now });
+    expect(() => store.putInteraction({ id: 'oauth', scope: { kind: 'host' }, request: { kind: 'oauth', provider: 'fake', url: 'https://invalid/?token=secret', instructions: '', provisioningId: 'fake' }, state: 'waiting', createdAt: now })).toThrow();
     store.close(); const reloaded = reopen(owner); reloaded.recover();
     expect(reloaded.snapshot().interactions[0]).toMatchObject({ state: 'deferred', expiresAt: now + 30 * 60 * 1000 });
     expect(reloaded.snapshot().interactions[1]).toMatchObject({ state: 'cancelled', result: { reason: 'restart' } });
@@ -205,7 +204,7 @@ describe.skipIf(!supported)('atomic interaction winners and continuation intents
     let fail = false;
     const { owner, store } = await open({ fault: at => { if (fail && at === boundary) throw new Error('disk full'); } });
     store.putInteraction(ask()); const id = requestId(); store.admit({ v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'ask', answer } }, 'winner');
-    fail = true; expect(() => store.answerInteraction(id, answer, 'tui', 'continue')).toThrow(/commit failed/); store.close();
+    fail = true; expect(() => store.answerInteraction(id, answer, 'continue')).toThrow(/commit failed/); store.close();
     const reloaded = reopen(owner); const plan = reloaded.recover().value;
     expect(plan.resumableContinuations).toEqual(boundary === 'after_rename' ? ['continue'] : []);
     expect(reloaded.snapshot().interactions[0]?.state).toBe(boundary === 'after_rename' ? 'answered' : 'deferred');
@@ -224,7 +223,7 @@ describe.skipIf(!supported)('control retention and cancellation boundaries', () 
   });
   it('persists explicit unsupported/abort/drain outcomes and expires only after the deadline', async () => {
     let time = now; const { store } = await open({ now: () => time });
-    const pending = (id: string) => ({ id, scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'confirm', title: 'Confirm', message: '' }, eligibleClientKinds: ['tui'], state: 'waiting', createdAt: now, expiresAt: now + 100 });
+    const pending = (id: string) => ({ id, scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'confirm', title: 'Confirm', message: '' }, state: 'waiting', createdAt: now, expiresAt: now + 100 });
     for (const reason of ['unsupported', 'abort', 'drain'] as const) {
       store.putInteraction(pending(reason)); expect(store.cancelInteraction(reason, reason).value).toMatchObject({ state: 'cancelled', result: { reason } });
       expect(() => store.cancelInteraction(reason, 'restart')).toThrow(/resolved/);
@@ -244,10 +243,10 @@ describe.skipIf(!supported)('control retention and cancellation boundaries', () 
 describe.skipIf(!supported)('retained ambiguity', () => {
   it('does not age-evict winning answers or unresolved resource evidence', async () => {
     let time = now; const { owner, store } = await open({ now: () => time });
-    store.putInteraction({ id: 'ask', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'ask_user', questions: [{ id: 'q', question: 'Continue?' }] }, eligibleClientKinds: ['tui'], state: 'waiting', createdAt: now });
-    const answer = { kind: 'ask_user' as const, answers: [{ questionId: 'q', choices: [], text: 'yes' }] };
+    store.putInteraction({ id: 'ask', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'input', title: 'Continue?' }, deferrable: true, state: 'waiting', createdAt: now });
+    const answer = { kind: 'input' as const, text: 'yes' };
     const id = requestId(); store.admit({ v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'ask', answer } }, 'winner');
-    store.answerInteraction(id, answer, 'tui', 'continue'); store.transitionContinuation('continue', 'dispatch_intent');
+    store.answerInteraction(id, answer, 'continue'); store.transitionContinuation('continue', 'dispatch_intent');
     store.putResource({ id: 'unresolved', session: 's', root: 's', kind: 'foreground', state: 'running', pid: 1234, startIdentity: 'unknown-outcome', updatedAt: now });
     store.close(); const reloaded = reopen(owner, { now: () => time }); reloaded.recover();
     time += 2 * LIMITS.requestRetentionMs; reloaded.compact();
@@ -261,12 +260,12 @@ describe.skipIf(!supported)('retained ambiguity', () => {
 describe.skipIf(!supported)('reserved interaction outcome space', () => {
   it('reserves bytes before asking and can still persist the winning answer at capacity', async () => {
     const { store } = await open({ capacity: { bytes: 1_230_000 } });
-    const waiting = (id: string) => ({ id, scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'input', title: 'Answer' }, eligibleClientKinds: ['tui'], state: 'waiting', createdAt: now });
+    const waiting = (id: string) => ({ id, scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'input', title: 'Answer' }, state: 'waiting', createdAt: now });
     store.putInteraction(waiting('a')); store.putInteraction(waiting('b'));
     expect(() => store.putInteraction(waiting('c'))).toThrow(/capacity/);
     const answer = { kind: 'input' as const, text: 'x'.repeat(60_000) }; const id = requestId();
     store.admit({ v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'a', answer } }, 'winner');
-    expect(store.answerInteraction(id, answer, 'tui').value).toMatchObject({ state: 'answered', result: answer });
+    expect(store.answerInteraction(id, answer).value).toMatchObject({ state: 'answered', result: answer });
   });
 });
 
@@ -301,9 +300,11 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
   });
   it('reserves the per-interaction terminal limit before publishing a near-limit question', async () => {
     const { store } = await open();
-    const questions = Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, question: 'Q'.repeat(16_384), context: 'C'.repeat(32_768), options: [{ id: 'yes', title: 'T'.repeat(4096), description: 'D'.repeat(8192) }] }));
-    const waiting = { id: 'large', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'ask_user', questions }, eligibleClientKinds: ['tui'], state: 'waiting', createdAt: now };
-    const answer = { kind: 'ask_user', answers: questions.map(q => ({ questionId: q.id, choices: [], text: 'A'.repeat(8192) })) };
+    const waiting = { id: 'large', scope: { kind: 'session', session: 's', root: 's' },
+      request: { kind: 'form', form: { title: 'Large review', markdown: 'Q'.repeat(128000), description: 'D'.repeat(16000), fallback: 'Review all content',
+        input: { defaults: { first: 'D'.repeat(32700), second: 'D'.repeat(32700) }, fields: [{ id: 'first', kind: 'string', label: 'First', required: true, maxLength: 32768 }, { id: 'second', kind: 'string', label: 'Second', required: true, maxLength: 32768 }] },
+        actions: [{ id: 'submit', label: 'Submit', target: 'element', outcome: 'submit' }] } }, deferrable: true, state: 'waiting', createdAt: now };
+    const answer = { kind: 'form' as const, actionId: 'submit', outcome: 'submit' as const, values: { first: 'A'.repeat(16384), second: 'A'.repeat(16384) } };
     validateInteractionAnswer(parseInteraction(waiting), answer);
     const revision = store.session('s').revision;
     expect(() => store.putInteraction(waiting)).toThrow(/leave room/);
@@ -311,13 +312,15 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
   });
   it('persists a large valid terminal interaction despite global capacity pressure', async () => {
     const { owner, store } = await open({ capacity: { bytes: 1_400_000 } });
-    const questions = Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, question: 'Q'.repeat(12_000), context: 'C'.repeat(28_000), options: [{ id: 'yes', title: 'T'.repeat(1000), description: 'D'.repeat(2000) }] }));
-    const waiting = { id: 'large', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'ask_user', questions }, eligibleClientKinds: ['tui'], state: 'waiting', createdAt: now };
-    const answer = { kind: 'ask_user' as const, answers: questions.map(q => ({ questionId: q.id, choices: [], text: 'A'.repeat(16_000) })) };
+    const waiting = { id: 'large', scope: { kind: 'session', session: 's', root: 's' },
+      request: { kind: 'form', form: { title: 'Large review', markdown: 'Q'.repeat(128000), fallback: 'Review all content',
+        input: { defaults: { first: 'D'.repeat(22000), second: 'D'.repeat(22000) }, fields: [{ id: 'first', kind: 'string', label: 'First', required: true, maxLength: 32768 }, { id: 'second', kind: 'string', label: 'Second', required: true, maxLength: 32768 }] },
+        actions: [{ id: 'submit', label: 'Submit', target: 'element', outcome: 'submit' }] } }, deferrable: true, state: 'waiting', createdAt: now };
+    const answer = { kind: 'form' as const, actionId: 'submit', outcome: 'submit' as const, values: { first: 'A'.repeat(32000), second: 'A'.repeat(32000) } };
     store.putInteraction(waiting);
     expect(() => store.putInteraction({ ...waiting, id: 'no-capacity' })).toThrow(/capacity/);
     const id = requestId(); store.admit({ v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'large', answer } }, 'winner');
-    const result = store.answerInteraction(id, answer, 'tui', 'continuation'); parseInteraction(result.value);
+    const result = store.answerInteraction(id, answer, 'continuation'); parseInteraction(result.value);
     expect(result.value.state).toBe('answered'); store.close();
     const reloaded = reopen(owner); reloaded.recover(); expect(reloaded.snapshot().interactions[0]?.state).toBe('answered');
   });
@@ -348,7 +351,7 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
 describe.skipIf(!supported)('complete default emergency admission budget', () => {
   async function fillOrdinaryBudget() {
     const { store, owner } = await open();
-    store.putInteraction({ id: 'boundary-question', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'ask_user', questions: [{ id: 'q', question: 'Continue?' }] }, eligibleClientKinds: ['tui'], state: 'waiting', createdAt: now });
+    store.putInteraction({ id: 'boundary-question', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'input', title: 'Continue?' }, deferrable: true, state: 'waiting', createdAt: now });
     const prompts: string[] = [];
     for (let i = 0; i < 14; i++) {
       const session = i === 0 ? 's' : `s${i}`;
@@ -391,9 +394,9 @@ describe.skipIf(!supported)('complete default emergency admission budget', () =>
           store.admit(request, 'owner'); store.markDispatched(id);
           store.finishRequest(id, { v: 1, re: id, outcome: 'accepted', result: {} }); completed.push({ id, request });
         } else {
-          const answer = { kind: 'ask_user' as const, answers: [{ questionId: 'q', choices: [], text: 'yes' }] };
+          const answer = { kind: 'input' as const, text: 'yes' };
           const request = { v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'boundary-question', answer } };
-          store.admit(request, 'owner'); store.answerInteraction(id, answer, 'tui', 'boundary-continuation'); completed.push({ id, request });
+          store.admit(request, 'owner'); store.answerInteraction(id, answer, 'boundary-continuation'); completed.push({ id, request });
           expect(store.snapshot().interactions[0]?.state).toBe('answered');
           expect(store.snapshot().continuations[0]?.phase).toBe('ready');
         }

@@ -23,10 +23,10 @@ import {
 } from '@earendil-works/pi-tui';
 import { AgentTranscript, type AgentToolPresentation } from './agent-transcript.js';
 import { registerSubagentCompletionRenderer } from './completion-presentation.js';
-import type { LocalSubagentView } from '@felan-ai/daemon/internal/subagents/host';
-import type { AgentViewTranscript } from '@felan-ai/ext-subagents/view';
-import type { AgentRailRenderer, LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions, LocalSubagentPresentationHost } from '@felan-ai/daemon/internal/subagents/presentation';
-export type { AgentRailRenderer, LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions } from '@felan-ai/daemon/internal/subagents/presentation';
+import type { LocalSubagentView } from './types.js';
+import type { AgentViewTranscript } from './types.js';
+import type { AgentRailRenderer, LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions, LocalSubagentPresentationHost } from './types.js';
+export type { AgentRailRenderer, LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions } from './types.js';
 
 export interface AgentNavigatorRecord extends LocalSubagentView {
   readonly projection?: AgentViewTranscript;
@@ -67,13 +67,15 @@ export class AgentRailEditor extends CustomEditor {
     tui: TUI,
     editorTheme: EditorTheme,
     private readonly appKeybindings: KeybindingsManager,
-    private readonly host: AgentNavigatorHost,
+    private readonly host: Pick<AgentNavigatorHost, 'listLocalSubagents'>,
     private readonly themeProvider: () => Theme,
     private readonly openAgent: (agentId: string) => void,
     private readonly renderRailInEditor: () => boolean = () => true,
   ) {
     super(tui, editorTheme, appKeybindings);
   }
+
+  isRailFocused(): boolean { return this.#railFocused; }
 
   handleInput(data: string): void {
     const records = activeSubagents(this.host);
@@ -93,7 +95,7 @@ export class AgentRailEditor extends CustomEditor {
       }
       if (matchesKey(data, Key.enter)) {
         const selected = records[this.#selectedIndex];
-        if (selected) this.openAgent(selected.agentId);
+        if (selected) this.openAgent(selected.id);
         return;
       }
       if (matchesKey(data, Key.escape)) {
@@ -170,13 +172,13 @@ export class AgentRailEditor extends CustomEditor {
       this.#selectedIndex = 0;
       return;
     }
-    const selectedIndex = records.findIndex((record) => record.agentId === this.#selectedAgentId);
+    const selectedIndex = records.findIndex((record) => record.id === this.#selectedAgentId);
     this.#select(records, selectedIndex < 0 ? Math.min(this.#selectedIndex, records.length - 1) : selectedIndex);
   }
 
   #select(records: readonly LocalSubagentView[], index: number): void {
     this.#selectedIndex = Math.max(0, Math.min(records.length - 1, index));
-    this.#selectedAgentId = records[this.#selectedIndex]?.agentId;
+    this.#selectedAgentId = records[this.#selectedIndex]?.id;
   }
 }
 
@@ -185,7 +187,7 @@ export class AgentNavigator implements Component, Focusable {
   #records: AgentNavigatorRecord[] = [];
   #selectedId: string | undefined;
   #transcript: AgentTranscript | undefined;
-  #transcriptSession: LocalSubagentView['session'];
+  #transcriptSession: LocalSubagentView['liveSession'];
   #transcriptProjection: AgentViewTranscript | undefined;
   #transcriptAgent: string | undefined;
   #unsubscribe: (() => void) | undefined;
@@ -209,7 +211,7 @@ export class AgentNavigator implements Component, Focusable {
     initialAgentId?: string,
   ) {
     this.#records = [...host.listLocalSubagents()];
-    this.#selectedId = initialAgentId && this.#records.some((record) => record.agentId === initialAgentId)
+    this.#selectedId = initialAgentId && this.#records.some((record) => record.id === initialAgentId)
       ? initialAgentId
       : this.#initialSelection(this.#records);
     this.#input.onSubmit = (value) => {
@@ -299,7 +301,7 @@ export class AgentNavigator implements Component, Focusable {
     const rows = Math.max(1, this.tui.terminal.rows - 2);
     if (this.#inputFocused && rows < 5) this.#focusNavigation(true);
     const selected = this.#selectedRecord();
-    const canSteer = selected?.status === 'running';
+    const canSteer = selected?.state === 'running';
     const status = this.#statusMessage || this.host.getStatus?.();
     const showStatus = Boolean(status) && rows >= 7;
     const showPrompt = canSteer && rows >= 5;
@@ -358,35 +360,35 @@ export class AgentNavigator implements Component, Focusable {
   }
 
   #initialSelection(records: readonly LocalSubagentView[]): string | undefined {
-    return records.find((record) => record.status === 'running' || record.status === 'queued')?.agentId
-      ?? records[0]?.agentId;
+    return records.find((record) => record.state === 'running' || record.state === 'queued')?.id
+      ?? records[0]?.id;
   }
 
   #refreshRecords(): void {
     const previousIndex = Math.max(
       0,
-      this.#records.findIndex((record) => record.agentId === this.#selectedId),
+      this.#records.findIndex((record) => record.id === this.#selectedId),
     );
     this.#records = [...this.host.listLocalSubagents()];
 
-    if (this.#selectedId && !this.#records.some((record) => record.agentId === this.#selectedId)) {
+    if (this.#selectedId && !this.#records.some((record) => record.id === this.#selectedId)) {
       if (this.#inputFocused) this.#focusNavigation(true);
-      this.#selectedId = this.#records[Math.min(previousIndex, this.#records.length - 1)]?.agentId;
+      this.#selectedId = this.#records[Math.min(previousIndex, this.#records.length - 1)]?.id;
       this.#statusMessage = '';
     } else if (!this.#selectedId && this.#records.length > 0) {
       this.#selectedId = this.#initialSelection(this.#records);
     }
 
     const selected = this.#selectedRecord();
-    if (this.#inputFocused && selected?.status !== 'running') this.#focusNavigation(true);
+    if (this.#inputFocused && selected?.state !== 'running') this.#focusNavigation(true);
     this.#syncSelectedRecord();
   }
 
   #syncSelectedRecord(): void {
     const record = this.#selectedRecord();
-    const session = record?.session;
+    const session = record?.liveSession;
     const projection = record?.projection;
-    const selectedChanged = record?.agentId !== this.#transcriptAgent;
+    const selectedChanged = record?.id !== this.#transcriptAgent;
     if (selectedChanged || session !== this.#transcriptSession) {
       this.#transcript?.dispose();
       this.#transcript = undefined;
@@ -397,14 +399,14 @@ export class AgentNavigator implements Component, Focusable {
     const changed = selectedChanged || session !== this.#transcriptSession || projection !== this.#transcriptProjection;
     this.#transcriptSession = session;
     this.#transcriptProjection = projection;
-    this.#transcriptAgent = record?.agentId;
+    this.#transcriptAgent = record?.id;
     if (!changed) return;
     if (!session && !projection) {
       this.#transcript?.dispose();
       this.#transcript = undefined;
     } else {
       try {
-        if (projection && projection.agentId !== record?.agentId) throw new Error('Transcript identity mismatch.');
+        if (projection && projection.agentId !== record?.id) throw new Error('Transcript identity mismatch.');
         this.#transcript ??= new AgentTranscript(this.tui, this.keybindings, this.host.toolPresentation?.bind(this.host), () => this.theme);
         if (session) this.#transcript.attach(session);
         else if (projection) this.#transcript.showProjection(projection);
@@ -414,7 +416,7 @@ export class AgentNavigator implements Component, Focusable {
         this.#statusMessage = `Unable to render transcript: ${activityLine(error instanceof Error ? error.message : String(error))}`;
       }
     }
-    if (selectedChanged) this.host.selectAgent?.(record?.agentId);
+    if (selectedChanged) this.host.selectAgent?.(record?.id);
   }
 
   #selectedRecord(): AgentNavigatorRecord | undefined {
@@ -425,18 +427,18 @@ export class AgentNavigator implements Component, Focusable {
     if (this.#records.length === 0) return;
     const current = Math.max(
       0,
-      this.#records.findIndex((record) => record.agentId === this.#selectedId),
+      this.#records.findIndex((record) => record.id === this.#selectedId),
     );
     const next = Math.max(0, Math.min(this.#records.length - 1, current + delta));
     if (next === current) return;
     this.#focusNavigation(true);
-    this.#selectedId = this.#records[next]!.agentId;
+    this.#selectedId = this.#records[next]!.id;
     this.#statusMessage = '';
     this.#syncSelectedRecord();
   }
 
   #focusInput(): void {
-    if (this.#selectedRecord()?.status !== 'running' || this.tui.terminal.rows < 5) return;
+    if (this.#selectedRecord()?.state !== 'running' || this.tui.terminal.rows < 5) return;
     this.#inputFocused = true;
     this.#input.focused = this.focused;
   }
@@ -450,19 +452,19 @@ export class AgentNavigator implements Component, Focusable {
   async #stopSelected(): Promise<void> {
     if (this.#controlPending) return;
     const record = this.#selectedRecord();
-    if (!record || (record.status !== 'running' && record.status !== 'queued')) {
+    if (!record || (record.state !== 'running' && record.state !== 'queued')) {
       this.#statusMessage = record
-        ? `Subagent is ${formatStatus(record.status)}.`
+        ? `Subagent is ${formatStatus(record.state)}.`
         : 'Select a running or queued subagent first.';
       return;
     }
-    this.#statusMessage = `Stopping ${record.type}…`;
+    this.#statusMessage = `Stopping ${record.label}…`;
     this.#controlPending = true;
     this.tui.requestRender();
     try {
-      const result = await this.host.cancel(record.agentId, 'Stopped from the agent navigator');
+      const result = await this.host.cancel(record.id, 'Stopped from the agent navigator');
       if (this.#closed) return;
-      this.#statusMessage = result.ok ? `Stopped ${record.type}.` : activityLine(result.error.message);
+      this.#statusMessage = result.ok ? `Stopped ${record.label}.` : activityLine(result.error.message);
     } catch (error) {
       if (!this.#closed) this.#statusMessage = activityLine(error instanceof Error ? error.message : String(error));
     } finally {
@@ -475,15 +477,15 @@ export class AgentNavigator implements Component, Focusable {
     if (this.#controlPending) return;
     const message = value.trim();
     const record = this.#selectedRecord();
-    if (!message || !record || record.status !== 'running') return;
-    const agentId = record.agentId;
+    if (!message || !record || record.state !== 'running') return;
+    const agentId = record.id;
     this.#controlPending = true;
-    this.#statusMessage = `Sending message to ${record.type}…`;
+    this.#statusMessage = `Sending message to ${record.label}…`;
     this.tui.requestRender();
     try {
       const result = await this.host.steer(agentId, message);
       if (this.#closed) return;
-      this.#statusMessage = result.ok ? `Message sent to ${record.type}.` : activityLine(result.error.message);
+      this.#statusMessage = result.ok ? `Message sent to ${record.label}.` : activityLine(result.error.message);
       if (result.ok && this.#selectedId === agentId && this.#input.getValue() === value) this.#input.setValue('');
     } catch (error) {
       if (!this.#closed) this.#statusMessage = activityLine(error instanceof Error ? error.message : String(error));
@@ -512,7 +514,7 @@ export class AgentNavigator implements Component, Focusable {
     let content: string[];
     if (!selected) {
       content = [this.theme.fg('dim', 'No subagents to show. Press Esc/q to close.')];
-    } else if (!selected.session && !selected.projection) {
+    } else if (!selected.liveSession && !selected.projection) {
       content = this.#renderUnavailableTranscript(selected, width);
     } else {
       content = this.#transcript?.render(width) ?? [];
@@ -529,14 +531,14 @@ export class AgentNavigator implements Component, Focusable {
 
   #renderUnavailableTranscript(record: AgentNavigatorRecord, width: number): string[] {
     if (record.transcriptStatus) return [this.theme.fg('dim', activityLine(record.transcriptStatus))];
+    if (record.result?.error && !record.result.text) return [this.theme.fg('error', record.result.error)];
     if (record.result) {
-      const text = stripTerminalSequences(record.result);
+      const text = stripTerminalSequences(record.result.text);
       return text.split('\n').flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
     }
-    if (record.error) return [this.theme.fg('error', record.error.message)];
-    const state = record.status === 'queued'
+    const state = record.state === 'queued'
       ? 'Waiting for an execution slot…'
-      : `Session unavailable (${formatStatus(record.status)}).`;
+      : `Session unavailable (${formatStatus(record.state)}).`;
     return [this.theme.fg('dim', state)];
   }
 
@@ -551,12 +553,12 @@ export class AgentNavigator implements Component, Focusable {
       formatCost(selected),
       formatDuration(selected),
     ].filter(Boolean).join(' · ');
-    return this.theme.bold(`Viewing ${selected.type}`)
+    return this.theme.bold(`Viewing ${selected.label}`)
       + this.theme.fg('dim', ` · ${metadata} · Esc returns`);
   }
 
   #renderInput(width: number, selected: LocalSubagentView): string {
-    const fullLabel = `Message ${selected.type}… `;
+    const fullLabel = `Message ${selected.label}… `;
     const labelText = visibleWidth(fullLabel) <= Math.max(1, width - 4) ? fullLabel : '> ';
     const label = this.theme.fg('accent', labelText);
     const inputWidth = Math.max(1, width - visibleWidth(label));
@@ -567,7 +569,7 @@ export class AgentNavigator implements Component, Focusable {
     if (maxRows <= 0) return [];
     const selectedIndex = Math.max(
       0,
-      this.#records.findIndex((record) => record.agentId === this.#selectedId),
+      this.#records.findIndex((record) => record.id === this.#selectedId),
     );
     const windowSize = Math.min(maxRows, this.#records.length);
     const maxStart = Math.max(0, this.#records.length - windowSize);
@@ -584,7 +586,7 @@ export class AgentNavigator implements Component, Focusable {
         : '';
       return indicator + this.#renderRailItem(
         item,
-        item.agentId === this.#selectedId,
+        item.id === this.#selectedId,
         Math.max(0, width - visibleWidth(indicator)),
       );
     });
@@ -723,7 +725,7 @@ export function registerLocalSubagentNavigator(
 
 function activeSubagents(host: Pick<AgentNavigatorHost, 'listLocalSubagents'>): AgentNavigatorRecord[] {
   return [...host.listLocalSubagents()]
-    .filter((record) => record.status === 'queued' || record.status === 'running');
+    .filter((record) => record.state === 'queued' || record.state === 'running');
 }
 
 function parseWheelDirection(data: string): -1 | 1 | undefined {
@@ -752,7 +754,7 @@ function renderAgentRow(
 ): string {
   if (width <= 0) return '';
   const cursor = selected ? theme.fg('accent', '›') : ' ';
-  const name = selected ? theme.bold(record.type) : record.type;
+  const name = selected ? theme.bold(record.label ?? 'session') : record.label ?? 'session';
   const baseHead = `${cursor} ${statusIcon(record, theme)} ${name}`;
   const model = modelLabel(record);
   const head = truncateToWidth(
@@ -762,9 +764,9 @@ function renderAgentRow(
   );
   const metrics = [formatCost(record), formatDuration(record)].filter(Boolean).join(' · ');
   const metricsWidth = visibleWidth(metrics);
-  const summary = record.status === 'running'
+  const summary = record.state === 'running'
     ? describeActivity(record)
-    : activityLine(record.description);
+    : activityLine(record.description ?? '');
   const summaryWidth = Math.max(
     0,
     width - visibleWidth(head) - 2 - (metricsWidth > 0 ? metricsWidth + 2 : 0),
@@ -798,18 +800,17 @@ function hideEditorCursor(lines: string[]): void {
 }
 
 function statusIcon(record: LocalSubagentView, theme: Theme): string {
-  if (record.status === 'running') return theme.fg('accent', '●');
-  if (record.status === 'queued') return theme.fg('muted', '◦');
-  if (record.status === 'completed') return theme.fg('success', '✓');
-  if (record.status === 'failed') return theme.fg('error', '✗');
-  if (record.status === 'timed_out') return theme.fg('warning', '◷');
+  if (record.state === 'running') return theme.fg('accent', '●');
+  if (record.state === 'queued') return theme.fg('muted', '◦');
+  if (record.state === 'completed') return theme.fg('success', '✓');
+  if (record.state === 'failed') return theme.fg('error', '✗');
   return theme.fg('dim', '■');
 }
 
 function describeActivity(record: AgentNavigatorRecord): string {
-  if (record.status !== 'running') return formatStatus(record.status);
+  if (record.state !== 'running') return formatStatus(record.state);
   if (record.activity !== undefined) return activityLine(record.activity);
-  const session = record.session;
+  const session = record.liveSession;
   if (!session) return 'starting…';
 
   const pendingToolCalls = session.state.pendingToolCalls;
@@ -849,18 +850,18 @@ function activityLine(text: string): string {
 }
 
 function modelLabel(record: LocalSubagentView): string {
-  const sessionModel = record.session?.model;
-  const model = record.model
-    ?? (sessionModel ? `${sessionModel.provider}/${sessionModel.id}` : undefined);
+  const sessionModel = record.liveSession?.model;
+  const model = record.model ? `${record.model.provider}/${record.model.id}`
+    : sessionModel ? `${sessionModel.provider}/${sessionModel.id}` : undefined;
   return model ? activityLine(model) : '';
 }
 
-function formatStatus(status: LocalSubagentView['status']): string {
+function formatStatus(status: LocalSubagentView['state']): string {
   return status.replaceAll('_', ' ');
 }
 
 function formatDuration(record: LocalSubagentView): string {
-  const start = Date.parse(record.startedAt ?? record.createdAt);
+  const start = Date.parse(record.startedAt ?? record.createdAt ?? '');
   const end = record.completedAt ? Date.parse(record.completedAt) : Date.now();
   if (!Number.isFinite(start) || !Number.isFinite(end)) return '';
   const seconds = Math.max(0, end - start) / 1_000;

@@ -1,16 +1,18 @@
 import {
   associateExtensionConfig,
+  MODELS_SERVICE,
+  type ConfiguredFelanExtension,
   type FelanExtension,
   type ExtensionCommandContext,
 } from '@felan-ai/agent-core';
 import type { Model } from '@felan-ai/agent-core';
-import { FUSION_CONFIG } from './config.js';
+import { FUSION_CONFIG, resolveFusionConfig as configFrom } from './config.js';
 import type { FusionHost, FusionModelChoice, FusionReview, FusionReviewActions } from './contracts.js';
 import { FusionComparisonError, runFusion, compareFusionAnswers, synthesizeFusion } from './orchestration.js';
 import { resolveFusionModels } from './models.js';
 import { fusionReviewBytes, FUSION_STATE_ENTRY, latestFusionReview, validateFusionReview } from './session-state.js';
-import { DEFAULT_FUSION_CONFIG } from './config.js';
 import { FusionPanelError } from './contracts.js';
+import { registerGenericFusion } from './generic.js';
 
 export function createFusionExtension(host?: FusionHost): FelanExtension {
   const extension: FelanExtension = (pi) => {
@@ -251,22 +253,6 @@ function modelReference(model: Model<any>): string {
   return `${model.provider}/${model.id}`;
 }
 
-function configFrom(config: Readonly<Record<string, unknown>>) {
-  const participants = Array.isArray(config.participants) ? config.participants.filter((item): item is string => typeof item === 'string') : DEFAULT_FUSION_CONFIG.participants;
-  const fusionModel = typeof config.fusionModel === 'string' ? config.fusionModel : DEFAULT_FUSION_CONFIG.fusionModel;
-  const concurrency = numberOption(config.concurrency, DEFAULT_FUSION_CONFIG.concurrency, 1, 8);
-  const timeoutSeconds = numberOption(config.timeoutSeconds, DEFAULT_FUSION_CONFIG.timeoutSeconds, 10, 600);
-  const maxOutputChars = numberOption(config.maxOutputChars, DEFAULT_FUSION_CONFIG.maxOutputChars, 1000, 50000);
-  const thinking = typeof config.thinking === 'string' && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(config.thinking)
-    ? config.thinking as typeof DEFAULT_FUSION_CONFIG.thinking
-    : DEFAULT_FUSION_CONFIG.thinking;
-  return { participants, fusionModel, concurrency, timeoutSeconds, maxOutputChars, thinking };
-}
-
-function numberOption(value: unknown, fallback: number, min: number, max: number): number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max ? value : fallback;
-}
-
 function persist(pi: Parameters<FelanExtension>[0], review: FusionReview): void {
   if (fusionReviewBytes(review) > 240_000 || !validateFusionReview(review)) {
     throw new Error('Fusion review is too large or invalid to save.');
@@ -285,7 +271,11 @@ function safeError(error: unknown): string {
   return message.replace(/(?:Bearer\s+)[^\s,;]+/giu, 'Bearer [redacted]').slice(0, 400);
 }
 
-const fusionExtension = createFusionExtension();
+const fusionExtension: ConfiguredFelanExtension = Object.assign(
+  (pi: Parameters<FelanExtension>[0]) => registerGenericFusion(pi, pi.services.get(MODELS_SERVICE)),
+  { serviceRequirements: { optional: [MODELS_SERVICE] } },
+);
+associateExtensionConfig(fusionExtension, FUSION_CONFIG);
 
 export { FUSION_CONFIG, DEFAULT_FUSION_CONFIG, FUSION_THINKING_LEVELS } from './config.js';
 export type { FusionConfig } from './config.js';
@@ -306,8 +296,10 @@ export type { RunFusionOptions } from './orchestration.js';
 export { buildComparisonPrompt, buildFusionPrompt } from './prompts.js';
 export { FUSION_STATE_ENTRY, latestFusionReview, validateFusionReview } from './session-state.js';
 export {
-  FUSION_PICKER_PRESENTER, FUSION_REVIEW_PRESENTER, parseFusionPickerRequest, parseFusionPickerResult,
+  parseFusionPickerRequest, parseFusionPickerResult,
   parseFusionReview, parseFusionReviewMetadata, parseFusionReviewDecision,
 } from './presentation.js';
 export type { FusionPickerRequest, FusionPickerResult, FusionReviewDecision } from './presentation.js';
 export default fusionExtension;
+
+export { FUSION_PICKER_HINT, FUSION_REVIEW_HINT } from './generic-ui.js';

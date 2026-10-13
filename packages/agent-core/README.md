@@ -6,6 +6,11 @@ Portable Felan agent contracts and the Node.js host runtime.
 Felan host and the pinned Pi packages. It is intended for applications and
 portable extensions, not as a complete end-user CLI.
 
+The published manifest pins the complete Pi runtime package family to one exact
+version. Workspace overrides alone do not protect npm consumers from upstream
+caret ranges selecting an incompatible Pi minor. Packed-install checks verify
+that every installed Pi package uses the pinned version.
+
 ```ts
 import { HostAgentRuntime } from '@felan-ai/agent-core';
 
@@ -169,6 +174,65 @@ Runtime-backed coding tools are installed during composition as hidden fallback
 extension tools, so feature extensions can override standard tool names while
 explicit application `customTools` retain final precedence.
 
+Hosts may pass a `FelanServiceRegistry` to session composition. Providers register
+typed contracts created by `defineServiceContract(id, major)`; an extension
+declares its `serviceRequirements` on its configured default export and accesses
+only those contracts through `pi.services.get(contract)`. Required services
+without a provider skip that extension and call
+`onServiceRequirementFailure(packageName, contract)` when configured. Optional
+services return `undefined` when absent. Hosts own provider loading, validation,
+scope, and lifecycle; Core does not discover provider modules or define an
+extension-specific service table. Revoke the registry when its owning scope is
+disposed so retained handles fail closed.
+
+Core supplies shared `MODELS_SERVICE`, `SESSIONS_HISTORY_SERVICE`,
+`SESSIONS_SERVICE`, `SECRETS_SERVICE` and `RUNTIME_DEPENDENCIES_SERVICE`
+contracts. Models exposes authenticated,
+allowed selection metadata and inference, not endpoint configuration or
+credential mutation. Sessions exposes scoped, revision-pinned history and
+admitted execution. History-only consumers declare `SESSIONS_HISTORY_SERVICE`
+without receiving execution methods. History IDs and cursors are opaque, and reads must not
+restore, adopt or execute a historical session. Secrets provides versioned,
+namespaced storage, not sign-in authority. Runtime dependency installation is
+an explicit host operation; a session form answer alone does not authorize it.
+Providers determine availability and enforce these boundaries.
+
+Models providers resolve `{ provider, id }` against the current authenticated,
+allowed scope on every call. Selection metadata never grants endpoint or
+credential authority. Providers own activation, cancellation and settlement;
+discovery may run during extension registration, but inference must wait for
+canonical session activation. Draining prevents new inference while joining
+existing work.
+
+Secrets exposes `read`, conditional `write`, and conditional `remove` within
+provider-granted namespaces. `expectedVersion: null` creates only an absent
+record. Versions are opaque content identities, not monotonic counters or
+authorization tokens. Keep values out of model results, UI, logs and events;
+storage access never grants permission to start an OAuth flow.
+
+Every extension receives `pi.ui`. It publishes bounded generic statuses,
+documents, views and progress, and requests forms with explicit action IDs.
+Applications supply `createExtensionUi(packageName)` to session composition;
+the package-specific binding owns validation, revisions, action dispatch and
+cleanup. A missing binding returns an unsupported cancellation for requests
+and rejects publication; it does not silently approve or discard an action.
+Presentation hints are optional and never change the allowed values or
+outcomes. Terminal components belong in an explicit client entrypoint, not
+the portable default export.
+
+Form requests default to the current session. `audience: 'owner'` requests an
+owner-only session approval, such as existing-Chrome access;
+`audience: 'host'` requests a local-console host interaction, such as MCP sign-in
+or installation consent. The daemon applies authenticated identity, transport
+authority, capabilities and host policy. TUI and ACP clients with equivalent
+capabilities have equivalent eligibility; neither a client-kind label nor a
+presenter hint grants authority.
+
+Extension execution contributions also travel with the configured default
+export. Importers must preserve their configuration and execution metadata;
+they must not separately apply a provider-specific stream wrapper a second
+time. Application policy still controls activation and the final tool loadout.
+
 Agent Core owns the exact Pi dependency versions used by its consumers. Its
 public entry point exposes the Pi model, credential, streaming, session,
 resource, skill, tool, and context-inspection symbols needed to compose Felan applications, so
@@ -182,7 +246,7 @@ does not enable it automatically. Felan's local host supports `codemode.mode`
 values `off`, `on`, and `only`, defaults to `off`, and disables the sandbox's
 extra model helpers with `models: false`.
 
-Agent Core 0.12 follows Pi 1.1's public contracts. Extension integrations must
+Agent Core 0.13 follows Pi 1.1's public contracts. Extension integrations must
 handle `aborted` on `agent_settled` events, include `durationMs` and `outputPad`
 when implementing Pi tool-render callbacks, and provide
 `ToolLoadout.getPromptGuidelines()`. Custom stream functions should return an

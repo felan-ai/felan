@@ -6,7 +6,7 @@ const decoder = new TextDecoder();
 
 export interface InteractiveBashProcess {
   readonly id: string;
-  readonly process: AgentRuntimeProcess;
+  readonly pid: number | undefined;
   readonly output: string;
   readonly running: boolean;
   readonly nextOffset: number;
@@ -26,19 +26,19 @@ interface Entry {
   signal?: 'SIGTERM' | 'SIGKILL';
 }
 
-/** Owns live PTY handles; persisted detached jobs remain owned by BackgroundBashManager. */
+/** Retains PTY output and persistence state; addressable terminals remain host-owned. */
 export class BackgroundBashCoordinator {
   readonly #entries = new Map<string, Entry>();
   readonly #starting = new Map<string, Promise<InteractiveBashProcess>>();
   #shutdownPromise: Promise<void> | undefined;
 
-  constructor(private readonly runtime: AgentRuntime) {}
+  constructor(private readonly runtime: AgentRuntime, private readonly onSnapshot?: (snapshot: InteractiveBashProcess) => Promise<void>) {}
 
   async start(
     id: string,
     command: string,
     cwd?: string,
-    onSnapshot?: (snapshot: InteractiveBashProcess) => Promise<void>,
+    onSnapshot = this.onSnapshot,
   ): Promise<InteractiveBashProcess> {
     if (this.#shutdownPromise) throw new Error('Background process coordinator is shut down');
     if (this.#entries.has(id) || this.#starting.has(id)) {
@@ -48,6 +48,7 @@ export class BackgroundBashCoordinator {
     if (!terminals) throw new Error('Interactive background processes require PTY support');
     const starting = (async () => {
       const process = await terminals.startShell(command, {
+        id,
         shellFlavor: 'posix',
         ...(cwd === undefined ? {} : { cwd }),
       });
@@ -132,7 +133,7 @@ export class BackgroundBashCoordinator {
   }
 
   has(id: string): boolean {
-    return this.#entries.has(id) || this.#starting.has(id);
+    return this.#entries.has(id) || this.#starting.has(id) || this.runtime.terminals?.attach?.(id) !== undefined;
   }
 
   isStarting(id: string): boolean {
@@ -143,6 +144,10 @@ export class BackgroundBashCoordinator {
     if (this.#shutdownPromise) return this.#shutdownPromise;
     this.#shutdownPromise = (async () => {
       const starts = await Promise.allSettled(this.#starting.values());
+      if (this.runtime.terminals?.attach) {
+        this.#entries.clear();
+        return;
+      }
       const entries = [...this.#entries.entries()];
       const results = await Promise.allSettled(entries.map(async ([id, entry]) => {
         const errors: unknown[] = [];
@@ -197,12 +202,12 @@ export class BackgroundBashCoordinator {
     if (!snapshot.running) entry.output = boundedTail(`${entry.output}${entry.decoder.decode()}`);
     const result: InteractiveBashProcess = {
       id,
-      process: entry.process,
+      pid: entry.process.pid,
       output: entry.output,
       running: snapshot.running,
       nextOffset: snapshot.nextOffset,
       ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }),
-      ...(entry.signal === undefined ? {} : { signal: entry.signal }),
+      ...(snapshot.signal === undefined && entry.signal === undefined ? {} : { signal: snapshot.signal ?? entry.signal! }),
     };
     const previous = entry.snapshot;
     if (
@@ -219,8 +224,13 @@ export class BackgroundBashCoordinator {
   }
 
   #require(id: string): Entry {
-    const entry = this.#entries.get(id);
-    if (!entry) throw new Error(`Interactive background process not found: ${id}`);
+    let entry = this.#entries.get(id);
+    if (!entry) {
+      const process = this.runtime.terminals?.attach?.(id);
+      if (!process) throw new Error(`Interactive background process not found: ${id}`);
+      entry = { process, onSnapshot: this.onSnapshot, decoder: new TextDecoder(), offset: 0, output: '', operation: Promise.resolve() };
+      this.#entries.set(id, entry);
+    }
     return entry;
   }
 }

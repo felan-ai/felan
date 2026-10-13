@@ -1,5 +1,5 @@
 import type { AgentSession } from '@felan-ai/agent-core';
-import { MESSAGE_DISPLAY_PRESENTER, parseActiveMessageDisplay, readMessageDisplay, type Message, type SessionSnapshot } from '@felan-ai/session-protocol';
+import { MESSAGE_DISPLAY_ID, parseActiveMessageDisplay, readMessageDisplay, type Message, type SessionSnapshot } from '@felan-ai/session-protocol';
 
 type NativeMessage = AgentSession['messages'][number];
 type Assistant = Extract<NativeMessage, { role: 'assistant' }>;
@@ -45,8 +45,8 @@ export function projectedNativeMessage(message: Message): NativeMessage | undefi
 }
 
 export function projectedStreamingMessage(snapshot: Pick<SessionSnapshot, 'presentation' | 'activeStreams' | 'history'>): Assistant | undefined {
-  const item = snapshot.presentation.find(row => row.id === MESSAGE_DISPLAY_PRESENTER.id);
-  if (!item || item.kind !== 'custom' || item.presenter.id !== MESSAGE_DISPLAY_PRESENTER.id || item.presenter.version !== MESSAGE_DISPLAY_PRESENTER.version) return undefined;
+  const item = snapshot.presentation.find(row => row.id === MESSAGE_DISPLAY_ID);
+  if (!item || item.kind !== 'message_display') return undefined;
   const active = parseActiveMessageDisplay(item.data);
   if (snapshot.history.entries.some(message => message.id === active.message)) return undefined;
   const parts: Array<{ index: number; content: Assistant['content'][number] }> = [];

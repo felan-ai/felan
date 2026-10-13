@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_PRESENTER, type Message, type SessionSnapshot } from '@felan-ai/session-protocol';
+import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, type Message, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { projectedNativeMessage, projectedStreamingMessage } from '../src/client/message-display.js';
 
 const metadata = { kind: 'assistant' as const, timestamp: 43, api: 'fixture', provider: 'offline', model: 'actual-model', stopReason: 'toolUse' as const,
@@ -22,7 +22,7 @@ it('retains tool identity and result details instead of deriving a name from tex
 });
 it('joins ordered active prefixes with their own metadata and ignores completed or unknown streams', () => {
   const snapshot: Pick<SessionSnapshot, 'presentation' | 'activeStreams' | 'history'> = { history: { entries: [], branch: 'branch', revision: 0 },
-    presentation: [{ id: MESSAGE_DISPLAY_PRESENTER.id, kind: 'custom', presenter: MESSAGE_DISPLAY_PRESENTER, data: { message: 'active', display: metadata } }],
+    presentation: [{ id: MESSAGE_DISPLAY_ID, kind: 'message_display', data: { message: 'active', display: metadata } }],
     activeStreams: [{ id: 'active:1', message: 'active', kind: 'assistant', offset: 6, text: 'Answer' },
       { id: 'active:0', message: 'active', kind: 'thinking', offset: 6, text: 'Reason' }] };
   expect(projectedStreamingMessage(snapshot)).toMatchObject({ model: 'actual-model', timestamp: 43, usage: metadata.usage,

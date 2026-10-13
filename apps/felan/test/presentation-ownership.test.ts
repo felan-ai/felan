@@ -1,15 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 
-it('keeps subagent and tool presentation in the client, with an injected daemon registration port', async () => {
-  const daemon = await readFile(new URL('../../daemon/src/extensions.ts', import.meta.url), 'utf8');
-  expect(daemon).not.toContain("from './subagents/agent-navigator.js'");
-  expect(daemon).toContain('uiHosts.subagents?.register');
-  const port = await readFile(new URL('../../daemon/src/subagents/presentation.ts', import.meta.url), 'utf8');
-  expect(port).not.toContain('@earendil-works/pi-tui'); expect(port).not.toContain('apps/felan');
-  const client = await readFile(new URL('../src/runtime.ts', import.meta.url), 'utf8');
-  expect(client).toContain('subagents: createLocalSubagentPresentation()');
-  expect(client).not.toContain('@felan-ai/daemon/internal/tool-activity');
+it('keeps subagent presentation in the client and the daemon execution port generic', async () => {
+  const daemon = await readFile(new URL('../../daemon/src/daemon/session-execution.ts', import.meta.url), 'utf8');
+  expect(daemon).not.toMatch(/Subagent|AgentView|Navigator/);
+  const client = await readFile(new URL('../src/client/agents-presenter.ts', import.meta.url), 'utf8');
+  expect(client).toContain('new ClientAgentHost(client, parent, settings, toolPresentation)');
+  expect(client).not.toContain('registerCustom');
+  const host = await readFile(new URL('../src/client/agent-host.ts', import.meta.url), 'utf8');
+  expect(host).toContain("'executions.list'");
+  expect(host).not.toContain('createLocalFelanRuntime');
   const memory = await readFile(new URL('../src/memory/history-renderer.ts', import.meta.url), 'utf8');
   expect(memory).toContain("from '../subagents/agent-transcript.js'");
 });

@@ -2,7 +2,7 @@ import { Type, type Static } from 'typebox';
 import { CounterSchema, IdSchema, enumOf, parseSchema, text } from './schema.js';
 import { ProtocolValidationError } from './limits.js';
 
-export const MESSAGE_DISPLAY_PRESENTER = Object.freeze({ id: 'felan.message-display', version: '1' });
+export const MESSAGE_DISPLAY_ID = 'felan.message-display';
 export const MESSAGE_DISPLAY_KEY = 'felanMessage';
 const CostSchema = Type.Number({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
 export const AssistantDisplaySchema = Type.Object({

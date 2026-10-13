@@ -2,18 +2,15 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import { Value } from 'typebox/value';
 import { ClientEnvelopeSchema, ConfigValuesSchema, LIMITS, OPERATION_CATALOG, OperationSchemas, ProtocolValidationError, ResultSchemas, SessionCommandSchema, SessionSummarySchema, canonicalRequestPayload,
   parseClientEnvelope, parseOperationResult, parseSchema, parseServerEnvelope, parseStoredRequestRecord, requestRetainUntil,
-  validateBase64, validateClientEligibility, type ClientEnvelope, type OperationResult } from '../src/index.js';
+  validateBase64, type ClientEnvelope, type OperationResult } from '../src/index.js';
 import { commandParams, now, request, results } from './fixtures.js';
 
 describe('complete operation inventory', () => {
-  it.each(Object.keys(commandParams) as (keyof typeof commandParams)[])('%s has a validated request, result and eligibility', op => {
+  it.each(Object.keys(commandParams) as (keyof typeof commandParams)[])('%s has a validated request and result', op => {
     const value = request(op);
     expect(Value.Check(ClientEnvelopeSchema, value)).toBe(true);
     expect(parseClientEnvelope(value, { now }).params).toEqual(commandParams[op]);
     expect(parseOperationResult(op, results[op])).toEqual(results[op]);
-    for (const kind of OPERATION_CATALOG[op].clients) {
-      if (op !== 'sessions.create') expect(() => validateClientEligibility(parseClientEnvelope(value, { now }), kind)).not.toThrow();
-    }
     if (OPERATION_CATALOG[op].scope !== 'host') expect(Value.Check(SessionCommandSchema, { op, params: commandParams[op] })).toBe(true);
     expect(() => parseClientEnvelope({ ...value, params: null }, { now })).toThrow();
   });
@@ -25,11 +22,20 @@ describe('complete operation inventory', () => {
     expect(() => parseClientEnvelope(request('config.set', { scope: 'session', values: {} }), { now })).toThrow();
   });
 
-  it('preserves all 65 inventoried configuration options without credential setters', () => {
-    const names = Object.keys(ConfigValuesSchema.properties).filter(key => !['scopedModels', 'defaultModel', 'defaultThinking'].includes(key));
-    expect(names).toHaveLength(65);
+  it('preserves all 64 inventoried configuration options without credential setters', () => {
+    const names = Object.keys(ConfigValuesSchema.properties).filter(key => !['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions'].includes(key));
+    expect(names).toHaveLength(64);
     expect(names.some(name => /api-key|secret|token|headers|placeholder/.test(name))).toBe(false);
     expect(parseSchema(ConfigValuesSchema, { 'powerline-lines': [{ segments: { git: { enabled: true, showSha: true } } }], 'prewalk-entry-approval': 'ask' })).toBeTruthy();
+  });
+
+  it('bounds classifier and built-in extension configuration', () => {
+    const values = { classifierModel: 'offline/classifier', builtinExtensions: { memory: false, contextView: true } };
+    expect(parseClientEnvelope(request('config.set', { scope: 'global', values }), { now }).params).toEqual({ scope: 'global', values });
+    expect(parseOperationResult('config.get', { values })).toEqual({ values });
+    for (const invalid of [{ classifierModel: '' }, { builtinExtensions: { memory: 'false' } }, { builtinExtensions: { '../memory': true } }]) {
+      expect(() => parseSchema(ConfigValuesSchema, invalid)).toThrow();
+    }
   });
 
   it('strips additive fields before payload comparison without mutating input', () => {
@@ -37,6 +43,13 @@ describe('complete operation inventory', () => {
     expect(parseClientEnvelope(input, { now })).toEqual(request('prompt'));
     expect(input.ignored).toBe('outer');
     expect(canonicalRequestPayload(input, { now })).toEqual(canonicalRequestPayload(request('prompt'), { now }));
+  });
+
+  it('never accepts a hello claim as owner or local-console authority', () => {
+    for (const localConsole of [true, false]) {
+      const parsed = parseClientEnvelope(request('hello', { ...commandParams.hello, localConsole, owner: true, principal: 'claimed-owner' }), { now });
+      expect(parsed.params).toEqual(commandParams.hello);
+    }
   });
 
   it('keeps session IDs opaque while bounding UTF-8 and absolute paths', () => {
@@ -47,16 +60,14 @@ describe('complete operation inventory', () => {
     for (const cwd of ['relative', '/fixture\0escape', '/' + '😀'.repeat(1024)]) expect(() => parseClientEnvelope(request('sessions.create', { ...commandParams['sessions.create'], cwd }), { now })).toThrow();
   });
 
-  it('keeps host/session targeting and ACP capabilities explicit', () => {
+  it('keeps host/session targeting and explicit extension loading boundaries', () => {
     expect(() => parseClientEnvelope({ ...request('host.status'), session: 'wrong' }, { now })).toThrow();
     const { session: _session, ...missing } = request('prompt');
     expect(() => parseClientEnvelope(missing, { now })).toThrow();
-    expect(() => validateClientEligibility(parseClientEnvelope(request('processes.write'), { now }), 'acp')).toThrow();
-    expect(() => validateClientEligibility(parseClientEnvelope(request('sessions.create', { cwd: '/fixture', source: 'acp', extensions: ['/fixture/ext.js'] }), { now }), 'acp')).toThrow();
-    expect(() => validateClientEligibility(parseClientEnvelope(request('sessions.create', { cwd: '/fixture', source: 'tui' }), { now }), 'headless')).toThrow();
-    const image = request('prompt', { text: '', attachments: [{ type: 'image', mimeType: 'image/png', data: 'YQ==' }] });
-    expect(() => validateClientEligibility(parseClientEnvelope(image, { now }), 'acp')).toThrow();
-    expect(() => validateClientEligibility(parseClientEnvelope(request('prompt'), { now }), 'acp')).not.toThrow();
+    for (const source of ['tui', 'acp', 'headless']) {
+      expect(parseClientEnvelope(request('sessions.create', { cwd: '/fixture', source,
+        interactiveExtensions: true, extensions: ['/fixture/ext.js'] }), { now }).params).toMatchObject({ source, interactiveExtensions: true });
+    }
   });
 
   it('requires confirmation, identity, revision and authorized resource IDs', () => {
@@ -67,12 +78,6 @@ describe('complete operation inventory', () => {
     expect(() => parseClientEnvelope(request('attach', { ...commandParams.attach, policyWaitMs: 30001 }), { now })).toThrow();
     expect(() => parseClientEnvelope(request('interaction.answer', { interactionId: 'q', answer: { cancelled: true, reason: 'restart' } }), { now })).toThrow();
     expect(() => parseClientEnvelope(request('interaction.answer', { interactionId: 'q', answer: { cancelled: true, reason: 'user' } }), { now })).not.toThrow();
-  });
-
-  it.each([undefined, false, 1, 'true', null])('requires a distinct literal legacy-risk acknowledgement, not %j', legacyRiskAcknowledged => {
-    const { legacyRiskAcknowledged: _acknowledged, ...params } = commandParams['session.adopt'];
-    expect(() => parseClientEnvelope(request('session.adopt', { ...params, ...(legacyRiskAcknowledged === undefined ? {} : { legacyRiskAcknowledged }) }), { now })).toThrowError(ProtocolValidationError);
-    expect(parseClientEnvelope(request('session.adopt'), { now }).op).toBe('session.adopt');
   });
 });
 
@@ -115,37 +120,6 @@ describe('queued and handled input results', () => {
       { itemId: string; status?: never } | { status: 'handled'; itemId?: never }
     >();
     expectTypeOf<OperationResult<'follow_up'>>().toEqualTypeOf<OperationResult<'steer'>>();
-  });
-});
-
-describe('legacy inventory selection fingerprint', () => {
-  const legacy = { session: 'legacy', root: 'legacy', cwd: '/fixture', adoption: 'legacy', state: 'closed', residency: 'evicted',
-    title: 'Legacy session', lastActivity: now, run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 } };
-
-  it('preserves the optional fingerprint through list and correlated response parsing without a source path', () => {
-    const row = { ...legacy, sourceFingerprint: 'a'.repeat(64) };
-    const result = { entries: [row] };
-    const response = { v: 1, re: 'list', outcome: 'accepted', result };
-    expect(Value.Check(SessionSummarySchema, row)).toBe(true);
-    expect(parseOperationResult('sessions.list', result)).toEqual(result);
-    expect(parseServerEnvelope(response, 'sessions.list')).toEqual(response);
-    expect(parseSchema(SessionSummarySchema, { ...row, source: '/private/legacy.jsonl' })).toEqual(row);
-    expect(parseSchema(SessionSummarySchema, legacy)).toEqual(legacy);
-  });
-
-  it('forbids the legacy-only fingerprint on ordinary owned summaries', () => {
-    const owned = { ...legacy, adoption: 'adopted', revision: 7 };
-    expect(parseSchema(SessionSummarySchema, owned)).toEqual(owned);
-    expect(() => parseSchema(SessionSummarySchema, { ...legacy, adoption: 'adopted' })).toThrowError(ProtocolValidationError);
-    expect(() => parseSchema(SessionSummarySchema, { ...legacy, revision: 7 })).toThrowError(ProtocolValidationError);
-    expect(() => parseSchema(SessionSummarySchema, { ...owned, sourceFingerprint: 'a'.repeat(64) })).toThrowError(ProtocolValidationError);
-  });
-
-  it('reuses the bounded fingerprint text contract, including UTF-8 limits', () => {
-    expect(parseSchema(SessionSummarySchema, { ...legacy, sourceFingerprint: 'a'.repeat(256) })).toBeTruthy();
-    for (const sourceFingerprint of ['', 'a'.repeat(257), '😀'.repeat(65), 1, null]) {
-      expect(() => parseSchema(SessionSummarySchema, { ...legacy, sourceFingerprint })).toThrowError(ProtocolValidationError);
-    }
   });
 });
 

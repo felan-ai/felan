@@ -1,12 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { open } from 'node:fs/promises';
-import { setImmediate as yieldTurn } from 'node:timers/promises';
+import { randomUUID } from 'node:crypto';
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, openSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { AbsolutePathSchema, IdSchema, parseSchema } from '@felan-ai/session-protocol';
-import { Type, type Static } from 'typebox';
+import { Type } from 'typebox';
 import type { DaemonOwnership } from './ownership.js';
-import type { LegacySessionIdentity } from './legacy-adoption.js';
 import { guardOwnedPaths, prepareControlDirectory, syncOwnedDirectory } from './persistence.js';
 import { assertPathIdentity, pathIdentity, pathInside, pinPathChain, type PathIdentity } from './target.js';
 
@@ -14,82 +11,6 @@ const maxImportBytes = 64 * 1024 * 1024;
 const headerSchema = Type.Object({ type: Type.Literal('session'), version: Type.Integer({ minimum: 1, maximum: 3 }), id: IdSchema, cwd: AbsolutePathSchema });
 const error = (code: string, message: string) => Object.assign(new Error(message), { code });
 const absent = (cause: unknown) => (cause as NodeJS.ErrnoException).code === 'ENOENT';
-
-export interface CachedLegacyIdentity { key: string; identity: LegacySessionIdentity }
-export type InventorySessionIdentity = Omit<LegacySessionIdentity, 'fingerprint' | 'bytes'> & { fingerprint?: string; bytes?: number };
-export interface InventoryHeader { key: string; identity: InventorySessionIdentity; verifiable: boolean; diagnostic?: 'unreadable' | 'oversize' }
-
-export async function inspectInventoryHeader(owner: DaemonOwnership, input: string, cached?: CachedLegacyIdentity): Promise<InventoryHeader> {
-  const path = owned(owner, input); const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const stat = await file.stat({ bigint: true }); regular(stat); const pin = pathIdentity(path); sameFile(stat, pin);
-    const key = inventoryKey(stat);
-    if (cached?.key === key) { assertPathIdentity(pin); owner.assertCurrent(); return { key, identity: { ...cached.identity }, verifiable: true }; }
-    const buffer = Buffer.alloc(65537); let length = 0; let end = -1;
-    while (length < buffer.length && end < 0) {
-      const { bytesRead } = await file.read(buffer, length, Math.min(4096, buffer.length - length), length);
-      if (!bytesRead) break;
-      end = buffer.subarray(0, length + bytesRead).indexOf(10, length); length += bytesRead; owner.assertCurrent();
-    }
-    if (end < 0 || end > 65536) throw error('invalid_request', 'Legacy header exceeds its limit or has no terminating newline.');
-    const header = parseSchema(headerSchema, JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, end))));
-    if (inventoryKey(await file.stat({ bigint: true })) !== key) throw error('invalid_request', 'Legacy source changed during header inspection.');
-    assertPathIdentity(pin); owner.assertCurrent();
-    const diagnostic = stat.uid !== BigInt(owner.target.uid) || stat.nlink !== 1n ? 'unreadable'
-      : stat.size > BigInt(maxImportBytes) ? 'oversize' : undefined;
-    return { key, identity: { session: header.id, cwd: header.cwd, source: path, ...(Number.isSafeInteger(Number(stat.size)) ? { bytes: Number(stat.size) } : {}) },
-      verifiable: diagnostic === undefined, ...(diagnostic ? { diagnostic } : {}) };
-  } finally { await file.close(); }
-}
-
-function inventoryKey(stat: BigIntStats): string {
-  return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs, stat.mode, stat.uid, stat.nlink].join(':');
-}
-
-export async function inspectInventorySource(owner: DaemonOwnership, input: string, cached?: CachedLegacyIdentity, readBudget = maxImportBytes,
-  readBytes?: (bytes: number) => void): Promise<CachedLegacyIdentity> {
-  const path = owned(owner, input); const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const stat = await file.stat({ bigint: true }); regular(stat, owner); const pin = pathIdentity(path); sameFile(stat, pin);
-    if (stat.size > BigInt(maxImportBytes)) throw error('oversize', 'Legacy transcript exceeds the inventory read limit.');
-    const key = inventoryKey(stat);
-    if (cached?.key === key) { assertPathIdentity(pin); owner.assertCurrent(); return cached; }
-    if (!Number.isSafeInteger(readBudget) || readBudget < 0 || stat.size > BigInt(readBudget)) throw error('inventory_budget', 'Inventory content-read budget reached.');
-    const hash = createHash('sha256'); const buffer = Buffer.alloc(65536); const decoder = new TextDecoder('utf-8', { fatal: true });
-    let count = 0; const pending: string[] = []; let pendingBytes = 0; let header: Static<typeof headerSchema> | undefined; let rows = 0;
-    const line = (text: string) => {
-      if (!header) { if (Buffer.byteLength(text) > 65536) throw error('invalid_request', 'Legacy header exceeds its limit.'); header = parseSchema(headerSchema, JSON.parse(text)); }
-      else if (text.trim()) { const row: unknown = JSON.parse(text); if (!row || typeof row !== 'object' || Array.isArray(row)) throw error('invalid_request', 'Invalid legacy row.'); }
-    };
-    const consume = async (text: string) => {
-      const parts = text.split('\n');
-      for (let index = 0; index < parts.length; index++) {
-        const part = parts[index]!; pending.push(part); pendingBytes += Buffer.byteLength(part);
-        if (!header && pendingBytes > 65536) throw error('invalid_request', 'Legacy header exceeds its limit.');
-        if (index < parts.length - 1) {
-          line(pending.join('')); pending.length = 0; pendingBytes = 0;
-          if (++rows % 64 === 0) await yieldTurn();
-        }
-      }
-    };
-    while (count <= Number(stat.size)) {
-      const { bytesRead } = await file.read(buffer, 0, Math.min(buffer.length, Number(stat.size) + 1 - count), count);
-      if (!bytesRead) break;
-      readBytes?.(bytesRead);
-      count += bytesRead; if (count > Number(stat.size)) throw error('invalid_request', 'Legacy source grew during inventory.');
-      const chunk = buffer.subarray(0, bytesRead); hash.update(chunk); await consume(decoder.decode(chunk, { stream: true }));
-      owner.assertCurrent();
-    }
-    await consume(decoder.decode());
-    if (!header) throw error('invalid_request', 'Legacy header has no terminating newline.');
-    const last = pending.join(''); if (last.trim()) line(last);
-    if (!header || count !== Number(stat.size)) throw error('invalid_request', 'Incomplete legacy source.');
-    const after = await file.stat({ bigint: true });
-    if (after.dev !== stat.dev || after.ino !== stat.ino || after.size !== stat.size || after.mtimeNs !== stat.mtimeNs || after.ctimeNs !== stat.ctimeNs) throw error('invalid_request', 'Legacy source changed during inventory.');
-    assertPathIdentity(pin); owner.assertCurrent();
-    return { key, identity: { session: header.id, cwd: header.cwd, source: path, bytes: count, fingerprint: hash.digest('hex') } };
-  } finally { await file.close(); }
-}
 
 function owned(owner: DaemonOwnership, path: string): string {
   if (owner.assertOwnsPath(path) !== path) throw error('ownership_lost', 'Owned file changed its canonical destination.');

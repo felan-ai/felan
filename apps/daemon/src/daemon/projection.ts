@@ -5,19 +5,18 @@ import {
   CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, OPERATION_CATALOG, PresentationSchema, PromptSchema, parseSchema, parseSessionSnapshot, validateBase64, validatePrompt,
   type KnownSessionChange, type Message, type Origin, type Presentation, type SessionEvent,
   type SessionSnapshot, type TextStreamEvent,
-  MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_PRESENTER, type ActiveMessageDisplay,
+  MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, type ActiveMessageDisplay,
 } from '@felan-ai/session-protocol';
 import type { DaemonControlStore } from './control-store.js';
 import { ControlStoreError, type ControlSession } from './control-state.js';
-import type { ProfileSessionBinding } from './profile.js';
-import { COMPACTION_MESSAGE_TYPE, compactionPresentation } from '@felan-ai/ext-session-compaction/view';
+import type { SessionBinding } from './session-lifecycle-contracts.js';
 import { messageDisplay } from './message-display.js';
 import { sessionTip } from './session-cursor.js';
 
 export type ProjectionOutput = SessionEvent | TextStreamEvent;
 export type ProjectionExtras = Pick<SessionSnapshot, 'children' | 'processes' | 'interactions'>;
 export interface ProjectionOptions {
-  binding: ProfileSessionBinding;
+  binding: SessionBinding;
   store: DaemonControlStore;
   extras(): ProjectionExtras;
   publish(event: ProjectionOutput): void;
@@ -60,6 +59,7 @@ export class SessionProjection {
   private disposed = false;
   private readonly unsubscribe: () => void;
   private catalogKey = '';
+  private executionsGeneration: string | undefined;
   private runtimeRunId: string | undefined;
   private compacting = false;
   private compactionDirty = false;
@@ -128,6 +128,12 @@ export class SessionProjection {
     this.options.publish({ v: 1, session: this.id, rev: commit.value.revision, change });
   }
 
+  setExecutionsGeneration(generation: string): void {
+    if (this.executionsGeneration === generation) return;
+    this.publish({ type: 'executions.changed', generation });
+    this.executionsGeneration = generation;
+  }
+
   refresh(): void {
     if (this.disposed) return;
     if (this.timer) clearTimeout(this.timer);
@@ -155,7 +161,7 @@ export class SessionProjection {
     if (this.compactionDirty) {
       const id = 'compaction:progress';
       if (!this.compacting || this.presentation.has(id) || this.presentation.size < LIMITS.pageEntries) {
-        if (this.compacting) this.setPresentation({ id, kind: 'status', text: 'Compacting context…' });
+        if (this.compacting) this.setPresentation({ id, kind: 'status', key: id, value: { kind: 'text', text: 'Compacting context…' }, fallback: 'Compacting context…' });
         else if (this.presentation.has(id)) this.setPresentation({ id, remove: true });
         this.compactionDirty = false;
       }
@@ -206,6 +212,7 @@ export class SessionProjection {
       branch: history.branch, history, model: stored.model, thinking: stored.thinking, run: stored.run,
       queue: this.queue, policy: stored.policy, catalog: this.catalog(), ...this.options.extras(),
       tools: [...this.tools.values()].slice(-LIMITS.pageEntries), presentation: [...this.presentation.values()],
+      ...(this.executionsGeneration ? { executionsGeneration: this.executionsGeneration } : {}),
       activeStreams: [...this.streams.values()], completionOnlyStreams: [...this.completionOnly.values()],
     });
   }
@@ -311,10 +318,10 @@ export class SessionProjection {
   }
   private flushDisplay(): void {
     if (!this.displayDirty) return;
-    const id = MESSAGE_DISPLAY_PRESENTER.id;
+    const id = MESSAGE_DISPLAY_ID;
     if (this.activeDisplay) {
       if (!this.presentation.has(id) && this.presentation.size >= LIMITS.pageEntries) return;
-      this.setPresentation({ id, kind: 'custom', presenter: MESSAGE_DISPLAY_PRESENTER, data: this.activeDisplay });
+      this.setPresentation({ id, kind: 'message_display', data: this.activeDisplay });
     } else if (this.presentation.has(id)) this.setPresentation({ id, remove: true });
     this.displayDirty = false;
   }
@@ -437,13 +444,12 @@ export class SessionProjection {
         provenance: source?.source ?? 'external', source: boundedText(source?.sourceId ?? 'unknown', 128), active: active.has(tool.name) };
     });
     const commands: SessionSnapshot['catalog']['commands'] = this.session.extensionRunner.getRegisteredCommands().filter(command => this.options.commandAvailable?.(command.name) ?? false).map(command => ({ name: command.name,
-      description: command.description ?? '', source: boundedText(command.sourceInfo?.path ?? 'extension', 128), kind: 'extension' as const,
-      eligibleClientKinds: [...OPERATION_CATALOG['command.invoke'].clients] }));
+      description: command.description ?? '', source: boundedText(command.sourceInfo?.path ?? 'extension', 128), kind: 'extension' as const }));
     const skills = this.session.settingsManager?.getEnableSkillCommands() === false ? [] : this.session.resourceLoader.getSkills().skills;
     for (const skill of skills) {
       const name = `skill:${skill.name}`;
       if (!commands.some(command => command.name === name) && (this.options.commandAvailable?.(name) ?? false)) commands.push({ name,
-        description: skill.description, source: boundedText(skill.filePath, 128), kind: 'skill', eligibleClientKinds: [...OPERATION_CATALOG['command.invoke'].clients] });
+        description: skill.description, source: boundedText(skill.filePath, 128), kind: 'skill' });
     }
     const available = this.session.scopedModels.length ? this.session.scopedModels.map(({ model }) => model)
       : this.session.modelRuntime.getAvailableSnapshot();
@@ -459,7 +465,12 @@ export class SessionProjection {
     return id;
   }
   private message(entry: MessageEntry): Message {
-    return projectPiMessage(entry, this.messageId(entry), this.origins.get(entry.id));
+    const message = projectPiMessage(entry, this.messageId(entry), this.origins.get(entry.id));
+    const project = this.options.binding.projectMessage;
+    if (!project) return message;
+    const value = parseSchema(MessageSchema, project(entry, message));
+    if (value.id !== message.id || value.entryId !== message.entryId) throw new Error('Message projection changed canonical identity.');
+    return value;
   }
 }
 
@@ -471,7 +482,7 @@ function isProjectionCapacityError(error: unknown): boolean {
 type MessageEntry = Extract<SessionEntry, { type: 'message' | 'custom_message' | 'compaction' | 'branch_summary' }>;
 function isMessageEntry(entry: SessionEntry): entry is MessageEntry { return entry.type === 'message' || entry.type === 'custom_message' || entry.type === 'compaction' || entry.type === 'branch_summary'; }
 export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Origin): Message {
-  const raw = entry.type === 'compaction' ? { role: 'system' as const, content: entry.summary, customType: COMPACTION_MESSAGE_TYPE, details: compactionPresentation(entry) }
+  const raw = entry.type === 'compaction' ? { role: 'system' as const, content: entry.summary }
     : entry.type === 'branch_summary' ? { role: 'system' as const, content: entry.summary } : entry.type === 'custom_message' ? { role: 'custom' as const, content: entry.content, customType: entry.customType, details: entry.details } : entry.message;
   const content: Message['content'] = [];
   const rawContent = 'content' in raw ? raw.content : raw.role === 'bashExecution' ? `$ ${raw.command}\n${raw.output}` : 'summary' in raw ? raw.summary : undefined;

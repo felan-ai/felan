@@ -18,8 +18,10 @@ describe('@felan-ai/ext-background-bash package boundary', () => {
         directory: 'packages/ext-background-bash',
       },
       publishConfig: { access: 'public', provenance: true },
-      exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
+      exports: { '.': { import: './dist/extension.js', types: './dist/extension.d.ts' } },
+      dependencies: { '@felan-ai/session-protocol': 'workspace:*' },
     });
+    expect(manifest.exports['./service']).toBeUndefined();
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');
     expect(notice).toContain('TypeBox 1.1.38');
   });

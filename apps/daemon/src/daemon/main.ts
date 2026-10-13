@@ -3,15 +3,31 @@ import { resolveDaemonTarget } from './target.js';
 import { startDaemonService } from './service.js';
 import { publishDaemonReadiness } from './supervisor.js';
 import { DAEMON_VERSION } from '../version.js';
-import { DaemonIdentitySchema, parseSchema } from '@felan-ai/session-protocol';
+import { DaemonIdentitySchema, parseSchema, type DaemonIdentity } from '@felan-ai/session-protocol';
+import type { HostManager } from './host-config.js';
 
-export async function runDaemonProcess(args: readonly string[]): Promise<void> {
-  if (args.length < 1 || args.length > 3 || args[0]!.length > 65_536
-    || args.length === 2 && args[1] !== '--foreground'
-    || args.length === 3 && (args[1] !== '--replace' || args[2]!.length > 65_536)) throw new Error('Invalid daemon launch arguments.');
+export async function runDaemonProcess(args: readonly string[], manager?: HostManager): Promise<void> {
+  if (args.length < 1 || args[0]!.length > 65_536) throw new Error('Invalid daemon launch arguments.');
   const target = parseTarget(args[0]!);
-  const replacing = args[1] === '--replace' ? parseSchema(DaemonIdentitySchema, JSON.parse(args[2]!)) : undefined;
-  const service = await startDaemonService(target, replacing ? { replacing } : {});
+  let foreground = false;
+  let hostConfigPath: string | undefined;
+  let replacing: DaemonIdentity | undefined;
+  for (let index = 1; index < args.length; index++) {
+    const option = args[index];
+    if (option === '--foreground' && !foreground) { foreground = true; continue; }
+    if ((option === '--host-config' || option === '--replace') && index + 1 < args.length) {
+      const value = args[++index]!;
+      if (!value || value.length > 65_536) throw new Error('Invalid daemon launch arguments.');
+      if (option === '--host-config' && hostConfigPath === undefined) hostConfigPath = value;
+      else if (option === '--replace' && replacing === undefined) replacing = parseSchema(DaemonIdentitySchema, JSON.parse(value));
+      else throw new Error('Invalid daemon launch arguments.');
+      continue;
+    }
+    throw new Error('Invalid daemon launch arguments.');
+  }
+  const activeManager: HostManager = manager ?? { packageName: '@felan-ai/daemon', version: DAEMON_VERSION,
+    resolveFrom: new URL('../index.js', import.meta.url).href };
+  const service = await startDaemonService(target, { ...(replacing ? { replacing } : {}), ...(hostConfigPath ? { hostConfigPath } : {}), manager: activeManager });
   let failed = false;
   const stop = () => { void service.requestStop().then(response => {
     if (response.outcome !== 'accepted') throw new Error('Shutdown was not accepted.');
@@ -19,7 +35,7 @@ export async function runDaemonProcess(args: readonly string[]): Promise<void> {
   const fail = () => { failed = true; stop(); };
   process.on('SIGINT', stop); process.on('SIGTERM', stop); process.on('uncaughtException', fail); process.on('unhandledRejection', fail);
   try {
-    if (args[1] === '--foreground') process.stdout.write(`Felan daemon ${DAEMON_VERSION}: ${service.lifecycle.state}\n`);
+    if (foreground) process.stdout.write(`Felan daemon ${DAEMON_VERSION}: ${service.lifecycle.state}\n`);
     else {
       try { await publishDaemonReadiness(service.owner, DAEMON_VERSION, 10_000, service.lifecycle.state === 'blocked' ? 'blocked' : 'ready'); }
       catch { failed = true; stop(); }

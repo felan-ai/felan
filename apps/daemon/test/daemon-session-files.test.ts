@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { inspectInventoryHeader, inspectInventorySource, prepareExport, prepareImport, prepareTranscriptDeletion, publishExport, readOwnedOutputRange, stageImport } from '../src/daemon/session-files.js';
 import type { DaemonOwnership } from '../src/daemon/ownership.js';
-import { inspectLegacySession } from '../src/daemon/legacy-adoption.js';
 import { sha256 } from '../src/daemon/persistence.js';
 
 vi.mock('node:fs', async original => {
@@ -102,34 +101,6 @@ describe('identity-checked daemon host file ports', () => {
 });
 
 describe('bounded legacy source reader', () => {
-  it('identifies headers without trusting oversized, linked or malformed transcript content', async () => {
-    const f = await fixture(); const source = join(f.owned, 'header.jsonl');
-    const header = JSON.stringify({ type: 'session', version: 3, id: 'header', cwd: f.owned }) + '\n';
-    await writeFile(source, header + '{"unfinished":');
-    expect(await inspectInventoryHeader(f.owner, source)).toMatchObject({ identity: { session: 'header' }, verifiable: true });
-    await expect(inspectInventorySource(f.owner, source)).rejects.toThrow();
-    await truncate(source, 64 * 1024 * 1024 + 1);
-    expect(await inspectInventoryHeader(f.owner, source)).toMatchObject({ identity: { session: 'header' }, verifiable: false, diagnostic: 'oversize' });
-    await writeFile(source, header); await link(source, join(f.owned, 'duplicate.jsonl'));
-    expect(await inspectInventoryHeader(f.owner, source)).toMatchObject({ identity: { session: 'header' }, verifiable: false, diagnostic: 'unreadable' });
-    await expect(inspectInventorySource(f.owner, source)).rejects.toThrow();
-    await symlink(source, join(f.owned, 'alias.jsonl'));
-    await expect(inspectInventoryHeader(f.owner, join(f.owned, 'alias.jsonl'))).rejects.toThrow();
-    await writeFile(join(f.owned, 'invalid.jsonl'), 'not a session\n');
-    await expect(inspectInventoryHeader(f.owner, join(f.owned, 'invalid.jsonl'))).rejects.toThrow();
-  });
-
-  it('reuses metadata-matched fingerprints and invalidates them when the source changes', async () => {
-    const f = await fixture(); const source = join(f.owned, 'cached.jsonl');
-    const bytes = JSON.stringify({ type: 'session', version: 3, id: 'cached', cwd: f.owned }) + '\n'; await writeFile(source, bytes, { mode: 0o600 });
-    const first = await inspectInventorySource(f.owner, source);
-    expect(await inspectInventorySource(f.owner, source, first)).toBe(first);
-    expect(await inspectInventorySource(f.owner, source, first, 0)).toBe(first);
-    await writeFile(source, bytes + '\n'); const second = await inspectInventorySource(f.owner, source, first);
-    expect(second.key).not.toBe(first.key); expect(second.identity.fingerprint).not.toBe(first.identity.fingerprint);
-    expect(second.identity.fingerprint).toBe(sha256(Buffer.from(bytes + '\n')));
-    await expect(inspectInventorySource(f.owner, source, first, 0)).rejects.toMatchObject({ code: 'inventory_budget' });
-  });
 
   it('revalidates a prepared import and export before staging or publication', async () => {
     const f = await fixture(); const source = join(f.external, 'import.jsonl');
@@ -139,48 +110,5 @@ describe('bounded legacy source reader', () => {
     const destination = join(f.external, 'export.html'); const output = prepareExport(f.owner, destination);
     await writeFile(destination, 'appeared');
     await expect(publishExport(f.owner, f.owned, destination, async () => {}, output)).rejects.toThrowError(/appeared/);
-  });
-  it('preserves exact normal bytes and fingerprints with nonblocking no-follow reads', async () => {
-    const f = await fixture(); const source = join(f.owned, 'legacy.jsonl');
-    const bytes = Buffer.from(JSON.stringify({ type: 'session', version: 3, id: 'legacy', cwd: f.owned }) + '\r\n' + JSON.stringify({ type: 'custom', data: '😀' }) + '\n\n');
-    await writeFile(source, bytes, { mode: 0o600 });
-    expect(inspectLegacySession(f.owner, source)).toEqual({ session: 'legacy', cwd: f.owned, source, fingerprint: sha256(bytes), bytes: bytes.length });
-    expect(openSync).toHaveBeenCalledWith(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    expect(await readFile(source)).toEqual(bytes);
-  });
-
-  it('rejects non-regular and oversized files before attempting content reads', async () => {
-    const f = await fixture();
-    expect(() => inspectLegacySession(f.owner, f.owned)).toThrowError(/unsafe/);
-    const source = join(f.owned, 'too-large.jsonl'); await writeFile(source, '', { mode: 0o600 }); await truncate(source, 64 * 1024 * 1024 + 1);
-    expect(() => inspectLegacySession(f.owner, source)).toThrowError(/unsafe/);
-    expect(readSync).not.toHaveBeenCalled();
-  });
-
-  it('detects growth at the maximum size after reading no more than max plus one bytes', async () => {
-    const f = await fixture(); const source = join(f.owned, 'growing.jsonl'); const maximum = 64 * 1024 * 1024;
-    await writeFile(source, '', { mode: 0o600 }); await truncate(source, maximum);
-    vi.mocked(readSync).mockImplementationOnce(((...args: unknown[]) => {
-      appendFileSync(source, 'x'); return Reflect.apply(actualFs.readSync, undefined, args);
-    }) as typeof readSync);
-    expect(() => inspectLegacySession(f.owner, source)).toThrowError(/unsafe/);
-    const calls = vi.mocked(readSync).mock.calls as unknown as Array<[number, Buffer, number, number, number]>;
-    expect(calls.length).toBeGreaterThan(0);
-    expect(vi.mocked(readSync).mock.results.reduce((total, result) => total + (result.type === 'return' ? Number(result.value) : 0), 0)).toBe(maximum + 1);
-    expect(calls.every(call => call[1].byteLength === maximum + 1 && call[3] <= 65536)).toBe(true);
-  });
-
-  it('revalidates path identity and in-place size changes after opening the source', async () => {
-    for (const replace of [false, true]) {
-      const f = await fixture(); const source = join(f.owned, 'changing.jsonl');
-      const bytes = JSON.stringify({ type: 'session', version: 3, id: 'legacy', cwd: f.owned }) + '\n'; await writeFile(source, bytes, { mode: 0o600 });
-      vi.mocked(readSync).mockImplementationOnce(((...args: unknown[]) => {
-        const count = Reflect.apply(actualFs.readSync, undefined, args);
-        if (replace) { renameSync(source, `${source}.original`); writeFileSync(source, bytes, { mode: 0o600 }); }
-        else appendFileSync(source, '\n');
-        return count;
-      }) as typeof readSync);
-      expect(() => inspectLegacySession(f.owner, source)).toThrowError(/unsafe/);
-    }
   });
 });

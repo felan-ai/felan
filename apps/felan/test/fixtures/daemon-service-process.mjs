@@ -1,5 +1,7 @@
 import { appendFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream } from '@felan-ai/agent-core';
+import { FELAN_VERSION } from '../../dist/version.js';
 import { startDaemonService } from '../../../daemon/dist/daemon/service.js';
 
 const { target, journal } = JSON.parse(process.argv[2]);
@@ -102,7 +104,12 @@ process.on('message', command => {
 });
 
 try {
-  service = await startDaemonService(target, { createModelRuntime: createModels });
+  service = await startDaemonService(target, { createModelRuntime: createModels, manager: {
+    packageName: '@felan-ai/felan', version: FELAN_VERSION,
+    resolveFrom: new URL('../../dist/daemon-entrypoint.js', import.meta.url).href,
+    resolveProvider: specifier => import.meta.resolve(specifier),
+    packagedDefaultPath: fileURLToPath(new URL('../../dist/host.json', import.meta.url)),
+  } });
   if (parentGone) await stop();
   else await send({ event: 'ready', value: { pid: process.pid, identity: service.owner.identity, environment: process.env.FELAN_PROCESS_ENV } });
 } catch (error) {

@@ -1,0 +1,123 @@
+import type {
+  AgentRuntime,
+  AgentSessionRuntime,
+  AgentSessionRuntimeDiagnostic,
+  CreateAgentSessionOptions,
+  CreateAgentCoreSessionOptions,
+  ExtensionConfigDefinition,
+  ExtensionConfigOverride,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+} from '@felan-ai/agent-core';
+import type { SessionBranchCursor } from './session-cursor.js';
+import type { SessionEnvironment, SessionRuntime } from './session-runtime.js';
+import type { SessionExtensionBindings, SessionExtensionContext, SessionExecutionPort } from './session-execution.js';
+import type { SessionConfiguration } from './session-configuration.js';
+export type { SessionBranchCursor } from './session-cursor.js';
+
+export const SESSION_LIFECYCLE_API_VERSION = 1;
+
+export interface SessionResourceRequest {
+  readonly cwd: string;
+  readonly sessionDir?: string;
+}
+
+export type SessionResources = SessionEnvironment;
+
+export interface SessionOwnership {
+  // The registry must hold the source-session and destination-directory claims before opening; calls are idempotent.
+  assertOwned(resources: SessionResources, target: SessionTargetIdentity): void | Promise<void>;
+}
+
+export interface SessionTargetIdentity {
+  readonly kind: SessionTarget['kind'];
+  readonly destinationDirectory: string;
+  readonly sourceSessionFile?: string;
+  readonly sourceSessionId?: string;
+}
+
+export interface ToolProvenance {
+  readonly name: string;
+  readonly source: 'builtin' | 'external';
+  readonly sourceId: string;
+}
+
+export interface SessionExecutionPolicy {
+  readonly mode: 'host-default' | 'acp-strict';
+  readonly pendingTightening: boolean;
+  readonly generation: number;
+}
+
+export interface DaemonSessionServices {
+  readonly getExecutionPolicy: () => SessionExecutionPolicy;
+  readonly extensions: {
+    configuration(packages: readonly string[]): Promise<readonly ExtensionConfigDefinition[]>;
+    executionPort?(context: SessionExtensionContext): SessionExecutionPort;
+    bind(context: SessionExtensionContext, port?: SessionExecutionPort): Promise<SessionExtensionBindings>;
+  };
+}
+
+export type SessionTarget =
+  | { readonly kind: 'new'; readonly id?: string }
+  | { readonly kind: 'resume'; readonly sessionFile: string; readonly cursor?: SessionBranchCursor }
+  | { readonly kind: 'fork'; readonly sourceSessionFile: string; readonly entryId: string; readonly position: 'before' | 'at' }
+  | { readonly kind: 'clone'; readonly sourceSessionFile: string }
+  | { readonly kind: 'import'; readonly sessionFile: string };
+
+export interface SessionOpenRequest {
+  readonly configuration?: SessionConfiguration;
+  readonly resources: SessionResources;
+  readonly ownership: SessionOwnership;
+  readonly policy: SessionExecutionPolicy;
+  readonly services: DaemonSessionServices;
+  readonly target: SessionTarget;
+  readonly rootSessionId?: string;
+  readonly parentSessionId?: string;
+  readonly model?: CreateAgentSessionOptions['model'];
+  readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
+  readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
+  readonly source?: 'tui' | 'acp' | 'headless';
+  readonly interactiveExtensions?: boolean;
+  readonly extensionPaths?: readonly string[];
+  readonly worker?: SessionWorkerConfiguration;
+}
+
+export interface SessionWorkerConfiguration {
+  readonly runtime: AgentRuntime;
+  readonly modelRuntime: ModelRuntime;
+  readonly sessionManager: SessionManager;
+  readonly model: NonNullable<CreateAgentCoreSessionOptions['model']>;
+  readonly thinkingLevel?: CreateAgentCoreSessionOptions['thinkingLevel'];
+  readonly settingsManager: SettingsManager;
+  readonly customTools?: CreateAgentCoreSessionOptions['customTools'];
+  readonly appendSystemPrompt?: CreateAgentCoreSessionOptions['appendSystemPrompt'];
+  readonly allowedTools: readonly string[];
+}
+
+export interface SessionBinding {
+  readonly configuration?: SessionConfiguration;
+  readonly runtime: AgentSessionRuntime;
+  readonly agentRuntime: AgentRuntime;
+  readonly sessionId: string;
+  readonly rootSessionId: string;
+  readonly parentSessionId?: string;
+  readonly resources: SessionResources;
+  readonly diagnostics: readonly AgentSessionRuntimeDiagnostic[];
+  readonly activate?: () => Promise<void>;
+  readonly projectMessage?: SessionRuntime['projectMessage'];
+  readonly toolProvenance: readonly ToolProvenance[];
+  readonly tools: {
+    readonly provenance: readonly ToolProvenance[];
+    requiresApproval(policy: SessionExecutionPolicy, name: string): boolean;
+  };
+}
+
+export interface SessionLifecycle {
+  readonly apiVersion: typeof SESSION_LIFECYCLE_API_VERSION;
+  readonly id: string;
+  resolveResources(request: SessionResourceRequest): Promise<SessionResources>;
+  validateConfiguration?(resources: SessionResources, overrides: readonly ExtensionConfigOverride[], configuration: DaemonSessionServices['extensions']['configuration']): Promise<void>;
+  openSession(request: SessionOpenRequest): Promise<SessionBinding>;
+  dispose(): Promise<void>;
+}

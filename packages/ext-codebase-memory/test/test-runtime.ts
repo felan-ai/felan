@@ -10,7 +10,7 @@ import { codebaseMemoryRuntimeDirectory } from '../src/runtime-path.js';
 export class MemoryRuntime implements AgentRuntime {
   cwd: string = '/work/repo';
   readonly logger = createSilentLogger();
-  readonly files = new Map<string, Uint8Array>();
+  readonly storedFiles = new Map<string, Uint8Array>();
   readonly execCalls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly shellCalls: Array<{ command: string; options?: Record<string, unknown> }> = [];
   readonly #storage: AgentRuntimeStorage;
@@ -28,8 +28,8 @@ export class MemoryRuntime implements AgentRuntime {
     storageRoot = '/agent-storage',
     sessionStorageRoot = storageRoot,
   ) {
-    this.#storage = createStorage(storageRoot, this.files);
-    this.#sessionStorage = createStorage(sessionStorageRoot, this.files);
+    this.#storage = createStorage(storageRoot, this.storedFiles);
+    this.#sessionStorage = createStorage(sessionStorageRoot, this.storedFiles);
   }
 
   get storageRoot(): string { return this.#storage.root; }

@@ -7,10 +7,12 @@ import { vi } from 'vitest';
 import { acquireDaemonOwnership, type DaemonOwnership } from '../../src/daemon/ownership.js';
 import { DaemonControlStore, type ControlStoreOptions } from '../../src/daemon/control-store.js';
 import { SessionRegistry } from '../../src/daemon/registry.js';
-import type { DaemonProfile, ProfileOpenRequest, ProfileSessionBinding } from '../../src/daemon/profile.js';
-import { createLocalDaemonProfile } from '../../src/daemon/local-profile.js';
-import { builtinExtensionPackages } from '../../src/extension-catalog.js';
+import type { SessionLifecycle, SessionOpenRequest, SessionBinding } from '../../src/daemon/session-lifecycle-contracts.js';
+import { createTestSessionLifecycle } from './session-runtime.js';
 import { restoreSessionCursor } from '../../src/daemon/session-cursor.js';
+import { fakeProcessAdapter } from './process-provider.js';
+import type { ProcessAdapter } from '../../src/daemon/process-adapter.js';
+import { assertSessionConfigurationEnvironment, parseSessionConfiguration } from '../../src/daemon/session-configuration.js';
 
 export const supported = ['darwin', 'linux'].includes(process.platform);
 export const now = 1_800_000_000_000;
@@ -29,10 +31,9 @@ export const offlineModel: Model<Api> = { id: 'fixture', name: 'Fixture', api: '
 
 export async function realFixture(onStream?: () => Promise<void>) {
   const f = await fixture(); await f.registry.shutdown();
-  await writeFile(join(f.owner.target.agentDir, 'settings.json'), JSON.stringify({ builtinExtensions: Object.fromEntries(Object.keys(builtinExtensionPackages).map(name => [name, false])) }));
+  await writeFile(join(f.owner.target.agentDir, 'settings.json'), JSON.stringify({}));
   let registry: SessionRegistry;
-  const profile = await createLocalDaemonProfile({ agentDir: f.owner.target.agentDir,
-    initializeProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }),
+  const profile = await createTestSessionLifecycle({ agentDir: f.owner.target.agentDir,
     runtimeFactory: request => registry.wrapOpeningRuntime(new HostAgentRuntime(request.cwd, request), request.rootSessionId),
     createModelRuntime: async () => {
       const models = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
@@ -44,7 +45,7 @@ export async function realFixture(onStream?: () => Promise<void>) {
       return models;
     } });
   fixtures.push(() => profile.dispose());
-  registry = new SessionRegistry({ owner: f.owner, store: f.store, profile, idleMs: 0, services: ({ getExecutionPolicy }) => ({ getExecutionPolicy,
+  registry = new SessionRegistry({ owner: f.owner, store: f.store, lifecycle: profile, idleMs: 0, processAdapter: fakeProcessAdapter(), services: ({ getExecutionPolicy }) => ({ getExecutionPolicy,
     extensions: { configuration: async () => [], bind: async () => ({ importExtension: async () => ({ default() {} }), wrapStreamFunction: stream => stream, dispose: async () => {} }) } }) });
   f.replaceRegistry(registry, f.store);
   const root = await registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
@@ -58,7 +59,7 @@ export interface FakeSession {
   dispose: ReturnType<typeof vi.fn>;
   abort: ReturnType<typeof vi.fn>;
 }
-export async function fixture(options: ControlStoreOptions = {}) {
+export async function fixture(options: ControlStoreOptions = {}, processAdapter: ProcessAdapter = fakeProcessAdapter()) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 's6-')));
   let owner: DaemonOwnership | undefined;
   let store: DaemonControlStore | undefined;
@@ -72,13 +73,14 @@ export async function fixture(options: ControlStoreOptions = {}) {
   owner = await acquireDaemonOwnership({ kind: 'isolated', directory, namespaceId: randomUUID() });
   store = new DaemonControlStore(owner, { now: () => now, ...options });
   const agentDir = owner.target.agentDir; const cwd = join(directory, 'workspace'); await mkdir(cwd);
-  const instances = new Map<string, FakeSession>(); const opened: ProfileOpenRequest[] = [];
-  const profile: DaemonProfile = {
+  const instances = new Map<string, FakeSession>(); const opened: SessionOpenRequest[] = [];
+  const profile: SessionLifecycle = {
     apiVersion: 1, id: 'fixture', dispose: vi.fn(async () => {}),
     resolveResources: async request => ({ cwd: request.cwd, agentDir, sessionDir: request.sessionDir ?? join(agentDir, 'sessions'),
       sessionStorageBase: join(agentDir, 'storage', 'sessions'), agentStorageRoot: join(agentDir, 'storage', 'agent'),
-      subagentRoot: join(agentDir, 'subagents'), memoryRoot: join(agentDir, 'memory', 'v1'), writableRoots: [agentDir] }),
+      writableRoots: [agentDir] }),
     openSession: vi.fn(async request => {
+      if (request.configuration) assertSessionConfigurationEnvironment(request.configuration, 'fixture', request.resources);
       opened.push(request);
       const source = request.target.kind === 'resume' ? request.target.sessionFile : undefined;
       await request.ownership.assertOwned(request.resources, { kind: request.target.kind, destinationDirectory: request.resources.sessionDir, ...(source ? { sourceSessionFile: source } : {}) });
@@ -111,11 +113,12 @@ export async function fixture(options: ControlStoreOptions = {}) {
       instances.set(id, { session, emit, listeners, queue, dispose, abort });
       const runtime = { session, dispose } as unknown as AgentSessionRuntime;
       return { runtime, agentRuntime: {} as AgentRuntime, sessionId: id, rootSessionId: request.parentSessionId ? request.rootSessionId! : id,
+        configuration: request.configuration ?? parseSessionConfiguration({ version: 1, composition: 'fixture', environment: request.resources, configuration: null }),
         ...(request.parentSessionId ? { parentSessionId: request.parentSessionId } : {}), resources: request.resources, diagnostics: [], toolProvenance: [],
-        tools: { provenance: [], requiresApproval: policy => policy.mode === 'acp-strict' } } satisfies ProfileSessionBinding;
+        tools: { provenance: [], requiresApproval: policy => policy.mode === 'acp-strict' } } satisfies SessionBinding;
     }),
   };
-  const createRegistry = (current = store!) => new SessionRegistry({ owner: owner!, store: current, profile, idleMs: 0, now: () => now,
+  const createRegistry = (current = store!) => new SessionRegistry({ owner: owner!, store: current, lifecycle: profile, idleMs: 0, now: options.now ?? (() => now), processAdapter,
     services: ({ getExecutionPolicy }) => ({ getExecutionPolicy, extensions: { configuration: async () => [], bind: async () => ({ importExtension: async () => ({ default() {} }), dispose: async () => {} }) } }) });
   registry = createRegistry();
   return { directory, cwd, owner, store, registry, profile, instances, opened, releases, createRegistry,

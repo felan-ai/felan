@@ -2,7 +2,7 @@ import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { LIMITS, type Message, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { SessionClient, type SessionClientOptions } from '../client/client.js';
 import { clientDaemonTarget } from '../client-application.js';
-import { resolveInstalledDaemonEntrypoint } from '../daemon-entrypoint.js';
+import { resolveClientHostComposition, resolveInstalledDaemonEntrypoint } from '../daemon-entrypoint.js';
 import { FELAN_VERSION } from '../version.js';
 
 export interface DaemonClientOptions {
@@ -12,10 +12,12 @@ export interface DaemonClientOptions {
   readonly createClient?: (options: SessionClientOptions) => SessionClient;
 }
 
-export function createDaemonClient(options: DaemonClientOptions, kind: 'acp' | 'headless', interactionKinds: SessionClientOptions['interactionKinds'] = [], presenters: SessionClientOptions['presenters'] = []): SessionClient {
+export async function createDaemonClient(options: DaemonClientOptions, kind: 'acp' | 'headless', interactionKinds: SessionClientOptions['interactionKinds'] = [], capabilities: SessionClientOptions['capabilities'] = []): Promise<SessionClient> {
+  const target = clientDaemonTarget(options);
+  const expectedComposition = options.createClient ? undefined : await resolveClientHostComposition(target);
   return (options.createClient ?? (settings => new SessionClient(settings)))({
-    target: clientDaemonTarget(options), clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION,
-    kind, interactionKinds, presenters, launch: { entrypoint: resolveInstalledDaemonEntrypoint() },
+    target, clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}),
+    kind, interactionKinds, capabilities, launch: { entrypoint: resolveInstalledDaemonEntrypoint() },
   });
 }
 

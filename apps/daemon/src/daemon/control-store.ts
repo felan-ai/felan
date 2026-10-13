@@ -1,13 +1,13 @@
 import { join } from 'node:path';
 import { Type } from 'typebox';
-import { CONTROL_LIMITS, CONTROL_REQUEST_BUDGET, ControlAdoptionSchema, ControlResourceSchema, ControlSessionSchema, ControlStateSchema, ControlStoreError, SessionProfileSchema, type ControlAdoption, type ControlContinuation, type ControlProjection, type ControlRequest, type ControlSession, type ControlState, type SessionProfile } from './control-state.js';
+import { CONTROL_LIMITS, CONTROL_REQUEST_BUDGET, ControlResourceSchema, ControlSessionSchema, ControlStoreError, SessionProfileSchema, parseControlState, validateControlConfigurationSnapshot, type ControlConfigurationSnapshot, type ControlContinuation, type ControlProjection, type ControlRequest, type ControlSession, type ControlState, type SessionProfile } from './control-state.js';
 import { AtomicControlFile, sha256, type PersistenceBoundary } from './persistence.js';
 import type { DaemonOwnership } from './ownership.js';
 import { recoverControlState, type RecoveryPlan } from './control-recovery.js';
 import { IdSchema, LIMITS, OPERATION_CATALOG, parseClientEnvelope, canonicalRequestPayload, parseInteraction, parseSchema, parseServerEnvelope, requestRetainUntil, validateInteractionAnswer, type Interaction, type InteractionAnswer, type Response, type Operation, type OperationParams } from '@felan-ai/session-protocol';
 
 const outcomeReserve = CONTROL_REQUEST_BUDGET.outcome;
-const safetyOperations = new Set<Operation>(['cancel', 'agents.cancel', 'interaction.answer', 'processes.stop', 'host.stop', 'host.restart', 'close']);
+const safetyOperations = new Set<Operation>(['cancel', 'executions.cancel', 'interaction.answer', 'processes.stop', 'host.stop', 'host.restart', 'close']);
 export interface ControlCapacity { bytes: number; reserveBytes: number; requests: number; sessionRequests: number; reserveRequests: number }
 export interface ControlStoreOptions {
   directory?: string;
@@ -36,24 +36,33 @@ export class DaemonControlStore {
     this.directory = this.file.directory;
     try {
       const raw = this.file.read();
-      this.state = raw === null ? { version: 1, namespace: owner.target.namespaceId, agentDir: owner.target.agentDir, clock: this.time(0), sessions: [], requests: [], interactions: [], continuations: [], resources: [], adoptions: [] } : this.validate(raw);
+      this.state = raw !== null ? this.validate(raw) : { version: 1, namespace: owner.target.namespaceId, agentDir: owner.target.agentDir, clock: this.time(0), sessions: [], requests: [], interactions: [], continuations: [], resources: [], configurationSnapshots: [] };
       if (this.state.namespace !== owner.target.namespaceId || this.state.agentDir !== owner.target.agentDir) throw new Error('identity');
       if (raw === null) this.file.write(this.state, this.capacity.bytes);
       else this.recoveryRequired = true;
-    } catch { this.file.close(); throw new ControlStoreError('storage_failure', 'Control state is invalid or belongs to another namespace; no automatic migration is allowed.'); }
+    } catch { this.file.close(); throw new ControlStoreError('storage_failure', 'Control state is invalid, unsupported or belongs to another namespace; preserve it for explicit recovery.'); }
   }
   close(): void { this.file.close(); }
   get needsRecovery(): boolean { return this.recoveryRequired; }
   snapshot(): ControlState { this.file.assertCurrent(); return structuredClone(this.state); }
   session(id: string): ControlSession { this.file.assertCurrent(); return structuredClone(this.findSession(this.state, id)); }
-  createSession(input: Omit<ControlSession, 'revision' | 'updatedAt' | 'projections'>): ControlCommit<ControlSession> {
+  configuration(id: string): ControlConfigurationSnapshot | undefined {
+    this.file.assertCurrent(); this.findSession(this.state, id);
+    const row = this.state.configurationSnapshots.find(row => row.sessionId === id);
+    return row === undefined ? undefined : structuredClone(row);
+  }
+  createSession(input: Omit<ControlSession, 'revision' | 'updatedAt' | 'projections'>, configuration?: ControlConfigurationSnapshot): ControlCommit<ControlSession> {
     const session = parseSchema(ControlSessionSchema, { ...input, revision: 0, updatedAt: this.time(this.state.clock), projections: [] });
     if (session.deletedAt !== undefined) throw new ControlStoreError('invalid_request', 'Only explicit deletion can create a tombstone.');
     session.piPath = this.owner.assertOwnsPath(session.piPath);
     if (this.state.sessions.some(item => item.id === session.id || item.piPath === session.piPath)) throw new ControlStoreError('request_conflict', 'Session identity or transcript path is already registered.');
-    return this.commit((state, touched) => { state.sessions.push(session); touched.add(session.id); return session; });
+    return this.commit((state, touched) => {
+      state.sessions.push(session);
+      if (configuration !== undefined) this.setConfiguration(state, session.id, configuration);
+      touched.add(session.id); return session;
+    });
   }
-  updateSession(id: string, patch: Partial<Pick<ControlSession, 'state' | 'residency' | 'run' | 'policy' | 'title' | 'branch' | 'observedTip' | 'model' | 'thinking'>>): ControlCommit<ControlSession> {
+  updateSession(id: string, patch: Partial<Pick<ControlSession, 'state' | 'residency' | 'run' | 'policy' | 'title' | 'branch' | 'observedTip' | 'model' | 'thinking' | 'execution'>>, configuration?: ControlConfigurationSnapshot): ControlCommit<ControlSession> {
     const old = this.session(id);
     if (old.deletedAt !== undefined) throw new ControlStoreError('not_found', 'Session was deleted.');
     const next = parseSchema(ControlSessionSchema, { ...old, ...patch });
@@ -61,7 +70,11 @@ export class DaemonControlStore {
     if ((old.policy.effective === 'acp-strict' && next.policy.effective !== 'acp-strict') || next.policy.generation < old.policy.generation ||
       (old.policy.pending && next.policy.effective !== 'acp-strict' && !next.policy.pending)) throw new ControlStoreError('invalid_request', 'Session policy may only tighten.');
     if (JSON.stringify(old.policy) !== JSON.stringify(next.policy) && next.policy.generation <= old.policy.generation) throw new ControlStoreError('invalid_request', 'A policy change must advance its generation.');
-    return this.commit((state, touched) => { const at = state.sessions.findIndex(item => item.id === id); state.sessions[at] = next; touched.add(id); return next; });
+    return this.commit((state, touched) => {
+      const at = state.sessions.findIndex(item => item.id === id); state.sessions[at] = next;
+      if (configuration !== undefined) this.setConfiguration(state, id, configuration);
+      touched.add(id); return next;
+    });
   }
   configureSession(requestId: string, values: OperationParams<'config.set'>['values'], overrides: NonNullable<SessionProfile['extensionConfigOverrides']>): ControlCommit<ControlSession> {
     return this.commit((state, touched) => {
@@ -72,6 +85,7 @@ export class DaemonControlStore {
       if (sha256(payload) !== request.identity.sha256 || Buffer.byteLength(payload) !== request.identity.bytes) throw new ControlStoreError('request_conflict', 'Configuration differs from its admitted payload.');
       if (session.parent || session.state !== 'open' || !['idle', 'interrupted'].includes(session.run.state)) throw new ControlStoreError('invalid_request', 'Session configuration requires a quiescent open root.');
       session.profile = parseSchema(SessionProfileSchema, { ...(session.profile ?? { source: 'headless' }), extensionConfigOverrides: overrides });
+      this.setConfiguration(state, session.id, undefined);
       request.phase = 'dispatch_intent'; touched.add(session.id); return session;
     });
   }
@@ -137,7 +151,7 @@ export class DaemonControlStore {
     }
     const now = this.time(this.state.clock);
     parseClientEnvelope(request, { now });
-    const session = request.op === 'session.adopt' ? undefined : request.session;
+    const session = request.session;
     if (session) {
       const target = this.findSession(this.state, session);
       if (target.deletedAt !== undefined && request.op !== 'session.delete') throw new ControlStoreError('not_found', 'Session was deleted.');
@@ -198,7 +212,6 @@ export class DaemonControlStore {
     const interaction = parseInteraction(value);
     if (interaction.state !== 'waiting') throw new ControlStoreError('invalid_request', 'New interactions must be waiting.');
     // OAuth URLs and transient credentials never belong in the control snapshot.
-    if (interaction.request.kind === 'oauth') throw new ControlStoreError('invalid_request', 'OAuth presentation must stay transient; persist only its interrupted operation outcome.');
     if (Buffer.byteLength(JSON.stringify(interaction)) + LIMITS.answerBytes + 1024 > LIMITS.interactionBytes) throw new ControlStoreError('request_capacity', 'Interaction must leave room for its maximum valid answer and terminal metadata.');
     return this.commit((state, touched) => {
       if (state.interactions.some(item => item.id === interaction.id)) throw new ControlStoreError('request_conflict', 'Interaction ID already exists.');
@@ -209,7 +222,7 @@ export class DaemonControlStore {
   deferInteraction(id: string): ControlCommit<Interaction> {
     return this.commit((state, touched, now) => {
       const item = this.findInteraction(state, id);
-      if (!['waiting', 'deferred'].includes(item.state) || item.request.kind !== 'ask_user') throw new ControlStoreError('invalid_request', 'Only a pending ask-user interaction is serializable across drain.');
+      if (!['waiting', 'deferred'].includes(item.state) || !item.deferrable) throw new ControlStoreError('invalid_request', 'Only a pending deferrable interaction is serializable across drain.');
       const next: Interaction = { ...item, state: 'deferred', expiresAt: item.expiresAt ?? now + 30 * 60 * 1000 };
       state.interactions[state.interactions.indexOf(item)] = next;
       if (item.scope.kind === 'session') touched.add(item.scope.session); return next;
@@ -226,7 +239,7 @@ export class DaemonControlStore {
       return next;
     }, true);
   }
-  answerInteraction(requestId: string, answer: InteractionAnswer | { cancelled: true; reason: 'user' }, kind: 'tui' | 'acp' | 'headless', continuationId?: string, responder?: string): ControlCommit<Interaction> {
+  answerInteraction(requestId: string, answer: InteractionAnswer | { cancelled: true; reason: 'user' }, continuationId?: string, responder?: string): ControlCommit<Interaction> {
     return this.commit((state, touched, now) => {
       const record = this.findRequest(state, requestId);
       if (record.op !== 'interaction.answer' || record.phase !== 'intent') throw new ControlStoreError('already_resolved', 'An answer requires its newly admitted request.');
@@ -237,13 +250,12 @@ export class DaemonControlStore {
       });
       const item = candidates[0];
       if (!item || candidates.length !== 1) throw new ControlStoreError('request_conflict', 'Answer differs from admitted payload.');
-      if (!item.eligibleClientKinds.includes(kind)) throw new ControlStoreError('invalid_request', 'Client is not eligible to answer.');
       if (item.state !== 'waiting' && item.state !== 'deferred') throw new ControlStoreError('already_resolved', 'Interaction already resolved.');
       if (item.expiresAt !== undefined && item.expiresAt <= now) throw new ControlStoreError('already_resolved', 'Interaction expired.');
       if ((item.scope.kind === 'session' ? item.scope.session : undefined) !== record.session) throw new ControlStoreError('request_conflict', 'Answer scope differs from interaction scope.');
       const next: Interaction = 'cancelled' in answer ? { ...item, state: 'cancelled', resolvedAt: now, result: answer } : { ...item, state: 'answered', responder: parseSchema(IdSchema, responder ?? record.principal), resolvedAt: now, result: validateInteractionAnswer(item, answer) };
       if (continuationId !== undefined) {
-        if (next.state !== 'answered' || item.request.kind !== 'ask_user' || item.scope.kind !== 'session') throw new ControlStoreError('invalid_request', 'Only answered session ask-user prompts have replayable continuations.');
+        if (next.state !== 'answered' || !item.deferrable || item.scope.kind !== 'session') throw new ControlStoreError('invalid_request', 'Only answered deferrable session interactions have replayable continuations.');
         if (state.continuations.some(item => item.id === continuationId || item.interaction === next.id)) throw new ControlStoreError('request_conflict', 'Continuation identity already exists.');
         state.continuations.push({ id: continuationId, interaction: item.id, session: item.scope.session, phase: 'ready', createdAt: now, updatedAt: now });
       }
@@ -273,21 +285,6 @@ export class DaemonControlStore {
       state.resources = state.resources.filter(item => item.id !== resource.id); state.resources.push(next); touched.add(resource.session); return next;
     }, true);
   }
-  recordAdoption(value: unknown): ControlCommit<ControlAdoption> {
-    const adoption = parseSchema(ControlAdoptionSchema, value);
-    adoption.source = this.owner.assertOwnsPath(adoption.source); adoption.destination = this.owner.assertOwnsPath(adoption.destination);
-    return this.commit(state => {
-      const previous = state.adoptions.find(item => item.session === adoption.session || item.id === adoption.id);
-      if (previous) {
-        if (previous.id !== adoption.id || previous.source !== adoption.source || previous.destination !== adoption.destination || previous.fingerprint !== adoption.fingerprint || previous.cwd !== adoption.cwd || (previous.phase === 'complete' && adoption.phase !== 'complete')) throw new ControlStoreError('request_conflict', 'Adoption source or identity changed.');
-        state.adoptions[state.adoptions.indexOf(previous)] = adoption;
-      } else {
-        if (adoption.phase !== 'copy_intent') throw new ControlStoreError('invalid_request', 'Adoption completion requires a durable copy intent.');
-        state.adoptions.push(adoption);
-      }
-      return adoption;
-    }, true);
-  }
   recover(): ControlCommit<Omit<RecoveryPlan, 'changedSessions'>> {
     if (!this.recoveryRequired) throw new ControlStoreError('invalid_request', 'Recovery is only valid immediately after reopening persisted state.');
     this.recoveryRequired = false;
@@ -297,6 +294,11 @@ export class DaemonControlStore {
     }, true); } catch (error) { this.recoveryRequired = true; throw error; }
   }
   compact(): ControlCommit<void> { return this.commit((state, touched, now) => this.prune(state, now, touched), true); }
+  private setConfiguration(state: ControlState, id: string, value: ControlConfigurationSnapshot | undefined): void {
+    if (value !== undefined && value.sessionId !== id) throw new ControlStoreError('invalid_request', 'Configuration snapshot belongs to another session.');
+    state.configurationSnapshots = state.configurationSnapshots.filter(row => row.sessionId !== id);
+    if (value !== undefined) state.configurationSnapshots.push(value);
+  }
   private commit<T>(change: (state: ControlState, touched: Set<string>, now: number) => T, safety = false): ControlCommit<T> {
     this.file.assertCurrent();
     if (this.recoveryRequired) throw new ControlStoreError('storage_failure', 'Recover the persisted control state before admitting mutations.');
@@ -323,39 +325,59 @@ export class DaemonControlStore {
     return safe;
   }
   private validate(value: unknown): ControlState {
-    const state = parseSchema(ControlStateSchema, value) as ControlState;
-    for (const key of ['sessions', 'requests', 'interactions', 'continuations', 'resources', 'adoptions'] as const) {
+    const state = parseControlState(value);
+    for (const key of ['sessions', 'requests', 'interactions', 'continuations', 'resources'] as const) {
       const ids = state[key].map(item => item.id); if (new Set(ids).size !== ids.length) throw new ControlStoreError('storage_failure', 'Duplicate control identities.');
     }
     for (const request of state.requests) {
       const { response: _response, ...metadata } = request;
       if (Buffer.byteLength(JSON.stringify(metadata)) > CONTROL_REQUEST_BUDGET.metadata) throw new ControlStoreError('request_capacity', 'Request metadata exceeds its reserved capacity.');
       if (!Object.hasOwn(OPERATION_CATALOG, request.op) || OPERATION_CATALOG[request.op as Operation].storage !== 'durable' || request.retainUntil < requestRetainUntil(request.id, request.admittedAt) || (request.phase === 'terminal') !== (request.response !== undefined)) throw new ControlStoreError('storage_failure', 'Invalid durable request state.');
-      if (request.response) request.response = this.safeResponse(request, request.response);
+      if (request.response) {
+        if (Buffer.byteLength(JSON.stringify(request.response)) > outcomeReserve) throw new ControlStoreError('storage_failure', 'Durable outcome exceeds its reserved capacity.');
+        this.safeResponse(request, request.response);
+      }
       if (request.session) this.findSession(state, request.session);
     }
     for (const interaction of state.interactions) {
       parseInteraction(interaction);
       if (interaction.scope.kind === 'session' && this.findSession(state, interaction.scope.session).root !== interaction.scope.root) throw new ControlStoreError('storage_failure', 'Interaction scope mismatch.');
-      if (interaction.request.kind === 'oauth') throw new ControlStoreError('storage_failure', 'OAuth credentials cannot be durable control state.');
     }
     for (const item of state.continuations) {
       const interaction = this.findInteraction(state, item.interaction);
-      if (interaction.state !== 'answered' || interaction.request.kind !== 'ask_user' || interaction.scope.kind !== 'session' || interaction.scope.session !== item.session) throw new ControlStoreError('storage_failure', 'Continuation lacks a committed winning answer.');
+      if (interaction.state !== 'answered' || !interaction.deferrable || interaction.scope.kind !== 'session' || interaction.scope.session !== item.session) throw new ControlStoreError('storage_failure', 'Continuation lacks a committed winning answer.');
       this.findSession(state, item.session);
     }
     for (const session of state.sessions) {
+      const execution = session.execution;
+      if (execution && (!session.parent || !!execution.completedAt !== !!execution.outcome || execution.completionPending && !execution.completedAt)) {
+        throw new ControlStoreError('storage_failure', 'Execution lifecycle metadata is inconsistent.');
+      }
       if (session.deletedAt !== undefined && (session.state !== 'closed' || session.residency !== 'evicted' || session.run.state !== 'idle')) throw new ControlStoreError('storage_failure', 'A deleted session must remain closed, evicted and idle.');
       if (this.owner.assertOwnsPath(session.piPath) !== session.piPath) throw new ControlStoreError('storage_failure', 'Persisted transcript path changed canonical identity.');
       if (new Set(session.projections.map(item => item.key)).size !== session.projections.length) throw new ControlStoreError('storage_failure', 'Duplicate projections.');
-      if (session.parent === session.id || (session.parent === undefined ? session.root !== session.id : this.findSession(state, session.parent).root !== session.root)) throw new ControlStoreError('storage_failure', 'Session root lineage mismatch.');
+      const path = new Set<string>();
+      let ancestor = session;
+      for (;;) {
+        if (path.has(ancestor.id) || ancestor.root !== session.root) throw new ControlStoreError('storage_failure', 'Session root lineage mismatch.');
+        path.add(ancestor.id);
+        if (ancestor.parent === undefined) {
+          if (ancestor.id !== session.root) throw new ControlStoreError('storage_failure', 'Session root lineage mismatch.');
+          break;
+        }
+        ancestor = this.findSession(state, ancestor.parent);
+      }
     }
     for (const resource of state.resources) {
       if (resource.reference && this.owner.assertOwnsPath(resource.reference) !== resource.reference) throw new ControlStoreError('storage_failure', 'Persisted resource path changed canonical identity.');
       if (this.findSession(state, resource.session).root !== resource.root) throw new ControlStoreError('storage_failure', 'Resource scope mismatch.');
     }
-    for (const adoption of state.adoptions) {
-      if (this.owner.assertOwnsPath(adoption.source) !== adoption.source || this.owner.assertOwnsPath(adoption.destination) !== adoption.destination) throw new ControlStoreError('storage_failure', 'Persisted adoption path changed canonical identity.');
+    const configurations = new Set<string>();
+    for (const snapshot of state.configurationSnapshots) {
+      this.findSession(state, snapshot.sessionId);
+      if (configurations.has(snapshot.sessionId)) throw new ControlStoreError('storage_failure', 'Duplicate configuration snapshots.');
+      configurations.add(snapshot.sessionId);
+      validateControlConfigurationSnapshot(snapshot);
     }
     return state;
   }

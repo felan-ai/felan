@@ -1,7 +1,7 @@
-import { parseSchema, TuiPreferencesSchema, TuiPreferencesUpdateSchema, type TuiPreferences, type TuiPreferencesUpdate } from '@felan-ai/session-protocol';
+import { ConfigValuesSchema, parseSchema, TuiPreferencesSchema, TuiPreferencesUpdateSchema, type TuiPreferences, type TuiPreferencesUpdate } from '@felan-ai/session-protocol';
 import type { KeybindingsConfig } from '@earendil-works/pi-tui';
 import type { Theme } from '@earendil-works/pi-coding-agent';
-import type { AgentViewTranscript } from '@felan-ai/ext-subagents/view';
+import type { AgentViewTranscript } from '../subagents/types.js';
 import type { TuiSessionController } from './controller.js';
 import type { TuiDialogHost } from './dialogs.js';
 import { parseClientKeybindings } from './keybindings.js';
@@ -79,7 +79,8 @@ export class TerminalPreferences {
     let error = '';
     while (!this.closed) {
       const launchOverride = this.overrides.theme !== undefined || Object.values(this.overrides.keybindings ?? {}).some(value => value !== undefined);
-      const field = await dialogs.select(`Settings · display defaults only${launchOverride ? '\nTheme/keybinding launch overrides remain active.' : ''}${error ? `\n${error}` : ''}`, [
+      const field = await dialogs.select(`Settings${launchOverride ? '\nTheme/keybinding launch overrides remain active.' : ''}${error ? `\n${error}` : ''}`, [
+        { value: 'execution', label: 'Execution defaults…', description: 'Classifier model and built-in extensions; apply to new sessions or /reload' },
         { value: 'theme', label: `Theme: ${draft.theme}`, description: 'Stored only in this TUI client configuration' },
         { value: 'hideThinking', label: `Thinking: ${draft.hideThinking ? 'hidden' : 'visible'}` },
         { value: 'showImages', label: `Images: ${draft.showImages ? 'shown' : 'hidden'}` },
@@ -87,7 +88,7 @@ export class TerminalPreferences {
         { value: 'outputPad', label: `Output padding: ${draft.outputPad} cells` },
         { value: 'toolDisplay', label: `Tool display: ${draft.toolDisplay}` },
         { value: 'keybindings', label: 'Keybindings (JSON)', description: 'Action → key or key array; [] disables a binding' },
-        { value: 'save', label: 'Save changes', description: 'Updates global defaults and this display, not running daemon execution' },
+        { value: 'save', label: 'Save display changes', description: 'Updates global defaults and this display, not running daemon execution' },
         { value: 'cancel', label: 'Cancel' },
       ]);
       if (field === undefined || field === 'cancel' || this.closed) return false;
@@ -100,7 +101,8 @@ export class TerminalPreferences {
         if (!Object.keys(changes).length) return true;
         if (await this.update(changes as ClientTuiPreferencesUpdate)) return true;
         error = this.controller.notice || 'Could not save. Your changes are retained; retry or cancel.';
-      } else if (field === 'hideThinking' || field === 'showImages') draft[field] = !draft[field];
+      } else if (field === 'execution') await this.openExecutionSettings(dialogs);
+      else if (field === 'hideThinking' || field === 'showImages') draft[field] = !draft[field];
       else if (field === 'theme') {
         const selected = await dialogs.select('Client theme', [
           ...this.themes.names.map(name => ({ value: `theme:${name}`, label: name })),
@@ -137,6 +139,50 @@ export class TerminalPreferences {
       }
     }
     return false;
+  }
+
+  private async openExecutionSettings(dialogs: TuiDialogHost): Promise<void> {
+    try {
+      const response = await this.controller.perform('config.get', { scope: 'global' });
+      if (response.outcome !== 'accepted' || this.closed) return;
+      const original = parseSchema(ConfigValuesSchema, response.result.values);
+      let classifierModel = original.classifierModel ?? 'auto';
+      const builtinExtensions = { ...original.builtinExtensions };
+      let error = '';
+      while (!this.closed) {
+        const field = await dialogs.select(`Execution defaults · new sessions or /reload${error ? `\n${error}` : ''}`, [
+          { value: 'classifierModel', label: `Classifier model: ${classifierModel}` },
+          ...Object.entries(builtinExtensions).map(([name, enabled]) => ({ value: `builtin:${name}`,
+            label: `${name}: ${enabled ? 'enabled' : 'disabled'}` })),
+          { value: 'save', label: 'Save execution defaults' }, { value: 'cancel', label: 'Back' },
+        ]);
+        if (field === undefined || field === 'cancel' || this.closed) return;
+        error = '';
+        if (field === 'classifierModel') {
+          const selected = await dialogs.select('Classifier model', [
+            { value: 'auto', label: 'Automatic' },
+            ...(this.controller.snapshot?.catalog.models ?? []).map(model => ({ value: `${model.provider}/${model.id}`, label: model.label,
+              description: `${model.provider}/${model.id}` })),
+          ]);
+          if (selected !== undefined) classifierModel = selected;
+        } else if (field.startsWith('builtin:')) {
+          const name = field.slice(8);
+          builtinExtensions[name] = builtinExtensions[name] === false;
+        } else if (field === 'save') {
+          const changed = Object.fromEntries(Object.entries(builtinExtensions).filter(([name, enabled]) => enabled !== (original.builtinExtensions?.[name] ?? true)));
+          const values = { ...(classifierModel === (original.classifierModel ?? 'auto') ? {} : { classifierModel }),
+            ...(Object.keys(changed).length ? { builtinExtensions: changed } : {}) };
+          if (!Object.keys(values).length) return;
+          const saved = await this.controller.perform('config.set', { scope: 'global', values });
+          if (this.closed) return;
+          if (saved.outcome === 'accepted') {
+            this.controller.setNotice('Execution defaults saved. Apply to new sessions or use /reload; running sessions are unchanged.');
+            return;
+          }
+          error = this.controller.notice || 'Could not save. Retry or go back.';
+        }
+      }
+    } catch (error) { this.notice(error); }
   }
 
   dispose(): void { this.closed = true; }

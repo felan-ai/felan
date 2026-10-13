@@ -1,6 +1,6 @@
 import type { AgentSession } from '@felan-ai/agent-core';
-import { SAFE_TOOL_NAMES } from '../safe-tools.js';
-import type { SessionExecutionPolicy, ToolProvenance } from './profile.js';
+import type { SessionToolPolicy } from './session-runtime.js';
+import type { SessionExecutionPolicy, ToolProvenance } from './session-lifecycle-contracts.js';
 
 export function inheritExecutionPolicy(policy: SessionExecutionPolicy): SessionExecutionPolicy {
   if (!['host-default', 'acp-strict'].includes(policy.mode) || !Number.isSafeInteger(policy.generation)
@@ -12,15 +12,15 @@ export function inheritExecutionPolicy(policy: SessionExecutionPolicy): SessionE
 export class TrustedToolCatalog {
   readonly #tools = new Map<string, { readonly implementation: object; readonly provenance: ToolProvenance }>();
 
-  constructor(private readonly definition: (name: string) => object | undefined) {}
+  private readonly approvalExemptTools: ReadonlySet<string>;
 
-  static fromSession(session: AgentSession, extensionPackages: readonly string[]): TrustedToolCatalog {
-    const catalog = new TrustedToolCatalog(name => session.getToolDefinition(name));
-    const trustedInlinePaths = new Set([
-      '<inline:@felan-ai/agent-core/runtime-tools>',
-      '<inline:@felan-ai/felan/codemode>',
-      ...extensionPackages.map(name => `<inline:${name}>`),
-    ]);
+  constructor(private readonly definition: (name: string) => object | undefined, approvalExemptTools: readonly string[] = []) {
+    this.approvalExemptTools = new Set(approvalExemptTools);
+  }
+
+  static fromSession(session: AgentSession, policy?: SessionToolPolicy): TrustedToolCatalog {
+    const catalog = new TrustedToolCatalog(name => session.getToolDefinition(name), policy?.approvalExemptTools);
+    const trustedInlinePaths = new Set(policy?.trustedInlinePaths);
     for (const tool of session.getAllTools()) {
       const definition = session.getToolDefinition(tool.name);
       if (!definition) continue;
@@ -42,7 +42,7 @@ export class TrustedToolCatalog {
   requiresApproval(policy: SessionExecutionPolicy, name: string): boolean {
     if (policy.mode === 'host-default') return false;
     const registered = this.#tools.get(name);
-    return !(SAFE_TOOL_NAMES.has(name) && registered?.provenance.source === 'builtin'
+    return !(this.approvalExemptTools.has(name) && registered?.provenance.source === 'builtin'
       && registered.implementation === this.definition(name));
   }
 }

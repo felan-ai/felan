@@ -2,7 +2,7 @@ import { emitKeypressEvents, type Key } from 'node:readline';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { SessionClient, type SessionClientOptions } from '../client/client.js';
 import { clientDaemonTarget } from '../client-application.js';
-import { resolveInstalledDaemonEntrypoint } from '../daemon-entrypoint.js';
+import { resolveClientHostComposition, resolveInstalledDaemonEntrypoint } from '../daemon-entrypoint.js';
 import { FELAN_VERSION } from '../version.js';
 import { TuiSessionController } from '../tui/controller.js';
 import { TerminalSetup } from '../tui/setup.js';
@@ -68,9 +68,11 @@ export async function runLocalFelanAcpLogin(options: RunLocalFelanAcpLoginOption
   if (options.signal?.aborted) fromCaller(); else options.signal?.addEventListener('abort', fromCaller, { once: true });
   try {
     abort.signal.throwIfAborted();
+    const target = clientDaemonTarget(options);
+    const expectedComposition = options.createClient ? undefined : await resolveClientHostComposition(target);
     const client = (options.createClient ?? (settings => new SessionClient(settings)))({
-      target: clientDaemonTarget(options), clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION,
-      kind: 'tui', interactionKinds: [], presenters: [], launch: { entrypoint: resolveInstalledDaemonEntrypoint() },
+      target, clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}),
+      kind: 'tui', interactionKinds: [], launch: { entrypoint: resolveInstalledDaemonEntrypoint() },
     });
     controller = new TuiSessionController(client);
     await waitForCancellation(client.connect(), abort.signal);

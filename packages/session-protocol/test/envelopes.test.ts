@@ -6,14 +6,12 @@ import * as protocol from '../src/index.js';
 import { identity, now, request, requestId, results } from './fixtures.js';
 
 describe('outcomes and handshake', () => {
-  it('uses unrevisioned notifications only for host prompts and transient OAuth', () => {
+  it('uses unrevisioned notifications only for host prompts', () => {
     const interaction = { id: 'host-prompt', scope: { kind: 'host' }, state: 'waiting',
-      request: { kind: 'trust', cwd: '/workspace', message: 'Trust?' }, eligibleClientKinds: ['tui'], createdAt: now };
+      request: { kind: 'confirm', title: 'Trust workspace?', message: '/workspace' }, createdAt: now };
     expect(parseServerEnvelope({ v: 1, interaction })).toEqual({ v: 1, interaction });
     const session = { ...interaction, scope: { kind: 'session', session: 's', root: 's' } };
     expect(() => parseServerEnvelope({ v: 1, interaction: session })).toThrow(/revisioned/);
-    const oauth = { ...session, request: { kind: 'oauth', provider: 'fixture', provisioningId: 'setup', url: 'https://example.invalid', instructions: 'Sign in' } };
-    expect(parseServerEnvelope({ v: 1, interaction: oauth })).toEqual({ v: 1, interaction: oauth });
   });
   it('exports independent protocol, row and control versions', () => {
     expect([PROTOCOL_VERSION, ROW_SCHEMA_VERSION, CONTROL_VERSION]).toEqual([1, 1, 1]);
@@ -68,31 +66,9 @@ describe('request retry identity', () => {
     expect(compareRequestPayload(first, first, { now: now + LIMITS.requestRetentionMs + 1 })).toBe('same');
     expect(() => parseClientEnvelope(first, { now: now + LIMITS.requestRetentionMs + 1 })).toThrow();
   });
-  it('retains until both admission age and embedded age have elapsed', () => {
-    expect(requestRetainUntil(requestId(), now + 1)).toBe(now + 1 + LIMITS.requestRetentionMs);
-    expect(requestRetainUntil(requestId(now + 1), now)).toBe(now + 1 + LIMITS.requestRetentionMs);
-    const record = { schemaVersion: 1, id: requestId(), owner: 'principal', session: 'session', admittedAt: now,
-      retainUntil: requestRetainUntil(requestId(), now), payload: canonicalRequestPayload(request('prompt'), { now }),
-      state: { phase: 'terminal', response: { v: 1, re: requestId(), outcome: 'accepted', result: results.prompt } } };
-    expect(parseStoredRequestRecord(record)).toEqual(record);
-    expect(() => parseStoredRequestRecord({ ...record, retainUntil: now })).toThrow();
-    expect(() => parseStoredRequestRecord({ ...record, state: { ...record.state, response: { ...record.state.response, re: 'other' } } })).toThrow();
-    const adoption = { ...record, payload: canonicalRequestPayload(request('session.adopt'), { now }),
-      state: { phase: 'terminal', response: { v: 1, re: requestId(), outcome: 'accepted', result: results['session.adopt'] } } };
-    expect(parseStoredRequestRecord(adoption).state).toEqual(adoption.state);
-    expect(LIMITS.reservedControlRecords).toBe(1024);
-    expect(LIMITS.sessionRequestRecords).toBe(100000);
-    expect(LIMITS.namespaceRequestRecords).toBe(1000000);
-  });
 });
 
 describe('shared daemon environment boundary', () => {
-  it('limits headless configuration changes to the attached session', () => {
-    expect(() => protocol.validateClientEligibility(parseClientEnvelope(request('config.set', { scope: 'session', values: { 'codex-priority': 'fast' } }), { now }), 'headless')).not.toThrow();
-    for (const scope of ['global', 'project']) {
-      expect(() => protocol.validateClientEligibility(parseClientEnvelope(request('config.set', { scope, values: { 'codex-priority': 'fast' } }), { now }), 'headless')).toThrow('session scoped');
-    }
-  });
   it('exposes no per-session environment API or limits', () => {
     expect(Object.keys(protocol.OperationSchemas)).toHaveLength(52);
     expect(Object.keys(protocol.OperationSchemas).some(op => op.startsWith('environment.'))).toBe(false);

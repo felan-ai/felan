@@ -34,7 +34,7 @@ Prewalk refuses to arm when no explicit mutation tool is active. Shell tools suc
 enter_prewalk {}  Enter Prewalk for complex repository work
 ```
 
-The no-argument tool requests a transition of the current run into planning, so it works while the agent is active. With the default `ask` policy, dialog-capable hosts ask the user before entering. A denial returns a tool error that directs the model to continue normally. JSON and print modes deny `ask` rather than blocking for unavailable input. Hosts can initialize the extension with `allow` for unattended environments such as a cloud platform, or `deny` to reject model-requested entry. Use the tool for complex repository work rather than small localized edits or routine one-file fixes. It must be called once and by itself. Conversation or repository activity from earlier requests does not prevent entry. Prefer entry before exploring the current task; if its complexity becomes clear after read-only exploration, call the tool before its first mutation. A mutation in the same model turn as a successful entry call cannot trigger handoff; the planning guidance must reach a later model turn first.
+The no-argument tool requests a transition of the current run into planning, so it works while the agent is active. With the default `ask` policy, the package root requests explicit entry approval through `pi.ui`, independently of Pi mode. A denial or unavailable interaction returns a tool error that directs the model to continue normally. Hosts can initialize the extension with `allow` for unattended environments such as a cloud platform, or `deny` to reject model-requested entry. Use the tool for complex repository work rather than small localized edits or routine one-file fixes. It must be called once and by itself. Conversation or repository activity from earlier requests does not prevent entry. Prefer entry before exploring the current task; if its complexity becomes clear after read-only exploration, call the tool before its first mutation. A mutation in the same model turn as a successful entry call cannot trigger handoff; the planning guidance must reach a later model turn first.
 
 The successful entry call and result are orchestration controls. They remain in the stored session transcript but are removed from model context. The `exit_plan_mode` call remains in context so the implementation model receives the approved plan argument. Current phase guidance is transient and replaced at the phase boundary, so the target receives the useful exploration, task graph, approved plan, and first valid change with implementation guidance rather than an instruction to keep planning.
 
@@ -46,13 +46,20 @@ When plan review is active, the planner calls the following tool after preparing
 exit_plan_mode { plan: "<complete concise plan>" }
 ```
 
-The plan must be non-empty and no longer than 32,000 characters. In the TUI, the tool opens a fullscreen review with a scrollable, theme-styled Markdown plan pane and fixed actions for approving, providing feedback, or cancelling Prewalk. Use the mouse wheel or trackpad, Page Up/Page Down, or Home/End to scroll the plan, and the select bindings to choose an action. The display copy is terminal-safe; the original plan argument remains in model context. RPC mode uses the host's select dialog. Approval returns control to the planner, whose first focused mutation triggers the existing model handoff. Feedback returns to planning so the planner can update the task graph and call `exit_plan_mode` again with the complete revised plan. Cancellation exits Prewalk without implementation. Dismissing the dialog leaves Prewalk in planning; Prewalk does not create a separate plan file or persisted plan record.
+The plan must be non-empty and no longer than 32,000 characters. The package root sends its complete display copy in a generic UI form through `pi.ui.request`, with **Approve plan**, **Provide feedback**, and **Cancel Prewalk** actions. The form includes an optional multiline feedback field bounded to 16 KiB. Approval returns control to the planner, whose first focused mutation triggers the existing model handoff. Feedback returns to planning so the planner can update the task graph and call `exit_plan_mode` again with the complete revised plan. Explicit cancellation exits Prewalk without implementation. Dismissed, deferred, or unavailable interactions leave the plan unapproved. Empty feedback also leaves it unapproved. Prewalk does not create a separate plan file or persisted plan record.
 
-Choosing **Provide feedback** opens a multiline editor below the plan in the same TUI review. Use Shift+Enter or Ctrl+J for a new line and Enter to send, or your configured input bindings. Multiline paste is supported. The plan stays visible above the editor and remains scrollable with the mouse wheel or Page Up/Page Down. Escape returns to the review choices without losing the draft.
+Untrusted HTML, links, and control characters are escaped in the display copy; the original plan argument remains in model context. An escaped plan exceeding the 128 KiB Markdown or 256 KiB aggregate form budget is rejected rather than truncated. The optional plan-review hint changes layout only. Tool cancellation and session shutdown abort pending interactions, and shutdown waits for owned requests to settle.
 
 Mutation tools remain available during review, so the non-mutation boundary is guidance enforced rather than a security sandbox.
 
-In modes without interactive input, `exit_plan_mode` auto-approves an `ask` review after receiving the plan argument. Prewalk emits a warning explaining the mode-based auto-approval, then continues through the same focused-mutation handoff.
+The default entry never auto-approves because a client lacks interactive input.
+The named `createPrewalkExtension(host?)` factory accepts an explicit
+`PrewalkHost`. The package exports neither a TUI entrypoint nor a feature-specific
+UI service; optional native rendering belongs to `apps/felan`.
+
+A custom `PrewalkHost` must explicitly set
+`autoApproveWithoutUi: true` to request that fallback; without it, the host's
+review result remains authoritative. The common-UI host never enables it.
 
 ## Lifecycle
 

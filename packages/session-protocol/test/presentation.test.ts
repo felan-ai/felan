@@ -1,23 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { HEADLESS_JSON_PRESENTER, LIMITS, PresentationEventSchema, PresentationSchema, RUNTIME_UI_PRESENTER, parseRuntimeUiState, parseSchema, parseServerEnvelope } from '../src/index.js';
+import { LIMITS, PresentationEventSchema, PresentationSchema, parsePresentation, parseSchema, parseServerEnvelope } from '../src/index.js';
 
 describe('runtime UI presentation contract', () => {
-  it('round trips bounded declarative state', () => {
-    const state = { workingMessage: 'Indexing', workingVisible: true, workingIndicator: { frames: ['.', '..'], intervalMs: 120 }, hiddenThinkingLabel: 'Thinking', toolsExpanded: false };
-    expect(parseRuntimeUiState(state)).toEqual(state);
-    expect(parseSchema(PresentationSchema, { id: 'runtime-ui', kind: 'custom', presenter: RUNTIME_UI_PRESENTER, data: state })).toMatchObject({ data: state });
-    expect(parseRuntimeUiState({})).toEqual({});
-    expect(parseRuntimeUiState({ workingIndicator: { frames: [] } })).toEqual({ workingIndicator: { frames: [] } });
+  it('bounds plain working status text', () => {
+    const status = { id: 'working', kind: 'status', key: 'working', value: { kind: 'text', text: 'Indexing' }, fallback: 'Status' };
+    expect(parseSchema(PresentationSchema, status)).toEqual(status);
+    expect(() => parseSchema(PresentationSchema, { ...status, value: { kind: 'text', text: 'x'.repeat(LIMITS.statusTextBytes + 1) } })).toThrow();
   });
-  it.each([
-    ['oversized text', { workingMessage: 'x'.repeat(LIMITS.statusTextBytes + 1) }],
-    ['too many frames', { workingIndicator: { frames: Array(65).fill('x') } }],
-    ['zero interval', { workingIndicator: { intervalMs: 0 } }],
-    ['non-finite interval', { workingIndicator: { intervalMs: Infinity } }],
-    ['unknown root field', { callback: 'unsupported' }],
-    ['unknown nested field', { workingIndicator: { callback: 'unsupported' } }],
-  ])('rejects %s', (_name, value) => { expect(() => parseRuntimeUiState(value)).toThrow(); });
-  it('preserves widget placement without requiring it for older payloads', () => {
+  it('validates optional widget placement', () => {
     const widget = { id: 'widget', kind: 'widget', text: 'value' };
     expect(parseSchema(PresentationSchema, widget)).toEqual(widget);
     expect(parseSchema(PresentationSchema, { ...widget, placement: 'belowEditor' })).toMatchObject({ placement: 'belowEditor' });
@@ -26,8 +16,18 @@ describe('runtime UI presentation contract', () => {
 });
 
 it('bounds opaque negotiated presentation events without importing runtime-specific types', () => {
-  const event = { v: 1, session: 'session', presentationEvent: { presenter: HEADLESS_JSON_PRESENTER, sequence: 0, data: { type: 'session', version: 3 } } };
+  const event = { v: 1, session: 'session', presentationEvent: { sequence: 0, data: { type: 'session', version: 3 } } };
   expect(parseServerEnvelope(event)).toEqual(event);
   expect(() => parseSchema(PresentationEventSchema, { ...event, presentationEvent: { ...event.presentationEvent, sequence: -1 } })).toThrow();
   expect(() => parseSchema(PresentationEventSchema, { ...event, presentationEvent: { ...event.presentationEvent, data: 'x'.repeat(LIMITS.pageBytes) } })).toThrow();
+});
+
+it.each(['custom', 'status_item'])('treats unknown %s presentations as fallback content', kind => {
+  expect(parsePresentation({ id: 'unknown', kind, fallback: 'Unsupported content' })).toEqual({
+    id: 'unknown', kind: 'notification', level: 'info', text: 'Unsupported content',
+  });
+});
+
+it.each(['progress', 'document', 'view'])('rejects incomplete known %s presentations instead of downgrading them', kind => {
+  expect(() => parsePresentation({ id: 'incomplete', kind, fallback: 'Incomplete content' })).toThrow();
 });

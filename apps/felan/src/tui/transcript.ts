@@ -1,7 +1,8 @@
-import type { AgentViewTranscript } from '@felan-ai/ext-subagents/view';
+import type { AgentViewTranscript } from '../subagents/types.js';
 import { COMPACTION_MESSAGE_TYPE, parseCompactionPresentation } from '@felan-ai/ext-session-compaction/view';
 import type { Message, SessionSnapshot } from '@felan-ai/session-protocol';
 import { projectedNativeMessage, projectedStreamingMessage } from '../client/message-display.js';
+import { SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE } from '../execution-completion.js';
 
 export function projectTuiTranscript(snapshot: SessionSnapshot, history: readonly Message[], settings: AgentViewTranscript['settings']): AgentViewTranscript {
   const messages: AgentViewTranscript['messages'] = [];
@@ -15,6 +16,8 @@ export function projectTuiTranscript(snapshot: SessionSnapshot, history: readonl
         const metadata = parseCompactionPresentation(item.details);
         if (metadata.method) compactions.push({ message: messages.length, method: metadata.method });
         messages.push({ role: 'compactionSummary', summary: messageText(item), tokensBefore: metadata.tokensBefore, timestamp: item.timestamp });
+      } else if (item.customType === SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE) {
+        fallbacks.push({ before: messages.length, text: messageText(item) });
       } else if (['user', 'assistant', 'tool'].includes(item.role)) fallbacks.push({ before: messages.length, text: `${item.role}:\n\n${messageText(item)}` });
     } catch {
       fallbacks.push({ before: messages.length, text: `[Display metadata unavailable]\n${item.role}:\n\n${messageText(item)}` });

@@ -30,14 +30,10 @@ export class BackgroundBashManager {
 
   readonly #coordinator: BackgroundBashCoordinator;
 
-  constructor(private readonly runtime: AgentRuntime, coordinator?: BackgroundBashCoordinator) {
+  constructor(private readonly runtime: AgentRuntime) {
     this.#storage = runtime.storage('session');
     this.#store = new BackgroundBashJobStore(runtime, this.#storage);
-    this.#coordinator = coordinator ?? new BackgroundBashCoordinator(runtime);
-  }
-
-  get coordinator(): BackgroundBashCoordinator {
-    return this.#coordinator;
+    this.#coordinator = new BackgroundBashCoordinator(runtime, snapshot => this.#persistInteractiveSnapshot(snapshot.id, snapshot));
   }
 
   async startInteractive(command: string): Promise<{ job: BackgroundBashJob; process: InteractiveBashProcess }> {
@@ -50,9 +46,8 @@ export class BackgroundBashManager {
         job.meta.id,
         command,
         this.runtime.cwd,
-        (snapshot) => this.#persistInteractiveSnapshot(job.meta.id, snapshot),
       );
-      const updated = await this.#store.updatePid(job.meta.id, process.process.pid ?? 0, undefined, {
+      const updated = await this.#store.updatePid(job.meta.id, process.pid ?? 0, undefined, {
         executionMode: 'pty',
       });
       if (!updated) throw new Error(`Background process disappeared during startup: ${job.meta.id}`);

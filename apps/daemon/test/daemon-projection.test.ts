@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_PRESENTER, parseSessionSnapshot, readMessageDisplay, type SessionEvent } from '@felan-ai/session-protocol';
+import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, parseSessionSnapshot, readMessageDisplay, type SessionEvent } from '@felan-ai/session-protocol';
 import { ControlStoreError } from '../src/daemon/control-state.js';
 import { projectPiMessage } from '../src/daemon/projection.js';
 import type { SessionEntry } from '@felan-ai/agent-core';
@@ -38,16 +38,41 @@ it('preserves real assistant metadata separately from text and leaves scalar too
     timestamp: 43, details: 'unchanged scalar' } }).details).toBe('unchanged scalar');
 });
 
-it('preserves compaction method and token metadata without exposing implementation details', () => {
+it('projects compaction summaries without interpreting feature-specific details', () => {
   const message = projectPiMessage({ type: 'compaction', id: 'compact', parentId: null, timestamp: new Date(0).toISOString(),
     summary: 'Retained summary', firstKeptEntryId: 'first', tokensBefore: 1234, fromHook: true,
     details: { namespace: 'felan.session-compaction', schemaVersion: 1, method: 'summary', trace: 'private' } });
-  expect(message).toMatchObject({ role: 'system', customType: 'felan.compaction.v1',
-    content: [{ type: 'text', text: 'Retained summary' }], details: { tokensBefore: 1234, method: 'Summary' } });
+  expect(message).toMatchObject({ id: 'compact', entryId: 'compact', role: 'system', timestamp: 0,
+    content: [{ type: 'text', text: 'Retained summary' }] });
+  expect(message).not.toHaveProperty('customType');
+  expect(message).not.toHaveProperty('details');
   expect(JSON.stringify(message)).not.toContain('private');
 });
 
 describe.skipIf(!supported)('Pi protocol projection', () => {
+  it('preserves configured compaction metadata while the provider keeps implementation details private', async () => {
+    const f = await fixture();
+    const open = vi.mocked(f.profile.openSession).getMockImplementation()!;
+    vi.mocked(f.profile.openSession).mockImplementation(async request => ({
+      ...await open(request),
+      projectMessage(entry, message) {
+        if (entry.type !== 'compaction') return message;
+        expect(entry.details).toEqual({ method: 'summary', trace: 'private' });
+        return { ...message, customType: 'example.compaction.v1', details: { tokensBefore: entry.tokensBefore, method: 'Summary' } };
+      },
+    }));
+    const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const manager = binding.runtime.session.sessionManager;
+    const kept = manager.appendMessage({ role: 'user', content: 'Retain this', timestamp: 0 });
+    const id = manager.appendCompaction('Retained summary', kept, 1234, { method: 'summary', trace: 'private' }, true);
+    const projection = f.registry.projection(binding.sessionId);
+    projection.refresh();
+    const message = projection.snapshot().history.entries.find(entry => entry.entryId === id);
+    expect(message).toMatchObject({ id, entryId: id, role: 'system', customType: 'example.compaction.v1',
+      content: [{ type: 'text', text: 'Retained summary' }], details: { tokensBefore: 1234, method: 'Summary' } });
+    expect(JSON.stringify(message)).not.toContain('private');
+  });
+
   it('lists available models when no explicit model scope is configured', async () => {
     const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const session = binding.runtime.session;
@@ -72,14 +97,14 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     expect(() => f.registry.assertAdmission()).not.toThrow();
     spy.mockRestore(); projection.refresh();
     const current = projection.snapshot();
-    expect(current.presentation).toContainEqual(expect.objectContaining({ id: MESSAGE_DISPLAY_PRESENTER.id,
+    expect(current.presentation).toContainEqual(expect.objectContaining({ id: MESSAGE_DISPLAY_ID,
       data: expect.objectContaining({ display: expect.objectContaining({ model: 'fixture', usage: message.usage }) }) }));
     const revision = current.revision;
     runtime.emit({ type: 'message_update', message, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Actual final answer', partial: message } });
     expect(projection.snapshot().revision).toBe(revision);
     runtime.emit({ type: 'message_end', message }); b.runtime.session.sessionManager.appendMessage(message); projection.refresh();
     const complete = projection.snapshot();
-    expect(complete.presentation.some(item => item.id === MESSAGE_DISPLAY_PRESENTER.id)).toBe(false);
+    expect(complete.presentation.some(item => item.id === MESSAGE_DISPLAY_ID)).toBe(false);
     expect(readMessageDisplay(complete.history.entries.at(-1)!.details)).toMatchObject({ kind: 'assistant', model: 'fixture', usage: message.usage });
   });
   it('reconciles compaction progress after transient capacity pressure and clears it on interruption', async () => {
@@ -90,7 +115,7 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     runtime.emit({ type: 'compaction_start', reason: 'manual' }); projection.refresh();
     expect(events.some(event => event.change.type === 'presentation.updated')).toBe(false);
     expect(() => f.registry.assertAdmission()).not.toThrow(); spy.mockRestore(); projection.refresh();
-    expect(projection.snapshot().presentation).toContainEqual({ id: 'compaction:progress', kind: 'status', text: 'Compacting context…' });
+    expect(projection.snapshot().presentation).toContainEqual({ id: 'compaction:progress', kind: 'status', key: 'compaction:progress', value: { kind: 'text', text: 'Compacting context…' }, fallback: 'Compacting context…' });
     runtime.emit({ type: 'compaction_end', reason: 'manual', result: undefined, aborted: true, willRetry: false }); projection.refresh();
     expect(projection.snapshot().presentation.some(item => item.id === 'compaction:progress')).toBe(false);
     expect(events.some(event => event.change.type === 'presentation.removed' && event.change.id === 'compaction:progress')).toBe(true);

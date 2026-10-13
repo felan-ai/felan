@@ -14,10 +14,10 @@ function medianDuration(action: () => void, runs = 3): number {
 
 describe('bounded protocol parsing cost', () => {
   it('parses near-limit structured answers with approximately linear scaling', () => {
-    const data = (rows: number) => Array.from({ length: rows }, () => Array.from({ length: 1000 }, () => 0));
+    const data = (rows: number) => Object.fromEntries(Array.from({ length: rows }, (_, index) => [`field${index}`, 'x'.repeat(1990)]));
     const small = data(4);
     const large = data(32);
-    const answer = (payload: number[][]) => request('interaction.answer', { interactionId: 'q', answer: { kind: 'custom', presenter: { id: 'p', version: '1' }, data: payload } });
+    const answer = (payload: Record<string, string>) => request('interaction.answer', { interactionId: 'q', answer: { kind: 'form', actionId: 'submit', outcome: 'submit', values: payload } });
     expect(JSON.stringify(large).length).toBeLessThan(LIMITS.answerBytes);
     expect(JSON.stringify(large).length).toBeGreaterThan(64000);
     const smallMs = medianDuration(() => { parseClientEnvelope(answer(small), { now }); });

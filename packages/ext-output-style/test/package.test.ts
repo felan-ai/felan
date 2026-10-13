@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -19,8 +19,8 @@ describe('@felan-ai/ext-output-style package boundary', () => {
         directory: 'packages/ext-output-style',
       },
       publishConfig: { access: 'public', provenance: true },
-      exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
-      peerDependencies: { '@felan-ai/agent-core': 'catalog:agent-core' },
+      exports: { '.': { import: './dist/extension.js', types: './dist/extension.d.ts' }, './extension': { import: './dist/extension.js' } },
+      peerDependencies: { '@felan-ai/agent-core': '^0.13.0' },
     });
     expect(license).toContain('MIT License');
     expect(notice).toContain('original Felan code');
@@ -30,10 +30,11 @@ describe('@felan-ai/ext-output-style package boundary', () => {
     expect(license).toContain('Copyright (c) 2026 Julius Brussee');
   });
 
-  it('does not load prompts, files, or host-specific dependencies', async () => {
-    const source = await readFile(join(packageRoot, 'src', 'index.ts'), 'utf8');
-
-    expect(source).not.toMatch(/node:|@felan-cloud|@earendil-works/u);
-    expect(source).not.toMatch(/readFile|fetch\(|process\./u);
+  it('loads configured files only through AgentRuntime', async () => {
+    const files = await readdir(join(packageRoot, 'src'));
+    const source = (await Promise.all(files.map(file => readFile(join(packageRoot, 'src', file), 'utf8')))).join('\n');
+    expect(source).not.toMatch(/node:(?:fs|os|http|net)|@felan-cloud|@earendil-works/u);
+    expect(source).not.toMatch(/fetch\(|process\./u);
+    expect(source).toContain('runtime.readFile(resolvedPath)');
   });
 });

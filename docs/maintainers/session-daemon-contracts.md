@@ -1,5 +1,10 @@
 # Story 1 integration contracts
 
+Historical pre-services contracts. The profile API below is superseded by
+[ADR 0036](../decisions/0036-configure-extension-services-through-trusted-providers.md)
+and [the current service/UI guide](extension-services-and-ui.md). It is not a
+current import or configuration reference.
+
 Companion to the [handoff](session-daemon-implementation.md). These are the S1.01
 baseline contracts for S1.02 and S1.05; they can be implemented independently.
 Symbols and reserved paths below are proposed outputs, not existing APIs.
@@ -124,10 +129,9 @@ record. Do not smuggle built-ins through an unrestricted generic `command.invoke
 | Operation | Parameters / result and conditions |
 | --- | --- |
 | `hello`, `host.status` | Handshake above; status includes lifecycle, binary/root/protocol, active counts and setup needs, no secrets. |
-| `sessions.list` | Optional cwd/root filter + cursor; summaries include legacy/adopted, warm/evicted/closed, run state, title, model, last activity, policy state. Read-only. |
-| `sessions.create` | Absolute cwd, optional configured sessionDir, model/thinking/config overrides, source kind and validated local extension paths. -> session ID. Resolve trust/setup before side effects; acquire actual-root locks first. ACP/headless cannot inject interactive external extensions. |
-| `attach` | Session ID; optional `requirePolicy:'acp-strict'` for ACP. -> attachment binding + snapshot. Unadopted legacy data returns `adoption_required`; attach itself never adopts. Attach of an adopted busy session is allowed. |
-| `session.adopt` | Explicit local-TUI management action for a selected legacy ID, expected source fingerprint and confirmed backup/quiescence acknowledgement. Validate actual roots, source identity and known owners under locks; return the durable adoption identity. Not an ACP capability or a new headless CLI flag. |
+| `sessions.list` | Optional cwd/root filter + cursor; summaries include only registered sessions, with warm/evicted/closed, run state, title, model, last activity, policy state. Read-only. |
+| `sessions.create` | Absolute cwd, optional configured sessionDir, model/thinking/config overrides, source kind and validated local extension paths. -> session ID. Resolve trust/setup before side effects; acquire actual-root locks first. Interactive extensions require explicit permission and a verified local console, independent of source kind. |
+| `attach` | Session ID; optional `requirePolicy:'acp-strict'` for ACP. -> attachment binding + snapshot. Unregistered IDs return `not_found`. Attaching to a registered busy session is allowed. |
 | `detach` | Attachment ID -> remove only that binding. EOF is the same operation without a required ack. |
 | `close` | Session ID -> settle the session's foreground work, child sessions and PTYs; retain history and independent detached-job records, then close. Detached jobs are not implicitly killed. Not ACP `session/close`, which maps to detach. |
 | `prompt`, `steer`, `follow_up` | Text + typed text/image/resource attachments; origin assigned/validated by adapter. Prompt starts only while idle; steering/follow-up preserve Pi queue semantics. Rejected busy gives retryable typed error, never silently forks. |
@@ -145,8 +149,7 @@ record. Do not smuggle built-ins through an unrestricted generic `command.invoke
 | `host.stop`, `host.restart`, `host.logs` | Explicit drain or force policy; bounded sanitized log cursor. No terminal disconnect invokes them. Only status/stop/restart are available through authenticated mismatch bootstrap; logs require v1. |
 
 Trust/dependency/OAuth/login actions are typed broker requests or schema-bound
-host commands in S1.09/12/14, never arbitrary shell/config access. Complete
-operation schemas must include their eligible client kinds. Existing TUI share,
+host commands in S1.09/12/14, never arbitrary shell/config access. Operation capabilities are negotiated without client-kind gates. Existing TUI share,
 bug-report, clipboard and external-editor actions stay explicit client workflows;
 they do not justify platform/telemetry implementation or new ACP capabilities.
 
@@ -154,7 +157,7 @@ Error codes include `invalid_request`, `unsupported_operation`,
 `protocol_mismatch`, `unavailable`, `busy`, `policy_pending`,
 `request_conflict`, `stale_request`, `expired`, `not_found`, `forbidden`,
 `already_resolved`, `storage_failure`, `ownership_lost`, `resync_required` and
-`indeterminate`, plus `adoption_required`, `request_capacity` and `target_mismatch`. Error text is bounded and sanitized.
+`indeterminate`, plus `request_capacity` and `target_mismatch`. Error text is bounded and sanitized.
 Reject before effects.
 
 ### Snapshot, streaming and durability
@@ -249,13 +252,13 @@ interface DaemonProfile {
   local session file. Fork names a source entry and explicit `before|at` position;
   `before` requires a user-message entry, while `at` permits any existing entry.
   Clone names the source session file. Import names a validated source copy
-  already inside the owned session directory; the selection/adoption host must
+  already inside the owned session directory; the import host must
   stage external files under ownership before calling the profile. Import does
   not grant arbitrary external-file access. The profile creates/opens Pi SessionManager
   **only after** ownership validation. New IDs are returned, never assumed by the
   caller. Resume/fork retain the canonical persisted cwd and reject mismatched
   resources before side effects. Clone/import deliberately use the requested
-  target cwd. No raw path sent by a client bypasses resource resolution/adoption.
+  target cwd. No raw path sent by a client bypasses resource resolution.
 - `ProfileOwnership.assertOwned(resources, target)` receives the canonical source
   path/ID, operation kind and destination directory. Before this idempotent check
   returns, the registry must hold the applicable source read/write claim and
@@ -405,40 +408,14 @@ Unsafe tools generate broker approvals before effects. Any eligible attached TUI
 may answer; ACP uses existing requestPermission/elicitation translations. Editor
 EOF only withdraws that responder; no deny-and-abort and no approval-by-absence.
 
-### One-time legacy adoption gate
+### Pre-daemon session files
 
-Unadopted legacy files are listable/readable history, not executable sessions.
-`session/load` over ACP maps daemon `adoption_required` to an ACP request error
-with typed `data.code = 'adoption_required'`, session ID and actionable guidance;
-it does not open an execution runtime or advertise a new ACP adoption method.
-Headless `--continue`/`--session` fail with exit 1 and the same diagnostic before
-prompt dispatch; `--continue` must not silently skip the legacy selection and
-create another session. This is the approved one-time legacy compatibility
-exception. Once adopted, normal busy ACP load/replay and prompt semantics above
-apply unchanged.
+Only registered daemon sessions are listed or resumable. Pre-daemon files remain
+untouched. An explicit `session.import` creates a new session ID from validated
+JSONL history; `session.export` remains available. No adoption or migration path
+is provided.
 
-The error directs the owner to launch the existing interactive command
-`felan --session <id>` (and existing `--session-dir <dir>` when needed), inspect
-the selected legacy session and explicitly accept the TUI adoption management
-dialog. No new `--adopt` flag, automatic takeover or forced fork is implied.
-That dialog confirms private backup and known-writer quiescence, shows actual
-roots/source identity, and invokes the owner-local `session.adopt` operation.
-Retries are idempotent; a changed source fingerprint or known live writer rejects
-the adoption. After success, rerun the original ACP/headless operation.
-
-Adoption keeps the original JSONL unchanged as a legacy reference and makes a
-byte-preserving managed working copy with the same session ID plus versioned
-ownership/control metadata. The index records the source fingerprint and managed
-path and suppresses the duplicate legacy listing. No new transcript backend or
-user-facing import is required. New binaries refuse direct in-process writes to
-the adopted copy. The JSONL's being Pi-readable is **not** a downgrade guarantee:
-an old noncooperating binary may ignore sidecars, so never point it at managed
-copies. Downgrade uses a quiescent pre-adoption backup or explicit history export;
-unknown future control versions fail closed. Do not merge later legacy-file
-changes into the adopted session automatically.
-
-An `Interaction` includes ID, host/session/root scope, kind/schema, eligible client
-kinds, creation/expiry, `waiting|deferred|answered|cancelled|expired`, responder and
+An `Interaction` includes ID, host/session/root scope, kind/schema, authority, creation/expiry, `waiting|deferred|answered|cancelled|expired`, responder and
 terminal result. Arbitrary component closures are never serialized. Ask-user
 waits through detach, honors explicit timeout and defers on drain/release; default
 expiry becomes 30 minutes on deferral if no timeout was specified. Persist winner

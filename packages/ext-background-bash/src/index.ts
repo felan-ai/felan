@@ -15,11 +15,10 @@ import {
   type BackgroundBashStatusFilter,
 } from './job-store.js';
 import { BackgroundBashManager } from './process-manager.js';
-import { BackgroundBashCoordinator } from './coordinator.js';
 import { inspectBackgroundBashRuntime } from './runtime-support.js';
+import { createCommonProcessPresentation } from './common-ui.js';
 import {
   BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE,
-  type BackgroundBashPresentationHost,
   type BackgroundProcessViewSource,
 } from './presentation.js';
 
@@ -81,7 +80,6 @@ type ReadBackgroundBashParams = Static<typeof ReadBackgroundBashParams>;
 type WaitBackgroundBashParams = Static<typeof WaitBackgroundBashParams>;
 type StopBackgroundBashParams = Static<typeof StopBackgroundBashParams>;
 type WriteBackgroundBashParams = Static<typeof WriteBackgroundBashParams>;
-type ExtensionUI = ExtensionContext['ui'];
 
 interface BackgroundBashDetails {
   background: true;
@@ -98,10 +96,6 @@ interface BackgroundBashDetails {
   startedAt: number;
 }
 
-interface StatusTarget {
-  ui: ExtensionUI;
-  generation: number;
-}
 
 export const BACKGROUND_BASH_CONFIG = defineExtensionConfig({
   id: 'backgroundBash',
@@ -117,26 +111,18 @@ export const BACKGROUND_BASH_CONFIG = defineExtensionConfig({
   },
 });
 
-export function createBackgroundBashExtension(
-  coordinator?: BackgroundBashCoordinator,
-  ownsCoordinator = coordinator === undefined,
-  presentation?: BackgroundBashPresentationHost,
-): FelanExtension {
+export function createBackgroundBashExtension(): FelanExtension {
   const extension: FelanExtension = (pi) => {
   const config = {
     foregroundTimeoutSeconds: Number(pi.config?.foregroundTimeoutSeconds ?? 120),
   };
-  presentation?.install?.(pi);
-  const manager = new BackgroundBashManager(pi.runtime, coordinator);
+  const commonPresentation = createCommonProcessPresentation(pi.ui);
+  const manager = new BackgroundBashManager(pi.runtime);
   const foregroundBash = createRuntimeCodingTools(pi.runtime, { shellFlavor: 'posix' })
     .find((tool) => tool.name === 'bash')!;
   let helperToolsRegistered = false;
   let backgroundBashActive = false;
   let controlsRegistered = false;
-  let statusTarget: StatusTarget | undefined;
-  let statusPollTimer: ReturnType<typeof setInterval> | undefined;
-  let statusUpdateRunning = false;
-  let statusGeneration = 0;
   let completionPollingEnabled = false;
   let completionPollTimer: ReturnType<typeof setInterval> | undefined;
   let completionPollGeneration = 0;
@@ -144,54 +130,11 @@ export function createBackgroundBashExtension(
   let runtimeAvailable: boolean | undefined;
   let runtimeCheck: Promise<boolean> | undefined;
   const viewLifetime = new AbortController();
-  const views = new Set<Promise<void>>();
   const viewSource: BackgroundProcessViewSource = {
     list: status => manager.list(status), tail: (id, lines) => manager.tail(id, lines), stop: (id, signal) => manager.stop(id, signal),
+    write: async (id, chars) => { await manager.writeInteractive(id, chars); },
   };
   const watchedJobIds = new Set<string>();
-
-  const createStatusTarget = (ctx: ExtensionContext): StatusTarget | undefined => {
-    if (!ctx.hasUI || !presentation) return undefined;
-    return { ui: ctx.ui, generation: statusGeneration };
-  };
-
-  const updateStatus = async (target: StatusTarget | undefined) => {
-    if (!target || target.generation !== statusGeneration || statusUpdateRunning) return;
-    statusUpdateRunning = true;
-    try {
-      const running = await manager.list('running');
-      if (target.generation !== statusGeneration) return;
-      if (running.length === 0) {
-        presentation?.status(target.ui, undefined);
-        return;
-      }
-      presentation?.status(target.ui, running.length);
-    } catch {
-      if (target.generation !== statusGeneration) return;
-      presentation?.status(target.ui, 'unavailable');
-    } finally {
-      statusUpdateRunning = false;
-    }
-  };
-
-  const startStatusPolling = (ctx: ExtensionContext) => {
-    statusGeneration += 1;
-    if (statusPollTimer) clearInterval(statusPollTimer);
-    const target = createStatusTarget(ctx);
-    statusTarget = target;
-    void updateStatus(target);
-    statusPollTimer = target ? setInterval(() => void updateStatus(target), 5_000) : undefined;
-  };
-
-  const stopStatusPolling = () => {
-    statusGeneration += 1;
-    if (statusPollTimer) {
-      clearInterval(statusPollTimer);
-      statusPollTimer = undefined;
-    }
-    if (statusTarget) presentation?.status(statusTarget.ui, undefined);
-    statusTarget = undefined;
-  };
 
   const clearCompletionPollTimer = () => {
     if (!completionPollTimer) return;
@@ -234,7 +177,6 @@ export function createBackgroundBashExtension(
 
         watchedJobIds.delete(id);
         deliverCompletion(job);
-        void updateStatus(statusTarget);
       }
     } finally {
       if (completionPollRunningGeneration === generation) {
@@ -280,18 +222,13 @@ export function createBackgroundBashExtension(
     watchedJobIds.clear();
   };
 
-  const openProcessView = async (ctx: ExtensionContext) => {
+  const openProcessView = async () => {
     viewLifetime.signal.throwIfAborted();
     if (!backgroundBashActive) {
-      if (ctx.hasUI) ctx.ui.notify('Background processes are unavailable in this runtime.', 'info');
+      await pi.ui.notify({ text: 'Background processes are unavailable in this runtime.', level: 'info' });
       return;
     }
-    const target = createStatusTarget(ctx);
-    if (!target || !presentation) throw Object.assign(new Error('Process presentation requires a compatible interactive client.'), { code: 'unsupported' });
-    const view = presentation.show(target.ui, viewSource, viewLifetime.signal).catch(error => { if (!viewLifetime.signal.aborted) throw error; });
-    views.add(view);
-    try { await view; } finally { views.delete(view); }
-    await updateStatus(target);
+    await commonPresentation.show(viewSource, viewLifetime.signal);
   };
 
   const registerBackgroundBash = () => {
@@ -318,7 +255,6 @@ export function createBackgroundBashExtension(
         const normalized = interactive
           ? { command: params.command, rtkRewriteRemoved: false }
           : normalizeBackgroundCommand(params.command);
-        const target = createStatusTarget(ctx);
         const started = interactive
           ? await manager.startInteractive(normalized.command)
           : { job: await manager.start(normalized.command) };
@@ -366,7 +302,6 @@ export function createBackgroundBashExtension(
         }
         if (!params.background) await manager.markPromoted(job.meta.id, interactive ? 'pty' : 'detached');
         watchCompletion(job.meta.id);
-        await updateStatus(target);
         const notice = normalized.rtkRewriteRemoved
           ? '\n\nRTK rewrite was removed for this background process so output streams directly to the log file.'
           : '';
@@ -394,7 +329,6 @@ export function createBackgroundBashExtension(
           details,
         };
       },
-      ...(presentation?.renderCall ? { renderCall: presentation.renderCall } : {}),
     });
     backgroundBashActive = true;
   };
@@ -409,12 +343,10 @@ export function createBackgroundBashExtension(
       promptSnippet: 'List workspace background processes and their status',
       parameters: ListBackgroundBashParams,
       async execute(_toolCallId, params: ListBackgroundBashParams, _signal, _onUpdate, ctx) {
-        const target = createStatusTarget(ctx);
         const jobs = await manager.list((params.status ?? 'all') as BackgroundBashStatusFilter);
         for (const job of jobs) {
           if (isTerminalStatus(job.status.status)) suppressCompletion(job.meta.id);
         }
-        await updateStatus(target);
         return {
           content: [{ type: 'text', text: formatJobList(jobs) }],
           details: { jobs: jobs.map((job) => ({ meta: job.meta, status: job.status })) },
@@ -446,7 +378,6 @@ export function createBackgroundBashExtension(
       promptSnippet: 'Wait for a background process and return its status',
       parameters: WaitBackgroundBashParams,
       async execute(_toolCallId, params: WaitBackgroundBashParams, signal, _onUpdate, ctx) {
-        const target = createStatusTarget(ctx);
         const wasWatched = suppressCompletion(params.id);
         let result: Awaited<ReturnType<BackgroundBashManager['wait']>>;
         try {
@@ -456,7 +387,6 @@ export function createBackgroundBashExtension(
           throw error;
         }
         if (wasWatched && result.timedOut) watchCompletion(params.id);
-        await updateStatus(target);
         return {
           content: [{ type: 'text', text: formatWaitResult(result.job, result.timedOut) }],
           details: { job: result.job, timedOut: result.timedOut },
@@ -471,7 +401,6 @@ export function createBackgroundBashExtension(
       promptSnippet: 'Stop a running background process by id',
       parameters: StopBackgroundBashParams,
       async execute(_toolCallId, params: StopBackgroundBashParams, _signal, _onUpdate, ctx) {
-        const target = createStatusTarget(ctx);
         const wasWatched = suppressCompletion(params.id);
         let job: BackgroundBashJob;
         try {
@@ -480,7 +409,6 @@ export function createBackgroundBashExtension(
           if (wasWatched) watchCompletion(params.id);
           throw error;
         }
-        await updateStatus(target);
         return {
           content: [{ type: 'text', text: `Background process stop result.\n\n${formatJobDetails(job)}` }],
           details: { job },
@@ -498,7 +426,6 @@ export function createBackgroundBashExtension(
         const result = await manager.writeInteractive(params.id, params.chars);
         const job = await manager.get(params.id);
         if (!result.running) suppressCompletion(job.meta.id);
-        await updateStatus(createStatusTarget(ctx));
         return {
           content: [{ type: 'text', text: result.output || '(no output)' }],
           details: { id: params.id, status: job.status.status, tty: true },
@@ -509,10 +436,10 @@ export function createBackgroundBashExtension(
 
   pi.registerCommand('processes', {
       description: 'View processes and logs',
-      handler: async (_args, ctx) => openProcessView(ctx),
+      handler: async () => openProcessView(),
   });
   const registerControls = () => {
-    if (controlsRegistered || !presentation) return;
+    if (controlsRegistered) return;
     controlsRegistered = true;
     pi.registerShortcut('ctrl+shift+j', {
       description: 'View processes and logs',
@@ -547,12 +474,9 @@ export function createBackgroundBashExtension(
     registerHelperTools();
     activateRegisteredTools();
     resumeCompletionPolling();
-    if (ctx.mode === 'tui' && ctx.hasUI && presentation) startStatusPolling(ctx);
-    else statusTarget = createStatusTarget(ctx);
   };
 
   const disableExtension = () => {
-    stopStatusPolling();
     pauseCompletionPolling();
     if (!helperToolsRegistered || !backgroundBashActive) return;
     pi.registerTool({ ...foregroundBash });
@@ -567,7 +491,7 @@ export function createBackgroundBashExtension(
   };
 
   pi.on('session_start', async (_event, ctx) => {
-    if (ctx.mode === 'tui') registerControls();
+    registerControls();
     await enableExtension(ctx);
   });
   pi.on('model_select', async (_event, ctx) => {
@@ -575,10 +499,9 @@ export function createBackgroundBashExtension(
   });
   pi.on('session_shutdown', async (event) => {
     viewLifetime.abort();
-    stopStatusPolling();
     clearCompletionWatches();
-    try { await Promise.all([...views]); }
-    finally { if (ownsCoordinator && event.reason !== 'reload') await manager.shutdownInteractive(); }
+    try { await commonPresentation.dispose(); }
+    finally { if (event.reason !== 'reload') await manager.shutdownInteractive(); }
   });
   };
   associateExtensionConfig(extension, BACKGROUND_BASH_CONFIG);
@@ -676,7 +599,7 @@ function formatForegroundOutput(job: BackgroundBashJob, output: string): string 
 
 export type { BackgroundBashDetails };
 export { BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE } from './presentation.js';
-export type { BackgroundBashPresentationHost, BackgroundProcessViewSource } from './presentation.js';
+export type { BackgroundProcessViewSource } from './presentation.js';
 export { BackgroundBashManager } from './process-manager.js';
 export { BackgroundBashCoordinator } from './coordinator.js';
 export type { InteractiveBashProcess } from './coordinator.js';

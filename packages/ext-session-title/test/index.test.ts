@@ -1,6 +1,7 @@
-import type { FelanExtensionAPI, ExtensionContext, Model, SessionEntry } from '@felan-ai/agent-core';
+import type { FelanExtensionAPI, ExtensionContext, TextModelInfo, SessionEntry } from '@felan-ai/agent-core';
+import { createExtensionServiceAccess, createFelanServiceRegistry, createSilentLogger, MODELS_SERVICE } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
+import sessionTitleExtension, {
   createSessionTitleExtension,
   formatSessionTerminalTitle,
   type SessionTitleHost,
@@ -12,7 +13,85 @@ afterEach(async () => {
   await Promise.allSettled(pendingTasks.splice(0));
 });
 
+describe('Session Title service-backed root entry', () => {
+  it('declares Models as optional and disables only title generation when absent', () => {
+    expect(sessionTitleExtension.serviceRequirements).toEqual({ optional: [MODELS_SERVICE] });
+    const on = vi.fn();
+    const debug = vi.fn();
+    const registry = createFelanServiceRegistry();
+    expect(() => sessionTitleExtension({
+      on, runtime: { logger: { ...createSilentLogger(), debug } },
+      services: createExtensionServiceAccess(registry, sessionTitleExtension.serviceRequirements!),
+    } as unknown as FelanExtensionAPI)).not.toThrow();
+    expect(on).not.toHaveBeenCalled();
+    expect(debug).toHaveBeenCalledWith({ component: 'session-title', reason: 'models-unavailable' }, 'Session title generation disabled.');
+  });
+});
+
+describe('Session Title explicit host lifecycle', () => {
+  it('uses the provider asynchronously and awaits persistence before setting the title', async () => {
+    const complete = vi.fn().mockResolvedValue(response('Generated session title'));
+    let finishPersistence!: (persisted: boolean) => void;
+    const persistence = new Promise<boolean>((resolve) => { finishPersistence = resolve; });
+    const host: SessionTitleHost = {
+      ...testHost(complete),
+      setTitleIfMissing: vi.fn(() => persistence),
+    };
+    const setSessionName = vi.fn();
+    const handlers = install(createSessionTitleExtension(host), setSessionName);
+    expect(host.prepare).not.toHaveBeenCalled();
+    expect(handlers.before({ prompt: 'Name this session' }, context({ entries: [] }))).toBeUndefined();
+    try {
+      await vi.waitFor(() => expect(host.setTitleIfMissing).toHaveBeenCalledOnce());
+      expect(setSessionName).not.toHaveBeenCalled();
+    } finally {
+      finishPersistence(true);
+    }
+    await vi.waitFor(() => expect(setSessionName).toHaveBeenCalledWith('Generated session title'));
+    await handlers.shutdown();
+  });
+
+  it('cancels and drains pending provider work on shutdown without publishing a title', async () => {
+    let finishCompletion!: (value: ReturnType<typeof response>) => void;
+    const completion = new Promise<ReturnType<typeof response>>((resolve) => { finishCompletion = resolve; });
+    const complete = vi.fn((_request: Parameters<SessionTitleHost['complete']>[0]) => completion);
+    const setSessionName = vi.fn();
+    const handlers = install(createSessionTitleExtension(testHost(complete)), setSessionName);
+    handlers.before({ prompt: 'Name this session' }, context({ entries: [] }));
+    try {
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+      let stopped = false;
+      const shutdown = handlers.shutdown().then(() => { stopped = true; });
+      pendingTasks.push(shutdown);
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      expect(complete.mock.calls[0]?.[0].options.signal?.aborted).toBe(true);
+      finishCompletion(response('Must not appear'));
+      await shutdown;
+      expect(setSessionName).not.toHaveBeenCalled();
+    } finally {
+      finishCompletion(response('Must not appear'));
+      await handlers.shutdown();
+    }
+  });
+});
+
 describe('@felan-ai/ext-session-title', () => {
+  it('passes endpoint-free current-model metadata to an explicit host', async () => {
+    const complete = vi.fn().mockResolvedValue(response('Portable title'));
+    const host = testHost(complete);
+    const handlers = install(createSessionTitleExtension(host), vi.fn());
+    const ctx = context({ entries: [] });
+    Object.assign(ctx.model!, { baseUrl: 'https://private.invalid', headers: { authorization: 'private' } });
+    handlers.before({ prompt: 'Name this session' }, ctx);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    const request = vi.mocked(host.prepare).mock.calls[0]![0];
+    expect(request.currentModel).not.toHaveProperty('baseUrl');
+    expect(request.currentModel).not.toHaveProperty('headers');
+    expect(request.currentModel).toMatchObject({ provider: 'test', id: 'active' });
+    await handlers.shutdown();
+  });
+
   it('generates one title from the first unnamed root prompt', async () => {
     const complete = vi.fn().mockResolvedValue(response('Title: "Review auth regressions."'));
     const setSessionName = vi.fn();
@@ -267,7 +346,7 @@ function context(options: {
   mode?: ExtensionContext['mode'];
   parentSession?: string;
   name?: string;
-  currentModel?: Model<any> | undefined;
+  currentModel?: TextModelInfo | undefined;
   notify?: ReturnType<typeof vi.fn>;
 }): ExtensionContext {
   return {
@@ -283,8 +362,12 @@ function context(options: {
   } as unknown as ExtensionContext;
 }
 
-function model(id: string, input: number, output: number, inputTypes: ('text' | 'image')[] = ['text']): Model<any> {
-  return { id, provider: 'test', input: inputTypes, cost: { input, output, cacheRead: 0, cacheWrite: 0 } } as Model<any>;
+function model(id: string, input: number, output: number, inputTypes: ('text' | 'image')[] = ['text']): TextModelInfo {
+  return {
+    id, name: id, provider: 'test', api: 'openai-completions', input: inputTypes,
+    cost: { input, output, cacheRead: 0, cacheWrite: 0 }, reasoning: false,
+    contextWindow: 32_000, maxTokens: 4096,
+  };
 }
 
 function response(text: string): any {

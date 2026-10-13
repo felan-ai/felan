@@ -2,29 +2,57 @@ import { resolve } from 'node:path';
 import { ThinkingSchema, parseSchema } from '@felan-ai/session-protocol';
 import type { TuiSessionController } from './controller.js';
 import type { TuiDialogHost } from './dialogs.js';
-import type { AutocompleteProvider } from '@earendil-works/pi-tui';
+import { CombinedAutocompleteProvider, type AutocompleteProvider, type SlashCommand } from '@earendil-works/pi-tui';
 
 export type DaemonAction = 'stop' | 'restart';
-const BUILTINS = ['new', 'cwd', 'sessions', 'resume', 'model', 'thinking', 'settings', 'login', 'dependencies', 'compact', 'fork', 'tree', 'rename', 'reload', 'reconnect', 'queue', 'steer', 'follow-up', 'cancel', 'close', 'history', 'help', 'exit', 'daemon'];
+const BUILTINS: SlashCommand[] = [
+  { name: 'settings', description: 'Open settings menu' },
+  { name: 'model', description: 'Select model (opens selector UI)' },
+  { name: 'tree', description: 'Navigate session tree (switch branches)' },
+  { name: 'thinking', description: 'Set thinking level' },
+  { name: 'fork', description: 'Create a new fork from a previous user message' },
+  { name: 'login', description: 'Configure provider authentication' },
+  { name: 'new', description: 'Start a new session' },
+  { name: 'compact', description: 'Manually compact the session context' },
+  { name: 'resume', description: 'Resume a different session' },
+  { name: 'reload', description: 'Reload session configuration' },
+  { name: 'cwd', description: 'Start a session in a different directory' },
+  { name: 'sessions', description: 'Select a session' },
+  { name: 'dependencies', description: 'Set up runtime dependencies' },
+  { name: 'rename', description: 'Set session display name' },
+  { name: 'reconnect', description: 'Reconnect to the daemon' },
+  { name: 'queue', description: 'Show queued messages' },
+  { name: 'steer', description: 'Steer the active run' },
+  { name: 'follow-up', description: 'Queue a follow-up message' },
+  { name: 'cancel', description: 'Interrupt the active run' },
+  { name: 'close', description: 'Close the current session' },
+  { name: 'history', description: 'Load session history' },
+  { name: 'ui', description: 'Open session UI' },
+  { name: 'help', description: 'Show available commands' },
+  { name: 'exit', description: 'Quit Felan' },
+  { name: 'daemon', description: 'Manage the daemon' },
+];
 
 export function createCommandAutocomplete(controller: TuiSessionController): AutocompleteProvider {
+  const builtinNames = new Set(BUILTINS.map(command => command.name));
+  const provider = () => new CombinedAutocompleteProvider([
+    ...BUILTINS, ...(controller.snapshot?.catalog.commands.filter(command => !builtinNames.has(command.name)) ?? []),
+  ], controller.snapshot?.cwd ?? process.cwd(), null);
   return {
     triggerCharacters: ['/'],
     async getSuggestions(lines, line, column, { signal }) {
       const prefix = lines[line]?.slice(0, column) ?? '';
       if (signal.aborted || line !== 0 || !/^\/[^\s]*$/u.test(prefix)) return null;
-      const names = new Set([...BUILTINS, ...(controller.snapshot?.catalog.commands.filter(command => command.eligibleClientKinds.includes('tui')).map(command => command.name) ?? [])]);
-      return { prefix, items: [...names].filter(name => `/${name}`.startsWith(prefix)).sort().map(name => ({ value: `/${name} `, label: `/${name}` })) };
+      return provider().getSuggestions(lines, line, column, { signal });
     },
     applyCompletion(lines, line, column, item, prefix) {
-      const next = [...lines]; next[line] = `${lines[line]!.slice(0, column - prefix.length)}${item.value}${lines[line]!.slice(column)}`;
-      return { lines: next, cursorLine: line, cursorCol: column - prefix.length + item.value.length };
+      return provider().applyCompletion(lines, line, column, item, prefix);
     },
   };
 }
 
 export async function submitTuiInput(controller: TuiSessionController, dialogs: TuiDialogHost, text: string,
-  options: { cwd: string; exit(): void; setDraft?(text: string): void; preferences?(): Promise<boolean>; login?(): Promise<boolean>; dependencies?(): Promise<boolean>; daemon?(action: DaemonAction, force: boolean): Promise<void> }): Promise<boolean> {
+  options: { cwd: string; exit(): void; setDraft?(text: string): void; preferences?(): Promise<boolean>; login?(): Promise<boolean>; dependencies?(): Promise<boolean>; ui?(): Promise<boolean>; daemon?(action: DaemonAction, force: boolean): Promise<void> }): Promise<boolean> {
   const trimmed = text.trim();
   if (trimmed === '/exit' || trimmed === '/quit') { options.exit(); return true; }
   if (trimmed === '/history') { await controller.loadHistory(); return true; }
@@ -40,6 +68,11 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
   }
   const [, name = '', argument = ''] = /^\/(\S+)(?:\s+([\s\S]*))?$/u.exec(trimmed) ?? [];
   controller.setNotice('');
+  if (name === 'ui') {
+    if (argument) throw new Error('Usage: /ui');
+    if (!options.ui) throw new Error('Session UI is unavailable.');
+    return options.ui();
+  }
   if (name === 'settings') {
     if (argument) throw new Error('Usage: /settings');
     if (!options.preferences) throw new Error('Client preferences are unavailable.');
@@ -84,22 +117,23 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     if (!cwd) return false;
     await controller.create({ cwd: resolve(controller.snapshot?.cwd ?? options.cwd, cwd) }); return true;
   }
+  if (name === 'reload') {
+    const session = argument || controller.sessionId;
+    if (!session) throw new Error('Use /reload <session-id> to recover a saved session.');
+    return controller.reloadSession(session);
+  }
   if (name === 'resume' || name === 'sessions') {
     const rows = await controller.sessions();
     const selected = await dialogs.select('Sessions', rows.map((row, index) => ({ value: String(index),
-      label: `${row.title || row.session}${row.adoption === 'legacy' ? ' [legacy]' : ''}`, description: `${row.cwd} · ${row.run.state}` })));
+      label: row.title || row.session, description: `${row.cwd} · ${row.run.state}` })));
     if (selected === undefined) return false;
     const row = rows[Number(selected)]; if (!row) throw new Error('The selected session is unavailable.');
-    if (row.adoption === 'legacy') {
-      if (!row.sourceFingerprint || !controller.client.identity) throw new Error('This legacy session cannot be safely adopted.');
-      if (!await dialogs.confirm('Adopt legacy session', 'All older Felan/Pi writers must be stopped. Continue?')
-        || !await dialogs.confirm('Backup confirmation', 'Have you made an offline backup of this session?')
-        || !await dialogs.confirm('Legacy writer risk', 'Older binaries cannot honor the new lock. Keep them stopped while this daemon owns the session.')) return false;
-      const adopted = await controller.perform('session.adopt', { expected: controller.client.identity, sourceFingerprint: row.sourceFingerprint,
-        backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true }, row.session);
-      if (adopted.outcome !== 'accepted') return false;
+    try { await controller.attach(row.session); return true; }
+    catch (error) {
+      if ((error as { code?: string }).code !== 'configuration_recovery_required') throw error;
+      if (!await dialogs.confirm('Reload session configuration', 'Use the current configuration for this saved session? Its transcript and identity are retained.')) return false;
+      return controller.reloadSession(row.session);
     }
-    await controller.attach(row.session); return true;
   }
   const session = requireSession(controller); const snapshot = controller.snapshot!;
   switch (name) {
@@ -109,7 +143,6 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     case 'steer': return argument ? controller.submit(argument, 'steer') : false;
     case 'follow-up': return argument ? controller.submit(argument, 'follow_up') : false;
     case 'compact': return (await controller.perform('compact', argument ? { instructions: argument } : {}, session)).outcome === 'accepted';
-    case 'reload': return (await controller.perform('session.reload', {}, session)).outcome === 'accepted';
     case 'rename': {
       const title = argument || await dialogs.input('Session name', snapshot.title);
       return title === undefined ? false : (await controller.perform('session.rename', { name: title }, session)).outcome === 'accepted';
@@ -163,10 +196,10 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       await dialogs.select('Queue (read-only; targeted editing is unavailable)', snapshot.queue.map(item => ({ value: item.id, label: `${item.kind}: ${item.prompt.text}` })));
       return true;
     case 'help':
-      controller.setNotice('/new /cwd /sessions /model /thinking /settings /login /dependencies /compact /fork /tree /rename /reload /reconnect /queue /steer /follow-up /cancel /close /exit; ! shell, !! shell without context');
+      controller.setNotice('/new /cwd /sessions /model /thinking /settings /login /dependencies /compact /fork /tree /rename /reload /reconnect /queue /steer /follow-up /cancel /close /ui /exit; ! shell, !! shell without context');
       return true;
     default: {
-      const command = snapshot.catalog.commands.find(command => command.name === name && command.eligibleClientKinds.includes('tui'));
+      const command = snapshot.catalog.commands.find(command => command.name === name);
       if (!command) throw new Error(`Unknown or unavailable command: /${name}`);
       return (await controller.perform('command.invoke', { name, arguments: argument }, session)).outcome === 'accepted';
     }

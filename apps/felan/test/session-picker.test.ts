@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { SessionInfo } from '@earendil-works/pi-coding-agent';
-import { Key, type Component, type TUI } from '@earendil-works/pi-tui';
-import { LocalSessionPicker, selectLocalSession } from '../src/session-picker.js';
+import { Key } from '@earendil-works/pi-tui';
+import { LocalSessionPicker } from '../src/session-picker.js';
 
 describe('local session picker', () => {
   it('shows current sessions and identifying metadata without mutation actions', () => {
@@ -85,61 +85,6 @@ describe('local session picker', () => {
     expect(cancelled).toBe(true);
   });
 
-  it('does not start a TUI when no local sessions exist', async () => {
-    const createTui = vi.fn();
-
-    await expect(selectLocalSession({
-      currentSessions: [],
-      allSessions: [],
-      agentDir: '/agent',
-      createTui,
-    })).resolves.toBeUndefined();
-    expect(createTui).not.toHaveBeenCalled();
-  });
-
-  it('stops the picker TUI after selection', async () => {
-    const tui = fakeTui();
-    const result = selectLocalSession({
-      currentSessions: [session('selected')],
-      allSessions: [session('selected')],
-      agentDir: '/agent',
-      createTui: () => tui,
-    });
-
-    (tui.children[0] as LocalSessionPicker).handleInput(keyData(Key.enter));
-
-    await expect(result).resolves.toBe('/sessions/selected.jsonl');
-    expect(tui.stop).toHaveBeenCalledOnce();
-  });
-
-  it('supports a read-only history picker and disposes it after completion', async () => {
-    const tui = fakeTui();
-    const dispose = vi.fn();
-    let finish: ((path: string | undefined) => void) | undefined;
-    const createPicker = vi.fn((_tui: TUI, done: (path: string | undefined) => void) => {
-      finish = done;
-      return {
-        focused: false,
-        render: () => ['Memory history'],
-        handleInput: () => {},
-        dispose,
-      };
-    });
-    const result = selectLocalSession({
-      currentSessions: [session('memory')],
-      allSessions: [session('memory')],
-      agentDir: '/agent',
-      createTui: () => tui,
-      createPicker,
-    });
-
-    expect(createPicker).toHaveBeenCalledOnce();
-    finish?.(undefined);
-
-    await expect(result).resolves.toBeUndefined();
-    expect(dispose).toHaveBeenCalledOnce();
-    expect(tui.stop).toHaveBeenCalledOnce();
-  });
 });
 
 function createPicker(current: SessionInfo[], all: SessionInfo[]): LocalSessionPicker {
@@ -175,39 +120,4 @@ function keyData(key: string): string {
   const data = map[key];
   if (!data) throw new Error(`Missing test key data for ${key}`);
   return data;
-}
-
-function fakeTui(): TUI {
-  const children: Component[] = [];
-  return {
-    mode: 'regular',
-    children,
-    terminal: {} as TUI['terminal'],
-    fullRedraws: 0,
-    addChild: (child) => children.push(child),
-    removeChild: () => {},
-    clear: () => {},
-    getShowHardwareCursor: () => false,
-    setShowHardwareCursor: () => {},
-    getClearOnShrink: () => true,
-    setClearOnShrink: () => {},
-    setFocus: (component) => {
-      if (component && 'focused' in component) (component as Component & { focused: boolean }).focused = true;
-    },
-    showOverlay: () => { throw new Error('not used'); },
-    hideOverlay: () => {},
-    hasOverlay: () => false,
-    start: vi.fn(),
-    stop: vi.fn(),
-    renderNow: () => {},
-    requestRender: () => {},
-    addInputListener: () => () => {},
-    removeInputListener: () => {},
-    onTerminalColorSchemeChange: () => () => {},
-    setTerminalColorSchemeNotifications: () => {},
-    queryTerminalBackgroundColor: async () => undefined,
-    queryTerminalColorScheme: async () => undefined,
-    invalidate: () => {},
-    render: () => [],
-  };
 }

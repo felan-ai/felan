@@ -1,16 +1,14 @@
 # @felan-ai/ext-subagents
 
-Portable subagent protocol and model-facing tools for Felan. Applications
-provide a `SubagentHost` to `createSubagentsExtension(host)` and bind the
-resulting parent-session lifecycle with `bindSubagentSession(...)` before the
-session is activated.
-
-The extension registers exactly `Agent`, `list_subagents`,
-`get_subagent_result`, `steer_subagent`, and `cancel_subagent`. It owns shared
-schemas, defaults, validation, and normalized text results while the host owns
-execution, latest records, continuation, persistence, completion delivery, and policy.
-Agent Core remains unaware of subagent execution and provides generic runtime,
-session, coding-tool, extension composition, and model-tier selection.
+Portable subagent tools built on Agent Core's `felan.sessions@1` contract.
+The default extension registers exactly `Agent`, `list_subagents`,
+`get_subagent_result`, `steer_subagent`, and `cancel_subagent`. It owns agent
+definitions, routing, model selection, and normalized results. The provider
+admits child sessions into the daemon registry and owns execution limits,
+persistence, continuation, completion delivery, and shutdown. Local concurrency
+and depth are configured through `felanSubagents.concurrency` and
+`felanSubagents.maxDepth` (defaults: four and three).
+No extension-specific service or custom presenter is required.
 
 The `Agent` tool accepts `inherit`, `xhigh`, `high`, `medium`, `low`, or an exact
 `provider/model-id` in its `model` field. Tier selection uses the models already
@@ -24,8 +22,6 @@ settings are authoritative. When a definition omits either setting, the
 corresponding explicit tool argument applies; when both omit it, the parent
 setting is inherited. Extension-facing thinking accepts `off`, `low`, `medium`,
 `high`, `xhigh`, and `max`; an inherited Pi `minimal` level normalizes to `low`.
-The extension also sends the resolved parent model to the host as internal
-attribution metadata; this is not an `Agent` tool parameter.
 
 All child launches are asynchronous and return after admission. Result reads
 return the latest record immediately, while completion notices surface finished
@@ -106,45 +102,17 @@ request and conversation. Local TUI records are written to
 Ambient Pi agent and extension discovery is outside this package and remains
 disabled by Felan applications.
 
-## Explore routing measurement
-
-Felan's local host reports one `model-routing` measurement after each successful,
-non-empty, cross-model `explore` completion. It preserves the child's observed
-input, output, cache-read, cache-write, and one-hour cache-write usage. The
-baseline prices that same usage at the parent model; the actual outcome retains
-the child model and observed provider cost. The method identifier is
-`parent-model-reprice-observed-child-usage-v1`.
-
-This measures only the routing-price advantage. It does not claim that the
-parent would have used the same number of tokens, that delegation reduces token
-count, or that the whole task was cheaper. No completed subagent benchmark
-artifact currently supports a stronger counterfactual. Same-model, empty,
-failed, cancelled, timed-out, turn-limited, and non-`explore` children do not
-claim savings. Continued children report only usage added since the previous
-terminal interval, including after a host reload; this prevents an earlier
-failed interval from being attributed to a later successful continuation.
-Missing catalog pricing makes the aggregate incomplete instead of inventing a
-zero price.
-
 ## Installation and composition
 
-```ts
-import { createSubagentsExtension } from '@felan-ai/ext-subagents';
+Load the default extension with a provider for `SESSIONS_SERVICE`. Agent
+catalogs are read through `AgentRuntime` from explicit user and workspace
+`.agents/agents` and `.felan/agents` directories. Workspace definitions override
+user definitions, which override the bundled `general`, `explore`, and
+`reviewer` definitions.
 
-const extension = createSubagentsExtension(host);
-```
-
-The `host` implements `SubagentHost` and owns execution, admission, records,
-persistence, continuation, nesting, cancellation, and completion delivery. A
-local TUI may add a navigator; a cloud host may provide a different
-presentation without changing the portable tool contract.
-
-## Package boundary and requirements
-
-This package owns exactly five model-facing tools, their schemas, validation,
-normalized results, host binding, and model-tier resolution. It does not load
-ambient agents/extensions and does not execute child sessions itself. It
-requires a compatible `@felan-ai/agent-core` peer and TypeBox.
+The extension uses a compatible `@felan-ai/agent-core` peer and TypeBox. A
+local TUI may offer a navigator, while other clients can read and control the
+same child executions through the generic session protocol.
 
 ## Development
 

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
-import { acquireDaemonOwnership } from '@felan-ai/daemon/internal/daemon/ownership';
-import { builtinExtensionPackages } from '@felan-ai/daemon/internal/extensions';
+import { acquireDaemonOwnership } from '../../daemon/src/daemon/ownership.js';
+import { builtinExtensionPackages } from '../src/providers/extensions.js';
 import { clientDaemonTarget } from '../src/client-application.js';
 import { SessionClient } from '../src/client/client.js';
 import { runCli } from '../src/cli-main.js';
@@ -14,6 +14,10 @@ import { runDaemonCommand } from '../src/daemon-command.js';
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); vi.unstubAllEnvs(); });
 const output = () => ({ writeOutput: vi.fn(), writeError: vi.fn() });
+async function runSuccessfully(args: readonly string[], io = output()): Promise<void> {
+  const code = await runDaemonCommand(args, io);
+  expect(code, [args.join(' '), ...io.writeError.mock.calls.flat(), ...io.writeOutput.mock.calls.flat()].join('\n')).toBe(0);
+}
 
 it('requires explicit stop/force consent before constructing a client', async () => {
   const io = output(); const createClient = vi.fn();
@@ -29,7 +33,7 @@ it('routes daemon arguments separately from prompts and preserves the explicit i
   expect(launchDaemon).toHaveBeenCalledWith(['status', '--daemon-runtime', '/tmp/explicit-target']);
   const foreground = vi.fn(async () => 7);
   expect(await runDaemonCommand(['foreground', '--daemon-runtime', '/tmp/explicit-target'], output(), { foreground })).toBe(7);
-  expect(foreground).toHaveBeenCalledWith(expect.objectContaining({ kind: 'isolated', directory: '/tmp/explicit-target', storeRoots: ['/tmp/explicit-target'] }));
+  expect(foreground).toHaveBeenCalledWith(expect.objectContaining({ kind: 'isolated', directory: '/tmp/explicit-target', storeRoots: ['/tmp/explicit-target'] }), undefined);
 });
 
 it('starts and restarts the actual daemon with a shared launch environment and retained session IDs', async () => {
@@ -43,16 +47,16 @@ it('starts and restarts the actual daemon with a shared launch environment and r
       models: [{ id: 'fixture', name: 'Fixture', reasoning: false, input: ['text'], contextWindow: 8192, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }), { mode: 0o600 });
   } finally { await owner.release(); }
   cleanup.push(async () => {
-    expect(await runDaemonCommand(['stop', '--yes', '--force', ...args], output())).toBe(0);
+    await runSuccessfully(['stop', '--yes', '--force', ...args]);
     await vi.waitFor(async () => { const lock = await acquireDaemonOwnership(target); await lock.release(); }, { timeout: 5000 });
   });
   vi.stubEnv('FELAN_DAEMON_TEST_LAUNCH', 'first');
-  const io = output(); expect(await runDaemonCommand(['start', ...args], io)).toBe(0);
-  expect(await runDaemonCommand(['status', ...args], io)).toBe(0);
-  expect(await runDaemonCommand(['logs', ...args], io)).toBe(0);
+  const io = output(); await runSuccessfully(['start', ...args], io);
+  await runSuccessfully(['status', ...args], io);
+  await runSuccessfully(['logs', ...args], io);
   const first = new SessionClient({ target, clientVersion: 'fixture', kind: 'tui' }); cleanup.push(async () => first.close()); await first.connect();
   const original = first.identity;
-  expect(await runDaemonCommand(['start', ...args], io)).toBe(0);
+  await runSuccessfully(['start', ...args], io);
   const created = await first.request('sessions.create', { cwd: directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
   const id = created.result.sessionId; await first.attach(id);
@@ -70,7 +74,7 @@ it('starts and restarts the actual daemon with a shared launch environment and r
   expect(await environment(first)).toBe('first');
   vi.stubEnv('FELAN_DAEMON_TEST_LAUNCH', 'second');
   expect(await environment(first)).toBe('first');
-  first.close(); expect(await runDaemonCommand(['restart', '--yes', ...args], io)).toBe(0);
+  first.close(); await runSuccessfully(['restart', '--yes', ...args], io);
   const second = new SessionClient({ target, clientVersion: 'fixture', kind: 'tui' }); cleanup.push(async () => second.close()); await second.connect();
   expect(second.identity?.instanceId).not.toBe(original?.instanceId); await second.attach(id);
   expect(second.getAttachment(id)?.state.snapshot?.session).toBe(id);
@@ -90,12 +94,12 @@ it('runs the emitted foreground command until its daemon is explicitly stopped',
     child.once('error', () => { finished = true; resolve(1); });
   });
   cleanup.push(async () => {
-    expect(await runDaemonCommand(['stop', '--yes', '--force', ...args], output())).toBe(0);
+    await runSuccessfully(['stop', '--yes', '--force', ...args]);
     if (!finished) await exited;
     await vi.waitFor(async () => { const owner = await acquireDaemonOwnership(target); await owner.release(); }, { timeout: 5000 });
   });
   await vi.waitFor(() => { if (finished) throw new Error(text || 'Foreground exited early'); expect(text).toContain('Felan daemon'); }, { timeout: 10_000 });
   expect(finished).toBe(false);
-  expect(await runDaemonCommand(['stop', '--yes', ...args], output())).toBe(0);
+  await runSuccessfully(['stop', '--yes', ...args]);
   expect(await exited).toBe(0);
 }, 20_000);

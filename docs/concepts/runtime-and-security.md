@@ -44,10 +44,10 @@ the current user can access.
 The portable packages never assume a credential store or callback listener:
 
 - the local daemon owns provider credentials, model login, and persisted settings;
-- the daemon owns MCP OAuth browser/callback flows and OS credential-store
-  persistence;
-- a cloud host may implement tenant-aware OAuth through the same
-  `McpOAuthHost` contract; and
+- the MCP extension owns OAuth orchestration, uses Core Secrets for persistence,
+  and requests local authorization through host-audience forms;
+- the local provider owns only the loopback callback and secure token store;
+  cloud hosts provision configuration and credentials without local sign-in; and
 - the Powerline host may request provider usage using the active local OAuth
   credential, while the portable package only parses and renders responses.
 

@@ -1,31 +1,34 @@
+import type { ProcessAdapter } from '../src/daemon/process-adapter.js';
+import { fakeProcessAdapter } from './fixtures/process-provider.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configField, defineExtensionConfig, type AgentRuntimeProcess, type ExtensionAPI } from '@felan-ai/agent-core';
 import { appendFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises';
 import { renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { JsonLineDecoder, OPERATION_CATALOG, encodeFrame, type Operation } from '@felan-ai/session-protocol';
+import { JsonLineDecoder, encodeFrame, type Operation } from '@felan-ai/session-protocol';
 import { SessionClient, newRequestId } from '../../felan/src/client/client.js';
-import { DaemonConfiguration } from '../src/daemon/configuration.js';
+import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 import { accepted } from '../src/daemon/commands.js';
 import { connectLocalIpc } from '../src/daemon/ipc.js';
 import { SessionServer, type BrokerDispatchPort } from '../src/daemon/server.js';
 import { protocolTarget } from '../src/daemon/target.js';
-import { inspectLegacySession } from '../src/daemon/legacy-adoption.js';
-import { LocalSubagentHost } from '../src/subagents/host.js';
 import { gate, serverFixture } from './fixtures/server.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const configDefinition = defineExtensionConfig({ id: 'codex', title: 'Synthetic config', fields: { fast: configField.boolean({ default: false, description: 'Synthetic value' }) } });
 
-async function fixture(options: { onStream?: () => Promise<void>; release?: () => void; broker?: BrokerDispatchPort; now?: () => number; extension?: (pi: ExtensionAPI) => void;
-  compaction?: { reserveTokens: number; keepRecentTokens: number }; skill?: boolean } = {}) {
-  const f = await serverFixture({ now: options.now ?? Date.now, ...(options.onStream ? { onStream: options.onStream } : {}), ...(options.extension ? { extension: options.extension } : {}),
+async function fixture(options: { processAdapter?: ProcessAdapter; onStream?: () => Promise<void>; release?: () => void; broker?: BrokerDispatchPort; now?: () => number; extension?: (pi: ExtensionAPI) => void;
+  compaction?: { reserveTokens: number; keepRecentTokens: number }; skill?: boolean;
+  composition?: { managerPackage: string; managerVersion: string; providerDigest: string; configDigest: string };
+  currentComposition?: () => Promise<{ managerPackage: string; managerVersion: string; providerDigest: string; configDigest: string }> } = {}) {
+  const f = await serverFixture({ ...(options.processAdapter ? { processAdapter: options.processAdapter } : {}), now: options.now ?? Date.now, ...(options.onStream ? { onStream: options.onStream } : {}), ...(options.extension ? { extension: options.extension } : {}),
     ...(options.compaction ? { compaction: options.compaction } : {}), ...(options.skill ? { skill: true } : {}) });
   const clients: SessionClient[] = []; const sockets: Awaited<ReturnType<typeof connectLocalIpc>>[] = [];
-  const configuration = new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [configDefinition], assertCurrent: () => f.registry.assertAdmission() });
+  const configuration = new DaemonConfiguration({ definitions: [configDefinition], assertCurrent: () => f.registry.assertAdmission() });
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'fixture',
+    ...(options.composition ? { composition: options.composition } : {}), ...(options.currentComposition ? { currentComposition: options.currentComposition } : {}),
     ...(options.broker ? { broker: options.broker } : {}), ...(options.now ? { now: options.now } : {}) });
   cleanups.push(async () => { options.release?.(); for (const client of clients) client.close(); for (const socket of sockets) socket.destroy(); server.close(); await f.dispose(); });
   await server.start();
@@ -47,6 +50,21 @@ async function fixture(options: { onStream?: () => Promise<void>; release?: () =
   }
   return { ...f, server, client, raw };
 }
+
+it('reports provider changes as restart-required while allowing reloadable policy/config changes', async () => {
+  const active = { managerPackage: '@felan-ai/felan', managerVersion: '1.0.0', providerDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64) };
+  let current = { ...active, configDigest: 'c'.repeat(64) };
+  const f = await fixture({ composition: active, currentComposition: async () => current });
+  const client = await f.client();
+  const reloadable = await client.request('host.status', {});
+  expect(reloadable).toMatchObject({ outcome: 'accepted', result: { composition: { configDigest: 'c'.repeat(64) } } });
+  if (reloadable.outcome !== 'accepted') return;
+  expect(reloadable.result.composition).not.toHaveProperty('restartRequired');
+  current = { ...current, providerDigest: 'd'.repeat(64), configDigest: 'e'.repeat(64) };
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { composition: {
+    providerDigest: active.providerDigest, configDigest: 'e'.repeat(64), restartRequired: true,
+  } } });
+});
 
 function syntheticShell(f: Awaited<ReturnType<typeof fixture>>) {
   const stopped = gate(); let running = true; const data = new Uint8Array([65, 0, 255, 10]); const input: Uint8Array[] = [];
@@ -73,11 +91,31 @@ async function completedPrompt(f: Awaited<ReturnType<typeof fixture>>, client: S
   });
 }
 
+it.each(['tui', 'acp'] as const)('derives %s local-console authority from the endpoint, not hello claims', async kind => {
+  const connected = vi.fn();
+  const f = await fixture({ broker: { connected, interactionKinds: [], dispatch() { throw new Error('Unused'); } } });
+  for (const localConsole of [false, true]) {
+    const peer = await f.raw();
+    expect(await peer.exchange({ v: 1, id: newRequestId(), op: 'hello', params: {
+      clientVersion: 'fixture', protocol: 1, kind, localConsole, principal: 'forged-owner',
+      interactionKinds: [], target: protocolTarget(f.owner.target),
+    } })).toMatchObject({ outcome: 'accepted' });
+    expect(connected.mock.calls.at(-1)?.[0]).toMatchObject({ principal: f.server.principal, kind, localConsole: true });
+  }
+});
+
+it('negotiates the same operations for equally capable local TUI and ACP clients', async () => {
+  const f = await fixture(); const tui = await f.client('tui'); const acp = await f.client('acp');
+  expect(acp.capabilities?.operations).toEqual(tui.capabilities?.operations);
+  expect(acp.capabilities?.operations).toEqual(expect.arrayContaining(['set_model', 'session.rename', 'processes.list', 'executions.read']));
+  expect(acp.capabilities?.operations).not.toContain('ui.action');
+});
+
 async function listedRevision(client: SessionClient, session: string): Promise<number> {
   const response = await client.request('sessions.list', {});
   if (response.outcome !== 'accepted') throw new Error('Session list failed');
-  const row = response.result.entries.find(row => row.session === session && row.adoption === 'adopted');
-  if (!row || row.adoption !== 'adopted') throw new Error('Owned session is missing from the wire list');
+  const row = response.result.entries.find(row => row.session === session);
+  if (!row) throw new Error('Owned session is missing from the wire list');
   return row.revision;
 }
 
@@ -88,7 +126,6 @@ function supportedRequests(f: Awaited<ReturnType<typeof fixture>>): Array<{ op: 
     { op: 'host.status', params: {} }, { op: 'sessions.list', params: {} },
     { op: 'sessions.create', params: { cwd: f.cwd, source: 'tui' } },
     { op: 'attach', session, params: { expected: f.owner.identity } },
-    { op: 'session.adopt', session, params: { expected: f.owner.identity, sourceFingerprint: 'a'.repeat(64), backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true } },
     { op: 'detach', session, params: { attachmentId: 'not-attached' } }, { op: 'close', session, params: {} },
     { op: 'prompt', session, params: { text: 'must not execute' } }, { op: 'steer', session, params: { text: 'must not queue' } },
     { op: 'follow_up', session, params: { text: 'must not queue' } }, { op: 'cancel', session, params: {} },
@@ -105,122 +142,25 @@ function supportedRequests(f: Awaited<ReturnType<typeof fixture>>): Array<{ op: 
     { op: 'session.reload', session, params: {} }, { op: 'processes.list', session, params: { root: session } },
     { op: 'processes.read', session, params: { ...resource, offset: 0, limit: 1 } }, { op: 'processes.write', session, params: { ...resource, data: 'AA==' } },
     { op: 'processes.stop', session, params: { ...resource, signal: 'SIGTERM' } },
-    { op: 'agents.list', session, params: {} }, { op: 'agents.read', session, params: { agentId: 'not-created' } },
-    { op: 'agents.steer', session, params: { agentId: 'not-created', message: 'must not send' } }, { op: 'agents.cancel', session, params: { agentId: 'not-created' } },
+    { op: 'executions.list', session, params: {} }, { op: 'executions.read', session, params: { executionId: 'not-created' } },
+    { op: 'executions.steer', session, params: { executionId: 'not-created', message: 'must not send' } }, { op: 'executions.cancel', session, params: { executionId: 'not-created' } },
   ];
 }
 
 describe('session server over private real Unix IPC with fake ownership', () => {
-  it('adopts two different legacy sessions while the first remains resident and keeps copies out of scan roots', async () => {
+
+  it('lists only registered sessions and never discovers pre-daemon transcripts', async () => {
     const f = await fixture(); const client = await f.client();
-    for (const session of ['first-legacy', 'second-legacy']) {
-      await writeFile(join(f.root.resources.sessionDir, `${session}.jsonl`), JSON.stringify({ type: 'session', version: 3, id: session, cwd: f.cwd }) + '\n'
-        + JSON.stringify({ id: 'legacy-user', parentId: null, type: 'message', timestamp: new Date().toISOString(), message: { role: 'user', content: 'A stored user message', timestamp: Date.now() } }) + '\n');
-      const listed = await client.request('sessions.list', {}); if (listed.outcome !== 'accepted') throw new Error('List failed');
-      const row = listed.result.entries.find(row => row.session === session && row.adoption === 'legacy');
-      if (!row || row.adoption !== 'legacy' || !row.sourceFingerprint) throw new Error('Missing legacy fingerprint');
-      expect(await client.request('session.adopt', { expected: f.owner.identity, sourceFingerprint: row.sourceFingerprint,
-        backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true }, { session })).toMatchObject({ outcome: 'accepted' });
-    }
-    expect(f.registry.binding('first-legacy')).toBeDefined(); expect(f.registry.binding('second-legacy')).toBeDefined();
-    expect((await f.registry.legacyInventory()).directories.some(path => path.includes('/adopted-sessions'))).toBe(false);
-    const cloned = await client.attach('first-legacy'); expect(cloned.outcome).toBe('accepted');
-    const copy = await client.request('session.clone', {}, { session: 'first-legacy' });
-    if (copy.outcome !== 'accepted') throw new Error('Clone failed');
-    const managed = join(f.root.resources.agentDir, 'adopted-sessions');
-    expect(f.registry.binding(copy.result.sessionId)?.resources.sessionDir).toBe(managed);
-    const fork = await client.request('fork', { from: { kind: 'position', position: 0 } }, { session: 'first-legacy' });
-    if (fork.outcome !== 'accepted') throw new Error('Fork failed');
-    expect(f.registry.binding(fork.result.sessionId)?.resources.sessionDir).toBe(managed);
-    expect((await f.registry.legacyInventory()).directories.some(path => path.includes('/adopted-sessions'))).toBe(false);
-  });
-
-  it('reports unrelated bad files and missing cwds without blocking a healthy adoption', async () => {
-    const f = await fixture(); const client = await f.client(); const session = 'missing-cwd-legacy';
-    await writeFile(join(f.root.resources.sessionDir, 'missing-cwd.jsonl'), JSON.stringify({ type: 'session', version: 3, id: session, cwd: join(f.directory, 'gone') }) + '\n');
-    const oversized = join(f.root.resources.sessionDir, 'oversized.jsonl');
-    await writeFile(oversized, JSON.stringify({ type: 'session', version: 3, id: 'oversized', cwd: f.cwd }) + '\n'); await truncate(oversized, 64 * 1024 * 1024 + 1);
-    await writeFile(join(f.root.resources.sessionDir, 'invalid-header.jsonl'), 'not a session\n');
-    await writeFile(join(f.root.resources.sessionDir, 'torn.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 'torn', cwd: f.cwd }) + '\n{"unfinished":');
-    await writeFile(join(f.root.resources.sessionDir, 'healthy.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 'healthy', cwd: f.cwd }) + '\n');
+    const path = join(f.root.resources.sessionDir, 'legacy.jsonl');
+    const contents = JSON.stringify({ type: 'session', version: 3, id: 'legacy', cwd: f.cwd }) + '\n';
+    await writeFile(path, contents);
     const response = await client.request('sessions.list', {});
-    expect(response).toMatchObject({ outcome: 'accepted', result: { inventory: { complete: true, diagnostics: expect.arrayContaining([
-      { code: 'unavailable_cwd', count: 1 }, { code: 'oversize', count: 1 },
-    ]) } } });
+    expect(response).toMatchObject({ outcome: 'accepted', result: { entries: [expect.objectContaining({ session: f.root.sessionId })] } });
     if (response.outcome !== 'accepted') throw new Error('List failed');
-    expect(response.result.entries.some(row => row.session === f.root.sessionId)).toBe(true);
-    const row = response.result.entries.find(row => row.session === session);
-    if (!row || row.adoption !== 'legacy' || !row.sourceFingerprint) throw new Error('Legacy row absent');
-    expect(await client.request('session.adopt', { expected: f.owner.identity, sourceFingerprint: row.sourceFingerprint,
-      backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true }, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'adoption_required' } });
-    const healthy = response.result.entries.find(row => row.session === 'healthy');
-    if (!healthy || healthy.adoption !== 'legacy' || !healthy.sourceFingerprint) throw new Error('Healthy fingerprint absent');
-    expect(await client.request('session.adopt', { expected: f.owner.identity, sourceFingerprint: healthy.sourceFingerprint,
-      backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true }, { session: 'healthy' })).toMatchObject({ outcome: 'accepted' });
-    for (const id of ['oversized', 'torn']) {
-      const candidate = response.result.entries.find(row => row.session === id);
-      expect(candidate).toBeDefined(); expect(candidate && 'sourceFingerprint' in candidate).toBe(false);
-      expect(await client.request('session.adopt', { expected: f.owner.identity, sourceFingerprint: 'a'.repeat(64),
-        backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true }, { session: id }))
-        .toMatchObject({ outcome: 'rejected', error: { code: 'adoption_required' } });
-    }
-  });
-
-  it('rejects duplicate header identities even if one duplicate has an unreadable body', async () => {
-    const f = await fixture(); const client = await f.client(); const session = 'duplicate-header';
-    const header = JSON.stringify({ type: 'session', version: 3, id: session, cwd: f.cwd }) + '\n';
-    await writeFile(join(f.root.resources.sessionDir, 'one.jsonl'), header);
-    await writeFile(join(f.root.resources.sessionDir, 'two.jsonl'), header + '{"torn":');
-    const listed = await client.request('sessions.list', { root: session });
-    if (listed.outcome !== 'accepted') throw new Error('List failed');
-    expect(listed.result.entries).toHaveLength(2);
-    const selected = listed.result.entries.find(row => row.adoption === 'legacy' && row.sourceFingerprint);
-    if (!selected || selected.adoption !== 'legacy' || !selected.sourceFingerprint) throw new Error('Fingerprint absent');
-    expect(await client.request('session.adopt', { expected: f.owner.identity, sourceFingerprint: selected.sourceFingerprint,
-      backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true }, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'request_conflict' } });
-  });
-
-  it('rejects adoption when a configured scan root cannot be verified', async () => {
-    const f = await fixture(); const client = await f.client(); const session = 'unknown-area';
-    const source = join(f.root.resources.sessionDir, 'known.jsonl');
-    await writeFile(source, JSON.stringify({ type: 'session', version: 3, id: session, cwd: f.cwd }) + '\n');
-    const resources = await f.profile.resolveResources({ cwd: f.cwd });
-    vi.spyOn(f.profile, 'resolveResources').mockResolvedValue({ ...resources, sessionDir: join(f.directory, '..', 'unowned-inventory') });
-    const listed = await client.request('sessions.list', {}); if (listed.outcome !== 'accepted') throw new Error('List failed');
-    expect(listed.result.inventory?.complete).toBe(false);
-    expect(await client.request('session.adopt', { expected: f.owner.identity, sourceFingerprint: inspectLegacySession(f.owner, source).fingerprint,
-      backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true }, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'adoption_required' } });
-  });
-
-  it('lists headers beyond the full-read budget and prioritizes a selected root or cwd for hashing', async () => {
-    const f = await fixture(); const cwd = join(f.directory, 'selected-cwd'); await mkdir(cwd);
-    const bulk = join(f.root.resources.sessionDir, 'a-bulk.jsonl');
-    const header = JSON.stringify({ type: 'session', version: 3, id: 'bulk', cwd: f.cwd }) + '\n';
-    await writeFile(bulk, header + ' '.repeat(64 * 1024 * 1024 - Buffer.byteLength(header)));
-    const source = join(f.root.resources.sessionDir, 'z-selected.jsonl');
-    await writeFile(source, JSON.stringify({ type: 'session', version: 3, id: 'selected', cwd }) + '\n');
-    const listed = await f.registry.legacyInventory();
-    expect(listed.entries.find(row => row.session === 'selected')).toMatchObject({ cwd });
-    expect(listed.entries.find(row => row.session === 'selected')).not.toHaveProperty('fingerprint');
-    for (const filter of [{ root: 'selected' }, { cwd }]) {
-      await utimes(bulk, new Date(), new Date(Date.now() + 60_000)); await appendFile(source, '\n');
-      const scoped = await f.registry.legacyInventory(filter);
-      expect(scoped.entries.find(row => row.session === 'selected')).toHaveProperty('fingerprint', inspectLegacySession(f.owner, source).fingerprint);
-    }
-  });
-
-  it('returns an explicit truncated inventory instead of failing the entire list at the scan bound', async () => {
-    const f = await fixture(); const client = await f.client();
-    for (let index = 0; index < 8193; index += 64) {
-      await Promise.all(Array.from({ length: Math.min(64, 8193 - index) }, (_, offset) =>
-        writeFile(join(f.root.resources.sessionDir, `inventory-${index + offset}.txt`), '')));
-    }
-    const response = await client.request('sessions.list', {});
-    expect(response).toMatchObject({ outcome: 'accepted', result: { inventory: { complete: false,
-      diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'truncated' })]),
-    } } });
-    if (response.outcome !== 'accepted') throw new Error('List failed');
-    expect(response.result.entries.some(row => row.session === f.root.sessionId)).toBe(true);
+    expect(response.result.entries).toHaveLength(1);
+    expect(response.result).not.toHaveProperty('inventory');
+    expect(await readFile(path, 'utf8')).toBe(contents);
+    expect(await client.attach('legacy')).toMatchObject({ outcome: 'rejected', error: { code: 'not_found' } });
   });
 
   it('exposes closed-session revisions through the wire and permits a stale delete to refresh after pruning', async () => {
@@ -241,23 +181,24 @@ describe('session server over private real Unix IPC with fake ownership', () => 
 
   it('starts ACP-created roots with strict policy before any client attachment', async () => {
     const f = await fixture(); const acp = await f.client('acp'); const opened = vi.spyOn(f.profile, 'openSession');
-    const response = await acp.request('sessions.create', { cwd: f.cwd, source: 'acp', model: { provider: 'offline', id: 'fixture' } });
+    const response = await acp.request('sessions.create', { cwd: f.cwd, source: 'acp', requirePolicy: 'acp-strict', model: { provider: 'offline', id: 'fixture' } });
     if (response.outcome !== 'accepted') throw new Error('Create failed');
     expect(opened.mock.calls.filter(([request]) => request.target.kind === 'new')[0]?.[0].policy.mode).toBe('acp-strict');
     expect(f.registry.getPolicy(response.result.sessionId).mode).toBe('acp-strict'); expect(f.registry.attachmentCount(response.result.sessionId)).toBe(0);
   });
 
-  it('catalogs loaded skills for TUI/headless and expands only explicit eligible skill invocations', async () => {
+  it('catalogs loaded skills for every client and expands only explicit skill invocations', async () => {
     const f = await fixture({ skill: true }); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
     expect(client.getAttachment(session)?.state.snapshot?.catalog.commands).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'skill:shared-test-skill', kind: 'skill', eligibleClientKinds: ['tui', 'headless'] }),
+      expect.objectContaining({ name: 'skill:shared-test-skill', kind: 'skill' }),
     ]));
     expect(await client.request('command.invoke', { name: 'skill:shared-test-skill', arguments: 'literal argument' }, { session })).toMatchObject({ outcome: 'accepted' });
     await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
     expect(JSON.stringify(f.root.runtime.session.sessionManager.getEntries())).toContain('Loaded skill instructions from private fixture.');
-    const acp = await f.client('acp'); await acp.attach(session);
-    expect(() => acp.request('command.invoke', { name: 'skill:shared-test-skill', arguments: '' }, { session }))
-      .toThrowError(expect.objectContaining({ code: 'invalid_request', message: 'Operation unavailable to this client kind' }));
+    const acp = await f.client('acp'); await acp.attach(session, { requirePolicy: 'acp-strict' });
+    expect(await acp.request('command.invoke', { name: 'skill:shared-test-skill', arguments: '' }, { session })).toMatchObject({ outcome: 'accepted' });
+    await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+    expect(f.registry.getPolicy(session).mode).toBe('acp-strict');
     await acp.request('prompt', { text: '/skill:shared-test-skill unexpanded' }, { session });
     await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
     const users = f.root.runtime.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'user');
@@ -276,12 +217,12 @@ describe('session server over private real Unix IPC with fake ownership', () => 
 
   it('rejects reserved RPC session directories without blocking internal child storage', async () => {
     const f = await fixture(); const client = await f.client(); const resources = f.root.resources;
-    for (const sessionDir of [f.store.directory, f.owner.target.runtimeDirectory, join(resources.agentDir, 'adopted-sessions'),
-      resources.sessionStorageBase, resources.agentStorageRoot, resources.subagentRoot, resources.memoryRoot]) {
+    for (const sessionDir of [f.store.directory, f.owner.target.runtimeDirectory,
+      resources.sessionStorageBase, resources.agentStorageRoot, ...(resources.workerRoots ?? [])]) {
       expect(await client.request('sessions.create', { cwd: f.cwd, sessionDir, source: 'tui', model: { provider: 'offline', id: 'fixture' } }))
         .toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
     }
-    const child = await f.registry.create({ cwd: f.cwd, sessionDir: join(resources.subagentRoot, 'internal-child'),
+    const child = await f.registry.create({ cwd: f.cwd, sessionDir: join(resources.agentStorageRoot, 'internal-child'),
       rootSessionId: f.root.sessionId, parentSessionId: f.root.sessionId, target: { kind: 'new' }, model: f.root.runtime.session.model! });
     expect(child.parentSessionId).toBe(f.root.sessionId);
   });
@@ -309,12 +250,9 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(await client.request('session.reload', {}, { session })).toMatchObject({ outcome: 'accepted' });
   });
 
-  it.each(['hasActiveJobs', 'hasPendingWork'] as const)('rejects reload while the bound host reports %s without shutting it down', async method => {
+  it.each(['hasExecutingJobs', 'hasPendingWork', 'hasActiveJobs'] as const)('rejects reload while the bound host reports %s without shutting it down', async method => {
     const f = await fixture(); const session = f.root.sessionId; const client = await f.client(); await client.attach(session);
-    const host = await LocalSubagentHost.create({ sessionId: session, cwd: f.cwd, agentDir: f.root.resources.agentDir, homeDir: f.directory,
-      modelRuntime: f.root.runtime.session.modelRuntime, settingsManager: f.root.runtime.session.settingsManager,
-      extensionPackages: [], importExtension: async () => ({ default() {} }) });
-    f.registry.bindSubagentHost(session, host);
+    const host = f.registry.executionHost(session);
     const active = vi.spyOn(host, method).mockReturnValue(true); const shutdown = vi.spyOn(host, 'shutdown');
     try {
       expect(await client.request('session.reload', {}, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
@@ -322,11 +260,14 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     } finally { active.mockRestore(); }
   });
 
-  it('rejects reload while a child resource is running', async () => {
+  it('rejects reload while a registered child execution is queued', async () => {
     const f = await fixture(); const session = f.root.sessionId; const client = await f.client(); await client.attach(session);
-    f.store.putResource({ id: 'active-child', kind: 'child', root: session, session, state: 'running', updatedAt: Date.now() });
+    const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: session, rootSessionId: session,
+      execution: { request: { prompt: 'work', description: 'queued' }, createdAt: new Date().toISOString(), deliveryId: 'delivery', completionPending: false } });
     expect(await client.request('session.reload', {}, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
-    f.store.putResource({ id: 'active-child', kind: 'child', root: session, session, state: 'exited', updatedAt: Date.now() });
+    await client.attach(child.sessionId);
+    expect(await client.request('prompt', { text: 'bypass queue' }, { session: child.sessionId })).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
+    await f.registry.close(child.sessionId);
   });
 
   it('rejects missing model authorization and missing process capability before durable dispatch', async () => {
@@ -421,7 +362,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     const f = await fixture(); const client = await f.client(); const source = join(f.directory, 'invalid-import.jsonl');
     const bytes = 'not a session header\n'; await writeFile(source, bytes, { mode: 0o600 }); const sessions = f.store.snapshot().sessions;
     expect(await client.request('session.import', { path: source, cwd: f.cwd, confirmed: true })).toMatchObject({ outcome: 'rejected', error: { code: 'invalid_request' } });
-    expect(f.store.snapshot().sessions).toEqual(sessions); expect(f.store.snapshot().adoptions).toEqual([]); expect(await readFile(source, 'utf8')).toBe(bytes);
+    expect(f.store.snapshot().sessions).toEqual(sessions); expect(await readFile(source, 'utf8')).toBe(bytes);
   });
 
   it('creates a new session over the wire once and rejects unavailable overrides or models without opening', async () => {
@@ -526,7 +467,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
   it('rejects every supported non-hello operation before negotiation without any admitted effect', async () => {
     const f = await fixture(); const before = f.store.snapshot(); const bytes = await readFile(f.store.session(f.root.sessionId).piPath);
     const cases = supportedRequests(f);
-    expect(new Set(cases.map(row => row.op)).size).toBe(37);
+    expect(new Set(cases.map(row => row.op)).size).toBe(36);
     for (const request of cases) {
       const peer = await f.raw();
       expect(await peer.exchange({ v: 1, id: newRequestId(), ...request })).toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
@@ -535,18 +476,17 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(f.store.snapshot()).toEqual(before); expect(await readFile(f.store.session(f.root.sessionId).piPath)).toEqual(bytes);
   });
 
-  it('enforces attachment and ACP operation eligibility before admitting the corresponding effects', async () => {
+  it('enforces session attachment apart from explicit local-console recovery operations', async () => {
     const f = await fixture(); const before = f.store.snapshot(); const bytes = await readFile(f.store.session(f.root.sessionId).piPath);
     const cases = supportedRequests(f); const tui = await f.raw(); const acp = await f.raw();
     for (const [peer, kind] of [[tui, 'tui'], [acp, 'acp']] as const) {
       expect(await peer.exchange({ v: 1, id: newRequestId(), op: 'hello', params: { clientVersion: 'fixture', protocol: 1, kind,
-        interactionKinds: [], presenters: [], target: protocolTarget(f.owner.target) } })).toMatchObject({ outcome: 'accepted' });
+        interactionKinds: [], target: protocolTarget(f.owner.target) } })).toMatchObject({ outcome: 'accepted' });
     }
-    for (const request of cases.filter(row => row.session && !['attach', 'session.adopt', 'session.delete'].includes(row.op))) {
-      expect(await tui.exchange({ v: 1, id: newRequestId(), ...request })).toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
-    }
-    for (const request of cases.filter(row => !OPERATION_CATALOG[row.op].clients.includes('acp'))) {
-      expect(await acp.exchange({ v: 1, id: newRequestId(), ...request })).toMatchObject({ outcome: 'rejected', error: { code: 'invalid_request' } });
+    for (const peer of [tui, acp]) {
+      for (const request of cases.filter(row => row.session && !['attach', 'session.delete', 'session.reload'].includes(row.op))) {
+        expect(await peer.exchange({ v: 1, id: newRequestId(), ...request })).toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
+      }
     }
     expect(f.store.snapshot()).toEqual(before); expect(await readFile(f.store.session(f.root.sessionId).piPath)).toEqual(bytes);
   });
@@ -634,80 +574,6 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(f.registry.projection(session).snapshot().presentation.some(row => row.id === 'run-error')).toBe(false);
   });
 
-  it('adopts only the selected inventory identity while preserving its legacy source and retry outcome', async () => {
-    const f = await fixture(); const client = await f.client(); const id = 'legacy-selected';
-    const source = join(f.root.resources.sessionDir, 'legacy-selected.jsonl');
-    const bytes = JSON.stringify({ type: 'session', version: 3, id, cwd: f.cwd }) + '\n';
-    await writeFile(source, bytes, { mode: 0o600 });
-    const listed = await client.request('sessions.list', {});
-    expect(listed).toMatchObject({ outcome: 'accepted', result: { entries: expect.arrayContaining([expect.objectContaining({ session: id, adoption: 'legacy' })]) } });
-    if (listed.outcome !== 'accepted') throw new Error('Inventory failed');
-    const selected = listed.result.entries.find(row => row.session === id && row.adoption === 'legacy');
-    if (!selected || selected.adoption !== 'legacy' || !selected.sourceFingerprint) throw new Error('Inventory fingerprint missing');
-    expect(Object.hasOwn(selected, 'source')).toBe(false);
-    expect(listed.result.entries.filter(row => row.adoption === 'adopted').every(row => !Object.hasOwn(row, 'sourceFingerprint'))).toBe(true);
-    expect(await client.attach(id)).toMatchObject({ outcome: 'rejected', error: { code: 'adoption_required' } });
-    const params = { expected: f.owner.identity, sourceFingerprint: selected.sourceFingerprint,
-      backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true } as const;
-    const request = newRequestId(); const response = await client.request('session.adopt', params, { session: id, id: request });
-    expect(response).toMatchObject({ outcome: 'accepted', result: { sessionId: id, adoptionId: expect.any(String) } });
-    expect(f.store.snapshot().requests.find(row => row.id === request)?.session).toBeUndefined();
-    expect(await readFile(source, 'utf8')).toBe(bytes);
-    expect(f.store.session(id).piPath).not.toBe(source);
-    const other = await f.client(); expect(await other.request('session.adopt', params, { session: id, id: request })).toEqual(response);
-    expect(await other.request('session.adopt', params, { session: id })).toMatchObject({ outcome: 'accepted' });
-    const after = await client.request('sessions.list', {});
-    if (after.outcome === 'accepted') expect(after.result.entries.filter(row => row.session === id)).toHaveLength(1);
-  });
-
-  it('revalidates a listed fingerprint against current inventory instead of echoing the request', async () => {
-    const f = await fixture(); const client = await f.client(); const session = 'changed-legacy';
-    const source = join(f.root.resources.sessionDir, 'changed-legacy.jsonl');
-    const bytes = JSON.stringify({ type: 'session', version: 3, id: session, cwd: f.cwd }) + '\n'; await writeFile(source, bytes, { mode: 0o600 });
-    const listed = await client.request('sessions.list', {});
-    if (listed.outcome !== 'accepted') throw new Error('Inventory failed');
-    const selected = listed.result.entries.find(row => row.session === session);
-    if (!selected || selected.adoption !== 'legacy' || !selected.sourceFingerprint) throw new Error('Inventory fingerprint missing');
-    await writeFile(source, bytes + '\n');
-    expect(await client.request('session.adopt', { expected: f.owner.identity, sourceFingerprint: selected.sourceFingerprint,
-      backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true }, { session }))
-      .toMatchObject({ outcome: 'rejected', error: { code: 'request_conflict' } });
-    expect(f.store.snapshot().adoptions).toEqual([]);
-    const fresh = await client.request('sessions.list', {});
-    if (fresh.outcome !== 'accepted') throw new Error('Inventory failed');
-    const refreshed = fresh.result.entries.find(row => row.session === session);
-    expect(refreshed).toMatchObject({ sourceFingerprint: inspectLegacySession(f.owner, source).fingerprint });
-    expect(refreshed?.sourceFingerprint).not.toBe(selected.sourceFingerprint);
-  });
-
-  it('keeps a completed copy staged after failed registration until an explicit new adoption request', async () => {
-    const f = await fixture(); const client = await f.client(); const session = 'registration-retry';
-    const source = join(f.root.resources.sessionDir, 'registration-retry.jsonl');
-    const bytes = JSON.stringify({ type: 'session', version: 3, id: session, cwd: f.cwd }) + '\n'; await writeFile(source, bytes, { mode: 0o600 });
-    const params = { expected: f.owner.identity, sourceFingerprint: inspectLegacySession(f.owner, source).fingerprint,
-      backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true } as const;
-    const open = vi.spyOn(f.profile, 'openSession').mockRejectedValueOnce(new Error('Synthetic registration failure'));
-    expect(await client.request('session.adopt', params, { session })).toMatchObject({ outcome: 'indeterminate' });
-    expect(f.store.snapshot().adoptions.find(row => row.session === session)?.phase).toBe('complete');
-    expect(f.store.snapshot().sessions.some(row => row.id === session)).toBe(false);
-    expect(await readFile(source, 'utf8')).toBe(bytes); open.mockRestore();
-    expect(await client.request('session.adopt', params, { session })).toMatchObject({ outcome: 'accepted', result: { sessionId: session } });
-  });
-
-  it('distinguishes the active adoption reservation from its own writer checks', async () => {
-    const entered = gate(); const release = gate();
-    const f = await fixture({ release: release.resolve }); const client = await f.client(); const other = await f.client(); const session = 'concurrent-adoption';
-    const source = join(f.root.resources.sessionDir, 'concurrent-adoption.jsonl');
-    await writeFile(source, JSON.stringify({ type: 'session', version: 3, id: session, cwd: f.cwd }) + '\n', { mode: 0o600 });
-    const params = { expected: f.owner.identity, sourceFingerprint: inspectLegacySession(f.owner, source).fingerprint,
-      backupConfirmed: true, quiescenceConfirmed: true, legacyRiskAcknowledged: true } as const;
-    const original = f.profile.openSession.bind(f.profile);
-    vi.spyOn(f.profile, 'openSession').mockImplementation(async request => { entered.resolve(); await release.promise; return original(request); });
-    const first = client.request('session.adopt', params, { session }); await entered.promise;
-    expect(await other.request('session.adopt', params, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
-    release.resolve(); expect(await first).toMatchObject({ outcome: 'accepted', result: { sessionId: session } });
-  });
-
   it('tombstones an explicitly closed session before deleting only its managed transcript', async () => {
     const f = await fixture(); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
     const path = f.store.session(session).piPath;
@@ -765,12 +631,12 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(response.outcome).toBe('accepted');
     if (response.outcome !== 'accepted') throw new Error('Import failed');
     expect(response.result.sessionId).not.toBe(oldId); expect(await readFile(source, 'utf8')).toBe(bytes);
-    expect(f.store.snapshot().adoptions).toEqual([]); expect(f.store.snapshot().sessions.some(row => row.id === oldId)).toBe(false);
+    expect(f.store.snapshot().sessions.some(row => row.id === oldId)).toBe(false);
     expect((await stat(join(f.root.resources.sessionDir, '.felan-import'))).mode & 0o777).toBe(0o700);
   });
 
   it('reads verified detached metadata as arbitrary bytes without starting or signaling its process', async () => {
-    const f = await fixture(); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
+    const f = await fixture({ processAdapter: fakeProcessAdapter() }); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
     const storage = f.root.agentRuntime.storage('session'); const id = 'bash-20260101000000-abcdef';
     const jobDir = join(storage.root, 'background-bash', id); await storage.mkdir(jobDir, { recursive: true });
     const info = { id, jobDir, infoPath: join(jobDir, 'info.json'), logPath: join(jobDir, 'output.log'), runnerPath: join(jobDir, 'runner.sh'),
@@ -850,7 +716,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     const f = await fixture(); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
     await completedPrompt(f, client, 'raw label target');
     const peer = await f.raw();
-    await peer.exchange({ v: 1, id: newRequestId(), op: 'hello', params: { clientVersion: 'fixture', protocol: 1, kind: 'tui', interactionKinds: [], presenters: [], target: protocolTarget(f.owner.target) } });
+    await peer.exchange({ v: 1, id: newRequestId(), op: 'hello', params: { clientVersion: 'fixture', protocol: 1, kind: 'tui', interactionKinds: [], target: protocolTarget(f.owner.target) } });
     const attached = await peer.exchange({ v: 1, id: newRequestId(), op: 'attach', session, params: { expected: f.owner.identity } });
     expect(attached.outcome).toBe('accepted');
     const snapshot = (attached.result as { snapshot: { revision: number } }).snapshot;
@@ -862,19 +728,22 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(await closed).toBe('closed');
   });
 
-  it('derives ACP strict policy from the connection, not a claimed request origin', async () => {
-    const f = await fixture(); const client = await f.client('acp'); const id = f.root.sessionId;
+  it.each(['tui', 'acp'] as const)('requires explicit strict policy rather than the %s connection kind', async kind => {
+    const f = await fixture(); const client = await f.client(kind); const id = f.root.sessionId;
     expect((await client.attach(id)).outcome).toBe('accepted');
+    expect(f.registry.getPolicy(id).mode).toBe('host-default');
+    await client.detach(id);
+    expect((await client.attach(id, { requirePolicy: 'acp-strict' })).outcome).toBe('accepted');
     expect(f.registry.getPolicy(id).mode).toBe('acp-strict');
-    expect(client.capabilities?.operations).not.toContain('command.invoke');
+    expect(client.capabilities?.operations).toContain('command.invoke');
     expect((await client.request('prompt', { text: 'strict' }, { session: id })).outcome).toBe('accepted');
-    await vi.waitFor(() => expect(f.store.session(id).run.origin?.kind).toBe('acp'));
+    await vi.waitFor(() => expect(f.store.session(id).run.origin?.kind).toBe(kind));
     client.close(); expect(f.registry.getPolicy(id).mode).toBe('acp-strict');
   });
 
   it('routes the injected broker port with verified identity and leaves arbitration outside this slice', async () => {
     const called = vi.fn();
-    const f = await fixture({ broker: { interactionKinds: ['confirm'], presenters: [], dispatch(command, client) {
+    const f = await fixture({ broker: { interactionKinds: ['confirm'], dispatch(command, client) {
       return { response: command.dispatch(() => { called(client); return accepted(command.request, {}); }) };
     } } });
     const client = await f.client();
@@ -887,7 +756,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     const calls: string[] = [];
     const f = await fixture({ extension: pi => { pi.registerCommand('synthetic-command', { description: 'Synthetic command', handler: async args => { calls.push(args); } }); } });
     const a = await f.client(); const b = await f.client(); const id = f.root.sessionId; await a.attach(id);
-    expect(a.getAttachment(id)?.state.snapshot?.catalog.commands).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'synthetic-command', eligibleClientKinds: ['tui', 'headless'] })]));
+    expect(a.getAttachment(id)?.state.snapshot?.catalog.commands).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'synthetic-command' })]));
     const request = newRequestId();
     const response = await a.request('command.invoke', { name: 'synthetic-command', arguments: 'literal arguments' }, { session: id, id: request });
     expect(response.outcome).toBe('accepted');
@@ -913,7 +782,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
 
   it('rejects forged targets, unattached commands, raw obsolete CAS and conflicting durable retries', async () => {
     const f = await fixture(); const peer = await f.raw();
-    const hello = await peer.exchange({ v: 1, id: 'hello', op: 'hello', params: { clientVersion: 'fixture', protocol: 1, kind: 'tui', interactionKinds: [], presenters: [], target: protocolTarget(f.owner.target) } });
+    const hello = await peer.exchange({ v: 1, id: 'hello', op: 'hello', params: { clientVersion: 'fixture', protocol: 1, kind: 'tui', interactionKinds: [], target: protocolTarget(f.owner.target) } });
     expect(hello.outcome).toBe('accepted');
     expect(await peer.exchange({ v: 1, id: newRequestId(), op: 'prompt', session: f.root.sessionId, params: { text: 'not attached' } }))
       .toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
