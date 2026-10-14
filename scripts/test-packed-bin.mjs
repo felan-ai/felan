@@ -12,11 +12,12 @@ import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { pnpmPackageVersions, pnpmPinnedVersions } from './felan-shrinkwrap.mjs';
 import { packagePaths } from './package-paths.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const artifacts = resolve(root, '.artifacts');
-const installDir = mkdtempSync(join(tmpdir(), 'felan-packed-bin-'));
+const installDir = realpathSync(mkdtempSync(join(tmpdir(), 'felan-packed-bin-')));
 const cleanHome = join(installDir, 'home');
 const cacheDir = join(installDir, 'npm-cache');
 const workspace = join(installDir, 'workspace');
@@ -41,6 +42,7 @@ const agentCoreVersion = sourcePackagesByName.get('@felan-ai/agent-core').versio
 const [agentCoreMajor, agentCoreMinor, agentCorePatch] = agentCoreVersion.split('.').map(Number);
 const felanVersion = sourcePackagesByName.get('@felan-ai/felan').version;
 const audit = process.argv.includes('--audit');
+const pnpmLockfile = readFileSync(resolve(root, 'pnpm-lock.yaml'), 'utf8');
 const cleanEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => (
     !/(TOKEN|API_KEY|AUTH|PASSWORD|SECRET|CREDENTIAL|COOKIE|SESSION|(^|_)KEY$)/i.test(name)
@@ -69,6 +71,11 @@ try {
     throw new Error(`Expected ${sourcePackages.length} packed artifacts, found ${tarballs.length}`);
   }
 
+  // Local tarball installs ignore the app's shrinkwrap, so pin the versions the workspace tested.
+  writeFileSync(join(installDir, 'package.json'), `${JSON.stringify({
+    private: true,
+    overrides: pnpmPinnedVersions(pnpmLockfile),
+  }, null, 2)}\n`);
   runNpm([
     'install',
     '--ignore-scripts',
@@ -82,6 +89,7 @@ try {
   assertPackedFelanThemes();
   assertPackedFelanOutputStyleDependency();
   assertPackedFelanAcpPackage();
+  assertPackedFelanShrinkwrap();
   assertSingleAgentCoreInstallation();
   assertPackedToolBoundary();
 
@@ -680,6 +688,25 @@ try {
   rmSync(installDir, { recursive: true, force: true });
 }
 
+// npm installs the published app from its shrinkwrap, so every pinned package must come from the
+// registry at a version the workspace resolved and tested.
+function assertPackedFelanShrinkwrap() {
+  const shrinkwrapPath = join(installDir, 'node_modules', '@felan-ai', 'felan', 'npm-shrinkwrap.json');
+  const { packages } = JSON.parse(readFileSync(shrinkwrapPath, 'utf8'));
+  const testedVersions = pnpmPackageVersions(pnpmLockfile);
+  for (const [path, entry] of Object.entries(packages)) {
+    if (path === '') continue;
+    const name = path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length);
+    if (!entry.resolved?.startsWith('https://registry.npmjs.org/')) {
+      throw new Error(`Packed Felan shrinkwrap resolves ${path} outside the public registry`);
+    }
+    const expected = sourcePackagesByName.get(name)?.version;
+    if (expected ? entry.version !== expected : !testedVersions.get(name)?.has(entry.version)) {
+      throw new Error(`Packed Felan shrinkwrap pins untested ${name}@${entry.version}`);
+    }
+  }
+}
+
 function assertPackedToolBoundary() {
   const forbidden = [
     'spawn_agent',
@@ -766,8 +793,15 @@ function validateInstalledPackage(sourcePackage) {
   if (!existsSync(join(packageRoot, 'dist'))) {
     throw new Error(`${manifest.name} packed artifact is missing dist`);
   }
+  const allowedEntries = ['dist', 'LICENSE', 'NOTICE', 'README.md', 'node_modules', 'package.json'];
+  if (manifest.name === '@felan-ai/felan') {
+    if (!existsSync(join(packageRoot, 'npm-shrinkwrap.json'))) {
+      throw new Error(`${manifest.name} packed artifact is missing npm-shrinkwrap.json`);
+    }
+    allowedEntries.push('npm-shrinkwrap.json');
+  }
   for (const entry of readdirSync(packageRoot)) {
-    if (!['dist', 'LICENSE', 'NOTICE', 'README.md', 'node_modules', 'package.json'].includes(entry)) {
+    if (!allowedEntries.includes(entry)) {
       throw new Error(`${manifest.name} packed unexpected top-level entry ${entry}`);
     }
   }

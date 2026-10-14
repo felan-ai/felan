@@ -38,6 +38,14 @@ workflow stores no npm credential.
    tests, packs, clean-installs, imports every public package, checks exact
    workspace dependency versions, constructs a runtime, and runs the `felan`
    binary without credentials.
+
+   `pack:all` also generates `npm-shrinkwrap.json` inside the `@felan-ai/felan`
+   artifact. npm ignores the workspace's pnpm overrides and lockfile, so without
+   it a global install resolves transitive dependencies such as
+   `@earendil-works/pi-codemode` to whatever is newest in range at install time.
+   The shrinkwrap pins every third-party package to the version pnpm resolved,
+   and `test:packed-bin` fails if it names a version the workspace did not
+   resolve. The generated file is not committed.
 4. Confirm that every package already present on npm trusts this repository's
    `release.yml` workflow and the `npm` GitHub environment.
 5. Commit the release-facing changes and push or merge them to `main`.
