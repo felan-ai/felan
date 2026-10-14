@@ -7,6 +7,7 @@ import { resolveClientHostComposition, resolveInstalledDaemonEntrypoint } from '
 import { TuiSessionController, type TuiSessionOptions } from './tui/controller.js';
 import { runDaemonTerminal } from './tui/run.js';
 import { FELAN_VERSION } from './version.js';
+import type { TuiPresentationPreferences } from './tui/preferences-schema.js';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import { waitForDaemonStop } from './client/daemon-stop.js';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
@@ -20,6 +21,7 @@ export interface RunDaemonFelanOptions extends Omit<TuiSessionOptions, 'cwd' | '
   extensionPaths?: readonly string[];
   initialMessage?: string;
   verbose?: boolean;
+  presentation?: Partial<{ [K in keyof TuiPresentationPreferences]: Partial<TuiPresentationPreferences[K]> }>;
   signal?: AbortSignal;
 }
 
@@ -62,6 +64,7 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
         ...(first && options.continueRecent ? { continueRecent: true } : {}), ...(first && options.resume ? { resume: true } : {}),
         ...(first && options.extensionPaths?.length ? { extensions: options.extensionPaths.map(path => resolve(path)) } : {}),
         ...(first && options.config ? { config: options.config } : {}), ...(first && options.initialMessage ? { initialMessage: options.initialMessage } : {}),
+        ...(options.presentation ? { presentation: options.presentation } : {}),
         ...(draft ? { initialDraft: draft } : {}),
         ...(options.signal ? { signal: options.signal } : {}), ...(options.verbose ? { verbose: true } : {}),
         onDaemonAction: async (action, force, text, beforeAttachment) => {

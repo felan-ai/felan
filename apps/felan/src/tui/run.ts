@@ -7,6 +7,7 @@ import { pickSession } from './session-navigator.js';
 import { TerminalInteractions } from './interactions.js';
 import { createPresentationUi } from './presentation-ui.js';
 import { ClientThemes } from './theme-config.js';
+import type { TuiPresentationPreferences } from './preferences-schema.js';
 import { TerminalPreferences } from './preferences.js';
 import { createTerminalPresenters } from './presenters.js';
 import { terminalToolPresentation } from './tool-presentation.js';
@@ -19,6 +20,7 @@ import { checkForFelanUpdate } from '../update.js';
 export async function runDaemonTerminal(controller: TuiSessionController, options: TuiSessionOptions & {
   initialMessage?: string;
   theme?: string;
+  presentation?: Partial<{ [K in keyof TuiPresentationPreferences]: Partial<TuiPresentationPreferences[K]> }>;
   clientConfigDir?: string;
   verbose?: boolean;
   keybindings?: KeybindingsConfig;
@@ -100,6 +102,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
   try {
     tui.start();
     if (options.signal?.aborted) return;
+    const loadingPreferences = preferences.load();
     if (typeof tui.onTerminalColorSchemeChange === 'function') {
       unsubscribeColors = tui.onTerminalColorSchemeChange(value => { themes.setAppearance(value); theme = themes.theme; screen.refreshPresentation(); });
       tui.setTerminalColorSchemeNotifications(true);
@@ -117,7 +120,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       if (!stopped && !setup!.busy && !tui.hasOverlay()) void setup!.dependencies(true);
     });
     const ui = createPresentationUi(tui, screen.dialogs, () => theme, keybindings, message => controller.setNotice(message));
-    builtins = createTerminalPresenters(controller, ui, { settings, toolPresentation: terminalToolPresentation,
+    builtins = createTerminalPresenters(controller, ui, { settings, presentationPreferences: () => preferences.presentation, toolPresentation: terminalToolPresentation,
       executionsChanged: executions => screen.setExecutions(executions),
       setEditorText: text => { screen.editor.setText(text); tui.requestRender(); } });
     let footerSession: string | undefined;
@@ -126,13 +129,14 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       if (footerSession === controller.sessionId) return;
       footerSession = controller.sessionId; footer?.dispose(); footer = undefined;
       if (footerSession) footer = createClientPowerlineFooter(controller.client, footerSession, {
-        theme: () => theme, requestRender: () => tui.requestRender(), onError: message => controller.setNotice(message),
+        theme: () => theme, preferences: () => preferences.presentation.powerline, requestRender: () => tui.requestRender(), onError: message => controller.setNotice(message),
       });
       screen.setFooter(footer);
     });
     interactions = new TerminalInteractions(controller, builtins.presenters, setup);
     const starting = controller.start(options, async sessions => (await pickSession(screen.dialogs, sessions, options.cwd, undefined, () => theme, false))?.session, async () => {
-      await preferences.load();
+      await loadingPreferences;
+      if (stopped) return false;
       if (!controller.client.capabilities?.operations.includes('host.status')) return;
       const response = await controller.perform('host.status', {});
       if (response.outcome !== 'accepted') throw new Error(controller.notice);

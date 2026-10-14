@@ -67,3 +67,34 @@ it('joins host lease cleanup before shutdown finishes', async () => {
     release(); await shutdown;
   } finally { release(); await (shutdown ?? h.emit('session_shutdown')); }
 });
+
+it('collects independently of display and respects behavior settings', async () => {
+  const h = harness();
+  Object.assign(h.pi, { config: { showWorkingTree: false, showStashCount: false, periodDays: 14, maxWindows: 1 } });
+  const query = vi.fn(async () => ({ savedCostUsd: 3, hasUnpricedMeasurements: false }));
+  createPowerlineRuntimeExtension(undefined, { savingsHost: { query } }, h.host)(h.pi);
+  try {
+    await h.emit('session_start');
+    await vi.waitFor(() => expect(query).toHaveBeenCalled());
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({ periodDays: 14 }));
+    expect(h.exec.mock.calls.some(([, args]) => args[0] === 'status' || args[0] === 'stash')).toBe(false);
+    const data = h.values.at(-1)!;
+    expect(data).not.toHaveProperty('style');
+    expect(data).not.toHaveProperty('lines');
+    expect(data.segments.some(segment => segment.name === 'session')).toBe(true);
+  } finally { await h.emit('session_shutdown'); }
+});
+
+it.each([2, 3])('keeps shared Codex windows before applying maxWindows %s for Spark', async maxWindows => {
+  const h = harness();
+  Object.assign(h.pi, { config: { maxWindows } });
+  Object.assign(h.context, { model: { provider: 'openai-codex', id: 'gpt-5.3-codex-spark', contextWindow: 8192 } });
+  const rate_limit = { primary_window: { limit_window_seconds: 18000, used_percent: 20 }, secondary_window: { limit_window_seconds: 604800, used_percent: 30 } };
+  createPowerlineRuntimeExtension({ fetchUsage: async () => ({ ok: true, data: { rate_limit,
+    additional_rate_limits: [{ limit_name: 'GPT-5.3-Codex-Spark', rate_limit }] } }) }, {}, h.host)(h.pi);
+  try {
+    await h.emit('session_start');
+    await vi.waitFor(() => expect(h.values.at(-1)?.segments.find(segment => segment.name === 'subscription')?.values)
+      .toMatchObject({ loading: false, windows: [{ label: '5h' }, { label: 'Week' }] }));
+  } finally { await h.emit('session_shutdown'); }
+});

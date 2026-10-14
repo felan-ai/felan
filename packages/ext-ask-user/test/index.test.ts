@@ -46,13 +46,14 @@ describe('@felan-ai/ext-ask-user core', () => {
     expect(schema.properties.overlayToggleKey.anyOf).toBeUndefined();
   });
 
-  it('applies extension display defaults before crossing the host boundary and permits request overrides', async () => {
+  it('does not apply host display defaults and passes per-call hints unchanged', async () => {
     const ask = vi.fn(answeringHost().ask);
     const harness = createHarness({ ask }, { displayMode: 'overlay', singleSelectLayout: 'list', overlayToggleKey: 'off', commentToggleKey: 'ctrl+g' });
     await harness.execute({ question: 'Name?' });
-    expect(ask.mock.calls[0]?.[0]).toMatchObject({ displayMode: 'overlay', singleSelectLayout: 'list', overlayToggleKey: 'off', commentToggleKey: 'ctrl+g' });
-    await harness.execute({ question: 'Name?', displayMode: 'inline', overlayToggleKey: 'alt+x' });
-    expect(ask.mock.calls[1]?.[0]).toMatchObject({ displayMode: 'inline', singleSelectLayout: 'list', overlayToggleKey: 'alt+x' });
+    expect(ask.mock.calls[0]?.[0]).not.toHaveProperty('displayMode');
+    expect(ask.mock.calls[0]?.[0]).not.toHaveProperty('singleSelectLayout');
+    await harness.execute({ question: 'Name?', displayMode: 'inline', singleSelectLayout: 'auto', overlayToggleKey: 'alt+x', commentToggleKey: 'ctrl+x' });
+    expect(ask.mock.calls[1]?.[0]).toMatchObject({ displayMode: 'inline', singleSelectLayout: 'auto', overlayToggleKey: 'alt+x', commentToggleKey: 'ctrl+x' });
   });
 
   it('normalizes defaults, inherited wizard values, and stable ids', () => {

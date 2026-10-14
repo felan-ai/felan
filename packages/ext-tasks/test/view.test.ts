@@ -10,7 +10,7 @@ function state(count = 2): TaskState {
     result: '🦙'.repeat(4000), notes: '"'.repeat(8000), description: 'Context '.repeat(500), acceptanceCriteria: 'Verified',
   })) };
 }
-const request = { viewId: 'view', displayMode: 'inline' as const };
+const request = { viewId: 'view' };
 
 describe('task view publications', () => {
   it('transfers a maximum graph and selected details without sending every heavy field', () => {

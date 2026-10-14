@@ -1,6 +1,6 @@
-import { scenario as s, pause, screen, keys, command, esc, prompt, until } from './helpers.mjs';
+import { scenario as s, pause, screen, keys, command, esc, prompt, until, legacyClientFallback } from './helpers.mjs';
 export default [
-  s('A-startup', 'Startup header, editor and footer', [screen('startup')], ['header lines', 'footer three lines', 'editor borders']),
+  s('A-startup', 'Startup header, editor and footer', [...legacyClientFallback(), screen('startup')], ['header lines', 'footer three lines', 'editor borders']),
   s('A-slash-list', 'Full slash autocomplete', [{ text: '/' }, pause(), screen('slash-list'), { commands: true }, ...esc()], ['labels, descriptions, order, skills and count'], ['daemon-only commands']),
   s('A-autocomplete-filter', 'Fuzzy autocomplete and escape', [{ text: '/mo' }, pause(), screen('filtered'), ...esc(), screen('escaped')], ['fuzzy filter', 'highlight', 'Esc behaviour']),
   s('A-editor-clear', 'Command submit and history', [

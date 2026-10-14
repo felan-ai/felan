@@ -9,7 +9,7 @@ incremental, with newest-first deduplication and at most 50 results. Selecting a
 result opens its full text; it never inserts, submits, or runs a prompt.
 
 The optional native picker renders inline by default with two full-width horizontal separators. Set
-`extensionConfig.promptHistory.displayMode` to `overlay` for a centered popup.
+`presentation.promptHistory.displayMode` in `$FELAN_AGENT_DIR/tui/settings.json` to `overlay` for a centered popup.
 Overlay mode uses a complete four-edge frame.
 Its editor insertion and TUI-only behavior remain available through the named
 factory. Display mode does not affect the default generic UI.
@@ -60,8 +60,9 @@ const extension = createPromptHistoryExtension(host);
 ```
 
 This native picker preserves scope cycling, inline/overlay presentation, and
-replacement of the local editor with the selected prompt. Existing named factories
-and public exports are unchanged. Configuration metadata remains available.
+replacement of the local editor with the selected prompt. Display configuration belongs to the TUI, which reads released
+`settings.json` preferences as a read-only fallback. The extension declares no
+display settings.
 
 The package does not access the filesystem, network, credentials, or ambient Pi
 configuration directly. Historical prompts can contain private source, paths,

@@ -1,5 +1,6 @@
 import { Key, KeybindingsManager, TUI_KEYBINDINGS, type KeybindingsConfig } from '@earendil-works/pi-tui';
-import { parseSchema, TuiKeybindingsSchema } from '@felan-ai/session-protocol';
+import { parseSchema } from '@felan-ai/session-protocol';
+import { TuiKeybindingsSchema } from './preferences-schema.js';
 
 declare module '@earendil-works/pi-tui' {
   interface Keybindings {

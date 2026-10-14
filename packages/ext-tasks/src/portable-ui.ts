@@ -1,9 +1,11 @@
 import { TASKS_HINT } from './data.js';
 import type { ExtensionUi, UiActionRequest, UiAction, UiElementHandle, UiField, UiInteractiveElement, UiPresentOptions, UiValues, UiView } from '@felan-ai/agent-core';
-import { TASK_STATUS_VALUES, TASK_VIEW_VALUES, type CreateTaskInput, type Task, type TaskState, type TaskView, type UpdateTaskInput } from './contracts.js';
+import { TASK_STATUS_VALUES, TASK_VIEW_VALUES, type CreateTaskInput, type TaskState, type TaskView, type UpdateTaskInput } from './contracts.js';
 import { getTask, incompleteBlockers, listTasks, TASK_ID_PATTERN, taskAvailability, taskCounts, taskDependents } from './graph.js';
 import type { TaskDataSource, TaskPresentationMutations } from './host.js';
 import { assembleTaskView, createTaskViewPublication } from './data.js';
+import { taskDetailDataPages } from './detail-data.js';
+import { taskGraphLayers } from './presentation.js';
 
 
 const PAGE_SIZE = 20;
@@ -33,6 +35,7 @@ export function createTasksUi(ui: ExtensionUi) {
       let search = '';
       let page = 0;
       let selected: string | undefined;
+      let graph = false;
       let detailPage = 0;
       let pageCount = 1;
       let current: UiInteractiveElement;
@@ -64,26 +67,30 @@ export function createTasksUi(ui: ExtensionUi) {
         if (closing) return;
         signal.throwIfAborted();
         if (selected && !snapshot.tasks.some(task => task.id === selected)) selected = undefined;
-        const publication = createTaskViewPublication(snapshot, { viewId: id, displayMode: 'inline', ...(selected ? { selectedTaskId: selected } : {}) }, revision);
+        const publication = createTaskViewPublication(snapshot, { viewId: id, ...(selected ? { selectedTaskId: selected } : {}) }, revision);
         const state = assembleTaskView([publication.manifest, ...publication.pages], id)!.state;
         graphRevision = state.revision;
         revision++;
         if (selected) {
           const task = getTask(state, selected);
-          const pages = documentPages(taskDocument(state, task));
+          const pages = taskDetailDataPages(state, task);
           pageCount = pages.length;
           detailPage = Math.min(detailPage, pageCount - 1);
           current = {
             kind: 'document', hint: TASKS_HINT, id: `${id}-detail`, revision,
             title: `Task ${task.id} — page ${detailPage + 1}/${pageCount}`,
-            markdown: pages[detailPage]!, fallback: `Task ${task.id}, graph revision ${graphRevision}, detail page ${detailPage + 1} of ${pageCount}.`,
-            actions: [action('back', 'Back to tasks'), action('open', 'Open related task', [field('taskId', 'Task ID', 8, true)]),
+            data: pages[detailPage]!.data,
+            markdown: pages[detailPage]!.records.map(record => 'field' in record ? `## ${record.field}\n${markdown(record.value || '-')}`
+              : `## ${record.relation}\n${record.id}: ${markdown(record.title)} (${record.availability})`).join('\n\n'),
+            fallback: `Task ${task.id}, graph revision ${graphRevision}, detail page ${detailPage + 1} of ${pageCount}.`,
+            actions: [action('back', 'Back to tasks'), action('graph', 'Task graph'), action('open', 'Open related task', [field('taskId', 'Task ID', 8, true)]),
               ...(detailPage > 0 ? [action('previous', 'Previous detail page')] : []),
               ...(detailPage + 1 < pageCount ? [action('next', 'Next detail page')] : []),
               ...(mutations ? [action('update', 'Update this task', updateFields)] : []), action('refresh', 'Refresh'), closeAction],
           };
         } else {
-          const tasks = listTasks(state, filter).filter(task => `${task.id} ${task.title}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+          const layers = graph ? taskGraphLayers(state) : [];
+          const tasks = graph ? layers.flat() : listTasks(state, filter).filter(task => `${task.id} ${task.title}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
           pageCount = Math.max(1, Math.ceil(tasks.length / PAGE_SIZE));
           page = Math.min(page, pageCount - 1);
           const counts = taskCounts(state);
@@ -93,15 +100,25 @@ export function createTasksUi(ui: ExtensionUi) {
             fields: [
               { id: 'id', label: 'Task ID', valueKind: 'text' },
               { id: 'title', label: 'Title', valueKind: 'text' }, { id: 'priority', label: 'Priority', valueKind: 'number' },
+              ...(graph ? [{ id: 'depth', label: 'Dependency depth', valueKind: 'number' as const }] : []),
+              ...(graph ? ['unblocks', 'relatedAvailability'].map(id => ({ id, label: id, valueKind: 'text' as const })) : []),
+              ...(graph ? ['graphRevision', 'total', 'completed', 'active', 'ready', 'blocked'].map(id => ({ id, label: id, valueKind: 'number' as const })) : []),
               ...['status', 'availability', 'owner', 'blockedBy', 'waitingOn', 'blockedReason', 'createdAt', 'updatedAt', 'claimedAt', 'completedAt'].map(key => ({ id: key, label: key, valueKind: 'text' as const })),
             ],
             items: tasks.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(task => ({
               id: task.id, fallback: `${task.id}, ${taskAvailability(task, state)}, priority ${task.priority}.`,
               values: { id: task.id, title: plain(task.title), priority: task.priority, status: task.status, availability: taskAvailability(task, state),
+                ...(graph ? { depth: layers.findIndex(layer => layer.includes(task)),
+                  graphRevision, total: counts.total, completed: counts.completed, active: counts.active, ready: counts.ready, blocked: counts.blocked,
+                  unblocks: taskDependents(state, task.id).map(entry => entry.id).join(', '),
+                  relatedAvailability: JSON.stringify(Object.fromEntries([...task.blockedBy.map(id => getTask(state, id)), ...taskDependents(state, task.id)]
+                    .map(entry => [entry.id, taskAvailability(entry, state)]))),
+                } : {}),
                 owner: plain(task.ownerSessionId ?? ''), blockedBy: task.blockedBy.join(', '), waitingOn: incompleteBlockers(task, state).map(entry => entry.id).join(', '), blockedReason: plain(task.blockedReason ?? ''),
                 createdAt: plain(task.createdAt), updatedAt: plain(task.updatedAt), claimedAt: plain(task.claimedAt ?? ''), completedAt: plain(task.completedAt ?? '') },
             })),
             actions: [
+              action(graph ? 'back' : 'graph', graph ? 'Back to tasks' : 'Task graph'),
               action('filter', 'Filter tasks', [
                 { id: 'filter', label: 'Task view', kind: 'enum', required: true, options: TASK_VIEW_VALUES.map(value => ({ id: value, label: value })) },
                 field('search', 'Search task IDs and titles', 500),
@@ -148,7 +165,8 @@ export function createTasksUi(ui: ExtensionUi) {
               const taskId = request.itemId ?? request.values.taskId as string;
               getTask(snapshot, taskId);
               selected = taskId; detailPage = 0;
-            } else if (request.actionId === 'back') selected = undefined;
+            } else if (request.actionId === 'back') { selected = undefined; if (graph) page = 0; graph = false; }
+            else if (request.actionId === 'graph') { selected = undefined; graph = true; page = 0; }
             else if (request.actionId === 'filter') { filter = request.values.filter as TaskView; search = request.values.search as string ?? ''; page = 0; }
             else if (request.actionId === 'next') { if (selected) detailPage++; else page++; }
             else if (request.actionId === 'previous') { if (selected) detailPage--; else page--; }
@@ -240,27 +258,6 @@ function updateInput(taskId: string, values: UiValues): UpdateTaskInput {
   };
 }
 
-function taskDocument(state: TaskState, task: Task): string {
-  const related = (entry: Task) => `${entry.id}: ${markdown(entry.title)} (${taskAvailability(entry, state)})`;
-  return [
-    `# ${task.id}`, markdown(task.title), '', `Status: ${task.status}`, `Availability: ${taskAvailability(task, state)}`, `Priority: ${task.priority}`,
-    `Owner: ${markdown(task.ownerSessionId ?? 'none')}`, `Claimed: ${markdown(task.claimedAt ?? 'never')}`,
-    `Created: ${markdown(task.createdAt)}`, `Updated: ${markdown(task.updatedAt)}`, `Completed: ${markdown(task.completedAt ?? 'never')}`,
-    '', '## Prerequisites', ...task.blockedBy.map(id => related(getTask(state, id))),
-    '', '## Dependents', ...taskDependents(state, task.id).map(related),
-    ...(['description', 'acceptanceCriteria', 'blockedReason', 'notes', 'result'] as const).flatMap(key => ['', `## ${key}`, markdown(task[key] ?? 'Not supplied')]),
-  ].join('\n');
-}
-function documentPages(document: string): string[] {
-  const pages: string[] = []; let page = '';
-  for (const line of document.split('\n')) {
-    if (encoder.encode(line).length > 128 * 1024) throw new Error('Task detail line exceeds the presentation byte limit.');
-    if (page && encoder.encode(`${page}\n${line}`).length > 128 * 1024) { pages.push(page); page = ''; }
-    page = page ? `${page}\n${line}` : line;
-  }
-  pages.push(page || 'No task details.');
-  return pages;
-}
 function plain(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, character => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }

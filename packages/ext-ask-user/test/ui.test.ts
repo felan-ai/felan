@@ -4,7 +4,7 @@ import {
 } from '@felan-ai/agent-core';
 import { parseUiForm } from '@felan-ai/session-protocol';
 import { describe, expect, it, vi } from 'vitest';
-import extension, { ASK_USER_CONFIG } from '../src/extension.js';
+import extension from '../src/extension.js';
 
 function answered(values: UiValues): UiRequestResult {
   return { state: 'answered', answer: { kind: 'form', actionId: 'submit', outcome: 'submit', values } };
@@ -37,7 +37,7 @@ const choices = { question: 'Choose?', options: [{ title: 'Alpha' }, { title: 'B
 describe('ask-user generic UI root', () => {
   it('needs no service and preserves config metadata, signal, timeout, and the required freeform answer', async () => {
     expect(extension.serviceRequirements).toEqual({});
-    expect(getExtensionConfigDefinition(extension)).toBe(ASK_USER_CONFIG);
+    expect(getExtensionConfigDefinition(extension)).toBeUndefined();
     const f = harness();
     const signal = new AbortController().signal;
     const result = await f.execute({ question: 'Describe the plan?', context: 'Explain the tradeoff.', timeout: 1200,

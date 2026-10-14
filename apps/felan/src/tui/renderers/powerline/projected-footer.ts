@@ -1,11 +1,13 @@
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui';
 import { getThemePalette, type PiTheme } from './colors.js';
 import { renderFooterLine } from './footer-renderer.js';
-import { getSymbols } from '@felan-ai/ext-powerline/data';
-import { parsePowerlineData, type PowerlineData } from '@felan-ai/ext-powerline/data';
+import { getSymbols } from './symbols.js';
+import type { PowerlineConfig } from './config.js';
+import type { RenderedSegment } from './segments.js';
+export type RenderedPowerlineData = Omit<PowerlineConfig['display'], 'lines'> & { lines: RenderedSegment[][] };
 
-export function renderPowerlineData(value: PowerlineData, theme: PiTheme, width: number, extraRows: readonly string[] = []): string[] {
-  const data = parsePowerlineData(value);
+export function renderPowerlineData(value: RenderedPowerlineData, theme: PiTheme, width: number, extraRows: readonly string[] = []): string[] {
+  const data = value;
   const safeWidth = Math.max(0, Math.floor(width));
   if (!Number.isFinite(safeWidth) || safeWidth === 0) return [''];
   const config = { display: { ...data, lines: [] } };
@@ -18,7 +20,7 @@ export class ProjectedPowerlineFooter implements Component {
   private readonly unsubscribe: () => void;
   private disposed = false;
   constructor(private readonly options: {
-    data(): PowerlineData | undefined;
+    data(): RenderedPowerlineData | undefined;
     theme(): PiTheme;
     requestRender(): void;
     subscribe(listener: () => void): () => void;

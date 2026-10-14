@@ -1,8 +1,8 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { colorBlock, colorForeground, colorPairText, type ColorMode, type ThemePalette } from './colors.js';
-import type { PowerlineConfig } from '@felan-ai/ext-powerline/data';
-import type { RenderedSegment } from '@felan-ai/ext-powerline/data';
-import type { PowerlineSymbols } from '@felan-ai/ext-powerline/data';
+import type { PowerlineConfig } from './config.js';
+import type { RenderedSegment } from './segments.js';
+import type { PowerlineSymbols } from './symbols.js';
 
 export function renderFooterLine(
   segments: RenderedSegment[],

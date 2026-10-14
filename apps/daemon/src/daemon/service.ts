@@ -67,7 +67,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
     let runtimeDependencies: RuntimeDependenciesService | undefined;
     sessionLifecycle = createSessionLifecycle({ composition: sessionRuntime, configurationIdentity: composition.configDigest,
       agentDir: owner.target.agentDir, ...(homeDir ? { homeDir } : {}),
-      createModelRuntime: makeModels, deferActivation: true,
+      createModelRuntime: makeModels, deferActivation: true, configuration: () => host.configuration,
       secretStorage: sessionRuntime.secretStorage,
       runtimeDependencies: { install: (request, options) => runtimeDependencies ? runtimeDependencies.install(request, options)
         : Promise.resolve({ status: 'unavailable', message: 'Dependency installation is unavailable.' }) },
@@ -127,7 +127,6 @@ export async function startDaemonService(target: DaemonTarget, options: {
           if (!sessionRuntime.prepareOpenInteraction) throw new Error('Opening this interaction is unsupported.');
           return sessionRuntime.prepareOpenInteraction(setupRuntime, request, path => owner.assertOwnsPath(path), signal);
         } }, id, client, signal),
-      ...(host.preferences ? { preferences: host.preferences } : {}),
       ...(host.prepareRoot ? { prepareRoot: host.prepareRoot } : {}),
       management: { lifecycle, logs: params => log.page(params) },
       setupNeeds: () => ambiguous() ? [{ code: 'process_recovery', message: 'Unverified prior processes block new work. Operator reconciliation is required.' }]

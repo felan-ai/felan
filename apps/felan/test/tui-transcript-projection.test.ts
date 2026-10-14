@@ -110,9 +110,8 @@ it.each(['felan-execution-completion', 'felan-background-bash-completion'])('ren
 
 it('derives the process footer from authoritative running background state and clears it on completion', () => {
   const state = snapshot();
-  state.presentation = [{ id: 'powerline', kind: 'view', revision: 1, title: 'Powerline', hint: { id: 'felan.powerline', version: '2.0.0' },
-    fields: ['segment', 'text'].map(id => ({ id, label: id, valueKind: 'text' as const })), actions: [], fallback: 'Powerline', items: Object.entries({ style: 'minimal', charset: 'text', autoWrap: 'true', padding: '0', lines: '1' })
-      .map(([key, text]) => ({ id: key, values: { segment: `display.${key}`, text }, fallback: key })) }];
+  state.presentation = [{ id: 'powerline', kind: 'view', revision: 1, title: 'Powerline', hint: { id: 'felan.powerline', version: '3.0.0' },
+    fields: [], actions: [], fallback: 'Powerline', items: [] }];
   const listeners = new Set<() => void>();
   const client = { getAttachment: () => ({ state: { status: 'live', snapshot: state } }), subscribe: (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn); } };
   const footer = createClientPowerlineFooter(client as unknown as SessionClient, 'session', { theme: defaultClientTheme, requestRender() {} });

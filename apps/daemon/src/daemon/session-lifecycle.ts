@@ -1,5 +1,6 @@
+import type { HostConfiguration } from './host-services.js';
 import { realpath } from 'node:fs/promises';
-import { AGENT_CORE_VERSION, createAgentCoreSessionRuntimeFactory, createAgentSessionRuntime, type AgentRuntime, type AgentSession, type ExtensionConfigWriter, type FelanServiceRegistry, type Logger, type ModelRuntime, type RuntimeDependenciesService, type SessionRef, type SessionsService } from '@felan-ai/agent-core';
+import { AGENT_CORE_VERSION, createAgentCoreSessionRuntimeFactory, createAgentSessionRuntime, getExtensionConfigDefinition, type AgentRuntime, type AgentSession, type ExtensionConfigWriter, type FelanServiceRegistry, type Logger, type ModelRuntime, type RuntimeDependenciesService, type SessionRef, type SessionsService } from '@felan-ai/agent-core';
 import { createRuntimeStorageRequest } from '../runtime-factory.js';
 import { inheritExecutionPolicy, TrustedToolCatalog } from './execution-policy.js';
 import { resolveTarget, assertTargetUnchanged, assertSessionManagerMatches, openSessionManager, createWorkerBinding, assertAbsolutePath, canonicalPath } from './profile-storage.js';
@@ -13,6 +14,7 @@ import { assertSessionConfigurationEnvironment, parseSessionConfiguration } from
 
 export interface SessionLifecycleOptions {
   readonly configurationIdentity: string;
+  readonly configuration: () => HostConfiguration;
   readonly composition: SessionRuntime;
   readonly agentDir: string;
   readonly homeDir?: string;
@@ -131,7 +133,35 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         const runtimeRequest = createRuntimeStorageRequest(cwd, options.agentDir, root);
         const runtime = options.wrapRuntime?.(prepared.runtime, runtimeRequest) ?? prepared.runtime; agentRuntime = runtime;
         const allowed = prepared.settingsManager.getEnabledModels()?.length ? (prepared.scopedModels ?? []).map(row => ({ provider: row.model.provider, id: row.model.id })) : undefined;
-        const context: SessionExtensionContext = { runtime, modelRuntime: models, settingsManager: prepared.settingsManager, sessionManager: manager,
+        const updateExtensionConfig: ExtensionConfigWriter = async (packageName, patch) => {
+          if (released || disposal || !activation) throw new Error('Session configuration binding is inactive.');
+          await request.ownership.assertOwned(request.resources, target.identity);
+          if (!activePackages.includes(packageName)) throw new Error('Extension configuration is unavailable for this package.');
+          const imported = await prepared.importExtension(packageName);
+          const extension = imported && typeof imported === 'object' ? Reflect.get(imported, 'default') : undefined;
+          const definition = typeof extension === 'function' ? getExtensionConfigDefinition(extension) : undefined;
+          if (!definition) throw new Error('Extension configuration is unavailable for this package.');
+          if (!patch || typeof patch !== 'object' || Array.isArray(patch)
+            || Object.getPrototypeOf(patch) !== Object.prototype && Object.getPrototypeOf(patch) !== null) throw new Error('Extension configuration patch must be a plain object.');
+          const values: Record<string, unknown> = {};
+          for (const field of Reflect.ownKeys(patch)) {
+            if (typeof field !== 'string') throw new Error('Unknown extension configuration field.');
+            const descriptor = Object.getOwnPropertyDescriptor(patch, field)!;
+            if (!descriptor.enumerable || !('value' in descriptor)) throw new Error('Extension configuration fields must be data properties.');
+            if (request.extensionConfigOverrides?.some(row => row.extensionId === definition.id && Object.hasOwn(row.values, field))) throw new Error('Session-overridden configuration cannot be persisted.');
+            Object.defineProperty(values, field, { value: descriptor.value, enumerable: true });
+          }
+          if (!Object.keys(values).length) return;
+          const configuration = options.configuration();
+          if (!(await configuration.get('global')).writable) throw new Error('Global configuration is read-only.');
+          if (released || disposal) throw new Error('Session configuration binding is inactive.');
+          await request.ownership.assertOwned(request.resources, target.identity);
+          configuration.prepare('global', { extensionConfig: { [definition.id]: values } });
+          await configuration.set('global', { extensionConfig: { [definition.id]: values } });
+          await request.ownership.assertOwned(request.resources, target.identity);
+          await prepared.settingsManager.reload();
+        };
+        const context: SessionExtensionContext = { updateExtensionConfig, runtime, modelRuntime: models, settingsManager: prepared.settingsManager, sessionManager: manager,
           resources: request.resources, rootSessionId: root, policy: effectivePolicy(request, originalPolicy), extensionPackages: prepared.extensionPackages,
           source: request.source ?? 'headless', extensionConfigs: composition.extensionConfigs, extensionConfigOverrides: prepared.extensionConfigOverrides ?? [],
           scopedModels: prepared.scopedModels ?? [], skillPaths: prepared.skillPaths ?? [], classifier: runtime.classifier, dynamicThinking: prepared.dynamicThinking ?? false,
@@ -155,16 +185,8 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         };
         const paths = [...(prepared.extensionPaths ?? []), ...(bindings.extensionPaths ?? [])];
         for (const path of paths) assertAbsolutePath(path);
-        const writeConfig = prepared.updateExtensionConfig;
-        const updateExtensionConfig: ExtensionConfigWriter | undefined = writeConfig ? async (packageName, patch) => {
-          if (released || disposal || !activation) throw new Error('Session configuration binding is inactive.');
-          await request.ownership.assertOwned(request.resources, target.identity);
-          if (released || disposal) throw new Error('Session configuration binding is inactive.');
-          await writeConfig(packageName, patch);
-          await request.ownership.assertOwned(request.resources, target.identity);
-        } : undefined;
         return { ...prepared, runtime, modelRuntime: models, importExtension: bindings.importExtension,
-          ...(updateExtensionConfig ? { updateExtensionConfig } : {}),
+          updateExtensionConfig,
           extensionPaths: [...new Set(paths)], inlineExtensions: [...(prepared.inlineExtensions ?? []), ...(bindings.inlineExtensions ?? [])],
           services: bindings.services ?? scope.services, ...(bindings.savings ? { savings: bindings.savings } : {}),
           ...(bindings.wrapStreamFunction ? { wrapStreamFunction: bindings.wrapStreamFunction } : {}),

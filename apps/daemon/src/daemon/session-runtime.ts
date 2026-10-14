@@ -5,7 +5,7 @@ import type { ProviderSecretStorage } from './provider.js';
 import type { ProcessAdapter } from './process-adapter.js';
 import type { SessionExecutionPort, SessionExtensionBindings, SessionExtensionContext } from './session-execution.js';
 export type { SetupDependency } from '../setup/dependencies.js';
-export type { HostConfiguration, HostPreferences, HostSetup, HostServices, HostServicesRequest } from './host-services.js';
+export type { HostConfiguration, HostSetup, HostServices, HostServicesRequest } from './host-services.js';
 
 export interface SessionEnvironment {
   readonly cwd: string;
@@ -42,7 +42,7 @@ export interface SessionCompositionRequest {
 export type SessionCompositionOptions = Pick<CreateAgentCoreSessionOptions,
   'runtime' | 'modelRuntime' | 'settingsManager' | 'extensionPackages' | 'importExtension'
   | 'extensionPaths' | 'extensionConfigOverrides' | 'model' | 'thinkingLevel' | 'dynamicThinking'
-  | 'scopedModels' | 'inlineExtensions' | 'customTools' | 'skillPaths' | 'themePaths' | 'skills' | 'appendSystemPrompt' | 'updateExtensionConfig'>;
+  | 'scopedModels' | 'inlineExtensions' | 'customTools' | 'skillPaths' | 'themePaths' | 'skills' | 'appendSystemPrompt'>;
 
 export interface SessionToolPolicy {
   readonly trustedInlinePaths: readonly string[];

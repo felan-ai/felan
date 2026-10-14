@@ -3,8 +3,7 @@ import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { configField, defineExtensionConfig, getExtensionConfigCliOptions } from '@felan-ai/agent-core';
-import { ConfigValuesSchema } from '@felan-ai/session-protocol';
+import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 import { DaemonConfiguration } from '../src/providers/configuration.js';
 import { acquireLocalFileLock } from '../../daemon/src/lock.js';
 import { mergeDaemonGlobalSettings } from '../src/providers/global-settings.js';
@@ -38,26 +37,26 @@ describe('daemon locked configuration', () => {
   });
   it('prepares session-only field merges without writing global settings', async () => {
     const f = await fixture(); const before = await readFile(f.path);
-    const first = f.config.sessionOverrides({ 'codex-fast': true });
-    const second = f.config.sessionOverrides({ 'codex-priority': 'fast' }, first);
+    const first = f.config.sessionOverrides({ extensionConfig: { codex: { fast: true } } });
+    const second = f.config.sessionOverrides({ extensionConfig: { codex: { priority: 'fast' } } }, first);
     expect(second).toEqual([{ extensionId: 'codex', source: 'CLI', values: { fast: true, priority: 'fast' } }]);
-    expect((await f.config.sessionValues(second)).values).toMatchObject({ 'codex-fast': true, 'codex-priority': 'fast' });
-    expect((await f.config.get('global')).values).toMatchObject({ 'codex-fast': false, 'codex-priority': 'normal' });
+    expect((await f.config.sessionValues(second)).values).toMatchObject({ extensionConfig: { codex: { fast: true, priority: 'fast' } } });
+    expect((await f.config.get('global')).values).toMatchObject({ extensionConfig: { codex: { fast: false, priority: 'normal' } } });
     expect(await readFile(f.path)).toEqual(before);
     expect(() => f.config.sessionOverrides({ defaultModel: 'offline/model' })).toThrow('global');
   });
   it('merges unrelated concurrent fields and preserves unknown settings and extension fields', async () => {
     const f = await fixture({ untouched: { future: true }, extensionConfig: { codex: { future: 'preserved' }, other: { enabled: true } } });
-    await Promise.all([f.config.set('global', { 'codex-fast': true }), f.config.set('global', { 'codex-priority': 'fast' })]);
+    await Promise.all([f.config.set('global', { extensionConfig: { codex: { fast: true } } }), f.config.set('global', { extensionConfig: { codex: { priority: 'fast' } } })]);
     expect(await f.read()).toEqual({ untouched: { future: true }, extensionConfig: { codex: { future: 'preserved', fast: true, priority: 'fast' }, other: { enabled: true } } });
-    expect(await f.config.get('global')).toMatchObject({ values: { 'codex-fast': true, 'codex-priority': 'fast' } });
+    expect(await f.config.get('global')).toMatchObject({ values: { extensionConfig: { codex: { fast: true, priority: 'fast' } } } });
   });
 
   it('accepts two serialized writes to one field with last-writer-wins, without CAS', async () => {
     const f = await fixture();
-    await f.config.set('global', { 'codex-priority': 'fast' });
-    await f.config.set('global', { 'codex-priority': 'ultrafast' });
-    expect((await f.config.get('global')).values['codex-priority']).toBe('ultrafast');
+    await f.config.set('global', { extensionConfig: { codex: { priority: 'fast' } } });
+    await f.config.set('global', { extensionConfig: { codex: { priority: 'ultrafast' } } });
+    expect((await f.config.get('global')).values.extensionConfig?.codex?.priority).toBe('ultrafast');
   });
 
   it('uses the existing model default fields without changing a live session or reloading settings', async () => {
@@ -69,9 +68,9 @@ describe('daemon locked configuration', () => {
 
   it('validates the entire update before touching an absent file or applying an earlier valid field', async () => {
     const f = await fixture(); await rm(f.path);
-    await expect(f.config.set('global', { 'codex-fast': true, defaultModel: 'not-qualified' })).rejects.toThrow('exact provider/model-id');
+    await expect(f.config.set('global', { defaultModel: 'not-qualified', extensionConfig: { codex: { fast: true } } })).rejects.toThrow('exact provider/model-id');
     expect(existsSync(f.path)).toBe(false);
-    await expect(f.config.set('global', { 'codex-fast': true, password: 'synthetic' })).rejects.toThrow();
+    await expect(f.config.set('global', { password: 'synthetic', extensionConfig: { codex: { fast: true } } })).rejects.toThrow();
     expect(existsSync(f.path)).toBe(false);
     await expect(mergeDaemonGlobalSettings(f.agentDir, { extensions: [
       { definition, field: 'fast', value: true }, { definition, field: 'priority', value: 'wrong' },
@@ -99,14 +98,14 @@ describe('daemon locked configuration', () => {
     const f = await fixture(); const before = await readFile(f.path);
     for (const values of [{ classifierModel: 'not-qualified' }, { classifierModel: 'auto\n' },
       { builtinExtensions: { memory: 'false' } }, { builtinExtensions: { '../memory': false } }]) {
-      await expect(f.config.set('global', { 'codex-fast': true, ...values })).rejects.toThrow();
+      await expect(f.config.set('global', { ...values, extensionConfig: { codex: { fast: true } } })).rejects.toThrow();
       expect(await readFile(f.path)).toEqual(before);
     }
   });
 
   it.each(['', '{broken', 'null', '[]', '"text"'])('rejects malformed/non-object global data %j without overwriting it', async content => {
     const f = await fixture(); await writeFile(f.path, content);
-    await expect(f.config.set('global', { 'codex-fast': true })).rejects.toThrow();
+    await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow();
     await expect(f.config.get('global')).rejects.toThrow();
     expect(await readFile(f.path, 'utf8')).toBe(content);
   });
@@ -115,7 +114,7 @@ describe('daemon locked configuration', () => {
     const f = await fixture();
     for (const content of [Buffer.from([123, 34, 120, 34, 58, 34, 255, 34, 125]), Buffer.alloc(1024 * 1024 + 1, 32)]) {
       await writeFile(f.path, content);
-      await expect(f.config.set('global', { 'codex-fast': true })).rejects.toThrow();
+      await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow();
       expect(await readFile(f.path)).toEqual(content);
     }
   });
@@ -123,7 +122,7 @@ describe('daemon locked configuration', () => {
   it('rejects malformed extension containers without replacing their content', async () => {
     for (const initial of [{ extensionConfig: [] }, { extensionConfig: { codex: 'invalid' } }]) {
       const f = await fixture(initial); const original = await readFile(f.path);
-      await expect(f.config.set('global', { 'codex-fast': true })).rejects.toThrow('must be an object');
+      await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow('must be an object');
       expect(await readFile(f.path)).toEqual(original);
     }
   });
@@ -131,8 +130,8 @@ describe('daemon locked configuration', () => {
   it('rejects project and other session configuration without inventing a target or store', async () => {
     const f = await fixture(); const original = await readFile(f.path);
     for (const scope of ['project', 'session'] as const) {
-      await expect(f.config.get(scope)).rejects.toMatchObject({ code: 'unavailable' });
-      await expect(f.config.set(scope, { 'codex-fast': true })).rejects.toMatchObject({ code: 'unavailable' });
+      expect((await f.config.get(scope)).writable).toBe(false);
+      await expect(f.config.set(scope, { extensionConfig: { codex: { fast: true } } })).rejects.toMatchObject({ code: 'unavailable' });
     }
     expect(await readFile(f.path)).toEqual(original);
   });
@@ -140,10 +139,10 @@ describe('daemon locked configuration', () => {
   it('rechecks ownership after acquiring the settings lock and before rename', async () => {
     const f = await fixture(); const original = await readFile(f.path);
     let calls = 0; f.setGuard(() => { if (++calls === 3) throw new Error('ownership lost under lock'); });
-    await expect(f.config.set('global', { 'codex-fast': true })).rejects.toThrow('ownership lost under lock');
+    await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow('ownership lost under lock');
     expect(await readFile(f.path)).toEqual(original);
     f.setGuard(() => { if (readdirSync(f.agentDir).some(name => name.endsWith('.tmp'))) throw new Error('ownership lost before rename'); });
-    await expect(f.config.set('global', { 'codex-fast': true })).rejects.toThrow('ownership lost before rename');
+    await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow('ownership lost before rename');
     expect(await readFile(f.path)).toEqual(original);
     expect(readdirSync(f.agentDir).filter(name => name.endsWith('.tmp'))).toEqual([]);
   });
@@ -151,14 +150,14 @@ describe('daemon locked configuration', () => {
   it('surfaces ownership loss after rename instead of claiming the write failed before effect', async () => {
     const f = await fixture();
     f.setGuard(() => { if (readFileSync(f.path, 'utf8').includes('"fast": true')) throw new Error('ownership lost after rename'); });
-    await expect(f.config.set('global', { 'codex-fast': true })).rejects.toThrow('ownership lost after rename');
+    await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow('ownership lost after rename');
     expect(await f.read()).toEqual({ extensionConfig: { codex: { fast: true } } });
   });
 
   it('surfaces a held lock without overwriting settings', async () => {
     const f = await fixture(); const original = await readFile(f.path);
     const lock = await acquireLocalFileLock(f.path, { realpath: false });
-    try { await expect(f.config.set('global', { 'codex-fast': true })).rejects.toMatchObject({ code: 'ELOCKED' }); }
+    try { await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toMatchObject({ code: 'ELOCKED' }); }
     finally { await lock.release(); }
     expect(await readFile(f.path)).toEqual(original);
   });
@@ -166,17 +165,17 @@ describe('daemon locked configuration', () => {
   it('refuses symlink/hardlink targets and noncanonical agent aliases', async () => {
     const f = await fixture(); const outside = join(f.directory, 'untouched.json'); await writeFile(outside, '{"keep":true}');
     await rm(f.path); await symlink(outside, f.path);
-    await expect(f.config.set('global', { 'codex-fast': true })).rejects.toThrow();
+    await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow();
     expect(await readFile(outside, 'utf8')).toBe('{"keep":true}');
     await rm(f.path); await link(outside, f.path);
-    await expect(f.config.set('global', { 'codex-fast': true })).rejects.toThrow('Unsafe daemon settings file');
+    await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow('Unsafe daemon settings file');
     const alias = join(f.directory, 'alias'); await symlink(f.agentDir, alias);
-    await expect(new DaemonConfiguration({ agentDir: alias, definitions: [definition], assertCurrent() {} }).set('global', { 'codex-fast': true })).rejects.toThrow('canonical');
+    await expect(new DaemonConfiguration({ agentDir: alias, definitions: [definition], assertCurrent() {} }).set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow('canonical');
   });
 
   it('surfaces file I/O errors and permits a subsequent validated update', async () => {
     const f = await fixture(); await rm(f.path); await mkdir(f.path);
-    await expect(f.config.set('global', { 'codex-fast': true })).rejects.toThrow();
+    await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow();
     await rm(f.path, { recursive: true });
     await mergeDaemonGlobalSettings(f.agentDir, { extensions: [{ definition, field: 'fast', value: true }] }, () => {});
     expect(await f.read()).toEqual({ extensionConfig: { codex: { fast: true } } });

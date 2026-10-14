@@ -1,7 +1,7 @@
 import type { ExtensionCommandContext, ExtensionContext, FelanExtensionAPI, SessionEntry } from '@felan-ai/agent-core';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
-import { createPromptHistoryExtension, PROMPT_HISTORY_CONFIG } from '../../../../packages/ext-prompt-history/src/index.js';
+import { createPromptHistoryExtension } from '../../../../packages/ext-prompt-history/src/index.js';
 import { collectPrompts, limitedPrompts, searchPromptHistory } from '../../../../packages/ext-prompt-history/src/history.js';
 import { PromptHistoryPicker } from '../../src/tui/renderers/prompt-history/picker.js';
 
@@ -9,7 +9,6 @@ const theme = { fg: (_color: string, text: string) => text, bold: (text: string)
 
 describe('@felan-ai/ext-prompt-history', () => {
   it('declares inline as the default and registers both platform shortcuts', () => {
-    expect(PROMPT_HISTORY_CONFIG.fields.displayMode).toMatchObject({ default: 'inline', values: ['inline', 'overlay'] });
     const api = fakePi();
     createPromptHistoryExtension({ listSessions: async () => [], readSession: async () => undefined })(api);
     expect(api.registerShortcut).toHaveBeenCalledTimes(2);

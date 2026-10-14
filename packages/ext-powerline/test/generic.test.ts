@@ -1,8 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import type { ExtensionUi, UiElementHandle, UiInteractiveElement } from '@felan-ai/agent-core';
-import { DEFAULT_CONFIG } from '../src/config.js';
 import { createGenericPowerlinePresentation } from '../src/generic.js';
-import { powerlineData } from '../src/data.js';
+import { parsePowerlineData } from '../src/data.js';
 
 function fixture() {
   const elements: UiInteractiveElement[] = [];
@@ -14,33 +13,20 @@ function fixture() {
     removeStatus: vi.fn<ExtensionUi['removeStatus']>().mockResolvedValue(undefined),
   };
   const host = createGenericPowerlinePresentation(ui as unknown as ExtensionUi);
-  const data = powerlineData(DEFAULT_CONFIG, [[{ name: 'model', colorKey: 'model', align: 'right', text: 'model 界 🧪' }]]);
+  const data = parsePowerlineData({ segments: [{ name: 'directory', colorKey: 'directory', values: { cwd: 'model 界 🧪' } }] });
   return { elements, ui, update, close, host, data };
 }
 
-it('preserves all segments and display metadata in bounded generic views without truncating text', async () => {
+it('publishes semantic values without style, symbols or layout in every generic row', async () => {
   const h = fixture();
-  const text = '界'.repeat(2000);
-  const data = powerlineData(DEFAULT_CONFIG, [Array.from({ length: 201 }, (_, index) => ({
-    name: 'status' as const, colorKey: 'status' as const, align: 'left' as const,
-    text: index === 200 ? text : `status ${index}`,
-  }))]);
-  expect(h.host.publish(data)).toBe(true);
+  expect(h.host.publish(h.data)).toBe(true);
   await h.host.settle!();
-  expect(h.elements).toHaveLength(3);
-  const items = h.elements.flatMap(element => element.kind === 'view' ? element.items : []);
-  expect(items).toHaveLength(206);
-  expect(new Set(items.map(item => item.id)).size).toBe(206);
-  expect(items.find(item => item.id === 'line-0-segment-200')?.values.text).toBe(text);
-  expect(items.find(item => item.id === 'display-autoWrap')?.values.text).toBe('true');
-  expect(items.find(item => item.id === 'display-lines')?.values.text).toBe('1');
-  for (const element of h.elements) {
-    expect(element).toMatchObject({ kind: 'view', actions: [], hint: { id: 'felan.powerline', version: '2.0.0' } });
-    if (element.kind === 'view') expect(element.items.length).toBeLessThanOrEqual(100);
-  }
-  h.host.clear();
-  await h.host.settle!();
-  expect(h.close).toHaveBeenCalledTimes(3);
+  expect(h.elements).toHaveLength(1);
+  const element = h.elements[0]!;
+  expect(element).toMatchObject({ kind: 'view', actions: [], hint: { id: 'felan.powerline', version: '3.0.0' } });
+  if (element.kind !== 'view') throw new Error('Expected view');
+  expect(element.items).toEqual([{ id: 'directory', values: { segment: 'directory', color: 'directory', data: JSON.stringify({ cwd: 'model 界 🧪' }) }, fallback: expect.any(String) }]);
+  h.host.clear(); await h.host.settle!(); expect(h.close).toHaveBeenCalledOnce();
 });
 
 it('coalesces blocked publishing, snapshots caller data, and monotonically updates revisions', async () => {
@@ -50,11 +36,11 @@ it('coalesces blocked publishing, snapshots caller data, and monotonically updat
   h.ui.present.mockImplementationOnce(async element => { h.elements.push(element); entered.resolve(); return finish.promise; });
   h.host.publish(h.data);
   await entered.promise;
-  const skipped = powerlineData(DEFAULT_CONFIG, [[{ name: 'model', colorKey: 'model', align: 'right', text: 'skipped' }]]);
-  const last = powerlineData(DEFAULT_CONFIG, [[{ name: 'model', colorKey: 'model', align: 'right', text: 'latest' }]]);
+  const skipped = parsePowerlineData({ segments: [{ name: 'directory', colorKey: 'directory', values: { cwd: 'skipped' } }] });
+  const last = parsePowerlineData({ segments: [{ name: 'directory', colorKey: 'directory', values: { cwd: 'latest' } }] });
   h.host.publish(skipped);
   h.host.publish(last);
-  last.lines[0]![0]!.text = 'changed by caller';
+  if (last.segments[0]?.name === 'directory') last.segments[0].values.cwd = 'changed by caller';
   finish.resolve({ update: h.update, close: h.close });
   await h.host.settle!();
   expect(h.update).toHaveBeenCalledOnce();

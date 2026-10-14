@@ -2,7 +2,7 @@ import type {
   FelanExtension,
   ToolDefinition,
 } from '@felan-ai/agent-core';
-import { associateExtensionConfig, StringEnum } from '@felan-ai/agent-core';
+import { StringEnum } from '@felan-ai/agent-core';
 import { Type, type Static } from 'typebox';
 import type {
   AskUserHost,
@@ -22,7 +22,6 @@ import {
   validateAskUserHostOutcome,
   validateAskUserProgress,
 } from './normalize.js';
-import { ASK_USER_CONFIG } from './config.js';
 
 const OptionSchema = Type.Object({
   title: Type.String({ minLength: 1, description: 'Short title for this option' }),
@@ -100,7 +99,7 @@ export function createAskUserExtension(host: AskUserHost): FelanExtension {
       parameters: AskUserParameters,
       prepareArguments: (args: unknown) => prepareAskUserArguments(args) as AskUserParams,
       async execute(toolCallId, params: AskUserParams, signal, onUpdate, extensionContext) {
-        const normalized = normalizeAskUserRequest({ ...pi.config, ...params } as AskUserInput);
+        const normalized = normalizeAskUserRequest(params as AskUserInput);
         if (!normalized.ok) return toolError(normalized.error);
         const request = normalized.value;
         const effectiveSignal = signal ?? new AbortController().signal;
@@ -140,7 +139,6 @@ export function createAskUserExtension(host: AskUserHost): FelanExtension {
 
     pi.registerTool(tool);
   };
-  associateExtensionConfig(extension, ASK_USER_CONFIG);
   return extension;
 }
 
@@ -292,13 +290,7 @@ export type {
   AskUserToolDetails,
   AskUserToolErrorDetails,
 } from './contracts.js';
-export {
-  ASK_USER_CONFIG,
-  DEFAULT_ASK_USER_CONFIG,
-  askUserConfigFromSettings,
-  normalizeAskUserShortcut,
-} from './config.js';
-export type { AskUserConfig } from './config.js';
+
 export {
   MAX_ASK_USER_QUESTIONS,
   normalizeAskUserRequest,

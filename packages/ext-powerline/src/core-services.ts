@@ -1,6 +1,6 @@
 import type { SessionsService, UsageService } from '@felan-ai/agent-core';
 import type { PowerlineRuntimeOptions } from './runtime.js';
-import type { SessionUsageTotals } from './segments.js';
+import type { SessionUsageTotals } from './data.js';
 
 export function createSavingsUsage(usage: UsageService): NonNullable<PowerlineRuntimeOptions['savingsHost']> {
   return {

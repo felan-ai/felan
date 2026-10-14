@@ -6,7 +6,7 @@ import { Key, Markdown, matchesKey, stripTerminalSequences, truncateToWidth, typ
 const positions = createElementNavigation<number>();
 
 export async function presentContextDocument(element: UiPresentation, ui: Pick<ExtensionContext['ui'], 'custom'>,
-	signal: AbortSignal): Promise<UiActionRequest | undefined> {
+	signal: AbortSignal, displayMode: 'inline' | 'overlay' = 'inline'): Promise<UiActionRequest | undefined> {
 	if (element.kind !== 'document') throw new Error('Expected a context report document.');
 	const close = element.actions.find(action => action.id === 'close' && action.target === 'element' && action.outcome === 'cancel');
 	if (!close) throw new Error('Context report is missing its close action.');
@@ -52,7 +52,7 @@ export async function presentContextDocument(element: UiPresentation, ui: Pick<E
 					}
 				},
 			};
-		});
+		}, displayMode === 'overlay' ? { overlay: true, overlayOptions: { width: '85%', minWidth: 72, maxHeight: '90%', margin: 2 } } : undefined);
 		return signal.aborted ? undefined : result;
 	} finally { positions.set(element.id, offset); signal.removeEventListener('abort', abort); }
 }

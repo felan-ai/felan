@@ -159,7 +159,7 @@ export class AgentTranscript implements Component {
     if (initialize) this.#hideThinkingBlock = settings.hideThinking;
     this.#showImages = settings.showImages;
     this.#imageWidthCells = settings.imageWidthCells;
-    this.#outputPad = settings.outputPad;
+    this.#outputPad = settings.outputPad === 0 ? 0 : 1;
     this.#mermaid = settings.mermaid ?? 'streaming';
     const pendingToolCalls = new Set(projection.pendingTools);
     const toolActivityState = new ToolActivityState(settings.toolMode, false);

@@ -70,7 +70,7 @@ describe('request retry identity', () => {
 
 describe('shared daemon environment boundary', () => {
   it('exposes no per-session environment API or limits', () => {
-    expect(Object.keys(protocol.OperationSchemas)).toHaveLength(52);
+    expect(Object.keys(protocol.OperationSchemas)).toHaveLength(50);
     expect(Object.keys(protocol.OperationSchemas).some(op => op.startsWith('environment.'))).toBe(false);
     for (const name of ['EnvironmentSchema', 'parseEnvironment', 'ProvisioningReferenceSchema']) expect(protocol).not.toHaveProperty(name);
     expect(Object.keys(LIMITS).some(name => name.startsWith('environment'))).toBe(false);
@@ -88,7 +88,7 @@ describe('shared daemon environment boundary', () => {
     }
   });
   it('preserves independent locked-credential setup references', () => {
-    expect(parseOperationResult('config.get', { values: {}, credentialSetup: { provisioningId: 'private-credential-flow' } }))
-      .toEqual({ values: {}, credentialSetup: { provisioningId: 'private-credential-flow' } });
+    expect(parseOperationResult('config.get', { writable: false, values: {}, credentialSetup: { provisioningId: 'private-credential-flow' } }))
+      .toEqual({ writable: false, values: {}, credentialSetup: { provisioningId: 'private-credential-flow' } });
   });
 });

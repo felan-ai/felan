@@ -34,7 +34,7 @@ it('decodes entities once, preserving literal encoded text and markdown escapes'
 describe('hint markdown entity decoding', () => {
   it.each([
     ['context', presentContextDocument], ['insights', presentInsightsDocument], ['fusion', presentFusionReviewDocument],
-    ['memory', presentMemoryHistory], ['tasks', presentTasksElement], ['processes', presentProcessesElement],
+    ['memory', presentMemoryHistory], ['processes', presentProcessesElement],
     ['history', presentPromptHistoryElement],
   ] as const)('renders %s entities as text', async (name, present) => {
     const h = harness();
@@ -43,6 +43,17 @@ describe('hint markdown entity decoding', () => {
     await present(document, h.ui, new AbortController().signal, vi.fn(), vi.fn());
     expect(h.lines.join('\n')).toContain('Literal <T> & [x] "q"');
     expect(h.lines.join('\n')).not.toContain('&lt;');
+  });
+
+  it('renders task data literally without interpreting it as Markdown or HTML', async () => {
+    const h = harness();
+    const title = 'Literal <T> & [x] "q" &lt;encoded&gt;';
+    await presentTasksElement({ id: 'task', kind: 'document', revision: 1, title: 'Task', fallback: 'Task', markdown: 'Fallback',
+      data: { taskId: 'T-AAAAAA', prerequisites: 0, dependents: 0,
+        records0: JSON.stringify([{ field: 'id', value: 'T-AAAAAA' }, { field: 'title', value: title }]) },
+      actions: [{ id: 'close', label: 'Close', target: 'element', outcome: 'cancel' }],
+    }, h.ui, new AbortController().signal, vi.fn());
+    expect(h.lines.join('\n')).toContain(title);
   });
 
   it('renders Prewalk entities without decoding the plan twice', async () => {

@@ -69,7 +69,7 @@ it.each(['payload', 'digest', 'bytes'] as const)('rejects a configuration %s mis
 it('invalidates configuration inside the transaction and persists an empty snapshot array', async () => {
   const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
   const id = requestId();
-  const values = { 'codex-fast': true };
+  const values = { extensionConfig: { codex: { fast: true } } };
   f.store.admit({ v: 1, id, op: 'config.set', session: binding.sessionId, params: { scope: 'session', values } }, 'owner');
   f.store.configureSession(id, values, []);
   expect(f.store.configuration(binding.sessionId)).toBeUndefined();

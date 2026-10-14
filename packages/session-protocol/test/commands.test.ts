@@ -22,18 +22,21 @@ describe('complete operation inventory', () => {
     expect(() => parseClientEnvelope(request('config.set', { scope: 'session', values: {} }), { now })).toThrow();
   });
 
-  it('preserves all 64 inventoried extension configuration options without credential setters', () => {
-    const names = Object.keys(ConfigValuesSchema.properties).filter(key => !['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions', 'codemode', 'extensionConfig', 'imageAutoResize', 'blockImages',
-      'autoCompact', 'skillCommands', 'steeringMode', 'followUpMode', 'transport', 'cacheWarming', 'httpIdleTimeoutMs', 'modelThinkingLevels'].includes(key));
-    expect(names).toHaveLength(64);
-    expect(names.some(name => /api-key|secret|token|headers|placeholder/.test(name))).toBe(false);
-    expect(parseSchema(ConfigValuesSchema, { 'powerline-lines': [{ segments: { git: { enabled: true, showSha: true } } }], 'prewalk-entry-approval': 'ask' })).toBeTruthy();
+  it('carries no extension-specific or presentation keys', () => {
+    const names = Object.keys(ConfigValuesSchema.properties);
+    expect(names.some(name => name.includes('-'))).toBe(false);
+    expect(names).toContain('extensionConfig');
+    expect(OperationSchemas).not.toHaveProperty('tui.preferences.get');
+    expect(OperationSchemas).not.toHaveProperty('tui.preferences.set');
+    for (const values of [{ 'codex-fast': true }, { 'powerline-style': 'capsule' }, { hideThinking: true }]) {
+      expect(() => parseSchema(ConfigValuesSchema, values)).toThrow();
+    }
   });
 
   it('bounds classifier and built-in extension configuration', () => {
     const values = { classifierModel: 'offline/classifier', builtinExtensions: { memory: false, contextView: true } };
     expect(parseClientEnvelope(request('config.set', { scope: 'global', values }), { now }).params).toEqual({ scope: 'global', values });
-    expect(parseOperationResult('config.get', { values })).toEqual({ values });
+    expect(parseOperationResult('config.get', { writable: true, values })).toEqual({ writable: true, values });
     for (const invalid of [{ classifierModel: '' }, { builtinExtensions: { memory: 'false' } }, { builtinExtensions: { '../memory': true } }]) {
       expect(() => parseSchema(ConfigValuesSchema, invalid)).toThrow();
     }

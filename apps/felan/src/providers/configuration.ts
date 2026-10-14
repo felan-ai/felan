@@ -1,4 +1,5 @@
-import { getExtensionConfigCliOptions, parseModelReference, validateExtensionConfigValue, type ExtensionConfigDefinition, type ExtensionConfigOverride } from '@felan-ai/agent-core';
+import { executionExtensionSettings } from './settings.js';
+import { parseModelReference, validateExtensionConfigValue, type ExtensionConfigDefinition, type ExtensionConfigOverride } from '@felan-ai/agent-core';
 import { assertJson, ConfigValuesSchema, parseOperationResult, parseSchema, type OperationParams, type OperationResult, type JsonValue } from '@felan-ai/session-protocol';
 import { EXECUTION_DEFAULT_KEYS, mergeDaemonGlobalSettings, readDaemonGlobalSettings, type DaemonGlobalSettingsUpdate } from './global-settings.js';
 import type { HostConfiguration } from '@felan-ai/daemon/session-runtime';
@@ -13,27 +14,18 @@ export interface DaemonConfigurationOptions {
 class ConfigurationUnavailable extends Error { readonly code = 'unavailable'; }
 
 export class DaemonConfiguration implements HostConfiguration {
-  private readonly fields;
-  constructor(private readonly options: DaemonConfigurationOptions) {
-    this.fields = new Map(getExtensionConfigCliOptions(options.definitions)
-      .filter(field => Object.hasOwn(ConfigValuesSchema.properties, field.name)).map(field => [field.name, field]));
-  }
+  constructor(private readonly options: DaemonConfigurationOptions) {}
 
   async get(scope: OperationParams<'config.get'>['scope'], model?: { provider: string; id: string }): Promise<OperationResult<'config.get'>> {
-    this.requireGlobal(scope);
+    this.options.assertCurrent();
     const settings = await readDaemonGlobalSettings(this.options.agentDir, this.options.assertCurrent);
     const values: Record<string, unknown> = {};
     const configured = settings.extensionConfig;
     if (configured !== undefined && !record(configured)) throw new Error('extensionConfig must be an object');
-    for (const [name, field] of this.fields) {
-      const extension = record(configured) ? configured[field.extensionId] : undefined;
-      if (extension !== undefined && !record(extension)) throw new Error(`extensionConfig.${field.extensionId} must be an object`);
-      const value = record(extension) && Object.hasOwn(extension, field.field) ? extension[field.field] : field.configField.default;
-      if (value !== undefined) values[name] = validateExtensionConfigValue(field.definition, field.field, value, 'daemon configuration');
-    }
     const extensionConfig: Record<string, Record<string, unknown>> = {};
     const extensions = this.options.definitions.map(definition => {
-      const stored = record(configured) ? configured[definition.id] : undefined;
+      const raw = record(configured) ? configured[definition.id] : undefined;
+      const stored = record(raw) ? executionExtensionSettings(definition.id, raw) : raw;
       if (stored !== undefined && !record(stored)) throw new Error(`extensionConfig.${definition.id} must be an object`);
       const fields = Object.entries(definition.fields).filter(([, field]) => !field.deprecated);
       extensionConfig[definition.id] = Object.fromEntries(fields.filter(([, field]) => !field.sensitive).flatMap(([id, field]) => {
@@ -80,7 +72,7 @@ export class DaemonConfiguration implements HostConfiguration {
     values.builtinExtensions = Object.fromEntries(Object.keys(builtinExtensionPackages)
       .map(name => [name, builtins?.[name as keyof typeof builtinExtensionPackages] ?? true]));
     this.options.assertCurrent();
-    return parseOperationResult('config.get', { values, extensions });
+    return parseOperationResult('config.get', { writable: scope === 'global', values, extensions });
   }
 
   async set(scope: OperationParams<'config.set'>['scope'], input: unknown): Promise<void> {
@@ -105,12 +97,6 @@ export class DaemonConfiguration implements HostConfiguration {
 
   async sessionValues(overrides: readonly ExtensionConfigOverride[]): Promise<OperationResult<'config.get'>> {
     const result = await this.get('global');
-    for (const [name, field] of this.fields) {
-      const row = overrides.find(row => row.extensionId === field.extensionId);
-      if (row && Object.hasOwn(row.values, field.field)) {
-        Object.assign(result.values, { [name]: validateExtensionConfigValue(field.definition, field.field, row.values[field.field], 'session configuration') });
-      }
-    }
     for (const extension of result.extensions ?? []) {
       const row = overrides.find(row => row.extensionId === extension.id);
       for (const field of extension.fields) {
@@ -120,7 +106,7 @@ export class DaemonConfiguration implements HostConfiguration {
         }
       }
     }
-    return parseOperationResult('config.get', result);
+    return parseOperationResult('config.get', { ...result, writable: true });
   }
 
   prepare(scope: OperationParams<'config.set'>['scope'], input: unknown): DaemonGlobalSettingsUpdate {
@@ -128,13 +114,6 @@ export class DaemonConfiguration implements HostConfiguration {
     const values = parseSchema(ConfigValuesSchema, input);
     validateBuiltinExtensionKeys(values.builtinExtensions);
     const extensions: DaemonGlobalSettingsUpdate['extensions'][number][] = [];
-    for (const [name, value] of Object.entries(values)) {
-      if (EXECUTION_DEFAULT_KEYS.some(key => key === name)) continue;
-      if (name === 'scopedModels' || name === 'defaultModel' || name === 'defaultThinking' || name === 'classifierModel' || name === 'builtinExtensions' || name === 'extensionConfig' || name === 'codemode' || name === 'imageAutoResize' || name === 'blockImages') continue;
-      const field = this.fields.get(name);
-      if (!field) throw new ConfigurationUnavailable('Configuration field is not available in this daemon.');
-      extensions.push({ definition: field.definition, field: field.field, value: validateExtensionConfigValue(field.definition, field.field, value, 'daemon configuration') });
-    }
     for (const [id, fields] of Object.entries(values.extensionConfig ?? {})) {
       const definition = this.options.definitions.find(item => item.id === id);
       if (!definition) throw new ConfigurationUnavailable('Extension is not available in this daemon.');
@@ -162,7 +141,7 @@ export class DaemonConfiguration implements HostConfiguration {
 
   private requireGlobal(scope: string): void {
     this.options.assertCurrent();
-    if (scope !== 'global') throw new ConfigurationUnavailable('This configuration scope is unavailable; session model and thinking use their dedicated operations.');
+    if (scope !== 'global') throw new ConfigurationUnavailable('This configuration scope is read-only; session model and thinking use their dedicated operations.');
   }
 }
 

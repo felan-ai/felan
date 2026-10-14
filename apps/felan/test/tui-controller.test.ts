@@ -1,3 +1,4 @@
+import { configField, defineExtensionConfig, type ExtensionConfigDefinition } from '@felan-ai/agent-core';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { KeybindingsManager, TUI_KEYBINDINGS, TuiAltScreen, setKeybindings, stripTerminalSequences, visibleWidth, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
 import { SessionClient } from '../src/client/client.js';
@@ -5,8 +6,8 @@ import { TuiSessionController } from '../src/tui/controller.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
 import { createCommandAutocomplete, submitTuiInput } from '../src/tui/commands.js';
 import type { TuiDialogHost } from '../src/tui/dialogs.js';
+import { ClientPreferencesStore } from '../src/tui/preferences-store.js';
 import { DaemonConfiguration } from '../src/providers/configuration.js';
-import { DaemonTuiPreferences } from '../src/providers/tui-preferences.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { gate, serverFixture } from '../../daemon/test/fixtures/server.js';
 import { computeControlConfigurationSnapshotIdentity } from '../../daemon/src/daemon/control-state.js';
@@ -14,19 +15,18 @@ import { parseSessionConfiguration } from '../../daemon/src/daemon/session-confi
 
 const cleanup: Array<() => Promise<void>> = [];
 beforeAll(() => setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS)));
-afterEach(async () => { for (const finish of cleanup.splice(0).reverse()) await finish(); });
+afterEach(async () => { for (const finish of cleanup.splice(0).reverse()) await finish(); vi.restoreAllMocks(); });
 
 function screenText(tui: TuiAltScreen): string {
   tui.renderNow(true);
   return stripTerminalSequences(tui.getScreenLines().join('\n'));
 }
 
-async function fixture(onStream?: () => Promise<void>) {
-  const f = await serverFixture({ now: Date.now, ...(onStream ? { onStream } : {}) });
-  const preferences = new DaemonTuiPreferences({ agentDir: f.owner.target.agentDir, assertCurrent: () => f.registry.assertAdmission() });
+async function fixture(onStream?: () => Promise<void>, configDefinitions: readonly ExtensionConfigDefinition[] = []) {
+  const f = await serverFixture({ now: Date.now, configDefinitions, ...(onStream ? { onStream } : {}) });
+  const preferences = new ClientPreferencesStore(f.owner.target.agentDir);
   const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture',
-    preferences,
-    configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() }) });
+    configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: configDefinitions, assertCurrent: () => f.registry.assertAdmission() }) });
   await server.start();
   const controllers: TuiSessionController[] = [];
   cleanup.push(async () => {
@@ -121,7 +121,7 @@ it('does not silently apply or discard new extension paths when attaching an exi
 it('renders the real protocol session, resizes and restores the terminal on client exit without closing the session', async () => {
   const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal();
   const tui = new TuiAltScreen(terminal); const signal = new AbortController();
-  const running = runDaemonTerminal(controller, { cwd: f.cwd, sessionId: f.root.sessionId, initialMessage: 'terminal input',
+  const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, initialMessage: 'terminal input',
     terminal, createTui: () => tui, signal: signal.signal });
   try {
     await vi.waitFor(() => expect(controller.history.some(row => row.role === 'assistant')).toBe(true));
@@ -138,7 +138,7 @@ it('allows terminal exit during an unresolved connection and releases the connec
   const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
     expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui', connector: () => new Promise(() => {}) });
   const controller = new TuiSessionController(client); const signal = new AbortController();
-  const running = runDaemonTerminal(controller, { cwd: f.cwd, terminal, signal: signal.signal });
+  const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, terminal, signal: signal.signal });
   try {
     expect(terminal.active).toBe(true); terminal.input('\x04'); await running;
     expect(client.status).toBe('closed'); expect(terminal.active).toBe(false);
@@ -147,7 +147,7 @@ it('allows terminal exit during an unresolved connection and releases the connec
 
 it('keeps an editor draft when the model shortcut opens and cancels its selector', async () => {
   const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
-  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, sessionId: f.root.sessionId, terminal, createTui: () => tui, signal: signal.signal });
+  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, terminal, createTui: () => tui, signal: signal.signal });
   try {
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     const before = f.root.runtime.session.messages.length;
@@ -161,12 +161,12 @@ it('keeps an editor draft when the model shortcut opens and cancels its selector
   } finally { signal.abort(); await running; }
 });
 
-it('loads daemon preferences without replacing input typed during startup', async () => {
+it('loads local preferences without replacing input typed during startup', async () => {
   const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
-  const entered = gate(); const release = gate(); const get = f.preferences.get.bind(f.preferences);
-  vi.spyOn(f.preferences, 'get').mockImplementation(async () => { entered.resolve(); await release.promise; return get(); });
+  const entered = gate(); const release = gate(); const load = ClientPreferencesStore.prototype.load;
+  vi.spyOn(ClientPreferencesStore.prototype, 'load').mockImplementationOnce(async function () { entered.resolve(); await release.promise; await load.call(this); });
   const signal = new AbortController();
-  const running = runDaemonTerminal(controller, { cwd: f.cwd, sessionId: f.root.sessionId, initialDraft: 'initial draft', terminal, createTui: () => tui, signal: signal.signal });
+  const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, initialDraft: 'initial draft', terminal, createTui: () => tui, signal: signal.signal });
   try {
     expect(terminal.active).toBe(true); await entered.promise;
     terminal.input(' plus typed text'); release.resolve();
@@ -176,11 +176,11 @@ it('loads daemon preferences without replacing input typed during startup', asyn
   } finally { release.resolve(); signal.abort(); await running; }
 });
 
-it('exits while a daemon preference request remains unresolved', async () => {
+it('exits while a local preference read remains unresolved', async () => {
   const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal();
-  const entered = gate(); const release = gate(); const get = f.preferences.get.bind(f.preferences);
-  vi.spyOn(f.preferences, 'get').mockImplementation(async () => { entered.resolve(); await release.promise; return get(); });
-  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, terminal, signal: signal.signal });
+  const entered = gate(); const release = gate(); const load = ClientPreferencesStore.prototype.load;
+  vi.spyOn(ClientPreferencesStore.prototype, 'load').mockImplementationOnce(async function () { entered.resolve(); await release.promise; await load.call(this); });
+  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, terminal, signal: signal.signal });
   try {
     await entered.promise; terminal.input('\x04'); await running;
     expect(terminal.active).toBe(false); expect(controller.client.status).toBe('closed');
@@ -188,10 +188,10 @@ it('exits while a daemon preference request remains unresolved', async () => {
   } finally { release.resolve(); signal.abort(); await running; }
 });
 
-it('uses daemon shortcuts in the active terminal and retains the saved setting after a rejected change', async () => {
-  const f = await fixture(); await f.preferences.set({ keybindings: { 'app.exit': 'alt+x', 'app.model.select': 'alt+m' } });
+it('uses client shortcuts in the active terminal and retains the saved setting after a rejected change', async () => {
+  const f = await fixture(); await f.preferences.update({ keybindings: { 'app.exit': 'alt+x', 'app.model.select': 'alt+m' } });
   const controller = f.controller(); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
-  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, sessionId: f.root.sessionId, terminal, createTui: () => tui, signal: signal.signal });
+  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, terminal, createTui: () => tui, signal: signal.signal });
   try {
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     terminal.input('retained draft'); terminal.input('\x1bm');
@@ -199,23 +199,23 @@ it('uses daemon shortcuts in the active terminal and retains the saved setting a
     terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('→ ✓ fixture [offline]'));
     tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('retained draft');
     terminal.input('\x03');
-    vi.spyOn(f.preferences, 'set').mockRejectedValueOnce(new Error('cannot write preferences'));
+    vi.spyOn(ClientPreferencesStore.prototype, 'update').mockRejectedValueOnce(new Error('cannot write preferences'));
     terminal.input('/settings'); terminal.input('\r');
     await vi.waitFor(() => expect(screenText(tui)).toContain('General settings'));
     terminal.input('\r');
     await vi.waitFor(() => expect(screenText(tui)).toContain('Hide thinking'));
     terminal.input('Hide thinking'); terminal.input('\r');
     await vi.waitFor(() => {
-      expect(controller.notice).toBe('Outcome uncertain: Operation did not complete. Inspect the current session before retrying.');
+      expect(controller.notice).toBe('Client preferences: cannot write preferences');
       tui.renderNow(true);
       const visible = stripTerminalSequences(tui.getScreenLines().join('\n'));
-      expect(visible).toContain('Outcome uncertain: Operation did not complete.');
+      expect(visible).toContain('Client preferences: cannot write preferences');
       expect(visible).toMatch(/Hide thinking\s+false/u);
     });
-    expect((await f.preferences.get()).hideThinking).toBe(false);
+    expect((await f.preferences.load(), f.preferences.values.hideThinking)).toBe(false);
     terminal.input('\r');
     await vi.waitFor(async () => {
-      expect((await f.preferences.get()).hideThinking).toBe(true);
+      expect((await f.preferences.load(), f.preferences.values.hideThinking)).toBe(true);
       expect(screenText(tui)).toMatch(/Hide thinking\s+true/u);
       expect(controller.notice).toContain('Display preferences saved.');
     });
@@ -390,3 +390,16 @@ class TestTerminal implements Terminal {
   setProgress(_active: boolean): void {}
   setProgramStatus(_status: ProgramStatus): void {}
 }
+
+it.each([false, true])('applies execution overrides to the interactive session (resume=%s), not persistent defaults', async resume => {
+  const definition = defineExtensionConfig({ id: 'codex', title: 'Fixture', fields: { fast: configField.boolean({ default: false, description: 'Fixture' }) } });
+  const f = await fixture(undefined, [definition]);
+  const controller = f.controller();
+  await controller.start({ cwd: f.cwd, ...(resume ? { sessionId: f.root.sessionId } : {}), config: { extensionConfig: { codex: { fast: true } } } });
+  const id = controller.sessionId!;
+  expect(id === f.root.sessionId).toBe(resume);
+  expect(f.store.session(id).profile?.extensionConfigOverrides).toEqual(expect.arrayContaining([
+    expect.objectContaining({ extensionId: 'codex', values: { fast: true } }),
+  ]));
+  expect(await controller.perform('config.get', { scope: 'global' })).toMatchObject({ outcome: 'accepted', result: { values: { extensionConfig: { codex: { fast: false } } } } });
+});

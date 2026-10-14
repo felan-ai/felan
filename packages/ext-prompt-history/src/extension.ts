@@ -1,5 +1,4 @@
-import { SESSIONS_HISTORY_SERVICE, associateExtensionConfig, type ConfiguredFelanExtension, type ExtensionContext, type FelanExtensionAPI } from '@felan-ai/agent-core';
-import { PROMPT_HISTORY_CONFIG } from './index.js';
+import { SESSIONS_HISTORY_SERVICE, type ConfiguredFelanExtension, type ExtensionContext, type FelanExtensionAPI } from '@felan-ai/agent-core';
 import { createCommonPromptHistory } from './common-ui.js';
 import { createPromptHistorySource, searchPromptHistory } from './history.js';
 import { createSessionsPromptHistory } from './sessions.js';
@@ -23,7 +22,6 @@ const extension = Object.assign((pi: FelanExtensionAPI) => {
   serviceRequirements: { required: [SESSIONS_HISTORY_SERVICE] },
 }) as ConfiguredFelanExtension;
 
-associateExtensionConfig(extension, PROMPT_HISTORY_CONFIG);
 export default extension;
 
 export { PROMPT_HISTORY_HINT } from './common-ui.js';

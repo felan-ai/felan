@@ -1,6 +1,5 @@
 import { associateExtensionConfig, MODELS_SERVICE, SESSIONS_SERVICE, USAGE_SERVICE, type ConfiguredFelanExtension, type FelanExtensionAPI } from '@felan-ai/agent-core';
 import { createPowerlineRuntimeExtension, POWERLINE_CONFIG } from './runtime.js';
-import { createGenericPowerlinePresentation } from './generic.js';
 import { createSavingsUsage, createSessionUsage } from './core-services.js';
 export * from './runtime.js';
 
@@ -14,7 +13,7 @@ const extension = Object.assign((pi: FelanExtensionAPI) => {
     ...(version === undefined ? {} : { felanVersion: version }),
     ...(usage ? { savingsHost: createSavingsUsage(usage) } : {}),
     ...(sessions ? { additionalSessionUsageHost: createSessionUsage(sessions) } : {}),
-  }, createGenericPowerlinePresentation(pi.ui))(pi);
+  })(pi);
 }, {
   serviceRequirements: { optional: [MODELS_SERVICE, SESSIONS_SERVICE, USAGE_SERVICE] },
 }) as ConfiguredFelanExtension;

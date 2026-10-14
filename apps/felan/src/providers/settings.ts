@@ -7,7 +7,6 @@ import {
   type ExtensionConfigDefinition,
   type ExtensionConfigOverride,
   type ExtensionConfigValue,
-  type ExtensionConfigWriter,
 } from '@felan-ai/agent-core';
 import {
   isBuiltinExtensionEnabled,
@@ -60,7 +59,8 @@ export function resolveExtensionConfigSettings(settings: FelanSettings, definiti
     const source = `settings.json.extensionConfig.${definition.id}`;
     if (!isRecord(configured)) { warnings.push(`${source} must be an object; using extension defaults.`); continue; }
     const values: Record<string, unknown> = {};
-    for (const [field, value] of Object.entries(configured)) {
+    const fields = executionExtensionSettings(definition.id, configured);
+    for (const [field, value] of Object.entries(fields)) {
       if (!Object.hasOwn(definition.fields, field)) { warnings.push(`${source} contains unknown field: ${definition.id}.${field}; ignoring it.`); continue; }
       try { values[field] = validateExtensionConfigValue(definition, field, value, `${source}.${field}`); }
       catch (error) { warnings.push(`${errorMessage(error)}; using the default value.`); }
@@ -70,62 +70,28 @@ export function resolveExtensionConfigSettings(settings: FelanSettings, definiti
   return { overrides, configs: resolveExtensionConfigs(definitions, overrides), warnings };
 }
 
-export async function setExtensionConfigValue(agentDir: string, extensionId: string, field: string, value: unknown): Promise<void> {
-  await setExtensionConfigValues(agentDir, extensionId, { [field]: value });
-}
-
-export async function setExtensionConfigValues(agentDir: string, extensionId: string, values: Readonly<Record<string, unknown>>): Promise<void> {
-  await updateFelanSettings(agentDir, settings => {
-    const current = settings.extensionConfig;
-    if (current !== undefined && !isRecord(current)) throw new Error('extensionConfig must be an object');
-    const extensionConfig = { ...(current ?? {}) };
-    const existing = extensionConfig[extensionId];
-    if (existing !== undefined && !isRecord(existing)) throw new Error(`extensionConfig.${extensionId} must be an object`);
-    extensionConfig[extensionId] = { ...(existing ?? {}), ...values };
-    settings.extensionConfig = extensionConfig;
-  });
-}
-
-export function createLocalExtensionConfigWriter(options: {
-  readonly agentDir: string;
-  readonly definitions: ReadonlyMap<string, ExtensionConfigDefinition>;
-  readonly overrides: readonly ExtensionConfigOverride[];
-  readonly reload?: () => Promise<void>;
-}): ExtensionConfigWriter {
-  const overridden = new Map<string, Set<string>>();
-  for (const override of options.overrides) {
-    const fields = overridden.get(override.extensionId) ?? new Set<string>();
-    for (const field of Object.keys(override.values)) fields.add(field);
-    overridden.set(override.extensionId, fields);
+export function executionExtensionSettings(id: string, configured: Record<string, unknown>): Record<string, unknown> {
+  if (id !== 'powerline') return configured;
+  const fields = { ...configured };
+  if (Array.isArray(fields.lines)) {
+    const segments = fields.lines.flatMap(line => isRecord(line) && isRecord(line.segments) ? [line.segments] : []);
+    for (const [field, segment] of [['showWorkingTree', 'git'], ['showStashCount', 'git'], ['periodDays', 'savings'], ['maxWindows', 'subscription']] as const) {
+      if (fields[field] !== undefined) continue;
+      const source = segments.find(line => isRecord(line[segment]))?.[segment];
+      if (isRecord(source)) {
+        if (source[field] !== undefined) fields[field] = source[field];
+        else if (field === 'showWorkingTree') fields[field] = false;
+      }
+    }
   }
-  return async (packageName, patch) => {
-    const definition = options.definitions.get(packageName);
-    if (!definition) throw new Error('Extension configuration persistence is unavailable for this package.');
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch)
-      || Object.getPrototypeOf(patch) !== Object.prototype && Object.getPrototypeOf(patch) !== null) {
-      throw new Error('Extension configuration patch must be a plain object.');
-    }
-    const values = Object.create(null) as Record<string, ExtensionConfigValue>;
-    for (const field of Reflect.ownKeys(patch)) {
-      if (typeof field !== 'string' || !Object.hasOwn(definition.fields, field)) throw new Error('Unknown extension configuration field.');
-      if (definition.fields[field]!.sensitive) throw new Error('Sensitive configuration cannot be changed through extension UI.');
-      if (overridden.get(definition.id)?.has(field)) throw new Error('Session-overridden configuration cannot be persisted.');
-      const descriptor = Object.getOwnPropertyDescriptor(patch, field)!;
-      if (!descriptor.enumerable || !('value' in descriptor)) throw new Error('Extension configuration fields must be data properties.');
-      values[field] = validateExtensionConfigValue(definition, field, descriptor.value, 'extension configuration update');
-    }
-    if (!Object.keys(values).length) return;
-    await setExtensionConfigValues(options.agentDir, definition.id, values);
-    await options.reload?.();
-  };
+  for (const key of ['style', 'charset', 'autoWrap', 'padding', 'lines']) delete fields[key];
+  return fields;
 }
 
 export interface FelanTuiSettings {
-  readonly toolDisplay?: LocalToolDisplayMode;
   readonly onboarding?: FelanOnboardingSettings;
 }
 
-export type LocalToolDisplayMode = 'grouped' | 'full';
 export const FELAN_ONBOARDING_SCHEMA_VERSION = 1;
 
 export interface FelanOnboardingSettings {
@@ -146,14 +112,12 @@ export function createLocalSettingsManager(cwd: string, agentDir: string): Setti
   const filteredResources = { packages: [], extensions: [], skills: [], prompts: [], themes: [] };
   const runtimeOverrides = { ...filteredResources, enableInstallTelemetry: false, lastChangelogVersion: PI_VERSION };
   const reload = settingsManager.reload.bind(settingsManager);
-  const getEditorPaddingX = settingsManager.getEditorPaddingX.bind(settingsManager);
   const getGlobalSettings = settingsManager.getGlobalSettings.bind(settingsManager);
   const getProjectSettings = settingsManager.getProjectSettings.bind(settingsManager);
   const getCacheWarmingMode = settingsManager.getCacheWarmingMode.bind(settingsManager);
   settingsManager.applyOverrides(runtimeOverrides);
   settingsManager.getCacheWarmingMode = () => (getGlobalSettings() as Record<string, unknown>).cacheWarming === undefined ? 'off' : getCacheWarmingMode();
   settingsManager.reload = async () => { await reload(); settingsManager.applyOverrides(runtimeOverrides); };
-  settingsManager.getEditorPaddingX = () => getGlobalSettings().editorPaddingX === undefined ? 1 : getEditorPaddingX();
   settingsManager.getGlobalSettings = () => ({ ...getGlobalSettings(), ...filteredResources });
   settingsManager.getProjectSettings = () => ({ ...getProjectSettings(), ...filteredResources });
   return settingsManager;
@@ -193,15 +157,6 @@ export function getDynamicThinkingEnabled(settingsManager: SettingsManager): boo
   if (raw.dynamic === undefined) return true;
   if (typeof raw.dynamic !== 'boolean') throw new Error('felanThinking.dynamic must be a boolean');
   return raw.dynamic;
-}
-
-export function getLocalToolDisplayMode(settingsManager: SettingsManager): LocalToolDisplayMode {
-  const rawTui = (settingsManager.getGlobalSettings() as Record<string, unknown>).felanTui;
-  if (rawTui === undefined) return 'grouped';
-  if (!isRecord(rawTui)) throw new Error('felanTui must be an object');
-  if (rawTui.toolDisplay === undefined) return 'grouped';
-  if (rawTui.toolDisplay === 'grouped' || rawTui.toolDisplay === 'full') return rawTui.toolDisplay;
-  throw new Error('felanTui.toolDisplay must be "grouped" or "full"');
 }
 
 export function getPiExtensionSettings(settingsManager: SettingsManager): ResolvedPiExtensionSettings {

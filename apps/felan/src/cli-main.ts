@@ -40,7 +40,7 @@ Options:
   -h, --help         Show this help
   -v, --version      Print the Felan Code version
   --verbose          Show verbose startup details
-${configOptions.map((option) => `  --${option.name}${option.type === 'boolean' ? '' : ` <${option.values?.join('|') ?? option.type}>`}  Configure ${option.name}`).join('\n')}`;
+${configOptions.map((option) => `  --${option.name}${option.configField.type === 'boolean' ? '' : ` <${option.configField.values?.join('|') ?? option.configField.type}>`}  ${option.configField.description}`).join('\n')}`;
 
 export async function runCli(args: readonly string[], dependencies: CliDependencies = {}): Promise<number> {
   const writeOutput = dependencies.writeOutput ?? ((line) => console.log(line));
@@ -98,8 +98,9 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   const extensionPaths: string[] = [];
   const messageParts: string[] = [];
   let positionalOnly = false;
-  const cliValues: Record<string, unknown> = {};
-  const configOptions = cliConfigOptions;
+  const cliValues: Record<string, Record<string, unknown>> = {};
+  const presentation: Record<string, Record<string, unknown>> = {};
+  const configOptions = await cliConfigOptions();
   const configByName = new Map(configOptions.map((option) => [option.name, option]));
 
   for (let index = 0; index < args.length; index += 1) {
@@ -189,11 +190,9 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       return 0;
     } else if (argument.startsWith('--no-')) {
       const option = configByName.get(argument.slice('--no-'.length));
-      if (!option || option.type !== 'boolean') {
-        writeError(`Unknown option: ${argument}`);
-        return 1;
-      }
-      cliValues[option.name] = false;
+      if (!option || option.configField.type !== 'boolean') { writeError(`Unknown option: ${argument}`); return 1; }
+      const target = option.presentation ? presentation : cliValues;
+      (target[option.extensionId] ??= {})[option.field] = false;
     } else if (argument.startsWith('--')) {
       const equals = argument.indexOf('=');
       const name = argument.slice(2, equals === -1 ? undefined : equals);
@@ -201,7 +200,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       if (option) {
         let raw: string | boolean;
         if (equals !== -1) raw = argument.slice(equals + 1);
-        else if (option.type === 'boolean') raw = true;
+        else if (option.configField.type === 'boolean') raw = true;
         else {
           const value = args[index + 1];
           if (value === undefined || value.startsWith('-')) {
@@ -212,7 +211,8 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
           index += 1;
         }
         try {
-          cliValues[option.name] = parseCliConfigValue(option, raw);
+          const target = option.presentation ? presentation : cliValues;
+          (target[option.extensionId] ??= {})[option.field] = parseCliConfigValue(option, raw);
         } catch (error) {
           writeError(error instanceof Error ? error.message : String(error));
           return 1;
@@ -241,6 +241,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     writeError('--session-dir requires --session');
     return 1;
   }
+  if (mode !== undefined && Object.keys(presentation).length) { writeError('Display options are interactive-only'); return 1; }
   if (mode !== undefined) {
     if (extensionPaths.length > 0) {
       writeError('--extension is interactive-only');
@@ -277,7 +278,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       ...(sessionId === undefined ? {} : { sessionId }),
       ...(sessionDir === undefined ? {} : { sessionDir }),
       ...(daemonRuntime === undefined ? {} : { daemonRuntime }),
-      ...(Object.keys(cliValues).length ? { config: parseSchema(ConfigValuesSchema, cliValues) } : {}),
+      ...(Object.keys(cliValues).length ? { config: parseSchema(ConfigValuesSchema, { extensionConfig: cliValues }) } : {}),
     });
   }
 
@@ -287,10 +288,11 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   });
   try {
     await launch({ continueRecent, verbose,
+      ...(Object.keys(presentation).length ? { presentation: presentation as NonNullable<RunDaemonFelanOptions['presentation']> } : {}),
       ...(resume ? { resume } : {}), ...(sessionId ? { sessionId } : {}), ...(sessionDir ? { sessionDir } : {}),
       ...(daemonRuntime ? { daemonRuntime } : {}),
       ...(messageParts.length ? { initialMessage: messageParts.join(' ') } : {}),
-      ...(Object.keys(cliValues).length ? { config: parseSchema(ConfigValuesSchema, cliValues) } : {}),
+      ...(Object.keys(cliValues).length ? { config: parseSchema(ConfigValuesSchema, { extensionConfig: cliValues }) } : {}),
       ...(extensionPaths.length ? { extensionPaths } : {}),
     });
     return 0;

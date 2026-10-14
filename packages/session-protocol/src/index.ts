@@ -1,7 +1,6 @@
 export * from './limits.js';
 export * from './schema.js';
 export * from './config.js';
-export * from './preferences.js';
 export * from './setup.js';
 export * from './data.js';
 export * from './presentation.js';

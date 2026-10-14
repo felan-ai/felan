@@ -12,6 +12,7 @@ import { userInfo } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { pathToFileURL } from 'node:url';
 import { pnpmPackageVersions, pnpmPinnedVersions } from './felan-shrinkwrap.mjs';
 import { packagePaths } from './package-paths.mjs';
 
@@ -332,11 +333,16 @@ try {
       if (JSON.stringify(askUserCapabilities) !== JSON.stringify(['ask-user'])) {
         throw new Error('Packed ask-user extension capability is unavailable');
       }
-      if (askUser.DEFAULT_ASK_USER_CONFIG.displayMode !== 'inline'
-        || askUser.DEFAULT_ASK_USER_CONFIG.singleSelectLayout !== 'auto'
-        || askUser.DEFAULT_ASK_USER_CONFIG.overlayToggleKey !== 'alt+o'
-        || askUser.DEFAULT_ASK_USER_CONFIG.commentToggleKey !== 'ctrl+g') {
-        throw new Error('Packed ask-user configuration defaults are unavailable');
+      if ('DEFAULT_ASK_USER_CONFIG' in askUser || 'ASK_USER_CONFIG' in askUser) {
+        throw new Error('Packed ask-user extension still exports client-owned presentation settings');
+      }
+      const { defaultPresentationPreferences } = await import(${JSON.stringify(pathToFileURL(join(installDir, 'node_modules/@felan-ai/felan/dist/tui/preferences-schema.js')).href)});
+      const askUserPreferences = defaultPresentationPreferences.askUser;
+      if (askUserPreferences.displayMode !== 'inline'
+        || askUserPreferences.singleSelectLayout !== 'auto'
+        || askUserPreferences.overlayToggleKey !== 'alt+o'
+        || askUserPreferences.commentToggleKey !== 'ctrl+g') {
+        throw new Error('Packed client ask-user presentation defaults are unavailable');
       }
       const memory = await import('@felan-ai/ext-memory');
       const memoryCapabilities = [];

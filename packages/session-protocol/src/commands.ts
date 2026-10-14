@@ -5,7 +5,6 @@ import { CatalogSchema, HistoryPageSchema, ProcessPageSchema, PromptSchema, Sess
 import { SessionSnapshotSchema } from './events.js';
 import { InteractionAnswerSchema, InteractionKindSchema, UserCancellationSchema } from './interactions.js';
 import { LIMITS } from './limits.js';
-import { TuiPreferencesSchema, TuiPreferencesUpdateSchema } from './preferences.js';
 import { UiActionRequestSchema, UiCapabilitySchema } from './ui.js';
 import { SetupCatalogSchema, SetupJobSchema, SetupStartSchema } from './setup.js';
 import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, IdSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text } from './schema.js';
@@ -65,8 +64,6 @@ export const OperationSchemas = {
   'shell.execute': Type.Object({ command: text(LIMITS.promptTextBytes, 1), includeInContext: Type.Boolean() }),
   'config.get': Type.Object({ scope: ConfigScopeSchema }),
   'config.set': Type.Object({ scope: ConfigScopeSchema, values: ConfigValuesSchema }),
-  'tui.preferences.get': empty,
-  'tui.preferences.set': Type.Object({ values: TuiPreferencesUpdateSchema }),
   'host.setup.catalog': empty,
   'host.setup.start': SetupStartSchema,
   'host.setup.read': Type.Object({ jobId: IdSchema }),
@@ -106,7 +103,6 @@ export const OPERATION_CATALOG = Object.freeze({
   'session.clone': definition('session'), 'session.import': definition('host'), 'session.export': definition('session'), 'session.delete': definition('session'),
   'session.history': definition('session', false, 'none'), 'queue.update': definition('session'), 'shell.execute': definition('session'),
   'config.get': definition('either', false, 'none'), 'config.set': definition('either'), 'session.reload': definition('session'),
-  'tui.preferences.get': definition('host', false, 'none'), 'tui.preferences.set': definition('host'),
   'host.setup.catalog': definition('host', false, 'none'), 'host.setup.start': definition('host'),
   'host.setup.read': definition('host', false, 'none'), 'host.setup.answer': definition('host', true, 'connection'),
   'host.setup.cancel': definition('host', true, 'connection'), 'host.open_interaction': definition('host'),
@@ -142,9 +138,8 @@ export const ResultSchemas = {
   'ui.action': emptyResult,
   'session.clone': created, 'session.import': created, 'session.export': Type.Object({ destination: AbsolutePathSchema }), 'session.delete': emptyResult,
   'session.history': HistoryPageSchema, 'queue.update': emptyResult, 'shell.execute': Type.Object({ resourceId: IdSchema, runId: IdSchema }),
-  'config.get': Type.Object({ values: ConfigValuesSchema, extensions: Type.Optional(ExtensionSettingsSchema), catalog: Type.Optional(CatalogSchema), credentialSetup: Type.Optional(Type.Object({ provisioningId: IdSchema })) }),
+  'config.get': Type.Object({ writable: Type.Boolean(), values: ConfigValuesSchema, extensions: Type.Optional(ExtensionSettingsSchema), catalog: Type.Optional(CatalogSchema), credentialSetup: Type.Optional(Type.Object({ provisioningId: IdSchema })) }),
   'config.set': emptyResult, 'session.reload': emptyResult, 'processes.list': ProcessPageSchema,
-  'tui.preferences.get': TuiPreferencesSchema, 'tui.preferences.set': emptyResult,
   'host.setup.catalog': SetupCatalogSchema, 'host.setup.start': SetupJobSchema, 'host.setup.read': SetupJobSchema,
   'host.setup.answer': emptyResult, 'host.setup.cancel': emptyResult, 'host.open_interaction': emptyResult,
   'host.setup.open_link': emptyResult,

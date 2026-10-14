@@ -38,7 +38,7 @@ it('loads legacy theme preferences without changing shared settings and writes o
   const themes = new ClientThemes(path); await themes.load();
   expect(themes.value).toBe('custom'); expect(colorToHex(themes.theme.colors.accent)).toBe('#123456');
   await themes.update('felan-light');
-  expect(JSON.parse(await readFile(join(path, 'tui', 'settings.json'), 'utf8'))).toEqual({ theme: 'felan-light' });
+  expect(JSON.parse(await readFile(join(path, 'tui', 'settings.json'), 'utf8'))).toMatchObject({ theme: 'felan-light', editorPadding: 1, keybindings: {} });
   expect(await readFile(join(path, 'settings.json'), 'utf8')).toBe(original);
 });
 
@@ -47,7 +47,7 @@ it('gives client-owned preferences precedence over legacy settings and preserves
   await writeFile(join(path, 'settings.json'), JSON.stringify({ theme: 'light' }));
   await writeFile(join(path, 'tui', 'settings.json'), JSON.stringify({ theme: 'dark', otherClientField: true }));
   const themes = new ClientThemes(path); await themes.load(); await themes.update('felan-light');
-  expect(JSON.parse(await readFile(join(path, 'tui', 'settings.json'), 'utf8'))).toEqual({ theme: 'felan-light', otherClientField: true });
+  expect(JSON.parse(await readFile(join(path, 'tui', 'settings.json'), 'utf8'))).toMatchObject({ theme: 'felan-light', otherClientField: true, editorPadding: 1 });
 });
 
 it('uses valid user palettes over shipped palettes and keeps invalid overrides from hiding shipped themes', async () => {
@@ -101,12 +101,16 @@ it.each(['../outside', '/absolute', 'x/y/z', '..', 'bad\\path'])('rejects traver
   const themes = new ClientThemes(await root()); await expect(themes.update(name)).rejects.toThrow();
 });
 
-it('rejects theme-directory and settings symlinks without reading their targets', async () => {
+it('rejects client symlinks and skips legacy symlinks without reading their targets', async () => {
   const path = await root(); const outside = await root(); await install(outside);
   await symlink(join(outside, 'themes'), join(path, 'themes'));
   await expect(new ClientThemes(path).load()).rejects.toThrow('Unsafe');
   const another = await root(); const sensitive = join(outside, 'settings.json');
   await writeFile(sensitive, JSON.stringify({ theme: 'light' })); await symlink(sensitive, join(another, 'settings.json'));
+  const themes = new ClientThemes(another); await themes.load();
+  expect(themes.value).toBe('felan-dark'); expect(themes.warnings).toHaveLength(1);
+  await mkdir(join(another, 'tui'));
+  await symlink(sensitive, join(another, 'tui/settings.json'));
   await expect(new ClientThemes(another).load()).rejects.toThrow();
   expect(await readFile(sensitive, 'utf8')).toBe(JSON.stringify({ theme: 'light' }));
 });
@@ -123,10 +127,11 @@ it('ignores symlinked, hardlinked, oversized, mismatched and cyclic theme files'
   expect(themes.names).not.toContain('another'); expect(themes.warnings).toHaveLength(5);
 });
 
-it('rejects invalid colors, missing required tokens and oversized legacy settings', async () => {
+it('rejects invalid colors and missing tokens but skips oversized legacy settings', async () => {
   const invalid = JSON.parse(await palette()); invalid.colors.accent = '\u001b[31m';
   expect(() => parseClientTheme(JSON.stringify(invalid))).toThrow();
   delete invalid.colors.accent; expect(() => parseClientTheme(JSON.stringify(invalid))).toThrow();
   const path = await root(); await writeFile(join(path, 'settings.json'), ' '.repeat(256 * 1024 + 1));
-  await expect(new ClientThemes(path).load()).rejects.toThrow('oversized');
+  const themes = new ClientThemes(path); await themes.load();
+  expect(themes.value).toBe('felan-dark'); expect(themes.warnings).toHaveLength(1);
 });

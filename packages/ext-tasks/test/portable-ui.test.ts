@@ -4,6 +4,8 @@ import type { TaskState } from '../src/contracts.js';
 import { cloneTaskState, createTask, emptyTaskState, updateTask } from '../src/graph.js';
 import type { TaskDataSource, TaskPresentationMutations } from '../src/host.js';
 import { createTasksUi } from '../src/portable-ui.js';
+import { readTaskDetailData } from '../src/detail-data.js';
+import { parseUiPresentation } from '../../session-protocol/src/ui.js';
 
 const legacyUi = {} as Parameters<ReturnType<typeof createTasksUi>['show']>[0];
 const id = (index: number) => `T-${index.toString(16).toUpperCase().padStart(6, '0')}`;
@@ -82,7 +84,9 @@ describe('portable task view', () => {
     const h = harness(); await h.ready();
     try {
       await h.act('create', { title: 'Blocked follow-up', blockedBy: id(0), priority: 1 });
-      expect(h.current()).toMatchObject({ kind: 'document', markdown: expect.stringContaining('Availability: waiting') });
+      const detail = h.current();
+      if (detail.kind !== 'document') throw new Error('Expected detail');
+      expect(readTaskDetailData(detail.data).records).toContainEqual({ field: 'availability', value: 'waiting' });
       await expect(h.act('update', { status: 'in_progress' })).rejects.toThrow('waiting on');
       expect(h.state().tasks[3]?.status).toBe('pending');
       await h.act('update', { removeBlockedBy: id(0), status: 'in_progress', notes: 'Owned work' });
@@ -194,6 +198,8 @@ describe('portable task view', () => {
       while (true) {
         const document = h.current();
         if (document.kind !== 'document') throw new Error('Expected document');
+        expect(() => parseUiPresentation(document)).not.toThrow();
+        expect(readTaskDetailData(document.data).taskId).toBe(id(0));
         pages.push(document.markdown);
         expect(new TextEncoder().encode(JSON.stringify(document)).byteLength).toBeLessThanOrEqual(256 * 1024);
         if (!document.actions.some(action => action.id === 'next')) break;
@@ -204,6 +210,29 @@ describe('portable task view', () => {
       expect(full).toContain('NOTE\\_END');
       expect(full).toContain(id(24));
       expect(full).not.toMatch(/<\/?[a-z]|\]\(/iu);
+    } finally { await h.act('close'); await h.work; }
+  });
+
+  it('publishes complete detail data and graph layers, with graph/list navigation', async () => {
+    const state = createTask(graph(1), { title: 'Dependent', blockedBy: [id(0)] }, id(1), '2026-01-02').state;
+    const h = harness(state); await h.ready();
+    try {
+      await h.act('detail', {}, id(0));
+      const detail = h.current();
+      if (detail.kind !== 'document') throw new Error('Expected detail');
+      expect(readTaskDetailData(detail.data)).toMatchObject({ taskId: id(0), prerequisites: 0, dependents: 1,
+        records: expect.arrayContaining([{ field: 'description', value: 'Full description 0' },
+          { relation: 'dependent', id: id(1), title: 'Dependent', availability: 'waiting' }]) });
+      await h.act('graph');
+      const view = h.current();
+      if (view.kind !== 'view') throw new Error('Expected graph');
+      expect(view.items.map(item => item.values.depth)).toEqual([0, 1]);
+      expect(view.items[0]?.values).toMatchObject({ graphRevision: 2, total: 2, completed: 0, active: 0, ready: 1, blocked: 1 });
+      expect(() => parseUiPresentation(view)).not.toThrow();
+      await h.act('back');
+      expect(h.current().kind === 'view' && h.current()).not.toHaveProperty('data');
+      await h.act('graph');
+      expect(h.current().kind).toBe('view');
     } finally { await h.act('close'); await h.work; }
   });
 });

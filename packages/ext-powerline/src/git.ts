@@ -38,6 +38,7 @@ export class GitCache {
     private readonly pi: Pick<FelanExtensionAPI, 'exec'>,
     private readonly cwd: string,
     private readonly now: () => number = Date.now,
+    private readonly options = { showWorkingTree: true, showStashCount: true },
   ) {}
 
   get(): GitDetails | undefined {
@@ -68,13 +69,21 @@ export class GitCache {
 
     const [sha, status, tag, commitTimestamp] = await Promise.all([
       runGit(this.pi, ['rev-parse', '--short', 'HEAD'], this.cwd, this.lifetime.signal),
-      runGit(this.pi, ['status', '--porcelain=v2', '--branch', '--show-stash'], this.cwd, this.lifetime.signal),
+      this.options.showWorkingTree ? runGit(this.pi, ['status', '--porcelain=v2', '--branch', ...(this.options.showStashCount ? ['--show-stash'] : [])], this.cwd, this.lifetime.signal) : undefined,
       runGit(this.pi, ['describe', '--tags', '--exact-match'], this.cwd, this.lifetime.signal),
       runGit(this.pi, ['log', '-1', '--format=%ct'], this.cwd, this.lifetime.signal),
     ]);
     if (this.disposed) return;
 
     const parsed = parseGitStatus(status);
+    const [branch, upstreamName, upstreamCounts, stashes] = this.options.showWorkingTree ? [] : await Promise.all([
+      runGit(this.pi, ['rev-parse', '--abbrev-ref', 'HEAD'], this.cwd, this.lifetime.signal),
+      runGit(this.pi, ['rev-parse', '--abbrev-ref', '@{upstream}'], this.cwd, this.lifetime.signal),
+      runGit(this.pi, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], this.cwd, this.lifetime.signal),
+      this.options.showStashCount ? runGit(this.pi, ['stash', 'list', '--format=%H'], this.cwd, this.lifetime.signal) : undefined,
+    ]);
+    const counts = upstreamCounts?.match(/^(\d+)\s+(\d+)$/u);
+    if (this.disposed) return;
     const statusDetails = parsed === undefined
       ? {
           ...(this.details?.branch === undefined ? {} : { branch: this.details.branch }),
@@ -94,12 +103,17 @@ export class GitCache {
     const timeSinceCommit = commitSeconds === undefined ? undefined : formatAge(commitSeconds, this.now());
     this.details = {
       ...statusDetails,
+      ...(branch === undefined ? {} : { branch }),
+      ...(upstreamName && counts ? { upstream: { name: upstreamName, ahead: Number(counts[1]), behind: Number(counts[2]) } } : {}),
+      ...(stashes === undefined ? {} : { stashCount: stashes.split(/\r?\n/u).filter(Boolean).length }),
       ...(sha === undefined ? {} : { sha }),
       ...(tag === undefined ? {} : { tag }),
       ...(timeSinceCommit === undefined ? {} : { timeSinceCommit }),
       repoName: basename(root),
       refreshedAt: this.now(),
     };
+    if (!this.options.showWorkingTree) { delete this.details.dirty; delete this.details.changedFiles; }
+    if (!this.options.showStashCount) delete this.details.stashCount;
   }
 }
 

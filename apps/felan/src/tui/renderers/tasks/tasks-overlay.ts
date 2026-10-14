@@ -1,10 +1,9 @@
-import { decodeUiMarkdown } from '../../../client/ui.js';
 import type { UiDocument, UiView } from '@felan-ai/agent-core';
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import { stripVTControlCharacters } from 'node:util';
 import { matchesKey, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Task, TaskState } from '@felan-ai/ext-tasks/data';
-import { emptyTaskState, listTasks, taskAvailability } from '@felan-ai/ext-tasks/data';
+import { emptyTaskState, listTasks, taskAvailability, readTaskDetailData } from '@felan-ai/ext-tasks/data';
 import {
   formatTaskDetails,
   formatTaskLine,
@@ -12,7 +11,7 @@ import {
   taskGraphLayers,
 } from '@felan-ai/ext-tasks/data';
 import type { TaskDataSource } from '@felan-ai/ext-tasks/data';
-import type { TasksDisplayMode } from '@felan-ai/ext-tasks/data';
+type TasksDisplayMode = 'inline' | 'overlay';
 
 const LIST_ROWS = 18;
 const CONTENT_ROWS = 24;
@@ -54,6 +53,7 @@ export class TasksOverlay {
     private readonly element?: { source: UiView | UiDocument; action(id?: string, itemId?: string): void },
   ) {
     if (element) {
+      this.#view = element.source.kind === 'document' ? 'detail' : element.source.fields.some(field => field.id === 'depth') ? 'graph' : 'list';
       const initial = navigation?.initial;
       this.#selected = element.source.kind === 'view' ? Math.max(0, element.source.items.findIndex(item => item.id === initial?.selectedTaskId)) : 0;
       this.#scroll = Math.max(0, this.#selected - LIST_ROWS + 1);
@@ -155,6 +155,7 @@ export class TasksOverlay {
   #handleElementInput(data: string): void {
     const { source, action } = this.element!;
     if (matchesKey(data, 'escape') || data === 'q') { this.done(); return; }
+    if (data === 'g') { action(this.#view === 'graph' ? 'back' : 'graph'); return; }
     const shortcuts: Record<string, string> = { r: 'refresh', '[': 'previous', ']': 'next' };
     const id = shortcuts[data];
     if (data === 'a') { action(); return; }
@@ -163,6 +164,7 @@ export class TasksOverlay {
       if (matchesKey(data, 'left') || matchesKey(data, 'backspace')) { action('back'); return; }
       this.#handleContentInput(data); return;
     }
+    if (this.#view === 'graph') { this.#handleContentInput(data); return; }
     const delta = matchesKey(data, 'up') ? -1 : matchesKey(data, 'down') ? 1 : 0;
     this.#selected = Math.max(0, Math.min(this.#selected + delta, source.items.length - 1));
     this.#scroll = Math.max(0, this.#selected - LIST_ROWS + 1);
@@ -176,8 +178,55 @@ export class TasksOverlay {
     const source = this.element!.source;
     const clean = (text: string) => stripVTControlCharacters(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu, '');
     const header = [this.theme.fg('accent', this.theme.bold(clean(source.title))),
-      this.theme.fg('dim', '↑↓ navigate • enter details • [/] page • r refresh • a all actions • q/esc close')];
-    if (source.kind === 'document') return this.#renderScrollable(header, clean(decodeUiMarkdown(source.markdown, { plainText: true })).split('\n'));
+      this.theme.fg('dim', '↑↓ navigate • enter details • g graph • [/] page • r refresh • a all actions • q/esc close')];
+    if (source.kind === 'document') {
+      const details = readTaskDetailData(source.data);
+      const fields = Object.fromEntries(details.records.flatMap(record => 'field' in record ? [[record.field, clean(record.value)]] : []));
+      const related = (relation: 'prerequisite' | 'dependent', label: string, count: number) => {
+        const records = details.records.filter(record => 'relation' in record && record.relation === relation);
+        return [`  ${label} (${count}):`, ...(!count ? ['    - None'] : records.map(record => {
+          if (!('relation' in record)) return '';
+          const title = clean(record.title).replace(/\s+/gu, ' ').trim();
+          return `    - ${record.id} · ${clean(record.availability)} · ${title.length > 80 ? `${title.slice(0, 79)}…` : title}`;
+        }))];
+      };
+      const field = (name: string, label: string) => fields[name] === undefined ? [] : formatField(label, fields[name] || '-');
+      return this.#renderScrollable([
+        this.theme.fg('accent', this.theme.bold(details.taskId))
+        + this.theme.fg('dim', '  backspace/← tasks • ↑↓ scroll • g graph • r refresh • q/esc close'),
+      ], ['', ...(fields.id ? [`Task ${fields.id}`, fields.title ?? '', '', 'Lifecycle',
+        ...field('status', 'Status'), ...field('availability', 'Availability'), ...formatField('Priority', `P${fields.priority}`), '',
+        'Execution', ...field('ownerSessionId', 'Owner'), ''] : []),
+        'Dependencies', ...related('prerequisite', 'Depends on', details.prerequisites), ...related('dependent', 'Unblocks', details.dependents), '',
+        'Work context', ...field('description', 'Description'), ...field('acceptanceCriteria', 'Acceptance criteria'),
+        ...field('blockedReason', 'Blocked reason'), ...field('notes', 'Notes'), ...field('result', 'Result'), '',
+        'Timeline', ...field('createdAt', 'Created'), ...field('updatedAt', 'Updated'), ...field('completedAt', 'Completed')]);
+    }
+    if (this.#view === 'graph') {
+      const lines = [''];
+      let depth: number | undefined;
+      for (const item of source.items) {
+        if (depth !== item.values.depth) {
+          if (depth !== undefined) lines.push('');
+          depth = Number(item.values.depth); lines.push(this.theme.fg('accent', `Layer ${depth}`));
+        }
+        lines.push(`  ${availabilityIcon(String(item.values.availability), this.theme)} ${item.id} ${clean(String(item.values.title))}`);
+        const prerequisites = String(item.values.blockedBy || '').split(', ').filter(Boolean);
+        const related: unknown = JSON.parse(String(item.values.relatedAvailability ?? '{}'));
+        if (!related || typeof related !== 'object' || Array.isArray(related)) throw new Error('Invalid task graph data.');
+        const label = (id: string) => clean(`${id} (${(related as Record<string, unknown>)[id] ?? 'missing'})`);
+        if (prerequisites.length) lines.push(`    depends on: ${prerequisites.map(label).join(' · ')}`);
+        const dependents = String(item.values.unblocks || '').split(', ').filter(Boolean);
+        if (dependents.length) lines.push(`    unblocks: ${dependents.map(label).join(' · ')}`);
+      }
+      lines.push(source.items.length ? '' : this.theme.fg('dim', 'No session tasks.'));
+      const counts = source.items[0]?.values;
+      const summary = counts && typeof counts.graphRevision === 'number'
+        ? `Tasks r${counts.graphRevision}: ${counts.completed}/${counts.total} completed · ${counts.active} active · ${counts.ready} ready · ${counts.blocked} blocked`
+        : clean(source.fallback);
+      return this.#renderScrollable([this.theme.fg('accent', this.theme.bold('Task Graph'))
+        + this.theme.fg('dim', '  ↑↓ scroll • g tasks • r refresh • q/esc close'), this.theme.fg('muted', summary)], lines);
+    }
     return [...header, this.theme.fg('muted', clean(source.fallback)), '',
       ...source.items.slice(this.#scroll, this.#scroll + LIST_ROWS).map((item, index) => {
         const values = item.values;
@@ -367,6 +416,11 @@ function frameLines(
 function relatedTaskLabel(state: TaskState, id: string): string {
   const task = state.tasks.find((entry) => entry.id === id);
   return task ? `${task.id} (${taskAvailability(task, state)})` : `${id} (missing)`;
+}
+
+function formatField(label: string, value: string): string[] {
+  const [first, ...rest] = value.split(/\r?\n/u);
+  return [`  ${label}: ${first ?? ''}`, ...rest.map(line => `    ${line || ' '}`)];
 }
 
 function wrapLine(line: string, width: number): string[] {

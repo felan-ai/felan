@@ -130,7 +130,11 @@ instructions. Any registered service currently makes the session busy, even if
 its `busy()` method returns false. Reload inherits restore's headless source and
 external-extension limitations; it does not require the later service split.
 Session model/thinking operations never write global defaults. The later TUI
-preserves interactive default selection through explicit `config.set` calls.
+preserves interactive default selection through explicit `config.set` calls only
+when `config.get.writable` permits the requested scope. Extension `updateConfig`
+uses the same host provider and rejects read-only persistent scopes. TUI display
+preferences and keybindings are local to `agentDir/tui/settings.json`, not daemon
+operations or session state.
 An interrupted but truly idle run is quiescent for cancel/reload. S1.09 must bind
 the replacement subagent host through the current service factory after reload;
 disposing the old host alone is not a rebind.

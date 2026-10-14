@@ -2,11 +2,13 @@ import type { ExtensionContext } from '@felan-ai/agent-core';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 import { getThemePalette } from '../../src/tui/renderers/powerline/colors.js';
-import { DEFAULT_CONFIG, type PowerlineConfig, type SegmentName } from '../../../../packages/ext-powerline/src/config.js';
+import { DEFAULT_CONFIG, type PowerlineConfig, type SegmentName } from '../../src/tui/renderers/powerline/config.js';
 import { renderFooterLine, renderStyledSegments } from '../../src/tui/renderers/powerline.js';
-import { renderSegments, sanitizePlainText, type FooterDataLike, type RenderedSegment } from '../../../../packages/ext-powerline/src/segments.js';
+import { renderSegments, sanitizePlainText, type RenderedSegment } from '../../src/tui/renderers/powerline/segments.js';
 import type { SubscriptionState } from '../../../../packages/ext-powerline/src/subscription.js';
-import { getSymbols } from '@felan-ai/ext-powerline';
+import { getSymbols } from '../../src/tui/renderers/powerline/symbols.js';
+import { getUsageTotals } from '../../../../packages/ext-powerline/src/usage.js';
+import type { PowerlineData, SegmentValues, SessionUsageTotals } from '@felan-ai/ext-powerline/data';
 
 const theme = {
   getFgAnsi: (color: string) => `\x1b[38;5;42m`,
@@ -118,12 +120,7 @@ describe('powerline segments', () => {
     expect(renderSingle('version', { enabled: true }, context({ felanVersion: '0.26.14\n\u001b[31m' })))
       .toMatchObject({ name: 'version', colorKey: 'version', text: 'Felan 0.26.14' });
     const hostless = context();
-    expect(renderSegments({ segments: { version: { enabled: true } } }, {
-      ctx: hostless.ctx,
-      footerData: hostless.footerData,
-      subscription: hostless.subscription,
-      symbols: getSymbols('text'),
-    })).toEqual([]);
+    expect(renderSegments({ segments: { version: { enabled: true } } }, hostless)).toEqual([]);
   });
 
   it('totals session tokens, cache usage, and cost', () => {
@@ -182,12 +179,12 @@ describe('powerline segments', () => {
           displayName: 'Codex Plan',
           windows: [
             { label: 'Week', usedPercent: 41, resetDescription: '5d8h' },
-            { label: 'GPT-5.6 Week', usedPercent: 12, resetDescription: '2d' },
+            { label: '5h', usedPercent: 12, resetDescription: '2h' },
           ],
         },
       },
     }));
-    expect(codex.text).toBe('7d 59% | 5d8h');
+    expect(codex.text).toBe('7d 59% | 5d8h * 5h 88% | 2h');
 
     const claude = renderSingle('subscription', {
       enabled: true,
@@ -363,14 +360,9 @@ describe('powerline segments', () => {
       branch: 'cached-main', sha: 'abc123', dirty: true, changedFiles: 2, repoName: 'repo', tag: 'v1',
       stashCount: 3, timeSinceCommit: '4m', upstream: { name: 'origin/main', ahead: 1, behind: 2 }, refreshedAt: 1,
     });
-    expect(git.text).toBe('repo footer-main sha: abc123 2 tag: v1 4m stash 3 origin/main ahead1 behind2');
+    expect(git.text).toBe('repo cached-main sha: abc123 2 tag: v1 4m stash 3 origin/main ahead1 behind2');
 
-    const statuses = renderSegments({ segments: { status: { enabled: true } } }, {
-      ctx: ctx.ctx,
-      footerData: ctx.footerData,
-      subscription: ctx.subscription,
-      symbols: getSymbols('text'),
-    });
+    const statuses = renderSegments({ segments: { status: { enabled: true } } }, ctx);
     expect(statuses.map((status) => status.text)).toEqual(['ready', 'bad line']);
     expect(statuses.map((status) => status.colorKey)).toEqual(['extensionStatus1', 'extensionStatus2']);
   });
@@ -385,75 +377,37 @@ function testConfig(overrides: Partial<PowerlineConfig['display']>): PowerlineCo
   return { ...config, display: { ...config.display, ...overrides } };
 }
 
-function renderSingle(
-  name: SegmentName,
-  config: Record<string, unknown>,
-  value: ReturnType<typeof context>,
-  gitDetails?: Parameters<typeof renderSegments>[1]['gitDetails'],
-): RenderedSegment {
-  const rendered = renderSegments({ segments: { [name]: config } }, {
-    ctx: value.ctx,
-    ...(value.felanVersion === undefined ? {} : { felanVersion: value.felanVersion }),
-    footerData: value.footerData,
-    ...(gitDetails === undefined ? {} : { gitDetails }),
-    subscription: value.subscription,
-    ...(value.savings === undefined ? {} : { savings: value.savings }),
-    ...(value.additionalSessionUsage === undefined
-      ? {}
-      : { additionalSessionUsage: value.additionalSessionUsage }),
-    symbols: getSymbols('text'),
-  });
+function renderSingle(name: SegmentName, config: Record<string, unknown>, value: ReturnType<typeof context>, gitDetails?: SegmentValues['git'] & { refreshedAt?: number }): RenderedSegment {
+  if (gitDetails) { const { refreshedAt: _refreshedAt, ...values } = gitDetails; value.data.segments.push({ name: 'git', colorKey: 'git', values }); }
+  const savings = value.data.segments.find(segment => segment.name === 'savings');
+  if (savings?.name === 'savings' && typeof config.periodDays === 'number') savings.values.periodDays = config.periodDays;
+  const rendered = renderSegments({ segments: { [name]: config } }, value);
   expect(rendered).toHaveLength(1);
   return rendered[0]!;
 }
 
 function context(options: {
-  cwd?: string;
-  model?: Record<string, unknown>;
-  thinkingLevel?: string;
-  providerCount?: number;
-  entries?: unknown[];
-  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
-  branch?: string | null;
-  statuses?: ReadonlyMap<string, string>;
-  felanVersion?: string;
-  subscription?: SubscriptionState;
-  savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } };
-  additionalSessionUsage?: Parameters<typeof renderSegments>[1]['additionalSessionUsage'];
-} = {}): {
-  ctx: ExtensionContext;
-  footerData: FooterDataLike;
-  felanVersion?: string;
-  subscription: SubscriptionState;
-  savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } };
-  additionalSessionUsage?: Parameters<typeof renderSegments>[1]['additionalSessionUsage'];
-} {
-  const ctx = {
-    cwd: options.cwd ?? '/workspace',
-    model: options.model,
-    thinkingLevel: options.thinkingLevel,
-    sessionManager: { getEntries: () => options.entries ?? [] },
-    getContextUsage: () => options.contextUsage,
-  } as unknown as ExtensionContext;
-  const footerData: FooterDataLike = {
-    getGitBranch: () => options.branch ?? null,
-    getExtensionStatuses: () => options.statuses ?? new Map(),
-    getAvailableProviderCount: () => options.providerCount ?? 1,
-    onBranchChange: () => () => {},
-  };
-  return {
-    ctx,
-    footerData,
-    felanVersion: options.felanVersion,
-    subscription: options.subscription ?? { loading: false },
-    savings: options.savings,
-    additionalSessionUsage: options.additionalSessionUsage,
-  };
+  cwd?: string; model?: Record<string, unknown>; thinkingLevel?: string; providerCount?: number; entries?: unknown[];
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null }; branch?: string | null;
+  statuses?: ReadonlyMap<string, string>; felanVersion?: string; subscription?: SubscriptionState;
+  savings?: { loading: boolean; result?: { savedCostUsd: number; hasUnpricedMeasurements: boolean } }; additionalSessionUsage?: SessionUsageTotals;
+} = {}): Parameters<typeof renderSegments>[1] {
+  const totals = getUsageTotals({ sessionManager: { getEntries: () => options.entries ?? [] } } as unknown as ExtensionContext, options.additionalSessionUsage);
+  const data: PowerlineData = { segments: [
+    { name: 'directory', colorKey: 'directory', values: { cwd: options.cwd ?? '/workspace' } },
+    { name: 'session', colorKey: 'session', values: totals },
+  ] };
+  if (options.model) data.segments.push({ name: 'model', colorKey: 'model', values: { id: String(options.model.id ?? 'no-model'), provider: String(options.model.provider ?? ''), reasoning: !!options.model.reasoning, providerCount: options.providerCount ?? 1, ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}) } });
+  if (options.contextUsage) data.segments.push({ name: 'context', colorKey: 'context', values: options.contextUsage });
+  if (options.savings) data.segments.push({ name: 'savings', colorKey: 'savings', values: { ...options.savings, periodDays: 7 } });
+  if (options.felanVersion) data.segments.push({ name: 'version', colorKey: 'version', values: { version: options.felanVersion } });
+  if (options.subscription) {
+    const { provider, loading, usage } = options.subscription;
+    data.segments.push({ name: 'subscription', colorKey: 'subscription', values: { loading, ...(provider ? { provider } : {}), windows: usage?.windows ?? [], ...(usage?.error ? { error: usage.error } : {}) } });
+  }
+  return { data, symbols: getSymbols('text'), statuses: [...(options.statuses ?? new Map()).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, text]) => text) };
 }
 
 function assistantEntry(input: number, output: number, cacheRead: number, cacheWrite: number, total: number) {
-  return {
-    type: 'message',
-    message: { role: 'assistant', usage: { input, output, cacheRead, cacheWrite, cost: { total } } },
-  };
+  return { type: 'message', message: { role: 'assistant', usage: { input, output, cacheRead, cacheWrite, cost: { total } } } };
 }

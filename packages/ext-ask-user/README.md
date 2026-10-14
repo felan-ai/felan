@@ -15,7 +15,7 @@ The default root uses the always-present `pi.ui.request` API. It declares no ser
 requirements. The host supplies generic form
 delivery, answer eligibility, cancellation, and deferred delivery. The extension does
 not inspect client kind or `hasUI`. The optional `ask-user.wizard` version `1`
-hint carries display preferences without changing form fields or outcomes.
+hint selects optional client rendering without changing form fields or outcomes.
 
 For an explicitly chosen host, the named factory remains available:
 
@@ -97,12 +97,12 @@ normalization also accepts string, number, and boolean entries and the object ke
 `label`, `text`, `value`, `name`, and `option`. Unusable entries return a validation
 error instead of silently falling back to a freeform prompt.
 
-Local defaults are configured declaratively under `extensionConfig.askUser` in
-`$FELAN_AGENT_DIR/settings.json`, through `/settings`, or through generated CLI options:
+Felan TUI defaults live under `presentation.askUser` in
+`$FELAN_AGENT_DIR/tui/settings.json`, through `/settings`, or through TUI-only CLI options:
 
 ```json
 {
-  "extensionConfig": {
+  "presentation": {
     "askUser": {
       "displayMode": "inline",
       "singleSelectLayout": "auto",
@@ -114,8 +114,9 @@ Local defaults are configured declaratively under `extensionConfig.askUser` in
 ```
 
 The defaults are `inline`, `auto`, `alt+o`, and `ctrl+g`, respectively. Use `off`,
-`none`, `disabled`, or an empty value to disable either shortcut. Per-call tool values
-take precedence over these settings. Generated CLI names are
+`none`, `disabled`, or an empty value to disable either shortcut. Per-call tool hints remain optional and pass unchanged to named hosts. The generic
+form adapter ignores them; Felan TUI uses its own preferences. Legacy
+`extensionConfig.askUser` values are read only when a local preference is absent. Generated CLI names are
 `--ask-user-display-mode`, `--ask-user-single-select-layout`,
 `--ask-user-overlay-toggle-key`, and `--ask-user-comment-toggle-key`.
 

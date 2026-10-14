@@ -1,12 +1,13 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ScrollView, TuiAltScreen, stripTerminalSequences, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
 import { identityFor } from '../../daemon/src/daemon/target.js';
-import type { Interaction, Operation, SetupJob, TuiPreferencesUpdate } from '@felan-ai/session-protocol';
+import type { Interaction, Operation, SetupJob } from '@felan-ai/session-protocol';
 import { SessionClient } from '../src/client/client.js';
 import { TuiSessionController } from '../src/tui/controller.js';
+import type { TuiPreferencesUpdate } from '../src/tui/preferences-schema.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
 import { TERMINAL_INTERACTION_KINDS } from '../src/tui/interactions.js';
 import { FakeTransport, snapshot } from './client-fixtures.js';
@@ -21,7 +22,9 @@ const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, c
 
 async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tui-startup-')); const fake = new FakeTransport();
-  const operations: Operation[] = ['attach', 'detach', 'sessions.create', 'prompt', 'interaction.answer', 'tui.preferences.get',
+  await mkdir(join(directory, 'tui'));
+  await writeFile(join(directory, 'tui/settings.json'), JSON.stringify({ showImages: false, ...options.preferences }));
+  const operations: Operation[] = ['attach', 'detach', 'sessions.create', 'prompt', 'interaction.answer',
     'host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link',
     ...(options.statusAvailable === false ? [] : ['host.status' as const])];
   const client = new SessionClient({ target: { kind: 'isolated', directory, namespaceId: 'startup-test' }, kind: 'tui', clientVersion: 'fixture',
@@ -37,7 +40,6 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
         identity, operations, interactionKinds: [...TERMINAL_INTERACTION_KINDS] }, connection); break;
       case 'host.status': fake.reply(request, { identity, daemonVersion: 'fixture', protocol: 1, state: 'ready',
         active: { sessions: 0, runs: 0, attachments: 0 }, setupNeeds: loggedIn ? [] : [{ code: 'provider', message: 'No model available' }] }, connection); break;
-      case 'tui.preferences.get': fake.reply(request, { hideThinking: false, showImages: false, imageWidthCells: 60, outputPad: 1, toolDisplay: 'grouped', keybindings: {}, ...options.preferences }, connection); break;
       case 'sessions.create':
         if (options.createError) fake.frame({ v: 1, re: request.id, outcome: 'rejected', error: { code: 'invalid_request', message: 'Invalid working directory.', retryable: false } }, connection);
         else fake.reply(request, { sessionId: 'session' }, connection);
@@ -59,7 +61,7 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
   cleanups.push(async () => { abort.abort(); if (running) await running.catch(() => {}); await controller.dispose(); await rm(directory, { recursive: true, force: true }); });
   return { client, controller, terminal, tui, fake, abort,
     start(extra: Partial<Parameters<typeof runDaemonTerminal>[1]> = {}) {
-      running = runDaemonTerminal(controller, { cwd: directory, terminal, createTui: () => tui, signal: abort.signal, ...extra });
+      running = runDaemonTerminal(controller, { cwd: directory, clientConfigDir: directory, terminal, createTui: () => tui, signal: abort.signal, ...extra });
       void running.catch(() => {}); return running;
     },
     text() { tui.renderNow(true); return stripTerminalSequences(tui.getScreenLines().join('\n')); },

@@ -20,7 +20,7 @@ function fixture() {
         { provider: 'z', id: 'default', label: 'Default', thinking: [] },
       ] } },
     perform: vi.fn(async (op: string) => ({ outcome: 'accepted', result: op === 'config.get'
-      ? { values: { defaultModel: 'z/default', defaultThinking: 'xhigh' } } : {} })),
+      ? { writable: true, values: { defaultModel: 'z/default', defaultThinking: 'xhigh' } } : {} })),
   };
   return { dialogs, controller, input: (data: string) => component?.handleInput?.(data),
     render: () => stripTerminalSequences(component?.render(100).join('\n') ?? ''),
@@ -74,7 +74,7 @@ it('shows effective generic selection keys and preserves the current item', asyn
 
 it('omits a thinking default marker when the provider has no effective default', async () => {
   const f = fixture();
-  f.controller.perform.mockResolvedValue({ outcome: 'accepted', result: { values: {} } } as never);
+  f.controller.perform.mockResolvedValue({ outcome: 'accepted', result: { writable: true, values: {} } } as never);
   const pending = f.submit('/thinking');
   await vi.waitFor(() => expect(f.render()).toContain('Extra-high reasoning'));
   expect(f.render()).not.toContain('· default');
@@ -85,7 +85,7 @@ it('omits a thinking default marker when the provider has no effective default',
 it('marks the provider effective thinking default and updates an existing model override on save', async () => {
   const f = fixture();
   f.controller.perform.mockImplementation(async (op: string) => ({ outcome: 'accepted', result: op === 'config.get'
-    ? { values: { defaultThinking: 'low', modelThinkingLevels: { 'z/current': 'low', 'z/other': 'high' } } } : {} }) as never);
+    ? { writable: true, values: { defaultThinking: 'low', modelThinkingLevels: { 'z/current': 'low', 'z/other': 'high' } } } : {} }) as never);
   const pending = f.submit('/thinking');
   await vi.waitFor(() => expect(f.render()).toContain('low · default'));
   expect(f.render()).not.toContain('xhigh · default');
@@ -114,5 +114,19 @@ it.each(['/model', '/thinking'])('%s reports a thrown save failure after applyin
   await vi.waitFor(() => expect(f.render()).toContain(command === '/model' ? 'Current model' : 'Extra-high reasoning'));
   f.input(command === '/model' ? '\r' : '\x13'); expect(await pending).toBe(true);
   expect(f.controller.setNotice).toHaveBeenLastCalledWith(expect.stringContaining('set for this session; saving default failed'));
+  f.dialogs.dispose();
+});
+
+it.each(['/model', '/thinking'])('%s leaves session selection available on a read-only host', async command => {
+  const f = fixture();
+  const original = f.controller.perform.getMockImplementation()!;
+  f.controller.perform.mockImplementation(async op => op === 'config.get'
+    ? { outcome: 'accepted', result: { writable: false, values: {} } } as never : original(op));
+  const pending = f.submit(command);
+  await vi.waitFor(() => expect(f.render()).toContain(command === '/model' ? 'Current model' : 'Extra-high reasoning'));
+  expect(f.render()).toContain('read-only');
+  expect(f.render()).not.toContain('set as default');
+  f.input('\r'); expect(await pending).toBe(true);
+  expect(f.controller.perform).not.toHaveBeenCalledWith('config.set', expect.anything());
   f.dialogs.dispose();
 });

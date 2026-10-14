@@ -1,5 +1,4 @@
 import { TestHostConfiguration, createTestHostServices } from './host-services.js';
-import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 import { mkdir, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, SettingsManager, createFelanServiceRegistry, resolveExtensionConfigs, type ExtensionConfigDefinition, type ExtensionPackageImporter, type FelanServiceRegistry } from '@felan-ai/agent-core';
@@ -56,8 +55,9 @@ export function createTestSessionRuntime(options: {
 }
 
 export async function createTestSessionLifecycle(options: Omit<SessionLifecycleOptions,
-  'composition' | 'serviceRegistry' | 'openServiceScope' | 'secretStorage' | 'extensionPackages' | 'configurationIdentity'> & {
+  'composition' | 'serviceRegistry' | 'openServiceScope' | 'secretStorage' | 'extensionPackages' | 'configurationIdentity' | 'configuration'> & {
   configurationIdentity?: string;
+  configuration?: SessionLifecycleOptions['configuration'];
   runtimeFactory?: RuntimeFactory;
   serviceRegistry?: FelanServiceRegistry;
   openServiceScope?: SessionLifecycleOptions['openServiceScope'];
@@ -69,7 +69,9 @@ export async function createTestSessionLifecycle(options: Omit<SessionLifecycleO
   const services = options.serviceRegistry ?? createFelanServiceRegistry();
   const composition = options.composition ?? createTestSessionRuntime({ ...(options.runtimeFactory ? { runtimeFactory: options.runtimeFactory } : {}),
     ...(options.definitions ? { definitions: options.definitions } : {}), ...(options.skillPaths ? { skillPaths: options.skillPaths } : {}) });
+  const configuration = new TestHostConfiguration({ definitions: options.definitions ?? [], assertCurrent() {} });
   return createSessionLifecycle({ ...options,
+    configuration: options.configuration ?? (() => configuration),
     configurationIdentity: options.configurationIdentity ?? 'test-composition',
     composition,
     extensionPackages: options.extensionAllowlist ?? [],

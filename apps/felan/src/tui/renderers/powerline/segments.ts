@@ -1,47 +1,18 @@
-import type { ExtensionContext } from '@felan-ai/agent-core';
+import type { PowerlineData, SegmentValues } from '@felan-ai/ext-powerline/data';
 import type { DisplayLineConfig, SegmentConfig, SegmentName, ThemeColorKey } from './config.js';
-import type { SavingsState } from './savings.js';
-import type { GitDetails } from './git.js';
-import {
-  formatReset,
-  prioritizeWindowsForModel,
-  type RateWindow,
-  type SubscriptionProviderName,
-  type SubscriptionState,
-} from './subscription.js';
 import { BAR_LEVELS, type PowerlineSymbols } from './symbols.js';
 
-export interface FooterDataLike {
-  getGitBranch(): string | null;
-  getExtensionStatuses(): ReadonlyMap<string, string>;
-  getAvailableProviderCount(): number;
-  onBranchChange(callback: () => void): () => void;
+type RateWindow = SegmentValues['subscription']['windows'][number];
+type SubscriptionProviderName = NonNullable<SegmentValues['subscription']['provider']>;
+export interface SegmentRenderContext { data: PowerlineData; symbols: PowerlineSymbols; statuses?: readonly string[] }
+function values<K extends keyof SegmentValues>(context: SegmentRenderContext, name: K): SegmentValues[K] | undefined {
+  return context.data.segments.find(segment => segment.name === name)?.values as SegmentValues[K] | undefined;
 }
-
-export interface SegmentRenderContext {
-  ctx: ExtensionContext;
-  felanVersion?: string;
-  footerData: FooterDataLike;
-  gitDetails?: GitDetails;
-  subscription: SubscriptionState;
-  savings?: SavingsState;
-  additionalSessionUsage?: SessionUsageTotals;
-  symbols: PowerlineSymbols;
-}
-
 export interface RenderedSegment {
   name: SegmentName;
   colorKey: ThemeColorKey;
   text: string;
   align: 'left' | 'right';
-}
-
-export interface SessionUsageTotals {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cost: number;
 }
 
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
@@ -53,8 +24,9 @@ export function renderSegments(line: DisplayLineConfig, context: SegmentRenderCo
     if (!config.enabled) continue;
     const rendered = renderSegment(name, config, context);
     const values = Array.isArray(rendered) ? rendered : rendered ? [rendered] : [];
+    const color = context.data.segments.find(segment => segment.name === name)?.colorKey;
     for (const segment of values) {
-      if (segment.text.trim()) segments.push({ ...segment, align: config.align ?? 'left' });
+      if (segment.text.trim()) segments.push({ ...segment, colorKey: config.colorKey ?? (color && color !== name ? color : segment.colorKey), align: config.align ?? 'left' });
     }
   }
   return segments;
@@ -82,42 +54,41 @@ function renderSegment(
   config: SegmentConfig,
   context: SegmentRenderContext,
 ): Omit<RenderedSegment, 'align'> | Omit<RenderedSegment, 'align'>[] | undefined {
+  if (name !== 'status' && !context.data.segments.some(segment => segment.name === name)) return undefined;
   switch (name) {
     case 'directory': return renderDirectory(config, context);
     case 'git': return renderGit(config, context);
     case 'model': return renderModel(context);
     case 'session': return renderSession(config, context);
     case 'subscription': return renderSubscription(config, context);
-    case 'savings': return renderSavings(config, context);
+    case 'savings': return renderSavings(context);
     case 'context': return renderContext(config, context);
     case 'status': return renderStatus(context);
-    case 'version': return context.felanVersion
-      ? { name: 'version', colorKey: 'version', text: `Felan ${sanitizePlainText(context.felanVersion)}` }
-      : undefined;
+    case 'version': { const version = values(context, 'version')?.version; return version ? { name: 'version', colorKey: 'version', text: `Felan ${sanitizePlainText(version)}` } : undefined; }
   }
 }
 
 function renderDirectory(config: SegmentConfig, context: SegmentRenderContext): Omit<RenderedSegment, 'align'> {
   const style = config.style ?? 'fish';
-  const cwd = context.ctx.cwd;
+  const cwd = values(context, 'directory')?.cwd ?? '';
   const text = style === 'basename' ? basename(cwd) : style === 'full' ? cwd : fishPath(cwd);
   return { name: 'directory', colorKey: 'directory', text: sanitizePlainText(text) };
 }
 
 function renderGit(config: SegmentConfig, context: SegmentRenderContext): Omit<RenderedSegment, 'align'> | undefined {
-  const details = context.gitDetails;
-  const branch = sanitizePlainText(context.footerData.getGitBranch() ?? details?.branch ?? '');
+  const details = values(context, 'git');
+  const branch = sanitizePlainText(details?.branch ?? '');
   const parts: string[] = [];
   if (config.showRepoName && details?.repoName) parts.push(sanitizePlainText(details.repoName));
   if (branch) parts.push(formatWithOptionalSymbol(context.symbols.branch, branch));
   if (config.showSha && details?.sha) parts.push(formatWithOptionalSymbol(context.symbols.sha, sanitizePlainText(details.sha)));
-  if (config.showWorkingTree && details) {
+  if (details) {
     const workingTree = formatWorkingTree(details, context.symbols);
     if (workingTree) parts.push(workingTree);
   }
   if (config.showTag && details?.tag) parts.push(`${context.symbols.tag} ${sanitizePlainText(details.tag)}`);
   if (config.showTimeSinceCommit && details?.timeSinceCommit) parts.push(`${context.symbols.clock} ${details.timeSinceCommit}`.trim());
-  if (config.showStashCount && details?.stashCount) parts.push(`${context.symbols.stash} ${details.stashCount}`);
+  if (details?.stashCount) parts.push(`${context.symbols.stash} ${details.stashCount}`);
   if (config.showUpstream && details?.upstream) {
     const upstream: string[] = [];
     if (details.upstream.name) upstream.push(sanitizePlainText(details.upstream.name));
@@ -129,15 +100,15 @@ function renderGit(config: SegmentConfig, context: SegmentRenderContext): Omit<R
 }
 
 function renderModel(context: SegmentRenderContext): Omit<RenderedSegment, 'align'> {
-  const model = context.ctx.model;
+  const model = values(context, 'model');
   let text = model?.id ?? 'no-model';
-  if (model && context.footerData.getAvailableProviderCount() > 1) text = `(${model.provider}) ${text}`;
-  if (model?.reasoning && context.ctx.thinkingLevel) text = `${text} • ${context.ctx.thinkingLevel}`;
+  if (model && model.providerCount > 1) text = `(${model.provider}) ${text}`;
+  if (model?.reasoning && model.thinkingLevel) text = `${text} • ${model.thinkingLevel}`;
   return { name: 'model', colorKey: 'model', text: sanitizePlainText(text) };
 }
 
 function renderSession(config: SegmentConfig, context: SegmentRenderContext): Omit<RenderedSegment, 'align'> {
-  const totals = getUsageTotals(context.ctx, context.additionalSessionUsage);
+  const totals = values(context, 'session') ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
   const tokenText = `${context.symbols.tokensIn}${formatTokens(totals.input)} ${context.symbols.tokensOut}${formatTokens(totals.output)}`;
   const cacheText = `${context.symbols.cacheRead}${formatTokens(totals.cacheRead)} ${context.symbols.cacheWrite}${formatTokens(totals.cacheWrite)}`;
   const costText = `$${totals.cost.toFixed(3)}`;
@@ -152,28 +123,28 @@ function renderSession(config: SegmentConfig, context: SegmentRenderContext): Om
   return { name: 'session', colorKey: 'session', text };
 }
 
-function renderSavings(config: SegmentConfig, context: SegmentRenderContext): Omit<RenderedSegment, 'align'> | undefined {
-  const savings = context.savings ?? { loading: false };
+function renderSavings(context: SegmentRenderContext): Omit<RenderedSegment, 'align'> | undefined {
+  const savings = values(context, 'savings') ?? { loading: false, periodDays: 7 };
   if (savings.loading && !savings.result) return { name: 'savings', colorKey: 'savings', text: 'savings …' };
   if (!savings.result) return undefined;
   const amount = savings.result.savedCostUsd;
   const estimate = `${savings.result.hasUnpricedMeasurements ? '~' : ''}${amount < 0 ? '-' : ''}$${Math.abs(amount).toFixed(2)}`;
-  return { name: 'savings', colorKey: 'savings', text: `Est. Savings(${config.periodDays ?? 7}d): ${estimate}` };
+  return { name: 'savings', colorKey: 'savings', text: `Est. Savings(${savings.periodDays}d): ${estimate}` };
 }
 
 function renderSubscription(
   config: SegmentConfig,
   context: SegmentRenderContext,
 ): Omit<RenderedSegment, 'align'> | undefined {
-  const provider = context.subscription.provider;
+  const subscription = values(context, 'subscription');
+  const provider = subscription?.provider;
   if (!provider) return undefined;
 
   const label = getSubscriptionProviderLabel(provider);
-  const usage = context.subscription.usage;
-  if (context.subscription.loading && (!usage || usage.windows.length === 0)) {
+  const usage = subscription;
+  if (subscription.loading && usage.windows.length === 0) {
     return { name: 'subscription', colorKey: 'subscription', text: sanitizePlainText(`${label} …`) };
   }
-  if (!usage) return undefined;
   if (usage.error?.code === 'NO_CREDENTIALS') {
     return { name: 'subscription', colorKey: 'warning', text: sanitizePlainText(`${label} no OAuth`) };
   }
@@ -181,10 +152,7 @@ function renderSubscription(
     return { name: 'subscription', colorKey: 'warning', text: 'ChatGPT usage: web only' };
   }
 
-  const maxWindows = clampInteger(config.maxWindows ?? 3, 1, 8);
-  const windows = prioritizeWindowsForModel(usage.windows, context.ctx.model)
-    .filter((window) => !isCodexModelSpecificWindow(provider, window))
-    .slice(0, maxWindows);
+  const windows = usage.windows;
   if (windows.length === 0) {
     if (!usage.error) return undefined;
     return {
@@ -205,8 +173,8 @@ function renderSubscription(
 }
 
 function renderContext(config: SegmentConfig, context: SegmentRenderContext): Omit<RenderedSegment, 'align'> | undefined {
-  const usage = context.ctx.getContextUsage();
-  const contextWindow = usage?.contextWindow ?? context.ctx.model?.contextWindow;
+  const usage = values(context, 'context');
+  const contextWindow = usage?.contextWindow;
   if (!contextWindow) return undefined;
 
   const percent = usage?.percent ?? null;
@@ -235,9 +203,7 @@ function renderContext(config: SegmentConfig, context: SegmentRenderContext): Om
 }
 
 function renderStatus(context: SegmentRenderContext): Omit<RenderedSegment, 'align'>[] | undefined {
-  const statuses = [...context.footerData.getExtensionStatuses().entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([, text]) => sanitizePlainText(text))
+  const statuses = [...(context.statuses ?? [])].map(sanitizePlainText)
     .filter(Boolean);
   return statuses.length === 0 ? undefined : statuses.map((text, index) => ({
     name: 'status',
@@ -300,9 +266,7 @@ function formatWindowReset(window: RateWindow): string | undefined {
   return window.resetDescription;
 }
 
-function isCodexModelSpecificWindow(provider: SubscriptionProviderName, window: RateWindow): boolean {
-  return provider === 'codex' && normalizeCodexWindowLabel(window.label) !== window.label;
-}
+
 
 function normalizeCodexWindowLabel(label: string): string {
   return label.match(/(?:^| )(5h|\d+h|Day|Week)$/)?.[1] ?? label;
@@ -313,32 +277,6 @@ function formatSubscriptionError(error: { code: string; httpStatus?: number }): 
   if (error.code === 'HTTP_ERROR' && error.httpStatus === 429) return 'usage unavailable';
   if (error.code === 'HTTP_ERROR' && error.httpStatus) return `HTTP ${error.httpStatus}`;
   return 'fetch failed';
-}
-
-function clampInteger(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-export function getUsageTotals(
-  context: ExtensionContext,
-  additional?: SessionUsageTotals,
-): SessionUsageTotals {
-  const totals: SessionUsageTotals = {
-    input: additional?.input ?? 0,
-    output: additional?.output ?? 0,
-    cacheRead: additional?.cacheRead ?? 0,
-    cacheWrite: additional?.cacheWrite ?? 0,
-    cost: additional?.cost ?? 0,
-  };
-  for (const entry of context.sessionManager.getEntries()) {
-    if (entry.type !== 'message' || entry.message.role !== 'assistant') continue;
-    totals.input += entry.message.usage.input;
-    totals.output += entry.message.usage.output;
-    totals.cacheRead += entry.message.usage.cacheRead;
-    totals.cacheWrite += entry.message.usage.cacheWrite;
-    totals.cost += entry.message.usage.cost.total;
-  }
-  return totals;
 }
 
 function basename(path: string): string {
@@ -359,7 +297,7 @@ function formatWithOptionalSymbol(symbol: string, text: string): string {
   return symbol ? `${symbol} ${text}` : text;
 }
 
-function formatWorkingTree(details: GitDetails, symbols: PowerlineSymbols): string | undefined {
+function formatWorkingTree(details: SegmentValues['git'], symbols: PowerlineSymbols): string | undefined {
   if (details.dirty === undefined) return undefined;
   if (!details.dirty) return symbols.clean || undefined;
   if (details.changedFiles !== undefined && details.changedFiles > 0) {
@@ -387,4 +325,14 @@ function renderBlockLine(ratio: number, width: number, symbols: PowerlineSymbols
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function formatReset(date: Date): string {
+  const minutes = Math.floor((date.getTime() - Date.now()) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < 0) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return minutes % 60 ? `${hours}h${minutes % 60}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 ? `${days}d${hours % 24}h` : `${days}d`;
 }

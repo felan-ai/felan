@@ -37,9 +37,9 @@ it('retains session configuration through eviction and a recovered control store
 it('atomically binds a configuration update to its admitted payload and preserves policy', async () => {
   const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' },
     policy: { mode: 'acp-strict', pendingTightening: false, generation: 1 } });
-  const id = requestId(); const values = { 'codex-fast': true };
+  const id = requestId(); const values = { extensionConfig: { codex: { fast: true } } };
   f.store.admit({ v: 1, id, op: 'config.set', session: binding.sessionId, params: { scope: 'session', values } }, 'client');
-  expect(() => f.store.configureSession(id, { 'codex-fast': false }, overrides)).toThrow('differs');
+  expect(() => f.store.configureSession(id, { extensionConfig: { codex: { fast: false } } }, overrides)).toThrow('differs');
   expect(f.store.snapshot().requests.find(row => row.id === id)?.phase).toBe('intent');
   await f.registry.reloadAdmitted(id, binding.sessionId, { values, overrides });
   expect(f.store.session(binding.sessionId).profile?.extensionConfigOverrides).toEqual(overrides);
@@ -52,7 +52,7 @@ it('atomically binds a configuration update to its admitted payload and preserve
 it('refuses configuration reload while work is active without changing the desired profile', async () => {
   const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
   f.store.updateSession(binding.sessionId, { run: { state: 'running', id: 'active' } });
-  const id = requestId(); const values = { 'codex-fast': true };
+  const id = requestId(); const values = { extensionConfig: { codex: { fast: true } } };
   f.store.admit({ v: 1, id, op: 'config.set', session: binding.sessionId, params: { scope: 'session', values } }, 'client');
   expect(() => f.registry.reloadAdmitted(id, binding.sessionId, { values, overrides })).toThrow('quiescent');
   expect(f.store.session(binding.sessionId).profile).toBeUndefined();
@@ -63,7 +63,7 @@ it('refuses configuration reload while work is active without changing the desir
 it('rejects an at-capacity profile change before disposing the current runtime', async () => {
   const f = await fixture({ capacity: { bytes: CONTROL_LIMITS.reserveBytes * 2 + 40_000 } });
   const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
-  const id = requestId(); const instructions = 'x'.repeat(60_000); const values = { 'output-style-instructions': instructions };
+  const id = requestId(); const instructions = 'x'.repeat(60_000); const values = { extensionConfig: { outputStyle: { instructions: instructions } } };
   f.store.admit({ v: 1, id, op: 'config.set', session: binding.sessionId, params: { scope: 'session', values } }, 'client');
   const disposal = f.instances.get(binding.sessionId)!.dispose; const before = disposal.mock.calls.length;
   await expect(f.registry.reloadAdmitted(id, binding.sessionId, { values,
@@ -87,16 +87,16 @@ it('applies wire creation and reload overrides in real composition without chang
     client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
       expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui' });
     await client.connect();
-    const created = await client.request('sessions.create', { cwd: f.cwd, source: 'tui', config: { 'codex-fast': true } });
+    const created = await client.request('sessions.create', { cwd: f.cwd, source: 'tui', config: { extensionConfig: { codex: { fast: true } } } });
     expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') throw new Error('Creation failed');
     const session = created.result.sessionId; await client.attach(session); expect(observed.at(-1)).toBe(true);
     const opens = vi.spyOn(f.profile, 'openSession'); const id = newRequestId();
-    const response = await client.request('config.set', { scope: 'session', values: { 'codex-fast': false } }, { session, id });
+    const response = await client.request('config.set', { scope: 'session', values: { extensionConfig: { codex: { fast: false } } } }, { session, id });
     expect(response.outcome).toBe('accepted'); expect(observed.at(-1)).toBe(false);
     const count = opens.mock.calls.length;
-    expect(await client.request('config.set', { scope: 'session', values: { 'codex-fast': false } }, { session, id })).toEqual(response);
+    expect(await client.request('config.set', { scope: 'session', values: { extensionConfig: { codex: { fast: false } } } }, { session, id })).toEqual(response);
     expect(opens.mock.calls).toHaveLength(count);
-    expect(await client.request('config.get', { scope: 'session' }, { session })).toMatchObject({ outcome: 'accepted', result: { values: { 'codex-fast': false } } });
+    expect(await client.request('config.get', { scope: 'session' }, { session })).toMatchObject({ outcome: 'accepted', result: { values: { extensionConfig: { codex: { fast: false } } } } });
     expect(await readFile(settings)).toEqual(before);
   } finally { client?.close(); server?.close(); await f.dispose(); }
 });

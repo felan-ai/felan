@@ -178,14 +178,15 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       if (!argument) {
         const response = await controller.perform('config.get', { scope: 'global' });
         if (response.outcome !== 'accepted') return false;
-        const { defaultModel } = parseOperationResult('config.get', response.result).values;
+        const { writable, values: { defaultModel } } = parseOperationResult('config.get', response.result);
+        persist = writable;
         const current = `${snapshot.model.provider}/${snapshot.model.id}`;
         const reference = (model: typeof models[number]) => `${model.provider}/${model.id}`;
         const rank = (model: typeof models[number]) => reference(model) === current ? 0 : reference(model) === defaultModel ? 1 : 2;
         selected = await dialogs.select('Model', [...models].sort((a, b) => rank(a) - rank(b) || a.provider.localeCompare(b.provider))
           .map(model => ({ value: reference(model), label: `${reference(model) === current ? '✓ ' : '  '}${model.id} [${model.provider}]${reference(model) === defaultModel ? ' · default' : ''}`,
-            description: `Model Name: ${model.label}` })), { initialValue: current, confirmLabel: 'set as default',
-            secondary: { key: 'app.models.save', label: 'select for this session', select: () => { persist = false; } } }) ?? '';
+            description: `Model Name: ${model.label}${writable ? '' : ' · host defaults are read-only'}` })), { initialValue: current, confirmLabel: writable ? 'set as default' : 'select for this session',
+            ...(writable ? { secondary: { key: 'app.models.save' as const, label: 'select for this session', select: () => { persist = false; } } } : {}) }) ?? '';
       }
       if (!selected) return false;
       const model = models.find(model => `${model.provider}/${model.id}` === selected);
@@ -210,15 +211,15 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       if (!argument) {
         const response = await controller.perform('config.get', { scope: 'global' }, session);
         if (response.outcome !== 'accepted') return false;
-        const values = parseOperationResult('config.get', response.result).values;
+        const { values, writable } = parseOperationResult('config.get', response.result);
         const { defaultThinking } = values;
         modelThinkingLevels = values.modelThinkingLevels;
         const descriptions = { off: 'No reasoning', minimal: 'Very brief reasoning (~1k tokens)', low: 'Light reasoning (~2k tokens)',
           medium: 'Moderate reasoning (~8k tokens)', high: 'Deep reasoning (~16k tokens)', xhigh: 'Extra-high reasoning (~32k tokens)', max: 'Maximum reasoning' };
         selected = await dialogs.select('Thinking Level', choices.map(level => ({ value: level,
-          label: `${level === snapshot.thinking ? '✓ ' : '  '}${level}${level === defaultThinking ? ' · default' : ''}`, description: descriptions[level] })),
+          label: `${level === snapshot.thinking ? '✓ ' : '  '}${level}${level === defaultThinking ? ' · default' : ''}`, description: `${descriptions[level]}${writable ? '' : ' · host defaults are read-only'}` })),
         { initialValue: snapshot.thinking, confirmLabel: 'select for this session',
-          secondary: { key: 'app.thinking.save', label: 'set as default', select: () => { persist = true; } } }) ?? '';
+          ...(writable ? { secondary: { key: 'app.thinking.save' as const, label: 'set as default', select: () => { persist = true; } } } : {}) }) ?? '';
       }
       if (!selected) return false;
       const thinking = parseSchema(ThinkingSchema, selected);

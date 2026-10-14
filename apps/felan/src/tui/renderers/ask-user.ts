@@ -34,7 +34,7 @@ import type {
 } from '@felan-ai/ext-ask-user/data';
 import { normalizeAskUserOption } from '@felan-ai/ext-ask-user/data';
 import { renderSingleSelectRows } from './ask-user/single-select-layout.js';
-import { DEFAULT_ASK_USER_CONFIG, normalizeAskUserShortcut, type AskUserConfig } from '@felan-ai/ext-ask-user/data';
+import { DEFAULT_ASK_USER_CONFIG, normalizeAskUserShortcut, type AskUserConfig } from '../ask-user-preferences.js';
 import type { UiForm, UiFormAnswer, UiValues } from '@felan-ai/session-protocol';
 export { ASK_USER_FORM_HINT } from '@felan-ai/ext-ask-user/data';
 
