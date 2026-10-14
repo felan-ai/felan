@@ -102,7 +102,7 @@ it('cancels active setup on owner disconnect and does not transfer it to another
 
 it('never installs on catalog reads or without an explicit selected action', async () => {
   let installed = false; const install = vi.fn(async () => { installed = true; });
-  const dependency: SetupDependency = { id: 'fixture', extension: 'browser', revision: 2, label: 'Fixture', description: 'Fixture dependency', skipDisables: true,
+  const dependency: SetupDependency = { id: 'fixture', extension: 'browser', revision: 2, label: 'Fixture', description: 'Fixture dependency',
     check: async () => ({ available: installed }), install };
   const f = await fixture(undefined, [dependency]);
   expect((await f.manager.catalog()).dependencies).toMatchObject([{ available: false, needsSetup: true }]); expect(install).not.toHaveBeenCalled();
@@ -110,6 +110,7 @@ it('never installs on catalog reads or without an explicit selected action', asy
   const skipped = f.manager.start({ kind: 'dependencies', choices: [{ id: 'fixture', action: 'skip' }], confirmed: true }, 'owner');
   await vi.waitFor(() => expect(f.manager.read(skipped.id, 'owner').state).toBe('completed'));
   expect(install).not.toHaveBeenCalled();
+  expect((await f.manager.catalog()).dependencies).toMatchObject([{ available: false, enabled: true }]);
   const selected = f.manager.start({ kind: 'dependencies', choices: [{ id: 'fixture', action: 'install' }], confirmed: true }, 'owner');
   await vi.waitFor(() => expect(f.manager.read(selected.id, 'owner').state).toBe('completed'));
   expect(install).toHaveBeenCalledOnce();

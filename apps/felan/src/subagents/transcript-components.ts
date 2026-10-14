@@ -1,6 +1,7 @@
 import { convertToPng, type AgentSession, type Theme, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Box, Container, Image, Markdown, MouseRegion, Spacer, Text, getCapabilities, stripTerminalSequences, type Component, type MarkdownTheme, type TUI } from '@earendil-works/pi-tui';
 import { renderThinkingGroupMarkdown } from '../thinking-groups.js';
+import { clientMarkdownTransform, type MermaidMode } from '../tui/markdown.js';
 
 type AssistantMessage = Extract<AgentSession['messages'][number], { role: 'assistant' }>;
 type CompactionMessage = Extract<AgentSession['messages'][number], { role: 'compactionSummary' }>;
@@ -10,16 +11,20 @@ type ToolResult = { content: Array<{ type: string; text?: string; data?: string;
 export class TranscriptAssistant extends Container {
   private message: AssistantMessage;
   private readonly thinking = new Map<number, boolean>();
+  private streaming = false;
   constructor(message: AssistantMessage, private hidden: boolean, private readonly markdown: MarkdownTheme,
-    private readonly padding: number, private readonly theme: () => Theme) { super(); this.message = message; this.updateContent(message); }
+    private readonly padding: number, private readonly theme: () => Theme, private readonly mermaid: MermaidMode = 'streaming', isStreaming = false) {
+    super(); this.message = message; this.updateContent(message, isStreaming);
+  }
   setHideThinkingBlock(hidden: boolean): void { this.hidden = hidden; this.thinking.clear(); this.updateContent(this.message); }
-  updateContent(message: AssistantMessage): void {
-    this.message = message; this.clear();
+  updateContent(message: AssistantMessage, isStreaming = this.streaming): void {
+    this.message = message; this.streaming = isStreaming; this.clear();
     if (message.content.some(part => part.type === 'text' && part.text.trim() || part.type === 'thinking' && part.thinking.trim())) this.addChild(new Spacer(1));
     let run = 0;
     for (let index = 0; index < message.content.length; index++) {
       const part = message.content[index]!;
-      if (part.type === 'text' && part.text.trim()) this.addChild(new Markdown(part.text.trim(), this.padding, 0, this.markdown));
+      if (part.type === 'text' && part.text.trim()) this.addChild(new Markdown(part.text.trim(), this.padding, 0, this.markdown, undefined,
+        { transform: clientMarkdownTransform(this.theme(), this.mermaid, this.streaming) }));
       else if (part.type === 'thinking') {
         const parts = [part.thinking];
         while (message.content[index + 1]?.type === 'thinking') parts.push((message.content[++index] as typeof part).thinking);

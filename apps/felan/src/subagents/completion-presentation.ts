@@ -2,14 +2,11 @@ import type { FelanExtensionAPI } from '@felan-ai/agent-core';
 import { SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE, type ExecutionCompletionNotice } from '../execution-completion.js';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import {
-  stripTerminalSequences,
   truncateToWidth,
   type Component,
 } from '@earendil-works/pi-tui';
 
-const MAX_DETAIL_LINES = 3;
-const MAX_INLINE_CHARACTERS = 240;
-const INLINE_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/gu;
+import { MAX_DETAIL_LINES, summaryLines, inlineText, messageText, isRecord } from '../tui/completion-text.js';
 
 interface CompletionMessageDetails {
   readonly notice?: unknown;
@@ -31,7 +28,7 @@ export function registerSubagentCompletionRenderer(
   );
 }
 
-class SubagentCompletionComponent implements Component {
+export class SubagentCompletionComponent implements Component {
   readonly #notices: readonly ExecutionCompletionNotice[];
   readonly #detailLines: readonly string[];
 
@@ -89,7 +86,8 @@ class SubagentCompletionComponent implements Component {
     if (notices.length === 0) {
       const summary = this.#detailLines[0];
       return `${this.theme.fg('success', '✓')} ${this.theme.bold('Subagent completed')}`
-        + (summary ? this.theme.fg('muted', ` · ${summary}`) : '');
+        + (summary ? this.theme.fg('muted', ` · ${summary}`) : '')
+        + this.theme.fg('muted', ' · Alt+A details');
     }
 
     if (notices.length > 1) {
@@ -123,7 +121,8 @@ function completionNotice(value: unknown): ExecutionCompletionNotice | undefined
   return value as unknown as ExecutionCompletionNotice;
 }
 
-function completionNotices(details: CompletionMessageDetails | undefined): ExecutionCompletionNotice[] {
+export function completionNotices(details: unknown): ExecutionCompletionNotice[] {
+  if (!isRecord(details)) return [];
   const notices = Array.isArray(details?.notices)
     ? details.notices.map(completionNotice).filter(isNotice)
     : [];
@@ -156,35 +155,4 @@ function formatStatus(status: ExecutionCompletionNotice['status']): string {
 
 function shortAgentId(agentId: string): string {
   return inlineText(agentId).slice(0, 8);
-}
-
-function summaryLines(value: string | readonly string[]): string[] {
-  const text = typeof value === 'string' ? value : value.join('\n');
-  return stripTerminalSequences(text)
-    .replace(/\r/g, '')
-    .split('\n')
-    .map((line) => inlineText(line).replace(/^(?:#{1,6}|[-*+])\s+/u, ''))
-    .filter(Boolean);
-}
-
-function inlineText(value: string): string {
-  const normalized = stripTerminalSequences(value)
-    .replace(INLINE_CONTROL_CHARACTERS, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return normalized.length <= MAX_INLINE_CHARACTERS
-    ? normalized
-    : `${normalized.slice(0, MAX_INLINE_CHARACTERS - 1)}…`;
-}
-
-function messageText(content: string | readonly { type: string; text?: string }[]): string {
-  if (typeof content === 'string') return content;
-  return content
-    .filter((entry) => entry.type === 'text' && typeof entry.text === 'string')
-    .map((entry) => entry.text!)
-    .join('\n');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

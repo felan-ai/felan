@@ -24,6 +24,7 @@ export class DaemonControlStore {
   private readonly now: () => number;
   private readonly capacity: ControlCapacity;
   private recoveryRequired = false;
+  private readonly transientRevisionCeilings = new Map<string, number>();
   constructor(readonly owner: DaemonOwnership, options: ControlStoreOptions = {}) {
     this.now = options.now ?? Date.now;
     this.capacity = { bytes: CONTROL_LIMITS.bytes, reserveBytes: CONTROL_LIMITS.reserveBytes, requests: CONTROL_LIMITS.requests, sessionRequests: CONTROL_LIMITS.sessionRequests, reserveRequests: CONTROL_LIMITS.reserveRequests, ...options.capacity };
@@ -116,6 +117,25 @@ export class DaemonControlStore {
       return session;
     }, true);
   }
+  advanceTransientRevision(id: string): number {
+    this.file.assertCurrent();
+    if (this.recoveryRequired) throw new ControlStoreError('storage_failure', 'Recover the persisted control state before publishing.');
+    const session = this.findSession(this.state, id);
+    if (session.deletedAt !== undefined) throw new ControlStoreError('not_found', 'Session was deleted.');
+    const revision = session.revision + 1;
+    if (revision > (this.transientRevisionCeilings.get(id) ?? session.revision)) {
+      const ceiling = revision + 4095;
+      if (!Number.isSafeInteger(ceiling)) throw new ControlStoreError('storage_failure', 'Session revision exhausted.');
+      const durable = this.durableState(this.state);
+      this.findSession(durable, id).revision = ceiling;
+      // Reserve revisions across crashes without persisting every transient frame.
+      this.file.write(durable, this.capacity.bytes);
+      this.transientRevisionCeilings.set(id, ceiling);
+    }
+    session.revision = revision;
+    return revision;
+  }
+
   project(id: string, values: readonly ControlProjection[]): ControlCommit<ControlSession> {
     return this.commit((state, touched, now) => {
       const session = this.findSession(state, id);
@@ -314,9 +334,17 @@ export class DaemonControlStore {
     const reserved = parsed.requests.filter(item => item.phase !== 'terminal').length * outcomeReserve
       + parsed.interactions.filter(item => item.state === 'waiting' || item.state === 'deferred').length * (LIMITS.answerBytes + 1024);
     if (Buffer.byteLength(JSON.stringify(parsed)) + reserved + CONTROL_REQUEST_BUDGET.bookkeeping > byteLimit) throw new ControlStoreError('request_capacity', 'Control capacity is reserved for outcomes and safety operations.');
-    this.file.write(parsed, byteLimit); this.state = parsed;
+    this.file.write(this.durableState(parsed), byteLimit); this.state = parsed;
     return { value: structuredClone(value), revisions };
   }
+  private durableState(state: ControlState): ControlState {
+    const durable = structuredClone(state);
+    for (const session of durable.sessions) {
+      session.revision = Math.max(session.revision, this.transientRevisionCeilings.get(session.id) ?? session.revision);
+    }
+    return durable;
+  }
+
   private safeResponse(record: ControlRequest, value: unknown): Response {
     const response = parseServerEnvelope(value, record.op as Operation) as Response;
     if (response.re !== record.id) throw new ControlStoreError('request_conflict', 'Response ID differs from request.');

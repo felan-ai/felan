@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { isAbsolute, relative, sep } from 'node:path';
+import { getLocalSkillSources } from './local-resources.js';
 import { SESSIONS_SERVICE, bindFelanExtension, type SessionsService } from '@felan-ai/agent-core';
 import type { SessionExecutionPort, SessionExtensionBindings, SessionExtensionContext, ExecutionSettings } from '@felan-ai/daemon/provider';
 import { bindExecutionSession } from './execution-binding.js';
@@ -6,6 +8,7 @@ import { type LocalExecutionRoot, type LocalExecutionSession } from './extension
 import { createHerdrExtension, type HerdrActivity } from './herdr.js';
 import { SavingsService, createModelPriceSource } from './savings.js';
 import { HERDR_BLOCKED_EVENT } from './herdr.js';
+import { createSavingsCommandExtension } from '../savings-command.js';
 
 export function createLocalExecutionRoots() {
   const roots = new Map<string, LocalExecutionRoot>();
@@ -58,7 +61,7 @@ export async function createLocalExecutionSession(session: SessionExtensionConte
   const state = { context: session, port, root, isRoot,
     attention: (active, label) => attention?.(active, label),
   } satisfies LocalExecutionSession;
-  return { session: state, inlineExtensions: [notifications],
+  return { session: state, inlineExtensions: [notifications, createSavingsCommandExtension(root.savings)],
     async dispose() { if (isRoot) await root.close(); },
   };
 }
@@ -75,6 +78,14 @@ export function createLocalExecutionServices(roots = executionRoots) {
       inlineExtensions: [...local.inlineExtensions, createHerdrExtension({ activity: createSessionActivity(context.services.get(SESSIONS_SERVICE)!) })],
       importExtension: context.importExtension,
       async onSession(session) {
+        const sources = getLocalSkillSources(context.resources.cwd);
+        for (const skill of session.resourceLoader.getSkills().skills) {
+          const source = sources.find(source => {
+            const path = relative(source.path, skill.filePath);
+            return !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`);
+          });
+          if (source) skill.sourceInfo = { ...skill.sourceInfo, scope: source.scope };
+        }
         if (isRoot) {
           releaseService = port.registerService({ disposeWhenIdle: true, busy: () => root.savings.hasPendingWork(), settle: mode => root.settle(mode), async dispose() {} });
           const settings = context.settingsManager.getSettings() as { felanSubagents?: ExecutionSettings };

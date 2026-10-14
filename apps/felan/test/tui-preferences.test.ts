@@ -82,6 +82,27 @@ it('selects a local theme without sending it to the daemon', async () => {
   expect(f.changed.mock.lastCall?.[0].theme).toBe('felan-light');
 });
 
+it('restores terminal display controls and keeps image input defaults provider-owned', async () => {
+  const f = fixture();
+  await f.preferences.open({ settings: async entries => {
+    const general = entries.find(entry => entry.id === 'general')!.children!;
+    for (const [id, value] of Object.entries({ hardwareCursor: 'true', editorPadding: '2', autocompleteMaxVisible: '12', clearOnShrink: 'true', terminalProgress: 'true' })) {
+      const entry = general.find(entry => entry.id === id)!;
+      expect(entry.description).toContain('Display only');
+      await entry.change!(value);
+    }
+    for (const id of ['imageAutoResize', 'blockImages']) {
+      const entry = general.find(entry => entry.id === id)!;
+      expect(entry.description).toContain('new sessions or /reload'); await entry.change!('true');
+    }
+    await expect(general.find(entry => entry.id === 'editorPadding')!.change!('4')).rejects.toThrow();
+    await expect(general.find(entry => entry.id === 'autocompleteMaxVisible')!.change!('21')).rejects.toThrow();
+  } });
+  expect(f.preferences.values).toMatchObject({ hardwareCursor: true, editorPadding: 2, autocompleteMaxVisible: 12, clearOnShrink: true, terminalProgress: true });
+  expect(f.controller.perform).toHaveBeenCalledWith('config.set', { scope: 'global', values: { imageAutoResize: true } });
+  expect(f.controller.perform).toHaveBeenCalledWith('config.set', { scope: 'global', values: { blockImages: true } });
+});
+
 it('does not apply a late preference reply after terminal disposal', async () => {
   const f = fixture(); let resolve!: (value: { outcome: string; result: TuiPreferences }) => void;
   let entered!: () => void; const entry = new Promise<void>(done => { entered = done; });

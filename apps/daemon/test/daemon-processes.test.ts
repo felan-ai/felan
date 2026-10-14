@@ -35,6 +35,31 @@ describe.skipIf(!supported)('registry process ownership', () => {
     expect(f.store.snapshot().resources).toEqual([expect.objectContaining({ state: 'exited' })]);
   });
 
+  it('allows a stdio consumer to close input after daemon-owned process settlement', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    let running = true;
+    const snapshot = () => ({ output: new Uint8Array(), nextOffset: 0, running, exitCode: 0 });
+    const handle: AgentRuntimeStdioProcess = {
+      pid: 42, read: async () => snapshot(), readStdout: async () => snapshot(), readStderr: async () => snapshot(),
+      write: vi.fn(async () => {}), closeInput: vi.fn(async () => {}),
+      terminate: vi.fn(async () => { running = false; }), dispose: vi.fn(async () => {}),
+    };
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, {
+      processes: { startShell: async () => handle, startStdio: async () => handle },
+    });
+    const process = await runtime.processes!.startStdio!('protocol-server', []);
+    await process.closeInput();
+    expect(handle.closeInput).toHaveBeenCalledOnce();
+    await f.registry.processes.settle(b.rootSessionId);
+    await expect(process.closeInput()).resolves.toBeUndefined();
+    await expect(process.closeInput()).resolves.toBeUndefined();
+    await expect(process.dispose()).resolves.toBeUndefined();
+    expect(handle.closeInput).toHaveBeenCalledOnce();
+    expect(handle.dispose).toHaveBeenCalledOnce();
+    expect(() => process.write(new Uint8Array())).toThrow('Process handle is disposed.');
+    expect(handle.write).not.toHaveBeenCalled();
+  });
+
   it('forwards filesystem operations without outliving the owning session', async () => {
     const f = await fixture();
     const session = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });

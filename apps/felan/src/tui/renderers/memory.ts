@@ -35,15 +35,17 @@ export async function presentMemoryHistory(element: UiPresentation, ui: Pick<Int
         bold: text => theme.bold(text), italic: plain, strikethrough: plain, underline: plain,
       };
       const body = element.kind === 'document' ? new Markdown(uiText(decodeUiMarkdown(element.markdown)), 1, 0, markdownTheme) : undefined;
-      const hints = ['↑↓ navigate', element.kind === 'view' && 'Enter inspect', available('previous') && '← previous', available('next') && '→ next',
+      const hasRows = element.kind === 'document' || element.items.length > 0;
+      const hints = [hasRows && '↑↓ navigate', element.kind === 'view' && hasRows && available('inspect') && 'Enter inspect', available('previous') && '← previous', available('next') && '→ next',
         element.kind === 'view' && element.query && 'Ctrl+F search', available('refresh') && 'Ctrl+R refresh',
-        available('back') && 'Backspace back', available('close') && 'q close', 'Esc dismiss'].filter(Boolean).join(' · ');
+        available('back') && 'Backspace back', available('close') && 'q close', 'Esc close'].filter(Boolean).join(' · ');
       if (signal.aborted) abort();
       return {
         render(width) {
           const height = Math.max(1, tui.terminal.rows - 6);
-          const rows = body ? body.render(width) : element.kind === 'view' ? element.items.map((item, index) =>
-            `${index === selected ? '›' : ' '} ${element.fields.map(field => `${uiText(field.label)}: ${uiText(String(item.values[field.id] ?? ''))}`).join(' · ')}`) : [];
+          const rows = body ? body.render(width) : element.kind === 'view' ? element.items.length ? element.items.map((item, index) =>
+            `${index === selected ? '›' : ' '} ${element.fields.map(field => `${uiText(field.label)}: ${uiText(String(item.values[field.id] ?? ''))}`).join(' · ')}`)
+            : [theme.fg('dim', element.query?.values.query ? 'No matching memory runs.' : 'No retained memory runs.')] : [];
           if (element.kind === 'view') {
             if (selected < offset) offset = selected;
             if (selected >= offset + height) offset = selected - height + 1;
@@ -54,7 +56,7 @@ export async function presentMemoryHistory(element: UiPresentation, ui: Pick<Int
         },
         invalidate: () => body?.invalidate(),
         handleInput(data) {
-          if (matchesKey(data, Key.escape)) { done(undefined); return; }
+          if (matchesKey(data, Key.escape)) { if (available('close')) action('close'); else done(undefined); return; }
           const id = data === 'q' ? 'close' : matchesKey(data, Key.backspace) ? 'back' : matchesKey(data, Key.left) ? 'previous'
             : matchesKey(data, Key.right) ? 'next' : matchesKey(data, Key.ctrl('r')) ? 'refresh'
               : element.kind === 'view' && matchesKey(data, Key.ctrl('f')) ? element.query?.actionId

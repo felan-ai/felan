@@ -36,6 +36,7 @@ export const ToolCatalogEntrySchema = Type.Object({
 });
 export const CommandCatalogEntrySchema = Type.Object({
   name: NameSchema, description: text(16384), source: IdSchema, kind: enumOf(['extension', 'skill'] as const),
+  scope: Type.Optional(enumOf(['temporary', 'project', 'user'] as const)),
 });
 export const CatalogSchema = Type.Object({
   tools: Type.Array(ToolCatalogEntrySchema, { maxItems: LIMITS.catalogEntries }),

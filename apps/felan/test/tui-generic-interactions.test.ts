@@ -12,7 +12,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(
 const document = (revision = 1): UiDocument => ({ id: 'doc', kind: 'document', revision, title: 'Document', markdown: 'Read this', fallback: 'Read document',
   actions: [{ id: 'refresh', label: 'Refresh', target: 'element', outcome: 'submit' }] });
 
-function fixture(capable = true, initial: UiPresentation = document()) {
+function fixture(capable = true, initial: UiPresentation = document(), inPlace = false) {
   let status = 'ready';
   let state: SessionState = { ...createSessionState('session'), status: 'live', snapshot: { ...snapshot(), presentation: [initial] } };
   const listeners = new Set<() => void>(); const emit = () => { for (const listener of [...listeners]) listener(); };
@@ -20,6 +20,11 @@ function fixture(capable = true, initial: UiPresentation = document()) {
   const presentElement = vi.fn((source: UiPresentation, signal: AbortSignal, _interactive: boolean) => new Promise<UiActionRequest | undefined>(resolve => {
     pending.push({ source, signal, resolve }); signal.addEventListener('abort', () => resolve(undefined), { once: true });
   }));
+  const updateElement = vi.fn((source: UiPresentation, signal: AbortSignal) => {
+    const row = pending.find(item => item.signal === signal);
+    if (!inPlace || !row) return false;
+    row.source = source; return true;
+  });
   const perform = vi.fn(async () => ({ outcome: 'accepted', result: {} }));
   const notice = vi.fn(() => emit());
   const controller = {
@@ -29,7 +34,7 @@ function fixture(capable = true, initial: UiPresentation = document()) {
     client: { get status() { return status; }, capabilities: { capabilities: capable ? [...GENERIC_UI_CAPABILITIES] : [], operations: capable ? ['ui.action'] : [] },
       getInteractions: () => [], getAttachment: () => ({ state }) },
   } as unknown as TuiSessionController;
-  const interactions = new TerminalInteractions(controller, { presentElement } as unknown as ClientInteractionPresenters);
+  const interactions = new TerminalInteractions(controller, { presentElement, updateElement } as unknown as ClientInteractionPresenters);
   cleanups.push(() => interactions.dispose());
   const answer = (index: number) => { const row = pending[index]!;
     if (!('revision' in row.source)) throw new Error('Statuses have no actions.');
@@ -92,4 +97,17 @@ it('opens typed statuses for full inspection without inventing a revision or act
   f.interactions.showElement('status'); await vi.waitFor(() => expect(f.pending).toHaveLength(1));
   f.pending[0]!.resolve(undefined); await vi.waitFor(() => expect(f.interactions.busy).toBe(false));
   expect(f.perform).not.toHaveBeenCalled();
+});
+
+
+it('keeps live-updatable presentations mounted and submits their current revision', async () => {
+  const f = fixture(true, document(), true);
+  await vi.waitFor(() => expect(f.pending).toHaveLength(1));
+  f.update('live', 'ready', document(2));
+  expect(f.presentElement).toHaveBeenCalledOnce();
+  expect(f.pending[0]!.signal.aborted).toBe(false);
+  expect(f.interactions.busy).toBe(true);
+  f.answer(0);
+  await vi.waitFor(() => expect(f.perform).toHaveBeenCalledOnce());
+  expect(f.perform).toHaveBeenCalledWith('ui.action', expect.objectContaining({ revision: 2 }), 'session');
 });

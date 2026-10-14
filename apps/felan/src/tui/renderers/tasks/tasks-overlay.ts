@@ -182,8 +182,9 @@ export class TasksOverlay {
       ...source.items.slice(this.#scroll, this.#scroll + LIST_ROWS).map((item, index) => {
         const values = item.values;
         const availability = String(values.availability ?? values.status ?? '');
-        const icon = availability === 'completed' ? '✓' : availability === 'in_progress' ? '◐' : availability === 'blocked' || availability === 'waiting' ? '⊘' : '○';
-        return clean(`${this.#scroll + index === this.#selected ? '▶' : ' '} ${icon} ${item.id} [P${values.priority}] ${values.title} · ${availability}${values.owner ? ` · ${values.owner}` : ''}`);
+        const marker = this.#scroll + index === this.#selected ? this.theme.fg('accent', '▶') : ' ';
+        const waiting = availability === 'waiting' && values.waitingOn ? ` ← waiting on ${values.waitingOn}` : '';
+        return `${marker} ${availabilityIcon(availability, this.theme)} ${clean(`${item.id} [P${values.priority}] ${values.title} · ${availability}${values.owner ? ` · ${values.owner}` : ''}${waiting}`)}`;
       }), ...(!source.items.length ? ['No session tasks.'] : [])];
   }
 
@@ -376,7 +377,10 @@ function wrapLine(line: string, width: number): string[] {
 }
 
 function statusIcon(task: Task, state: TaskState, theme: Theme): string {
-  const availability = taskAvailability(task, state);
+  return availabilityIcon(taskAvailability(task, state), theme);
+}
+
+function availabilityIcon(availability: string, theme: Theme): string {
   if (availability === 'completed') return theme.fg('success', '✓');
   if (availability === 'in_progress') return theme.fg('accent', '◐');
   if (availability === 'blocked' || availability === 'waiting') return theme.fg('warning', '⊘');

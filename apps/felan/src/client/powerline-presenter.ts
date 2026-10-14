@@ -1,10 +1,15 @@
 import { parsePowerlineData, type PowerlineData, type RenderedSegment, type ThemeColorKey } from '@felan-ai/ext-powerline/data';
 import { ProjectedPowerlineFooter } from '../tui/renderers/powerline.js';
-import { parseUiPresentation, type Presentation, type UiView } from '@felan-ai/session-protocol';
+import { parseUiPresentation, type Presentation, type UiView, type SessionSnapshot } from '@felan-ai/session-protocol';
 import type { SessionClient } from './client.js';
 import { statusText } from './ui.js';
 import { FELAN_VERSION } from '../version.js';
 
+
+export function processStatus(processes: SessionSnapshot['processes']): string | undefined {
+  const running = processes.filter(process => process.kind !== 'foreground' && process.state === 'running').length;
+  return running ? `● ${running} ${running === 1 ? 'process' : 'processes'}` : undefined;
+}
 
 export function isPowerlinePresentation(item: Presentation): boolean {
   return (item.kind === 'status' || item.kind === 'view')
@@ -72,6 +77,8 @@ export function createClientPowerlineFooter(
           .sort((a, b) => a.kind === 'status' && b.kind === 'status' ? a.key.localeCompare(b.key) : 0)
           .map((item, index) => ({ name: 'status', align: 'left', colorKey: colors[index % colors.length]!,
             text: item.kind === 'status' ? statusText(item).replace(/[\r\n\t]+/gu, ' ') : '' }));
+        const processes = processStatus(attachment.state.snapshot?.processes ?? []);
+        if (processes) statuses.push({ name: 'status', align: 'left', colorKey: 'extensionStatus1', text: processes });
         const lines = result.lines.map(line => line.filter(segment => segment.name !== 'version'));
         let statusLine = lines.findIndex(line => line.some(segment => segment.name === 'status'));
         if (statusLine === -1) {

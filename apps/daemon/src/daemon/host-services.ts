@@ -3,7 +3,7 @@ import type { JsonValue, OperationParams, OperationResult, SetupCatalog, SetupJo
 import type { InteractionBroker } from './broker.js';
 
 export interface HostConfiguration {
-  get(scope: OperationParams<'config.get'>['scope']): Promise<OperationResult<'config.get'>>;
+  get(scope: OperationParams<'config.get'>['scope'], model?: { provider: string; id: string }): Promise<OperationResult<'config.get'>>;
   set(scope: OperationParams<'config.set'>['scope'], input: unknown): Promise<void>;
   prepare(scope: OperationParams<'config.set'>['scope'], input: unknown): void;
   sessionOverrides(input: unknown, previous?: readonly ExtensionConfigOverride[]): { extensionId: string; source: string; values: Record<string, JsonValue> }[];

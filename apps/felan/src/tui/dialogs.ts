@@ -1,9 +1,18 @@
 import type { Theme } from '@earendil-works/pi-coding-agent';
-import { Container, CURSOR_MARKER, Editor, Input, SelectList, Text, getKeybindings, stripTerminalSequences, type Component, type OverlayHandle, type OverlayOptions, type SelectItem, type TUI } from '@earendil-works/pi-tui';
+import { Container, CURSOR_MARKER, Editor, Input, SelectList, Text, getKeybindings, stripTerminalSequences, type Component, type Keybinding, type OverlayHandle, type OverlayOptions, type SelectItem, type TUI } from '@earendil-works/pi-tui';
 import { clientSelectListTheme, defaultClientTheme } from './theme.js';
 import { SettingsMenu, type SettingsEntry } from './settings-menu.js';
 
-export interface DialogOptions { signal?: AbortSignal; timeout?: number; placeholder?: string; secret?: boolean }
+export interface DialogOptions { signal?: AbortSignal; timeout?: number; placeholder?: string; secret?: boolean;
+  initialValue?: string; confirmLabel?: string; secondary?: { key: Keybinding; label: string; select(value: string): void } }
+
+export function selectionHint(keys = getKeybindings(), confirmLabel = 'select', secondary?: DialogOptions['secondary']): string {
+  const display = (action: Keybinding) => keys.getKeys(action).map(key => key === 'up' ? '↑' : key === 'down' ? '↓' : key).join('/') || 'unbound';
+  const up = display('tui.select.up'); const down = display('tui.select.down');
+  const navigation = `${up}${up === '↑' && down === '↓' ? '' : '/'}${down} navigate`;
+  return [navigation, `${display('tui.select.confirm')} ${confirmLabel}`,
+    ...(secondary ? [`${display(secondary.key)} ${secondary.label}`] : []), `${display('tui.select.cancel')} cancel`].join(' · ');
+}
 
 export interface TuiDialogHost {
   select(title: string, choices: readonly SelectItem[], options?: DialogOptions): Promise<string | undefined>;
@@ -24,10 +33,13 @@ export class TuiDialogs implements TuiDialogHost {
       const content = new Container(); const search = new Input(); search.focused = true;
       const items = choices.map(choice => ({ ...choice, label: stripTerminalSequences(choice.label),
         ...(choice.description ? { description: stripTerminalSequences(choice.description) } : {}) }));
-      const makeList = (filter = '') => {
+      const makeList = (filter = '', selected = options.initialValue) => {
         const prefix = filter.toLowerCase();
-        const result = new SelectList(items.filter(item => item.label.toLowerCase().startsWith(prefix) || item.value.toLowerCase().startsWith(prefix))
+        const filtered = items.filter(item => item.label.toLowerCase().includes(prefix) || item.value.toLowerCase().includes(prefix));
+        const result = new SelectList(filtered
           .map(({ value, label }) => ({ value, label })), 12, clientSelectListTheme(this.theme));
+        const at = filtered.findIndex(item => item.value === selected);
+        if (at >= 0) result.setSelectedIndex(at);
         result.onSelect = item => finish(item.value); result.onCancel = () => finish(undefined);
         return result;
       };
@@ -35,9 +47,13 @@ export class TuiDialogs implements TuiDialogHost {
       content.addChild(new Text(this.theme().fg('accent', this.theme().bold(stripTerminalSequences(title))), 1, 1)); content.addChild(search); content.addChild(list);
       return {
         render: width => this.frame([...content.render(width), ...new Text(this.theme().fg('dim',
-          items.find(item => item.value === list.getSelectedItem()?.value)?.description ?? ''), 1, 1).render(width)], width), invalidate: () => content.invalidate(),
+          items.find(item => item.value === list.getSelectedItem()?.value)?.description ?? ''), 1, 1).render(width),
+          ...new Text(this.theme().fg('dim', selectionHint(getKeybindings(), options.confirmLabel, options.secondary)), 1, 0).render(width)], width), invalidate: () => content.invalidate(),
         handleInput: data => {
-          if ((['tui.select.up', 'tui.select.down', 'tui.select.confirm', 'tui.select.cancel'] as const).some(key => getKeybindings().matches(data, key))) list.handleInput(data);
+          if (options.secondary && getKeybindings().matches(data, options.secondary.key)) {
+            const selected = list.getSelectedItem();
+            if (selected) { options.secondary.select(selected.value); finish(selected.value); }
+          } else if ((['tui.select.up', 'tui.select.down', 'tui.select.confirm', 'tui.select.cancel'] as const).some(key => getKeybindings().matches(data, key))) list.handleInput(data);
           else {
             const previous = search.getValue(); search.handleInput(data);
             if (search.getValue() !== previous) {

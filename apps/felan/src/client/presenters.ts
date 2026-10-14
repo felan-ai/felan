@@ -33,6 +33,10 @@ export class ClientInteractionPresenters {
     return presentUiElement(source, createGenericTuiDriver(this.ui), signal, interactive, this.hints);
   }
 
+  updateElement(source: UiPresentation, signal: AbortSignal): boolean {
+    return this.hints.updatePresentation(source, signal);
+  }
+
   async present(value: Interaction, signal: AbortSignal): Promise<InteractionPresentation> {
     const item = parseInteraction(value);
     if (signal.aborted) return { state: 'cancelled', reason: 'abort' };

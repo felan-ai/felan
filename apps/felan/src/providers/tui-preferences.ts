@@ -10,11 +10,20 @@ export class DaemonTuiPreferences {
   async get(): Promise<TuiPreferences> {
     const settings = await readDaemonGlobalSettings(this.options.agentDir, this.options.assertCurrent);
     const terminal = object(settings.terminal, 'terminal'); const tui = object(settings.felanTui, 'felanTui');
+    const markdown = object(settings.markdown, 'markdown');
     const keybindings = { ...await this.legacyKeybindings(), ...parseSchema(TuiKeybindingsSchema, tui.keybindings ?? {}) };
     this.options.assertCurrent();
     return parseSchema(TuiPreferencesSchema, { hideThinking: settings.hideThinkingBlock ?? false,
       showImages: terminal.showImages ?? true, imageWidthCells: terminal.imageWidthCells ?? 60, outputPad: settings.outputPad ?? 1,
-      toolDisplay: tui.toolDisplay ?? 'grouped', keybindings });
+      toolDisplay: tui.toolDisplay ?? 'grouped', keybindings,
+      ...(markdown.mermaid === undefined ? {} : { mermaid: markdown.mermaid }),
+      ...Object.fromEntries(['quietStartup', 'fullscreenScrollbar', 'fullscreenCopyOnSelect', 'fullscreenWheelScrollLines']
+        .flatMap(key => settings[key] === undefined ? [] : [[key, settings[key]]])),
+      ...(settings.showHardwareCursor === undefined ? {} : { hardwareCursor: settings.showHardwareCursor }),
+      ...(settings.editorPaddingX === undefined ? {} : { editorPadding: settings.editorPaddingX }),
+      ...(settings.autocompleteMaxVisible === undefined ? {} : { autocompleteMaxVisible: settings.autocompleteMaxVisible }),
+      ...(terminal.clearOnShrink === undefined ? {} : { clearOnShrink: terminal.clearOnShrink }),
+      ...(terminal.showTerminalProgress === undefined ? {} : { terminalProgress: terminal.showTerminalProgress }) });
   }
 
   async set(value: TuiPreferencesUpdate): Promise<void> {

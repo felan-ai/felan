@@ -63,7 +63,7 @@ export function createMemoryPresentation(pi: FelanExtensionAPI, environment: Mem
                 const key = randomUUID(); selected.set(key, row);
                 const name = label(row.name || row.id);
                 return { id: key, values: { run: name, project: label(row.cwd), updated: row.modified.toISOString(), messages: row.messageCount }, fallback: name };
-              }), actions: [...actions, close], query: { actionId: 'query', values: { query } },
+              }), actions: [...actions.filter(action => action.id !== 'inspect' || rows.length > 0), close], query: { actionId: 'query', values: { query } },
               ...(page > 0 || (page + 1) * pageSize < rows.length ? { paging: {
                 ...(page > 0 ? { previousActionId: 'previous' } : {}), ...((page + 1) * pageSize < rows.length ? { nextActionId: 'next' } : {}),
               } } : {}) };

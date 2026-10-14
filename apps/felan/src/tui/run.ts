@@ -3,6 +3,7 @@ import { TuiSessionController, type TuiSessionOptions } from './controller.js';
 import { DaemonTuiScreen } from './screen.js';
 import { createClientKeybindings } from './keybindings.js';
 import type { DaemonAction } from './commands.js';
+import { pickSession } from './session-navigator.js';
 import { TerminalInteractions } from './interactions.js';
 import { createPresentationUi } from './presentation-ui.js';
 import { ClientThemes } from './theme-config.js';
@@ -48,16 +49,26 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
     controller.setNotice('Interactive setup is not ready yet. Wait for the daemon connection.');
     return false;
   };
-  const preferences: TerminalPreferences = new TerminalPreferences(controller, options, async (_values, bindings, next): Promise<void> => {
+  const preferences: TerminalPreferences = new TerminalPreferences(controller, options, async (values, bindings, next): Promise<void> => {
     if (stopped) return;
     theme = next;
     keybindings.setUserBindings(bindings);
+    tui.setShowHardwareCursor(values.hardwareCursor ?? false);
+    tui.setClearOnShrink(values.clearOnShrink ?? false);
+    screen.editor.setPaddingX(values.editorPadding ?? 1);
+    screen.editor.setAutocompleteMaxVisible(values.autocompleteMaxVisible ?? 5);
+    screen.scroll.setScrollbar(values.fullscreenScrollbar ?? 'auto');
+    if (tui instanceof TuiAltScreen) {
+      tui.setCopyOnSelect(values.fullscreenCopyOnSelect ?? true);
+      tui.setWheelScrollLines(values.fullscreenWheelScrollLines ?? 'auto');
+    }
+    terminal.setProgress((values.terminalProgress ?? false) && !!controller.snapshot && !['idle', 'interrupted'].includes(controller.snapshot.run.state));
     screen.refreshPresentation();
     if (themes.warnings.length) controller.setNotice(themes.warnings.join('\n'));
   }, themes);
   let builtins: ReturnType<typeof createTerminalPresenters> | undefined;
   const settings = () => preferences.settings;
-  const screen: DaemonTuiScreen = new DaemonTuiScreen(controller, tui, { cwd: options.cwd, exit, settings, theme: () => theme, preferences: (): Promise<boolean> => preferences.open(screen.dialogs),
+  const screen: DaemonTuiScreen = new DaemonTuiScreen(controller, tui, { cwd: options.cwd, exit, settings, theme: () => theme, quietStartup: () => preferences.values.quietStartup ?? false, preferences: (): Promise<boolean> => preferences.open(screen.dialogs),
     agents: async id => { if (!builtins) throw new Error('Session UI is not ready.'); await builtins.openExecutions(id); },
     login: (provider?: string): Promise<boolean> => setupAction('login', provider), logout: (): Promise<boolean> => setupAction('logout'), dependencies: (): Promise<boolean> => setupAction('dependencies'), toolPresentation: terminalToolPresentation,
     hasRenderer: element => isPowerlinePresentation(element) || ('hint' in element && !!builtins?.presenters.hints.get(element.hint)),
@@ -93,6 +104,11 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       unsubscribeColors = tui.onTerminalColorSchemeChange(value => { themes.setAppearance(value); theme = themes.theme; screen.refreshPresentation(); });
       tui.setTerminalColorSchemeNotifications(true);
     }
+    const applyTerminalColors = (colors: Awaited<ReturnType<TUI['queryTerminalColors']>>) => {
+      if (stopped) return;
+      themes.setTerminalColors(colors); theme = themes.theme; screen.refreshPresentation();
+    };
+    void tui.queryTerminalColors({ timeoutMs: 1000, onLateReply: applyTerminalColors }).then(applyTerminalColors).catch(() => {});
     setup = new TerminalSetup(controller, createSetupUi(tui, screen.dialogs, () => theme, keybindings, () => !interactions?.busy));
     let setupSession: string | undefined;
     unsubscribeSetup = controller.subscribe(() => {
@@ -106,6 +122,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       setEditorText: text => { screen.editor.setText(text); tui.requestRender(); } });
     let footerSession: string | undefined;
     unsubscribeFooter = controller.subscribe(() => {
+      terminal.setProgress((preferences.values.terminalProgress ?? false) && !!controller.snapshot && !['idle', 'interrupted'].includes(controller.snapshot.run.state));
       if (footerSession === controller.sessionId) return;
       footerSession = controller.sessionId; footer?.dispose(); footer = undefined;
       if (footerSession) footer = createClientPowerlineFooter(controller.client, footerSession, {
@@ -114,8 +131,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       screen.setFooter(footer);
     });
     interactions = new TerminalInteractions(controller, builtins.presenters, setup);
-    const starting = controller.start(options, sessions => screen.dialogs.select('Resume session', sessions.map(session => ({ value: session.session,
-      label: session.title || session.session, description: `${session.cwd} · ${session.run.state}` }))), async () => {
+    const starting = controller.start(options, async sessions => (await pickSession(screen.dialogs, sessions, options.cwd, undefined, () => theme, false))?.session, async () => {
       await preferences.load();
       if (!controller.client.capabilities?.operations.includes('host.status')) return;
       const response = await controller.perform('host.status', {});
@@ -159,6 +175,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
     void stopInteractions?.catch(() => {});
     await setup?.dispose();
     const cleanup = await Promise.allSettled([stopInteractions, builtins?.dispose(), controller.dispose(), screen.dispose()]);
+    terminal.setProgress(false);
     tui.stop();
     const failures = cleanup.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     if (failures.length) throw new AggregateError(failures, 'Terminal cleanup failed.');

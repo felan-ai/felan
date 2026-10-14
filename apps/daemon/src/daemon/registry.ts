@@ -44,6 +44,7 @@ export interface RegistryOptions {
   idleMs?: number;
   processAdapter?: ProcessAdapter;
   commandAvailable?(session: string, name: string): boolean;
+  onViewCancellationDiagnostic?(event: { session: string; elementId: string; reason: 'failed' | 'timeout' | 'limit' }): void;
 }
 export interface RegistryMutationContext {
   readonly session: AgentSession;
@@ -61,7 +62,12 @@ interface Entry {
   host?: ExecutionHost;
   lastDetached: number;
   disposing?: Promise<void>;
+  runtimeDisposed?: boolean;
   cancelling?: Promise<void>;
+  cancellingViews?: Promise<void>;
+  viewActions?: Set<AbortController>;
+  viewCancellation?: { attempted: Set<string>; rounds: number };
+  command?: { runId: string; views: Set<string> };
 }
 class RegistryOpeningCancelled extends Error {}
 
@@ -145,6 +151,7 @@ export class SessionRegistry {
   async waitForDrain(): Promise<void> {
     this.assertAdmission();
     if (!this.draining) throw new Error('Drain must be started before waiting.');
+    await this.join([...this.entries.keys()].map(id => this.cancelViews(id)));
     await this.join([...this.opening.values(), ...this.closes.values(), ...this.lifecycleWriters], undefined, true);
     for (const entry of this.entries.values()) {
       await entry.host?.settle();
@@ -310,9 +317,29 @@ export class SessionRegistry {
     return () => { if (entry.prepareUiAction === prepare) delete entry.prepareUiAction; };
   }
   prepareUiAction(id: string, request: OperationParams<'ui.action'>) {
-    const prepare = this.require(id).prepareUiAction;
+    const entry = this.require(id);
+    const prepare = entry.prepareUiAction;
     if (!prepare) throw registryError('unavailable', 'Session UI actions are unavailable.');
-    return prepare(request);
+    const execute = prepare(request);
+    if (request.outcome !== 'cancel') return execute;
+    return async (context: Parameters<typeof execute>[0]) => {
+      const controller = new AbortController();
+      const signal = AbortSignal.any([context.signal, controller.signal]);
+      const actions = entry.viewActions ??= new Set();
+      actions.add(controller);
+      let onAbort!: () => void;
+      const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(signal.reason);
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+      try {
+        signal.throwIfAborted();
+        await Promise.race([execute({ ...context, signal }), aborted]);
+      } finally {
+        signal.removeEventListener('abort', onAbort);
+        actions.delete(controller);
+      }
+    };
   }
   executionHost(id: string): ExecutionHost {
     const existing = this.entries.get(id)?.host;
@@ -335,6 +362,7 @@ export class SessionRegistry {
     const writer = new Promise<void>(resolve => { finish = resolve; });
     entry.writers.add(writer);
     entry.dispatches.add(requestId); entry.projection.setOrigin(origin);
+    if (request.op === 'command.invoke') entry.command = { runId: run.id, views: new Set() };
     try {
       entry.projection.syncCursor();
       this.commitDispatch(requestId, id);
@@ -345,6 +373,7 @@ export class SessionRegistry {
     finally {
       try {
         entry.dispatches.delete(requestId);
+        if (entry.command?.runId === run.id) delete entry.command;
         if (!this.failure) {
           if (!entry.cancelling) entry.projection.settleRun(run.id);
           entry.projection.refresh();
@@ -603,6 +632,7 @@ export class SessionRegistry {
     const operation = Promise.resolve().then(async () => {
       entry.projection.transitionForSafety('cancelling', stored.run.id);
       this.settleInteractions(id, 'cancel');
+      await this.cancelViews(id);
       await entry.binding.runtime.session.abort();
       await this.processes.cancelForeground(id);
       await this.join([...entry.writers]);
@@ -614,7 +644,10 @@ export class SessionRegistry {
     entry.cancelling = operation;
     try { await operation; }
     catch (error) { this.cancellationFailures.add(error); throw error; }
-    finally { delete entry.cancelling; }
+    finally {
+      delete entry.cancelling;
+      if (!this.draining && !this.stopping && !this.closing.has(id)) delete entry.viewCancellation;
+    }
     if (!this.stopping && !this.failure && !this.closing.has(id) && !this.closing.has(stored.root)) this.entries.get(stored.root)?.host?.resumeQueued();
   }
 
@@ -685,6 +718,7 @@ export class SessionRegistry {
     // Host shutdown cancels its full descendant tree and waits beyond terminal status records.
     const entry = this.entries.get(id);
     this.settleInteractions(id, 'close');
+    if (entry) await this.cancelViews(id);
     await entry?.host?.shutdown();
     for (const child of descendants) await this.close(child.id);
     if (entry) {
@@ -706,23 +740,34 @@ export class SessionRegistry {
       .map(row => ({ id: row.id, run: row.run.id! })) : [];
     this.stopping = true;
     if (this.failure) { await this.failureSettlement; throw new Error('Registry is fenced; verify settlement before releasing ownership.'); }
-    await this.join([...this.opening.values(), ...this.closes.values(), ...this.lifecycleWriters], undefined, true);
+    const cancellations = [...this.entries].map(([id, entry]) => {
+      if (!options.interrupt) return this.cancelViews(id);
+      this.closing.add(id);
+      this.settleInteractions(id, 'shutdown');
+      return this.join([this.cancelViews(id), entry.host?.shutdown() ?? Promise.resolve(), entry.binding.runtime.session.abort()]);
+    });
+    await this.join([...cancellations, ...this.opening.values(), ...this.closes.values(), ...this.lifecycleWriters], undefined, true);
     for (const [id, entry] of this.entries) {
       this.closing.add(id);
       this.settleInteractions(id, 'shutdown');
-      if (options.interrupt) {
-        await this.join([entry.host?.shutdown() ?? Promise.resolve(), entry.cancelling ?? Promise.resolve(), entry.binding.runtime.session.abort()]);
-      } else {
+      if (!options.interrupt) {
+        await this.cancelViews(id);
         await entry.host?.shutdown();
         await entry.cancelling;
         await entry.binding.runtime.session.abort();
       }
       await this.processes.cancelForeground(id);
-      await Promise.all(entry.writers);
-      entry.projection.settleRun(this.options.store.session(id).run.id);
+      if (!options.interrupt) await Promise.all(entry.writers);
       await this.processes.settle(entry.binding.rootSessionId);
       for (const service of entry.services) await this.processes.withCleanup(id, async () => { await service.settle(); await service.dispose(); });
       entry.services.clear();
+      if (options.interrupt) {
+        await this.processes.withCleanup(id, () => entry.binding.runtime.dispose());
+        entry.runtimeDisposed = true;
+        await entry.cancelling;
+        await Promise.all(entry.writers);
+      }
+      entry.projection.settleRun(this.options.store.session(id).run.id);
       await this.disposeEntry(id, false);
     }
     for (const services of this.retainedServices.values()) for (const service of services) { await service.settle(); await service.dispose(); }
@@ -862,7 +907,11 @@ export class SessionRegistry {
         commandAvailable: name => this.options.commandAvailable?.(binding!.sessionId, name) === false ? false
           : this.commandDispatcher?.(binding!.sessionId, name) ?? this.options.commandAvailable?.(binding!.sessionId, name) ?? false,
         canSettle: () => { const current = this.entries.get(binding!.sessionId); return !current?.dispatches.size && !current?.cancelling; },
-        onRefresh: () => { if (!this.stopping && !this.failure && this.entries.has(binding!.sessionId)) this.activatePolicy(binding!.rootSessionId); },
+        onRefresh: () => {
+          const current = this.entries.get(binding!.sessionId);
+          if (current) this.updateCommandState(current);
+          if (!this.stopping && !this.failure && current) this.activatePolicy(binding!.rootSessionId);
+        },
       });
       const entry: Entry = { binding, projection, attachments: new Map(), dispatches: new Set(), writers: new Set(), services: this.retainedServices.get(binding.sessionId) ?? new Set(), lastDetached: this.now() };
       this.retainedServices.delete(binding.sessionId); this.entries.set(binding.sessionId, entry);
@@ -917,6 +966,67 @@ export class SessionRegistry {
     }
   }
 
+  private cancelViews(id: string): Promise<void> {
+    const entry = this.require(id);
+    if (entry.cancellingViews) return entry.cancellingViews;
+    for (const controller of entry.viewActions ?? []) controller.abort();
+    const cancellation = entry.viewCancellation ??= { attempted: new Set(), rounds: 0 };
+    const work = Promise.resolve().then(async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 250);
+      let aborted!: () => void;
+      const deadline = new Promise<void>(resolve => { aborted = resolve; });
+      controller.signal.addEventListener('abort', aborted, { once: true });
+      try {
+        for (;;) {
+          const actions = entry.projection.presentations().flatMap(element => {
+            if (element.kind !== 'view' && element.kind !== 'document' && element.kind !== 'progress') return [];
+            const action = element.actions.find(action => action.target === 'element' && action.outcome === 'cancel');
+            const key = JSON.stringify([element.id, element.revision]);
+            if (!action || cancellation.attempted.has(key)) return [];
+            cancellation.attempted.add(key);
+            return [{ elementId: element.id, revision: element.revision, actionId: action.id, outcome: action.outcome, values: {} }];
+          });
+          if (!actions.length) return;
+          if (cancellation.rounds++ >= 8 || controller.signal.aborted) {
+            for (const action of actions) this.viewCancellationDiagnostic(id, action.elementId, controller.signal.aborted ? 'timeout' : 'limit');
+            return;
+          }
+          await Promise.all(actions.map(async action => {
+            try {
+              const execute = this.prepareUiAction(id, action);
+              await Promise.race([execute({ requestId: randomUUID(), signal: controller.signal }), deadline]);
+              if (controller.signal.aborted) this.viewCancellationDiagnostic(id, action.elementId, 'timeout');
+            } catch (error) {
+              if ((error as { code?: string } | null)?.code !== 'stale_request') this.viewCancellationDiagnostic(id, action.elementId, controller.signal.aborted ? 'timeout' : 'failed');
+            }
+          }));
+        }
+      } finally {
+        clearTimeout(timer);
+        controller.signal.removeEventListener('abort', aborted);
+        controller.abort();
+        delete entry.cancellingViews;
+        entry.writers.delete(work);
+      }
+    });
+    entry.cancellingViews = work;
+    entry.writers.add(work);
+    return work;
+  }
+
+  private viewCancellationDiagnostic(session: string, elementId: string, reason: 'failed' | 'timeout' | 'limit'): void {
+    try { this.options.onViewCancellationDiagnostic?.({ session, elementId, reason }); } catch { /* Diagnostics cannot block best-effort cancellation. */ }
+  }
+
+  private updateCommandState(entry: Entry): void {
+    if (!entry.command) return;
+    const run = this.options.store.session(entry.binding.sessionId).run;
+    if (run.id !== entry.command.runId || run.state !== 'running' && run.state !== 'waiting') return;
+    const state = entry.command.views.size && entry.binding.runtime.session.isIdle ? 'waiting' : 'running';
+    if (state !== run.state) entry.projection.publish({ type: 'run.updated', run: { ...run, state } }, { run: { ...run, state } });
+  }
+
   private extras(id: string): { children: SessionSnapshot['children']; processes: SessionSnapshot['processes']; interactions: SessionSnapshot['interactions'] } {
     const state = this.options.store.snapshot(); const session = this.options.store.session(id);
     return { children: state.sessions.filter(item => item.parent === id && item.deletedAt === undefined).map(item => ({ session: item.id, parent: id, root: item.root, title: item.title, state: item.state, run: item.run })),
@@ -928,6 +1038,25 @@ export class SessionRegistry {
       for (const listener of this.interactionListeners) listener(structuredClone(interaction));
     }
     for (const listener of this.listeners.get(event.session) ?? []) { try { listener(structuredClone(event)); } catch { /* A client observer does not own runtime lifetime. */ } }
+    const entry = this.entries.get(event.session);
+    if (!entry || !('change' in event)) return;
+    const change = event.change;
+    if (change.type === 'run.updated') { this.updateCommandState(entry); return; }
+    if (change.type !== 'presentation.updated' && change.type !== 'presentation.removed') return;
+    if (entry.command) {
+      if (change.type === 'presentation.removed' && 'id' in change) entry.command.views.delete(change.id);
+      else if ('presentation' in change) {
+        const element = change.presentation;
+        if ((element.kind === 'view' || element.kind === 'document') && element.actions.some(action => action.target === 'element' && action.outcome === 'cancel')) entry.command.views.add(element.id);
+        else entry.command.views.delete(element.id);
+      }
+      this.updateCommandState(entry);
+    }
+    if (change.type === 'presentation.updated' && 'presentation' in change && (this.draining || this.stopping || this.closing.has(event.session) || entry.cancelling)) {
+      void Promise.resolve().then(() => {
+        if (this.entries.get(event.session) === entry) return this.cancelViews(event.session);
+      }).catch(() => this.viewCancellationDiagnostic(event.session, change.presentation.id, 'failed'));
+    }
   }
   private policyUpdate(id: string, policy: Policy): void {
     const projection = this.entries.get(id)?.projection;
@@ -949,7 +1078,7 @@ export class SessionRegistry {
       if (close) for (const service of entry.services) await this.processes.withCleanup(id, () => service.dispose());
       await entry.host?.shutdown();
       await this.processes.settle(entry.binding.rootSessionId, false, new Set([id]));
-      await this.processes.withCleanup(id, () => entry.binding.runtime.dispose());
+      if (!entry.runtimeDisposed) await this.processes.withCleanup(id, () => entry.binding.runtime.dispose());
       this.processes.revoke(id);
       this.options.owner.assertCurrent();
       const stored = this.options.store.session(id);

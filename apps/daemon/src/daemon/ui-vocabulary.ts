@@ -302,7 +302,7 @@ export function createUiVocabulary(callbacks: UiVocabularyCallbacks): UiVocabula
       const requestId = parseSchema(IdSchema, context.requestId);
       checkElement(element);
       const signal = AbortSignal.any([element.signal, context.signal]);
-      const result = element.actions.catch(() => {}).then(async () => {
+      const invocation = element.actions.catch(() => {}).then(async () => {
         await element.writes.catch(() => {});
         checkElement(element);
         signal.throwIfAborted();
@@ -311,6 +311,12 @@ export function createUiVocabulary(callbacks: UiVocabularyCallbacks): UiVocabula
         await element.handler(parsed, { requestId, signal });
         element.lifetime.throwIfAborted();
         context.signal.throwIfAborted();
+      });
+      const result = action.outcome !== 'cancel' ? invocation : new Promise<void>((resolve, reject) => {
+        const onAbort = () => reject(context.signal.reason);
+        if (context.signal.aborted) onAbort();
+        else context.signal.addEventListener('abort', onAbort, { once: true });
+        void invocation.then(resolve, reject).finally(() => context.signal.removeEventListener('abort', onAbort));
       });
       element.actions = result;
       return track(result);

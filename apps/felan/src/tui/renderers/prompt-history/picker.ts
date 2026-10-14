@@ -57,7 +57,7 @@ export class PromptHistoryPicker implements Component, Focusable {
 		private readonly done: (value: PromptHistoryResult | undefined) => void,
 		private readonly displayMode: PromptHistoryDisplayMode = "inline",
 		navigation?: PromptHistoryNavigation,
-		private readonly element?: { source: UiView | UiDocument; action(id?: string, itemId?: string): void; use?(): void },
+		private readonly element?: { source: UiView | UiDocument; action(id?: string, itemId?: string): void; use?(): void; search?(query: string, scope: PromptHistoryScope): void },
 	) {
 		if (navigation) { this.scope = navigation.scope; this.query = navigation.query; this.selectedIndex = navigation.selectedIndex; }
 		this.states = {
@@ -66,7 +66,12 @@ export class PromptHistoryPicker implements Component, Focusable {
 			all: emptySearchState(false),
 		};
 		if (element) {
-      if (element.source.kind === "view") this.selectedIndex = Math.max(0, element.source.items.findIndex(item => item.id === navigation?.selectedId));
+      if (element.source.kind === "view") {
+        this.selectedIndex = Math.max(0, element.source.items.findIndex(item => item.id === navigation?.selectedId));
+        const values = element.source.query?.values;
+        if (typeof values?.query === "string") this.query = values.query;
+        if (PROMPT_HISTORY_SCOPES.includes(values?.scope as PromptHistoryScope)) this.scope = values!.scope as PromptHistoryScope;
+      }
       return;
     }
 		if (!search) throw new Error("Prompt search is required.");
@@ -134,10 +139,20 @@ export class PromptHistoryPicker implements Component, Focusable {
 		const { source, action } = this.element!;
 		if (source.kind === "document" && (matchesKey(data, Key.enter) || data === "u")) { this.element!.use?.(); return; }
 		const shortcuts: Record<string, string> = { "[": "previous", "]": "next" };
-		if (matchesKey(data, Key.escape)) { this.done(undefined); return; }
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) { this.done(undefined); return; }
 		const id = shortcuts[data];
-		if (matchesKey(data, Key.ctrl("s")) || matchesKey(data, Key.ctrl("r"))) { action("search"); return; }
-		if (data === "a") { action(); return; }
+		if (source.kind === "view" && (matchesKey(data, Key.ctrl("s")) || matchesKey(data, Key.ctrl("r")) || matchesKey(data, Key.super("r")))) {
+      if (!source.actions.find(entry => entry.id === "search")?.input?.fields.some(field => field.id === "scope")) { action("search"); return; }
+      const scope = PROMPT_HISTORY_SCOPES[(PROMPT_HISTORY_SCOPES.indexOf(this.scope) + 1) % PROMPT_HISTORY_SCOPES.length]!;
+      this.element!.search?.(this.query, scope); return;
+    }
+    if (matchesKey(data, Key.alt("a"))) { action(); return; }
+    if (source.kind === "view" && (matchesKey(data, Key.backspace) || Array.from(data).length === 1 && (data.codePointAt(0) ?? 0) >= 32)) {
+      this.query = matchesKey(data, Key.backspace) ? Array.from(this.query).slice(0, -1).join("") : this.query + data;
+      if (this.searchTimer) clearTimeout(this.searchTimer);
+      this.searchTimer = setTimeout(() => this.element!.search?.(this.query, this.scope), PROMPT_HISTORY_SEARCH_DEBOUNCE_MS);
+      this.requestRender(); return;
+    }
 		if (id && source.actions.some(entry => entry.id === id)) { action(id); return; }
 		if (source.kind === "document") {
 			if (matchesKey(data, Key.left) || matchesKey(data, Key.backspace)) { action("back"); return; }
@@ -157,7 +172,7 @@ export class PromptHistoryPicker implements Component, Focusable {
 		const source = this.element!.source;
 		const clean = (text: string) => stripVTControlCharacters(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu, "");
 		const lines = [this.theme.fg("accent", this.theme.bold(clean(source.title))),
-			source.kind === "view" ? "↑↓ navigate · enter read · Ctrl+R search/scope · a all actions · Esc dismiss" : "↑↓ scroll · enter use full prompt · ← results · [/] pages · Esc dismiss"];
+			source.kind === "view" ? `Search: ${clean(this.query)} · ↑↓ navigate · enter use · Ctrl+R scope · Alt+A actions · Esc close` : "↑↓ scroll · enter use full prompt · ← results · [/] pages · Esc dismiss"];
 		if (source.kind === "document") {
 			const content = clean(decodeUiMarkdown(source.markdown, { plainText: true })).split("\n");
 			this.elementLineCount = content.length;
@@ -165,7 +180,8 @@ export class PromptHistoryPicker implements Component, Focusable {
 		}
 		else for (const [index, item] of source.items.slice(this.visibleStart(source.items.length), this.visibleStart(source.items.length) + MAX_VISIBLE_PROMPT_HISTORY_ITEMS).entries()) {
 			const selected = this.visibleStart(source.items.length) + index === this.selectedIndex;
-			lines.push(clean(`${selected ? "›" : " "} ${item.values.preview}${item.values.clipped ? "…" : ""}`),
+			const preview = clean(`${selected ? "›" : " "} ${item.values.preview}${item.values.clipped ? "…" : ""}`);
+			lines.push(selected ? this.theme.fg("accent", this.theme.bold(preview)) : preview,
 				this.theme.fg("dim", clean(`  ${item.values.project} · ${item.values.session} · ${new Date(Number(item.values.timestamp)).toLocaleString()}`)));
 		}
 		return frameLines(lines.map(line => truncateToWidth(line, Math.max(1, width - 2), "…")), width, this.displayMode, this.theme);

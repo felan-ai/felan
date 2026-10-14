@@ -41,11 +41,14 @@ describe('portable context report document', () => {
     expect(document).toMatchObject({ kind: 'document', revision: 1, title: 'Context usage' });
     expect(document.hint).toEqual(CONTEXT_DOCUMENT_HINT);
     if (document.kind !== 'document') throw new Error('Expected report document');
-    expect(document.markdown).toContain('| Free Space | 64 |');
-    expect(document.markdown).toContain('| recalls | 4 |');
-    expect(document.markdown).toContain('| extension-11 | 1 | 11 |');
-    expect(document.markdown).toContain('| skill-11 | 11 | yes |');
+    expect(document.markdown).toContain('Free Space: 64 (64%)');
+    expect(document.markdown).toContain('recalls 4');
+    expect(document.markdown).toContain('extension-11 · 1 tools · 11 tokens');
+    expect(document.markdown).toContain('skill-11 · 11 tokens');
     expect(document.markdown).toContain('estimates, not provider billing measurements');
+    expect(document.markdown).toContain('System Prompt: 1 (1.0%) · System Tools: 2 (2.0%) · Extensions: 3 (3.0%)');
+    expect(document.markdown).toContain('skill-0 · 0 tokens · not included in prompt');
+    expect(document.markdown).not.toContain('| ---');
     expect(document.actions).toEqual([{ id: 'close', label: 'Close report', target: 'element', outcome: 'cancel' }]);
     await closeDocument(options, document.id, controller.signal);
     await work;
@@ -77,10 +80,22 @@ describe('portable context report document', () => {
     const data = { ...original, breakdown: { ...original.breakdown, available: 0 }, contextWindow: null, usagePercent: null };
     const work = h.host.show(data, controller.signal);
     const [document, options] = h.present.mock.calls[0]!;
-    expect(document).toHaveProperty('markdown', expect.stringContaining('Usage: 36 / unknown tokens\nUsage percent: unknown'));
+    expect(document).toHaveProperty('markdown', expect.stringContaining('Used: 36 / unknown (n/a) estimated'));
     await closeDocument(options, document.id, controller.signal);
     await work;
   });
+
+  it.each([[6.204411764705883, '6.2%'], [9.96, '10.0%'], [10.4, '10%'], [99.6, '100%'], [0, '0.0%']])(
+    'formats usage %s with the released display precision', async (usagePercent, expected) => {
+      const h = harness();
+      const controller = new AbortController();
+      const work = h.host.show({ ...report(), usagePercent: usagePercent as number }, controller.signal);
+      const [document, options] = h.present.mock.calls[0]!;
+      expect(document).toHaveProperty('markdown', expect.stringContaining(`(${expected}) estimated`));
+      await closeDocument(options, document.id, controller.signal);
+      await work;
+    },
+  );
 
   it('rejects oversized and incomplete reports before presenting instead of truncating', async () => {
     const h = harness();

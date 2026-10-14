@@ -11,9 +11,10 @@ export interface AgentViewTranscript {
   tools?: Array<{ id: string; state: 'running' | 'completed' | 'failed' | 'interrupted'; output: string; truncated: boolean }>;
   compactions?: Array<{ message: number; method: 'Classifier' | 'Summary' | 'Native' }>;
   fallbacks?: Array<{ before: number; text: string }>;
-  streamingText?: string;
+  streamingContent?: Array<{ type: 'text'; text: string } | { type: 'thinking'; thinking: string }>;
+  runningShells?: number[];
   result?: string;
-  settings: { hideThinking: boolean; showImages: boolean; imageWidthCells: number; outputPad: number; toolMode: 'grouped' | 'full' };
+  settings: { hideThinking: boolean; showImages: boolean; imageWidthCells: number; outputPad: number; toolMode: 'grouped' | 'full'; mermaid?: 'off' | 'final' | 'streaming' };
 }
 
 export interface LocalSubagentView extends Execution {

@@ -5,10 +5,12 @@ import {
 
 export interface UiHintRenderer {
   form?(form: UiForm, signal: AbortSignal): Promise<UiFormAnswer | undefined>;
+  updatePresentation?(element: UiPresentation, signal: AbortSignal): boolean;
   presentation?(element: UiPresentation, signal: AbortSignal): Promise<UiActionRequest | undefined>;
 }
 
 export class UiHintRenderers {
+  private readonly updates = new WeakMap<AbortSignal, UiPresentation>();
   private readonly renderers = new Map<string, { renderer: UiHintRenderer }>();
 
   register(hint: UiHint, renderer: UiHintRenderer): () => void {
@@ -21,6 +23,16 @@ export class UiHintRenderers {
 
   get(hint: UiHint | undefined): UiHintRenderer | undefined {
     return hint && this.renderers.get(this.key(hint))?.renderer;
+  }
+
+  updatePresentation(element: UiPresentation, signal: AbortSignal): boolean {
+    if (signal.aborted || !this.get(element.hint)?.updatePresentation?.(element, signal)) return false;
+    this.updates.set(signal, element);
+    return true;
+  }
+
+  currentPresentation(element: UiPresentation, signal: AbortSignal): UiPresentation {
+    return this.updates.get(signal) ?? element;
   }
 
   private key(hint: UiHint): string { return JSON.stringify([hint.id, hint.version]); }

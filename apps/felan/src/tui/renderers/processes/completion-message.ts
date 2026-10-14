@@ -1,15 +1,11 @@
-import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
+import type { ExtensionContext } from '@felan-ai/agent-core';
 import {
-  stripTerminalSequences,
   truncateToWidth,
   type Component,
 } from '@earendil-works/pi-tui';
 import type { BackgroundBashStatus } from '@felan-ai/ext-background-bash/data';
-import { BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE } from '@felan-ai/ext-background-bash/data';
 
-const MAX_DETAIL_LINES = 3;
-const MAX_INLINE_CHARACTERS = 240;
-const INLINE_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/gu;
+import { MAX_DETAIL_LINES, summaryLines, inlineText, isRecord } from '../../completion-text.js';
 
 type Theme = ExtensionContext['ui']['theme'];
 type TerminalStatus = Exclude<BackgroundBashStatus, 'running'>;
@@ -21,25 +17,6 @@ interface CompletionJobDetails {
   readonly exitCode?: number | null;
   readonly signal?: string | null;
   readonly error?: string;
-}
-
-interface CompletionMessageDetails {
-  readonly job?: unknown;
-}
-
-export function registerBackgroundBashCompletionRenderer(
-  pi: Pick<FelanExtensionAPI, 'registerMessageRenderer'>,
-): void {
-  pi.registerMessageRenderer<CompletionMessageDetails>(
-    BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE,
-    (message, options, theme) => new BackgroundBashCompletionComponent(
-      completionJob(message.details),
-      messageText(message.content),
-      options.expanded,
-      options.outputPad,
-      theme,
-    ),
-  );
 }
 
 export class BackgroundBashCompletionComponent implements Component {
@@ -69,7 +46,7 @@ export class BackgroundBashCompletionComponent implements Component {
       if (this.#detailLines.length > MAX_DETAIL_LINES) {
         lines.push(this.theme.fg(
           'dim',
-          `  … ${this.#detailLines.length - MAX_DETAIL_LINES} more lines · Alt+A full details`,
+          `  … ${this.#detailLines.length - MAX_DETAIL_LINES} more lines · /processes full details`,
         ));
       }
     }
@@ -84,19 +61,19 @@ export class BackgroundBashCompletionComponent implements Component {
       const summary = this.#detailLines[0];
       return `${this.theme.fg('warning', '?')} ${this.theme.bold('Background process finished')}`
         + (summary ? this.theme.fg('muted', ` · ${summary}`) : '')
-        + this.theme.fg('muted', ' · Alt+A details');
+        + this.theme.fg('muted', ' · /processes details');
     }
 
     const metadata = [shortJobId(this.job.id)];
     if (!this.expanded && this.job.command) metadata.push(`$ ${inlineText(this.job.command)}`);
-    metadata.push('Alt+A details');
+    metadata.push('/processes details');
     return `${statusIcon(this.job.status, this.theme)} ${this.theme.bold(statusTitle(this.job.status))}`
       + this.theme.fg('muted', ` · ${metadata.join(' · ')}`);
   }
 }
 
-function completionJob(details: CompletionMessageDetails | undefined): CompletionJobDetails | undefined {
-  const job = details?.job;
+export function completionJob(details: unknown): CompletionJobDetails | undefined {
+  const job = isRecord(details) ? details.job : undefined;
   if (!isRecord(job)) return undefined;
   if (
     typeof job.id !== 'string'
@@ -139,39 +116,9 @@ function shortJobId(id: string): string {
   return normalized.match(/-([a-f0-9]{6})$/u)?.[1] ?? normalized.slice(0, 12);
 }
 
-function summaryLines(value: string): string[] {
-  return stripTerminalSequences(value)
-    .replace(/\r/g, '')
-    .split('\n')
-    .map((line) => inlineText(line).replace(/^(?:#{1,6}|[-*+])\s+/u, ''))
-    .filter(Boolean);
-}
-
-function inlineText(value: string): string {
-  const normalized = stripTerminalSequences(value)
-    .replace(INLINE_CONTROL_CHARACTERS, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return normalized.length <= MAX_INLINE_CHARACTERS
-    ? normalized
-    : `${normalized.slice(0, MAX_INLINE_CHARACTERS - 1)}…`;
-}
-
-function messageText(content: string | readonly { type: string; text?: string }[]): string {
-  if (typeof content === 'string') return content;
-  return content
-    .filter((entry) => entry.type === 'text' && typeof entry.text === 'string')
-    .map((entry) => entry.text!)
-    .join('\n');
-}
-
 function isTerminalStatus(value: unknown): value is TerminalStatus {
   return value === 'completed'
     || value === 'failed'
     || value === 'killed'
     || value === 'unknown';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

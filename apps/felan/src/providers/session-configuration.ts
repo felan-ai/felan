@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { ExtensionConfigDefinition, ExtensionConfigValue, SettingsManager } from '@felan-ai/agent-core';
 
 const settingKeys = ['defaultProvider', 'defaultModel', 'defaultThinkingLevel', 'modelThinkingLevels',
-  'transport', 'steeringMode', 'followUpMode', 'compaction', 'branchSummary', 'retry', 'images',
+  'transport', 'steeringMode', 'followUpMode', 'compaction', 'branchSummary', 'retry', 'images', 'cacheWarming', 'enableSkillCommands',
   'enabledModels', 'defaultTools', 'thinkingBudgets', 'codemode', 'felanClassifier', 'felanThinking',
   'felanSubagents', 'outputStyle', 'piExtensions'] as const;
 

@@ -18,7 +18,7 @@ import { join } from 'node:path';
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function fixture(builtins: BuiltinExtensionName[] = ['subagents', 'askUser']) {
+async function fixture(builtins: BuiltinExtensionName[] = ['subagents', 'askUser'], skill = false) {
   let broker: InteractionBroker | undefined;
   const requests: RegistryOpenRequest[] = [];
   const scopes = new Map<string, { runtime: AgentRuntime; sessions: SessionsService; openWorker: import('@felan-ai/agent-core').HostWorkerLauncher }>();
@@ -29,7 +29,7 @@ async function fixture(builtins: BuiltinExtensionName[] = ['subagents', 'askUser
     const root = await localRoots.open(context, port);
     return root;
   } } satisfies ReturnType<typeof createLocalExecutionRoots>;
-  const f = await serverFixture({ now: Date.now, deferActivation: true, builtins,
+  const f = await serverFixture({ now: Date.now, deferActivation: true, builtins, skill,
     extensionPackages: builtins.map(name => builtinExtensionPackages[name]),
     async openServiceScope(context) {
       const services = createFelanServiceRegistry();
@@ -81,7 +81,16 @@ it('supplies required services to package-owned execution entries', async () => 
   expect(f.root.diagnostics.filter(diagnostic => diagnostic.message.includes('required service'))).toEqual([]);
   expect(f.root.runtime.session.getAllTools().map(tool => tool.name)).toEqual(expect.arrayContaining(['Agent', 'ask_user', 'TaskCreate']));
   const commands = f.root.runtime.session.extensionRunner?.getRegisteredCommands().map(command => command.name);
-  expect(commands).toEqual(expect.arrayContaining(['insights', 'prewalk', 'prompt-history']));
+  expect(commands).toEqual(expect.arrayContaining(['insights', 'prewalk', 'prompt-history', 'savings']));
+});
+
+it('assigns project scope at the known skill source and exposes portable savings output', async () => {
+  const f = await fixture(['subagents', 'askUser'], true);
+  expect(f.root.runtime.session.resourceLoader.getSkills().skills.find(skill => skill.name === 'shared-test-skill')?.sourceInfo.scope).toBe('project');
+  await f.root.runtime.session.prompt('/savings');
+  expect(f.registry.projection(f.root.sessionId).snapshot().presentation).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: 'notification', text: expect.stringContaining('Felan Code estimated savings') }),
+  ]));
 });
 
 it('scopes execution controls to each child session', async () => {

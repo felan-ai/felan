@@ -2,7 +2,7 @@ import { lstatSync, fstatSync, openSync, closeSync, readSync, opendirSync, realp
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Theme, type ThemeBg, type ThemeColor } from '@earendil-works/pi-coding-agent';
-import { getTerminalColorMode, parseColor, type MarkdownTheme, type SelectListTheme, type Terminal } from '@earendil-works/pi-tui';
+import { getTerminalColorMode, parseColor, type MarkdownTheme, type SelectListTheme, type Terminal, type TerminalColors } from '@earendil-works/pi-tui';
 
 export const THEME_BYTES = 128 * 1024;
 export const FELAN_THEME_PATHS = ['felan-light', 'felan-dark'].map(name => fileURLToPath(new URL(`../themes/${name}.json`, import.meta.url)));
@@ -14,6 +14,11 @@ const foreground = ['accent', 'border', 'borderAccent', 'borderMuted', 'success'
   'thinkingHigh', 'thinkingXhigh', 'thinkingMax', 'bashMode'] as const satisfies readonly ThemeColor[];
 const background = ['selectedBg', 'searchMatchBg', 'userMessageBg', 'customMessageBg', 'toolPendingBg', 'toolSuccessBg', 'toolErrorBg'] as const satisfies readonly ThemeBg[];
 const optional = new Set(['scrollbarTrack', 'scrollbarThumb', 'thinkingMax', 'searchMatchText', 'searchMatchBg']);
+const { generateSystemThemeColors }: {
+  generateSystemThemeColors(input: TerminalColors & { appearanceHint: 'light' | 'dark' }): {
+    colors: Record<ThemeColor | ThemeBg, string | number>; dim: ThemeColor[]; appearance?: 'light' | 'dark';
+  };
+} = await import(new URL('./modes/interactive/theme/system-theme.js', import.meta.resolve('@earendil-works/pi-coding-agent')).href);
 
 export function themeName(value: unknown): string {
   if (typeof value !== 'string' || !value || Buffer.byteLength(value) > 128 || value === '.' || value === '..'
@@ -65,6 +70,13 @@ export function parseClientTheme(text: string, expectedName?: string): Theme {
   });
 }
 
+export function systemClientTheme(colors: TerminalColors = {}, appearance: 'light' | 'dark' = 'dark'): Theme {
+  const generated = generateSystemThemeColors({ ...colors, appearanceHint: appearance });
+  const fg = Object.fromEntries(foreground.map(token => [token, generated.colors[token]])) as Record<ThemeColor, string | number>;
+  const bg = Object.fromEntries(background.map(token => [token, generated.colors[token]])) as Record<ThemeBg, string | number>;
+  return new Theme(fg, bg, getTerminalColorMode(), { name: 'system', ...(generated.appearance === undefined ? {} : { appearance: generated.appearance }), dim: generated.dim });
+}
+
 export function bundledClientThemes(): Map<string, Theme> {
   const themes = new Map<string, Theme>();
   for (const name of ['felan-dark', 'felan-light', 'dark', 'light']) {
@@ -72,6 +84,7 @@ export function bundledClientThemes(): Map<string, Theme> {
       : new URL(`./modes/interactive/theme/${name}.json`, import.meta.resolve('@earendil-works/pi-coding-agent'));
     const text = readFileSync(file, 'utf8'); themes.set(name, parseClientTheme(text, name));
   }
+  themes.set('system', systemClientTheme());
   return themes;
 }
 

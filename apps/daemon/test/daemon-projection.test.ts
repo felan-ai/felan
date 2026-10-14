@@ -88,12 +88,13 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
       modelRuntime: { getAvailableSnapshot: () => [{ ...offlineModel, id: 'outside-scope' }] } });
     expect(f.registry.projection(binding.sessionId).snapshot().catalog.models.map(model => model.id)).toEqual(['fixture']);
   });
-  it('reconciles capacity-blocked streaming metadata and removes it only after message completion', async () => {
+  it('publishes streaming metadata without durable capacity and removes it only after message completion', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
     const message = assistant('Actual final answer');
     const spy = vi.spyOn(f.store, 'project').mockImplementationOnce(() => { throw new ControlStoreError('request_capacity', 'Control capacity is reserved for outcomes and safety operations.'); });
     runtime.emit({ type: 'message_start', message });
+    expect(spy).not.toHaveBeenCalled();
     expect(() => f.registry.assertAdmission()).not.toThrow();
     spy.mockRestore(); projection.refresh();
     const current = projection.snapshot();
@@ -107,13 +108,14 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     expect(complete.presentation.some(item => item.id === MESSAGE_DISPLAY_ID)).toBe(false);
     expect(readMessageDisplay(complete.history.entries.at(-1)!.details)).toMatchObject({ kind: 'assistant', model: 'fixture', usage: message.usage });
   });
-  it('reconciles compaction progress after transient capacity pressure and clears it on interruption', async () => {
+  it('publishes compaction progress without durable capacity and clears it on interruption', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
     const events: SessionEvent[] = []; f.registry.subscribe(b.sessionId, event => { if ('rev' in event) events.push(event); });
     const spy = vi.spyOn(f.store, 'project').mockImplementationOnce(() => { throw new ControlStoreError('request_capacity', 'Control capacity is reserved for outcomes and safety operations.'); });
     runtime.emit({ type: 'compaction_start', reason: 'manual' }); projection.refresh();
-    expect(events.some(event => event.change.type === 'presentation.updated')).toBe(false);
+    expect(events.some(event => event.change.type === 'presentation.updated')).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
     expect(() => f.registry.assertAdmission()).not.toThrow(); spy.mockRestore(); projection.refresh();
     expect(projection.snapshot().presentation).toContainEqual({ id: 'compaction:progress', kind: 'status', key: 'compaction:progress', value: { kind: 'text', text: 'Compacting context…' }, fallback: 'Compacting context…' });
     runtime.emit({ type: 'compaction_end', reason: 'manual', result: undefined, aborted: true, willRetry: false }); projection.refresh();

@@ -130,9 +130,12 @@ class FusionApplication {
   private async chooseModels(initial: Lineup, ctx: ExtensionCommandContext, signal: AbortSignal): Promise<Lineup | undefined> {
     const catalogue = await this.trackModel(fusionModelCatalogue(this.models!, signal));
     if (catalogue.length < 2) throw new Error('Fusion requires at least two available authenticated text models.');
-    const choices = catalogue.map(fusionModelChoice);
+    const available = catalogue.map(fusionModelChoice);
+    const known = new Set(available.map(choice => choice.reference));
     const participants = new Set(initial.participants);
     let comparison = initial.fusionModel === 'inherit' && ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : initial.fusionModel;
+    const unavailable = [...new Set([...participants, comparison])].filter(reference => reference && !known.has(reference));
+    const choices = [...unavailable.map(reference => ({ reference, label: `Unavailable: ${reference}` })), ...available];
     let query = ''; let page = 0;
     let finish!: (value: Lineup | undefined) => void;
     const done = new Promise<Lineup | undefined>(resolve => { finish = resolve; });
@@ -142,7 +145,6 @@ class FusionApplication {
       signal.throwIfAborted(); context.signal.throwIfAborted();
       if (request.actionId === 'cancel') { finish(undefined); return; }
       if (request.actionId === 'save') {
-        const known = new Set(choices.map(choice => choice.reference));
         if (participants.size < 2 || participants.size > 8 || [...participants].some(reference => !known.has(reference)) || !known.has(comparison)) {
           throw new Error('Select two to eight available participants and one comparison model before saving.');
         }
@@ -165,9 +167,13 @@ class FusionApplication {
       else {
         const choice = choices[Number(request.itemId!.slice(6))];
         if (!choice) throw new Error('Unknown Fusion model choice.');
-        if (request.actionId === 'comparison') comparison = choice.reference;
+        if (request.actionId === 'comparison') {
+          if (!known.has(choice.reference)) throw new Error('Choose an available comparison / fusion model.');
+          comparison = choice.reference;
+        }
         else if (participants.has(choice.reference)) participants.delete(choice.reference);
         else {
+          if (!known.has(choice.reference)) throw new Error('Remove or replace unavailable participants.');
           if (participants.size >= 8) throw new Error('Fusion supports at most eight participants.');
           participants.add(choice.reference);
         }
@@ -177,8 +183,17 @@ class FusionApplication {
     const render = () => surface.publish((id, revision) => {
       const filtered = choices.map((choice, index) => ({ choice, index })).filter(({ choice }) => `${choice.reference} ${choice.label}`.toLowerCase().includes(query.toLowerCase()));
       const pages = Math.max(1, Math.ceil(filtered.length / 40)); page = Math.max(0, Math.min(page, pages - 1));
-      return { id, revision, kind: 'view', hint: FUSION_PICKER_HINT, title: `Fusion model lineup\nParticipants: ${[...participants].join(', ') || 'none'}\nComparison: ${comparison || 'none'}`,
-        fallback: `Page ${page + 1}/${pages}. Select two to eight participants and a comparison model, then save explicitly.`,
+      const unavailableParticipants = [...participants].some(reference => !known.has(reference));
+      const unavailableComparison = comparison && !known.has(comparison);
+      return { id, revision, kind: 'view', hint: FUSION_PICKER_HINT, title: 'Fusion model lineup',
+        fallback: [
+          ...(unavailableParticipants || unavailableComparison ? ['Unavailable saved model choices must be replaced before saving.'] : []),
+          ...(unavailableParticipants ? ['Remove or replace unavailable participants.'] : []),
+          ...(unavailableComparison ? ['Choose an available comparison / fusion model.'] : []),
+          `Participants: ${[...participants].join(', ') || 'none'}`,
+          `Comparison: ${comparison || 'none'}`,
+          `Page ${page + 1}/${pages}. Select two to eight participants and a comparison model, then save explicitly.`,
+        ].join('\n'),
         fields: [{ id: 'model', label: 'Model', valueKind: 'text' }, { id: 'participant', label: 'Participant', valueKind: 'boolean' }, { id: 'comparison', label: 'Comparison', valueKind: 'boolean' }],
         items: filtered.slice(page * 40, page * 40 + 40).map(({ choice, index }) => ({ id: `model-${index}`, values: {
           model: choice.label, participant: participants.has(choice.reference), comparison: choice.reference === comparison,

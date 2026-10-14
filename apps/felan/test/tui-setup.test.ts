@@ -148,8 +148,8 @@ it('does not reopen the same prompt after an accepted answer while the daemon is
 it('requires explicit unchecked checklist submission and maps unchecked choices to skip', async () => {
   const dependencies: SetupCatalog['dependencies'] = [
     { id: 'install', label: 'Installable', description: '', enabled: true, available: false, installable: true, needsSetup: true },
-    { id: 'enable', label: 'Installed', description: '', enabled: false, available: true, installable: true, needsSetup: true },
-    { id: 'disable', label: 'Enabled', description: '', enabled: true, available: true, installable: true, needsSetup: false },
+    { id: 'enable', label: 'Installed', description: 'Verify the installer and install Installed.', enabled: false, available: true, installable: true, needsSetup: true },
+    { id: 'disable', label: 'Enabled', description: 'Verify the installer and install Enabled.', enabled: true, available: true, installable: true, needsSetup: false },
     { id: 'skip', label: 'Fallback', description: '', enabled: false, available: false, installable: false, needsSetup: true },
   ];
   const f = fixture({ 'host.setup.catalog': () => ({ ...catalog, dependencies }), 'host.setup.start': () => ({ ...finished, kind: 'dependencies' }) });
@@ -158,8 +158,24 @@ it('requires explicit unchecked checklist submission and maps unchecked choices 
   const work = f.setup.dependencies(); await vi.advanceTimersByTimeAsync(0);
   expect(f.calls.some(call => call.op === 'host.setup.start')).toBe(false);
   submit(['install', 'enable', 'disable']); expect(await work).toBe(true);
+  expect(f.ui.checklist.mock.calls[0]?.[0].map(row => row.description)).toEqual(expect.arrayContaining([expect.stringContaining('Unchecked: leave unchanged.')]));
+  const rows = f.ui.checklist.mock.calls[0]![0];
+  expect(rows.find(row => row.id === 'disable')?.description).toBe('Disable Enabled; installed software is kept. Checked: disable. Unchecked: leave unchanged.');
+  expect(rows.find(row => row.id === 'enable')?.description).toBe('Enable the installed Installed extension. Checked: enable. Unchecked: leave unchanged.');
+  expect(rows.find(row => row.id === 'skip')?.description).toContain('No changes are available');
+  expect(f.ui.confirm).toHaveBeenCalledWith('Apply extension changes?', 'install: Installable\nenable: Installed\ndisable: Enabled\nunchanged: Fallback', expect.anything());
   expect(f.calls.find(call => call.op === 'host.setup.start')?.params).toEqual({ kind: 'dependencies', confirmed: true,
     choices: [{ id: 'install', action: 'install' }, { id: 'enable', action: 'enable' }, { id: 'disable', action: 'disable' }, { id: 'skip', action: 'skip' }] });
+});
+
+it('does not start dependency changes when their confirmation is declined', async () => {
+  const f = fixture({ 'host.setup.catalog': () => ({ ...catalog, dependencies: [
+    { id: 'ready', label: 'Ready', description: '', enabled: true, available: true, installable: true, needsSetup: false },
+  ] }) });
+  f.ui.checklist.mockResolvedValueOnce(['ready']); f.ui.confirm.mockResolvedValueOnce(false);
+  expect(await f.setup.dependencies()).toBe(false);
+  expect(f.ui.confirm).toHaveBeenCalledWith('Apply extension changes?', 'disable: Ready', expect.anything());
+  expect(f.calls.some(call => call.op === 'host.setup.start')).toBe(false);
 });
 
 it('offers only needsSetup dependencies automatically and treats dismissal as no decision', async () => {

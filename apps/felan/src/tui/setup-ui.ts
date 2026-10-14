@@ -2,7 +2,7 @@ import type { Theme } from '@earendil-works/pi-coding-agent';
 import { Container, CURSOR_MARKER, Input, Key, SelectList, Text, matchesKey, stripTerminalSequences, fuzzyFilter, type SelectItem, type KeybindingsManager, type TUI } from '@earendil-works/pi-tui';
 import type { SetupJob } from '@felan-ai/session-protocol';
 import { DependencyInstallationChecklist, DependencyInstallProgressLoader, type DependencyInstallOption } from '../dependency-onboarding.js';
-import type { TuiDialogHost, TuiDialogs } from './dialogs.js';
+import { selectionHint, type TuiDialogHost, type TuiDialogs } from './dialogs.js';
 import { clientSelectListTheme } from './theme.js';
 
 export interface TerminalSetupUi extends TuiDialogHost {
@@ -33,7 +33,7 @@ export function createSetupUi(tui: TUI, dialogs: TuiDialogs, theme: () => Theme,
       return {
         render: width => {
           const border = theme().fg('border', '─'.repeat(width));
-          return [border, ...content.render(width), border];
+          return [border, ...content.render(width), ...new Text(theme().fg('dim', selectionHint(keys)), 1, 0).render(width), border];
         },
         invalidate: () => content.invalidate(),
         handleInput: data => {

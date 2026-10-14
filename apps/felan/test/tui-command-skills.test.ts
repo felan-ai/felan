@@ -41,11 +41,13 @@ it('loads and invokes every workspace and home skill even when daemon storage us
   expect(skills.map(command => command.name).sort()).toEqual(['skill:alpha', 'skill:beta', 'skill:explicit-only', 'skill:shared-test-skill']);
   expect(skills.every(command => command.description.length > 0)).toBe(true);
   expect(skills.find(command => command.name === 'skill:alpha')?.source).toContain(home.path);
+  expect(skills.find(command => command.name === 'skill:alpha')?.scope).toBe('temporary');
+  expect(skills.find(command => command.name === 'skill:shared-test-skill')?.scope).toBe('project');
   const provider = createCommandAutocomplete(controller);
   const options = { signal: new AbortController().signal };
   expect((await provider.getSuggestions(['/skill:'], 0, 7, options))?.items.map(item => item.value).sort()).toEqual(skills.map(command => command.name).sort());
   expect((await provider.getSuggestions(['/alpa'], 0, 5, options))?.items).toEqual([
-    { label: 'skill:alpha', value: 'skill:alpha', description: 'alpha instructions' },
+    { label: 'skill:alpha', value: 'skill:alpha', description: '[t] alpha instructions' },
   ]);
   const dialogs: TuiDialogHost = { select: async () => undefined, input: async () => undefined, confirm: async () => false };
   for (const skill of skills) {

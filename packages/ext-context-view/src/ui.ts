@@ -1,6 +1,6 @@
 import { CONTEXT_DOCUMENT_HINT } from './data.js';
 import type { ExtensionUi, UiDocument, UiElementHandle } from '@felan-ai/agent-core';
-import { CATEGORY_SUMMARIES, type ContextReport, type ContextViewPresentationHost } from './report.js';
+import { CATEGORY_SUMMARIES, formatPercent, formatTokens, type ContextReport, type ContextViewPresentationHost } from './report.js';
 
 
 export function createContextViewUiHost(ui: ExtensionUi): ContextViewPresentationHost {
@@ -60,24 +60,22 @@ function reportMarkdown(report: ContextReport): string {
     || report.skillDetailsTotal !== undefined && report.skillDetailsTotal !== report.skillDetails.length) {
     throw new Error('A full context report requires every extension and skill detail row.');
   }
+  const categories = CATEGORY_SUMMARIES.map(({ key, label }) => {
+    const tokens = report.breakdown[key];
+    const percent = report.contextWindow ? tokens / report.contextWindow * 100 : null;
+    return `${label}: ${formatTokens(tokens)} (${formatPercent(percent)})`;
+  });
   return [
-    `Model: ${cell(report.modelLabel ?? 'unknown')}`,
-    `Usage: ${report.usedTokens} / ${report.contextWindow ?? 'unknown'} tokens`,
-    `Usage percent: ${report.usagePercent === null ? 'unknown' : `${report.usagePercent}%`}`,
-    `Measurements: ${report.estimated ? 'estimates, not provider billing measurements' : 'reported values'}`,
-    '', '| Category | Tokens |', '| --- | ---: |',
-    ...CATEGORY_SUMMARIES.map(({ key, label }) => `| ${label} | ${report.breakdown[key]} |`),
-    '', '## Counts',
-    `- System tools: ${report.systemToolCount}`,
-    `- Extension tools: ${report.extensionToolCount}`,
-    `- Context files: ${report.contextFileCount}`,
-    `- Skills: ${report.skillCount}`,
-    '', '## Memory', '| Component | Tokens |', '| --- | ---: |',
-    ...(['summary', 'index', 'schema', 'recalls'] as const).map(key => `| ${key} | ${report.memory[key]} |`),
-    '', `## Extensions (${report.extensionDetails.length})`, '| Extension | Tools | Tokens |', '| --- | ---: | ---: |',
-    ...report.extensionDetails.map(row => `| ${cell(row.label)} | ${row.toolCount} | ${row.tokens} |`),
-    '', `## Skills (${report.skillDetails.length})`, '| Skill | Tokens | Included in prompt |', '| --- | ---: | --- |',
-    ...report.skillDetails.map(row => `| ${cell(row.label)} | ${row.tokens} | ${row.promptVisible ? 'yes' : 'no'} |`),
+    `Model: ${cell(report.modelLabel ?? 'unknown')}  `,
+    `Used: ${formatTokens(report.usedTokens)} / ${report.contextWindow === null ? 'unknown' : formatTokens(report.contextWindow)} (${formatPercent(report.usagePercent)})${report.estimated ? ' estimated' : ''}  `,
+    ...[0, 3, 6].map(start => categories.slice(start, start + 3).join(' · ') + '  '),
+    `Tools: ${report.systemToolCount} system · ${report.extensionToolCount} extension · Context files: ${report.contextFileCount} · Skills: ${report.skillCount}  `,
+    `Memory: ${(['summary', 'index', 'schema', 'recalls'] as const).map(key => `${key} ${formatTokens(report.memory[key])}`).join(' · ')}  `,
+    report.estimated ? 'Token estimates, not provider billing measurements.' : 'Reported token values.',
+    '', `**Extensions (${report.extensionDetails.length})**`,
+    ...report.extensionDetails.map(row => `- ${cell(row.label)} · ${row.toolCount} tools · ${formatTokens(row.tokens)} tokens`),
+    '', `**Skills (${report.skillDetails.length})**`,
+    ...report.skillDetails.map(row => `- ${cell(row.label)} · ${formatTokens(row.tokens)} tokens${row.promptVisible ? '' : ' · not included in prompt'}`),
   ].join('\n');
 }
 

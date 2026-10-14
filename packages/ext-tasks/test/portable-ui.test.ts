@@ -94,6 +94,27 @@ describe('portable task view', () => {
     } finally { await h.act('close'); await h.work; }
   });
 
+  it('publishes only unfinished prerequisites as waiting-on data and refreshes after completion', async () => {
+    let state = createTask(graph(2), { title: 'Follow-up', blockedBy: [id(0), id(1)] }, id(2), '2026-01-02').state;
+    state = updateTask(state, { taskId: id(1), status: 'in_progress' }, 'session', '2026-01-03').state;
+    state = updateTask(state, { taskId: id(1), status: 'completed', result: 'Verified' }, 'session', '2026-01-03').state;
+    const h = harness(state); await h.ready();
+    try {
+      const view = h.current();
+      if (view.kind !== 'view') throw new Error('Expected task view');
+      expect(view.items.find(item => item.id === id(2))?.values).toMatchObject({
+        availability: 'waiting', blockedBy: `${id(0)}, ${id(1)}`, waitingOn: id(0),
+      });
+      state = updateTask(state, { taskId: id(0), status: 'in_progress' }, 'session', '2026-01-04').state;
+      h.publish(updateTask(state, { taskId: id(0), status: 'completed', result: 'Verified' }, 'session', '2026-01-04').state);
+      await vi.waitFor(() => {
+        const updated = h.current();
+        expect(updated.kind === 'view' && updated.items.find(item => item.id === id(2))?.values)
+          .toMatchObject({ availability: 'ready', waitingOn: '' });
+      });
+    } finally { await h.act('close'); await h.work; }
+  });
+
   it('does not override another owner without an explicit force field', async () => {
     const state = updateTask(graph(), { taskId: id(0), status: 'in_progress' }, 'other-session', '2026-01-02').state;
     const h = harness(state); await h.ready();

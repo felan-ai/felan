@@ -1,10 +1,11 @@
 import type { HostConfiguration, HostPreferences, HostSetup } from './host-services.js';
 import { registrySessionExecutions } from './session-services.js';
 import { SessionsServiceError, type AgentSession, type ModelRuntime } from '@felan-ai/agent-core';
+import { truncateTail } from '@earendil-works/pi-coding-agent';
 import { LIMITS, parseOperationResult, type ClientEnvelope, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
 import type { SessionRegistry } from './registry.js';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
-import { boundedText, digest } from './projection.js';
+import { boundedText, digest, isProjectionCapacityError } from './projection.js';
 import { prepareExport, prepareImport, publishExport, stageImport } from './session-files.js';
 import { sha256 } from './persistence.js';
 import { join } from 'node:path';
@@ -80,7 +81,7 @@ export class SessionCommands {
         return accepted(request, { ...keysetPage(entries, request.params, JSON.stringify(['sessions', request.params.cwd ?? null, request.params.root ?? null]), row => keys.get(row)!) });
       }
       case 'config.get': {
-        if (request.params.scope !== 'session') return accepted(request, await configuration.get(request.params.scope));
+        if (request.params.scope !== 'session') return accepted(request, await configuration.get(request.params.scope, request.session ? registry.binding(request.session)?.runtime.session.model : undefined));
         if (!request.session) throw commandError('invalid_request');
         return accepted(request, await configuration.sessionValues(registry.options.store.session(request.session).profile?.extensionConfigOverrides ?? []));
       }
@@ -96,7 +97,9 @@ export class SessionCommands {
         const entries = manager.getEntries().map(entry => ({ id: entry.id, ...(entry.parentId ? { parent: entry.parentId } : {}), kind: entry.type,
           ...(entry.type === 'message' ? { role: entry.message.role } : {}),
           ...(manager.getLabel(entry.id) ? { label: manager.getLabel(entry.id) } : {}), summary: boundedText(entry.type === 'message' && 'content' in entry.message
-            ? typeof entry.message.content === 'string' ? entry.message.content : entry.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n') : entry.type,
+            ? typeof entry.message.content === 'string' ? entry.message.content : entry.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+            : entry.type === 'custom_message' ? `[${entry.customType}]: ${typeof entry.content === 'string' ? entry.content : entry.content.filter(part => part.type === 'text').map(part => part.text).join('\n')}`
+            : entry.type === 'branch_summary' || entry.type === 'compaction' ? entry.summary : entry.type,
           16384), timestamp: Math.max(0, Date.parse(entry.timestamp) || 0) }));
         return accepted(request, { revision: snapshot.revision, branch: snapshot.branch,
           ...page(entries, request.params, `tree:${request.session}:${snapshot.revision}:${snapshot.branch}`) });
@@ -232,9 +235,53 @@ export class SessionCommands {
         const response = new Promise<Response>((done, fail) => { resolve = done; reject = fail; });
         const work = registry.runAdmitted(request.id, request.session, context.origin, async session => {
           const { resourceId } = await registry.processes.startForeground(request.id, request.session, request.params, prepared);
+          const projection = registry.projection(request.session);
+          let revision = 0; let lastPublished = 0;
+          let pendingOutput: string | undefined; let timer: ReturnType<typeof setTimeout> | undefined;
+          const flushOutput = () => {
+            timer = undefined;
+            if (pendingOutput === undefined) return;
+            let command = boundedText(request.params.command, 16_384);
+            let retained = truncateTail(pendingOutput, { maxBytes: 16_384, maxLines: 2000 }).content;
+            pendingOutput = undefined;
+            lastPublished = Date.now();
+            const frame = () => {
+              const content = `$ ${command}\n${retained}`;
+              const fence = '`'.repeat(Math.max(3, ...[...content.matchAll(/`+/gu)].map(match => match[0].length + 1)));
+              return { id: resourceId, kind: 'document' as const, revision: revision + 1, title: 'Shell execution',
+                hint: { id: 'shell.execution', version: '1.0.0' }, fallback: 'Shell command is running.', actions: [],
+                markdown: `${fence}\n${content}\n${fence}`, data: { commandLength: command.length, excludeFromContext: !request.params.includeInContext } };
+            };
+            let value = frame();
+            while (Buffer.byteLength(JSON.stringify(value)) > LIMITS.structuredBytes) {
+              if (retained.length) {
+                const points = [...retained];
+                retained = points.slice(Math.ceil(points.length / 2)).join('');
+              } else command = boundedText(command, Math.floor(Buffer.byteLength(command) / 2));
+              value = frame();
+            }
+            revision++;
+            try { projection.setPresentation(value); } catch {}
+          };
+          const publishOutput = (output: string) => {
+            pendingOutput = output;
+            const delay = Math.max(0, 100 - (Date.now() - lastPublished));
+            if (!delay) {
+              if (timer) clearTimeout(timer);
+              flushOutput();
+            } else timer ??= setTimeout(flushOutput, delay);
+          };
+          publishOutput('');
           resolve(accepted(request, { resourceId, runId: registry.options.store.session(request.session).run.id! }));
-          const result = await registry.processes.waitForeground(request.session, resourceId);
-          session.recordBashResult(request.params.command, result, { excludeFromContext: !request.params.includeInContext });
+          try {
+            const result = await registry.processes.waitForeground(request.session, resourceId, publishOutput);
+            session.recordBashResult(request.params.command, result, { excludeFromContext: !request.params.includeInContext });
+            projection.refresh();
+          } finally {
+            if (timer) clearTimeout(timer);
+            pendingOutput = undefined;
+            try { projection.setPresentation({ id: resourceId, remove: true }); } catch {}
+          }
         });
         void work.catch(error => {
           reject(error);
