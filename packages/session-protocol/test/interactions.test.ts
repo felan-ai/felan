@@ -57,11 +57,11 @@ describe('declarative interactions', () => {
     expect(() => parseInteraction({ ...interaction, state: 'answered', result: { kind: 'confirm', confirmed: true }, resolvedAt: now })).toThrow();
     expect(parseInteraction({ ...interaction, state: 'cancelled', resolvedAt: now, result: { cancelled: true, reason: 'restart' } }).state).toBe('cancelled');
   });
-  it('bounds choices, wizard pages, answers and presentation JSON', () => {
-    expect(() => parseSchema(InteractionRequestSchema, { kind: 'select', title: 'Pick', multiple: false, choices: Array.from({ length: 101 }, (_, id) => ({ id: String(id), title: 'x' })) })).toThrow();
+  it('accepts many choices and large answers but rejects unknown request kinds', () => {
+    expect(parseSchema(InteractionRequestSchema, { kind: 'select', title: 'Pick', multiple: false, choices: Array.from({ length: 300 }, (_, id) => ({ id: String(id), title: 'x' })) }).kind).toBe('select');
     expect(() => parseSchema(InteractionRequestSchema, { kind: 'ask_user', questions: Array.from({ length: 5 }, (_, id) => ({ id: String(id), question: 'x' })) })).toThrow();
-    expect(() => validateInteractionAnswer({ ...interaction, request: { kind: 'input', title: 'Input' } }, { kind: 'input', text: 'a'.repeat(LIMITS.answerBytes) })).toThrow();
-    expect(() => parseInteraction({ ...interaction, request: { kind: 'custom', presenter: { id: 'p', version: '1' }, data: 'x'.repeat(LIMITS.structuredBytes) } })).toThrow();
+    expect(validateInteractionAnswer({ ...interaction, request: { kind: 'input', title: 'Input' } }, { kind: 'input', text: 'a'.repeat(128 * 1024) }).kind).toBe('input');
+    expect(() => parseInteraction({ ...interaction, request: { kind: 'custom', presenter: { id: 'p', version: '1' }, data: 'x' } })).toThrow();
   });
 
 });

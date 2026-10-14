@@ -33,7 +33,7 @@ async function fixture(overrides: Partial<Endpoints> = {}) {
     fake.onSend = (request, connection) => {
       requests.push(request);
       if (request.op === 'hello') {
-        fake.reply(request, { attachmentId: 'client', localConsole: true, principal: 'principal', daemonVersion: options.expectedDaemonVersion ?? options.clientVersion,
+        fake.reply(request, { attachmentId: 'client', principal: 'principal', daemonVersion: options.expectedDaemonVersion ?? options.clientVersion,
           protocol: 1, identity, operations: Object.keys(endpoints), interactionKinds: [] }, connection); return;
       }
       const endpoint = endpoints[request.op as SetupOperation] as (params: unknown) => unknown;
@@ -57,7 +57,7 @@ describe('finite ACP daemon login', () => {
     expect(await f.run(terminal)).toBe(0);
     expect(terminal.inputRequests).toEqual([{ message: 'Enter API key', options: { secret: true } }]);
     expect(f.requests.filter(request => request.op === 'host.setup.start').map(request => request.params)).toEqual([
-      { kind: 'login', provider: 'provider', method: 'api_key', confirmed: true },
+      { kind: 'login', provider: 'provider', method: 'api_key' },
     ]);
     expect(f.requests.filter(request => request.op === 'host.setup.answer').map(request => request.params)).toEqual([
       { jobId: 'job', promptId: 'key', text: 'test-private-key' },
@@ -121,12 +121,12 @@ describe('finite ACP daemon login', () => {
     }
   });
 
-  it('allows cancelling replacement of existing credentials', async () => {
+  it('replaces existing credentials without an extra confirmation', async () => {
     const f = await fixture({ 'host.setup.catalog': () => ({ ...catalog, providers: [{ ...catalog.providers[0]!, configured: true }] }) });
-    const terminal = new TestLoginTerminal([1, 0, 0], []);
-    expect(await f.run(terminal)).toBe(1);
-    expect(terminal.lines).toContain('Authentication cancelled.');
-    expect(f.requests.some(request => request.op === 'host.setup.start')).toBe(false);
+    const terminal = new TestLoginTerminal([1, 0], ['replacement-key']);
+    expect(await f.run(terminal)).toBe(0);
+    expect(f.requests.filter(request => request.op === 'host.setup.start')).toHaveLength(1);
+    expect(terminal.lines).toContain('Authentication saved by the daemon.');
   });
 
   it('redacts entered credentials from failing daemon replies and releases the job', async () => {

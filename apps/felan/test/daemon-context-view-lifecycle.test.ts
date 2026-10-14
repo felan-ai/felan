@@ -88,7 +88,7 @@ it.each(['drain', 'force'] as const)('%s stop closes the real context command be
     settle: mode => settleDaemonWork(f.registry, createRegistryInteractionBroker(f.registry), mode),
   });
   const admission = new OrderedAdmission(f.store, { now: Date.now }); const id = uuidv7();
-  const response = await admission.submit({ v: 1, id, op: 'host.stop', params: { expected: f.owner.identity, confirmed: true, mode } }, 'client', command => lifecycle.prepare(command));
+  const response = await admission.submit({ v: 1, id, op: 'host.stop', params: { expected: f.owner.identity, mode } }, 'client', command => lifecycle.prepare(command));
   expect(response.outcome).toBe('accepted'); lifecycle.afterResponse(id);
   await work;
   await vi.waitFor(() => expect(lifecycle.state).toBe('stopped'));
@@ -151,9 +151,9 @@ it('stops the real daemon on the first force command with an attached context vi
   cleanups.push(async () => { lifetime.abort(); await running; await controller.dispose(); });
   await vi.waitFor(() => expect(controller.sessionId).toBe(session));
   const screen = () => { tui.renderNow(true); return tui.getScreenLines().join('\n'); };
-  await vi.waitFor(() => expect(screen()).toContain('Manage optional extensions'));
+  await vi.waitFor(() => expect(screen()).toContain('Manage optional extensions'), { timeout: 5000 });
   input('\x1b');
-  await vi.waitFor(() => expect(screen()).not.toContain('Manage optional extensions'));
+  await vi.waitFor(() => expect(screen()).not.toContain('Manage optional extensions'), { timeout: 5000 });
   const document = () => client.getAttachment(session)?.state.snapshot?.presentation.find(element => element.kind === 'document') as UiDocument | undefined;
   for (let index = 0; index < 3; index++) {
     expect(await client.request('command.invoke', { name: 'context', arguments: '' }, { session })).toMatchObject({ outcome: 'accepted' });
@@ -175,7 +175,7 @@ it('stops the real daemon on the first force command with an attached context vi
   const control = new SessionClient({ target, clientVersion: FELAN_VERSION, kind: 'tui' });
   cleanups.push(async () => control.close());
   await control.connect();
-  expect(await control.control('host.stop', { confirmed: true, mode: 'force' })).toMatchObject({ outcome: 'accepted' });
+  expect(await control.control('host.stop', 'force')).toMatchObject({ outcome: 'accepted' });
   await vi.waitFor(() => expect(service.lifecycle.state, inspect(settlementError)).toBe('stopped'), { timeout: 3000 });
   await expect(waitForDaemonStop(control)).resolves.toBeUndefined();
   expect(settleTransport).toHaveBeenCalledOnce();

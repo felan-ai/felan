@@ -48,10 +48,10 @@ export async function spawnDetachedDaemon(options: {
   try {
     const ready = await Promise.race([readControlFrame(channel, timeoutMs), exited]);
     assertTargetIdentity(target, ready.identity, ready.identity);
-    if (ready.re !== 'launch' || !['ready', 'blocked'].includes(ready.state) || ready.outcome !== 'accepted') throw new DaemonSecurityError('invalid_readiness', 'Child did not report an available daemon.');
+    if (ready.re !== 'launch' || ready.state !== 'ready' || ready.outcome !== 'accepted') throw new DaemonSecurityError('invalid_readiness', 'Child did not report an available daemon.');
     const remaining = deadline - performance.now();
     if (remaining <= 0) throw new DaemonSecurityError('readiness_timeout', 'Daemon did not become ready before the deadline.');
-    await probeDaemon(target, ready.identity, Math.min(remaining, 2_000), true);
+    await probeDaemon(target, ready.identity, Math.min(remaining, 2_000));
     await new Promise<void>((resolve, reject) => channel.write(Buffer.from([1]), error => error ? reject(error) : resolve()));
     channel.end(); channel.unref(); child.unref();
     return Object.freeze({ target: options.target, identity: ready.identity, daemonVersion: ready.daemonVersion });
@@ -70,7 +70,7 @@ export async function spawnDetachedDaemon(options: {
   }
 }
 
-export async function publishDaemonReadiness(owner: DaemonOwnership, version: string, timeoutMs = 10_000, state: 'ready' | 'blocked' = 'ready'): Promise<void> {
+export async function publishDaemonReadiness(owner: DaemonOwnership, version: string, timeoutMs = 10_000): Promise<void> {
   owner.assertCurrent();
   const channel = new Socket({ fd: 3, readable: true, writable: true });
   try {
@@ -83,7 +83,7 @@ export async function publishDaemonReadiness(owner: DaemonOwnership, version: st
       channel.once('data', (bytes: Buffer) => settle(bytes.length === 1 && bytes[0] === 1 ? undefined : new DaemonSecurityError('launch_aborted', 'Invalid readiness acknowledgement.')));
       channel.once('end', () => settle(new DaemonSecurityError('launch_aborted', 'Launcher left before readiness.')));
       channel.once('error', () => settle(new DaemonSecurityError('launch_aborted', 'Launch channel failed.')));
-      channel.write(encodeFrame(readinessResponse(owner, version, 'launch', state)));
+      channel.write(encodeFrame(readinessResponse(owner, version, 'launch')));
     });
     owner.assertCurrent();
   } finally { channel.destroy(); }

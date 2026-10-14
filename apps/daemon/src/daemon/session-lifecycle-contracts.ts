@@ -13,7 +13,6 @@ import type {
 import type { SessionBranchCursor } from './session-cursor.js';
 import type { SessionEnvironment, SessionRuntime } from './session-runtime.js';
 import type { SessionExtensionBindings, SessionExtensionContext, SessionExecutionPort } from './session-execution.js';
-import type { SessionConfiguration } from './session-configuration.js';
 export type { SessionBranchCursor } from './session-cursor.js';
 
 export const SESSION_LIFECYCLE_API_VERSION = 1;
@@ -45,7 +44,6 @@ export interface ToolProvenance {
 
 export interface SessionExecutionPolicy {
   readonly mode: 'host-default' | 'acp-strict';
-  readonly pendingTightening: boolean;
   readonly generation: number;
 }
 
@@ -66,7 +64,6 @@ export type SessionTarget =
   | { readonly kind: 'import'; readonly sessionFile: string };
 
 export interface SessionOpenRequest {
-  readonly configuration?: SessionConfiguration;
   readonly resources: SessionResources;
   readonly ownership: SessionOwnership;
   readonly policy: SessionExecutionPolicy;
@@ -96,7 +93,6 @@ export interface SessionWorkerConfiguration {
 }
 
 export interface SessionBinding {
-  readonly configuration?: SessionConfiguration;
   readonly runtime: AgentSessionRuntime;
   readonly agentRuntime: AgentRuntime;
   readonly sessionId: string;

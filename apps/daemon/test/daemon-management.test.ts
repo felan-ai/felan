@@ -38,7 +38,7 @@ it('advertises management operations to every verified local client and exposes 
 it('uses the identity-verified control connection for consented restart', async () => {
   const f = await fixture(true); const client = await f.client();
   await expect(client.control('host.restart')).rejects.toThrow(); expect(f.lifecycle.state).toBe('ready');
-  const result = await client.control('host.restart', { confirmed: true, mode: 'drain' });
+  const result = await client.control('host.restart', 'drain');
   expect(result).toMatchObject({ outcome: 'accepted', state: 'draining', identity: f.owner.identity });
   expect(await client.control('host.status')).toMatchObject({ outcome: 'accepted', state: 'draining' });
   expect(f.complete).not.toHaveBeenCalled(); f.settled.resolve();
@@ -47,22 +47,22 @@ it('uses the identity-verified control connection for consented restart', async 
 
 it('rejects new session work during drain while keeping status available', async () => {
   const f = await fixture(true); const client = await f.client(); await client.attach(f.root.sessionId);
-  expect(await client.request('host.stop', { expected: f.owner.identity, confirmed: true, mode: 'drain' })).toMatchObject({ outcome: 'accepted', result: { state: 'draining' } });
+  expect(await client.request('host.stop', { expected: f.owner.identity, mode: 'drain' })).toMatchObject({ outcome: 'accepted', result: { state: 'draining' } });
   expect(await client.request('prompt', { text: 'must not run' }, { session: f.root.sessionId })).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
   expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'draining' } });
   expect(f.root.runtime.session.messages).toHaveLength(0);
   await expect(client.attach(f.root.sessionId)).rejects.toThrow();
 });
 
-it('keeps version mismatch read-only until an explicit identity-pinned control request', async () => {
+it('keeps a mismatched daemon running for a client that cannot relaunch it', async () => {
   const f = await fixture(true);
   const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
     clientVersion: 'fixture', expectedDaemonVersion: 'different-version', kind: 'tui' });
   cleanup.push(async () => client.close());
   await expect(client.connect()).rejects.toThrow('version differs');
-  expect(client.status).toBe('incompatible'); expect(client.identity).toEqual(f.owner.identity);
+  expect(client.status).toBe('incompatible'); expect(client.identity).toEqual(f.owner.identity); expect(client.incompatibleActiveWork).toBe(0);
   expect(f.lifecycle.state).toBe('ready');
   expect(await client.control('host.status')).toMatchObject({ outcome: 'accepted', state: 'ready' });
   await expect(client.control('host.restart')).rejects.toThrow(); expect(f.lifecycle.state).toBe('ready');
-  expect(await client.control('host.restart', { confirmed: true, mode: 'drain' })).toMatchObject({ outcome: 'accepted' });
+  expect(await client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
 });

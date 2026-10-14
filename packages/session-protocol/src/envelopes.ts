@@ -5,17 +5,16 @@ import { SessionEventSchema, TextStreamEventSchema, parseSessionEvent, parseSess
 import { InteractionSchema, parseInteraction } from './interactions.js';
 import { LIMITS, PROTOCOL_VERSION, ProtocolValidationError } from './limits.js';
 import { CounterSchema, DiagnosticTextSchema, IdSchema, NameSchema, assertJson, enumOf, parseSchema } from './schema.js';
-import { requestTimestamp, validateRequestId, UUID_V7_PATTERN } from './request-id.js';
+import { requestTimestamp, UUID_V7_PATTERN } from './request-id.js';
 import { PresentationEventSchema } from './presentation.js';
 
-export const ERROR_CODES = Object.freeze(['invalid_request', 'unsupported_operation', 'protocol_mismatch', 'unavailable', 'authentication_required', 'busy', 'policy_pending',
+export const ERROR_CODES = Object.freeze(['invalid_request', 'unsupported_operation', 'protocol_mismatch', 'unavailable', 'authentication_required', 'busy',
   'request_conflict', 'stale_request', 'expired', 'not_found', 'forbidden', 'already_resolved', 'storage_failure',
-  'ownership_lost', 'resync_required', 'indeterminate', 'configuration_recovery_required', 'request_capacity', 'target_mismatch'] as const);
+  'ownership_lost', 'resync_required', 'indeterminate', 'request_capacity', 'target_mismatch'] as const);
 export type KnownErrorCode = (typeof ERROR_CODES)[number];
 export const ErrorCodeSchema = NameSchema;
 export const ProtocolErrorSchema = Type.Object({
-  code: ErrorCodeSchema, message: DiagnosticTextSchema, retryable: Type.Boolean(), retryAfterMs: Type.Optional(CounterSchema),
-  sessionId: Type.Optional(IdSchema), blockers: Type.Optional(Type.Array(Type.Object({ session: IdSchema, runId: Type.Optional(IdSchema), toolCallId: Type.Optional(IdSchema), reason: enumOf(['turn', 'tool', 'admitted_dispatch'] as const) }), { maxItems: LIMITS.pageEntries })),
+  code: ErrorCodeSchema, message: DiagnosticTextSchema, retryable: Type.Boolean(),
 });
 export type ClientEnvelope = { [O in Operation]: {
   v: typeof PROTOCOL_VERSION; id: string; op: O; params: OperationParams<O>;
@@ -41,9 +40,7 @@ export type ServerEnvelope = Static<typeof ServerEnvelopeSchema>;
 export type ResponseFor<O extends Operation> = { v: 1; re: string; outcome: 'accepted'; result: OperationResult<O> } |
   { v: 1; re: string; outcome: 'rejected' | 'indeterminate'; error: ProtocolError };
 
-export interface ParseClientOptions { now?: number; checkFreshness?: boolean }
-
-export function parseClientEnvelope(value: unknown, options: ParseClientOptions = {}): ClientEnvelope {
+export function parseClientEnvelope(value: unknown): ClientEnvelope {
   assertEnumerableData(value);
   assertJson(value);
   if (value !== null && typeof value === 'object') {
@@ -58,8 +55,7 @@ export function parseClientEnvelope(value: unknown, options: ParseClientOptions 
   const definition = OPERATION_CATALOG[parsed.op];
   if (definition.scope === 'host' && value !== null && typeof value === 'object' && 'session' in value) throw new ProtocolValidationError('invalid_request', 'Host operation must not name a session');
   if (definition.mutation) {
-    if (options.checkFreshness === false) requestTimestamp(parsed.id);
-    else validateRequestId(parsed.id, options.now);
+    requestTimestamp(parsed.id);
     parsed.id = parsed.id.toLowerCase();
   }
   if (parsed.op === 'prompt' || parsed.op === 'steer' || parsed.op === 'follow_up') validatePrompt(parsed.params);

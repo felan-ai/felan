@@ -178,48 +178,4 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     expect(f.registry.projection(b.sessionId).snapshot().completionOnlyStreams).toEqual([]);
   });
 
-  it('retains a capacity-blocked completion-only notification and final message without fencing', async () => {
-    const f = await fixture({ capacity: { bytes: 2_200_000 } });
-    const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } }); const runtime = f.instances.get(b.sessionId)!;
-    const gate = deferred(); f.releases.add(gate.resolve); const id = requestId();
-    const events: SessionEvent[] = [];
-    f.registry.subscribe(b.sessionId, event => { if ('rev' in event) events.push(event); });
-    f.store.admit({ v: 1, id, op: 'prompt', session: b.sessionId, params: { text: 'held' } }, 'owner');
-    const work = f.registry.runAdmitted(id, b.sessionId, { kind: 'headless', attachment: 'fixture' }, () => gate.promise);
-    const safety = requestId(); f.store.admit({ v: 1, id: safety, op: 'cancel', session: b.sessionId, params: {} }, 'owner'); f.store.markDispatched(safety);
-    const message = assistant('authoritative final'); runtime.emit({ type: 'message_start', message });
-    runtime.emit({ type: 'message_update', message, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'x'.repeat(1024 * 1024 + 1), partial: message } });
-    runtime.emit({ type: 'message_update', message, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'ignored tail', partial: message } });
-    expect(() => f.registry.assertAdmission()).not.toThrow();
-    expect(f.registry.projection(b.sessionId).snapshot()).toMatchObject({ activeStreams: [], completionOnlyStreams: [{ reason: 'limit' }] });
-    expect(events.some(event => event.change.type === 'stream.completion_only')).toBe(false);
-    runtime.emit({ type: 'message_end', message }); b.runtime.session.sessionManager.appendMessage(message);
-    gate.resolve(); await work;
-    for (const request of [id, safety]) f.store.finishRequest(request, { v: 1, re: request, outcome: 'rejected', error: { code: 'unavailable', message: 'test completed', retryable: true } });
-    await vi.waitFor(() => expect(events.filter(event => event.change.type === 'message.completed')).toHaveLength(1));
-    const relevant = events.filter(event => event.change.type === 'stream.completion_only' || event.change.type === 'message.completed');
-    expect(relevant.map(event => event.change.type)).toEqual(['stream.completion_only', 'message.completed']);
-    const overflow = relevant[0]!.change; const completed = relevant[1]!.change;
-    if (overflow.type !== 'stream.completion_only' || completed.type !== 'message.completed') throw new Error('Missing completion evidence');
-    expect(overflow.stream.message).toBe(completed.message.id);
-    expect(completed.message.content).toEqual([{ type: 'text', text: 'authoritative final' }]);
-    expect(f.registry.projection(b.sessionId).snapshot()).toMatchObject({ activeStreams: [], completionOnlyStreams: [] });
-    expect(JSON.stringify(f.store.snapshot())).not.toContain('ignored tail');
-  });
-
-  for (const code of ['storage_failure', 'ownership_lost', 'invalid_request', 'request_capacity'] as const) {
-    it(`keeps ${code} outside exact transient capacity fatal during stream overflow`, async () => {
-      const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
-      const spy = vi.spyOn(f.store, 'project').mockImplementationOnce(() => { throw new ControlStoreError(code, 'not transient capacity'); });
-      const runtime = f.instances.get(b.sessionId)!; const message = assistant();
-      runtime.emit({ type: 'message_start', message });
-      runtime.emit({ type: 'message_update', message, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'x'.repeat(1024 * 1024 + 1), partial: message } });
-      spy.mockRestore();
-      expect(() => f.registry.assertAdmission()).toThrow('not admitting');
-      await f.registry.settleWriters();
-      const fault = f.registry as unknown as { failure?: unknown; failureSettlement?: Promise<void> };
-      delete fault.failure; delete fault.failureSettlement;
-    });
-  }
-
 });

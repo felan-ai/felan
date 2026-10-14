@@ -46,7 +46,7 @@ it('renders the unified selector and persists extension changes through the daem
     expect(render()).toContain('true');
     component.handleInput!('\x1b[B'); component.handleInput!('\r');
     component.handleInput!('\x0b'); component.handleInput!('0'); component.handleInput!('\r');
-    await vi.waitFor(() => expect(render()).toContain('Operation did not complete.'));
+    await vi.waitFor(() => expect(render()).toContain('Must be positive'));
     expect((await configuration.get('global')).values.extensionConfig?.example?.count).toBe(3);
     component.handleInput!('\x7f'); component.handleInput!('4'); component.handleInput!('\r');
     await vi.waitFor(async () => expect((await configuration.get('global')).values.extensionConfig?.example?.count).toBe(4));

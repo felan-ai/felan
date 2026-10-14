@@ -1,13 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { CreateAgentCoreSessionOptions } from '@felan-ai/agent-core';
 import {
-  INTERACTION_KINDS, LIMITS, parseInteraction, validateInteractionAnswer,
+  INTERACTION_KINDS, parseInteraction, validateInteractionAnswer,
   type Interaction, type InteractionAnswer, type InteractionAuthority, type OperationParams,
 } from '@felan-ai/session-protocol';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
 import { accepted, commandError } from './commands.js';
 import type { ControlCommit, DaemonControlStore } from './control-store.js';
-import { CONTROL_LIMITS } from './control-state.js';
 import type { SessionRegistry } from './registry.js';
 
 type ClientKind = OperationParams<'hello'>['kind'];
@@ -21,7 +20,6 @@ export interface BrokerClient {
   attachment: string;
   sessions: readonly string[];
   interactionKinds: OperationParams<'hello'>['interactionKinds'];
-  localConsole?: boolean;
 }
 
 export interface BrokerRequestOptions {
@@ -40,7 +38,6 @@ export type BrokerOutcome =
 export interface BrokerOptions {
   store: DaemonControlStore;
   ownerPrincipal?: string;
-  requireLocalConsole?: boolean;
   publish(interaction: Interaction, revisions: Readonly<Record<string, number>>): void;
   resume?(session: string, answer: InteractionAnswer, continuationId: string, dispatch: () => void): Promise<void>;
   committed?(revisions: Readonly<Record<string, number>>): void;
@@ -153,8 +150,6 @@ export class InteractionBroker {
     if (options.transient && scope.kind !== 'host') throw commandError('invalid_request');
     if (options.transient && options.deferrable) throw commandError('invalid_request');
     const transient = options.transient === true;
-    const pending = this.pending();
-    if (pending.length >= CONTROL_LIMITS.interactions || pending.filter(item => sameScope(item.scope, scope)).length >= LIMITS.pageEntries) throw commandError('request_capacity');
     if (scope.kind === 'session' && this.options.store.session(scope.session).state !== 'open') throw commandError('not_found');
     const createdAt = Math.max(this.now(), this.options.store.snapshot().clock);
     const interaction = parseInteraction({ id: randomUUID(), state: 'waiting', scope, request, createdAt,
@@ -285,7 +280,6 @@ export class InteractionBroker {
 
   private eligible(client: BrokerClient, item: Pick<Interaction, 'request' | 'scope' | 'authority'>): boolean {
     return client.interactionKinds.includes(item.request.kind)
-      && (!(this.options.requireLocalConsole || item.scope.kind === 'host' || item.authority === 'local-console') || client.localConsole === true)
       && (item.authority !== 'owner' || client.principal === this.ownerPrincipal)
       && (item.scope.kind === 'host' ? item.scope.recipient === undefined || item.scope.recipient === client.attachment : client.sessions.includes(item.scope.session));
   }
@@ -319,7 +313,7 @@ export class InteractionBroker {
       } catch (error) {
         const phase = this.options.store.snapshot().continuations.find(item => item.id === id)?.phase;
         if (phase === 'ready' && error !== null && typeof error === 'object' && 'code' in error
-          && (error.code === 'busy' || error.code === 'policy_pending')) return;
+          && error.code === 'busy') return;
         if (dispatched && phase === 'dispatch_intent') {
           const commit = this.options.store.transitionContinuation(id, 'indeterminate');
           this.options.committed?.(commit.revisions);
@@ -365,16 +359,11 @@ export class InteractionBroker {
   }
 }
 
-export function createRegistryInteractionBroker(registry: SessionRegistry, options: Pick<BrokerOptions, 'ownerPrincipal' | 'requireLocalConsole'> = {}): InteractionBroker {
+export function createRegistryInteractionBroker(registry: SessionRegistry, options: Pick<BrokerOptions, 'ownerPrincipal'> = {}): InteractionBroker {
   return new InteractionBroker({ store: registry.options.store,
     ...(options.ownerPrincipal === undefined ? {} : { ownerPrincipal: options.ownerPrincipal }),
-    ...(options.requireLocalConsole === undefined ? {} : { requireLocalConsole: options.requireLocalConsole }),
     publish: (interaction, revisions) => registry.publishInteraction(interaction, revisions),
     committed: revisions => registry.publishCommitted(revisions),
     resume: (session, answer, id, dispatch) => registry.resumeInteraction(session, answer, id, dispatch),
   });
-}
-
-function sameScope(left: Scope, right: Scope): boolean {
-  return left.kind === right.kind && (left.kind === 'host' || right.kind === 'session' && left.session === right.session);
 }

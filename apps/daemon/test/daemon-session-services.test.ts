@@ -10,7 +10,7 @@ function fixture() {
   const session = { sessionManager: manager, setSessionName: vi.fn((value: string) => { title = value; }) };
   const stored = { id: 'current', root: 'current', revision: 0 };
   const refresh = vi.fn();
-  const registry = { assertDispatch: vi.fn(), options: { owner: { assertCurrent: vi.fn() }, store: { session: () => stored } },
+  const registry = { assertDispatch: vi.fn(), assertServiceAccess: vi.fn(), options: { owner: { assertCurrent: vi.fn() }, store: { session: () => stored } },
     binding: () => ({ runtime: { session } }), projection: () => ({ refresh, setExecutionsGeneration: vi.fn() }), subscribe: vi.fn(() => () => {}) };
   return { registry: registry as unknown as SessionRegistry, session, entries, stored,
     service: createRegistrySessionsService(registry as unknown as SessionRegistry, { id: 'current', root: 'current' }, '/project') };
@@ -20,7 +20,7 @@ describe('canonical Sessions binding', () => {
   it('does not access files, restore sessions, or start work while binding the service', () => {
     const f = fixture();
     expect(f.service.current).toEqual({ id: 'current', root: 'current' });
-    expect(f.registry.assertDispatch).not.toHaveBeenCalled();
+    expect(f.registry.assertServiceAccess).not.toHaveBeenCalled();
     expect(f.session.setSessionName).not.toHaveBeenCalled();
   });
 

@@ -14,9 +14,21 @@ entrypoint resolution. Runtime/store/model/settings/classifier/subagent-host
 constructors, `CliDependencies.openSession`, and headless host-runtime options
 are removed. Use the daemon service; there is no in-process fallback.
 
-Pre-daemon session files are not listed or resumable. `/import <path>` explicitly
-copies JSONL history into a new daemon session without changing the original;
-`/export` exports a daemon session. There is no legacy adoption workflow.
+Sessions saved by Felan Code 0.28.3 and earlier stay available after upgrading on
+the same agent directory. They appear in the `/resume` and `--resume` picker,
+`--continue` picks them up in their recorded working folder, and
+`--session <id>`, headless runs and ACP `session/load` open them by ID. Opening
+one adopts it in place: the daemon registers the existing file under its
+existing session ID, and new turns are appended to that same file, so 0.28.3 can
+still read it. Felan finds these files in the per-folder directories
+under `~/.felan/sessions/` and directly in a custom `--session-dir`.
+
+Exit 0.28.3 before resuming one of its sessions. After adoption the daemon is
+the only writer; running 0.28.3 on the same session at the same time is
+unsupported and can interleave or lose history. Malformed files are not listed. Until a session is opened, the picker shows its saved name or
+first prompt, or its ID. `/import <path>` explicitly copies JSONL history into a new
+daemon session without changing the original; `/export` exports a daemon
+session.
 
 ## Invocation
 
@@ -84,15 +96,16 @@ The implemented agent surface is:
 ACP sessions attach to daemon-owned sessions. Loading replays the complete
 current branch before the load request succeeds. Prompt turns accept ACP's
 baseline `text` and `resource_link` blocks. Felan Code streams ordered user,
-assistant, thought, and tool lifecycle updates with aggregate, per-item, and
-output limits. Unsupported prompt block types fail before the model runs.
+assistant, thought, and tool lifecycle updates. Unsupported prompt block types fail before the model runs.
 
-ACP attaches with the daemon's strict policy. Tightening waits for active admitted
-work to drain; EOF detaches only the ACP attachment. It does not answer pending
+ACP attaches with the daemon's strict policy. It applies to the session tree
+immediately; running tool calls keep the approvals they already had, and the
+tree returns to host defaults when the last ACP client detaches. EOF detaches
+only the ACP attachment. It does not answer pending
 interactions, stop session work, or replay interrupted work.
 
 If the client advertises form elicitation, Pi extension `select`, `confirm`,
-`input`, and `editor` requests are mapped to bounded ACP forms. This enables
+`input`, and `editor` requests are mapped to ACP forms. This enables
 `ask_user` and Prewalk plan review. Without that capability, dialog UI is
 reported as unavailable rather than silently accepted.
 
@@ -197,14 +210,15 @@ felan daemon status
 felan daemon start
 felan daemon foreground
 felan daemon logs
-felan daemon stop --yes
-felan daemon restart --yes
+felan daemon stop
+felan daemon restart
 ```
 
 `status` and `logs` never start it. `start` attaches to a compatible instance or
 launches the exact installed daemon; `foreground` remains attached to the service.
-`stop` and `restart` require `--yes`. Add `--force` only to explicitly interrupt
-active work. Restart launches the replacement with the requesting shell
+`stop` and `restart` wait for active work to finish. If it does not finish
+before the drain deadline, the command fails and the daemon keeps running; add
+`--force` to interrupt the work instead. Restart launches the replacement with the requesting shell
 environment; no per-session environment is transported or persisted.
 
 Use `--daemon-runtime <dir>` only for a private test/CI namespace. Headless
@@ -212,10 +226,31 @@ completion detaches from that daemon; it does not stop it. CI must explicitly
 stop the isolated daemon it started.
 
 In the TUI, `/daemon status`, `/daemon logs`, `/daemon stop`, and `/daemon
-restart` provide the same lifecycle controls. Stop/restart confirm their effect
-on all clients; force requires a second confirmation. Ctrl+D on an empty editor
+restart` provide the same lifecycle controls. When active work (runs, subagents, interactive PTY or foreground processes, and pending questions) would be
+interrupted, they ask once with the count and then stop or restart immediately.
+A daemon from another Felan version is replaced automatically only when it has
+no active work; otherwise the TUI shows how many active tasks a restart would
+interrupt and asks first. Ctrl+D on an empty editor
 and `/exit` detach the client. Escape interrupts the current run. `/close`
-confirms session disposal. These are distinct actions.
+disposes of the session. These are distinct actions.
+
+If the daemon connection drops, for example because the daemon restarts, the
+TUI keeps the input usable and shows `Daemon disconnected · reconnecting in Ns
+· /reconnect to retry now`. It retries automatically with backoff (250 ms,
+doubling to 10 s, with no attempt limit) and, once the daemon is back,
+reattaches the current session and briefly shows `Reconnected`. Automatic
+retries only connect to a running daemon; they never start one, so an explicit
+`felan daemon stop` stays stopped. `/reconnect` retries immediately and starts
+the daemon when none is running. Input submitted while disconnected stays in
+the editor; requests in flight when the connection dropped report that their
+outcome is unknown, because the daemon may still be running them. ACP clients
+reconnect the same way while the editor connection is open. Headless text runs
+fail if the daemon does not return within 30 seconds; JSON runs fail on any
+interruption because their event stream cannot be replayed.
+
+`/reload` keeps all background processes. A daemon restart keeps detached
+background processes, which the restored session rediscovers, and ends
+interactive (PTY) ones, as quitting Felan Code did before the daemon.
 
 ### Resume a session
 
@@ -308,9 +343,10 @@ or wait for dependency onboarding.
 
 ### Restart the daemon
 
-`/restart` restarts the daemon; it does not reload the Felan client. Use
-`/daemon restart` for the explicit lifecycle control. After rebuilding Felan
-Code from source, detach and relaunch the client to use rebuilt client code.
+`/restart` restarts the daemon and then Felan Code, resuming the current
+session, so rebuilt daemon and client code both take effect. `/daemon restart`
+restarts only the daemon in place: the TUI shows `Daemon restarting…`, starts
+the replacement, reattaches the current session, and keeps your editor input.
 
 ### Herdr integration
 

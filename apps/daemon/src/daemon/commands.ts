@@ -5,10 +5,11 @@ import { truncateTail } from '@earendil-works/pi-coding-agent';
 import { LIMITS, parseOperationResult, type ClientEnvelope, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
 import type { SessionRegistry } from './registry.js';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
-import { boundedText, digest, isProjectionCapacityError } from './projection.js';
+import { boundedText, digest } from './projection.js';
 import { prepareExport, prepareImport, publishExport, stageImport } from './session-files.js';
 import { sha256 } from './persistence.js';
-import { join } from 'node:path';
+import { canonicalPath } from './profile-storage.js';
+import { dirname, join } from 'node:path';
 
 export async function forkSession(
   registry: SessionRegistry,
@@ -21,7 +22,7 @@ export async function forkSession(
 }
 
 export interface RootPreparation { cwd: string; extensionPaths: readonly string[] }
-export interface CommandContext { origin: Origin; localConsole?: boolean; signal?: AbortSignal; rootPreparation?: RootPreparation; invalidateAfterResponse?(revisions: Readonly<Record<string, number>>): void }
+export interface CommandContext { origin: Origin; signal?: AbortSignal; rootPreparation?: RootPreparation; invalidateAfterResponse?(revisions: Readonly<Record<string, number>>): void }
 export interface CommandOptions {
   registry: SessionRegistry;
   configuration: HostConfiguration;
@@ -41,7 +42,7 @@ export class SessionCommands {
     if (options.prepareOpenInteraction) this.operations.add('host.open_interaction');
   }
 
-  async read(request: ClientEnvelope, client?: string, localConsole = false): Promise<Response> {
+  async read(request: ClientEnvelope, client?: string): Promise<Response> {
     const { registry, configuration } = this.options;
     switch (request.op) {
       case 'host.setup.catalog': {
@@ -53,26 +54,35 @@ export class SessionCommands {
         return accepted(request, this.options.setup.read(request.params.jobId, client));
       }
       case 'host.setup.answer': {
-        if (!localConsole) throw commandError('forbidden');
         if (!this.options.setup || !client) throw commandError('unavailable');
         await this.options.setup.answer(request.params.jobId, request.params.promptId, request.params.text, client);
         return accepted(request, {});
       }
       case 'host.setup.cancel': {
-        if (!localConsole) throw commandError('forbidden');
         if (!this.options.setup || !client) throw commandError('unavailable');
         this.options.setup.cancel(request.params.jobId, client);
         return accepted(request, {});
       }
       case 'sessions.list': {
-        const keys = new WeakMap<object, string>();
+        const keys = new WeakMap<object, string>(); const previews = new Map<string, () => Promise<string>>();
+        const cwd = request.params.cwd === undefined ? undefined : await canonicalPath(request.params.cwd).catch(() => request.params.cwd!);
         const entries = [...registry.list().map(row => {
           const entry = { session: row.id, root: row.root, ...(row.parent ? { parent: row.parent } : {}), cwd: row.cwd,
           revision: row.revision, state: row.state, residency: row.residency, title: row.title, ...(row.model ? { model: row.model } : {}), lastActivity: row.updatedAt, run: row.run, policy: row.policy };
-          keys.set(entry, row.id); return entry;
+          keys.set(entry, row.id); previews.set(row.id, () => registry.preview(row)); return entry;
+        }), ...(request.params.root ? [] : await registry.legacySessions(cwd)).map(row => {
+          const entry = { session: row.id, root: row.id, cwd: row.cwd, revision: 0, state: 'open' as const, residency: 'evicted' as const, title: row.title,
+            lastActivity: row.modifiedAt, run: { state: 'idle' as const }, policy: { effective: 'host-default' as const, generation: 0 } };
+          keys.set(entry, row.id); previews.set(row.id, async () => row.preview); return entry;
         })]
-          .filter(row => (!request.params.cwd || row.cwd === request.params.cwd) && (!request.params.root || row.root === request.params.root));
-        return accepted(request, { ...keysetPage(entries, request.params, JSON.stringify(['sessions', request.params.cwd ?? null, request.params.root ?? null]), row => keys.get(row)!) });
+          .filter(row => (!cwd || row.cwd === cwd) && (!request.params.root || row.root === request.params.root));
+        const result = keysetPage(entries, request.params, JSON.stringify(['sessions', request.params.cwd ?? null, request.params.root ?? null]), row => keys.get(row)!);
+        // Only the returned page pays for transcript reads.
+        const page = await Promise.all(result.entries.map(async entry => {
+          const preview = await previews.get(entry.session)!();
+          return preview ? { ...entry, preview } : entry;
+        }));
+        return accepted(request, { ...result, entries: page });
       }
       case 'config.get': {
         if (request.params.scope !== 'session') return accepted(request, await configuration.get(request.params.scope, request.session ? registry.binding(request.session)?.runtime.session.model : undefined));
@@ -113,7 +123,7 @@ export class SessionCommands {
 
   async prepare(command: AdmittedCommand, context: CommandContext): Promise<AdmissionOutcome> {
     const { request } = command; const { registry, configuration } = this.options;
-    const localClient = context.localConsole && 'attachment' in context.origin ? context.origin.attachment : undefined;
+    const localClient = 'attachment' in context.origin ? context.origin.attachment : undefined;
     switch (request.op) {
       case 'ui.action': {
         const execute = registry.prepareUiAction(request.session, request.params);
@@ -145,14 +155,14 @@ export class SessionCommands {
       case 'sessions.create': {
         const overrides = request.params.config && Object.keys(request.params.config).length ? configuration.sessionOverrides(request.params.config) : [];
         const model = request.params.model && await this.model(request.params.model);
-        if (!request.params.model && !(await this.options.models.getAvailable()).length) throw commandError('authentication_required');
+        if (!request.params.model && !(await this.options.models.getAvailable()).length) throw commandError('authentication_required', 'No model is available. Log in with /login or configure a provider API key.');
         const resources = await registry.options.lifecycle.resolveResources({ cwd: request.params.cwd, ...(request.params.sessionDir ? { sessionDir: request.params.sessionDir } : {}) });
         if (context.rootPreparation && context.rootPreparation.cwd !== resources.cwd) throw commandError('target_mismatch');
         registry.assertClientSessionDirectory(resources);
         const extensionPaths = context.rootPreparation?.extensionPaths ?? request.params.extensions;
         if ((request.params.interactiveExtensions || extensionPaths?.length) && !localClient) throw commandError('forbidden');
         const creation = { interactiveExtensions: request.params.interactiveExtensions === true, cwd: resources.cwd, target: { kind: 'new' as const }, source: request.params.source, clientRoot: true as const,
-          sessionDir: resources.sessionDir, ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', pendingTightening: false, generation: 0 } as const } : {}), ...(model ? { model } : {}),
+          sessionDir: resources.sessionDir, ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } as const } : {}), ...(model ? { model } : {}),
           ...(request.params.thinking ? { thinkingLevel: request.params.thinking } : {}), ...(extensionPaths ? { extensionPaths } : {}),
           ...(overrides.length ? { extensionConfigOverrides: overrides } : {}) };
         await registry.validateConfiguration(creation, resources);
@@ -164,10 +174,10 @@ export class SessionCommands {
         if (request.params.scope === 'session') {
           if (!request.session) throw commandError('invalid_request');
           const overrides = configuration.sessionOverrides(request.params.values, registry.options.store.session(request.session).profile?.extensionConfigOverrides ?? []);
-          const binding = registry.binding(request.session)!;
-          await registry.validateConfiguration({ cwd: binding.resources.cwd, target: { kind: 'resume', sessionFile: registry.options.store.session(request.session).piPath },
-            policy: registry.getPolicy(request.session), extensionConfigOverrides: overrides }, binding.resources);
-          return { response: registry.reloadAdmitted(request.id, request.session, { values: request.params.values, overrides }).then(() => accepted(request, {})) };
+          const stored = registry.options.store.session(request.session); const resources = registry.binding(request.session)?.resources;
+          await registry.validateConfiguration({ cwd: resources?.cwd ?? stored.cwd, sessionDir: dirname(stored.piPath), target: { kind: 'resume', sessionFile: stored.piPath },
+            policy: registry.getPolicy(request.session), extensionConfigOverrides: overrides }, resources);
+          return { response: registry.configureAdmitted(request.id, request.session, { values: request.params.values, overrides }).then(() => accepted(request, {})) };
         }
         if (!localClient) throw commandError('forbidden');
         if (!(await configuration.get(request.params.scope)).writable) throw Object.assign(new Error('This configuration scope is read-only.'), { code: 'unavailable' });
@@ -175,31 +185,29 @@ export class SessionCommands {
         return { response: command.dispatch(() => configuration.set(request.params.scope, request.params.values)).then(() => accepted(request, {})) };
       }
       case 'close': return { response: registry.closeAdmitted(request.id, request.session).then(() => accepted(request, {})) };
-      case 'session.delete': return { response: registry.deleteAdmitted(request.id, request.session, request.params.expectedRevision).then(() => accepted(request, {})) };
+      case 'session.delete': return { response: registry.deleteAdmitted(request.id, request.session).then(() => accepted(request, {})) };
       case 'session.reload': return { response: registry.reloadAdmitted(request.id, request.session).then(() => accepted(request, {})) };
       case 'session.import': {
         const resources = await registry.options.lifecycle.resolveResources({ cwd: request.params.cwd });
         for (const root of resources.writableRoots) registry.options.owner.assertOwnsPath(root);
         registry.assertClientSessionDirectory(resources);
-        const state = registry.options.store.snapshot();
-        const excluded = state.sessions.map(row => row.piPath);
-        const prepared = preflight(() => prepareImport(registry.options.owner, request.params.path, excluded));
+        const prepared = preflight(() => prepareImport(registry.options.owner, request.params.path));
         command.assertDispatch();
         return { response: command.dispatch(async () => {
-          const staged = stageImport(registry.options.owner, resources.sessionDir, request.params.path, excluded, prepared);
+          const staged = stageImport(registry.options.owner, resources.sessionDir, request.params.path, prepared);
           try {
             const binding = await registry.create({ cwd: resources.cwd, sessionDir: resources.sessionDir, target: { kind: 'import', sessionFile: staged.path },
               source: context.origin.kind === 'acp' ? 'acp' : context.origin.kind === 'headless' ? 'headless' : 'tui', clientRoot: true,
-              ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', pendingTightening: false, generation: 0 } as const } : {}) });
+              ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } as const } : {}) });
             return accepted(request, { sessionId: binding.sessionId });
           } finally { staged.dispose(); }
         }) };
       }
       case 'session.export': {
-        const binding = registry.binding(request.session)!;
-        const prepared = preflight(() => prepareExport(registry.options.owner, request.params.destination));
+        const managed = [registry.options.store.directory, registry.options.owner.target.runtimeDirectory, ...registry.options.store.snapshot().sessions.map(row => row.piPath)];
+        const prepared = preflight(() => prepareExport(registry.options.owner, request.params.destination, managed));
         return { response: registry.mutateAdmitted(request.id, request.session, async ({ session, assertCurrent }) => {
-          const destination = await publishExport(registry.options.owner, binding.agentRuntime.storage('session').root, request.params.destination,
+          const destination = await publishExport(registry.options.owner,
             async path => { if (request.params.format === 'html') await session.exportToHtml(path); else await session.exportToJsonl(path); assertCurrent(); }, prepared);
           assertCurrent(); return accepted(request, { destination });
         }) };
@@ -222,7 +230,10 @@ export class SessionCommands {
         const prepared = registry.processes.prepareForeground(request.session, { shell: settings.getShellPath(), prefix: settings.getShellCommandPrefix() });
         let resolve!: (response: Response) => void; let reject!: (error: unknown) => void;
         const response = new Promise<Response>((done, fail) => { resolve = done; reject = fail; });
-        const work = registry.runAdmitted(request.id, request.session, context.origin, async session => {
+        // Like Pi, a shell command during an active run joins that run; its result is queued for the next turn.
+        const active = registry.options.store.session(request.session).run;
+        const joinsRun = ['running', 'waiting', 'cancelling'].includes(active.state) && active.id !== undefined;
+        const execute = async (session: AgentSession) => {
           const { resourceId } = await registry.processes.startForeground(request.id, request.session, request.params, prepared);
           const projection = registry.projection(request.session);
           let revision = 0; let lastPublished = 0;
@@ -271,7 +282,9 @@ export class SessionCommands {
             pendingOutput = undefined;
             try { projection.setPresentation({ id: resourceId, remove: true }); } catch {}
           }
-        });
+        };
+        const work = joinsRun ? registry.mutateAdmitted(request.id, request.session, ({ session }) => execute(session))
+          : registry.runAdmitted(request.id, request.session, context.origin, execute);
         void work.catch(error => {
           reject(error);
           if (registry.binding(request.session)) {
@@ -283,7 +296,7 @@ export class SessionCommands {
       case 'prompt': {
         const session = registry.binding(request.session)!.runtime.session;
         const model = session.model;
-        if (!model || !(await session.modelRuntime.getAvailable()).some(candidate => candidate.provider === model.provider && candidate.id === model.id)) throw commandError('authentication_required');
+        if (!model || !(await session.modelRuntime.getAvailable()).some(candidate => candidate.provider === model.provider && candidate.id === model.id)) throw commandError('authentication_required', model ? `Model ${model.provider}/${model.id} is not available. Log in with /login or choose another model.` : 'No model is selected. Choose one with /model.');
         return this.start(request, context.origin, session => {
           const input = promptInput(request.params);
           return session.prompt(input.text, { images: input.images, source: 'rpc', expandPromptTemplates: false });
@@ -294,8 +307,22 @@ export class SessionCommands {
         return this.start(request, context.origin, async session => { await session.compact(request.params.instructions); });
       }
       case 'command.invoke': {
-        if (!registry.projection(request.session).snapshot().catalog.commands.some(item => item.name === request.params.name)) throw commandError('unavailable');
-        return this.start(request, context.origin, session => session.prompt(`/${request.params.name}${request.params.arguments ? ` ${request.params.arguments}` : ''}`, { source: 'rpc' }));
+        const target = registry.projection(request.session).snapshot().catalog.commands.find(item => item.name === request.params.name);
+        if (!target) throw commandError('unavailable');
+        const invoke = (session: AgentSession) => session.prompt(`/${request.params.name}${request.params.arguments ? ` ${request.params.arguments}` : ''}`, { source: 'rpc' });
+        // Like Pi, extension commands execute immediately during an active run; skill commands still wait for it.
+        const active = registry.options.store.session(request.session).run;
+        if (target.kind === 'extension' && ['running', 'waiting', 'cancelling'].includes(active.state) && active.id !== undefined) {
+          let started = false;
+          const work = registry.mutateAdmitted(request.id, request.session, ({ session }) => { started = true; return invoke(session); });
+          if (!started) return { response: work.then(() => { throw commandError('unavailable'); }) };
+          void work.catch(() => {
+            if (!registry.binding(request.session)) return;
+            try { registry.projection(request.session).setPresentation({ id: 'run-error', kind: 'notification', level: 'error', text: 'Command failed. Inspect the session before retrying.' }); } catch {}
+          });
+          return { response: accepted(request, { runId: active.id, status: 'started' }) };
+        }
+        return this.start(request, context.origin, invoke);
       }
       case 'steer': case 'follow_up': {
         const projection = registry.projection(request.session);
@@ -320,8 +347,6 @@ export class SessionCommands {
       case 'set_thinking': return this.mutate(request, async ({ session }) => { session.setThinkingLevel(request.params.thinking, { persist: false }); });
       case 'session.rename': return this.mutate(request, async ({ session }) => { session.setSessionName(request.params.name); });
       case 'session.entry.label': case 'session.branch.select': {
-        const stored = registry.options.store.session(request.session);
-        if (stored.revision !== request.params.expectedRevision) throw commandError('resync_required');
         const session = registry.binding(request.session)!.runtime.session;
         if (!session.sessionManager.getEntry(request.params.entryId)) throw commandError('not_found');
         return this.mutate(request, async ({ session, assertCurrent }) => {
@@ -371,9 +396,9 @@ export class SessionCommands {
 
   private async model(reference: OperationParams<'set_model'>, session?: AgentSession) {
     const available = await (session?.modelRuntime ?? this.options.models).getAvailable();
-    if (!available.length) throw commandError('authentication_required');
+    if (!available.length) throw commandError('authentication_required', 'No model is available. Log in with /login or configure a provider API key.');
     const model = available.find(model => model.provider === reference.provider && model.id === reference.id);
-    if (!model || session && session.scopedModels.length && !session.scopedModels.some(item => item.model.provider === model.provider && item.model.id === model.id)) throw commandError('not_found');
+    if (!model || session && session.scopedModels.length && !session.scopedModels.some(item => item.model.provider === model.provider && item.model.id === model.id)) throw commandError('not_found', `Model ${reference.provider}/${reference.id} is not available.`);
     return model;
   }
 
@@ -382,7 +407,7 @@ export class SessionCommands {
   }
 }
 
-export function commandError(code: string): Error & { code: string } { return Object.assign(new Error('Operation unavailable or rejected.'), { code }); }
+export function commandError(code: string, message = 'Operation unavailable or rejected.'): Error & { code: string } { return Object.assign(new Error(message), { code }); }
 export function accepted(request: ClientEnvelope, value: unknown): Response {
   return { v: 1, re: request.id, outcome: 'accepted', result: parseOperationResult(request.op, value) };
 }
@@ -391,7 +416,7 @@ function preflight<T>(prepare: () => T): T {
   try { return prepare(); }
   catch (error) {
     const code = (error as { code?: unknown })?.code;
-    if (code === undefined || ['ENOENT', 'ENOTDIR', 'EISDIR', 'ELOOP', 'EACCES'].includes(String(code))) throw commandError('invalid_request');
+    if (code === undefined || ['ENOENT', 'ENOTDIR', 'EISDIR', 'ELOOP', 'EACCES'].includes(String(code))) throw commandError('invalid_request', error instanceof Error ? error.message : undefined);
     throw error;
   }
 }

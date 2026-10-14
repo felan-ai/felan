@@ -2,9 +2,11 @@ import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStdioProcess } from '@felan-ai/agent-core';
+import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { RegistryProcesses } from '../src/daemon/processes.js';
+import type { SessionRegistry } from '../src/daemon/registry.js';
 import { FakeBackgroundProcessProvider as BackgroundBashManager, fakeProcessAdapter } from './fixtures/process-provider.js';
-import { deferred, fixture, fixtures, supported } from './fixtures/registry.js';
+import { deferred, fixture, fixtures, now, requestId, supported } from './fixtures/registry.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 
@@ -294,6 +296,148 @@ describe.skipIf(!supported)('registry process ownership', () => {
     });
   }
 
+  it('keeps detached and PTY processes running and controllable across reload; only the PTY is restart-interruptible work', async () => {
+    const stopDetached = vi.fn(async () => {});
+    const f = await fixture({}, { ...fakeProcessAdapter(), inspectDetached: async () => ({ status: 'running' as const, pid: 42 }), stopDetached });
+    const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    const pty = syntheticTerminal(); let identity = '';
+    const ports = { terminals: { startShell: async () => pty.handle }, shell: async () => ({ stdout: '', stderr: '', code: 0, killed: false }),
+      exec: async () => ({ stdout: identity, stderr: '', code: 0, killed: false }) };
+    const before = await wrappedRuntime(f, root, root, ports);
+    const manager = new BackgroundBashManager(before);
+    const { job: terminal } = await manager.startInteractive('synthetic pty');
+    const detached = await manager.start('synthetic detached'); identity = `${detached.meta.runnerPath} ${detached.meta.processToken}`;
+    await before.storage().writeFile(detached.meta.logPath, new TextEncoder().encode('detached output'));
+    expect(f.registry.processes.activeCount(root)).toBe(2);
+    expect(await f.registry.activeWork()).toBe(1);
+
+    const reload = requestId(); f.store.admit({ v: 1, id: reload, op: 'session.reload', session: root, params: {} }, 'client');
+    await f.registry.reloadAdmitted(reload, root);
+    expect(pty.handle.terminate).not.toHaveBeenCalled(); expect(pty.handle.dispose).not.toHaveBeenCalled();
+    expect(() => before.terminals!.attach!(terminal.meta.id)).toThrow('closed');
+    const after = await wrappedRuntime(f, root, root, ports);
+    expect(f.registry.processes.list(root)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: terminal.meta.id, kind: 'pty', state: 'running', controllable: true }),
+      expect.objectContaining({ id: detached.meta.id, kind: 'detached', state: 'running' }),
+    ]));
+    const attached = after.terminals!.attach!(terminal.meta.id)!;
+    expect(new TextDecoder().decode((await attached.read(0)).output)).toBe('pty output');
+    await attached.write(new TextEncoder().encode('attached'));
+    await f.registry.processes.write(root, terminal.meta.id, new TextEncoder().encode('protocol'));
+    expect(pty.handle.write).toHaveBeenCalledTimes(2);
+    expect(new TextDecoder().decode((await f.registry.processes.read(root, detached.meta.id, 0, 1024)).data)).toBe('detached output');
+    await f.registry.processes.stopForSession(root, terminal.meta.id, 'SIGTERM');
+    expect(pty.handle.terminate).toHaveBeenCalledOnce();
+    await f.registry.processes.prepareStop(root, detached.meta.id);
+    await f.registry.processes.stopForSession(root, detached.meta.id, 'SIGTERM');
+    expect(stopDetached).toHaveBeenCalledWith(after, detached.meta.id, 'SIGTERM');
+    expect(await f.registry.activeWork()).toBe(0);
+  });
+
+  it('stops counting a kept PTY as active work once it exits unread after reload', async () => {
+    const f = await fixture(); const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    const pty = syntheticTerminal();
+    const { job } = await new BackgroundBashManager(await wrappedRuntime(f, root, root, { terminals: { startShell: async () => pty.handle } })).startInteractive('synthetic pty');
+    const reload = requestId(); f.store.admit({ v: 1, id: reload, op: 'session.reload', session: root, params: {} }, 'client');
+    await f.registry.reloadAdmitted(reload, root);
+    expect(await f.registry.activeWork()).toBe(1);
+    await pty.handle.terminate();
+    expect(await f.registry.activeWork()).toBe(0);
+    expect(f.registry.processes.list(root)).toEqual([expect.objectContaining({ id: job.meta.id, state: 'exited', controllable: false })]);
+  });
+
+  it('settles PTYs kept by a failed reload when the daemon shuts down', async () => {
+    const f = await fixture(); const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    const pty = syntheticTerminal();
+    const { job } = await new BackgroundBashManager(await wrappedRuntime(f, root, root, { terminals: { startShell: async () => pty.handle } })).startInteractive('synthetic pty');
+    vi.mocked(f.profile.openSession).mockRejectedValueOnce(new Error('reload failed'));
+    const reload = requestId(); f.store.admit({ v: 1, id: reload, op: 'session.reload', session: root, params: {} }, 'client');
+    await expect(f.registry.reloadAdmitted(reload, root)).rejects.toThrow('reload failed');
+    expect(f.registry.binding(root)).toBeUndefined(); expect(pty.handle.terminate).not.toHaveBeenCalled();
+    await f.registry.shutdown();
+    expect(pty.handle.terminate).toHaveBeenCalledOnce(); expect(pty.handle.dispose).toHaveBeenCalledOnce();
+    expect(f.store.snapshot().resources).toEqual([expect.objectContaining({ id: job.meta.id, state: 'exited' })]);
+  });
+
+  it('lets the root control a PTY started by a child after reload disposes the idle child', async () => {
+    const f = await fixture(); const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    const child = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, rootSessionId: root, parentSessionId: root })).sessionId;
+    const pty = syntheticTerminal();
+    const { job } = await new BackgroundBashManager(await wrappedRuntime(f, child, root, { terminals: { startShell: async () => pty.handle } })).startInteractive('child pty');
+    const reload = requestId(); f.store.admit({ v: 1, id: reload, op: 'session.reload', session: root, params: {} }, 'client');
+    await f.registry.reloadAdmitted(reload, root);
+    expect(f.registry.binding(child)).toBeUndefined(); expect(pty.handle.terminate).not.toHaveBeenCalled();
+    await wrappedRuntime(f, root, root, {});
+    expect(new TextDecoder().decode((await f.registry.processes.read(root, job.meta.id, 0, 1024)).data)).toBe('pty output');
+    await f.registry.processes.write(root, job.meta.id, new TextEncoder().encode('from root'));
+    expect(pty.handle.write).toHaveBeenCalledWith(new TextEncoder().encode('from root'));
+    await f.registry.processes.stopForSession(root, job.meta.id, 'SIGTERM');
+    expect(pty.handle.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('propagates a store failure from restore reconciliation and fences the registry', async () => {
+    const f = await fixture(); const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    expect(await f.registry.evictIdle()).toEqual([root]);
+    f.store.putResource({ id: 'stale-pty', kind: 'pty', session: root, root, state: 'running', updatedAt: now });
+    const commit = vi.spyOn(f.store, 'putResource').mockImplementation(() => { throw new Error('commit failed'); });
+    await expect(f.registry.restore(root)).rejects.toThrow('commit failed');
+    commit.mockRestore();
+    expect(() => f.registry.assertAdmission()).toThrow('not admitting');
+    await f.registry.settleWriters().catch(() => {}); f.replaceRegistry(undefined as never, f.store);
+  });
+
+  it('keeps restoring when one detached process cannot be inspected', async () => {
+    const adapter = { ...fakeProcessAdapter(), inspectDetached: vi.fn(async () => { throw new Error('inspection failed'); }) };
+    const f = await fixture({}, adapter); const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    const ports = { shell: async () => ({ stdout: '', stderr: '', code: 0, killed: false }) };
+    const detached = await new BackgroundBashManager(await wrappedRuntime(f, root, root, ports)).start('synthetic detached');
+    await f.registry.close(root);
+    openWrappedRoots(f, () => f.registry, ports);
+    await f.registry.restore(root);
+    expect(adapter.inspectDetached).toHaveBeenCalled();
+    expect(f.store.snapshot().resources).toEqual([expect.objectContaining({ id: detached.meta.id, state: 'running' })]);
+    expect(() => f.registry.assertAdmission()).not.toThrow();
+  });
+
+  it('ends PTYs with the daemon but leaves detached jobs running for the restarted daemon to rediscover and control', async () => {
+    const stopDetached = vi.fn(async () => {});
+    const adapter = { ...fakeProcessAdapter(), inspectDetached: async () => ({ status: 'running' as const, pid: 42 }), stopDetached };
+    const f = await fixture({}, adapter);
+    const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    const pty = syntheticTerminal(); let identity = '';
+    const ports = { terminals: { startShell: async () => pty.handle }, shell: async () => ({ stdout: '', stderr: '', code: 0, killed: false }),
+      exec: async () => ({ stdout: identity, stderr: '', code: 0, killed: false }) };
+    const runtime = await wrappedRuntime(f, root, root, ports);
+    const manager = new BackgroundBashManager(runtime);
+    const { job: terminal } = await manager.startInteractive('synthetic pty');
+    const detached = await manager.start('synthetic detached'); identity = `${detached.meta.runnerPath} ${detached.meta.processToken}`;
+    await runtime.storage().writeFile(detached.meta.logPath, new TextEncoder().encode('detached output'));
+
+    await f.registry.shutdown();
+    expect(pty.handle.terminate).toHaveBeenCalledOnce(); expect(stopDetached).not.toHaveBeenCalled();
+    f.store.close(); const store = new DaemonControlStore(f.owner, { now: () => now });
+    const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
+    openWrappedRoots(f, () => registry, ports);
+    await registry.restore(root);
+    const restarted = registry.binding(root)!.agentRuntime;
+    expect(registry.processes.list(root)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: terminal.meta.id, state: 'exited', controllable: false }),
+      expect.objectContaining({ id: detached.meta.id, state: 'running', controllable: true, command: 'synthetic detached' }),
+    ]));
+    expect(await registry.activeWork()).toBe(0);
+    expect(new TextDecoder().decode((await registry.processes.read(root, detached.meta.id, 0, 1024)).data)).toBe('detached output');
+    await registry.processes.stopForSession(root, detached.meta.id, 'SIGKILL');
+    expect(stopDetached).toHaveBeenCalledWith(restarted, detached.meta.id, 'SIGKILL');
+  });
+
+  it('marks a live-process record left running by a previous daemon as interrupted', async () => {
+    const f = await fixture(); const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    f.store.putResource({ id: 'stale-pty', kind: 'pty', session: root, root, state: 'running', updatedAt: now });
+    await f.registry.processes.refresh(root);
+    expect(f.registry.processes.list(root)).toEqual([expect.objectContaining({ id: 'stale-pty', state: 'interrupted', controllable: false })]);
+    expect(f.registry.processes.activeCount(root)).toBe(0);
+  });
+
   it('drains a writer started at the eviction boundary before revoking the binding', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const gate = deferred(); f.releases.add(gate.resolve);
@@ -308,14 +452,38 @@ describe.skipIf(!supported)('registry process ownership', () => {
   });
 });
 
-async function wrappedRuntime(f: Awaited<ReturnType<typeof fixture>>, session: string, root: string, overrides: Partial<AgentRuntime> | ((raw: HostAgentRuntime) => Partial<AgentRuntime>)): Promise<AgentRuntime> {
-  const paths = { pathAccess: 'host' as const, agentStorageRoot: join(f.owner.target.agentDir, 'storage', 'agent'), sessionStorageRoot: join(f.owner.target.agentDir, 'storage', 'sessions', root) };
-  await mkdir(paths.agentStorageRoot, { recursive: true }); await mkdir(paths.sessionStorageRoot, { recursive: true });
-  const raw = new HostAgentRuntime(f.cwd, paths);
-  const ports = typeof overrides === 'function' ? overrides(raw) : overrides;
-  const runtime = new Proxy(raw, { get(target, key) {
+function syntheticTerminal() {
+  let running = true;
+  const handle = { pid: 4242, read: async (offset: number) => offset === 0
+    ? { output: new TextEncoder().encode('pty output'), nextOffset: 10, running, ...(running ? {} : { exitCode: 0 }) }
+    : { output: new Uint8Array(), nextOffset: offset, running, ...(running ? {} : { exitCode: 0 }) },
+  write: vi.fn(async () => {}), terminate: vi.fn(async () => { running = false; }), dispose: vi.fn(async () => {}) } satisfies AgentRuntimeProcess;
+  return { handle };
+}
+
+/** Gives every opened session the root's wrapped host runtime, so restore reconciliation sees it like production composition does. */
+function openWrappedRoots(f: Awaited<ReturnType<typeof fixture>>, registry: () => SessionRegistry, ports: Partial<AgentRuntime>): void {
+  const open = f.profile.openSession;
+  f.profile.openSession = async request => {
+    const binding = await open(request);
+    const paths = { pathAccess: 'host' as const, agentStorageRoot: join(f.owner.target.agentDir, 'storage', 'agent'), sessionStorageRoot: join(f.owner.target.agentDir, 'storage', 'sessions', binding.rootSessionId) };
+    await mkdir(paths.agentStorageRoot, { recursive: true }); await mkdir(paths.sessionStorageRoot, { recursive: true });
+    const agentRuntime = registry().wrapOpeningRuntime(withPorts(new HostAgentRuntime(f.cwd, paths), ports), binding.rootSessionId);
+    await request.services.extensions.bind({ sessionManager: binding.runtime.session.sessionManager, rootSessionId: binding.rootSessionId } as never, {} as never);
+    return { ...binding, agentRuntime };
+  };
+}
+
+function withPorts(raw: HostAgentRuntime, ports: Partial<AgentRuntime>): AgentRuntime {
+  return new Proxy(raw, { get(target, key) {
     if (key in ports) return Reflect.get(ports, key);
     const value: unknown = Reflect.get(target, key, target); return typeof value === 'function' ? value.bind(target) : value;
   } });
-  return f.registry.processes.wrap(runtime, { session, root });
+}
+
+async function wrappedRuntime(f: Awaited<ReturnType<typeof fixture>>, session: string, root: string, overrides: Partial<AgentRuntime> | ((raw: HostAgentRuntime) => Partial<AgentRuntime>), processes = f.registry.processes): Promise<AgentRuntime> {
+  const paths = { pathAccess: 'host' as const, agentStorageRoot: join(f.owner.target.agentDir, 'storage', 'agent'), sessionStorageRoot: join(f.owner.target.agentDir, 'storage', 'sessions', root) };
+  await mkdir(paths.agentStorageRoot, { recursive: true }); await mkdir(paths.sessionStorageRoot, { recursive: true });
+  const raw = new HostAgentRuntime(f.cwd, paths);
+  return processes.wrap(withPorts(raw, typeof overrides === 'function' ? overrides(raw) : overrides), { session, root });
 }

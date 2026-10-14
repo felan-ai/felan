@@ -111,51 +111,41 @@ Production always uses the same `production.lock`, regardless of selected
 roots. Isolated namespace locks are hashed names in the same coordinator.
 Isolated stores, agent directory and runtime must stay within their canonical
 fixture; they cannot contain/use the real account's `.felan`, the coordinator,
-or an active/previously registered production root. The global ledger protects
-custom production roots too. Initial isolated acquisition requires an empty
-private directory and writes a private marker pinned to its namespace and
-directory inode. Reuse requires that marker; a nonempty unregistered directory
-cannot be converted into a fixture even if the temporary account ledger was
-lost across reboot. To seed fixture configuration, first acquire/release the
-empty fixture, then seed it and reuse the same target. Host tests use only new
-explicit fixture targets and never acquire the host production singleton.
+or a root held by a live production daemon. An isolated target may use an
+existing directory; no marker is required. Host tests use only new explicit
+fixture targets and never acquire the host production singleton.
 Production-ledger regressions run solely in an explicitly guarded disposable
-container account, without host mounts. Isolated claims use this same account
-coordination path, remove only their own claim on settled release, and leave
-lock inodes intact; they do not reset or rewrite unrelated claims.
+container account, without host mounts. Every instance removes only its own
+claim on settled release and leaves lock inodes intact.
 
 `acquireDaemonOwnership` holds the separate short-lived coordination lock while
 checking claims and taking lifetime namespace/store locks. The bounded private
 ledger is atomic-renamed and fsynced. It compares canonical paths and directory
 inode ancestry to reject exact aliases, parent/child overlaps and inode aliases
-across namespaces. All declared roots are acquired before returning authority.
-The agent directory itself is locked, conservatively covering its session,
-task, memory, subagent and shared storage descendants. Custom roots outside it
-must be declared too. The returned root set is minimal and immutable for the
-instance; additional roots require an explicit restart, not an unlocked open.
+held by another live daemon. All declared roots are acquired before returning
+authority. The agent directory itself is locked, conservatively covering its
+session, task, memory, subagent and shared storage descendants. A custom session
+directory is added with `ownRoot` when a session first resolves it: the owner
+takes its store lock, adds it to its ledger claim and records it in
+`agentDir/daemon-store-roots.json`. Recorded roots remain addressable after a
+restart and are locked again when used.
 
-Locks are never unlinked to unlock. Stale isolated claims are pruned only after
-their original retained lock inode can be locked. Production root records are
-retained to prevent later isolated reuse. Repeated unchanged production claims
-are replaced by the newest instance, deduplicated by canonical root/inode set;
-their ancestor history is merged. Distinct former paths or inode generations
-remain protected. Compaction precedes the record-capacity check, so duplicate
-history from an earlier instance cannot permanently consume all slots.
-Missing/replaced recorded namespace
-lock inodes or a corrupt ledger block recovery rather than implying death.
-PID values and readiness files are not ownership evidence. Unknown/network
-filesystems fail closed; the allowlist is APFS/HFS on Darwin and common local
-Linux filesystem magic values, which still require platform CI validation.
+Locks are never unlinked to unlock. A claim is live only while its recorded
+lifetime lock inode is still held; missing, replaced or unheld claims are stale
+and dropped, and an unreadable ledger is rebuilt. PID values and readiness files
+are not ownership evidence. Store roots are not required to be owner-only or on
+a local filesystem; the runtime directory, socket and coordinator remain
+owner-only.
 
 ## Fencing and integration
 
 - `DaemonOwnership.assertCurrent()` checks retained locks and path identities.
   Use it synchronously before every admission and after any async boundary
   before dispatch/write. `assertOwnsPath(path)` additionally canonicalizes and
-  returns a path within the startup root set; **use the returned path**.
-- The owner checks identities every 25 ms as an additional idle guard. Deleting,
-  replacing, relinking or changing permissions of a watched lock/root/endpoint
-  permanently fences that instance. Recreating the old pathname does not
+  returns a path within the current root set; **use the returned path**.
+- The owner checks identities every 25 ms as an additional idle guard. Deleting
+  or replacing a watched lock/root/endpoint permanently fences that instance;
+  permission changes do not. Recreating the old pathname does not
   un-fence it. `onLost` closes listeners/connections immediately when detected.
   The interval is not a promise of instantaneous revocation between arbitrary
   syscalls, and is not a replacement for synchronous admission checks.

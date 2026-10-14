@@ -75,39 +75,21 @@ authority; client kind and a claimed capability are not authority.
 
 Use `audience: 'owner'` for owner-only session approvals, such as Chrome access.
 Use `audience: 'host'` for local-console prompts. These restrictions are enforced
-by the broker from transport facts, not by the client's `kind` label. The host's
-`requireLocalConsole` policy may further restrict owner approvals. Answering an
+by the broker from transport facts, not by the client's `kind` label. Answering an
 ordinary form does not authorize a host operation outside its service policy.
 
 ## Provider and lifecycle boundaries
 
 Providers resolve from the managing package's fixed installation anchor, not
 the current directory or a project-controlled config path. Changing provider
-selection requires restart. Session configuration must not silently change
-when an evicted session is restored.
+selection requires restart. Like Pi resume, restoring an evicted session
+composes it from the current configuration; there is no stored configuration
+identity or drift check. The daemon checks canonical storage paths and never
+grants a new storage location implicitly.
 
-`SessionComposition.configuration` supplies a bounded, credential-free identity
-for the resolved configuration. An ordinary restore receives that value in
-`SessionCompositionRequest.configuration`. Reuse the exact configuration or
-reject drift; do not silently substitute current defaults. Felan's local provider
-fingerprints resolved execution settings and requires explicit session reload
-when they change. The daemon separately checks composition identity and
-canonical storage paths. Neither check grants a new storage location implicitly.
-
-Control state version 1 holds `configurationSnapshots` alongside sessions.
-Unknown versions fail closed; there is no control-store migration.
-Sessions without a verified configuration identity require explicit
-reload before execution; they are not replayed to reconstruct configuration.
-An attachment rejected with `configuration_recovery_required` does not prevent
-recovery: a local console may issue `session.reload` for that known, quiescent
-root without first attaching. It must then attach normally. The TUI asks before
-doing this and also supports `/reload <session-id>`. Reload does not bypass
-root, busy-work, ownership or ACP policy checks.
-
-Child sessions with missing or drifted configuration identities remain
-fail-closed: reload is root-only. Their stored history is preserved, but they
-cannot be reattached for execution. This is an explicitly accepted limitation
-of session restoration, not an automatic child-reconfiguration path.
+Control state version 1 holds sessions, requests, interactions and resources.
+Invalid or foreign control state is quarantined and rebuilt; pre-daemon
+discovery re-adopts the transcripts it described.
 
 Validate configuration and dependencies before effects. Activate an admitted
 session only after canonical registration. Settle work before releasing its

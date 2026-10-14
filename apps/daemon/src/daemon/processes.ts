@@ -7,7 +7,7 @@ import { DEFAULT_MAX_BYTES, getShellConfig, truncateTail } from '@earendil-works
 import type { AgentRuntime, AgentRuntimeProcess, AgentRuntimeStorage, AgentRuntimeTerminationSignal } from '@felan-ai/agent-core';
 import { LIMITS, canonicalRequestPayload, type OperationParams, type Process as ProcessView } from '@felan-ai/session-protocol';
 import type { DaemonControlStore } from './control-store.js';
-import { CONTROL_LIMITS, type ControlResource } from './control-state.js';
+import type { ControlResource } from './control-state.js';
 import type { ProcessAdapter, ProcessRecord } from './process-adapter.js';
 import { boundedText } from './projection.js';
 import { readOwnedOutputRange } from './session-files.js';
@@ -165,11 +165,10 @@ export class RegistryProcesses {
     this.assertLifetime(lifetime, true);
     const request = this.options.store.snapshot().requests.find(item => item.id === requestId);
     if (request?.session !== session || request.op !== 'shell.execute' || request.phase !== 'dispatch_intent') throw new Error('Foreground start requires its committed shell dispatch.');
-    const payload = canonicalRequestPayload({ v: 1, id: requestId, op: 'shell.execute', session, params }, { checkFreshness: false });
+    const payload = canonicalRequestPayload({ v: 1, id: requestId, op: 'shell.execute', session, params });
     if (request.identity.bytes !== Buffer.byteLength(payload) || request.identity.sha256 !== createHash('sha256').update(payload).digest('hex')) throw new Error('Shell command differs from its admitted payload.');
     if (!lifetime.runtime.processes) throw new Error('Foreground processes are unavailable.');
     if (this.foregroundStarts.has(requestId)) throw new Error('Foreground dispatch cannot be repeated.');
-    if (this.foregroundStarts.size >= CONTROL_LIMITS.resources) throw new Error('Foreground dispatch capacity reached.');
     const resourceId = `foreground:${requestId}`;
     if (this.options.store.snapshot().resources.some(row => row.id === resourceId)) throw processFault('already_resolved', 'Foreground dispatch already has a durable resource intent.');
     this.foregroundStarts.set(requestId, resourceId);
@@ -255,7 +254,7 @@ export class RegistryProcesses {
     }
     const live = this.live.get(id);
     if (!live) return { data: new Uint8Array(), offset, nextOffset: offset, state: row.state === 'interrupted' ? 'interrupted' : 'missing' };
-    const lifetime = this.currentLifetime(row.session);
+    const lifetime = this.creatorLifetime(row);
     this.assertLifetime(lifetime);
     this.assertLiveIdentity(row, live);
     return this.track((async () => {
@@ -275,7 +274,7 @@ export class RegistryProcesses {
     const bytes = new Uint8Array(data);
     const row = this.authorizeResource(requester, id); const live = this.live.get(id);
     if (!live || live.disposed || live.settled || !live.view.controllable) throw new Error('Process stdin is unavailable.');
-    const lifetime = this.currentLifetime(row.session);
+    const lifetime = this.creatorLifetime(row);
     this.assertLifetime(lifetime); this.assertLiveIdentity(row, live);
     return this.track((async () => {
       await live.process.write(bytes);
@@ -287,22 +286,22 @@ export class RegistryProcesses {
   assertWritable(requester: string, id: string): void {
     const row = this.authorizeResource(requester, id); const live = this.live.get(id);
     if (!live || live.disposed || live.settled || !live.view.controllable) throw processFault('unavailable', 'Process stdin is unavailable.');
-    this.assertLifetime(this.currentLifetime(row.session)); this.assertLiveIdentity(row, live);
+    this.assertLifetime(this.creatorLifetime(row)); this.assertLiveIdentity(row, live);
   }
 
   async prepareStop(requester: string, id: string): Promise<void> {
     let row = this.authorizeResource(requester, id);
-    this.assertLifetime(this.currentLifetime(row.session));
+    this.assertLifetime(this.creatorLifetime(row));
     if (this.live.has(id)) return;
     await this.refresh(row.root);
-    row = this.authorizeResource(requester, id); this.assertLifetime(this.currentLifetime(row.session));
+    row = this.authorizeResource(requester, id); this.assertLifetime(this.creatorLifetime(row));
     if (row.kind !== 'detached' || !this.views.get(id)?.controllable) throw processFault('unavailable', 'Process identity is missing or unverified.');
   }
 
   async stopForSession(requester: string, id: string, signal: 'SIGTERM' | 'SIGKILL'): Promise<void> {
     if (signal !== 'SIGTERM' && signal !== 'SIGKILL') throw new Error('Unsupported process termination signal.');
     const row = this.authorizeResource(requester, id);
-    const lifetime = this.currentLifetime(row.session);
+    const lifetime = this.creatorLifetime(row);
     this.assertLifetime(lifetime);
     return this.track((async () => {
       await this.stop(row.root, id, signal);
@@ -311,10 +310,19 @@ export class RegistryProcesses {
   }
 
   private currentLifetime(session: string): Lifetime {
-    const stored = this.options.store.session(session);
-    const lifetime = [...this.lifetimes].reverse().find(item => !item.revoked && item.scope.session === session && item.scope.root === stored.root);
-    if (!lifetime || stored.state !== 'open') throw new Error('Process creator runtime is unavailable.');
+    const lifetime = this.openLifetime(session);
+    if (!lifetime) throw new Error('Process creator runtime is unavailable.');
     return lifetime;
+  }
+
+  private openLifetime(session: string): Lifetime | undefined {
+    const stored = this.options.store.session(session);
+    return stored.state === 'open' ? [...this.lifetimes].reverse().find(item => !item.revoked && item.scope.session === session && item.scope.root === stored.root) : undefined;
+  }
+
+  /** A PTY kept across reload may outlive its child creator's runtime; its root then controls it. */
+  private creatorLifetime(row: ControlResource): Lifetime {
+    return this.openLifetime(row.session) ?? this.currentLifetime(row.root);
   }
 
   private authorizeResource(requester: string, id: string): ControlResource {
@@ -339,15 +347,33 @@ export class RegistryProcesses {
     if (this.live.get(row.id) !== live || live.view.session !== row.session || live.view.root !== row.root || live.view.kind !== row.kind) throw new Error('Retained process identity changed.');
   }
 
-  blocksEviction(root: string): boolean {
-    return [...this.operations.values()].some(({ scope, passive }) => scope.root === root && !passive)
-      || this.options.store.snapshot().resources.some(row => row.root === root && !this.live.get(row.id)?.transport && (row.state === 'running' || row.state === 'reconciling'));
+  blocksEviction(root: string): boolean { return this.activeCount(root) > 0; }
+  /** In-flight runtime operations plus running or unverified processes of a root; stdio service transports are excluded. */
+  activeCount(root: string): number {
+    return [...this.operations.values()].filter(({ scope, passive }) => scope.root === root && !passive).length
+      + this.options.store.snapshot().resources.filter(row => row.root === root && !this.live.get(row.id)?.transport && (row.state === 'running' || row.state === 'reconciling')).length;
+  }
+  /** Work a daemon stop would interrupt: in-flight runtime operations and live non-transport processes. Detached jobs survive the daemon. */
+  async interruptibleCount(): Promise<number> {
+    await this.observeLive();
+    return [...this.operations.values()].filter(({ passive }) => !passive).length
+      + [...this.live.values()].filter(item => !item.transport && !item.settled && !item.disposed).length;
   }
 
+  async observeLive(): Promise<void> {
+    await Promise.all([...this.live.values()].filter(item => !item.transport).map(item => this.observe(item)));
+  }
+
+  /** Roots that still hold undisposed live handles, including PTYs kept by a reload that never reopened its root. */
+  liveRoots(): Set<string> { return new Set([...this.live.values()].filter(item => !item.disposed).map(item => item.view.root)); }
+
+  /** Reconciles a root's processes; a failed per-process probe leaves that row unchanged, while store and ownership failures propagate. */
   async refresh(root: string): Promise<void> {
     for (const row of this.options.store.snapshot().resources.filter(row => row.root === root)) {
       const live = this.live.get(row.id);
-      if (live) { await live.process.read(live.view.outputOffset, { maxBytes: 0 }); continue; }
+      if (live) { await this.observe(live); continue; }
+      // Live handles end with the daemon that started them.
+      if (row.kind !== 'detached' && row.state === 'running' && !this.starting.has(row.id)) { this.update(row, 'interrupted'); continue; }
       if (row.kind !== 'detached' || !row.reference || !row.startIdentity) continue;
       const runtime = this.runtime(row.session, root) ?? this.runtime(root, root);
       if (!runtime) continue;
@@ -359,12 +385,14 @@ export class RegistryProcesses {
       let info: ProcessRecord | undefined;
       try { info = this.describeJob(runtime, row.reference, bytes); } catch { this.update(row, 'missing'); continue; }
       if (!info || info.id !== row.id || info.startIdentity !== row.startIdentity || info.kind !== 'detached') { this.update(row, 'missing'); continue; }
-      const job = await adapter.inspectDetached(runtime, row.id);
+      const job = await Promise.resolve().then(() => adapter.inspectDetached(runtime, row.id)).catch(() => undefined);
       this.options.assertCurrent();
+      if (!job) continue;
       if (job.status !== 'running') { this.update(row, job.status === 'unknown' ? 'missing' : 'exited'); continue; }
       const pid = job.pid;
-      const inspection = pid ? await runtime.exec('ps', ['-o', 'command=', '-p', String(pid)]) : undefined;
+      const inspection = pid ? await runtime.exec('ps', ['-o', 'command=', '-p', String(pid)]).catch(() => null) : undefined;
       this.options.assertCurrent();
+      if (inspection === null) continue;
       const verified = inspection?.code === 0 && info.commandIdentity.every(value => inspection.stdout.includes(value)) && inspection.stdout.includes(row.startIdentity);
       this.update(row, verified ? 'running' : 'reconciling', {
         id: row.id, session: row.session, root, kind: 'detached', state: verified ? 'running' : 'interrupted',
@@ -389,8 +417,10 @@ export class RegistryProcesses {
     await this.refresh(root);
   }
 
-  async settle(root: string, fenced = false, sessions?: ReadonlySet<string>): Promise<void> {
+  /** Settles a root's live handles and operations; `keepTerminals` leaves PTYs running for the root's next runtime. */
+  async settle(root: string, fenced = false, sessions?: ReadonlySet<string>, keepTerminals = false): Promise<void> {
     const owns = (scope: Scope) => scope.root === root && (!sessions || sessions.has(scope.session));
+    const settles = (item: LiveProcess) => owns(item.view) && !item.disposed && !(keepTerminals && item.view.kind === 'pty');
     for (const lifetime of this.lifetimes) if (owns(lifetime.scope)) lifetime.draining = true;
     const failures: unknown[] = [];
     const join = async (operations: Promise<unknown>[]) => {
@@ -399,7 +429,7 @@ export class RegistryProcesses {
     };
     for (;;) {
       // Terminate first: a pending foreground read may need process exit to unblock.
-      const handles = [...this.live.values()].filter(item => owns(item.view) && !item.disposed);
+      const handles = [...this.live.values()].filter(settles);
       await join(handles.map(async item => {
         if (!item.settled) await item.raw.terminate('SIGTERM');
       }));
@@ -417,7 +447,7 @@ export class RegistryProcesses {
         await item.raw.dispose(); item.disposed = true;
       }));
       if (failures.length) throw new AggregateError(failures, 'Owned processes did not settle.');
-      if (![...this.operations.values()].some(({ scope }) => owns(scope)) && ![...this.live.values()].some(item => owns(item.view) && !item.disposed)) break;
+      if (![...this.operations.values()].some(({ scope }) => owns(scope)) && ![...this.live.values()].some(settles)) break;
     }
   }
 
@@ -446,9 +476,7 @@ export class RegistryProcesses {
           return this.track((async () => {
           current(); const read = Reflect.get(target, key, target) as AgentRuntimeProcess['read'];
           const snapshot = await read.apply(target, args); this.options.assertCurrent();
-          live.settled ||= !snapshot.running;
-          live.view = { ...live.view, state: live.settled ? 'exited' : 'running', controllable: !live.settled, outputOffset: key === 'read' ? Math.max(live.view.outputOffset, snapshot.nextOffset) : live.view.outputOffset, ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }) };
-          this.update(row, live.view.state, live.view);
+          this.record(live, row, snapshot, key === 'read');
           return { ...snapshot, running: !live.settled, ...(live.view.exitCode === undefined ? {} : { exitCode: live.view.exitCode }), ...(!snapshot.running && live.signal ? { signal: live.signal } : {}) };
           })(), scope, transport);
         };
@@ -463,7 +491,8 @@ export class RegistryProcesses {
         return (...args: unknown[]) => {
           if (live.disposed && (key === 'dispose' || key === 'terminate' || key === 'closeInput')) return Promise.resolve();
           current();
-          if (key === 'write' || key === 'resize') this.assertLifetime(lifetime);
+          // A PTY outlives its starting runtime across reload; its callers check their own current lifetime.
+          if ((key === 'write' || key === 'resize') && kind !== 'pty') this.assertLifetime(lifetime);
           return this.track(Promise.resolve(Reflect.apply(value, target, args)).then(result => {
             this.options.assertCurrent(); if (key === 'dispose') live.disposed = true; return result;
           }), scope);
@@ -496,6 +525,22 @@ export class RegistryProcesses {
       command: boundedText(info.command, 16384), startedAt: info.startedAt, controllable: this.live.has(info.id), outputOffset: 0,
     });
   }
+  private record(live: LiveProcess, row: ControlResource, snapshot: { running: boolean; nextOffset: number; exitCode?: number }, advance: boolean): void {
+    live.settled ||= !snapshot.running;
+    live.view = { ...live.view, state: live.settled ? 'exited' : 'running', controllable: !live.settled, outputOffset: advance ? Math.max(live.view.outputOffset, snapshot.nextOffset) : live.view.outputOffset, ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }) };
+    this.update(row, live.view.state, live.view);
+  }
+
+  /** Records an exit nobody has read yet, e.g. a PTY kept across reload; a failed probe leaves the handle as it was. */
+  private async observe(live: LiveProcess): Promise<void> {
+    if (live.settled || live.disposed) return;
+    const snapshot = await this.track(live.raw.read(live.view.outputOffset, { maxBytes: 0 }), live.view, true).catch(() => undefined);
+    this.options.assertCurrent();
+    const row = this.options.store.snapshot().resources.find(item => item.id === live.view.id);
+    if (!snapshot || !row || this.live.get(live.view.id) !== live || live.disposed) return;
+    this.record(live, row, snapshot, false);
+  }
+
   private update(row: ControlResource, state: ControlResource['state'], view?: ProcessView): void {
     this.options.assertCurrent();
     const old = this.options.store.snapshot().resources.find(item => item.id === row.id);

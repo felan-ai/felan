@@ -12,7 +12,6 @@ import { createTestSessionLifecycle } from './session-runtime.js';
 import { restoreSessionCursor } from '../../src/daemon/session-cursor.js';
 import { fakeProcessAdapter } from './process-provider.js';
 import type { ProcessAdapter } from '../../src/daemon/process-adapter.js';
-import { assertSessionConfigurationEnvironment, parseSessionConfiguration } from '../../src/daemon/session-configuration.js';
 
 export const supported = ['darwin', 'linux'].includes(process.platform);
 export const now = 1_800_000_000_000;
@@ -80,7 +79,6 @@ export async function fixture(options: ControlStoreOptions = {}, processAdapter:
       sessionStorageBase: join(agentDir, 'storage', 'sessions'), agentStorageRoot: join(agentDir, 'storage', 'agent'),
       writableRoots: [agentDir] }),
     openSession: vi.fn(async request => {
-      if (request.configuration) assertSessionConfigurationEnvironment(request.configuration, 'fixture', request.resources);
       opened.push(request);
       const source = request.target.kind === 'resume' ? request.target.sessionFile : undefined;
       await request.ownership.assertOwned(request.resources, { kind: request.target.kind, destinationDirectory: request.resources.sessionDir, ...(source ? { sourceSessionFile: source } : {}) });
@@ -113,7 +111,6 @@ export async function fixture(options: ControlStoreOptions = {}, processAdapter:
       instances.set(id, { session, emit, listeners, queue, dispose, abort });
       const runtime = { session, dispose } as unknown as AgentSessionRuntime;
       return { runtime, agentRuntime: {} as AgentRuntime, sessionId: id, rootSessionId: request.parentSessionId ? request.rootSessionId! : id,
-        configuration: request.configuration ?? parseSessionConfiguration({ version: 1, composition: 'fixture', environment: request.resources, configuration: null }),
         ...(request.parentSessionId ? { parentSessionId: request.parentSessionId } : {}), resources: request.resources, diagnostics: [], toolProvenance: [],
         tools: { provenance: [], requiresApproval: policy => policy.mode === 'acp-strict' } } satisfies SessionBinding;
     }),

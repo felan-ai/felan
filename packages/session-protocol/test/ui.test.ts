@@ -101,7 +101,7 @@ describe('explicit UI contracts', () => {
     expect(parsePresentation(document)).toEqual(document);
     expect(() => parseUiPresentation({ ...document, data: { pageIndex: Number.POSITIVE_INFINITY } })).toThrow();
     expect(() => parseUiPresentation({ ...document, data: { nested: { unknown: true } } })).toThrow();
-    expect(() => parseUiPresentation({ ...document, data: { text: 'x'.repeat(32769) } })).toThrow();
+    expect(parseUiPresentation({ ...document, data: { text: 'x'.repeat(32769) } }).kind).toBe('document');
   });
 
   it('validates action input and rejects item targets outside views', () => {
@@ -155,23 +155,18 @@ describe('explicit UI contracts', () => {
       expect(parsePresentation({ ...status, value })).toEqual({ ...status, value });
     }
     for (const value of [{ kind: 'tokens', value: -1 }, { kind: 'tokens', value: 1.5 }, { kind: 'percent', value: 101 },
-      { kind: 'money', value: 1, currency: 'usd' }, { kind: 'duration', milliseconds: -1 }, { kind: 'text', text: 'a'.repeat(LIMITS.statusTextBytes) }]) {
+      { kind: 'money', value: 1, currency: 'usd' }, { kind: 'duration', milliseconds: -1 }]) {
       expect(() => parsePresentation({ ...status, value })).toThrow();
     }
   });
 
-  it('enforces UTF-8 and aggregate limits and does not downgrade malformed known UI elements', () => {
-    expect(() => parseUiForm({ ...form, title: '😀'.repeat(1025) })).toThrow();
+  it('accepts large form answers and does not downgrade malformed known UI elements', () => {
     const fields = Array.from({ length: 3 }, (_, i) => ({ id: `f${i}`, label: 'Field', kind: 'string', required: false, maxLength: 32 * 1024 }));
     const values = Object.fromEntries(fields.map(field => [field.id, 'x'.repeat(24 * 1024)]));
-    expect(() => parseUiForm({ ...form, input: { fields, defaults: values } })).toThrow();
-    expect(() => validateUiFormAnswer(parseUiForm({ ...form, input: { fields } }), {
+    expect(parseUiForm({ ...form, input: { fields, defaults: values } }).input.defaults).toEqual(values);
+    expect(validateUiFormAnswer(parseUiForm({ ...form, input: { fields } }), {
       kind: 'form', actionId: 'approve', outcome: 'submit', values,
-    })).toThrow();
-    const verbose = Array.from({ length: 32 }, (_, i) => ({ id: `f${i}`, label: 'x'.repeat(1024), kind: 'string', required: false,
-      maxLength: 32 * 1024, placeholder: 'x'.repeat(1024) }));
-    expect(() => parseUiForm({ ...form, markdown: 'x'.repeat(128 * 1024), input: { fields: verbose },
-      actions: Array.from({ length: 16 }, (_, i) => ({ ...submit, id: `a${i}`, description: 'x'.repeat(4096) })) })).toThrow();
+    }).values).toEqual(values);
     expect(() => parsePresentation({ id: 'bad', kind: 'view', fallback: 'Cannot downgrade' })).toThrow();
     expect(() => parseUiPresentation({ ...view, items: Array(101).fill(view.items[0]) })).toThrow();
     expect(() => parseUiForm({ ...form, input: { fields: Array(33).fill(fields[0]) } })).toThrow();

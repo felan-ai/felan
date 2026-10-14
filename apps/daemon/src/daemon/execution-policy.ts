@@ -4,9 +4,8 @@ import type { SessionExecutionPolicy, ToolProvenance } from './session-lifecycle
 
 export function inheritExecutionPolicy(policy: SessionExecutionPolicy): SessionExecutionPolicy {
   if (!['host-default', 'acp-strict'].includes(policy.mode) || !Number.isSafeInteger(policy.generation)
-    || policy.generation < 0 || typeof policy.pendingTightening !== 'boolean'
-    || (policy.mode === 'acp-strict' && policy.pendingTightening)) throw new Error('Invalid session execution policy');
-  return Object.freeze({ mode: policy.mode, pendingTightening: policy.pendingTightening, generation: policy.generation });
+    || policy.generation < 0) throw new Error('Invalid session execution policy');
+  return Object.freeze({ mode: policy.mode, generation: policy.generation });
 }
 
 export class TrustedToolCatalog {

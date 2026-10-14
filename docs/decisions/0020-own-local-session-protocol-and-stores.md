@@ -1,7 +1,7 @@
 # ADR 0020: Own the local session protocol and stores in one daemon
 
 > Status: Accepted for Story 1; implementation and platform gates remain open
-> Date: 2026-10-10
+> Date: 2026-10-10; amended 2026-10-14 to adopt pre-daemon sessions in place
 > Deciders: Felan maintainers, approved Story 1 plan
 > Related: [Implementation handoff](../maintainers/session-daemon-implementation.md), [ADR 0004](0004-own-native-acp-in-the-local-host.md)
 
@@ -22,8 +22,11 @@ headless to the same local endpoint in the same shipping cutover.
 One production daemon per OS account holds kernel-lifetime ownership of its actual canonical
 session, task, memory and child/process roots, including custom session paths.
 Keep Pi transcripts as content authority and add bounded control metadata, not
-a competing transcript backend. The final review removed legacy adoption:
-pre-daemon data is not listed or resumable; explicit import creates a new ID.
+a competing transcript backend. Pre-daemon transcripts in owned store roots are
+listed and adopted in place on first attach: the daemon registers their existing
+ID and file without copying, and later turns append to that file. Adoption has
+no quiet window: like 0.28.3 resume, it opens the file immediately. After adoption
+the daemon is the only supported writer. Explicit import still creates a new ID.
 This supersedes **only ADR 0004's in-process runtime/store ownership**; native
 ACP in `apps/tui`, stdio discipline, authentication and capability limits remain.
 Explicit isolated test/CI namespaces are permitted only with disposable roots
@@ -39,11 +42,17 @@ falling back to the user's daemon.
   multi-client ownership, admission, recovery and interaction contract.
 - Move daemon into Agent Core or a separate public daemon package: broadens the
   portable API with local policy and splits the intended composition root.
+- Require explicit import for pre-daemon sessions (the earlier Story 1 decision):
+  upgrading users lost their session list and every resumed session changed ID.
+- Migrate the whole pre-daemon store at startup: rewrites or registers data the
+  user may never open and makes downgrade harder; listing-time discovery with
+  per-session adoption touches only what is opened.
 
 ## Consequences
 
 - Clients cannot fall back to opening stores when a daemon is unavailable.
 - Native ownership/peer checks need platform evidence and packaging; unsupported
   platforms block release rather than silently use unsafe leases.
-- Old noncooperating binaries are a disclosed best-effort detection risk.
+- Old noncooperating binaries are not detected. Running 0.28.3 and the daemon
+  on one session at the same time is unsupported.
 - No connector, database or cloud execution is introduced by this decision.

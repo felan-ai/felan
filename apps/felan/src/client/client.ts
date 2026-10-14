@@ -3,11 +3,12 @@ import { setTimeout as wait } from 'node:timers/promises';
 import {
   CONTROL_VERSION, LIMITS, OPERATION_CATALOG, PROTOCOL_VERSION, canonicalRequestPayload, encodeFrame,
   parseClientEnvelope, parseControlRequest, parseControlResponse, parseServerEnvelope,
-  validateRequestId, type ClientEnvelope, type ControlRequest, type ControlResponse, type DaemonIdentity, type Interaction,
+  type ClientEnvelope, type ControlRequest, type ControlResponse, type DaemonIdentity, type Interaction,
   type Operation, type OperationParams, type OperationResult, type PresentationEvent, type Response, type ResponseFor,
 } from '@felan-ai/session-protocol';
 import { spawnDetachedDaemon } from '@felan-ai/daemon/client';
 import { assertTargetIdentity, protocolTarget, resolveDaemonTarget, type DaemonTarget, type ResolvedDaemonTarget } from '@felan-ai/daemon/client';
+import { waitForDaemonStop } from './daemon-stop.js';
 import { createSessionState, reduceSession, type SessionState } from './reducer.js';
 import { localConnector, type ClientTransport, type TransportConnector } from './transport.js';
 
@@ -28,7 +29,6 @@ export interface AttachmentState {
   readonly id: string;
   readonly session: string;
   readonly requirePolicy?: 'acp-strict';
-  readonly policyWaitMs?: number;
   readonly binding?: string;
   readonly state: SessionState;
 }
@@ -45,8 +45,11 @@ export interface SessionClientOptions {
   launch?: { entrypoint: string; timeoutMs?: number; replacing?: DaemonIdentity; hostConfigPath?: string };
   requestTimeoutMs?: number;
   retries?: number;
+  /** Automatic reconnect attempts after an established connection drops; unlimited by default, 0 disables. */
   reconnectAttempts?: number;
+  /** First automatic reconnect delay; later attempts double it up to `reconnectMaxDelayMs`. */
   reconnectDelayMs?: number;
+  reconnectMaxDelayMs?: number;
 }
 interface Pending {
   envelope: ClientEnvelope;
@@ -60,6 +63,7 @@ interface Pending {
   internal: boolean;
   localAttachmentId: string | undefined;
 }
+const LIVENESS_OPERATIONS = new Set<Operation>(['hello', 'host.status']);
 const failure = (id: string, outcome: 'rejected' | 'indeterminate', code: string, message: string): Response =>
   ({ v: 1, re: id, outcome, error: { code, message, retryable: false } });
 
@@ -70,13 +74,18 @@ export class SessionClient {
   private readonly retries: number;
   private readonly reconnectLimit: number;
   private readonly delay: number;
+  private readonly maxDelay: number;
   private transport: ClientTransport | undefined;
   private connecting: Promise<OperationResult<'hello'>> | undefined;
+  private connectingLaunches = false;
   private epoch = 0;
   private closed = false;
   private readonly lifetime = new AbortController();
   private reconnectCount = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private reconnectAt: number | undefined;
+  private established = false;
+  private readyAt = 0;
   private records = new Map<string, Pending>();
   private attachments = new Map<string, AttachmentState>();
   private readonly interactionNotifications = new Map<string, Interaction>();
@@ -87,6 +96,9 @@ export class SessionClient {
   private readonly presentationListeners = new Set<(event: PresentationEvent) => void>();
   private readonly presentationSequences = new Map<string, number>();
   private pinned: DaemonIdentity | undefined;
+  private verifying: DaemonIdentity | undefined;
+  private replacing: DaemonIdentity | undefined;
+  private mismatchedWork: number | undefined;
   private negotiated: OperationResult<'hello'> | undefined;
   private connectionState: 'disconnected' | 'connecting' | 'ready' | 'incompatible' | 'blocked' | 'closed' = 'disconnected';
 
@@ -101,13 +113,20 @@ export class SessionClient {
     if (this.pinned) assertTargetIdentity(this.target, this.pinned, this.pinned);
     this.timeout = bounded(options.requestTimeoutMs ?? 5_000, 1, 60_000);
     this.retries = bounded(options.retries ?? 2, 0, 5);
-    this.reconnectLimit = bounded(options.reconnectAttempts ?? 3, 0, 5);
-    this.delay = bounded(options.reconnectDelayMs ?? 100, 0, 10_000);
+    this.reconnectLimit = options.reconnectAttempts === undefined ? Infinity : bounded(options.reconnectAttempts, 0, Number.MAX_SAFE_INTEGER);
+    this.delay = bounded(options.reconnectDelayMs ?? 250, 0, 10_000);
+    this.maxDelay = Math.max(this.delay, bounded(options.reconnectMaxDelayMs ?? 10_000, 0, 300_000));
   }
 
   get status() { return this.connectionState; }
+  /** The scheduled automatic reconnect after an established connection dropped; automatic attempts never launch a daemon. */
+  get reconnection(): { attempt: number; retryAt: number } | undefined {
+    return this.reconnectAt === undefined ? undefined : { attempt: this.reconnectCount + 1, retryAt: this.reconnectAt };
+  }
   get identity() { return this.pinned && structuredClone(this.pinned); }
   get capabilities() { return this.negotiated && structuredClone(this.negotiated); }
+  /** Active work on an incompatible daemon, when it could report it; restarting it would interrupt that work. */
+  get incompatibleActiveWork(): number | undefined { return this.connectionState === 'incompatible' ? this.mismatchedWork : undefined; }
   getInteractions(options: { includeSessions?: boolean } = {}): readonly Interaction[] {
     const items = new Map(this.interactionNotifications);
     if (options.includeSessions) for (const attachment of this.attachments.values()) {
@@ -156,24 +175,42 @@ export class SessionClient {
     });
   }
 
-  connect(): Promise<OperationResult<'hello'>> {
-    if (!this.connecting) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectCount = 0;
-    }
-    return this.connectShared();
+  /** Connects now, resetting automatic backoff; unlike automatic reconnects this starts an absent daemon when `launch` is configured. */
+  async connect(options: { replacing?: DaemonIdentity } = {}): Promise<OperationResult<'hello'>> {
+    if (options.replacing) { assertTargetIdentity(this.target, options.replacing, options.replacing); this.replacing = structuredClone(options.replacing); }
+    if (this.connecting && !this.connectingLaunches) await this.connecting.catch(() => {});
+    this.cancelReconnect(); this.reconnectCount = 0;
+    try { return await this.connectShared(true); }
+    catch (error) { this.retryLater(); throw error; }
   }
 
-  private connectShared(): Promise<OperationResult<'hello'>> {
+  private connectShared(launch: boolean): Promise<OperationResult<'hello'>> {
     if (this.closed) return Promise.reject(new Error('Client is closed'));
     if (this.connecting) return this.connecting;
     if (this.connectionState === 'ready') return Promise.resolve(structuredClone(this.negotiated!));
-    this.connecting = this.open().finally(() => { this.connecting = undefined; });
+    this.connectingLaunches = launch;
+    this.connecting = this.open(launch).finally(() => { this.connecting = undefined; });
     return this.connecting;
   }
 
-  private async open(): Promise<OperationResult<'hello'>> {
-    this.queuedInteractions = []; this.queuedInteractionBytes = 0;
+  /** An idle daemon from another installation is replaced transparently; one with active work stays incompatible so the caller can ask. */
+  private async open(launch: boolean): Promise<OperationResult<'hello'>> {
+    try { return await this.openOnce(launch); }
+    catch (error) {
+      if (!launch || this.closed || this.connectionState !== 'incompatible' || this.mismatchedWork !== 0 || !this.options.launch || this.options.expected) throw error;
+      const identity = this.pinned!;
+      const response = await this.control('host.restart', 'drain');
+      if (response.outcome !== 'accepted') throw new Error('The running daemon did not accept a restart.');
+      await waitForDaemonStop(this, this.lifetime.signal);
+      this.pinned = undefined; this.replacing = identity;
+      return this.openOnce(launch);
+    }
+  }
+
+  private async openOnce(launch: boolean): Promise<OperationResult<'hello'>> {
+    this.queuedInteractions = []; this.queuedInteractionBytes = 0; this.mismatchedWork = undefined;
+    // Only an explicit expected identity or this attempt's launch receipt pins the instance; an unpinned client follows daemon restarts.
+    this.verifying = this.options.expected && structuredClone(this.options.expected);
     this.connectionState = 'connecting'; this.negotiated = undefined; this.emit();
     const epoch = ++this.epoch;
     const receiver = { frame: (value: unknown) => { if (epoch === this.epoch) this.receive(value); },
@@ -183,12 +220,12 @@ export class SessionClient {
       catch (error) {
         if (this.closed) throw new Error('Client is closed');
         const code = (error as { code?: string }).code;
-        if (this.pinned || !this.options.launch || !['ENOENT', 'stale_endpoint', 'unavailable'].includes(code ?? '')) throw error;
+        if (!launch || this.options.expected || !this.options.launch || !['ENOENT', 'stale_endpoint', 'unavailable'].includes(code ?? '')) throw error;
         try {
-          const receipt = await this.whileOpen(spawnDetachedDaemon({ target: this.options.target, ...this.options.launch }));
+          const receipt = await this.whileOpen(spawnDetachedDaemon({ target: this.options.target, ...this.options.launch, ...(this.replacing ? { replacing: this.replacing } : {}) }));
           if (this.closed) throw new Error('Client is closed');
           assertTargetIdentity(this.target, receipt.identity, receipt.identity);
-          this.pinned = receipt.identity;
+          this.pinned = receipt.identity; this.verifying = receipt.identity;
         } catch (launchError) {
           if ((launchError as { code?: string }).code !== 'launch_failed') throw launchError;
           // A concurrent starter can win ownership while this launch exits.
@@ -208,17 +245,16 @@ export class SessionClient {
       if (this.closed || epoch !== this.epoch) throw new Error('Connection was superseded');
       if (hello.outcome !== 'accepted') throw new Error('Daemon handshake rejected');
       const result = hello.result;
-      assertTargetIdentity(this.target, this.pinned ?? result.identity, result.identity);
+      assertTargetIdentity(this.target, this.verifying ?? result.identity, result.identity);
       this.pinned = structuredClone(result.identity);
-      if (this.options.expectedDaemonVersion && result.daemonVersion !== this.options.expectedDaemonVersion) {
-        this.connectionState = 'incompatible';
-        throw new Error('Daemon version differs from the installed package. Explicit restart is required.');
-      }
-      if (this.options.expectedComposition && (this.options.expectedComposition.managerPackage !== result.composition?.managerPackage
+      const versionDiffers = !!this.options.expectedDaemonVersion && result.daemonVersion !== this.options.expectedDaemonVersion;
+      if (versionDiffers || this.options.expectedComposition && (this.options.expectedComposition.managerPackage !== result.composition?.managerPackage
         || this.options.expectedComposition.managerVersion !== result.composition?.managerVersion
         || this.options.expectedComposition.providerDigest !== result.composition?.providerDigest)) {
+        this.mismatchedWork = await this.activeWork(result.operations);
         this.connectionState = 'incompatible';
-        throw new Error('Daemon provider configuration differs from the selected configuration. Explicit restart is required.');
+        throw new Error(versionDiffers ? 'Daemon version differs from the installed package; restart it to continue.'
+          : 'Daemon provider configuration differs from the selected configuration; restart it to continue.');
       }
       this.negotiated = structuredClone(result);
       for (const interaction of this.queuedInteractions) this.acceptInteraction(interaction);
@@ -228,18 +264,25 @@ export class SessionClient {
         await this.restore(attachment.session);
       }
       if (epoch !== this.epoch || this.closed) throw new Error('Connection was superseded');
-      this.connectionState = 'ready';
+      this.connectionState = 'ready'; this.established = true; this.readyAt = Date.now(); this.replacing = undefined;
       for (const record of this.records.values()) if (!record.internal && !record.response) this.transmit(record);
       this.emit();
       return structuredClone(result);
     } catch (error) {
       const status = this.connectionState as string;
-      if (status !== 'incompatible' && !this.closed) this.connectionState = 'blocked';
+      // An established client that will retry stays disconnected so observers do not treat a daemon restart as fatal.
+      if (status !== 'incompatible' && !this.closed) this.connectionState = this.established && this.reconnectCount < this.reconnectLimit ? 'disconnected' : 'blocked';
       this.interactionNotifications.clear(); this.queuedInteractions = []; this.queuedInteractionBytes = 0;
       ++this.epoch; this.transport?.close(); this.transport = undefined;
-      if (this.reconnectCount === 0) this.settleOutstanding('Connection could not be established');
+      this.settleOutstanding('Daemon connection could not be established; execution may still be running');
       this.emit(); throw error;
     }
+  }
+
+  private async activeWork(operations: readonly string[]): Promise<number | undefined> {
+    if (!operations.includes('host.status')) return undefined;
+    const response = await this.exchange('host.status', {}, undefined, undefined, true);
+    return response.outcome === 'accepted' ? response.result.active.work : undefined;
   }
 
   request<O extends Operation>(op: O, params: OperationParams<O>, options: { session?: string; id?: string } = {}): Promise<ResponseFor<O>> {
@@ -250,8 +293,8 @@ export class SessionClient {
   private exchange<O extends Operation>(op: O, params: OperationParams<O>, session?: string, suppliedId?: string, internal = false): Promise<ResponseFor<O>> {
     const id = OPERATION_CATALOG[op].mutation ? (suppliedId ?? newRequestId()).toLowerCase() : suppliedId ?? randomUUID();
     const previous = this.records.get(id);
-    const envelope = parseClientEnvelope({ v: 1, id, op, params, ...(session === undefined ? {} : { session }) }, { checkFreshness: previous === undefined });
-    const canonical = canonicalRequestPayload(envelope, { checkFreshness: false });
+    const envelope = parseClientEnvelope({ v: 1, id, op, params, ...(session === undefined ? {} : { session }) });
+    const canonical = canonicalRequestPayload(envelope);
     const payload = op === 'host.setup.answer' ? createHash('sha256').update(canonical).digest('hex') : canonical;
     if (previous) {
       if (previous.payload !== payload) return Promise.resolve(failure(id, 'rejected', 'request_conflict', 'Request ID already names a different command') as ResponseFor<O>);
@@ -259,7 +302,7 @@ export class SessionClient {
     }
     const bytes = encodeFrame(envelope).byteLength;
     if (!internal && (this.connectionState !== 'ready' || !this.negotiated?.operations.includes(op))) {
-      return Promise.resolve(failure(id, 'rejected', this.connectionState === 'ready' ? 'unsupported_operation' : 'unavailable', 'Operation is not available on this connection') as ResponseFor<O>);
+      return Promise.resolve(failure(id, 'rejected', this.connectionState === 'ready' ? 'unsupported_operation' : 'unavailable', this.connectionState === 'ready' ? 'Operation is not available on this connection' : 'Daemon is not connected') as ResponseFor<O>);
     }
     const pending = [...this.records.values()].filter(record => !record.response);
     if (pending.length >= LIMITS.inflightRequests || pending.reduce((sum, record) => sum + record.bytes, 0) + bytes > LIMITS.unsentBytes) {
@@ -278,10 +321,10 @@ export class SessionClient {
     if (this.closed) { this.finish(record, failure(record.envelope.id, 'indeterminate', 'unavailable', 'Client is closed')); return; }
     if (record.attempts > this.retries) { this.finish(record, failure(record.envelope.id, 'indeterminate', 'indeterminate', 'No authoritative reply before retry limit')); return; }
     try {
-      if (OPERATION_CATALOG[record.envelope.op].mutation) validateRequestId(record.envelope.id);
       if (!this.transport) throw new Error('No transport');
       ++record.attempts;
-      record.timer = setTimeout(() => {
+      // Interactive operations wait for their authoritative reply; only liveness probes are bounded.
+      if (LIVENESS_OPERATIONS.has(record.envelope.op)) record.timer = setTimeout(() => {
         record.timer = undefined;
         if (this.transport) this.transmit(record);
         else this.finish(record, failure(record.envelope.id, 'indeterminate', 'indeterminate', 'Connection lost before authoritative reply'));
@@ -316,7 +359,7 @@ export class SessionClient {
         const reply = parseControlResponse(value);
         const record = this.records.get(reply.re);
         if (!record || record.envelope.op !== 'hello' || reply.outcome !== 'mismatch') throw new Error('Unexpected control reply');
-        assertTargetIdentity(this.target, this.pinned ?? reply.identity, reply.identity);
+        assertTargetIdentity(this.target, this.verifying ?? reply.identity, reply.identity);
         if (record.response) return;
         this.pinned = reply.identity; this.connectionState = 'incompatible';
         this.finish(record, failure(reply.re, 'rejected', 'protocol_mismatch', 'Daemon uses an incompatible protocol'));
@@ -375,7 +418,7 @@ export class SessionClient {
     if (this.interactionNotifications.size > LIMITS.pageEntries) throw new Error('Interaction notification limit exceeded');
   }
 
-  async attach(session: string, policy: { requirePolicy?: 'acp-strict'; policyWaitMs?: number } = {}): Promise<ResponseFor<'attach'>> {
+  async attach(session: string, policy: { requirePolicy?: 'acp-strict' } = {}): Promise<ResponseFor<'attach'>> {
     if (this.connectionState !== 'ready') throw new Error('Connect before attaching');
     if (this.attachments.has(session)) throw new Error('Session already attached');
     const attachment = { id: randomUUID(), session, ...policy, state: createSessionState(session) };
@@ -402,8 +445,7 @@ export class SessionClient {
     const bufferGeneration = attachment.state.bufferGeneration;
     if (attachment.state.status === 'disconnected') this.attachments.set(session, { ...attachment, state: { ...attachment.state, status: 'awaiting_snapshot' } });
     const response = await this.exchange('attach', { expected: this.pinned!,
-      ...(attachment.requirePolicy ? { requirePolicy: attachment.requirePolicy } : {}),
-      ...(attachment.policyWaitMs === undefined ? {} : { policyWaitMs: attachment.policyWaitMs }) }, session, undefined, true);
+      ...(attachment.requirePolicy ? { requirePolicy: attachment.requirePolicy } : {}) }, session, undefined, true);
     if (this.closed || epoch !== this.epoch || this.attachments.get(session)?.id !== attachment.id) return response;
     if (response.outcome === 'accepted') {
       const current = this.attachments.get(session);
@@ -464,29 +506,36 @@ export class SessionClient {
       clearTimeout(record.timer); record.timer = undefined;
       if (record.internal && !record.response) this.finish(record, failure(record.envelope.id, 'indeterminate', 'unavailable', 'Connection lost'));
     }
-    if (wasReady && reason !== 'invalid_frame' && this.reconnectCount < this.reconnectLimit) this.scheduleReconnect();
-    else this.settleOutstanding('Transport lost; execution may still be running');
+    // Backoff restarts only after a connection that stayed up longer than the longest delay, so a flapping daemon is not hammered.
+    if (wasReady && Date.now() - this.readyAt >= this.maxDelay) this.reconnectCount = 0;
+    if (!wasReady || reason === 'invalid_frame' || !this.retryLater()) this.settleOutstanding('Daemon connection lost; execution may still be running');
     this.emit();
   }
-  private scheduleReconnect() {
-    clearTimeout(this.reconnectTimer);
+  /** Schedules the next automatic attempt; outstanding requests stay pending only until an attempt fails. */
+  private retryLater(): boolean {
+    if (this.closed || !this.established || this.connectionState === 'incompatible' || this.reconnectCount >= this.reconnectLimit) return false;
+    if (this.reconnectTimer) return true;
+    this.connectionState = 'disconnected';
+    const delay = Math.min(this.maxDelay, this.delay * 2 ** Math.min(this.reconnectCount, 30) * (0.9 + Math.random() * 0.2));
+    this.reconnectAt = Date.now() + delay;
     this.reconnectTimer = setTimeout(() => {
-      ++this.reconnectCount;
-      void this.connectShared().catch(() => {
-        if (!this.closed && this.connectionState !== 'incompatible' && this.reconnectCount < this.reconnectLimit) this.scheduleReconnect();
-        else this.settleOutstanding('Reconnect exhausted; execution may still be running');
-      });
-    }, this.delay);
+      this.reconnectTimer = undefined; this.reconnectAt = undefined; ++this.reconnectCount;
+      void this.connectShared(false).catch(() => { this.retryLater(); this.emit(); });
+    }, delay);
+    this.reconnectTimer.unref?.();
+    this.emit();
+    return true;
   }
+  private cancelReconnect() { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; this.reconnectAt = undefined; }
   private settleOutstanding(message: string) {
     for (const record of this.records.values()) if (!record.response) this.finish(record, failure(record.envelope.id, record.attempts ? 'indeterminate' : 'rejected', 'indeterminate', message));
   }
 
-  async control(op: ControlRequest['op'], options: { confirmed: true; mode: 'drain' | 'force' } | undefined = undefined): Promise<ControlResponse> {
+  async control(op: ControlRequest['op'], mode?: 'drain' | 'force'): Promise<ControlResponse> {
     if (this.closed) throw new Error('Client is closed');
     if (!this.pinned) throw new Error('Control requires a verified daemon identity');
     const id = op === 'host.status' ? randomUUID() : newRequestId();
-    const request = parseControlRequest({ control: CONTROL_VERSION, id, op, params: { expected: this.pinned, ...options } });
+    const request = parseControlRequest({ control: CONTROL_VERSION, id, op, params: { expected: this.pinned, ...(mode ? { mode } : {}) } });
     let transport: ClientTransport | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onClose = () => {};
@@ -521,7 +570,7 @@ export class SessionClient {
     this.interactionNotifications.clear();
     this.presentationSequences.clear(); this.presentationListeners.clear();
     this.queuedInteractions = []; this.queuedInteractionBytes = 0;
-    clearTimeout(this.reconnectTimer); this.transport?.close(); this.transport = undefined;
+    this.cancelReconnect(); this.transport?.close(); this.transport = undefined;
     this.settleOutstanding('Client detached; execution may still be running');
     for (const [session, attachment] of this.attachments) this.attachments.set(session, { ...attachment, state: reduceSession(attachment.state, { type: 'disconnected' }) });
     this.emit();

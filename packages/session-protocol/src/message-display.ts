@@ -1,5 +1,5 @@
 import { Type, type Static } from 'typebox';
-import { CounterSchema, IdSchema, enumOf, parseSchema, text } from './schema.js';
+import { CounterSchema, IdSchema, enumOf, parseSchema, text, unboundedText } from './schema.js';
 import { ProtocolValidationError } from './limits.js';
 
 export const MESSAGE_DISPLAY_ID = 'felan.message-display';
@@ -9,11 +9,11 @@ export const AssistantDisplaySchema = Type.Object({
   kind: Type.Literal('assistant'), timestamp: CounterSchema,
   api: text(256, 1), provider: text(256, 1), model: text(256, 1),
   stopReason: enumOf(['stop', 'length', 'toolUse', 'error', 'aborted'] as const),
-  errorMessage: Type.Optional(text(16_384)),
+  errorMessage: Type.Optional(unboundedText()),
   usage: Type.Object({ input: CounterSchema, output: CounterSchema, cacheRead: CounterSchema, cacheWrite: CounterSchema,
     totalTokens: CounterSchema, cost: Type.Object({ input: CostSchema, output: CostSchema, cacheRead: CostSchema, cacheWrite: CostSchema, total: CostSchema },
       { additionalProperties: false }) }, { additionalProperties: false }),
-}, { additionalProperties: false, 'x-maxEncodedBytes': 32 * 1024 });
+}, { additionalProperties: false });
 export const ToolDisplaySchema = Type.Object({ kind: Type.Literal('tool'), timestamp: CounterSchema, name: text(256, 1) }, { additionalProperties: false });
 export const MessageDisplaySchema = Type.Union([AssistantDisplaySchema, ToolDisplaySchema]);
 export const ActiveMessageDisplaySchema = Type.Object({ message: IdSchema, display: AssistantDisplaySchema }, { additionalProperties: false });

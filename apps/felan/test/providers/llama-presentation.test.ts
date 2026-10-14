@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ExtensionContext } from '@felan-ai/agent-core';
-import { LIMITS, parseSchema, InteractionRequestSchema } from '@felan-ai/session-protocol';
+import { parseSchema, InteractionRequestSchema } from '@felan-ai/session-protocol';
 import { createLlamaPresentation } from '../../src/providers/llama/presentation.js';
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
@@ -17,14 +17,14 @@ function fixture() {
 }
 
 describe('llama.cpp broker-compatible presentation', () => {
-  it('pages large catalogs and preserves exact identities behind duplicate clipped labels', async () => {
+  it('offers large catalogs in one list and preserves exact identities behind duplicate clipped labels', async () => {
     const f = fixture(); const values = Array.from({ length: 250 }, (_, i) => `${'🦙'.repeat(1000)}${i}`);
     f.select.mockImplementation(async (title: string, choices: string[]) => {
       parseSchema(InteractionRequestSchema, { kind: 'select', title, choices: choices.map((text, i) => ({ id: String(i), title: text })), multiple: false });
-      expect(choices.length).toBeLessThanOrEqual(LIMITS.choices);
-      return f.select.mock.calls.length === 1 ? 'Next page' : choices[1];
+      expect(choices).toHaveLength(values.length);
+      return choices[199];
     });
-    await expect(f.ui.select('Long catalog', values)).resolves.toBe(values[LIMITS.choices - 1]);
+    await expect(f.ui.select('Long catalog', values)).resolves.toBe(values[199]);
   });
 
   it('preserves an explicit repository and supports repeated search', async () => {

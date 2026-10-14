@@ -54,8 +54,10 @@ The subsequent distribution decision is recorded in
   identity, never production discovery. See the explicit
   [target contract](session-daemon-contracts.md#production-and-isolated-runtime-targets).
   No idle self-termination is inferred from zero clients.
-- Only registered daemon sessions are visible or resumable. Explicit import
-  copies pre-daemon history to a new ID without changing the source.
+- Registered daemon sessions and unregistered pre-daemon transcripts in owned
+  store roots are visible and resumable; opening a pre-daemon transcript adopts
+  it in place. Explicit import copies history to a new ID without changing the
+  source.
 
 ## Completion evidence and limits
 
@@ -79,7 +81,7 @@ S1.15 owns end-to-end evidence; earlier tasks own the unit/integration gates bel
 | R1: separate detach/cancel/close/evict/stop | Registry S1.06, admission S1.07, management S1.14, clients S1.11/13 | Exit during a tool/PTY leaves work alive; reattach sees it. Cancel aborts the addressed run/foreground operation, not independent spawned child sessions or detached jobs. Explicit child cancellation walks its descendant tree. Close/stop settle owned foreground work/children/PTYs while preserving and reconciling independent detached jobs. Eviction is only idle runtime disposal. See the inspected lifetime table in the baseline. |
 | R2: convergence | Protocol S1.02, projection S1.06, server S1.07, reducer S1.10 | Two independently connected clients agree on active branch/transcript, retained active text/thinking prefixes, model/thinking, queue, tool/process/child states, interactions and run origin. Mid-message attach uses an atomic stream-offset cutover; unrecoverable prefixes wait for completion rather than resnapshot-loop. |
 | R3: retry safety | Store S1.04, admission S1.07 | Lost ack + identical ID returns recorded outcome; changed payload conflicts; expired ID is rejected. Crash at each intent/dispatch/outcome boundary never causes a second execution. Ambiguity is visible as `indeterminate`. |
-| R4: one answer, despite detach | Broker S1.08, adapters S1.09/11/13 | TUI and ACP race: one authorized, schema-valid answer wins and both see resolution. EOF leaves pending. Timeout, cancellation, unsupported presentation, drain/defer and answer-before-crash are distinct. ACP load while busy still attaches/replays; prompt returns typed busy until strict policy activates with no in-flight turn/tool call or admitted dispatch across the session/root scope, including child turns. Detached jobs, PTYs and idle children do not block activation; future controls are gated calls. Blocker IDs/reasons are visible, explicit activation waits are capped at 30 seconds and blocker cancellation stays available. |
+| R4: one answer, despite detach | Broker S1.08, adapters S1.09/11/13 | TUI and ACP race: one authorized, schema-valid answer wins and both see resolution. EOF leaves pending. Timeout, cancellation, unsupported presentation, drain/defer and answer-before-crash are distinct. ACP load while busy still attaches/replays and tightens the root tree to strict policy immediately; running tool calls keep their approvals. The tree relaxes to host defaults after the last ACP attachment detaches. |
 | R5: offline local | Profile S1.05, all clients, S1.15 | With no Felan/provider credentials and network denied, a fake model completes create/run/detach/reattach/resume. Readiness never requires update, provider, account or platform calls. Missing real-model credentials give a useful local error. |
 | R10: daemon owns descendants | S1.05/06/09/14 | Root and nested children, memory work, bash jobs and PTYs are tracked in the owner; client exit does not dispose them. Another client can inspect/control authorized resources. Restart reports interrupted/missing resources and does not recreate a shell, PTY or child execution. |
 | Ownership/security prerequisite | S1.03/04/07 | Concurrent starters, aliased/custom/overlapping stores, PID reuse, paused owner, replaced endpoint/lock inode, forged readiness and cross-user denial. No second current-version writer. |
@@ -268,7 +270,7 @@ but never advertise partial single-writer behavior or ship a mixed entrypoint.
    Never silently rerun a shell, prompt or continuation.
 
 Downgrade/import are acceptance fixtures, not actions to perform on this
-developer's stores. Network filesystems without verified lock/identity semantics
-are unsupported for canonical writable roots; fail closed rather than fall back
-to mtime leases. Old noncooperating binaries can still ignore locks: disclose this
+developer's stores. Stores on network filesystems are accepted as in Felan 0.28.3;
+kernel lock semantics there are best-effort and never replaced by mtime leases.
+Old noncooperating binaries can still ignore locks: disclose this
 residual risk and require operator quiescence, not a false exactly-one-writer claim.

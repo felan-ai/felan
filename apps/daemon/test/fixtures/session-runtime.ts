@@ -42,7 +42,7 @@ export function createTestSessionRuntime(options: {
       const runtimeRequest = createRuntimeStorageRequest(environment.cwd, environment.agentDir, request.session.root);
       await mkdir(runtimeRequest.sessionStorageRoot, { recursive: true, mode: 0o700 }); await mkdir(runtimeRequest.agentStorageRoot, { recursive: true, mode: 0o700 });
       const runtime = options.runtimeFactory?.(runtimeRequest) ?? new HostAgentRuntime(environment.cwd, runtimeRequest);
-      return { configuration: request.configuration ?? null, toolPolicy: { ...toolPolicy,
+      return { toolPolicy: { ...toolPolicy,
         trustedInlinePaths: [...toolPolicy.trustedInlinePaths, ...request.extensionPackages.map(name => `<inline:${name}>`)] },
         options: { runtime, modelRuntime: request.modelRuntime, settingsManager: SettingsManager.create(environment.cwd, environment.agentDir),
         extensionPackages: request.extensionPackages, importExtension: options.importExtension ?? (async () => ({ default() {} })),
@@ -55,8 +55,7 @@ export function createTestSessionRuntime(options: {
 }
 
 export async function createTestSessionLifecycle(options: Omit<SessionLifecycleOptions,
-  'composition' | 'serviceRegistry' | 'openServiceScope' | 'secretStorage' | 'extensionPackages' | 'configurationIdentity' | 'configuration'> & {
-  configurationIdentity?: string;
+  'composition' | 'serviceRegistry' | 'openServiceScope' | 'secretStorage' | 'extensionPackages' | 'configuration'> & {
   configuration?: SessionLifecycleOptions['configuration'];
   runtimeFactory?: RuntimeFactory;
   serviceRegistry?: FelanServiceRegistry;
@@ -72,7 +71,6 @@ export async function createTestSessionLifecycle(options: Omit<SessionLifecycleO
   const configuration = new TestHostConfiguration({ definitions: options.definitions ?? [], assertCurrent() {} });
   return createSessionLifecycle({ ...options,
     configuration: options.configuration ?? (() => configuration),
-    configurationIdentity: options.configurationIdentity ?? 'test-composition',
     composition,
     extensionPackages: options.extensionAllowlist ?? [],
     serviceRegistry: services,

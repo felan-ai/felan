@@ -21,9 +21,27 @@ then fsyncs the containing directory. Returned revisions/outcomes may be
 published only after that sequence returns. Before first use, a separate private
 `<agentDir>/.control-initialized-<SHA-256-of-control-directory>.json` records the
 store identity. It is outside the control directory, is synced before control
-initialization and must be included in backups. A previously initialized store
-with a missing directory, missing format/snapshot pair, corrupt or unknown-version
-snapshot fails closed; no empty store or backup snapshot is silently substituted.
+initialization and must be included in backups.
+
+Recovery distinguishes the file from its rows:
+
+- A missing snapshot starts an empty store without quarantine.
+- Other read errors (for example `EACCES`) fail startup with a retryable
+  `storage_failure` and leave the file in place.
+- Only a file that fails parsing, integrity (digest, sequence, store ID),
+  schema, or namespace/agent-directory checks, or that was replaced by a
+  symlink, is quarantined as `control-corrupt-<time>.json`; an empty store then
+  starts, and transcripts remain listable and are re-adopted on attach.
+- In an otherwise valid file, inconsistent rows are dropped individually with
+  the rows that depend on them (descendant sessions, requests, interactions,
+  continuations and resources). A row whose transcript path no longer has the
+  same canonical identity is dropped the same way.
+- A row whose session directory lies outside the current store roots (for
+  example after `daemon-store-roots.json` was lost) is kept, and its directory is
+  owned again at startup. It is dropped only if that directory cannot be owned.
+
+Deleting a session tombstones it and every registered descendant and removes
+all of their transcripts.
 The control directory cannot contain the agent directory/initialization record.
 Initialization syncs created directory entries through their owned parent chain.
 Incomplete temporary snapshots are never recovery candidates. An I/O error
@@ -39,19 +57,9 @@ transcript database, platform outbox, event archive or persistence framework.
 
 ## Bounds and identities
 
-The entire encoded snapshot is limited to 16 MiB. Ordinary mutations leave
-1 MiB + 4 KiB + 1 KiB for a complete safety admission: its maximum outcome,
-bounded identity/phase row, and commit bookkeeping. Request metadata is checked
-against that 4 KiB bound before writing; configurations cannot reduce this safety
-floor. Every pending request additionally reserves 1 MiB for its
-terminal response, including maximum-size validated blocker identifiers and JSON
-escaping. Every pending interaction reserves its maximum answer plus 1 KiB of
-terminal metadata. These byte limits may reject well before the maximum record
-counts: 100,000 requests/session, 1,000,000/namespace, with 1,024 namespace slots
-reserved for cancellation, interaction resolution, close and drain, with equivalent
-headroom within each session. Smaller byte/count bounds are allowed only while
-preserving the complete safety floor; larger bounds are rejected. Full capacity never
-evicts still-retryable records to admit new work.
+The snapshot has no byte or session-count cap. Admission bounds only in-flight
+work (pending requests and their bytes), keeping a small reserve so cancellation,
+interaction resolution, close and drain can still be admitted under load.
 
 A protocol-valid request up to the protocol frame limit is canonicalized by the
 protocol parser, then stored as SHA-256 plus canonical encoded length. Prompt,
@@ -60,19 +68,17 @@ control snapshot. The record includes the normalized ID, stable owner principal,
 operation, session, admission time, retention deadline, phase and sanitized
 terminal response. Pass a **stable retry principal**, not an ephemeral attachment
 ID. A reconnecting authorized attachment must map to that same principal.
-Identical retries return the record; changed payload/principal conflicts. The
-UUIDv7 timestamp remains the freshness authority. Terminal records are pruned
-only after both admission time and ID timestamp age beyond seven days. A durable
-clock high-water prevents clock rollback from reviving an expired request.
+Identical retries return the record; changed payload/principal conflicts.
+Request IDs are not rejected for age or clock skew. Terminal records are pruned
+seven days after the later of admission time and the ID's UUIDv7 timestamp.
 
-The schema caps sessions at 4,096, interactions/continuations at 1,024,
-resources at 4,096 and coalesced projections at 256/session. Session revision
-high-water and nonterminal records are not age-evicted.
+Coalesced projections are capped at 256/session. Session revision high-water
+and nonterminal records are not age-evicted.
 Resolved interaction/completed-continuation/exited-resource and request records
 have a minimum seven-day retention window; `compact` removes expired records and
 old terminal projections. Call it periodically from lifecycle management.
 Indeterminate continuations retain their winning answers indefinitely; unresolved
-resource identities are not age-evicted. These records can instead block capacity.
+resource identities are not age-evicted.
 Message references/tool/status projections
 may be compacted without invalidating Pi content or retry protection. No full
 completed message, tree, raw process environment, provider credential, control
@@ -190,10 +196,29 @@ terminal results. Later drain orchestration must use the same durable ordering.
 
 ## Pre-daemon files and downgrade
 
-Pre-daemon files are not discovered or resumed. Explicit import validates and
-copies history into a new daemon session without changing the source. Export
-remains available. Older binaries must not write daemon-owned transcripts or
-control data; use separate roots and verified backups when downgrading.
+Unregistered Pi transcripts in pre-daemon layouts are discovered while listing
+and adopted in place when a client attaches to one. Discovery scans only
+`agentDir/sessions` (top level and its `--<encoded-cwd>--` directories; a
+cwd-filtered listing reads only that cwd's directory) and the top level of each
+other owned store root, such as a custom `--session-dir`. It reads at most a
+64 KiB first-line header from regular files, validates it with the import
+header schema and Pi's session-ID syntax, and lists it like Pi's
+`SessionManager.listAll` regardless of file mode, link count or whether its cwd
+still exists. Registered IDs and paths and duplicate IDs are skipped. A row's title is the latest Pi `session_info` name within the same
+64 KiB prefix, else a 120-character snippet of the first user message there,
+else empty (clients then show the ID). Listings reuse one discovery result for
+two seconds so pages stay consistent; adoption always rediscovers.
+
+Adoption registers the existing ID and canonical file path in control state
+without copying, and continuation appends to that file through the normal resume
+path, ownership checks and path claims. Adoption rediscovers the file by ID, so a
+transcript replaced after listing is adopted from its current file; there is no
+quiet window. After adoption the daemon is the only supported writer; running a
+pre-daemon binary on the same session concurrently is unsupported. Explicit
+import copies history into a new daemon session without changing the source
+(the source must start with a session header), and export remains available.
+Older binaries must not write daemon-owned control data; use separate roots and
+verified backups when downgrading.
 
 ## Verification scope
 
@@ -210,22 +235,15 @@ this document does not claim integration/packed/Linux coverage by implication.
 
 ## Deletion tombstones
 
-`markSessionDeleted` atomically commits its matching request's dispatch intent and
-the optional `deletedAt` timestamp. It compares the admitted expected revision
-inside that commit and requires a previously closed, evicted, idle session tree
-without pending requests, active resources, interactions or continuations. It
-uses ordinary capacity accounting, not the general safety bypass: at full
-ordinary capacity deletion rejects before either tombstone or unlink, preserving
-other outcome, interaction and emergency reserves.
+Any session may be deleted; the client asks for one confirmation, as in 0.28.3.
+There is no expected-revision or closed/evicted/idle precondition: the registry
+first closes the session tree (cancelling its run), then `markSessionDeleted`
+commits the request's dispatch intent and the `deletedAt` tombstone, and the
+exact transcript file is unlinked. No directory, child store, legacy original,
+detached output or retry history is recursively removed.
 
-The row, lineage, transcript path and policy remain. Obsolete projections are
-cleared atomically with the tombstone; terminal request outcomes retain the normal
-bounded retention window and expire normally. An expired request ID cannot be
-admitted again, so pruning cannot enable late replay. Ordinary updates cannot
-clear a tombstone or reopen it.
-Tombstones consume the existing 4,096-session limit permanently. Only a separate
-verified exact-file unlink follows the commit; no directory, child store, legacy
-original, detached output or retry history is recursively removed. A failure
-after committing the tombstone is indeterminate, with no automatic retry. A new
-explicit request can retry exact-file removal without replacing the tombstone.
+The tombstone keeps request retries idempotent and stops later requests from
+reopening the session. Ordinary updates cannot clear it. Tombstones are pruned
+with their request records after the normal seven-day retention once no
+request, interaction, continuation, resource or descendant references them.
 Deletion is permanent, not trash or undo; the client must warn before confirmation.

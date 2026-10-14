@@ -12,6 +12,7 @@ import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import { waitForDaemonStop } from './client/daemon-stop.js';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { TERMINAL_INTERACTION_KINDS, TERMINAL_UI_CAPABILITIES } from './tui/interactions.js';
+import { restartFelanProcess, type RestartProcess } from './process-restart.js';
 
 export interface RunDaemonFelanOptions extends Omit<TuiSessionOptions, 'cwd' | 'extensions'> {
   cwd?: string;
@@ -21,6 +22,8 @@ export interface RunDaemonFelanOptions extends Omit<TuiSessionOptions, 'cwd' | '
   extensionPaths?: readonly string[];
   initialMessage?: string;
   verbose?: boolean;
+  /** Launch arguments that `/restart` repeats when it re-executes the client; session selection and the initial prompt are excluded. */
+  restartArgs?: readonly string[];
   presentation?: Partial<{ [K in keyof TuiPresentationPreferences]: Partial<TuiPresentationPreferences[K]> }>;
   signal?: AbortSignal;
 }
@@ -32,8 +35,7 @@ export function clientDaemonTarget(options: RunDaemonFelanOptions): DaemonTarget
     const directory = resolve(options.daemonRuntime);
     return { kind: 'isolated', directory, namespaceId: `cli-${createHash('sha256').update(directory).digest('hex').slice(0, 32)}`, storeRoots: [directory] };
   }
-  return { kind: 'production', agentDir: resolve(options.agentDir ?? getClientAgentDir()),
-    storeRoots: options.sessionDir ? [resolve(options.sessionDir)] : [] };
+  return { kind: 'production', agentDir: resolve(options.agentDir ?? getClientAgentDir()), storeRoots: [] };
 }
 
 export function clientConfigurationRoot(options: RunDaemonFelanOptions): string {
@@ -44,6 +46,7 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
   createClient?: (options: SessionClientOptions) => SessionClient;
   runTerminal?: typeof runDaemonTerminal;
   waitForStop?: typeof waitForDaemonStop;
+  restartProcess?: RestartProcess;
 } = {}): Promise<void> {
   let replacing: DaemonIdentity | undefined;
   let selected = options.sessionId;
@@ -57,7 +60,7 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
       clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}), kind: 'tui', interactionKinds: [...TERMINAL_INTERACTION_KINDS], capabilities: [...TERMINAL_UI_CAPABILITIES],
       launch: { entrypoint: resolveInstalledDaemonEntrypoint(), ...(options.hostConfigPath ? { hostConfigPath: resolve(options.hostConfigPath) } : {}), ...(replacing ? { replacing } : {}) } });
     const controller = new TuiSessionController(client);
-    const outcome: { restart?: { identity: DaemonIdentity; sessionId?: string; cwd: string; draft: string; keepStartup: boolean } } = {};
+    const outcome: { restart?: { identity: DaemonIdentity; sessionId?: string; cwd: string; draft: string; keepStartup: boolean }; relaunch?: { sessionId?: string; cwd: string } } = {};
     try {
       await (dependencies.runTerminal ?? runDaemonTerminal)(controller, { cwd, clientConfigDir: clientConfigurationRoot(options),
         ...(selected ? { sessionId: selected } : {}), ...(options.sessionDir ? { sessionDir: resolve(options.sessionDir) } : {}),
@@ -70,9 +73,22 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
         onDaemonAction: async (action, force, text, beforeAttachment) => {
           const identity = client.identity;
           if (!identity) throw new Error('Connect to a verified daemon before using lifecycle controls.');
-          const result = await client.control(action === 'stop' ? 'host.stop' : 'host.restart', { confirmed: true, mode: force ? 'force' : 'drain' });
+          const result = await client.control(action === 'stop' ? 'host.stop' : 'host.restart', force ? 'force' : 'drain');
           if (result.outcome !== 'accepted') throw new Error('Daemon control was not accepted. Inspect status before retrying.');
+          const inPlace = action !== 'stop' && !beforeAttachment;
+          if (inPlace) controller.setNotice('Daemon restarting…');
           await (dependencies.waitForStop ?? waitForDaemonStop)(client, options.signal);
+          if (inPlace) {
+            await controller.reconnect({ replacing: identity });
+            if (action === 'relaunch') {
+              const sessionId = controller.sessionId ?? selected;
+              outcome.relaunch = { ...(sessionId ? { sessionId } : {}), cwd: controller.snapshot?.cwd ?? cwd };
+              controller.setNotice('Restarting Felan Code…');
+              return true;
+            }
+            controller.setNotice('Daemon restarted');
+            return false;
+          }
           if (action === 'restart') {
             const sessionId = controller.sessionId ?? selected;
             outcome.restart = { identity, ...(sessionId ? { sessionId } : {}), cwd: controller.snapshot?.cwd ?? cwd,
@@ -82,6 +98,10 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
         },
       });
     } finally { await controller.dispose(); }
+    if (outcome.relaunch) {
+      await (dependencies.restartProcess ?? restartFelanProcess)({ ...outcome.relaunch, ...(options.restartArgs ? { restartArgs: options.restartArgs } : {}) });
+      return;
+    }
     const restart = outcome.restart;
     if (!restart) return;
     replacing = restart.identity; selected = restart.sessionId; cwd = restart.cwd; draft = restart.draft; first = restart.keepStartup;

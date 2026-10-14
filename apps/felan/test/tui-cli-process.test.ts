@@ -75,13 +75,16 @@ it('keeps an active daemon run alive after the terminal client is killed', async
   f.release.resolve();
 }, 20_000);
 
-it('requires consent for an incompatible daemon and exits without submitting input when declined', async () => {
-  const f = await fixture(false, 'incompatible-fixture'); const count = f.root.runtime.session.messages.length;
+it('requires consent before restarting an incompatible daemon with active runs and exits without submitting input when declined', async () => {
+  const f = await fixture(true, 'incompatible-fixture');
+  const observer = await f.client();
+  void observer.request('prompt', { text: 'active run' }, { session: f.root.sessionId });
+  await f.entered.promise;
   const child = await f.launch('must remain unsubmitted');
-  await readUntil(child, text => text.includes('Daemon version mismatch'));
+  await readUntil(child, text => stripTerminalSequences(text).includes('1 active task will be interrupted'));
   await child.write(new TextEncoder().encode('\r'));
   await readUntil(child, (_text, running) => !running);
-  expect(f.root.runtime.session.messages).toHaveLength(count);
+  expect(JSON.stringify(f.root.runtime.session.messages)).not.toContain('must remain unsubmitted');
   expect(f.store.session(f.root.sessionId).state).toBe('open');
 }, 20_000);
 

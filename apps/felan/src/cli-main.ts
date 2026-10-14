@@ -286,8 +286,9 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     const { runDaemonFelan } = await import('./client-application.js');
     await runDaemonFelan(options);
   });
+  const restartArgs = buildRestartArgs(args, configByName);
   try {
-    await launch({ continueRecent, verbose,
+    await launch({ continueRecent, verbose, ...(restartArgs.length ? { restartArgs } : {}),
       ...(Object.keys(presentation).length ? { presentation: presentation as NonNullable<RunDaemonFelanOptions['presentation']> } : {}),
       ...(resume ? { resume } : {}), ...(sessionId ? { sessionId } : {}), ...(sessionDir ? { sessionDir } : {}),
       ...(daemonRuntime ? { daemonRuntime } : {}),
@@ -297,6 +298,29 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     });
     return 0;
   } catch (error) { writeError(error instanceof Error ? error.message : String(error)); return 1; }
+}
+
+/** Repeats launch options for `/restart`; session selection and the initial prompt are excluded, and relative extension paths are resolved because the restart changes directory. */
+function buildRestartArgs(args: readonly string[], configByName: ReadonlyMap<string, { readonly configField: { readonly type: string } }>): string[] {
+  const restartArgs: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === '--') break;
+    if (argument === '--session' || argument === '--session-dir') { index += 1; continue; }
+    if (argument === '-e' || argument === '--extension') {
+      restartArgs.push(argument, resolveLocalExtensionPath(args[index + 1]!, process.cwd())); index += 1; continue;
+    }
+    if (argument === '--daemon-runtime') { restartArgs.push(argument, args[index + 1]!); index += 1; continue; }
+    if (argument === '--verbose') { restartArgs.push(argument); continue; }
+    if (!argument.startsWith('--')) continue;
+    const equals = argument.indexOf('=');
+    const name = argument.slice(2, equals === -1 ? undefined : equals);
+    const option = configByName.get(name) ?? (argument.startsWith('--no-') ? configByName.get(argument.slice('--no-'.length)) : undefined);
+    if (!option) continue;
+    restartArgs.push(argument);
+    if (equals === -1 && !argument.startsWith('--no-') && option.configField.type !== 'boolean') { restartArgs.push(args[index + 1]!); index += 1; }
+  }
+  return restartArgs;
 }
 
 function resolveLocalExtensionPath(value: string, cwd: string): string {

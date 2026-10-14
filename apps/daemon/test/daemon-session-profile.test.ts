@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
-import { CONTROL_LIMITS } from '../src/daemon/control-state.js';
 import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 import { SessionServer } from '../src/daemon/server.js';
 import { SessionClient, newRequestId } from '../../felan/src/client/client.js';
@@ -49,29 +48,20 @@ it('atomically binds a configuration update to its admitted payload and preserve
   expect(() => f.store.configureSession(id, values, overrides)).toThrow('undispatched');
 });
 
-it('refuses configuration reload while work is active without changing the desired profile', async () => {
+it('persists session configuration during an active run without reloading and applies it on the next reload', async () => {
   const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
   f.store.updateSession(binding.sessionId, { run: { state: 'running', id: 'active' } });
   const id = requestId(); const values = { extensionConfig: { codex: { fast: true } } };
   f.store.admit({ v: 1, id, op: 'config.set', session: binding.sessionId, params: { scope: 'session', values } }, 'client');
-  expect(() => f.registry.reloadAdmitted(id, binding.sessionId, { values, overrides })).toThrow('quiescent');
-  expect(f.store.session(binding.sessionId).profile).toBeUndefined();
-  expect(f.store.snapshot().requests.find(row => row.id === id)?.phase).toBe('intent');
+  const opened = f.opened.length;
+  await f.registry.configureAdmitted(id, binding.sessionId, { values, overrides });
+  expect(f.store.session(binding.sessionId).profile?.extensionConfigOverrides).toEqual(overrides);
+  expect(f.store.snapshot().requests.find(row => row.id === id)?.phase).toBe('dispatch_intent');
+  expect(f.opened).toHaveLength(opened); expect(f.registry.binding(binding.sessionId)).toBe(binding);
   f.store.updateSession(binding.sessionId, { run: { state: 'idle' } });
-});
-
-it('rejects an at-capacity profile change before disposing the current runtime', async () => {
-  const f = await fixture({ capacity: { bytes: CONTROL_LIMITS.reserveBytes * 2 + 40_000 } });
-  const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
-  const id = requestId(); const instructions = 'x'.repeat(60_000); const values = { extensionConfig: { outputStyle: { instructions: instructions } } };
-  f.store.admit({ v: 1, id, op: 'config.set', session: binding.sessionId, params: { scope: 'session', values } }, 'client');
-  const disposal = f.instances.get(binding.sessionId)!.dispose; const before = disposal.mock.calls.length;
-  await expect(f.registry.reloadAdmitted(id, binding.sessionId, { values,
-    overrides: [{ extensionId: 'outputStyle', source: 'CLI', values: { instructions } }],
-  })).rejects.toMatchObject({ code: 'request_capacity' });
-  expect(disposal.mock.calls).toHaveLength(before); expect(f.registry.binding(binding.sessionId)).toBe(binding);
-  expect(f.store.session(binding.sessionId).profile).toBeUndefined();
-  expect(f.store.snapshot().requests.find(row => row.id === id)?.phase).toBe('intent');
+  const reload = requestId(); f.store.admit({ v: 1, id: reload, op: 'session.reload', session: binding.sessionId, params: {} }, 'client');
+  await f.registry.reloadAdmitted(reload, binding.sessionId);
+  expect(f.opened.at(-1)?.extensionConfigOverrides).toEqual(overrides);
 });
 
 it('applies wire creation and reload overrides in real composition without changing global settings or replaying a duplicate', async () => {

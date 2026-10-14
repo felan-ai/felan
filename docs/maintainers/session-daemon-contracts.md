@@ -50,17 +50,12 @@ bounded extension-defined payloads; built-in operations use discriminated types.
 - Server assigns UUID session/run/message/interaction/attachment IDs. Treat all
   IDs as opaque strings, never filesystem paths. Existing Pi session IDs remain
   valid; validate nonempty length <=128, not a new incompatible UUID-only rule.
-- Mutating request IDs are UUIDv7. Their embedded millisecond timestamp is the
-  fixed freshness marker; do not allow a separate mutable timestamp to renew an
-  expired ID. Retain terminal request records for at least seven days. Reject
-  older IDs and IDs >5 minutes in the future; retain records until both their
-  admission age and embedded timestamp have aged out. Bound retained mutation
-  records to 100,000 per session and 1,000,000 per daemon namespace; reserve
-  capacity for admitted work before dispatch. At capacity, reject new mutations
-  with `request_capacity` and a retry hint; continue reads and duplicate-outcome
-  lookup. Cut off new work with 1,024 namespace records still reserved for
-  cancellation, interaction resolution and drain. Never evict still-retryable
-  records. Queries use the same envelope.
+- Mutating request IDs are UUIDv7. IDs are not rejected for age or clock skew;
+  terminal request records are retained for seven days after the later of
+  admission and the ID's embedded timestamp. Admission bounds only in-flight
+  work; at that bound reject new mutations with `request_capacity`, keeping a
+  reserve for cancellation, interaction resolution, close and drain. Never evict
+  still-retryable records. Queries use the same envelope.
 - `hello` is first: client binary version, protocol 1, kind `tui|acp|headless`,
   supported interaction kinds and presenter `{id,version}` entries. Response
   assigns an attachment principal, daemon instance ID/version, namespace and
@@ -84,14 +79,11 @@ instance ID. A path alone, stale readiness file or matching PID is not identity.
 
 | Boundary | Initial limit |
 | --- | --- |
-| Encoded frame | 16 MiB; close on oversize before allocating an unbounded buffer |
-| Prompt | 1 MiB UTF-8 text total; at most 16 attachments, aggregate encoded content <=12 MiB |
 | ID / command name / path | 128 / 128 / 4,096 UTF-8 bytes; paths reject NUL |
-| Extension command arguments / structured presentation | 64 KiB each |
+| Structured presentation | 64 KiB |
 | Retained active text | <=1 MiB UTF-8 per stream, <=4 MiB total and <=8 streams per session; overflow uses completion-only state below |
-| Pending interaction / answer | 256 KiB / 64 KiB; <=100 choices, <=4 ask-user wizard pages |
 | Process output read / input write | 64 KiB / 16 KiB decoded bytes per request; explicit base64 for arbitrary bytes |
-| Snapshot/history page | <=256 entries and <=12 MiB encoded; opaque continuation cursor |
+| Snapshot/history page | Default 256 entries per page, no schema cap; opaque continuation cursor |
 | Per-client unsent bytes / in-flight requests | 32 MiB / 64; overflow requires resnapshot or disconnect |
 | Identifiers in one catalog/page | <=1,024; page larger lists |
 
@@ -128,20 +120,20 @@ record. Do not smuggle built-ins through an unrestricted generic `command.invoke
 
 | Operation | Parameters / result and conditions |
 | --- | --- |
-| `hello`, `host.status` | Handshake above; status includes lifecycle, binary/root/protocol, active counts and setup needs, no secrets. |
-| `sessions.list` | Optional cwd/root filter + cursor; summaries include only registered sessions, with warm/evicted/closed, run state, title, model, last activity, policy state. Read-only. |
+| `hello`, `host.status` | Handshake above; status includes lifecycle, binary/root/protocol, active counts (`sessions`, `runs`, `work`, `attachments`; `work` counts everything a restart would interrupt) and setup needs, no secrets. |
+| `sessions.list` | Optional cwd/root filter + cursor; summaries include registered sessions and unregistered pre-daemon transcripts, with warm/evicted/closed, run state, title (session name), optional preview (first user message from a bounded 64 KiB transcript prefix), model, last activity, policy state. Read-only. |
 | `sessions.create` | Absolute cwd, optional configured sessionDir, model/thinking/config overrides, source kind and validated local extension paths. -> session ID. Resolve trust/setup before side effects; acquire actual-root locks first. Interactive extensions require explicit permission and a verified local console, independent of source kind. |
 | `attach` | Session ID; optional `requirePolicy:'acp-strict'` for ACP. -> attachment binding + snapshot. Unregistered IDs return `not_found`. Attaching to a registered busy session is allowed. |
 | `detach` | Attachment ID -> remove only that binding. EOF is the same operation without a required ack. |
 | `close` | Session ID -> settle the session's foreground work, child sessions and PTYs; retain history and independent detached-job records, then close. Detached jobs are not implicitly killed. Not ACP `session/close`, which maps to detach. |
 | `prompt`, `steer`, `follow_up` | Text + typed text/image/resource attachments; origin assigned/validated by adapter. Prompt starts only while idle; steering/follow-up preserve Pi queue semantics. Rejected busy gives retryable typed error, never silently forks. |
 | `cancel` | Run ID (optional current-run selector resolved under admission) -> abort that run's active foreground operation and related waits. Already-spawned child sessions and detached jobs require their existing explicit cancellation/stop operations; see the lifetime table in the baseline. Does not delete session or detach other clients. |
-| `set_model`, `set_thinking` | Provider/model ID or thinking enum `off|minimal|low|medium|high|xhigh|max`; validated against session model scope. Idle-only where Pi cannot safely change. |
+| `set_model`, `set_thinking` | Provider/model ID or thinking enum `off|minimal|low|medium|high|xhigh|max`; validated against session model scope. Accepted during an active run, as in Pi. |
 | `compact`, `fork` | Compact instructions/method; fork from source entry ID/position. Fork allocates a **new** registry entry and returns its ID, preserving the source and its attachments. Inherit policy, env and bounded resource context. |
 | `command.invoke` | Catalog command name + text arguments for registered extension commands only. Execute in daemon. Missing/unsupported handler is an explicit rejection. |
 | `interaction.answer` | Interaction ID + typed answer or explicit user cancellation. Broker validates eligibility, schema, timeout and terminal state; first valid answer wins. |
-| `session.rename`, `session.tree`, `session.branch.select`, `session.entry.label` | Name; paged tree query; entry ID + optional summarization; entry ID + label. Branch mutations serialized/idle-only, published to all clients. |
-| `session.clone`, `session.import`, `session.export`, `session.delete` | Clone -> new ID; import a validated owned copy of a selected local file into a new managed session with fresh ID (64 MiB source limit, 64 KiB header limit); export format `html|jsonl` and explicit owner-approved destination; delete only quiescent explicitly confirmed session, never implicit on close. Imported history is data, not execution. |
+| `session.rename`, `session.tree`, `session.branch.select`, `session.entry.label` | Name; paged tree query; entry ID + optional summarization; entry ID + label. Serialized without expected-revision checks and published to all clients. |
+| `session.clone`, `session.import`, `session.export`, `session.delete` | Clone -> new ID; import a validated owned copy of a selected local file into a new managed session with fresh ID (the source must start with a session header); export format `html|jsonl` and explicit owner-approved destination; delete closes the session if needed and removes it after one client-side confirmation, never implicit on close. Imported history is data, not execution. |
 | `session.history`, `queue.update` | Pinned history cursor; queue kind `steer|follow_up` + item IDs and replacement/removal. Enforce expected revision so a dequeue cannot remove an already consumed item. |
 | `shell.execute` | Command + `includeInContext:boolean` preserves `!`/`!!`; daemon runtime only, admission/policy and process tracking apply. No client shell used for agent work. |
 | `config.get`, `config.set`, `session.reload` | Core execution values plus generic `extensionConfig.<id>.<field>`, validated against declared fields by the host configuration provider. `config.get` includes a required `writable` boolean for the requested scope; both client and extension persistent writes use that provider. Session overrides remain writable independently of persistent scopes. No presentation preferences or extension-specific protocol keys. Explicit reload only. Process-level proxy/environment changes require daemon restart. No arbitrary config path/value bypass. New sessions read current files; live sessions do not auto-reload. |
@@ -154,8 +146,8 @@ bug-report, clipboard and external-editor actions stay explicit client workflows
 they do not justify platform/telemetry implementation or new ACP capabilities.
 
 Error codes include `invalid_request`, `unsupported_operation`,
-`protocol_mismatch`, `unavailable`, `busy`, `policy_pending`,
-`request_conflict`, `stale_request`, `expired`, `not_found`, `forbidden`,
+`protocol_mismatch`, `unavailable`, `authentication_required`, `busy`,
+`request_conflict`, `stale_request` (undeclared or stale UI actions), `expired`, `not_found`, `forbidden`,
 `already_resolved`, `storage_failure`, `ownership_lost`, `resync_required` and
 `indeterminate`, plus `request_capacity` and `target_mismatch`. Error text is bounded and sanitized.
 Reject before effects.
@@ -164,7 +156,7 @@ Reject before effects.
 
 `SessionSnapshot` has session/root/parent IDs, revision, active branch, paged
 transcript tail/cursor, model/thinking, queue item IDs, run/turn origin, tools and
-command catalog, effective/pending policy, pending interactions, children,
+command catalog, effective policy, pending interactions, children,
 processes, declarative presentation state and bounded `activeStreams` entries
 `{message,id,kind:'assistant'|'thinking',text,offset}`. `text` is the complete
 retained prefix and `offset` is its end in Unicode code points, not a tail with
@@ -291,7 +283,7 @@ interface DaemonProfile {
   per-session environment object or accessor is part of the profile contract.
   Per-session model/config/extension-registration views remain independent,
   while standard credentials refresh under their existing file locks.
-- `SessionExecutionPolicy`: `host-default|acp-strict`, pending tightening flag,
+- `SessionExecutionPolicy`: `host-default|acp-strict`,
   monotonic generation and trusted tool provenance. No per-turn privilege switch.
   The daemon assigns origin independently for display/audit.
 
@@ -345,8 +337,10 @@ default. Ordinary production use still selects exactly one user daemon.
 
 Authenticated readiness/hello returns `{namespaceId,instanceId,agentDir,rootSet}`.
 Pin these canonical values in the client/CI launch receipt. Attach, stop and
-restart carry the expected tuple; absent/mismatched identity returns
-`target_mismatch`, not a fallback to production. A restart issues a new instance
+restart carry the expected tuple; a different namespace, agent directory or
+instance returns `target_mismatch`, not a fallback to production. `rootSet` is
+informational: a daemon adds custom session directories to its roots when a
+session first opens there, so clients do not compare it. A restart issues a new instance
 receipt. Tests may stop only their pinned isolated instance; process cleanup by
 name/PID alone or unqualified `felan daemon stop` is forbidden in test harnesses.
 
@@ -358,14 +352,17 @@ root is rejected even across isolated namespaces. This is a testing exception,
 not support for multiple production daemons.
 
 Lock the production account-wide singleton independently of `FELAN_AGENT_DIR`, then the
-actual canonical roots: effective `sessionDir` (CLI/settings/default),
-`agentDir/storage/sessions` (tasks, process data, projections),
-`agentDir/storage/agent` (shared dependencies/accounting), `agentDir/subagents`,
-and `agentDir/memory/v1`. Custom profile roots must be included. A parent's lock
-covers descendants within that owner, but independent overlapping roots or
-cross-daemon aliases must conflict; detect ancestors as well as exact strings.
-Keep the canonical-root claim ledger in the account coordination directory, not
-under a selectable agentDir or isolated namespace. Reject ambiguous/network-filesystem aliases. Keep lifetime
+canonical `agentDir`, which covers its default sessions, storage, subagent and
+memory directories. A custom `sessionDir` (CLI or settings) is locked when a
+session first opens there and recorded in `agentDir/daemon-store-roots.json` so
+persisted sessions stay addressable after restart. A parent's lock covers
+descendants within that owner, but overlapping roots or aliases held by another
+live daemon conflict; detect ancestors as well as exact strings. Ledger claims
+whose lifetime lock is no longer held are stale and discarded; an unreadable
+ledger is rebuilt. Store roots need not be owner-only and may be on any
+filesystem; only the runtime directory, socket and claim coordinator stay
+owner-only. Keep the canonical-root claim ledger in the account coordination
+directory, not under a selectable agentDir or isolated namespace. Keep lifetime
 kernel locks and stable inode/file identity; never unlink a lock to unlock it.
 Observe identity replacement and stop admission on loss. A lease timeout/PID
 alone is not proof that a paused process or unfenced child has stopped.
@@ -380,26 +377,12 @@ state or model-visible events.
 
 ## ACP policy transition and interaction contract
 
-ACP-created sessions start `acp-strict`. Loading a host-default adopted session
-attaches and replays immediately, even busy. Under admission, mark a pending
-one-way tightening; do not alter an in-flight run. At the next safe dispatch boundary,
-activate strict policy and persist it **before** allowing any next prompt, queue,
-child continuation or deferred answer to dispatch. ACP prompt before activation
-returns retryable `policy_pending`/`busy`. Detach cannot weaken active or pending
-strict policy. Restore/fork/clone/child inherit it.
-The activation boundary has no turn or tool call in flight and no admitted
-dispatch anywhere in the affected session/root scope, including running child
-turns. Detached background jobs, PTYs and idle retained children do **not** block
-activation. Future control actions on those resources are gated tool calls under
-the newly effective policy; do not change their lifetime merely to activate it.
-Pending state exposes the blocking session/run/tool IDs and reason to TUI and
-ACP. Load/replay remains immediate; any explicit activation wait is capped at
-30 seconds, then returns retryable `policy_pending` with those blockers and
-cancel/retry guidance rather than hanging. Authorized cancellation of a blocking
-turn remains admissible while tightening is pending; cancelling a child turn
-uses the existing explicit child-cancellation scope. Do not silently cancel work
-on timeout, weaken pending policy, or admit another turn/continuation ahead of
-activation. Once blockers settle, persist strict policy before dispatch resumes.
+ACP-created sessions start `acp-strict`. Attaching with
+`requirePolicy:'acp-strict'` attaches and replays immediately, even busy, and
+tightens the open root tree to strict policy at once; there is no pending state.
+Running tool calls keep the approvals they already had; later tool calls use the
+new policy. When the last ACP attachment in the tree detaches, the tree relaxes
+to `host-default`. Restore/fork/clone/child inherit the current policy.
 
 Move the safe-tool list from `acp/interactions.ts` to daemon policy without
 broadening it. A safe name is exempt only if the registered implementation has
@@ -410,10 +393,12 @@ EOF only withdraws that responder; no deny-and-abort and no approval-by-absence.
 
 ### Pre-daemon session files
 
-Only registered daemon sessions are listed or resumable. Pre-daemon files remain
-untouched. An explicit `session.import` creates a new session ID from validated
-JSONL history; `session.export` remains available. No adoption or migration path
-is provided.
+Unregistered pre-daemon Pi transcripts in owned store roots are listed and
+adopted in place on attach: their ID and file are kept, and new entries append to
+the original file, immediately and without a quiet window, like 0.28.3 resume. The store
+is not migrated as a whole and nothing is scanned outside listing and attach. An
+explicit `session.import` still creates a new session ID from validated JSONL
+history; `session.export` remains available.
 
 An `Interaction` includes ID, host/session/root scope, kind/schema, authority, creation/expiry, `waiting|deferred|answered|cancelled|expired`, responder and
 terminal result. Arbitrary component closures are never serialized. Ask-user

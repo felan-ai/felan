@@ -25,43 +25,84 @@ const tree = (): OperationResult<'session.tree'> => ({ revision: 9, branch: 'rep
 ] });
 
 describe('session navigator (R17)', () => {
-  it('shows names, current folder, status, selected session and All scope', () => {
+  const minutesAgo = (minutes: number) => Date.now() - minutes * 60_000;
+
+  it('shows names, current folder, selected session and All scope with folders only in All', () => {
     const done = vi.fn(); const theme = defaultClientTheme();
-    const picker = new SessionNavigator([row('current', { title: 'Current task' }), row('other', { cwd: '/elsewhere', title: 'Elsewhere' })], '/fixture', 'current', done, () => theme);
-    expect(clean(picker)).toContain('Resume Session (Current Folder)');
-    expect(clean(picker)).toContain('› ● Current task · idle · warm · /fixture');
-    expect(clean(picker)).not.toContain('Elsewhere');
+    const picker = new SessionNavigator([row('current', { title: 'Current task', lastActivity: minutesAgo(5) }), row('other', { cwd: '/elsewhere', title: 'Elsewhere' })], '/fixture', 'current', done, () => theme);
+    const output = clean(picker);
+    expect(output).toContain('Resume Session (Current Folder)'); expect(output).toContain('◉ Current Folder | ○ All  Name: All  Sort: Recent');
+    expect(output).toMatch(/› Current task +5m\n/u);
+    expect(output).not.toContain('/fixture'); expect(output).not.toContain('Elsewhere');
     expect(picker.render(180).join('\n')).toContain(theme.getFgAnsi('accent'));
-    picker.handleInput('\t'); expect(clean(picker)).toContain('Resume Session (All)'); expect(clean(picker)).toContain('/elsewhere');
+    picker.handleInput('\t'); expect(clean(picker)).toContain('Resume Session (All)'); expect(clean(picker)).toMatch(/Elsewhere +\/elsewhere 56y/u);
     picker.handleInput('\x1b[B'); picker.handleInput('\r'); expect(done).toHaveBeenCalledWith({ action: 'resume', session: 'other' });
   });
 
-  it('searches fuzzy names, IDs, folders and status, with exact phrases and no-match recovery', () => {
-    const rows = [row('abc-123', { title: 'Release planning', cwd: '/fixture/backend', run: { state: 'waiting' } }), row('def', { title: 'Other' })];
-    for (const query of ['rlspln', 'abc-123', 'backend', 'waiting', '"release planning"']) {
+  it('labels unnamed sessions by their first user message, then their ID, with age and only actionable state', () => {
+    const picker = new SessionNavigator([
+      row('preview', { preview: 'Fix the\nflaky test', lastActivity: minutesAgo(3 * 60), residency: 'evicted' }),
+      row('019a-empty', { lastActivity: minutesAgo(2 * 24 * 60) }),
+      row('busy', { title: 'Busy', run: { state: 'running' }, lastActivity: minutesAgo(1) }),
+      row('asking', { preview: 'Asking', run: { state: 'waiting' }, lastActivity: minutesAgo(2) }),
+    ], '/fixture', undefined, () => {});
+    const output = clean(picker);
+    expect(output).toMatch(/Fix the flaky test +3h/u); expect(output).toMatch(/019a-empty +2d/u);
+    expect(output).toMatch(/Busy +running 1m/u); expect(output).toMatch(/Asking +waiting for input 2m/u);
+    for (const internal of ['idle', 'warm', 'evicted', ' · ']) expect(output.split('\n').slice(8).join('\n')).not.toContain(internal);
+  });
+
+  it('keeps a stable viewport, scrolls only past an edge and always shows the counter', () => {
+    const rows = Array.from({ length: 10 }, (_, index) => row(`s${index}`, { title: `Session ${index}`, lastActivity: 100 - index }));
+    const listed = (picker: SessionNavigator) => clean(picker).split('\n').filter(line => /Session \d/u.test(line)).map(line => line.trim().replace(/^› /u, '').split(/ {2,}/u)[0]);
+    const full = new SessionNavigator(rows, '/fixture', undefined, () => {}, undefined, true, () => 22);
+    for (let step = 0; step < 9; step++) full.handleInput('\x1b[B');
+    expect(listed(full)).toHaveLength(10); expect(clean(full)).toContain('(10/10)');
+    let height = 17; const picker = new SessionNavigator(rows, '/fixture', undefined, () => {}, undefined, true, () => height);
+    const lines = () => picker.render(120);
+    expect(lines()).toHaveLength(17); expect(listed(picker)).toEqual(['Session 0', 'Session 1', 'Session 2', 'Session 3', 'Session 4']);
+    for (let step = 0; step < 4; step++) picker.handleInput('\x1b[B');
+    expect(listed(picker)[0]).toBe('Session 0'); expect(lines()).toHaveLength(17);
+    picker.handleInput('\x1b[B'); expect(listed(picker)).toEqual(['Session 1', 'Session 2', 'Session 3', 'Session 4', 'Session 5']);
+    picker.handleInput('\x1b[6~'); picker.handleInput('\x1b[6~'); expect(listed(picker).at(-1)).toBe('Session 9');
+    expect(lines()).toHaveLength(17); expect(clean(picker)).toContain('(10/10)');
+    for (let step = 0; step < 4; step++) picker.handleInput('\x1b[A');
+    expect(listed(picker)[0]).toBe('Session 5'); picker.handleInput('\x1b[A'); expect(listed(picker)[0]).toBe('Session 4');
+    height = 13; expect(lines()).toHaveLength(13); expect(listed(picker)).toEqual(['Session 4']); expect(clean(picker)).toContain('(5/10)');
+  });
+
+  it('searches fuzzy names, previews, IDs, folders and active state, with exact phrases and no-match recovery', () => {
+    const rows = [row('abc-123', { title: 'Release planning', cwd: '/fixture/backend', run: { state: 'waiting' } }), row('def', { title: 'Other' }),
+      row('ghi', { preview: 'deploy the docs', cwd: '/fixture/backend' })];
+    for (const query of ['rlspln', 'abc-123', 'waiting', '"release planning"']) {
       const picker = new SessionNavigator(rows, '/fixture/backend', undefined, () => {});
       picker.handleInput(query); expect(clean(picker)).toContain('Release planning'); expect(clean(picker)).not.toContain('Other');
     }
+    const preview = new SessionNavigator(rows, '/fixture/backend', undefined, () => {});
+    preview.handleInput('"deploy"'); expect(clean(preview)).toContain('deploy the docs'); expect(clean(preview)).not.toContain('Release planning');
     const picker = new SessionNavigator(rows, '/fixture/backend', undefined, () => {});
     picker.handleInput('"no match"'); expect(clean(picker)).toContain('No matching sessions.');
     picker.handleInput('\x15'); expect(clean(picker)).toContain('Release planning');
   });
 
-  it('offers sort, name filtering, identity/path display, current rename and guarded delete', () => {
-    const done = vi.fn(); const picker = new SessionNavigator([row('current', { title: 'Named' }), row('unnamed')], '/fixture', 'current', done);
-    picker.handleInput('\x13'); expect(clean(picker)).toContain('sort (Name)');
-    picker.handleInput('\x0e'); expect(clean(picker)).not.toContain('unnamed');
-    picker.handleInput('\x10'); expect(clean(picker)).toContain('Session: current · Folder: /fixture');
-    picker.handleInput('\x04'); expect(done).not.toHaveBeenCalled(); expect(clean(picker)).toContain('Deletion requires a closed');
+  it('offers sort, name filtering, identity display, current rename and inline-confirmed delete', () => {
+    const done = vi.fn(); const picker = new SessionNavigator([row('current', { title: 'Named' }), row('unnamed', { preview: 'Unnamed prompt' })], '/fixture', 'current', done);
+    expect(clean(picker)).toContain('ctrl+s sort · ctrl+n named · ctrl+d delete · ctrl+p path (off) · ctrl+r rename');
+    picker.handleInput('\x13'); expect(clean(picker)).toContain('Sort: Name');
+    picker.handleInput('\x0e'); expect(clean(picker)).not.toContain('Unnamed prompt'); expect(clean(picker)).toContain('Name: Named');
+    picker.handleInput('\x10'); expect(clean(picker)).toMatch(/Named +current 56y/u); expect(clean(picker)).toContain('path (on)');
+    picker.handleInput('\x04'); expect(done).not.toHaveBeenCalled(); expect(clean(picker)).toContain('Cannot delete the currently active session.');
     picker.handleInput('\x12'); expect(done).toHaveBeenCalledWith({ action: 'rename', session: 'current' });
-    const closed = new SessionNavigator([row('closed', { state: 'closed', residency: 'evicted' })], '/fixture', undefined, done);
-    closed.handleInput('\x04'); expect(done).toHaveBeenCalledWith({ action: 'delete', session: 'closed' });
+    const open = new SessionNavigator([row('open', { title: 'Open' })], '/fixture', undefined, done);
+    open.handleInput('\x04'); expect(clean(open)).toContain('Delete session? enter confirm · escape/ctrl+c cancel');
+    open.handleInput('x'); open.handleInput('\x1b'); expect(done).toHaveBeenCalledTimes(1); expect(clean(open)).not.toContain('Delete session?');
+    open.handleInput('\x04'); open.handleInput('\r'); expect(done).toHaveBeenLastCalledWith({ action: 'delete', session: 'open' });
   });
 
   it('keeps startup selection read-only, handles empty scopes, cancellation, sanitization and narrow widths', () => {
     const done = vi.fn(); const picker = new SessionNavigator([row('elsewhere', { cwd: '/other', title: '\x1b[31mUnsafe\nname' })], '/fixture', undefined, done, undefined, false);
-    expect(clean(picker)).toContain('Press Tab to view all');
-    picker.handleInput('\t'); expect(clean(picker)).toContain('Unsafe name'); expect(clean(picker)).not.toContain('delete closed');
+    expect(clean(picker)).toContain('No sessions in current folder. Press Tab to view all.');
+    picker.handleInput('\t'); expect(clean(picker)).toContain('Unsafe name'); expect(clean(picker)).not.toContain('delete'); expect(clean(picker)).not.toContain('rename');
     for (const width of [40, 80, 120]) expect(picker.render(width).every(line => visibleWidth(line) <= width)).toBe(true);
     picker.handleInput('\x1b'); expect(done).toHaveBeenCalledWith(undefined);
   });
@@ -154,40 +195,39 @@ describe('session commands (R17–R19)', () => {
     expect(f.controller.notice).toBe('Session name set: Renamed');
   });
 
-  it('confirms eligible deletion and sends the listed revision, never treating close as delete', async () => {
-    const f = commandFixture([['\x04']]);
-    f.controller.sessions.mockResolvedValueOnce([row('closed', { state: 'closed', residency: 'evicted', revision: 17 })]);
+  it('deletes an open session after the inline confirmation without another dialog', async () => {
+    const f = commandFixture([['\x04', '\r']]);
+    f.controller.sessions.mockResolvedValueOnce([row('open', { revision: 17 })]);
     expect(await f.submit('/sessions')).toBe(true);
-    expect(f.dialogs.confirm).toHaveBeenCalledWith('Delete session', expect.stringContaining('cannot be undone'));
-    expect(f.controller.perform).toHaveBeenCalledWith('session.delete', { confirmed: true, expectedRevision: 17 }, 'closed');
+    expect(f.dialogs.confirm).not.toHaveBeenCalled();
+    expect(f.controller.perform).toHaveBeenCalledWith('session.delete', {}, 'open');
   });
 
-  it('does not mutate for the current leaf; sends revision and explicit summary choice for navigation', async () => {
+  it('does not mutate for the current leaf; sends the explicit summary choice for navigation', async () => {
     const f = commandFixture([['\r'], ['\x1b[B', '\r']]);
     expect(await f.submit('/tree')).toBe(true); expect(f.controller.notice).toBe('Already at this point'); expect(f.controller.perform).not.toHaveBeenCalled();
     expect(await f.submit('/tree')).toBe(true);
-    expect(f.controller.perform).toHaveBeenCalledWith('session.branch.select', { entryId: 'alternate', expectedRevision: 9, summarize: false }, 'session');
+    expect(f.controller.perform).toHaveBeenCalledWith('session.branch.select', { entryId: 'alternate', summarize: false }, 'session');
     expect(f.controller.loadHistory).toHaveBeenCalledOnce();
   });
 
-  it('saves labels with a revision and reopens the tree; rejected navigation does not load history', async () => {
+  it('saves labels and reopens the tree; rejected navigation does not load history', async () => {
     const f = commandFixture([['L', 'Saved', '\r'], ['\x1b'], ['\x1b[B', '\r']]);
     expect(await f.submit('/tree')).toBe(false);
-    expect(f.controller.perform).toHaveBeenCalledWith('session.entry.label', { entryId: 'reply', label: 'Saved', expectedRevision: 9 }, 'session');
+    expect(f.controller.perform).toHaveBeenCalledWith('session.entry.label', { entryId: 'reply', label: 'Saved' }, 'session');
     expect(f.controller.tree).toHaveBeenCalledTimes(2);
     f.controller.perform.mockResolvedValueOnce({ outcome: 'rejected', result: {} });
     expect(await f.submit('/tree')).toBe(false); expect(f.controller.loadHistory).not.toHaveBeenCalled();
   });
 
-  it('does not delete on declined confirmation and returns to the same tree selection on cancelled summary', async () => {
-    const deletion = commandFixture([['\x04']]);
-    deletion.controller.sessions.mockResolvedValueOnce([row('closed', { state: 'closed', residency: 'evicted' })]);
-    vi.mocked(deletion.dialogs.confirm).mockResolvedValueOnce(false);
+  it('does not delete on cancelled confirmation and returns to the same tree selection on cancelled summary', async () => {
+    const deletion = commandFixture([['\x04', '\x1b', '\x1b']]);
+    deletion.controller.sessions.mockResolvedValueOnce([row('open')]);
     expect(await deletion.submit('/sessions')).toBe(false); expect(deletion.controller.perform).not.toHaveBeenCalled();
     const navigation = commandFixture([['\x1b[B', '\r'], ['\r']]);
     vi.mocked(navigation.dialogs.select).mockResolvedValueOnce(undefined).mockResolvedValueOnce('yes');
     expect(await navigation.submit('/tree')).toBe(true);
-    expect(navigation.controller.perform).toHaveBeenCalledExactlyOnceWith('session.branch.select', { entryId: 'alternate', expectedRevision: 9, summarize: true }, 'session');
+    expect(navigation.controller.perform).toHaveBeenCalledExactlyOnceWith('session.branch.select', { entryId: 'alternate', summarize: true }, 'session');
   });
 });
 
@@ -209,9 +249,11 @@ it('keeps tree and picker headings, current selection and draft usable in an 80�
     terminal.input('\x1b'); await treeView; expect(screen.editor.getText()).toBe('retained draft');
     f.controller.sessions.mockResolvedValueOnce([row('session', { title: 'Current' }), ...Array.from({ length: 25 }, (_, index) => row(`extra-${index}`))]);
     const picker = screen.submit('/sessions', true);
-    await vi.waitFor(() => expect(lines()).toContain('Resume Session (Current Folder)'));
-    expect(lines()).toContain('● Current'); terminal.input('\x10');
-    expect(lines()).toContain('Resume Session (Current Folder)'); expect(lines()).toContain('Session: session');
+    await vi.waitFor(() => expect(lines()).toContain('Resume Session (Current'));
+    expect(lines()).toMatch(/› Current +56y\n {2}\(26\/26\)\n\n─+\nFooter one/u); terminal.input('\x10');
+    expect(lines()).toMatch(/› Current +session 56y\n {2}\(26\/26\)\n/u); expect(lines()).toContain('Footer three');
+    for (let step = 0; step < 8; step++) terminal.input('\x1b[A');
+    expect(lines()).toContain('(18/26)'); expect(lines().split('\n').filter(line => / 56y\s*$/u.test(line))).toHaveLength(9);
     terminal.input('\x1b'); await picker;
     expect(screen.editor.getText()).toBe('retained draft'); terminal.input(' typed'); expect(screen.editor.getText()).toBe('retained draft typed');
   } finally { await screen.dispose(); tui.stop(); }

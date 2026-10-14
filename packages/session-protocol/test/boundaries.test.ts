@@ -23,16 +23,10 @@ describe('nested union boundaries', () => {
     expect(() => parseSchema(wrapped, { choice: value })).toThrow(/Encoded field limit/);
   });
 
-  it('applies the 64KiB answer limit inside a complete interaction.answer request', () => {
-    const answer = { kind: 'form', actionId: 'submit', outcome: 'submit', values: { first: '', second: '' } };
-    const overhead = utf8Bytes(JSON.stringify(answer));
-    answer.values.first = 'a'.repeat(32768);
-    answer.values.second = 'c'.repeat(LIMITS.answerBytes - overhead - 32768);
-    expect(utf8Bytes(JSON.stringify(answer))).toBe(LIMITS.answerBytes);
-    expect(parseClientEnvelope(request('interaction.answer', { interactionId: 'i', answer }), { now }).op).toBe('interaction.answer');
-    answer.values.second += 'c';
-    expect(() => parseSchema(InteractionAnswerSchema, answer)).toThrow(/Encoded field limit/);
-    expect(() => parseClientEnvelope(request('interaction.answer', { interactionId: 'i', answer }), { now })).toThrow(/Encoded field limit/);
+  it('accepts large interaction answers', () => {
+    const answer = { kind: 'form', actionId: 'submit', outcome: 'submit', values: { first: 'a'.repeat(128 * 1024) } };
+    expect(parseSchema(InteractionAnswerSchema, answer)).toEqual(answer);
+    expect(parseClientEnvelope(request('interaction.answer', { interactionId: 'i', answer })).op).toBe('interaction.answer');
   });
 });
 
@@ -65,24 +59,11 @@ describe('transcript-specific JSON boundaries', () => {
     }
   });
 
-  it('accepts a message at 12MiB and rejects one encoded byte beyond it', () => {
-    const entry = writeMessage('');
-    entry.content[0]!.arguments.content = 'x'.repeat(LIMITS.pageBytes - utf8Bytes(JSON.stringify(entry)));
-    expect(utf8Bytes(JSON.stringify(entry))).toBe(LIMITS.pageBytes);
+  it('accepts transcript messages and attach snapshots beyond the history page budget', () => {
+    const entry = writeMessage('x'.repeat(LIMITS.pageBytes + 1));
     const event = { v: 1, session: 'session', rev: 8, change: { type: 'message.completed', message: entry } };
     expect(parseServerEnvelope(event)).toMatchObject({ change: { type: 'message.completed' } });
-    entry.content[0]!.arguments.content += 'x';
-    expect(() => parseServerEnvelope(event)).toThrow(/Encoded field limit/);
-  }, 30000);
-
-  it('accepts a complete attach snapshot at 12MiB and rejects one encoded byte beyond it', () => {
-    const entry = writeMessage('');
-    const frame = attachFrame(entry);
-    entry.content[0]!.arguments.content = 'x'.repeat(LIMITS.pageBytes - utf8Bytes(JSON.stringify(frame.result.snapshot)));
-    expect(utf8Bytes(JSON.stringify(frame.result.snapshot))).toBe(LIMITS.pageBytes);
-    expect(parseServerEnvelope(frame, 'attach')).toMatchObject({ outcome: 'accepted' });
-    entry.content[0]!.arguments.content += 'x';
-    expect(() => parseServerEnvelope(frame, 'attach')).toThrow(/Encoded field limit/);
+    expect(parseServerEnvelope(attachFrame(entry), 'attach')).toMatchObject({ outcome: 'accepted' });
   }, 30000);
 
   it('retains depth and prototype safety for transcript payloads', () => {
@@ -95,18 +76,17 @@ describe('transcript-specific JSON boundaries', () => {
     expect(Object.prototype).not.toHaveProperty('polluted');
   });
 
-  it.each([
-    ['tool catalog', ToolCatalogEntrySchema, (data: string) => ({ name: 'write', label: 'Write', description: '', parameters: data, provenance: 'builtin', source: 'core', active: true })],
-  ] as const)('keeps the 64KiB limit for %s data', (_name, schema, value) => {
-    expect(() => parseSchema(schema, value('x'.repeat(LIMITS.structuredBytes)))).toThrow(/Encoded field limit/);
+  it('accepts large tool catalog parameter schemas', () => {
+    const value = { name: 'write', label: 'Write', description: '', parameters: 'x'.repeat(LIMITS.structuredBytes), provenance: 'builtin', source: 'core', active: true };
+    expect(parseSchema(ToolCatalogEntrySchema, value)).toEqual(value);
   });
 });
 
 describe('known error vocabulary and future wire codes', () => {
   it('exports all known codes while retaining future error strings', () => {
-    expect(ERROR_CODES).toEqual(['invalid_request', 'unsupported_operation', 'protocol_mismatch', 'unavailable', 'authentication_required', 'busy', 'policy_pending',
+    expect(ERROR_CODES).toEqual(['invalid_request', 'unsupported_operation', 'protocol_mismatch', 'unavailable', 'authentication_required', 'busy',
       'request_conflict', 'stale_request', 'expired', 'not_found', 'forbidden', 'already_resolved', 'storage_failure',
-      'ownership_lost', 'resync_required', 'indeterminate', 'configuration_recovery_required', 'request_capacity', 'target_mismatch']);
+      'ownership_lost', 'resync_required', 'indeterminate', 'request_capacity', 'target_mismatch']);
     expect(Object.isFrozen(ERROR_CODES)).toBe(true);
     expectTypeOf<KnownErrorCode>().toEqualTypeOf<(typeof ERROR_CODES)[number]>();
     expectTypeOf<ProtocolError['code']>().toEqualTypeOf<string>();

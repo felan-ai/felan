@@ -8,7 +8,6 @@ import { mkdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isDeepStrictEqual } from 'node:util';
 import { HOST_RUNTIME_SERVICE, resolveExtensionConfigs, type AgentSessionRuntimeDiagnostic, type HostRuntimeService, type ModelRuntime } from '@felan-ai/agent-core';
 import { resolveModelScopeWithDiagnostics } from '@earendil-works/pi-coding-agent';
 import { defineServiceProvider } from '@felan-ai/daemon/provider';
@@ -31,7 +30,6 @@ import { COMPACTION_MESSAGE_TYPE, compactionPresentation } from '@felan-ai/ext-s
 import { openHostUrl, prepareLocalInteractionOpen } from './setup-open.js';
 import { parsePiExtensionSettings } from './global-settings.js';
 import { createLocalModelRuntime } from './local-model-runtime.js';
-import { localSessionConfiguration } from './session-configuration.js';
 import { parseApprovalExemptTools } from './tool-policy.js';
 
 export function createLocalSessionRuntime(options: {
@@ -143,11 +141,6 @@ export function createLocalSessionRuntime(options: {
       }
       const skills = getLocalSkillPaths(environment.cwd);
       const append = await loadLocalAppendSystemPrompt(environment.agentDir);
-      const configuration = localSessionConfiguration({ settings, packages, definitions, configs: extensionConfigs,
-        models: modelScope.scopedModels.map(row => ({ provider: row.model.provider, id: row.model.id })), paths, skills, append });
-      if (request.configuration !== undefined && !isDeepStrictEqual(request.configuration, configuration)) {
-        throw Object.assign(new Error('Local execution settings changed; explicit session reload is required.'), { code: 'configuration_recovery_required' });
-      }
       await Promise.all([mkdir(runtimeRequest.sessionStorageRoot, { recursive: true, mode: 0o700 }), mkdir(runtimeRequest.agentStorageRoot, { recursive: true, mode: 0o700 })]);
       const classifier = options.runtimeFactory === undefined ? await createLocalClassifier(models, getClassifierModelSetting(settings)) : { warnings: [] };
       const runtime = options.runtimeFactory?.(runtimeRequest) ?? options.runtimeService.create(environment.cwd, {
@@ -161,7 +154,6 @@ export function createLocalSessionRuntime(options: {
       const release = await acquireFelanModelDefaults();
       let disposed = false;
       return {
-        configuration,
         toolPolicy: { ...toolPolicy, trustedInlinePaths: [...toolPolicy.trustedInlinePaths,
           ...packages.map(name => `<inline:${name}>`), ...(codemode ? [`<inline:${codemode.name}>`] : [])] },
         options: { runtime, modelRuntime: models, settingsManager: settings, extensionPackages: packages,

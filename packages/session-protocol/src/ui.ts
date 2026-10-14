@@ -1,76 +1,75 @@
 import { Type, type Static } from 'typebox';
 import { LIMITS, ProtocolValidationError, utf8Bytes } from './limits.js';
-import { IdSchema, enumOf, parseSchema, text } from './schema.js';
+import { IdSchema, enumOf, parseSchema, text, unboundedText } from './schema.js';
 
 export const UI_CAPABILITIES = ['ui.status', 'ui.progress', 'ui.document', 'ui.view', 'ui.action', 'native.events'] as const;
 export const UiCapabilitySchema = enumOf(UI_CAPABILITIES);
-export const UiFallbackSchema = text(4096, 1);
+export const UiFallbackSchema = unboundedText(1);
 
 const closed = { additionalProperties: false } as const;
 const revision = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const finiteNumber = Type.Number({ minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER });
-const field = { id: IdSchema, label: text(1024, 1), required: Type.Boolean() };
-const options = Type.Array(Type.Object({ id: IdSchema, label: text(1024, 1) }, closed), { minItems: 1, maxItems: 64 });
+const field = { id: IdSchema, label: unboundedText(1), required: Type.Boolean() };
+const options = Type.Array(Type.Object({ id: IdSchema, label: unboundedText(1) }, closed), { minItems: 1 });
 
 export const UiHintSchema = Type.Object({ id: IdSchema, version: text(128, 1) }, closed);
 export const UiValuesSchema = Type.Record(IdSchema, Type.Union([
-  text(32 * 1024), finiteNumber, Type.Boolean(), Type.Array(IdSchema, { maxItems: 64, uniqueItems: true }),
-]), { maxProperties: 32, 'x-maxEncodedBytes': LIMITS.answerBytes });
+  unboundedText(), finiteNumber, Type.Boolean(), Type.Array(IdSchema, { uniqueItems: true }),
+]));
 export const UiFieldSchema = Type.Union([
-  Type.Object({ ...field, kind: Type.Literal('string'), maxLength: Type.Integer({ minimum: 0, maximum: 32 * 1024 }),
-    placeholder: Type.Optional(text(1024)), multiline: Type.Optional(Type.Boolean()) }, closed),
+  Type.Object({ ...field, kind: Type.Literal('string'), maxLength: Type.Integer({ minimum: 0 }),
+    placeholder: Type.Optional(unboundedText()), multiline: Type.Optional(Type.Boolean()) }, closed),
   Type.Object({ ...field, kind: Type.Literal('boolean') }, closed),
   Type.Object({ ...field, kind: Type.Literal('number'), minimum: Type.Optional(finiteNumber), maximum: Type.Optional(finiteNumber) }, closed),
   Type.Object({ ...field, kind: Type.Literal('enum'), options }, closed),
   Type.Object({ ...field, kind: Type.Literal('multi_select'), options, maxSelections: Type.Integer({ minimum: 1, maximum: 64 }) }, closed),
 ]);
 export const UiInputSchema = Type.Object({
-  fields: Type.Array(UiFieldSchema, { maxItems: 32 }), defaults: Type.Optional(UiValuesSchema),
-}, { ...closed, 'x-maxEncodedBytes': LIMITS.interactionBytes });
+  fields: Type.Array(UiFieldSchema), defaults: Type.Optional(UiValuesSchema),
+}, closed);
 export const UiActionSchema = Type.Object({
-  id: IdSchema, label: text(1024, 1), description: Type.Optional(text(4096)), destructive: Type.Optional(Type.Boolean()),
+  id: IdSchema, label: unboundedText(1), description: Type.Optional(unboundedText()), destructive: Type.Optional(Type.Boolean()),
   target: enumOf(['element', 'item'] as const), outcome: enumOf(['submit', 'cancel'] as const), input: Type.Optional(UiInputSchema),
 }, closed);
 export const UiFormSchema = Type.Object({
-  title: text(4096, 1), description: Type.Optional(text(16 * 1024)), markdown: Type.Optional(text(128 * 1024)),
+  title: unboundedText(1), description: Type.Optional(unboundedText()), markdown: Type.Optional(unboundedText()),
   fallback: UiFallbackSchema, input: UiInputSchema,
-  actions: Type.Array(UiActionSchema, { minItems: 1, maxItems: 16 }), hint: Type.Optional(UiHintSchema),
-}, { ...closed, 'x-maxEncodedBytes': LIMITS.interactionBytes });
-export const UiFormRequestSchema = Type.Object({ kind: Type.Literal('form'), form: UiFormSchema },
-  { ...closed, 'x-maxEncodedBytes': LIMITS.interactionBytes });
+  actions: Type.Array(UiActionSchema, { minItems: 1 }), hint: Type.Optional(UiHintSchema),
+}, closed);
+export const UiFormRequestSchema = Type.Object({ kind: Type.Literal('form'), form: UiFormSchema }, closed);
 export const UiFormAnswerSchema = Type.Object({
   kind: Type.Literal('form'), actionId: IdSchema, outcome: enumOf(['submit', 'cancel'] as const), values: UiValuesSchema,
-}, { ...closed, 'x-maxEncodedBytes': LIMITS.answerBytes });
+}, closed);
 export const UiActionRequestSchema = Type.Object({
   elementId: IdSchema, revision, actionId: IdSchema, outcome: enumOf(['submit', 'cancel'] as const),
   itemId: Type.Optional(IdSchema), values: UiValuesSchema,
-}, { ...closed, 'x-maxEncodedBytes': LIMITS.answerBytes });
+}, closed);
 
 const presentation = { id: IdSchema, revision, fallback: UiFallbackSchema, hint: Type.Optional(UiHintSchema) };
 export const UiDocumentSchema = Type.Object({
-  ...presentation, kind: Type.Literal('document'), title: text(4096, 1), markdown: text(256 * 1024, 1),
+  ...presentation, kind: Type.Literal('document'), title: unboundedText(1), markdown: unboundedText(1),
   data: Type.Optional(UiValuesSchema),
-  actions: Type.Array(UiActionSchema, { maxItems: 16 }),
-}, { ...closed, 'x-maxEncodedBytes': 256 * 1024 });
+  actions: Type.Array(UiActionSchema),
+}, { ...closed });
 export const UiViewSchema = Type.Object({
-  ...presentation, kind: Type.Literal('view'), title: text(4096, 1),
-  fields: Type.Array(Type.Object({ id: IdSchema, label: text(1024, 1),
-    valueKind: enumOf(['text', 'number', 'boolean', 'date'] as const) }, closed), { maxItems: 32 }),
+  ...presentation, kind: Type.Literal('view'), title: unboundedText(1),
+  fields: Type.Array(Type.Object({ id: IdSchema, label: unboundedText(1),
+    valueKind: enumOf(['text', 'number', 'boolean', 'date'] as const) }, closed)),
   items: Type.Array(Type.Object({ id: IdSchema, values: Type.Record(IdSchema, Type.Union([
-    text(LIMITS.statusTextBytes), finiteNumber, Type.Boolean(),
-  ]), { maxProperties: 32 }), fallback: UiFallbackSchema }, closed), { maxItems: 100 }),
-  actions: Type.Array(UiActionSchema, { maxItems: 32 }),
+    unboundedText(), finiteNumber, Type.Boolean(),
+  ])), fallback: UiFallbackSchema }, closed)),
+  actions: Type.Array(UiActionSchema),
   query: Type.Optional(Type.Object({ actionId: IdSchema, values: UiValuesSchema }, closed)),
   paging: Type.Optional(Type.Object({ previousActionId: Type.Optional(IdSchema), nextActionId: Type.Optional(IdSchema) }, closed)),
-}, { ...closed, 'x-maxEncodedBytes': LIMITS.pageBytes });
+}, closed);
 export const UiProgressSchema = Type.Object({
-  ...presentation, kind: Type.Literal('progress'), label: text(4096, 1),
+  ...presentation, kind: Type.Literal('progress'), label: unboundedText(1),
   state: enumOf(['running', 'completed', 'failed', 'cancelled'] as const),
   fraction: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
-  actions: Type.Array(UiActionSchema, { maxItems: 16 }),
-}, { ...closed, 'x-maxEncodedBytes': LIMITS.structuredBytes });
+  actions: Type.Array(UiActionSchema),
+}, { ...closed });
 export const UiStatusValueSchema = Type.Union([
-  Type.Object({ kind: Type.Literal('text'), text: text(LIMITS.statusTextBytes) }, closed),
+  Type.Object({ kind: Type.Literal('text'), text: unboundedText() }, closed),
   Type.Object({ kind: Type.Literal('tokens'), value: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) }, closed),
   Type.Object({ kind: Type.Literal('percent'), value: Type.Number({ minimum: 0, maximum: 100 }) }, closed),
   Type.Object({ kind: Type.Literal('money'), value: Type.Number({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
@@ -80,7 +79,7 @@ export const UiStatusValueSchema = Type.Union([
 export const UiStatusSchema = Type.Object({
   id: IdSchema, kind: Type.Literal('status'), key: IdSchema, value: UiStatusValueSchema,
   severity: Type.Optional(enumOf(['info', 'warning', 'error'] as const)), fallback: UiFallbackSchema, hint: Type.Optional(UiHintSchema),
-}, { ...closed, 'x-maxEncodedBytes': LIMITS.structuredBytes });
+}, { ...closed });
 export const UiPresentationSchema = Type.Union([UiDocumentSchema, UiViewSchema, UiProgressSchema, UiStatusSchema]);
 
 export type UiHint = Static<typeof UiHintSchema>;
@@ -194,7 +193,6 @@ export function validateUiFormAnswer(form: UiForm, value: unknown): UiFormAnswer
   if (action.outcome === 'cancel') {
     if (Object.keys(answer.values).length) invalid('Cancel actions cannot submit values.');
   } else validateValues(source.input, answer.values, true);
-  if (utf8Bytes(JSON.stringify({ form: source, answer })) > LIMITS.interactionBytes) invalid('UI form and answer exceed their aggregate bound.');
   return answer;
 }
 

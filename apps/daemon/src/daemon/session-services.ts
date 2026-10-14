@@ -11,6 +11,10 @@ const executionPorts = new WeakMap<SessionRegistry, Map<string, SessionExecution
 
 export function registrySessionExecutions(registry: SessionRegistry, sessionId: string): SessionExecutionOperations {
   registry.assertDispatch(sessionId);
+  return sessionExecutions(registry, sessionId);
+}
+
+function sessionExecutions(registry: SessionRegistry, sessionId: string): SessionExecutionOperations {
   let ports = executionPorts.get(registry);
   if (!ports) { ports = new Map(); executionPorts.set(registry, ports); }
   let operations = ports.get(sessionId);
@@ -25,13 +29,13 @@ export function registrySessionExecutions(registry: SessionRegistry, sessionId: 
 export function createRegistrySessionsService(registry: SessionRegistry, current: SessionRef, project: string): SessionsService {
   const identity = Object.freeze({ ...current });
   const assertCurrent = () => {
-    registry.assertDispatch(identity.id);
+    registry.assertServiceAccess(identity.id);
     const stored = registry.options.store.session(identity.id);
     if (stored.root !== identity.root || stored.parent !== identity.parent) throw new SessionsServiceError('inaccessible');
   };
   const execution = () => {
     assertCurrent();
-    return registrySessionExecutions(registry, identity.id);
+    return sessionExecutions(registry, identity.id);
   };
   const history = createSessionHistoryBackend({
     current: identity,

@@ -10,8 +10,6 @@ import { ClientPreferencesStore } from '../src/tui/preferences-store.js';
 import { DaemonConfiguration } from '../src/providers/configuration.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { gate, serverFixture } from '../../daemon/test/fixtures/server.js';
-import { computeControlConfigurationSnapshotIdentity } from '../../daemon/src/daemon/control-state.js';
-import { parseSessionConfiguration } from '../../daemon/src/daemon/session-configuration.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 beforeAll(() => setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS)));
@@ -64,6 +62,13 @@ it('creates, switches and continues the most recent root through daemon operatio
   expect(other.sessionId).toBeDefined();
 });
 
+it('reloads the attached session and confirms it like Pi', async () => {
+  const f = await fixture(); const controller = f.controller();
+  await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
+  expect(await controller.reloadSession(f.root.sessionId)).toBe(true);
+  expect(controller.notice).toBe('Reloaded extensions, skills, prompts, themes, and context files.');
+});
+
 it('detaches one client without stopping an active run observed by another, while explicit cancellation stops it', async () => {
   const entered = gate(); const release = gate();
   cleanup.push(async () => release.resolve());
@@ -96,26 +101,22 @@ it('preserves an existing attachment when another selection is rejected', async 
   expect(controller.sessionId).toBe(f.root.sessionId); expect(controller.client.getAttachment(f.root.sessionId)).toBeDefined();
 });
 
-it('requires an explicit reload to recover a saved session before attachment', async () => {
-  const f = await fixture(); const id = f.root.sessionId;
-  const saved = f.store.configuration(id)!;
-  const snapshot = { ...parseSessionConfiguration(saved.snapshot), composition: 'previous-composition' };
-  f.store.updateSession(id, {}, { sessionId: id, snapshot, identity: computeControlConfigurationSnapshotIdentity(snapshot) });
-  await f.registry.evictIdle();
-  const controller = f.controller();
-  await expect(controller.start({ cwd: f.cwd, sessionId: id })).rejects.toMatchObject({ code: 'configuration_recovery_required', sessionId: id });
-  expect(controller.sessionId).toBeUndefined();
-  expect(f.store.configuration(id)!.snapshot).toEqual(snapshot);
-  expect(await submitTuiInput(controller, {} as TuiDialogHost, `/reload ${id}`, { cwd: f.cwd, exit() {} })).toBe(true);
-  expect(controller.sessionId).toBe(id);
-  expect(controller.snapshot?.run.state).toBe('idle');
-  expect(f.store.configuration(id)!.snapshot).not.toEqual(snapshot);
+it('resumes an existing session and keeps its saved extensions when --extension is given', async () => {
+  const f = await fixture(); const controller = f.controller();
+  await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId, extensions: ['/untrusted/new-extension.ts'] });
+  expect(controller.sessionId).toBe(f.root.sessionId); expect(controller.notice).toContain('keep their saved extensions');
+  expect(f.store.session(f.root.sessionId).profile?.extensionPaths).toBeUndefined();
 });
 
-it('does not silently apply or discard new extension paths when attaching an existing session', async () => {
-  const f = await fixture(); const controller = f.controller();
-  await expect(controller.start({ cwd: f.cwd, sessionId: f.root.sessionId, extensions: ['/untrusted/new-extension.ts'] })).rejects.toThrow('cannot replace');
-  expect(controller.sessionId).toBeUndefined(); expect(f.store.session(f.root.sessionId).state).toBe('open');
+it('resumes the first session matching an ambiguous ID prefix', async () => {
+  const rows = ['abc-1', 'abc-2'].map(session => ({ session, root: session, cwd: '/fixture', title: '', revision: 1, state: 'open', residency: 'warm',
+    lastActivity: 1, run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 } }));
+  const attach = vi.fn(async () => ({ outcome: 'accepted' }));
+  const client = { status: 'ready', capabilities: { operations: ['sessions.list'] }, connect: async () => {}, subscribe: () => () => {}, getAttachment: () => undefined,
+    request: async () => ({ outcome: 'accepted', result: { entries: rows } }), attach, close() {} };
+  const controller = new TuiSessionController(client as unknown as SessionClient);
+  await controller.start({ cwd: '/fixture', sessionId: 'abc' });
+  expect(attach).toHaveBeenCalledExactlyOnceWith('abc-1'); expect(controller.sessionId).toBe('abc-1');
 });
 
 it('renders the real protocol session, resizes and restores the terminal on client exit without closing the session', async () => {
@@ -262,16 +263,13 @@ it('routes model, thinking and rename through advertised commands, preserving ar
   await expect(submitTuiInput(controller, dialogs, '/model missing/model', options)).rejects.toThrow('advertised');
 });
 
-it('requires confirmation to close and treats exit as a client-only action', async () => {
+it('treats exit as a client-only action and closes on /close', async () => {
   const f = await fixture(); const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
   const dialogs = fakeDialogs(); const exit = vi.fn();
-  expect(await submitTuiInput(controller, dialogs, '/close', { cwd: f.cwd, exit })).toBe(false);
-  expect(f.store.session(f.root.sessionId).state).toBe('open');
   expect(await submitTuiInput(controller, dialogs, '/exit', { cwd: f.cwd, exit })).toBe(true);
   expect(exit).toHaveBeenCalledOnce(); expect(f.store.session(f.root.sessionId).state).toBe('open');
-  dialogs.confirm = async () => true;
   expect(await submitTuiInput(controller, dialogs, '/close', { cwd: f.cwd, exit })).toBe(true);
-  expect(f.store.session(f.root.sessionId).state).toBe('closed');
+  expect(dialogs.confirm).not.toHaveBeenCalled(); expect(f.store.session(f.root.sessionId).state).toBe('closed');
 });
 
 it('forks before a selected zero-based user position without resubmitting that message', async () => {
@@ -338,15 +336,48 @@ it('changes cwd by creating another session instead of mutating the existing ses
   expect(f.store.session(f.root.sessionId).state).toBe('open');
 });
 
-it('requires separate daemon and force confirmations before global lifecycle actions', async () => {
-  const f = await fixture(); const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
+it('stops or restarts an idle daemon without confirmation or an attached session', async () => {
+  const f = await fixture(); const controller = f.controller(); await controller.client.connect();
   const dialogs = fakeDialogs(); const daemon = vi.fn(async () => {});
-  dialogs.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-  expect(await submitTuiInput(controller, dialogs, '/daemon stop force', { cwd: f.cwd, exit: vi.fn(), daemon })).toBe(false);
-  expect(daemon).not.toHaveBeenCalled();
-  dialogs.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
   expect(await submitTuiInput(controller, dialogs, '/daemon restart force', { cwd: f.cwd, exit: vi.fn(), daemon })).toBe(true);
-  expect(daemon).toHaveBeenCalledOnce(); expect(daemon).toHaveBeenCalledWith('restart', true);
+  expect(dialogs.confirm).not.toHaveBeenCalled(); expect(daemon).toHaveBeenCalledWith('restart', true);
+  expect(await submitTuiInput(controller, dialogs, '/restart', { cwd: f.cwd, exit: vi.fn(), daemon })).toBe(true);
+  expect(daemon).toHaveBeenLastCalledWith('relaunch', false);
+});
+
+it('keeps input usable with a clear notice while the daemon is disconnected, and announces reconnection', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const listeners = new Set<() => void>();
+  const client = { status: 'ready', reconnection: { attempt: 2, retryAt: Date.now() + 4_000 } as { attempt: number; retryAt: number } | undefined,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+    getAttachment: () => undefined, capabilities: { operations: ['prompt'] }, request: vi.fn(), close: vi.fn() };
+  const emit = () => { for (const listener of listeners) listener(); };
+  const controller = new TuiSessionController(client as unknown as SessionClient);
+  try {
+    client.status = 'disconnected'; emit();
+    expect(await controller.submit('hello')).toBe(false);
+    expect(controller.notice).toBe('Daemon disconnected; reconnecting automatically. Use /reconnect to retry now. The input remains in the editor.');
+    await expect(controller.perform('prompt', { text: 'hello' }, 'session')).rejects.toThrow('reconnecting automatically');
+    expect(client.request).not.toHaveBeenCalled();
+    client.status = 'ready'; client.reconnection = undefined; emit();
+    expect(controller.notice).toBe('Reconnected');
+    vi.advanceTimersByTime(3_000); expect(controller.notice).toBe('');
+  } finally { vi.useRealTimers(); await controller.dispose(); }
+});
+
+it('confirms once before a daemon action would interrupt active runs', async () => {
+  const entered = gate(); const release = gate();
+  cleanup.push(async () => release.resolve());
+  const f = await fixture(async () => { entered.resolve(); await release.promise; });
+  const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
+  expect(await controller.submit('keep running')).toBe(true); await entered.promise;
+  const dialogs = fakeDialogs(); const daemon = vi.fn(async () => {});
+  expect(await submitTuiInput(controller, dialogs, '/daemon stop', { cwd: f.cwd, exit: vi.fn(), daemon })).toBe(false);
+  expect(dialogs.confirm).toHaveBeenCalledExactlyOnceWith('Stop daemon', expect.stringContaining('1 active task')); expect(daemon).not.toHaveBeenCalled();
+  vi.mocked(dialogs.confirm).mockClear().mockResolvedValueOnce(true);
+  expect(await submitTuiInput(controller, dialogs, '/daemon stop', { cwd: f.cwd, exit: vi.fn(), daemon })).toBe(true);
+  expect(dialogs.confirm).toHaveBeenCalledOnce(); expect(daemon).toHaveBeenCalledExactlyOnceWith('stop', true);
+  release.resolve(); await controller.cancel();
 });
 
 it('reads daemon status without turning the command into model input', async () => {

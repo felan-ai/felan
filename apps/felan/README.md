@@ -26,13 +26,8 @@ Pass `--host-config /absolute/path/host.json` to select explicit trusted
 configuration. Otherwise the launcher uses `host.json` in the agent directory,
 then its packaged default. Providers resolve from the installed managing
 package, never from the project or configuration directory. Provider changes
-require a daemon restart. Restored sessions do not silently adopt changed
-configuration; use explicit session reload when recovery requires it.
-The TUI offers a confirmation when a saved session needs configuration recovery.
-You can also use `/reload <session-id>` before attaching. No transcript is reset
-and no pending work is replayed to recover configuration.
-Child sessions with missing or changed configuration identities remain blocked
-from execution; explicit reload currently applies only to root sessions.
+require a daemon restart. Restored sessions resume with the current
+configuration, as in 0.28.3.
 
 Programmatic consumers use the client API: `runCli`, `runDaemonFelan`,
 `runLocalFelanHeadless`, `SessionClient`, `newRequestId`, daemon target and
@@ -110,8 +105,9 @@ acp login           Configure model-provider credentials in a finite terminal fl
 --verbose          Show verbose startup details
 ```
 
-`/restart` restarts the daemon; it does not reload client code. After rebuilding
-Felan Code from source, detach and relaunch the client to use the rebuilt code.
+`/restart` restarts the daemon and then Felan Code, resuming the current
+session, so rebuilt daemon and client code both take effect. `/daemon restart`
+restarts only the daemon and reattaches the current session in place.
 
 Run `felan update` to check the stable npm release. It updates only a verified
 global npm installation, reports when the installation is current, and tells
@@ -145,21 +141,43 @@ felan daemon status
 felan daemon start
 felan daemon foreground
 felan daemon logs
-felan daemon stop --yes
-felan daemon restart --yes
+felan daemon stop
+felan daemon restart
 ```
 
 `status` and `logs` never start it. `start` attaches to a compatible instance or
 launches the exact installed daemon. `foreground` remains attached to the service.
-`stop` and `restart` require `--yes`; add `--force` only to explicitly interrupt
-active work. A replacement inherits the requesting shell environment. No
+`stop` and `restart` wait for active work to finish. If it does not finish
+before the drain deadline, the command fails and the daemon keeps running; add
+`--force` to interrupt the work instead. A replacement inherits the requesting shell environment. No
 per-session environment is sent or persisted. The TUI offers `/daemon status`,
-`/daemon logs`, `/daemon stop`, and `/daemon restart`; force requires a second
-confirmation.
+`/daemon logs`, `/daemon stop`, and `/daemon restart`. When active work (runs, subagents, interactive PTY or foreground processes, and pending questions)
+would be interrupted, they ask once with the count and then stop or restart
+immediately. A daemon from another Felan version is replaced automatically only
+when it has no active work; otherwise the TUI shows how many active tasks a
+restart would interrupt and asks first.
 
 `/exit` (or Ctrl+D on an empty editor) detaches. Escape interrupts the current
-run. `/close` confirms disposal of the selected session. These actions do not
+run. `/close` disposes of the selected session. These actions do not
 mean the same thing.
+
+If the daemon connection drops, for example because the daemon restarts, the
+TUI keeps the input usable and shows `Daemon disconnected · reconnecting in Ns
+· /reconnect to retry now`. It retries automatically with backoff (250 ms,
+doubling to 10 s, with no attempt limit) and, once the daemon is back,
+reattaches the current session and briefly shows `Reconnected`. Automatic
+retries only connect to a running daemon; they never start one, so an explicit
+`felan daemon stop` stays stopped. `/reconnect` retries immediately and starts
+the daemon when none is running. Input submitted while disconnected stays in
+the editor; requests in flight when the connection dropped report that their
+outcome is unknown, because the daemon may still be running them. ACP clients
+reconnect the same way while the editor connection is open. Headless text runs
+fail if the daemon does not return within 30 seconds; JSON runs fail on any
+interruption because their event stream cannot be replayed.
+
+`/reload` keeps all background processes. A daemon restart keeps detached
+background processes, which the restored session rediscovers, and ends
+interactive (PTY) ones, as quitting Felan Code did before the daemon.
 
 ## Native ACP v1
 
@@ -180,9 +198,10 @@ is reserved for protocol frames; diagnostics go to stderr. ACP clients receive
 the machine name `felan` and display title `Felan Code`. Each ACP attachment is a daemon client and can create, load, prompt, cancel, and
 detach from Felan Code sessions. Felan Code accepts baseline text and resource-link
 prompt blocks, replays the current persisted branch on load, and streams user,
-assistant, thought, and bounded tool-call updates. ACP uses strict daemon policy:
-new strict policy waits for active admitted work to drain, and EOF detaches without
-answering pending interactions or stopping session work.
+assistant, thought, and tool-call updates. ACP uses strict daemon policy: it
+applies to the session tree immediately (running tool calls keep the approvals
+they already had) and returns to host defaults when the last ACP client detaches.
+EOF detaches without answering pending interactions or stopping session work.
 
 When the client advertises terminal authentication, Felan Code offers a terminal
 method that appends `login` to the configured `felan acp` invocation. Run the

@@ -31,7 +31,7 @@ function fixture() {
     { id: 'warning', kind: 'notification', level: 'warning', text: 'Memory processing disabled for this project.' },
   ] };
   const listeners = new Set<() => void>();
-  const client = { status: 'ready', capabilities: { daemonVersion: '0.2.0' },
+  const client = { status: 'ready', reconnection: undefined as { attempt: number; retryAt: number } | undefined, capabilities: { daemonVersion: '0.2.0' },
     getAttachment: () => ({ state: { status: 'live', snapshot: current } }),
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
   const controller = { client, get snapshot() { return current; }, get state() { return client.getAttachment().state; },
@@ -162,6 +162,13 @@ it('shows working state only during a run and a disconnected daemon notice', () 
   expect(f.lines().join('\n')).not.toContain('Working');
   f.client.status = 'disconnected'; f.change({});
   expect(f.lines().join('\n')).toContain('Daemon disconnected. Use /reconnect to retry.');
+  f.client.reconnection = { attempt: 3, retryAt: Date.now() + 4_000 }; f.change({});
+  expect(f.lines().join('\n')).toContain('Daemon disconnected · reconnecting in 4s · /reconnect to retry now');
+  const projection = vi.spyOn(f.screen.transcript, 'showProjection');
+  vi.advanceTimersByTime(1_000);
+  expect(f.lines().join('\n')).toContain('reconnecting in 3s'); expect(projection).not.toHaveBeenCalled();
+  f.client.reconnection = undefined; f.client.status = 'ready'; f.change({});
+  expect(f.lines().join('\n')).not.toContain('Daemon disconnected');
 });
 
 it('uses extension working messages only in the active loader, including updates and reset', () => {

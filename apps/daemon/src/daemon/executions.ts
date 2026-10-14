@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { CURRENT_SESSION_VERSION, SESSION_EXECUTION_LIMITS, type ModelReference, type SessionExecutionInput, type SessionManager } from '@felan-ai/agent-core';
 import type { ControlSession, ExecutionMetadata } from './control-state.js';
 import type { SessionRegistry } from './registry.js';
+import { redact } from '../logger.js';
 
 export interface ExecutionSettings { readonly concurrency?: number; readonly maxDepth?: number }
 export interface ExecutionCompletionNotice {
@@ -123,8 +125,10 @@ export class RegistryExecutions {
       }
       const { excludedTools, ...input } = structuredClone(request);
       const execution: ExecutionMetadata = { request: { ...input, ...(excludedTools ? { excludedTools: [...excludedTools] } : {}) }, createdAt: new Date().toISOString(), deliveryId: randomUUID(), completionPending: false };
-      const root = this.registry.binding(this.root)!;
-      const binding = await this.registry.create({ cwd: root.resources.cwd, sessionDir: root.resources.sessionDir, target: { kind: 'new', id: randomUUID() },
+      // A busy child keeps spawning while its root reloads, so fall back to the root's stored location.
+      const stored = this.registry.options.store.session(this.root);
+      const root = this.registry.binding(this.root)?.resources ?? { cwd: stored.cwd, sessionDir: dirname(stored.piPath) };
+      const binding = await this.registry.create({ cwd: root.cwd, sessionDir: root.sessionDir, target: { kind: 'new', id: randomUUID() },
         rootSessionId: this.root, parentSessionId: parent, policy: this.registry.getPolicy(parent), source: 'headless', execution,
         systemPromptAppend: request.appendSystemPrompt ?? '', ...(model ? { model } : {}), ...(request.thinking ? { thinkingLevel: request.thinking } : {}) });
       if (signal?.aborted || this.closed.has(this.root) || this.closed.has(parent) || this.registry.options.store.session(parent).execution?.completedAt) {
@@ -206,14 +210,14 @@ export class RegistryExecutions {
         for (const row of this.rows()) {
           if (this.active.size >= this.concurrency) break;
           if (row.execution!.startedAt || row.execution!.completedAt || this.active.has(row.id) || this.closed.has(row.id)) continue;
-          try { this.registry.activatePolicy(this.root); this.checkParent(row.parent!); this.registry.assertDispatch(row.id); }
+          try { this.checkParent(row.parent!); this.registry.assertDispatch(row.id); }
           catch { continue; }
           this.update(row.id, { ...row.execution!, startedAt: new Date().toISOString() });
           const controller = new AbortController();
           const promise = Promise.resolve().then(() => this.run(row.id, controller.signal));
           const job: Job = { id: row.id, controller, promise };
           this.active.set(row.id, job);
-          void promise.catch(error => this.failures.add(error)).finally(() => { this.active.delete(row.id); this.registry.activatePolicy(this.root); this.drain(); });
+          void promise.catch(error => this.failures.add(error)).finally(() => { this.active.delete(row.id); this.drain(); });
         }
       } catch (error) { this.failures.add(error); }
       finally { this.draining = false; }
@@ -359,7 +363,7 @@ function readEntries(registry: SessionRegistry, row: ControlSession): ReturnType
   }
   return entries;
 }
-function sanitize(value: string | undefined): string { return (value ?? 'unknown provider error').replace(/[\u0000-\u001F\u007F-\u009F]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 300); }
+function sanitize(value: string | undefined): string { return redact(value ?? 'unknown provider error').replace(/[\u0000-\u001F\u007F-\u009F]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 300); }
 function bounded(value: number | undefined, fallback: number, maximum: number): number { return value === undefined || !Number.isInteger(value) ? fallback : Math.max(1, Math.min(maximum, value)); }
 function success<T>(value: T): Result<T> { return { ok: true, value }; }
 function failure(code: string, message: string): Result<never> { return { ok: false, error: { code, message } }; }

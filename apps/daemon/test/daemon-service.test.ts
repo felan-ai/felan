@@ -47,25 +47,9 @@ async function models() {
   return runtime;
 }
 
-it('rejects a populated isolation directory before loading model state', async () => {
-  const { target: input, hostConfigPath } = await target(false);
-  await writeFile(join(input.directory, 'unowned-state'), 'existing');
-  const createModels = vi.fn(models);
-  const starting = startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: createModels }).then(service => {
-    cleanups.push(async () => { await service.requestStop('stop', 'force'); await service.stopped; });
-    return service;
-  });
-  await expect(starting).rejects.toThrow('A new isolated target must be an empty private directory');
-  expect(createModels).not.toHaveBeenCalled();
-  expect(await readFile(join(input.directory, 'unowned-state'), 'utf8')).toBe('existing');
-});
-
 it('assembles owned service state and executes a real offline session before explicit shutdown', async () => {
   const { target: input, hostConfigPath } = await target();
-  const createModels = vi.fn(async () => {
-    expect(JSON.parse(await readFile(join(input.directory, '.felan-isolated.json'), 'utf8'))).toMatchObject({ namespaceId: input.namespaceId });
-    return models();
-  });
+  const createModels = vi.fn(models);
   const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: createModels });
   cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
   expect(createModels).toHaveBeenCalledOnce();
@@ -80,7 +64,7 @@ it('assembles owned service state and executes a real offline session before exp
   await vi.waitFor(() => expect(client.getAttachment(created.result.sessionId)?.state.snapshot?.history.entries.some(row => row.role === 'assistant')).toBe(true));
   await vi.waitFor(() => expect(client.getAttachment(created.result.sessionId)?.state.snapshot?.run.state).toBe('idle'));
   expect((await client.request('host.logs', {})).outcome).toBe('accepted');
-  expect(await client.control('host.stop', { confirmed: true, mode: 'drain' })).toMatchObject({ outcome: 'accepted' });
+  expect(await client.control('host.stop', 'drain')).toMatchObject({ outcome: 'accepted' });
   expect(await service.stopped).toBe('stop');
   const next = await acquireDaemonOwnership(input); await next.release();
 });
@@ -105,7 +89,7 @@ it('forces an owned foreground process to settle and persists its interrupted ru
   expect(shell.outcome).toBe('accepted'); if (shell.outcome !== 'accepted') return;
   const run = service.registry.options.store.session(created.result.sessionId).run;
   expect(run.state).toBe('running');
-  expect((await client.control('host.stop', { confirmed: true, mode: 'force' })).outcome).toBe('accepted');
+  expect((await client.control('host.stop', 'force')).outcome).toBe('accepted');
   await service.stopped;
   const owner = await acquireDaemonOwnership(input); const store = new DaemonControlStore(owner);
   try {
@@ -114,7 +98,7 @@ it('forces an owned foreground process to settle and persists its interrupted ru
   } finally { store.close(); await owner.release(); }
 });
 
-it('blocks recovered unknown processes instead of signalling a stored process identity', async () => {
+it('keeps admitting work with unverified prior process records and never signals their stored identity', async () => {
   const { target: input, hostConfigPath } = await target(); const owner = await acquireDaemonOwnership(input); const seed = new DaemonControlStore(owner);
   try {
     seed.createSession({ id: 'prior-session', root: 'prior-session', cwd: input.directory, piPath: join(owner.target.agentDir, 'sessions', 'prior.jsonl'),
@@ -130,9 +114,8 @@ it('blocks recovered unknown processes instead of signalling a stored process id
     }
   });
   const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui' }); cleanups.push(async () => client.close()); await client.connect();
-  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'blocked', setupNeeds: [{ code: 'process_recovery' }] } });
-  expect((await client.control('host.stop', { confirmed: true, mode: 'force' })).outcome).toBe('rejected');
-  expect(service.lifecycle.state).toBe('blocked');
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'ready', setupNeeds: [] } });
+  expect(service.lifecycle.state).toBe('ready');
 });
 
 it('joins a dispatched global settings writer before closing its control store or releasing ownership', async () => {
@@ -154,9 +137,18 @@ it('joins a dispatched global settings writer before closing its control store o
   cleanups.push(async () => { release(); writer.mockRestore(); joinSpy.mockRestore(); close.mockRestore(); });
   const write = client.request('config.set', { scope: 'global', values: { defaultThinking: 'low' } });
   await entering;
-  expect((await client.control('host.stop', { confirmed: true, mode: 'drain' })).outcome).toBe('accepted');
+  expect((await client.control('host.stop', 'drain')).outcome).toBe('accepted');
   await joinStarted;
   expect(close).not.toHaveBeenCalled(); expect(() => service.owner.assertCurrent()).not.toThrow();
   release(); const result = await write; expect(['accepted', 'indeterminate']).toContain(result.outcome);
   await service.stopped; expect(order).toEqual(['write', 'close']);
+});
+
+it('redacts credentials from startup failure diagnostics', async () => {
+  const { target: input, hostConfigPath } = await target();
+  const secret = 'https://admin:pa55@models.example.test/v1?key=query-secret';
+  await expect(startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: async () => { throw new Error(`Model setup failed for ${secret}`); } }))
+    .rejects.toThrow('Model setup failed');
+  const stderr = await readFile(join(resolveDaemonTarget(input).runtimeDirectory, 'stderr.log'), 'utf8');
+  expect(stderr).toContain('Model setup failed'); expect(stderr).not.toContain('pa55'); expect(stderr).not.toContain('query-secret');
 });

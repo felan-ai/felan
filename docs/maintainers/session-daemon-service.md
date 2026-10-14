@@ -13,9 +13,9 @@ felan daemon status
 felan daemon start
 felan daemon foreground
 felan daemon logs
-felan daemon stop --yes
-felan daemon restart --yes
-felan daemon stop --yes --force
+felan daemon stop
+felan daemon restart
+felan daemon stop --force
 ```
 
 Status and logs never start a daemon. Start attaches to an existing compatible
@@ -24,21 +24,34 @@ attached to the service process. Exiting a normal TUI or completing a client
 request does not stop the daemon.
 
 `--daemon-runtime <dir>` selects an explicit private test/CI namespace, not an
-environment-derived alternative target. Custom external session stores must be
-declared with `--session-dir`; canonical root-set checks are not weakened.
+environment-derived alternative target. A custom session directory, from
+`settings.json` or `--session-dir`, becomes an owned store root when a session
+first opens there: the daemon takes its kernel store lock and records it in
+`daemon-store-roots.json` so persisted sessions stay addressable after restart.
+Only a directory that overlaps the runtime directory, leaves an isolated fixture
+or is locked by another live daemon is refused.
 
 The TUI provides `/daemon status`, `/daemon logs`, `/daemon stop`, and
-`/daemon restart`. Adding `force` requires a second confirmation. Restart creates
+`/daemon restart`. They confirm once, only when active work would be interrupted,
+and then request force. Restart creates
 a new protocol client and reattaches the selected session ID without resending
 old prompts or applying session configuration again. Local drafts remain local.
 
 ## Shutdown and replacement
 
 Graceful shutdown rejects new work, defers eligible questions and waits for
-accepted work. It does not silently become a forced stop. If its deadline expires
-or long-lived resources remain, the service reports `blocked` and keeps ownership.
-An explicit force request cancels and joins owned work, verifies process
-settlement and persists interrupted run identities before ownership release.
+accepted work. Drain never escalates to force. If it fails or misses its
+deadline (30 seconds by default), the drain is abandoned: admission reopens, the
+daemon returns to `ready` and keeps serving, and the stop or restart is reported
+as failed. Only an explicit force request cancels and joins owned work, verifies
+process settlement and persists interrupted run identities before ownership
+release. A forced settlement that fails or misses its deadline reports `blocked`
+and keeps ownership.
+
+`host.status` reports `active.work`: busy resident sessions (including child
+executions), running background processes of resident roots, and unanswered host
+questions. This is the work a restart would interrupt. Clients use it instead of
+`active.runs` to decide whether a confirmation is needed.
 
 The requesting client launches a replacement after the old daemon stops. This
 uses the requesting shell's environment; no environment map is transmitted or
@@ -46,16 +59,21 @@ persisted. An identity-pinned, bounded handoff handles the short interval betwee
 endpoint closure and kernel-lock release. A failed replacement is reported, not
 silently retried. See [ADR 0030](../decisions/0030-launch-daemon-replacements-from-clients.md).
 
-A version mismatch preserves the verified control identity but refuses session
-traffic. Replacement requires explicit consent. SIGINT/SIGTERM request graceful
+A daemon from another installed version or provider configuration is replaced
+automatically by a client that can launch the daemon when `active.work` is zero.
+Otherwise it stays connected only for control; the TUI asks before a forced
+replacement, and other clients report the mismatch. SIGINT/SIGTERM request graceful
 shutdown; they are not implicit permission to interrupt other clients' work.
 
 ## Recovery and diagnostics
 
 Unknown foreground/PTY or detached process records after a crash are not proof
-that the processes exited. Such recovery is blocked pending operator
-reconciliation. Force never signals an arbitrary stored PID. Do not remove lock
-files, reset control state or overwrite the claim ledger to force access.
+that the processes exited, but they do not block startup, new work or shutdown.
+Force never signals an arbitrary stored PID. Stale claim-ledger entries (whose
+lifetime lock is gone or no longer held) are discarded, and an unreadable ledger
+is rebuilt. Control-store recovery follows
+[persistence](session-daemon-persistence.md): inconsistent rows are dropped
+individually, and only a corrupt or foreign file is quarantined.
 
 Operational logs are bounded rolling tails of fixed, sanitized events. They do
 not contain prompts, environment values, credentials or arbitrary provider

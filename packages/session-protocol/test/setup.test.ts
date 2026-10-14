@@ -11,8 +11,7 @@ it('exposes method availability and display metadata without credential values',
   expect(() => parseOperationResult('host.setup.catalog', { ...catalog, credentials: [{ ...catalog.credentials[0], refreshToken: 'secret' }] })).toThrow();
 });
 
-it('requires explicit confirmation for stored-credential removal', () => {
-  expect(parseSchema(SetupStartSchema, { kind: 'logout', provider: 'provider', confirmed: true })).toEqual({ kind: 'logout', provider: 'provider', confirmed: true });
-  expect(() => parseSchema(SetupStartSchema, { kind: 'logout', provider: 'provider', confirmed: false })).toThrow();
+it('accepts stored-credential removal without a protocol confirmation', () => {
+  expect(parseSchema(SetupStartSchema, { kind: 'logout', provider: 'provider' })).toEqual({ kind: 'logout', provider: 'provider' });
   expect(parseOperationResult('host.setup.start', { id: 'job', kind: 'logout', state: 'running', message: 'Removing credentials' }).kind).toBe('logout');
 });

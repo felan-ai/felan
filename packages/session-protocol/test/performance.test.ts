@@ -18,10 +18,9 @@ describe('bounded protocol parsing cost', () => {
     const small = data(4);
     const large = data(32);
     const answer = (payload: Record<string, string>) => request('interaction.answer', { interactionId: 'q', answer: { kind: 'form', actionId: 'submit', outcome: 'submit', values: payload } });
-    expect(JSON.stringify(large).length).toBeLessThan(LIMITS.answerBytes);
     expect(JSON.stringify(large).length).toBeGreaterThan(64000);
-    const smallMs = medianDuration(() => { parseClientEnvelope(answer(small), { now }); });
-    const largeMs = medianDuration(() => { parseClientEnvelope(answer(large), { now }); });
+    const smallMs = medianDuration(() => { parseClientEnvelope(answer(small)); });
+    const largeMs = medianDuration(() => { parseClientEnvelope(answer(large)); });
     const standaloneMs = medianDuration(() => { parseSchema(JsonValueSchema, large); });
     expect(largeMs).toBeLessThan(1500);
     expect(standaloneMs).toBeLessThan(1500);

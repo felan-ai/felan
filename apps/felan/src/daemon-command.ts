@@ -8,7 +8,7 @@ import { FELAN_VERSION } from './version.js';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { waitForDaemonStop } from './client/daemon-stop.js';
 
-const usage = 'Usage: felan daemon [status|start|foreground|stop|restart|logs] [--daemon-runtime <dir>] [--session-dir <dir>] [--host-config <path>] [--yes] [--force]';
+const usage = 'Usage: felan daemon [status|start|foreground|stop|restart|logs] [--daemon-runtime <dir>] [--host-config <path>] [--force]';
 const absent = (error: unknown) => ['ENOENT', 'stale_endpoint', 'unavailable'].includes((error as { code?: string }).code ?? '');
 
 export async function runDaemonCommand(args: readonly string[], io: { writeOutput(line: string): void; writeError(line: string): void }, dependencies: {
@@ -17,24 +17,21 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
 } = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { io.writeOutput(usage); return 0; }
   const action = args[0] && !args[0].startsWith('-') ? args[0] : 'status';
-  let yes = false; let force = false; let daemonRuntime: string | undefined; let sessionDir: string | undefined; let hostConfigPath: string | undefined;
+  let force = false; let daemonRuntime: string | undefined; let hostConfigPath: string | undefined;
   try {
     if (!['status', 'start', 'foreground', 'stop', 'restart', 'logs'].includes(action)) throw new Error(usage);
     for (let i = action === args[0] ? 1 : 0; i < args.length; i++) {
       const arg = args[i];
-      if (arg === '--yes') yes = true;
-      else if (arg === '--force') force = true;
-      else if (arg === '--daemon-runtime' || arg === '--session-dir' || arg === '--host-config') {
+      if (arg === '--force') force = true;
+      else if (arg === '--daemon-runtime' || arg === '--host-config') {
         const value = args[++i]; if (!value || value.startsWith('-')) throw new Error(usage);
         if (arg === '--daemon-runtime') daemonRuntime = resolve(value);
-        else if (arg === '--session-dir') sessionDir = resolve(value);
         else hostConfigPath = resolve(value);
       } else throw new Error(usage);
     }
-    if ((yes || force) && !['stop', 'restart'].includes(action)) throw new Error('--yes and --force apply only to stop/restart.');
-    if (['stop', 'restart'].includes(action) && !yes) throw new Error('Stop and restart require --yes. Add --force only to interrupt active work.');
+    if (force && !['stop', 'restart'].includes(action)) throw new Error('--force applies only to stop/restart.');
   } catch (error) { io.writeError((error as Error).message); return 1; }
-  const target = clientDaemonTarget({ ...(daemonRuntime ? { daemonRuntime } : {}), ...(sessionDir ? { sessionDir } : {}) });
+  const target = clientDaemonTarget(daemonRuntime ? { daemonRuntime } : {});
   if (action === 'foreground') return (dependencies.foreground ?? foreground)(target, hostConfigPath);
   const makeClient = dependencies.createClient ?? (options => new SessionClient(options));
   let client: SessionClient | undefined;
@@ -45,7 +42,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     const connect = async (launch = false, replacing?: DaemonIdentity) => {
       client?.close();
       const expectedComposition = dependencies.createClient ? undefined : await resolveClientHostComposition(target, hostConfigPath);
-      client = makeClient({ target, clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}), kind: 'tui',
+      client = makeClient({ target, clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}), kind: 'tui', reconnectAttempts: 0,
         ...(launch ? { launch: { entrypoint: resolveInstalledDaemonEntrypoint(), ...(hostConfigPath ? { hostConfigPath } : {}), ...(replacing ? { replacing } : {}) } } : {}) });
       try { await client.connect(); }
       catch (error) { if (client.status !== 'incompatible' || !client.identity) throw error; }
@@ -60,7 +57,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     const active = client!;
     if (action === 'stop' || action === 'restart') {
       const identity = active.identity!;
-      const response = await active.control(action === 'stop' ? 'host.stop' : 'host.restart', { confirmed: true, mode: force ? 'force' : 'drain' });
+      const response = await active.control(action === 'stop' ? 'host.stop' : 'host.restart', force ? 'force' : 'drain');
       if (response.outcome !== 'accepted') throw new Error('Daemon control was not accepted; inspect status before retrying.');
       await waitForDaemonStop(active, lifetime.signal);
       if (action === 'restart') { await connect(true, identity); io.writeOutput(`Daemon restarted (${client!.identity!.instanceId}).`); }
@@ -69,7 +66,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     }
     if (active.status === 'incompatible') {
       const status = await active.control('host.status');
-      io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}. Protocol mismatch; restart requires --yes.`);
+      io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}. It differs from this installation; run felan daemon restart.`);
       return action === 'status' ? 0 : 1;
     }
     if (action === 'logs') {
@@ -85,7 +82,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     const response = await active.request('host.status', {});
     if (response.outcome !== 'accepted') throw new Error('Daemon status is unavailable.');
     const status = response.result;
-    io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}\nSessions: ${status.active.sessions}; runs: ${status.active.runs}; attachments: ${status.active.attachments}`);
+    io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}\nSessions: ${status.active.sessions}; runs: ${status.active.runs}; active tasks: ${status.active.work}; attachments: ${status.active.attachments}`);
     for (const need of status.setupNeeds) io.writeOutput(need.message);
     return 0;
   } catch (error) { io.writeError(error instanceof Error ? error.message : 'Daemon operation failed.'); return 1; }

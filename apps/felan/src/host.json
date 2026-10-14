@@ -50,7 +50,6 @@
   ],
   "policy": {
     "projectTrust": "ask",
-    "dependencyInstalls": "ask",
-    "requireLocalConsole": false
+    "dependencyInstalls": "ask"
   }
 }

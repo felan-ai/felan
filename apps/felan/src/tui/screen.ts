@@ -2,7 +2,7 @@ import type { KeybindingsManager, Theme } from '@earendil-works/pi-coding-agent'
 import { Container, Loader, getKeybindings, ScrollView, Text, VStack, type Component, type TUI } from '@earendil-works/pi-tui';
 import type { AgentViewTranscript } from '../subagents/types.js';
 import { AgentTranscript, type AgentToolPresentation } from '../subagents/agent-transcript.js';
-import { TuiSessionController } from './controller.js';
+import { TuiSessionController, connectionText } from './controller.js';
 import { projectTuiTranscript } from './transcript.js';
 import { TuiDialogs } from './dialogs.js';
 import { createCommandAutocomplete, submitTuiInput, tuiCommands, type DaemonAction } from './commands.js';
@@ -39,6 +39,8 @@ export class DaemonTuiScreen {
   private disposed = false;
   private submitting: Promise<void> | undefined;
   private queuedSubmit: string | undefined;
+  private countdown: ReturnType<typeof setTimeout> | undefined;
+  private connectionNotice: Text | undefined;
 
   constructor(private readonly controller: TuiSessionController, private readonly tui: TUI, private readonly options: {
     cwd: string;
@@ -60,7 +62,10 @@ export class DaemonTuiScreen {
     const theme = options.theme ?? (() => initialTheme!);
     this.theme = theme;
     const selectList = clientSelectListTheme(theme);
-    this.dialogs = new TuiDialogs(tui, theme, component => this.showInline(component));
+    this.dialogs = new TuiDialogs(tui, theme, component => this.showInline(component), () => {
+      const width = tui.terminal.columns;
+      return Math.max(1, tui.terminal.rows - this.editor.renderRail(width).length - this.footer.render(width).length);
+    });
     this.editor = new AgentRailEditor(tui, { borderColor: text => (this.editor?.getText().trimStart().startsWith('!')
       ? theme().getBashModeBorderColor() : theme().getThinkingBorderColor(controller.snapshot?.thinking ?? 'off'))(text), selectList },
     this.keys as unknown as KeybindingsManager, { listLocalSubagents: () => this.executions }, theme,
@@ -211,13 +216,18 @@ export class DaemonTuiScreen {
     this.header.setText(startupHeader(this.theme(), this.keys, this.transcript.toolsExpanded, this.options.quietStartup?.()));
     this.notices.clear(); this.activity.clear();
     const notice = (text: string, color: 'warning' | 'error' | 'muted' = 'muted') => {
-      this.notices.addChild(new Text(this.theme().fg(color, uiText(text)), 1, 1));
+      const component = new Text(this.theme().fg(color, uiText(text)), 1, 1);
+      this.notices.addChild(component); return component;
     };
-    if (connection !== 'ready') notice(`Daemon ${connection}. Use /reconnect to retry.`, 'warning');
-    else if (state && state.status !== 'live') notice(`Session ${state.status}. Use /reconnect to retry.`, 'warning');
+    const disconnected = connectionText(this.controller.client);
+    this.connectionNotice = undefined;
+    if (disconnected) this.connectionNotice = notice(disconnected, 'warning');
+    else if (state?.status === 'blocked') notice('Session recovery did not complete. Use /reconnect to retry.', 'warning');
+    else if (state && state.status !== 'live') notice('Reattaching session…');
+    clearTimeout(this.countdown); this.countdown = undefined;
+    if (connection !== 'ready' && this.controller.client.reconnection) this.countdown = setTimeout(() => this.tickCountdown(), 1_000);
     else if (!snapshot) notice('No session attached. Use /new or /sessions.', 'warning');
-    if (snapshot?.policy.pending) notice('Stricter approval policy pending.', 'warning');
-    else if (snapshot?.policy.effective === 'acp-strict') notice('Approvals required.');
+    if (snapshot?.policy.effective === 'acp-strict') notice('Approvals required.');
     if (snapshot?.queue.length) notice(`${snapshot.queue.length} queued`);
     try {
       const presentation = fallbackPresentations(snapshot?.presentation ?? [], this.options.hasRenderer);
@@ -251,13 +261,24 @@ export class DaemonTuiScreen {
     this.tui.requestRender();
   }
 
+  /** Connection changes refresh through the controller; ticks only rewrite the countdown so the transcript is not re-projected every second. */
+  private tickCountdown(): void {
+    this.countdown = undefined;
+    if (this.disposed) return;
+    const text = connectionText(this.controller.client);
+    if (!text || !this.connectionNotice || !this.controller.client.reconnection) { this.refresh(); return; }
+    this.connectionNotice.setText(this.theme().fg('warning', uiText(text)));
+    this.countdown = setTimeout(() => this.tickCountdown(), 1_000);
+    this.tui.requestRender();
+  }
+
   private workingIndicator() {
     return { frames: WORKING_FRAMES.map(frame => this.theme().fg('accent', frame)), intervalMs: 120 };
   }
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
-    this.disposed = true; this.working?.stop(); this.unsubscribe(); this.removeInput(); this.dialogs.dispose(); this.transcript.dispose();
+    this.disposed = true; clearTimeout(this.countdown); this.working?.stop(); this.unsubscribe(); this.removeInput(); this.dialogs.dispose(); this.transcript.dispose();
     if (this.submitting) await this.submitting;
   }
 }

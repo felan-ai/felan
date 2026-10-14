@@ -8,6 +8,7 @@ const messages = {
   stop_requested: 'Explicit daemon stop requested.',
   restart_requested: 'Explicit daemon restart requested.',
   drain_blocked: 'Daemon shutdown is blocked; ownership remains held.',
+  drain_cancelled: 'Daemon drain did not finish because work is still active; the daemon keeps running. Use force to interrupt it.',
   releasing: 'Owned work settled; releasing daemon ownership.',
   ownership_lost: 'Daemon ownership was lost; admission is fenced.',
   startup_failed: 'Daemon startup could not complete.',
@@ -19,7 +20,7 @@ export class DaemonOperationalLog {
 
   record(event: keyof typeof messages): void {
     if (!Object.hasOwn(messages, event)) throw new Error('Unknown operational event.');
-    const entry: Entry = { timestamp: this.now(), level: ['drain_blocked', 'ownership_lost', 'startup_failed'].includes(event) ? 'error' : 'info', message: messages[event] };
+    const entry: Entry = { timestamp: this.now(), level: ['drain_blocked', 'ownership_lost', 'startup_failed'].includes(event) ? 'error' : event === 'drain_cancelled' ? 'warning' : 'info', message: messages[event] };
     this.sink.write('stdout', JSON.stringify(entry));
   }
 

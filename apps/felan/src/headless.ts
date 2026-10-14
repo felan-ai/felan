@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { ConfigValuesSchema, LIMITS, parseSchema, readMessageDisplay, type OperationParams, type PresentationEvent, type SessionSnapshot } from '@felan-ai/session-protocol';
+import { ConfigValuesSchema, INTERACTION_KINDS, LIMITS, parseSchema, readMessageDisplay, type OperationParams, type PresentationEvent, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { accepted, createDaemonClient, readCurrentDaemonHistory, waitForDaemonAttachment, waitForDaemonRun, type DaemonClientOptions } from './acp/daemon-session.js';
 import { sanitizeAcpErrorMessage } from './acp/session-updates.js';
 
@@ -57,7 +57,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     }
     if (Reflect.get(options, 'extensionConfigOverrides') !== undefined) throw new Error('Use typed daemon config rather than extensionConfigOverrides in headless mode');
     const cwd = resolve(options.cwd ?? process.cwd());
-    client = await createDaemonClient(options, 'headless');
+    client = await createDaemonClient(options, 'headless', [...INTERACTION_KINDS]);
     await client.connect();
     if (signalCode) return signalCode;
     session = options.sessionId;
@@ -71,7 +71,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
           session = row.session; latest = row.lastActivity;
         }
         cursor = page.cursor;
-        if (cursor && (seen.has(cursor) || seen.size >= 64)) throw new Error('Session inventory exceeds the headless page limit');
+        if (cursor && seen.has(cursor)) throw new Error('Session inventory cursor repeated');
         if (cursor) seen.add(cursor);
       } while (cursor);
     }
@@ -95,7 +95,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     if (options.mode === 'json') {
       accepted(await client.detach(session));
       client.close();
-      client = await createDaemonClient(options, 'headless', [], ['native.events']);
+      client = await createDaemonClient(options, 'headless', [...INTERACTION_KINDS], ['native.events']);
       await client.connect();
       if (!client.capabilities?.capabilities?.includes('native.events')) {
         throw new Error('The daemon does not support native headless JSON output');
@@ -117,9 +117,8 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
       });
       accepted(await Promise.race([client.attach(session), outputFailure]));
     }
-    let interactionFailure: ((error: Error) => void) | undefined;
-    const needsInteraction = new Promise<never>((_resolve, reject) => { interactionFailure = reject; });
-    void needsInteraction.catch(() => {});
+    // Like a client without UI, headless runs resolve dialogs with their cancelled defaults instead of waiting.
+    const dismissed = new Set<string>();
     const observe = () => {
       const attachment = client!.getAttachment(session!);
       if (attachment?.state.status !== 'live' || !attachment.state.snapshot) return;
@@ -127,8 +126,10 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
       const origin = observed.run.origin;
       if (!runId && (!origin || !('attachment' in origin) || origin.attachment !== client!.capabilities?.attachmentId)) return;
       if (runId && observed.run.id && observed.run.id !== runId) return;
-      if (observed.interactions.some(item => item.state === 'waiting' || item.state === 'deferred')) {
-        interactionFailure?.(new Error(`Session ${session} needs an interactive client; its request remains pending in the daemon`));
+      for (const item of observed.interactions) {
+        if (item.state !== 'waiting' || dismissed.has(item.id)) continue;
+        dismissed.add(item.id);
+        void client!.request('interaction.answer', { interactionId: item.id, answer: { cancelled: true, reason: 'user' } }, { session: session! }).catch(() => {});
       }
     };
     const stopObserving = client.subscribe(observe);
@@ -136,7 +137,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     unsubscribe = () => { stopObserving(); stopConnection(); };
     runId = accepted(await Promise.race([client.request('prompt', { text: options.initialMessage }, { session }), outputFailure])).runId;
     if (signalCode) requestCancel(signalCode);
-    await Promise.race([waitForDaemonRun(client, session, runId), needsInteraction, outputFailure]);
+    await Promise.race([waitForDaemonRun(client, session, runId), outputFailure]);
     await cancel;
     observe();
     if (output) {
@@ -213,7 +214,6 @@ export function resolveHeadlessModel(options: Pick<RunLocalFelanHeadlessOptions,
 export class HeadlessJsonWriter {
   readonly #queue: string[] = [];
   readonly #waiters = new Set<{ resolve(): void; reject(error: Error): void }>();
-  #bytes = 0;
   #writing = false;
   #closed = false;
   #failure: Error | undefined;
@@ -222,19 +222,14 @@ export class HeadlessJsonWriter {
 
   enqueue(data: unknown): void {
     if (this.#closed) return;
-    const line = `${JSON.stringify(data)}\n`;
-    if (this.#bytes + Buffer.byteLength(line) > LIMITS.unsentBytes || this.#queue.length >= 4096) {
-      this.fail(new Error('Headless JSON output buffer exceeded; the consumer is too slow')); return;
-    }
-    this.#bytes += Buffer.byteLength(line);
-    this.#queue.push(line);
+    this.#queue.push(`${JSON.stringify(data)}\n`);
     this.pump();
   }
 
   fail(error: Error): void {
     if (this.#closed) return;
     this.#failure = error; this.#closed = true;
-    this.#queue.length = 0; this.#bytes = 0;
+    this.#queue.length = 0;
     for (const waiter of this.#waiters) waiter.reject(error);
     this.#waiters.clear();
     this.onError(error);
@@ -243,15 +238,12 @@ export class HeadlessJsonWriter {
   flush(): Promise<void> {
     if (this.#failure) return Promise.reject(this.#failure);
     if (!this.#queue.length) return Promise.resolve();
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => this.fail(new Error('Headless JSON output drain timed out')), 30_000);
-      this.#waiters.add({ resolve: () => { clearTimeout(timer); resolve(); }, reject: error => { clearTimeout(timer); reject(error); } });
-    });
+    return new Promise<void>((resolve, reject) => { this.#waiters.add({ resolve, reject }); });
   }
 
   close(): void {
     this.#closed = true;
-    this.#queue.length = 0; this.#bytes = 0;
+    this.#queue.length = 0;
     for (const waiter of this.#waiters) waiter.reject(new Error('Headless JSON output closed'));
     this.#waiters.clear();
   }
@@ -269,7 +261,7 @@ export class HeadlessJsonWriter {
         if (this.#closed) return;
         this.#writing = false;
         if (error) { this.fail(error); return; }
-        this.#queue.shift(); this.#bytes -= Buffer.byteLength(line);
+        this.#queue.shift();
         queueMicrotask(() => this.pump());
       });
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }

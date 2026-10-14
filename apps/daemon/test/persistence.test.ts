@@ -3,14 +3,14 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { mkdtemp, readFile, rm, writeFile, rename, symlink } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, unlink, writeFile, rename, symlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LIMITS, parseInteraction, validateInteractionAnswer } from '@felan-ai/session-protocol';
+import { LIMITS, parseInteraction } from '@felan-ai/session-protocol';
 import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/ownership.js';
 import { DaemonControlStore, type ControlStoreOptions } from '../src/daemon/control-store.js';
-import { CONTROL_LIMITS, CONTROL_REQUEST_BUDGET } from '../src/daemon/control-state.js';
 import type { PersistenceBoundary } from '../src/daemon/persistence.js';
 
 const supported = ['darwin', 'linux'].includes(process.platform);
@@ -59,26 +59,6 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
     const bytes = await readFile(join(store.directory, 'control.json'), 'utf8');
     expect(bytes).not.toContain('offline'); expect(bytes).not.toContain('secret-extra');
   });
-  it('keeps stale IDs rejected across expiry, eviction, clock rollback and reload', async () => {
-    let time = now; const { owner, store } = await open({ now: () => time }); const request = prompt();
-    store.admit(request, 'owner'); store.finishRequest(request.id, { v: 1, re: request.id, outcome: 'rejected', error: { code: 'busy', message: 'synthetic secret', retryable: true } });
-    store.updateSession('s', { residency: 'evicted' });
-    time += LIMITS.requestRetentionMs + 1; store.compact(); expect(store.snapshot().requests).toHaveLength(0);
-    time = now; expect(() => store.admit(request, 'owner')).toThrow(/retry lifetime/);
-    store.close(); const reloaded = reopen(owner); reloaded.recover(); expect(() => reloaded.admit(request, 'owner')).toThrow(/retry lifetime/);
-  });
-  it('reserves count and byte room for cancellation without evicting retryable mutations', async () => {
-    const { store } = await open({ capacity: { requests: 3, reserveRequests: 1, sessionRequests: 3 } });
-    store.admit(prompt(), 'owner'); store.admit(prompt(), 'owner');
-    expect(() => store.admit(prompt(), 'owner')).toThrow(/capacity/);
-    store.admit({ v: 1, id: requestId(), op: 'cancel', session: 's', params: {} }, 'owner');
-    expect(store.snapshot().requests).toHaveLength(3);
-    expect(() => store.admit({ v: 1, id: requestId(), op: 'cancel', session: 's', params: {} }, 'owner')).toThrow(/capacity/);
-    const tight = await open({ capacity: { bytes: 2_200_000 } });
-    tight.store.admit(prompt(), 'owner'); expect(() => tight.store.admit(prompt(), 'owner')).toThrow(/capacity/);
-    const cancel = requestId(); tight.store.admit({ v: 1, id: cancel, op: 'cancel', session: 's', params: {} }, 'owner');
-    tight.store.markDispatched(cancel); tight.store.finishRequest(cancel, { v: 1, re: cancel, outcome: 'accepted', result: {} });
-  });
   it('stores large legal attachment identities as a digest, not unbounded copies or launch secrets', async () => {
     const { store } = await open();
     const request = { ...prompt(), params: { text: '', attachments: [{ type: 'image', mimeType: 'image/png', data: Buffer.alloc(7 * 1024 * 1024).toString('base64') }] }, env: { SECRET: 'launch-value' } };
@@ -87,13 +67,14 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
     expect((await readFile(join(store.directory, 'control.json'))).length).toBeLessThan(4096);
     expect(JSON.stringify(store.snapshot())).not.toContain('launch-value');
   });
-  it('coalesces bounded tool/status projections, keeps revisions monotonic and enforces policy tightening', async () => {
+  it('coalesces bounded tool/status projections, keeps revisions monotonic and advances policy generations', async () => {
     const { owner, store } = await open();
     for (let i = 0; i < 10; i++) store.project('s', [{ type: 'status', id: 'status', text: String(i) }, { type: 'tool', tool: { id: 'tool', name: 'fake', message: 'm', state: 'running', output: String(i), truncated: false } }]);
     expect(store.session('s').projections).toHaveLength(2);
     const revision = store.session('s').revision;
     store.updateSession('s', { policy: { effective: 'acp-strict', generation: 1 } });
-    expect(() => store.updateSession('s', { policy: { effective: 'host-default', generation: 2 } })).toThrow(/tighten/);
+    expect(() => store.updateSession('s', { policy: { effective: 'host-default', generation: 1 } })).toThrow(/advance/);
+    store.updateSession('s', { policy: { effective: 'host-default', generation: 2 } });
     store.close(); const reloaded = reopen(owner);
     expect(() => reloaded.updateSession('s', { title: 'before recovery' })).toThrow(/Recover/);
     reloaded.recover(); expect(reloaded.session('s').revision).toBeGreaterThan(revision);
@@ -121,14 +102,16 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
       expect(reloaded.session('s').revision).toBeGreaterThanOrEqual(initial);
     });
   }
-  it('does not restore old revisions from torn, deleted, unknown-format or replaced files', async () => {
+  it('quarantines torn, deleted, unknown-format or replaced files and starts empty instead of restoring old revisions', async () => {
     for (const mode of ['torn', 'delete', 'version', 'symlink']) {
       const { owner, store } = await open(); store.close(); const path = join(store.directory, 'control.json');
       if (mode === 'torn') await writeFile(path, '{"torn":');
       if (mode === 'delete') await rm(path);
       if (mode === 'version') { const value = JSON.parse(await readFile(path, 'utf8')); value.version = 2; await writeFile(path, JSON.stringify(value)); }
       if (mode === 'symlink') { await rename(path, `${path}.old`); await symlink(`${path}.old`, path); }
-      expect(() => reopen(owner)).toThrow(/invalid|safely/);
+      const reopened = reopen(owner);
+      expect(reopened.snapshot().sessions).toEqual([]); expect(reopened.needsRecovery).toBe(false);
+      reopened.close();
     }
   });
   it('rechecks ownership before writes and after injected scheduling gaps', async () => {
@@ -231,12 +214,13 @@ describe.skipIf(!supported)('control retention and cancellation boundaries', () 
     store.putInteraction(pending('expires')); expect(() => store.cancelInteraction('expires', 'timeout')).toThrow(/not expired/);
     time += 100; expect(store.cancelInteraction('expires', 'timeout').value).toMatchObject({ state: 'expired', result: { reason: 'timeout' } });
   });
-  it('rejects a transcript symlink substitution inside an otherwise owned root', async () => {
+  it('drops a row whose transcript was substituted by a symlink without quarantining the state', async () => {
     const { owner, store } = await open();
     const other = join(owner.target.agentDir, 'other.jsonl'); await writeFile(other, 'other');
     await symlink(other, join(owner.target.agentDir, 's.jsonl'));
-    expect(() => store.updateSession('s', { title: 'must not change' })).toThrow(/canonical identity/);
-    store.close(); expect(() => reopen(owner)).toThrow(/invalid/);
+    store.close(); const reopened = reopen(owner);
+    expect(reopened.snapshot().sessions).toEqual([]);
+    expect((await readdir(reopened.directory)).filter(name => name.startsWith('control-corrupt-'))).toEqual([]);
   });
 });
 
@@ -257,20 +241,8 @@ describe.skipIf(!supported)('retained ambiguity', () => {
   });
 });
 
-describe.skipIf(!supported)('reserved interaction outcome space', () => {
-  it('reserves bytes before asking and can still persist the winning answer at capacity', async () => {
-    const { store } = await open({ capacity: { bytes: 1_230_000 } });
-    const waiting = (id: string) => ({ id, scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'input', title: 'Answer' }, state: 'waiting', createdAt: now });
-    store.putInteraction(waiting('a')); store.putInteraction(waiting('b'));
-    expect(() => store.putInteraction(waiting('c'))).toThrow(/capacity/);
-    const answer = { kind: 'input' as const, text: 'x'.repeat(60_000) }; const id = requestId();
-    store.admit({ v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'a', answer } }, 'winner');
-    expect(store.answerInteraction(id, answer).value).toMatchObject({ state: 'answered', result: answer });
-  });
-});
-
 describe.skipIf(!supported)('reviewed persistence boundaries', () => {
-  for (const deletion of ['directory', 'both-files'] as const) it(`refuses lost initialized state across owner reacquisition: ${deletion}`, async () => {
+  for (const deletion of ['directory', 'both-files'] as const) it(`rebuilds lost initialized state across owner reacquisition: ${deletion}`, async () => {
     const { owner, store, input } = await open(); const request = prompt();
     store.admit(request, 'owner'); store.markDispatched(request.id);
     store.finishRequest(request.id, { v: 1, re: request.id, outcome: 'accepted', result: { runId: 'done' } });
@@ -280,8 +252,8 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
     if (deletion === 'directory') await rm(store.directory, { recursive: true });
     else { await rm(join(store.directory, 'format.json')); await rm(join(store.directory, 'control.json')); }
     const nextOwner = await acquireDaemonOwnership(input); owners.push(nextOwner);
-    expect(() => reopen(nextOwner)).toThrow(/cannot be opened safely/);
-    expect(fs.existsSync(join(store.directory, 'control.json'))).toBe(false);
+    const rebuilt = reopen(nextOwner);
+    expect(rebuilt.snapshot().sessions).toEqual([]); expect(rebuilt.needsRecovery).toBe(false);
   });
   it('syncs new control directory entries in their parent and still creates genuinely new stores', async () => {
     const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
@@ -298,142 +270,27 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
     const other = new DaemonControlStore(owner, { directory: join(owner.target.agentDir, 'other-control') }); stores.push(other);
     expect(other.snapshot().requests).toEqual([]);
   });
-  it('reserves the per-interaction terminal limit before publishing a near-limit question', async () => {
-    const { store } = await open();
-    const waiting = { id: 'large', scope: { kind: 'session', session: 's', root: 's' },
-      request: { kind: 'form', form: { title: 'Large review', markdown: 'Q'.repeat(128000), description: 'D'.repeat(16000), fallback: 'Review all content',
-        input: { defaults: { first: 'D'.repeat(32700), second: 'D'.repeat(32700) }, fields: [{ id: 'first', kind: 'string', label: 'First', required: true, maxLength: 32768 }, { id: 'second', kind: 'string', label: 'Second', required: true, maxLength: 32768 }] },
-        actions: [{ id: 'submit', label: 'Submit', target: 'element', outcome: 'submit' }] } }, deferrable: true, state: 'waiting', createdAt: now };
-    const answer = { kind: 'form' as const, actionId: 'submit', outcome: 'submit' as const, values: { first: 'A'.repeat(16384), second: 'A'.repeat(16384) } };
-    validateInteractionAnswer(parseInteraction(waiting), answer);
-    const revision = store.session('s').revision;
-    expect(() => store.putInteraction(waiting)).toThrow(/leave room/);
-    expect(store.snapshot().interactions).toEqual([]); expect(store.session('s').revision).toBe(revision);
-  });
-  it('persists a large valid terminal interaction despite global capacity pressure', async () => {
-    const { owner, store } = await open({ capacity: { bytes: 1_400_000 } });
+  it('persists a large valid terminal interaction', async () => {
+    const { owner, store } = await open();
     const waiting = { id: 'large', scope: { kind: 'session', session: 's', root: 's' },
       request: { kind: 'form', form: { title: 'Large review', markdown: 'Q'.repeat(128000), fallback: 'Review all content',
         input: { defaults: { first: 'D'.repeat(22000), second: 'D'.repeat(22000) }, fields: [{ id: 'first', kind: 'string', label: 'First', required: true, maxLength: 32768 }, { id: 'second', kind: 'string', label: 'Second', required: true, maxLength: 32768 }] },
         actions: [{ id: 'submit', label: 'Submit', target: 'element', outcome: 'submit' }] } }, deferrable: true, state: 'waiting', createdAt: now };
     const answer = { kind: 'form' as const, actionId: 'submit', outcome: 'submit' as const, values: { first: 'A'.repeat(32000), second: 'A'.repeat(32000) } };
     store.putInteraction(waiting);
-    expect(() => store.putInteraction({ ...waiting, id: 'no-capacity' })).toThrow(/capacity/);
     const id = requestId(); store.admit({ v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'large', answer } }, 'winner');
     const result = store.answerInteraction(id, answer, 'continuation'); parseInteraction(result.value);
     expect(result.value.state).toBe('answered'); store.close();
     const reloaded = reopen(owner); reloaded.recover(); expect(reloaded.snapshot().interactions[0]?.state).toBe('answered');
   });
-  it('preserves validated policy/capacity metadata on publication and retry lookup after reload', async () => {
-    const { owner, store } = await open();
-    const blocker = { session: '\u0001'.repeat(128), runId: '\u0002'.repeat(128), toolCallId: '\u0003'.repeat(128), reason: 'admitted_dispatch' as const };
-    const requests = [prompt(), prompt()];
-    for (const [index, request] of requests.entries()) {
-      store.admit(request, 'owner');
-      const error = { code: index === 0 ? 'policy_pending' : 'request_capacity', message: 'DO_NOT_PERSIST_FREE_TEXT', retryable: true, retryAfterMs: 100, sessionId: 's', blockers: Array.from({ length: LIMITS.pageEntries }, () => blocker) };
-      const response = store.finishRequest(request.id, { v: 1, re: request.id, outcome: 'rejected', error }).value;
-      expect(response.outcome).toBe('rejected');
-      if (response.outcome === 'accepted') throw new Error('unexpected accepted response');
-      expect(response.error.message).not.toContain('DO_NOT_PERSIST'); expect(response.error.retryAfterMs).toBe(100); expect(response.error.sessionId).toBe('s');
-      expect(response.error.blockers?.length).toBe(LIMITS.pageEntries);
-      expect(response.error.blockers?.every(item => item.session === blocker.session && item.runId === blocker.runId && item.toolCallId === blocker.toolCallId && item.reason === blocker.reason)).toBe(true);
-      expect(Buffer.byteLength(JSON.stringify(response))).toBeGreaterThan(16 * 1024);
-    }
+  it('retains rejected outcome diagnostics for retry lookup after reload', async () => {
+    const { owner, store } = await open(); const request = prompt();
+    store.admit(request, 'owner');
+    const response = store.finishRequest(request.id, { v: 1, re: request.id, outcome: 'rejected', error: { code: 'busy', message: 'Session is busy.', retryable: true } }).value;
+    expect(response).toMatchObject({ outcome: 'rejected', error: { code: 'busy', message: 'Session is busy.' } });
     store.close(); const reloaded = reopen(owner); reloaded.recover();
-    for (const request of requests) {
-      const response = reloaded.admit(request, 'owner').value.response;
-      expect(response?.outcome).toBe('rejected'); if (!response || response.outcome === 'accepted') throw new Error('missing rejected response');
-      expect(response.error.retryAfterMs).toBe(100); expect(response.error.sessionId).toBe('s'); expect(response.error.blockers?.length).toBe(LIMITS.pageEntries);
-    }
+    expect(reloaded.admit(request, 'owner').value.response).toEqual(response);
   });
-});
-
-describe.skipIf(!supported)('complete default emergency admission budget', () => {
-  async function fillOrdinaryBudget() {
-    const { store, owner } = await open();
-    store.putInteraction({ id: 'boundary-question', scope: { kind: 'session', session: 's', root: 's' }, request: { kind: 'input', title: 'Continue?' }, deferrable: true, state: 'waiting', createdAt: now });
-    const prompts: string[] = [];
-    for (let i = 0; i < 14; i++) {
-      const session = i === 0 ? 's' : `s${i}`;
-      if (i !== 0) store.createSession({ id: session, root: session, cwd: '/fixture', piPath: join(owner.target.agentDir, `${session}.jsonl`), state: 'open', residency: 'warm', run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 }, title: '' });
-      const request = { ...prompt(), session }; prompts.push(request.id);
-      store.admit(request, 'owner'); store.markDispatched(request.id);
-      store.updateSession(session, { run: { state: i === 0 ? 'waiting' : 'running', id: `run${i}` } });
-    }
-    const used = () => {
-      const state = store.snapshot();
-      return Buffer.byteLength(JSON.stringify(state))
-        + state.requests.filter(item => item.phase !== 'terminal').length * CONTROL_REQUEST_BUDGET.outcome
-        + state.interactions.filter(item => item.state === 'waiting' || item.state === 'deferred').length * (LIMITS.answerBytes + 1024)
-        + CONTROL_REQUEST_BUDGET.bookkeeping;
-    };
-    const normalLimit = CONTROL_LIMITS.bytes - CONTROL_LIMITS.reserveBytes;
-    let index = 0;
-    while (normalLimit - used() > 16_384) {
-      const length = Math.min(16_384, normalLimit - used() - 2048);
-      store.project('s', [{ type: 'status', id: `fill${index++}`, text: 'x'.repeat(length) }]);
-    }
-    store.project('s', [{ type: 'status', id: 'padding', text: '' }]);
-    const room = normalLimit - used(); expect(room).toBeGreaterThan(100);
-    const revision = store.session('s').revision;
-    const revisionGrowth = String(revision + 1).length - String(revision).length;
-    store.project('s', [{ type: 'status', id: 'padding', text: 'x'.repeat(room - 100 - revisionGrowth) }]);
-    expect(used()).toBe(normalLimit - 100);
-    expect(store.snapshot().sessions).toHaveLength(14);
-    expect(store.snapshot().requests.filter(item => item.phase === 'dispatch_intent')).toHaveLength(14);
-    return { store, owner, prompts };
-  }
-  for (const operations of [['cancel'], ['answer'], ['cancel', 'answer']] as const) {
-    it(`preserves complete ${operations.join(' then ')} admission and terminal commits at the default boundary`, async () => {
-      const { store, owner, prompts } = await fillOrdinaryBudget();
-      const completed: { id: string; request: ReturnType<typeof prompt> | object }[] = [];
-      for (const operation of operations) {
-        const id = requestId();
-        if (operation === 'cancel') {
-          const request = { v: 1, id, op: 'cancel', session: 's', params: { runId: 'run0' } };
-          store.admit(request, 'owner'); store.markDispatched(id);
-          store.finishRequest(id, { v: 1, re: id, outcome: 'accepted', result: {} }); completed.push({ id, request });
-        } else {
-          const answer = { kind: 'input' as const, text: 'yes' };
-          const request = { v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'boundary-question', answer } };
-          store.admit(request, 'owner'); store.answerInteraction(id, answer, 'boundary-continuation'); completed.push({ id, request });
-          expect(store.snapshot().interactions[0]?.state).toBe('answered');
-          expect(store.snapshot().continuations[0]?.phase).toBe('ready');
-        }
-      }
-      expect(prompts.every(id => store.snapshot().requests.some(item => item.id === id && item.phase === 'dispatch_intent'))).toBe(true);
-      for (const { id } of completed) expect(store.snapshot().requests.find(item => item.id === id)?.response?.outcome).toBe('accepted');
-      store.close(); const next = reopen(owner); next.recover();
-      for (const { request } of completed) expect(next.admit(request, 'owner').value.response?.outcome).toBe('accepted');
-      expect(prompts.every(id => next.snapshot().requests.some(item => item.id === id))).toBe(true);
-    }, 30_000);
-  }
-  it('does not permit configuration to remove the full emergency admission reserve', async () => {
-    const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
-    expect(() => new DaemonControlStore(owner, { capacity: { reserveBytes: CONTROL_REQUEST_BUDGET.outcome } })).toThrow(/complete request/);
-  });
-  it('fits multi-session safety transitions without spending pending outcome reservations', async () => {
-    const { store, owner, prompts } = await fillOrdinaryBudget();
-    const id = requestId(); store.admit({ v: 1, id, op: 'cancel', session: 's', params: {} }, 'owner'); store.markDispatched(id);
-    const requests = store.snapshot().requests;
-    expect(() => store.updateSession('s', { title: 'ordinary write' })).toThrow(/reserved/);
-    store.cancelInteraction('boundary-question', 'abort');
-    for (const [index, session] of store.snapshot().sessions.entries()) {
-      store.transitionSessionForSafety(session.id, 'cancelling');
-      expect(() => store.transitionSessionForSafety(session.id, 'closed')).toThrow(/Settle/);
-      store.transitionSessionForSafety(session.id, 'idle');
-      store.transitionSessionForSafety(session.id, index % 2 ? 'closed' : 'evicted');
-    }
-    expect(store.snapshot().requests).toEqual(requests);
-    const blocker = { session: '\u0001'.repeat(128), runId: '\u0002'.repeat(128), toolCallId: '\u0003'.repeat(128), reason: 'admitted_dispatch' as const };
-    for (const request of [...prompts, id]) {
-      store.finishRequest(request, { v: 1, re: request, outcome: 'rejected', error: { code: 'busy', message: 'stopped', retryable: true, blockers: Array.from({ length: LIMITS.pageEntries }, () => blocker) } });
-    }
-    const retained = store.snapshot().requests;
-    expect(retained.every(request => request.phase === 'terminal' && request.response?.outcome === 'rejected')).toBe(true);
-    store.close(); const next = reopen(owner); next.recover();
-    expect(next.snapshot().requests).toEqual(retained);
-  }, 30_000);
 });
 
 describe.skipIf(!supported)('fixed safety session transitions', () => {
@@ -457,7 +314,7 @@ describe.skipIf(!supported)('fixed safety session transitions', () => {
     expect(() => store.transitionSessionForSafety('s', 'cancelling')).toThrow(/existing active/);
     store.transitionSessionForSafety('s', 'closed');
     expect(() => store.transitionSessionForSafety('s', 'cancelling')).toThrow(/existing active/);
-    expect(() => store.updateSession('s', { state: 'open' })).toThrow(/cannot be reopened/);
+    expect(store.updateSession('s', { state: 'open' }).value.state).toBe('open');
   });
 
   it('preserves full records and makes repeated transitions revision-idempotent', async () => {
@@ -502,4 +359,41 @@ describe.skipIf(!supported)('fixed safety session transitions', () => {
       expect(next.snapshot().requests[0]?.response?.outcome).toBe('indeterminate');
     });
   }
+});
+
+describe.skipIf(!supported)('control file recovery', () => {
+  const corrupt = async (directory: string) => (await readdir(directory)).filter(name => name.startsWith('control-corrupt-'));
+
+  it('starts empty without quarantine when the control file is missing', async () => {
+    const { owner, store } = await open(); const directory = store.directory; store.close();
+    await unlink(join(directory, 'control.json'));
+    expect(reopen(owner).snapshot().sessions).toEqual([]);
+    expect(await corrupt(directory)).toEqual([]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)('fails retryably without quarantine when the control file cannot be read', async () => {
+    const { owner, store } = await open(); const directory = store.directory; const path = join(directory, 'control.json'); store.close();
+    const before = await readFile(path, 'utf8'); await chmod(path, 0o000);
+    try { expect(() => reopen(owner)).toThrow(expect.objectContaining({ code: 'storage_failure', message: expect.stringContaining('EACCES') })); }
+    finally { await chmod(path, 0o600); }
+    expect(await readFile(path, 'utf8')).toBe(before);
+    expect(await corrupt(directory)).toEqual([]);
+  });
+
+  it('keeps a row whose session directory is outside the current roots and owns that directory again', async () => {
+    const { owner, store, input } = await open(); const directory = store.directory; const path = join(directory, 'control.json'); store.close();
+    const custom = join(await realpath(input.directory), 'custom-sessions'); await mkdir(custom);
+    const piPath = join(custom, 's.jsonl');
+    const envelope = JSON.parse(await readFile(path, 'utf8')) as { data: { sessions: { piPath: string }[] }; digest: string };
+    envelope.data.sessions[0]!.piPath = piPath;
+    envelope.digest = createHash('sha256').update(JSON.stringify(envelope.data)).digest('hex');
+    await writeFile(path, JSON.stringify(envelope), { mode: 0o600 });
+    expect(() => owner.assertOwnsPath(piPath)).toThrow(/outside/);
+    const reopened = reopen(owner);
+    expect(reopened.snapshot().sessions.map(session => session.piPath)).toEqual([piPath]);
+    await reopened.ownPersistedRoots();
+    expect(owner.assertOwnsPath(piPath)).toBe(piPath);
+    expect(reopened.snapshot().sessions.map(session => session.piPath)).toEqual([piPath]);
+    expect(await corrupt(directory)).toEqual([]);
+  });
 });

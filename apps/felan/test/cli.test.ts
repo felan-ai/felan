@@ -243,8 +243,18 @@ describe('felan CLI', () => {
     expect(launches).toEqual([{
       continueRecent: true,
       verbose: true,
+      restartArgs: ['--verbose'],
       initialMessage: 'inspect this project',
     }]);
+  });
+
+  it('repeats launch options for /restart without session selection or the initial prompt', async () => {
+    const launches: RunDaemonFelanOptions[] = [];
+    const exitCode = await runCli(['-e', 'local-extension', '--session', 'chosen', '--daemon-runtime', '/isolated', '--verbose', '--', 'hello'], {
+      launch: async (options) => { launches.push(options); },
+    });
+    expect(exitCode).toBe(0);
+    expect(launches[0]?.restartArgs).toEqual(['-e', resolve('local-extension'), '--daemon-runtime', '/isolated', '--verbose']);
   });
 
   it('passes explicit creation configuration without turning the prompt into restart arguments', async () => {

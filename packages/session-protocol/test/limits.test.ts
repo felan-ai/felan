@@ -10,7 +10,7 @@ describe('bounded UTF-8 JSON framing', () => {
     const frames = [];
     for (const byte of bytes) frames.push(...decoder.push(new Uint8Array([byte])));
     expect(frames).toEqual([first]);
-    expect(parseClientEnvelope(frames[0], { now })).toEqual(first);
+    expect(parseClientEnvelope(frames[0])).toEqual(first);
     const multi = new Uint8Array([...encodeFrame({ n: 1 }), ...encodeFrame({ n: 2 })]);
     expect(decoder.push(multi)).toEqual([{ n: 1 }, { n: 2 }]);
     decoder.finish();
@@ -26,14 +26,9 @@ describe('bounded UTF-8 JSON framing', () => {
       expect(() => new JsonLineDecoder().push(new TextEncoder().encode(raw))).toThrow();
     }
   });
-  it('bounds encoded frames including LF before growing the receive buffer', () => {
-    const prefix = '{"x":"';
-    const suffix = '"}\n';
-    const exact = prefix + 'a'.repeat(LIMITS.frameBytes - prefix.length - suffix.length) + suffix;
-    expect(new JsonLineDecoder().push(new TextEncoder().encode(exact))).toHaveLength(1);
-    const decoder = new JsonLineDecoder();
-    expect(() => decoder.push(new Uint8Array(LIMITS.frameBytes).fill(65))).toThrow(/limit/);
-    expect(() => encodeFrame({ x: 'a'.repeat(LIMITS.frameBytes) })).toThrow(/limit/);
+  it('decodes frames larger than the initial receive buffer', () => {
+    const value = { x: 'a'.repeat(20 * 1024 * 1024) };
+    expect(new JsonLineDecoder().push(encodeFrame(value))).toEqual([value]);
   });
   it('rejects excessive depth, non-JSON runtime objects, cycles and prototype keys', () => {
     const nest = (depth: number) => { let value: unknown = null; for (let i = 0; i < depth; i++) value = { a: value }; return value; };

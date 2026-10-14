@@ -588,7 +588,7 @@ async function run(options, scenarios) {
   });
   const monitor = processMonitor(root, home, env);
   const newCli = [process.execPath, path.join(repo, 'apps/felan/dist/cli.js')];
-  const daemon = async (action, force = false, timeoutMs = 45000) => command(newCli[0], [...newCli.slice(1), 'daemon', action, ...(action === 'stop' ? ['--yes', ...(force ? ['--force'] : [])] : []), '--daemon-runtime', path.join(root, 'new')], { env: env('new'), timeoutMs, onSpawn: pid => monitor.register(pid, 'new') });
+  const daemon = async (action, force = false, timeoutMs = 45000) => command(newCli[0], [...newCli.slice(1), 'daemon', action, ...(action === 'stop' && force ? ['--force'] : []), '--daemon-runtime', path.join(root, 'new')], { env: env('new'), timeoutMs, onSpawn: pid => monitor.register(pid, 'new') });
   const tmux = (...args) => command('tmux', ['-S', path.join(root, 'tmux.sock'), '-f', '/dev/null', ...args], { env: env('old') });
   const pane = side => `${side}:0.0`;
   const capture = async side => tmux('capture-pane', '-p', '-e', '-t', pane(side));

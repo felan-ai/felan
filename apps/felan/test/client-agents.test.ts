@@ -11,9 +11,9 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const settings = () => ({ hideThinking: false, showImages: false, imageWidthCells: 60, outputPad: 1, toolMode: 'grouped' as const });
 
-async function fixture(capacity?: { requests: number; reserveRequests: number }) {
+async function fixture() {
   const release = gate(); const entered = gate(); let blocked = false;
-  const f = await serverFixture({ now: Date.now, ...(capacity ? { capacity } : {}), onStream: async () => { if (blocked) { entered.resolve(); await release.promise; } } });
+  const f = await serverFixture({ now: Date.now, onStream: async () => { if (blocked) { entered.resolve(); await release.promise; } } });
 
   let server: SessionServer | undefined; const clients: SessionClient[] = []; const views: ClientAgentHost[] = [];
   let releaseAgentView = () => {};
@@ -123,17 +123,6 @@ it('invalidates a paged catalog after a record change and admits attached headle
   const view = new ClientAgentHost(client, f.root.sessionId, settings); f.views.push(view); await view.refresh();
   f.setRows(current.map(row => ({ ...row, description: 'new value' })));
   await vi.waitFor(() => expect(view.getLocalSubagent('child-one')?.description).toBe('new value'));
-});
-
-it('admits cancellation through the reserved request slot when ordinary admissions are full', async () => {
-  const f = await fixture({ requests: 3, reserveRequests: 1 }); const client = await f.client();
-  for (let index = 0; index < 2; index++) f.store.admit({ v: 1, id: newRequestId(), op: 'prompt', session: f.root.sessionId, params: { text: `held-${index}` } }, 'fixture');
-  expect(await client.request('executions.steer', { executionId: 'child-one', message: 'no room' }, { session: f.root.sessionId }))
-    .toMatchObject({ outcome: 'rejected', error: { code: 'request_capacity' } });
-  expect(f.host.steer).not.toHaveBeenCalled();
-  expect(await client.request('executions.cancel', { executionId: 'child-one' }, { session: f.root.sessionId }))
-    .toMatchObject({ outcome: 'accepted', result: { state: 'cancelled' } });
-  expect(f.host.cancel).toHaveBeenCalledOnce();
 });
 
 it('joins a late child attachment during disposal without stopping the child runtime', async () => {

@@ -55,6 +55,7 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
       if (child === '..' || child.startsWith('../') || isAbsolute(child)) throw new Error('Outside private server fixture');
       return path;
     },
+    async ownRoot(input: string) { owner.assertOwnsPath(input); },
     watchPath: () => () => {}, onLost: () => () => {},
   } as unknown as DaemonOwnership;
   let registry: SessionRegistry | undefined;

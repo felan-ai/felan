@@ -1,5 +1,5 @@
 import { defineServiceContract, type AgentRuntime, type AgentSessionRuntimeDiagnostic, type CreateAgentCoreSessionOptions, type ExtensionConfigDefinition, type ExtensionConfigOverride, type ExtensionConfigValue, type Logger, type ModelRuntime, type SessionEntry, type SessionRef } from '@felan-ai/agent-core';
-import type { Interaction, JsonValue, Message } from '@felan-ai/session-protocol';
+import type { Interaction, Message } from '@felan-ai/session-protocol';
 import type { HostServices, HostServicesRequest } from './host-services.js';
 import type { ProviderSecretStorage } from './provider.js';
 import type { ProcessAdapter } from './process-adapter.js';
@@ -25,7 +25,6 @@ export interface SessionEnvironmentRequest {
 }
 
 export interface SessionCompositionRequest {
-  readonly configuration?: JsonValue;
   readonly environment: SessionEnvironment;
   readonly session: SessionRef;
   readonly modelRuntime: ModelRuntime;
@@ -50,8 +49,6 @@ export interface SessionToolPolicy {
 }
 
 export interface SessionComposition {
-  /** Resolved, credential-free configuration to reuse on ordinary restore. */
-  readonly configuration: JsonValue;
   readonly options: SessionCompositionOptions;
   readonly toolPolicy?: SessionToolPolicy;
   readonly extensionConfigs: ReadonlyMap<string, Readonly<Record<string, ExtensionConfigValue>>>;

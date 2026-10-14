@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -33,7 +33,6 @@ describe('daemon locked configuration', () => {
     expect(await f.read()).toMatchObject({ terminal: { showImages: true }, images: { retained: true, autoResize: false, blockImages: true } });
     const reopened = new DaemonConfiguration({ agentDir: f.agentDir, definitions: [definition], assertCurrent: f.assertCurrent });
     expect((await reopened.get('global')).values).toMatchObject({ imageAutoResize: false, blockImages: true });
-    expect(() => reopened.sessionOverrides({ blockImages: false })).toThrow('global');
   });
   it('prepares session-only field merges without writing global settings', async () => {
     const f = await fixture(); const before = await readFile(f.path);
@@ -43,7 +42,6 @@ describe('daemon locked configuration', () => {
     expect((await f.config.sessionValues(second)).values).toMatchObject({ extensionConfig: { codex: { fast: true, priority: 'fast' } } });
     expect((await f.config.get('global')).values).toMatchObject({ extensionConfig: { codex: { fast: false, priority: 'normal' } } });
     expect(await readFile(f.path)).toEqual(before);
-    expect(() => f.config.sessionOverrides({ defaultModel: 'offline/model' })).toThrow('global');
   });
   it('merges unrelated concurrent fields and preserves unknown settings and extension fields', async () => {
     const f = await fixture({ untouched: { future: true }, extensionConfig: { codex: { future: 'preserved' }, other: { enabled: true } } });
@@ -89,9 +87,6 @@ describe('daemon locked configuration', () => {
     expect((await f.config.get('global')).values).toMatchObject({ classifierModel: 'offline/classifier', builtinExtensions: { memory: true, contextView: false } });
     await f.config.set('global', { classifierModel: 'auto' });
     expect((await f.config.get('global')).values.classifierModel).toBe('auto');
-    for (const values of [{ classifierModel: 'auto' }, { builtinExtensions: { memory: false } }]) {
-      expect(() => f.config.sessionOverrides(values)).toThrow('global');
-    }
   });
 
   it('rejects invalid classifier and builtin values before writing any fields', async () => {
@@ -110,13 +105,10 @@ describe('daemon locked configuration', () => {
     expect(await readFile(f.path, 'utf8')).toBe(content);
   });
 
-  it('rejects malformed UTF-8 and excessive file bytes before a merge', async () => {
-    const f = await fixture();
-    for (const content of [Buffer.from([123, 34, 120, 34, 58, 34, 255, 34, 125]), Buffer.alloc(1024 * 1024 + 1, 32)]) {
-      await writeFile(f.path, content);
-      await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow();
-      expect(await readFile(f.path)).toEqual(content);
-    }
+  it('merges settings files larger than 1 MiB', async () => {
+    const f = await fixture({ padding: 'x'.repeat(1024 * 1024) });
+    await f.config.set('global', { extensionConfig: { codex: { fast: true } } });
+    expect(await f.read()).toMatchObject({ padding: 'x'.repeat(1024 * 1024), extensionConfig: { codex: { fast: true } } });
   });
 
   it('rejects malformed extension containers without replacing their content', async () => {
@@ -162,15 +154,15 @@ describe('daemon locked configuration', () => {
     expect(await readFile(f.path)).toEqual(original);
   });
 
-  it('refuses symlink/hardlink targets and noncanonical agent aliases', async () => {
-    const f = await fixture(); const outside = join(f.directory, 'untouched.json'); await writeFile(outside, '{"keep":true}');
-    await rm(f.path); await symlink(outside, f.path);
-    await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow();
-    expect(await readFile(outside, 'utf8')).toBe('{"keep":true}');
-    await rm(f.path); await link(outside, f.path);
-    await expect(f.config.set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow('Unsafe daemon settings file');
+  it('writes through a symlinked settings file and accepts agent directory aliases', async () => {
+    const f = await fixture(); const dotfile = join(f.directory, 'dotfile.json'); await writeFile(dotfile, '{"keep":true}');
+    await rm(f.path); await symlink(dotfile, f.path);
+    await f.config.set('global', { extensionConfig: { codex: { fast: true } } });
+    expect(await readlink(f.path)).toBe(dotfile);
+    expect(JSON.parse(await readFile(dotfile, 'utf8'))).toEqual({ keep: true, extensionConfig: { codex: { fast: true } } });
     const alias = join(f.directory, 'alias'); await symlink(f.agentDir, alias);
-    await expect(new DaemonConfiguration({ agentDir: alias, definitions: [definition], assertCurrent() {} }).set('global', { extensionConfig: { codex: { fast: true } } })).rejects.toThrow('canonical');
+    await new DaemonConfiguration({ agentDir: alias, definitions: [definition], assertCurrent() {} }).set('global', { extensionConfig: { codex: { priority: 'fast' } } });
+    expect(JSON.parse(await readFile(dotfile, 'utf8'))).toEqual({ keep: true, extensionConfig: { codex: { fast: true, priority: 'fast' } } });
   });
 
   it('surfaces file I/O errors and permits a subsequent validated update', async () => {
@@ -210,6 +202,5 @@ describe('daemon locked configuration', () => {
     await f.config.set('global', { codemode: 'only' });
     expect((await f.read()).codemode).toEqual({ mode: 'only', inlineBudget: 42 });
     expect((await f.config.get('global')).values.codemode).toBe('only');
-    expect(() => f.config.sessionOverrides({ codemode: 'off' })).toThrow('global');
   });
 });

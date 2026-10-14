@@ -24,8 +24,15 @@ export class TuiDialogs implements TuiDialogHost {
   private readonly active = new Set<() => void>();
   private closed = false;
   private readonly theme: () => Theme;
-  constructor(private readonly tui: TUI, theme?: () => Theme, private readonly inline?: (component: Component) => () => void) {
+  constructor(private readonly tui: TUI, theme?: () => Theme, private readonly inline?: (component: Component) => () => void,
+    private readonly inlineHeight?: () => number) {
     const initial = theme ? undefined : defaultClientTheme(); this.theme = theme ?? (() => initial!);
+  }
+
+  /** Terminal rows a custom component can use without being clipped where it would currently be shown. */
+  viewportHeight(): number {
+    if (this.inline && this.inlineHeight && !this.tui.hasOverlay()) return this.inlineHeight();
+    return Math.floor(this.tui.terminal.rows * 0.85);
   }
 
   select(title: string, choices: readonly SelectItem[], options: DialogOptions = {}): Promise<string | undefined> {

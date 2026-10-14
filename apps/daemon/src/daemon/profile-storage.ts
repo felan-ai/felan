@@ -6,7 +6,6 @@ import { TrustedToolCatalog } from './execution-policy.js';
 import type { SessionLifecycleOptions } from './session-lifecycle.js';
 import type { SessionOpenRequest, SessionBinding, SessionTargetIdentity } from './session-lifecycle-contracts.js';
 
-const MAX_IMPORTED_SESSION_BYTES = 64 * 1024 * 1024;
 const MAX_SESSION_HEADER_BYTES = 64 * 1024;
 
 export interface ResolvedProfileTarget {
@@ -17,10 +16,7 @@ export interface ResolvedProfileTarget {
 export async function resolveTarget(request: SessionOpenRequest): Promise<ResolvedProfileTarget> {
   const { target, resources } = request;
   if (target.kind === 'new') return { identity: { kind: target.kind, destinationDirectory: resources.sessionDir } };
-  const file = await ownedSessionFile('sourceSessionFile' in target ? target.sourceSessionFile : target.sessionFile, resources.sessionDir);
-  if (target.kind === 'import' && (await stat(file)).size > MAX_IMPORTED_SESSION_BYTES) {
-    throw new Error('Imported session exceeds the 64 MiB limit');
-  }
+  const file = await sessionFile('sourceSessionFile' in target ? target.sourceSessionFile : target.sessionFile, resources.sessionDir);
   const handle = await open(file, 'r');
   let header: unknown;
   try {
@@ -39,9 +35,6 @@ export async function resolveTarget(request: SessionOpenRequest): Promise<Resolv
   if (typeof id !== 'string' || id.length === 0 || Buffer.byteLength(id) > 128 || typeof cwd !== 'string') throw new Error('Invalid session header');
   assertAbsolutePath(cwd);
   const sourceCwd = await canonicalPath(cwd);
-  if ((target.kind === 'resume' || target.kind === 'fork') && sourceCwd !== resources.cwd) {
-    throw new Error('Session cwd does not match the persisted session');
-  }
   if (target.kind === 'fork' && target.position !== 'at' && target.position !== 'before') throw new Error('Invalid fork position');
   return { identity: { kind: target.kind, destinationDirectory: resources.sessionDir, sourceSessionFile: file, sourceSessionId: id }, sourceCwd };
 }
@@ -56,8 +49,8 @@ export function assertTargetUnchanged(before: ResolvedProfileTarget, after: Reso
   }
 }
 
-export async function assertSessionManagerMatches(manager: SessionManager, cwd: string, sessionId?: string): Promise<void> {
-  if (await canonicalPath(manager.getCwd()) !== cwd || (sessionId !== undefined && manager.getSessionId() !== sessionId)) {
+export function assertSessionManagerMatches(manager: SessionManager, sessionId?: string): void {
+  if (sessionId !== undefined && manager.getSessionId() !== sessionId) {
     throw new Error('Loaded session does not match its validated identity');
   }
 }
@@ -73,8 +66,9 @@ export async function openSessionManager(request: SessionOpenRequest, resolved: 
   if (target.kind === 'new') return SessionManager.create(resources.cwd, resources.sessionDir, target.id ? { id: target.id } : undefined);
   const file = resolved.identity.sourceSessionFile!;
   if (target.kind === 'resume' || target.kind === 'fork') {
-    const manager = SessionManager.open(file, resources.sessionDir);
-    await assertSessionManagerMatches(manager, resolved.sourceCwd!, resolved.identity.sourceSessionId);
+    // The resolved cwd is canonical; a header written under a symlinked project path names the same directory.
+    const manager = SessionManager.open(file, resources.sessionDir, resources.cwd);
+    assertSessionManagerMatches(manager, resolved.identity.sourceSessionId);
     if (target.kind === 'resume') return manager;
     const entry = manager.getEntry(target.entryId);
     if (!entry || (target.position === 'before' && (entry.type !== 'message' || entry.message.role !== 'user'))) throw new Error('Invalid entry ID for forking');
@@ -119,14 +113,13 @@ export async function createWorkerBinding(request: SessionOpenRequest, manager: 
   };
 }
 
-async function ownedSessionFile(file: string, root: string): Promise<string> {
+// A transcript linked from elsewhere (for example a symlinked dotfile store) keeps its listed path.
+async function sessionFile(file: string, root: string): Promise<string> {
   assertAbsolutePath(file);
   const canonical = await realpath(file);
+  if (!(await stat(canonical)).isFile()) throw new Error('Session file is not a regular file');
   const path = relative(root, canonical);
-  if (path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path) || !(await stat(canonical)).isFile()) {
-    throw new Error('Session file is outside the owned session directory');
-  }
-  return canonical;
+  return path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path) ? file : canonical;
 }
 
 export function assertAbsolutePath(path: string): void {

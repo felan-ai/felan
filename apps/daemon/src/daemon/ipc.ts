@@ -81,9 +81,9 @@ export async function connectLocalIpc(target: ResolvedDaemonTarget): Promise<Soc
   catch (error) { socket.destroy(); throw error; }
 }
 
-export function readinessResponse(owner: DaemonOwnership, version: string, re: string, state: 'ready' | 'blocked' = 'ready'): ControlResponse {
+export function readinessResponse(owner: DaemonOwnership, version: string, re: string): ControlResponse {
   owner.assertCurrent();
-  return { control: CONTROL_VERSION, re, identity: owner.identity, daemonVersion: version, supportedProtocol: PROTOCOL_VERSION, state, outcome: 'accepted' };
+  return { control: CONTROL_VERSION, re, identity: owner.identity, daemonVersion: version, supportedProtocol: PROTOCOL_VERSION, state: 'ready', outcome: 'accepted' };
 }
 
 export function serveReadiness(owner: DaemonOwnership, version: string, socket: Socket): void {
@@ -126,14 +126,14 @@ export async function readControlFrame(socket: Socket, timeoutMs: number): Promi
   });
 }
 
-export async function probeDaemon(target: ResolvedDaemonTarget, expected: DaemonIdentity, timeoutMs = 2_000, allowBlocked = false): Promise<ControlResponse> {
+export async function probeDaemon(target: ResolvedDaemonTarget, expected: DaemonIdentity, timeoutMs = 2_000): Promise<ControlResponse> {
   const socket = await connectLocalIpc(target);
   try {
     const id = randomUUID(); const response = readControlFrame(socket, timeoutMs);
     socket.write(encodeFrame({ control: CONTROL_VERSION, id, op: 'host.status', params: { expected } }));
     const ready = await response;
     assertTargetIdentity(target, expected, ready.identity);
-    if (ready.re !== id || ready.outcome !== 'accepted' || ready.state !== 'ready' && !(allowBlocked && ready.state === 'blocked') || ready.supportedProtocol !== PROTOCOL_VERSION) throw new DaemonSecurityError('invalid_readiness', 'Daemon is not ready for this protocol.');
+    if (ready.re !== id || ready.outcome !== 'accepted' || ready.state !== 'ready' || ready.supportedProtocol !== PROTOCOL_VERSION) throw new DaemonSecurityError('invalid_readiness', 'Daemon is not ready for this protocol.');
     return ready;
   } finally { socket.destroy(); }
 }

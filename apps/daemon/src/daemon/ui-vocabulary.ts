@@ -5,7 +5,7 @@ import type {
   UiInteractiveElement, UiPresentOptions, UiRequestOptions, UiRequestResult,
 } from '@felan-ai/agent-core';
 import {
-  IdSchema, LIMITS, PresentationSchema, ProtocolValidationError, UiActionRequestSchema,
+  IdSchema, PresentationSchema, ProtocolValidationError, UiActionRequestSchema,
   parseSchema, parseUiForm, parseUiPresentation, validateUiAction, validateUiFormAnswer,
   type Presentation, type UiActionRequest, type UiForm, type UiPresentation, type UiStatus,
 } from '@felan-ai/session-protocol';
@@ -93,12 +93,6 @@ export function createUiVocabulary(callbacks: UiVocabularyCallbacks): UiVocabula
   function checkElement(element: Element): void {
     check(element.binding);
     if (element.signal.aborted || elements.get(element.wireId) !== element) stale();
-  }
-
-  function capacity(binding: Binding): void {
-    if (binding.elements.size + binding.statuses.size + binding.notices.size >= LIMITS.pageEntries) {
-      throw new Error('UI binding presentation capacity reached.');
-    }
   }
 
   function write(binding: Binding, operation: () => Promise<void>): Promise<void> {
@@ -191,7 +185,6 @@ export function createUiVocabulary(callbacks: UiVocabularyCallbacks): UiVocabula
     const source = parseElement(input);
     if (source.actions.length && typeof options.onAction !== 'function') invalid('Interactive UI requires an action handler.');
     if (binding.elements.has(source.id)) invalid('UI element is already presented.');
-    capacity(binding);
     const controller = new AbortController();
     const lifetime = AbortSignal.any([binding.controller.signal, ...(options.signal ? [options.signal] : [])]);
     const signal = AbortSignal.any([lifetime, controller.signal]);
@@ -253,7 +246,6 @@ export function createUiVocabulary(callbacks: UiVocabularyCallbacks): UiVocabula
         });
         if (parsed.kind !== 'notification') invalid('Invalid UI notification.');
         return write(binding, async () => {
-          capacity(binding);
           binding.notices.add(parsed.id);
           await publish(parsed);
         });
@@ -264,7 +256,6 @@ export function createUiVocabulary(callbacks: UiVocabularyCallbacks): UiVocabula
         return write(binding, async () => {
           let wireId = binding.statuses.get(status.id);
           if (!wireId) {
-            capacity(binding);
             wireId = `${binding.id}:status:${randomUUID()}`;
             binding.statuses.set(status.id, wireId);
           }

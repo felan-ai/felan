@@ -46,7 +46,7 @@ export class HostSetupManager {
     if (signal?.aborted) return { status: 'cancelled', message: 'Dependency installation was cancelled.' };
     if (!this.dependency(id)) return { status: 'unavailable', message: 'Dependency installation is unavailable.' };
     const client = `runtime-dependency-${randomUUID()}`;
-    const view = this.start({ kind: 'dependencies', confirmed: true, choices: [{ id, action: 'install' }] }, client);
+    const view = this.start({ kind: 'dependencies', choices: [{ id, action: 'install' }] }, client);
     const job = this.jobs.get(view.id)!;
     const abort = () => this.abort(job);
     signal?.addEventListener('abort', abort, { once: true });
@@ -152,6 +152,7 @@ export class HostSetupManager {
 
   disconnected(client: string): void { for (const job of this.jobs.values()) if (job.client === client) this.abort(job); }
   beginDrain(): void { this.closed = true; for (const job of this.jobs.values()) this.abort(job); }
+  endDrain(): void { this.closed = false; }
   async drain(): Promise<void> { this.beginDrain(); await Promise.all([...this.jobs.values()].map(job => job.work)); if (this.failure) throw this.failure; }
 
   private check(): void { this.options.assertCurrent(); if (this.closed || this.failure) throw commandError('unavailable'); }

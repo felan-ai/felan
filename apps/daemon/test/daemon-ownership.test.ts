@@ -82,6 +82,21 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     expect(() => owner.assertOwnsPath(join(store, 'escape', 'file'))).toThrow(/outside/);
   });
 
+  it('owns session directories on first use, keeps them addressable after restart and ignores store permissions', async () => {
+    const input = await target(); const sessions = join(input.directory, 'custom-sessions');
+    const owner = await acquire(input); await chmod(owner.target.agentDir, 0o775);
+    expect(() => owner.assertOwnsPath(join(sessions, 'a.jsonl'))).toThrow(/outside/);
+    await Promise.all([owner.ownRoot(sessions), owner.ownRoot(sessions)]);
+    const canonical = join(await realpath(sessions), 'a.jsonl');
+    expect(owner.assertOwnsPath(join(sessions, 'a.jsonl'))).toBe(canonical);
+    const outside = await target();
+    await expect(owner.ownRoot(outside.directory)).rejects.toMatchObject({ code: 'root_not_owned' });
+    owner.assertCurrent(); await owner.release(); owners.splice(owners.indexOf(owner), 1);
+    const restarted = await acquire(input);
+    expect(restarted.assertOwnsPath(join(sessions, 'a.jsonl'))).toBe(canonical);
+    await restarted.ownRoot(sessions); restarted.assertCurrent();
+  });
+
   it('fences replaced store directories and supports idempotent concurrent release', async () => {
     const input = await target(); const owner = await acquire(input);
     await rename(owner.target.agentDir, `${owner.target.agentDir}.old`); await mkdir(owner.target.agentDir, { mode: 0o700 });
@@ -115,9 +130,9 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     await unlink(lock); await rename(`${lock}.original`, lock);
   });
 
-  it('cannot convert an unregistered nonempty store into an isolated target', async () => {
+  it('uses an existing nonempty directory as an isolated target without touching its files', async () => {
     const input = await target(); await writeFile(join(input.directory, 'existing-store'), 'leave alone');
-    await expect(acquireDaemonOwnership(input)).rejects.toMatchObject({ code: 'invalid_target' });
+    const owner = await acquire(input); await owner.release();
     expect(await readFile(join(input.directory, 'existing-store'), 'utf8')).toBe('leave alone');
   });
 

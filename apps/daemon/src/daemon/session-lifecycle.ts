@@ -9,11 +9,10 @@ import { interruptProviderScope, type LoadedProviders } from './provider-loader.
 import type { SessionExtensionBindings, SessionExtensionContext } from './session-execution.js';
 import type { ProviderSecretStorage, ProviderWorkerLauncher } from './provider.js';
 import type { SessionComposition, SessionRuntime } from './session-runtime.js';
-import { SESSION_LIFECYCLE_API_VERSION, type SessionLifecycle, type SessionOpenRequest, type SessionResources, type SessionBinding, type SessionExecutionPolicy } from './session-lifecycle-contracts.js';
-import { assertSessionConfigurationEnvironment, parseSessionConfiguration } from './session-configuration.js';
+import { SESSION_LIFECYCLE_API_VERSION, type SessionLifecycle, type SessionResources, type SessionBinding } from './session-lifecycle-contracts.js';
+import { diagnosticMessage } from './admission.js';
 
 export interface SessionLifecycleOptions {
-  readonly configurationIdentity: string;
   readonly configuration: () => HostConfiguration;
   readonly composition: SessionRuntime;
   readonly agentDir: string;
@@ -32,8 +31,6 @@ export interface SessionLifecycleOptions {
 }
 
 export function createSessionLifecycle(options: SessionLifecycleOptions): SessionLifecycle {
-  const configurationIdentity = options.configurationIdentity;
-  if (typeof configurationIdentity !== 'string' || !configurationIdentity || configurationIdentity.length > 128) throw new Error('A bounded composition identity is required.');
   const environments = new WeakSet<SessionResources>();
   const modelRuntimes = new WeakSet<ModelRuntime>();
   const retained = new Set<() => Promise<void>>();
@@ -61,8 +58,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
     },
     async openSession(request) {
       if (disposed || !environments.has(request.resources)) throw new Error('Unknown session environment.');
-      if (request.configuration) assertSessionConfigurationEnvironment(request.configuration, configurationIdentity, request.resources);
-      const originalPolicy = inheritExecutionPolicy(request.policy);
+      inheritExecutionPolicy(request.policy);
       if (request.extensionPaths?.length && (!request.interactiveExtensions || request.parentSessionId !== undefined)) {
         throw new Error('External extensions require a trusted interactive root session');
       }
@@ -74,7 +70,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
       await request.ownership.assertOwned(request.resources, target.identity);
       const owned = await resolveTarget(request); assertTargetUnchanged(target, owned);
       const manager = await openSessionManager(request, owned);
-      await assertSessionManagerMatches(manager, request.resources.cwd,
+      assertSessionManagerMatches(manager,
         target.identity.kind === 'resume' ? owned.identity.sourceSessionId : request.target.kind === 'new' ? request.target.id : undefined);
       if (request.target.kind === 'resume' && request.target.cursor) restoreSessionCursor(manager, request.target.cursor);
       if (request.worker) return createWorkerBinding(request, manager, options);
@@ -119,10 +115,9 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
       retained.add(cleanup);
       const factory = createAgentCoreSessionRuntimeFactory(async ({ cwd, sessionManager }) => {
         if (sessionManager !== manager || await canonicalPath(cwd) !== request.resources.cwd) throw new Error('Session replacement requires registry admission.');
-        await assertSessionManagerMatches(manager, request.resources.cwd, id);
+        assertSessionManagerMatches(manager, id);
         await request.ownership.assertOwned(request.resources, target.identity);
         composition = await options.composition.prepare({ environment: request.resources, session: identity, modelRuntime: models,
-          ...(request.configuration ? { configuration: request.configuration.configuration } : {}),
           ...(options.homeDir ? { homeDir: options.homeDir } : {}),
           ...(options.createLogger ? { logger: options.createLogger(createRuntimeStorageRequest(cwd, options.agentDir, root).agentStorageRoot) } : {}),
           extensionPackages: options.extensionPackages, extensionConfigOverrides: request.extensionConfigOverrides ?? [], extensionPaths,
@@ -162,7 +157,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
           await prepared.settingsManager.reload();
         };
         const context: SessionExtensionContext = { updateExtensionConfig, runtime, modelRuntime: models, settingsManager: prepared.settingsManager, sessionManager: manager,
-          resources: request.resources, rootSessionId: root, policy: effectivePolicy(request, originalPolicy), extensionPackages: prepared.extensionPackages,
+          resources: request.resources, rootSessionId: root, policy: inheritExecutionPolicy(request.services.getExecutionPolicy()), extensionPackages: prepared.extensionPackages,
           source: request.source ?? 'headless', extensionConfigs: composition.extensionConfigs, extensionConfigOverrides: prepared.extensionConfigOverrides ?? [],
           scopedModels: prepared.scopedModels ?? [], skillPaths: prepared.skillPaths ?? [], classifier: runtime.classifier, dynamicThinking: prepared.dynamicThinking ?? false,
           services: options.serviceRegistry, importExtension: prepared.importExtension };
@@ -196,7 +191,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         const runtime = await createAgentSessionRuntime(async creation => {
           const result = await factory(creation); agent = result.session;
           const diagnostics = [...result.diagnostics, { type: 'info' as const, message: `Agent Core version: ${AGENT_CORE_VERSION}` }, ...(composition?.diagnostics ?? []),
-            ...result.services.settingsManager.drainErrors().map(({ scope, error }) => ({ type: 'warning' as const, message: `${scope} settings: ${error.message}` }))];
+            ...result.services.settingsManager.drainErrors().map(({ scope, error }) => ({ type: 'warning' as const, message: `${scope} settings: ${diagnosticMessage(error)}` }))];
           return { ...result, diagnostics };
         }, { cwd: request.resources.cwd, agentDir: request.resources.agentDir, sessionManager: manager });
         disposeSession = runtime.dispose.bind(runtime); runtime.dispose = cleanup;
@@ -210,8 +205,6 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         if (!options.deferActivation) await activate();
         const tools = TrustedToolCatalog.fromSession(runtime.session, composition!.toolPolicy);
         return { runtime, agentRuntime: agentRuntime!, sessionId: id, rootSessionId: root,
-          configuration: parseSessionConfiguration({ version: 1, composition: configurationIdentity,
-            environment: request.resources, configuration: composition!.configuration }),
           ...(options.composition.projectMessage ? { projectMessage: options.composition.projectMessage } : {}),
           ...(request.parentSessionId ? { parentSessionId: request.parentSessionId } : {}), resources: request.resources, diagnostics: runtime.diagnostics,
           tools, toolProvenance: tools.provenance, ...(options.deferActivation ? { activate } : {}) } satisfies SessionBinding;
@@ -225,11 +218,4 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
       for (const cleanup of [...retained].reverse()) await cleanup();
     },
   };
-}
-
-function effectivePolicy(request: SessionOpenRequest, original: SessionExecutionPolicy): SessionExecutionPolicy {
-  const policy = inheritExecutionPolicy(request.services.getExecutionPolicy());
-  if (policy.generation < original.generation || original.mode === 'acp-strict' && policy.mode !== 'acp-strict'
-    || original.pendingTightening && !policy.pendingTightening && policy.mode !== 'acp-strict') throw new Error('Session execution policy cannot be weakened');
-  return policy;
 }

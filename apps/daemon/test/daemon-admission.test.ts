@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, type ClientEnvelope, type Response } from '@felan-ai/session-protocol';
-import { OrderedAdmission, type AdmittedCommand } from '../src/daemon/admission.js';
-import { CONTROL_LIMITS, CONTROL_REQUEST_BUDGET, ControlStoreError } from '../src/daemon/control-state.js';
+import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand } from '../src/daemon/admission.js';
+import { ControlStoreError } from '../src/daemon/control-state.js';
 import { DaemonControlStore, type ControlStoreOptions } from '../src/daemon/control-store.js';
 import type { DaemonOwnership } from '../src/daemon/ownership.js';
 
@@ -44,6 +44,7 @@ async function fixture(options: ControlStoreOptions = {}) {
       if (child === '..' || child.startsWith('../') || isAbsolute(child)) throw new Error('Path outside private fixture');
       return path;
     },
+    async ownRoot(input: string) { owner.assertOwnsPath(input); },
     watchPath() { return () => {}; },
   } as unknown as DaemonOwnership;
   const open = () => { const store = new DaemonControlStore(owner, { now: () => now, ...options }); stores.push(store); return store; };
@@ -179,14 +180,14 @@ describe('ordered durable admission', () => {
     expect(f.store.session('s').revision).toBe(1);
   });
 
-  it('sanitizes thrown failures and distinguishes undispatched from ambiguous effects', async () => {
+  it('reports undispatched failure messages and hides ambiguous effect diagnostics', async () => {
     const f = await fixture(); const admission = new OrderedAdmission(f.store);
-    const before = await admission.submit(prompt(), 'owner', () => { throw new ControlStoreError('request_conflict', 'sensitive diagnostic'); });
-    expect(before).toMatchObject({ outcome: 'rejected', error: { code: 'request_conflict', retryable: false } });
+    const before = await admission.submit(prompt(), 'owner', () => { throw new ControlStoreError('request_conflict', 'Readable\nfailure'); });
+    expect(before).toMatchObject({ outcome: 'rejected', error: { code: 'request_conflict', message: 'Readable failure', retryable: false } });
     const request = prompt();
     const after = await admission.submit(request, 'owner', command => command.dispatch(() => { throw new Error('sensitive diagnostic'); }));
     expect(after).toMatchObject({ outcome: 'indeterminate', error: { code: 'indeterminate', retryable: false } });
-    expect(JSON.stringify([before, after, f.disk()])).not.toContain('sensitive diagnostic');
+    expect(JSON.stringify([after, f.disk()])).not.toContain('sensitive diagnostic');
   });
 
   it('records a failed asynchronous outcome without blocking subsequent admission', async () => {
@@ -234,33 +235,6 @@ describe('ordered durable admission', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('enforces freshness for new IDs but still looks up retained duplicate outcomes', async () => {
-    let time = now; const f = await fixture({ now: () => time }); const admission = new OrderedAdmission(f.store);
-    const request = prompt(); await admission.submit(request, 'owner');
-    const expected = f.store.snapshot().requests[0]!.response;
-    time += LIMITS.requestRetentionMs + 1;
-    expect(await admission.submit(request, 'owner')).toEqual(expected);
-    await expect(admission.submit(prompt('old', 's', requestId(now)), 'owner')).rejects.toMatchObject({ code: 'stale_request' });
-    await expect(admission.submit(prompt('future', 's', requestId(time + LIMITS.requestFutureSkewMs + 1)), 'owner')).rejects.toMatchObject({ code: 'invalid_request' });
-    f.store.compact(); time = now;
-    await expect(admission.submit(request, 'owner')).rejects.toMatchObject({ code: 'stale_request' });
-  });
-
-  it('rechecks freshness after queued and asynchronous preparation', async () => {
-    let time = now;
-    const f = await fixture({ now: () => time }); const admission = new OrderedAdmission(f.store, { now: () => time });
-    const gate = deferred<void>(); const entered = deferred<void>(); const effect = vi.fn(); const queued = vi.fn();
-    const first = admission.submit(prompt(), 'owner', async command => {
-      entered.resolve(); await gate.promise;
-      return command.dispatch(() => { effect(); return { response: accepted(command.request.id) }; });
-    });
-    const second = admission.submit(prompt(), 'owner', queued);
-    await entered.promise; time += LIMITS.requestRetentionMs + 1; gate.resolve();
-    expect(await first).toMatchObject({ outcome: 'rejected', error: { code: 'stale_request' } });
-    expect(await second).toMatchObject({ outcome: 'rejected', error: { code: 'stale_request' } });
-    expect(effect).not.toHaveBeenCalled(); expect(queued).not.toHaveBeenCalled();
-  });
-
   it('bounds pending requests while allowing duplicates and reserved cancellation capacity', async () => {
     const f = await fixture(); const admission = new OrderedAdmission(f.store, { maxPending: 3 });
     const requests = [prompt('first'), prompt('second')]; const outcomes = requests.map(() => deferred<Response>());
@@ -275,7 +249,7 @@ describe('ordered durable admission', () => {
   });
 
   it('bounds pending encoded bytes and frees capacity after completion', async () => {
-    const f = await fixture(); const admission = new OrderedAdmission(f.store, { maxBytes: LIMITS.answerBytes + 4096 + 512 });
+    const f = await fixture(); const admission = new OrderedAdmission(f.store, { maxBytes: SAFETY_BYTES + 512 });
     const request = prompt('x'.repeat(200)); const outcome = deferred<Response>();
     const run = admission.submit(request, 'owner', command => command.dispatch(() => ({ response: outcome.promise })));
     await expect(admission.submit(prompt('x'.repeat(200)), 'owner')).rejects.toMatchObject({ code: 'request_capacity' });
@@ -286,24 +260,14 @@ describe('ordered durable admission', () => {
     expect(await admission.submit(prompt('x'.repeat(200)), 'owner')).toMatchObject({ outcome: 'rejected' });
   });
 
-  it('preserves store outcome reserves and rejects capacity before effects', async () => {
-    const f = await fixture({ capacity: { bytes: 2_200_000 } }); const admission = new OrderedAdmission(f.store);
-    const request = prompt(); const outcome = deferred<Response>(); const effect = vi.fn();
-    const run = admission.submit(request, 'owner', command => command.dispatch(() => ({ response: outcome.promise })));
-    await expect(admission.submit(prompt('full'), 'owner', command => command.dispatch(() => { effect(); return { response: accepted(command.request.id) }; })))
-      .rejects.toMatchObject({ code: 'request_capacity' });
-    expect(effect).not.toHaveBeenCalled();
-    outcome.resolve(accepted(request.id)); await run;
-  });
-
   it('validates requests, principals and limits without admitting invalid data', async () => {
     const f = await fixture(); const admission = new OrderedAdmission(f.store); const handler = vi.fn();
-    for (const request of [{ v: 1, id: 'read', op: 'host.status', params: {} }, { ...prompt(), op: 'unknown' }, prompt('x'.repeat(LIMITS.promptTextBytes + 1))]) {
+    for (const request of [{ v: 1, id: 'read', op: 'host.status', params: {} }, { ...prompt(), op: 'unknown' }]) {
       await expect(admission.submit(request, 'owner', handler)).rejects.toMatchObject({ code: 'invalid_request' });
     }
     await expect(admission.submit(prompt(), '', handler)).rejects.toMatchObject({ code: 'invalid_request' });
     expect(f.store.snapshot().requests).toEqual([]); expect(handler).not.toHaveBeenCalled();
-    for (const options of [{ maxPending: 1 }, { maxPending: 65 }, { maxPending: 2.5 }, { maxBytes: LIMITS.answerBytes }, { maxBytes: LIMITS.unsentBytes + 1 }]) {
+    for (const options of [{ maxPending: 1 }, { maxPending: 65 }, { maxPending: 2.5 }, { maxBytes: SAFETY_BYTES }, { maxBytes: LIMITS.unsentBytes + 1 }]) {
       expect(() => new OrderedAdmission(f.store, options)).toThrow('safety capacity');
     }
   });
@@ -365,76 +329,39 @@ describe('ordered durable admission', () => {
 
 describe('adoption and deletion admission boundaries', () => {
 
-  it('atomically clears obsolete projections on deletion while retaining the tombstone and expiring normal request history', () => {
-    let clock = now; const fPromise = fixture({ now: () => clock });
-    return fPromise.then(f => {
-      f.store.project('s', [{ type: 'status', id: 'history', text: 'retained audit' }]);
-      f.store.transitionSessionForSafety('s', 'closed');
-      const revision = f.store.session('s').revision;
-      const request: ClientEnvelope = { v: 1, id: requestId(), op: 'session.delete', session: 's', params: { confirmed: true, expectedRevision: revision } };
-      f.store.admit(request, 'owner');
-      const commit = f.store.markSessionDeleted(request.id, revision);
-      expect(commit.value).toMatchObject({ deletedAt: now, state: 'closed', residency: 'evicted', revision: revision + 1 });
-      expect(commit.revisions).toEqual({ s: revision + 1 });
-      expect(commit.value.projections).toEqual([]);
-      expect(f.disk().requests.find((row: { id: string }) => row.id === request.id)).toMatchObject({ phase: 'dispatch_intent' });
-      expect(f.disk().sessions.find((row: { id: string }) => row.id === 's')).toMatchObject({ deletedAt: now });
-      f.store.finishRequest(request.id, empty(request.id));
-      expect(() => f.store.updateSession('s', { state: 'open' })).toThrowError(/deleted/);
-      expect(() => f.store.transitionSessionForSafety('s', 'idle')).toThrowError(/deleted/);
-      expect(() => f.store.project('s', [])).toThrowError(/deleted/);
-      clock += LIMITS.requestRetentionMs + 1; f.store.compact();
-      expect(f.store.session('s').projections).toEqual([]);
-      expect(f.store.snapshot().requests.some(row => row.id === request.id)).toBe(false);
-      expect(() => f.store.admit(request, 'owner')).toThrowError(expect.objectContaining({ code: 'stale_request', message: 'Request ID is outside the retry lifetime' }));
-      const fresh = prompt('capacity remains usable', 'other', requestId(clock));
-      expect(f.store.admit(fresh, 'owner').value.phase).toBe('intent');
-      f.store.close(); const reopened = f.open(); reopened.recover();
-      expect(reopened.session('s').deletedAt).toBe(now);
-    });
-  });
-
-  it('checks the admitted revision and pending writers before committing a tombstone', async () => {
-    const f = await fixture(); const pending = prompt(); f.store.admit(pending, 'owner');
-    f.store.transitionSessionForSafety('s', 'closed');
+  it('atomically clears projections on deletion, keeps the tombstone for retries and prunes it with request history', async () => {
+    let clock = now; const f = await fixture({ now: () => clock });
+    f.store.project('s', [{ type: 'status', id: 'history', text: 'retained audit' }]);
     const revision = f.store.session('s').revision;
-    const request: ClientEnvelope = { v: 1, id: requestId(), op: 'session.delete', session: 's', params: { confirmed: true, expectedRevision: revision } };
+    const request: ClientEnvelope = { v: 1, id: requestId(), op: 'session.delete', session: 's', params: {} };
     f.store.admit(request, 'owner');
-    expect(() => f.store.markSessionDeleted(request.id, revision)).toThrowError(/settled/);
-    expect(f.store.session('s').deletedAt).toBeUndefined();
-    f.store.finishRequest(pending.id, { v: 1, re: pending.id, outcome: 'rejected', error: { code: 'unavailable', message: '', retryable: false } });
-    f.store.updateSession('s', { title: 'revision changed' });
-    expect(() => f.store.markSessionDeleted(request.id, revision)).toThrowError(/revision changed/);
-    expect(f.store.snapshot().requests.find(row => row.id === request.id)?.phase).toBe('intent');
+    const commit = f.store.markSessionDeleted(request.id);
+    expect(commit.value).toMatchObject({ deletedAt: now, state: 'closed', residency: 'evicted', revision: revision + 1 });
+    expect(commit.revisions).toEqual({ s: revision + 1 });
+    expect(commit.value.projections).toEqual([]);
+    expect(f.disk().requests.find((row: { id: string }) => row.id === request.id)).toMatchObject({ phase: 'dispatch_intent' });
+    expect(f.disk().sessions.find((row: { id: string }) => row.id === 's')).toMatchObject({ deletedAt: now });
+    f.store.finishRequest(request.id, empty(request.id));
+    expect(() => f.store.updateSession('s', { state: 'open' })).toThrowError(/deleted/);
+    expect(() => f.store.transitionSessionForSafety('s', 'idle')).toThrowError(/deleted/);
+    expect(() => f.store.project('s', [])).toThrowError(/deleted/);
+    f.store.close(); const reopened = f.open(); reopened.recover();
+    expect(reopened.session('s').deletedAt).toBe(now);
+    clock += LIMITS.requestRetentionMs + 1; reopened.compact();
+    expect(reopened.snapshot().requests.some(row => row.id === request.id)).toBe(false);
+    expect(reopened.snapshot().sessions.some(row => row.id === 's')).toBe(false);
+    const fresh = prompt('capacity remains usable', 'other', requestId(clock));
+    expect(reopened.admit(fresh, 'owner').value.phase).toBe('intent');
   });
+});
 
-  it('rejects deletion at measured ordinary capacity without spending other outcome or interaction reserves', async () => {
-    const capacity = 4_000_000; const f = await fixture({ capacity: { bytes: capacity } });
-    f.store.project('other', [{ type: 'status', id: 'reserve-fill', text: '' }]);
-    const other = prompt('pending', 'other'); f.store.admit(other, 'owner');
-    f.store.putInteraction({ id: 'question', scope: { kind: 'session', session: 'other', root: 'other' },
-      request: { kind: 'confirm', title: 'Synthetic', message: 'Test' }, createdAt: now, state: 'waiting' });
-    f.store.transitionSessionForSafety('s', 'closed'); const revision = f.store.session('s').revision;
-    const request: ClientEnvelope = { v: 1, id: requestId(), op: 'session.delete', session: 's', params: { confirmed: true, expectedRevision: revision } };
-    f.store.admit(request, 'owner');
-    const remaining = () => {
-      const state = f.store.snapshot();
-      const reserved = state.requests.filter(row => row.phase !== 'terminal').length * CONTROL_REQUEST_BUDGET.outcome
-        + state.interactions.filter(row => ['waiting', 'deferred'].includes(row.state)).length * (LIMITS.answerBytes + 1024);
-      const document = JSON.parse(readFileSync(join(f.store.directory, 'control.json'), 'utf8')).data;
-      return capacity - CONTROL_LIMITS.reserveBytes - Buffer.byteLength(JSON.stringify(document)) - reserved - CONTROL_REQUEST_BUDGET.bookkeeping;
-    };
-    for (let index = 0; remaining() > 16384; index++) {
-      f.store.project('other', [{ type: 'status', id: `fill-${index}`, text: 'x'.repeat(Math.min(16000, remaining() - 512)) }]);
-    }
-    f.store.project('other', [{ type: 'status', id: 'reserve-fill', text: 'x'.repeat(Math.max(0, remaining() - 8)) }]);
-    expect(remaining()).toBeLessThanOrEqual(8); expect(remaining()).toBeGreaterThanOrEqual(0);
-    const before = f.store.snapshot(); const unlink = vi.fn();
-    expect(() => { f.store.markSessionDeleted(request.id, revision); unlink(); }).toThrowError(/capacity/);
-    expect(unlink).not.toHaveBeenCalled(); expect(f.store.snapshot()).toEqual(before);
-    f.store.finishRequest(request.id, { v: 1, re: request.id, outcome: 'rejected', error: { code: 'request_capacity', message: '', retryable: false } });
-    f.store.finishRequest(other.id, { v: 1, re: other.id, outcome: 'rejected', error: { code: 'unavailable', message: '', retryable: false } });
-    expect(f.store.cancelInteraction('question', 'abort').value.state).toBe('cancelled');
-    expect(f.store.session('s').deletedAt).toBeUndefined();
+describe('diagnostic messages', () => {
+  it('passes real failure text through while masking credentials and quoted JSON content', () => {
+    expect(diagnosticMessage(new Error('Session file not found: /tmp/a.jsonl'))).toBe('Session file not found: /tmp/a.jsonl');
+    const leaked = diagnosticMessage(new Error('401 from provider: Authorization: Bearer abc.def apiKey="sk-live-1234567890abcdef" {"refresh_token": "r-secret-value"} ghp_abcdefghijklmnop'));
+    for (const secret of ['abc.def', 'sk-live-1234567890abcdef', 'r-secret-value', 'ghp_abcdefghijklmnop']) expect(leaked).not.toContain(secret);
+    expect(leaked).toContain('401 from provider');
+    let parseError: unknown; try { JSON.parse('{"openai": {"key": "sk-quoted-secret-value"'); } catch (error) { parseError = error; }
+    expect(diagnosticMessage(parseError)).toBe('A file or response contains invalid JSON.');
   });
 });

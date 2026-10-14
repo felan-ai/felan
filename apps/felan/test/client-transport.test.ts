@@ -40,11 +40,9 @@ describe('bounded local frame transport', () => {
     const { wire, frame, closed } = fixture(); wire.emit('data', bytes); wire.emit('end');
     expect(frame).not.toHaveBeenCalled(); expect(closed).toHaveBeenCalledExactlyOnceWith('invalid_frame'); expect(wire.destroyed).toBe(true);
   });
-  it('rejects oversized incomplete frames before unbounded buffering and partial EOF', () => {
-    const first = fixture(); first.wire.emit('data', Buffer.alloc(LIMITS.frameBytes, 0x20));
-    expect(first.closed).toHaveBeenCalledExactlyOnceWith('invalid_frame');
-    const second = fixture(); second.wire.emit('data', Buffer.from('{')); second.wire.emit('end');
-    expect(second.closed).toHaveBeenCalledExactlyOnceWith('invalid_frame');
+  it('rejects a partial frame at EOF', () => {
+    const { wire, closed } = fixture(); wire.emit('data', Buffer.from('{')); wire.emit('end');
+    expect(closed).toHaveBeenCalledExactlyOnceWith('invalid_frame');
   });
   it('bounds outbound backpressure without interpreting disconnect as cancellation', () => {
     const { wire, transport, closed } = fixture(); wire.writableLength = LIMITS.unsentBytes;

@@ -12,6 +12,6 @@ export const ExecutionSchema = Type.Object({
   usage: Type.Optional(Type.Object({ input: CounterSchema, output: CounterSchema, cacheRead: CounterSchema, cacheWrite: CounterSchema,
     cacheWrite1h: CounterSchema, cost: Type.Number({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) }, { additionalProperties: false })),
 }, { additionalProperties: false });
-export const ExecutionsPageSchema = Type.Object({ items: Type.Array(ExecutionSchema, { maxItems: LIMITS.pageEntries }),
-  nextCursor: Type.Optional(CursorSchema) }, { additionalProperties: false, 'x-maxEncodedBytes': LIMITS.pageBytes });
+export const ExecutionsPageSchema = Type.Object({ items: Type.Array(ExecutionSchema),
+  nextCursor: Type.Optional(CursorSchema) }, { additionalProperties: false });
 export type Execution = Static<typeof ExecutionSchema>;

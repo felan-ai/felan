@@ -15,8 +15,8 @@ export function createRootPreparation(options: {
     options.assertCurrent(); caller.signal.throwIfAborted();
     const cwd = await realpath(request.cwd);
     if (!(await stat(cwd)).isDirectory()) throw new Error('Session cwd must be a directory.');
-    if (!caller.localConsole || !request.interactiveExtensions) {
-      if (request.extensions?.length) throw new Error('External extensions require a local-console interactive root session.');
+    if (!request.interactiveExtensions) {
+      if (request.extensions?.length) throw new Error('External extensions require an interactive root session.');
       return { cwd, extensionPaths: [] };
     }
     const settings = parsePiExtensionSettings((await readDaemonGlobalSettings(options.agentDir, options.assertCurrent)).piExtensions);

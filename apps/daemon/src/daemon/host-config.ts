@@ -1,13 +1,12 @@
 import { createHash } from 'node:crypto';
 import { isUtf8 } from 'node:buffer';
 import { constants } from 'node:fs';
-import { lstat, open, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, parse } from 'node:path';
+import { lstat, open } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import { Type, type Static } from 'typebox';
 import { JsonValueSchema, assertJson, parseSchema, text } from '@felan-ai/session-protocol';
 import { DaemonSecurityError } from './native-ownership.js';
 
-const MAX_HOST_CONFIG_BYTES = 64 * 1024;
 const ServiceSchema = Type.Object({
   id: Type.String({ minLength: 1, maxLength: 128, pattern: '^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$' }),
   major: Type.Integer({ minimum: 1, maximum: 65_535 }),
@@ -15,19 +14,18 @@ const ServiceSchema = Type.Object({
   options: Type.Optional(JsonValueSchema),
 }, { additionalProperties: false });
 const ExtensionSchema = Type.Object({
-  package: text(256, 1), grants: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 128, uniqueItems: true })),
+  package: text(256, 1), grants: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { uniqueItems: true })),
 }, { additionalProperties: false });
 const PolicySchema = Type.Object({
   projectTrust: Type.Optional(Type.Union([Type.Literal('allow'), Type.Literal('ask'), Type.Literal('deny')])),
   dependencyInstalls: Type.Optional(Type.Union([Type.Literal('allow'), Type.Literal('ask'), Type.Literal('deny')])),
-  requireLocalConsole: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 export const HostConfigSchema = Type.Object({
   version: Type.Literal(1),
-  services: Type.Array(ServiceSchema, { maxItems: 128 }),
-  extensions: Type.Array(ExtensionSchema, { maxItems: 256 }),
+  services: Type.Array(ServiceSchema),
+  extensions: Type.Array(ExtensionSchema),
   policy: Type.Optional(PolicySchema),
-}, { additionalProperties: false, 'x-maxEncodedBytes': MAX_HOST_CONFIG_BYTES });
+}, { additionalProperties: false });
 export type HostConfig = Static<typeof HostConfigSchema>;
 
 export interface HostConfigSource {
@@ -142,16 +140,18 @@ export async function loadHostConfig(options: {
       throw new DaemonSecurityError('invalid_host_config', `Extension ${extension.package} has an invalid service grant.`);
     }
   }
-  assertJson(config, MAX_HOST_CONFIG_BYTES);
+  assertJson(config);
   rejectCredentialValues(config);
   const normalized = Buffer.from(JSON.stringify(config));
   return Object.freeze({ config, source, digest: createHash('sha256').update(normalized).digest('hex') });
 }
 
+const CREDENTIAL_KEY = /^(?:password|passphrase|secret|client.?secret|(?:access|refresh|auth|bearer|api).?token|token|api.?key|private.?key|credentials?)$/iu;
+
 function rejectCredentialValues(value: unknown): void {
   if (value === null || typeof value !== 'object') return;
   for (const [key, child] of Object.entries(value)) {
-    if (/(?:password|secret|token|api.?key|credential|private.?key)/iu.test(key)) {
+    if (CREDENTIAL_KEY.test(key)) {
       throw new DaemonSecurityError('invalid_host_config', 'host.json cannot contain credential values; configure a host-owned secret service.');
     }
     rejectCredentialValues(child);
@@ -168,36 +168,15 @@ export function validPackageSpecifier(specifier: string): boolean {
 
 function isExportSegment(value: string): boolean { return /^[A-Za-z0-9._~-]+$/u.test(value); }
 
+/** host.json selects executable providers, so only its owner may be able to change it. */
 async function readTrustedConfigFile(source: HostConfigSource): Promise<Buffer> {
-  if (process.platform === 'win32' || typeof process.getuid !== 'function') {
-    throw new DaemonSecurityError('unsupported_platform', 'Host configuration ownership cannot be verified on this platform.');
-  }
-  const uid = process.getuid();
-  const canonical = await realpath(source.path).catch(() => { throw new DaemonSecurityError('unsafe_host_config', 'host.json path is unavailable.'); });
-  if (canonical !== source.path) throw new DaemonSecurityError('unsafe_host_config', 'host.json must not traverse symlinked paths.');
-  for (let path = dirname(source.path);; path = dirname(path)) {
-    const parent = await lstat(path);
-    if (!parent.isDirectory() || parent.uid !== uid && parent.uid !== 0 || (parent.mode & 0o022) !== 0) {
-      throw new DaemonSecurityError('unsafe_host_config', 'host.json parent directories must be trusted, non-symlinked and not group/world writable.');
-    }
-    if (path === parse(path).root) break;
-  }
-  const initial = await lstat(source.path);
-  if (!initial.isFile() || initial.nlink !== 1 || initial.size > MAX_HOST_CONFIG_BYTES
-    || (initial.uid !== uid && !(source.kind === 'packaged-default' && initial.uid === 0))
-    || (initial.mode & 0o022) !== 0) {
-    throw new DaemonSecurityError('unsafe_host_config', 'host.json must be a bounded, owner-controlled regular file, not a link.');
-  }
-  const handle = await open(source.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  let bytes: Buffer;
+  const handle = await open(source.path, constants.O_RDONLY).catch(() => { throw new DaemonSecurityError('unsafe_host_config', 'host.json path is unavailable.'); });
   try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.dev !== initial.dev || opened.ino !== initial.ino || opened.uid !== initial.uid
-      || opened.mode !== initial.mode || (opened.mode & 0o022) !== 0 || opened.size > MAX_HOST_CONFIG_BYTES || opened.nlink !== 1) {
-      throw new DaemonSecurityError('unsafe_host_config', 'host.json changed while being opened.');
-    }
-    const bytes = await handle.readFile();
-    if (bytes.length > MAX_HOST_CONFIG_BYTES) throw new DaemonSecurityError('invalid_host_config', 'host.json exceeds 64 KiB.');
-    if (!isUtf8(bytes)) throw new DaemonSecurityError('invalid_host_config', 'host.json must be valid UTF-8.');
-    return bytes;
+    const stat = await handle.stat();
+    if (!stat.isFile() || (stat.mode & 0o022) !== 0) throw new DaemonSecurityError('unsafe_host_config', 'host.json must be a regular file that is not group or world writable.');
+    bytes = await handle.readFile();
   } finally { await handle.close(); }
+  if (!isUtf8(bytes)) throw new DaemonSecurityError('invalid_host_config', 'host.json must be valid UTF-8.');
+  return bytes;
 }

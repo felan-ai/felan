@@ -12,12 +12,16 @@ export interface DaemonClientOptions {
   readonly createClient?: (options: SessionClientOptions) => SessionClient;
 }
 
+/** Backoff of 250 ms doubling to 10 s spans about 36 s over eight attempts, covering the 30 s headless reconnect window. */
+const HEADLESS_RECONNECT_ATTEMPTS = 8;
+
 export async function createDaemonClient(options: DaemonClientOptions, kind: 'acp' | 'headless', interactionKinds: SessionClientOptions['interactionKinds'] = [], capabilities: SessionClientOptions['capabilities'] = []): Promise<SessionClient> {
   const target = clientDaemonTarget(options);
   const expectedComposition = options.createClient ? undefined : await resolveClientHostComposition(target);
   return (options.createClient ?? (settings => new SessionClient(settings)))({
     target, clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}),
     kind, interactionKinds, capabilities, launch: { entrypoint: resolveInstalledDaemonEntrypoint() },
+    ...(kind === 'headless' ? { reconnectAttempts: HEADLESS_RECONNECT_ATTEMPTS } : {}),
   });
 }
 
@@ -35,16 +39,13 @@ export function accepted<T>(response: { outcome: 'accepted'; result: T } | { out
 export async function readDaemonHistory(client: SessionClient, session: string, snapshot: SessionSnapshot): Promise<Message[]> {
   let entries = [...snapshot.history.entries];
   let cursor = snapshot.history.cursor;
-  let bytes = Buffer.byteLength(JSON.stringify(entries));
   const seen = new Set<string>();
   while (cursor) {
-    if (seen.has(cursor) || seen.size >= 400) throw new Error('Session history exceeds the client page limit');
+    if (seen.has(cursor)) throw new Error('Session history cursor repeated');
     seen.add(cursor);
     const page = accepted(await client.request('session.history', { revision: snapshot.history.revision, branch: snapshot.history.branch, cursor, limit: LIMITS.pageEntries }, { session }));
     if (page.revision !== snapshot.history.revision || page.branch !== snapshot.history.branch) throw new Error('Session changed while loading history; retry the attachment');
-    bytes += Buffer.byteLength(JSON.stringify(page.entries));
     entries = [...page.entries, ...entries];
-    if (entries.length > 100_000 || bytes > 64 * 1024 * 1024) throw new Error('Session history exceeds the client display limit');
     cursor = page.cursor;
   }
   return entries;
@@ -65,11 +66,15 @@ export function waitForDaemonAttachment(client: SessionClient, session: string, 
       if (!attachment || ['closed', 'blocked', 'incompatible'].includes(client.status) || attachment.state.status === 'blocked') {
         finish(new Error('Session recovery failed')); return;
       }
-      if (client.status === 'ready' && attachment.state.status === 'live' && attachment.state.snapshot) finish(undefined, attachment.state.snapshot);
+      if (client.status !== 'ready') {
+        timer ??= setTimeout(() => finish(new Error('Session reconnect timed out')), 30_000);
+        return;
+      }
+      clearTimeout(timer); timer = undefined;
+      if (attachment.state.status === 'live' && attachment.state.snapshot) finish(undefined, attachment.state.snapshot);
     };
     unsubscribe = client.subscribe(check);
     signal?.addEventListener('abort', abort, { once: true });
-    timer = setTimeout(() => finish(new Error('Session recovery timed out')), 30_000);
     check();
   });
 }

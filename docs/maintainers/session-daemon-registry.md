@@ -50,6 +50,16 @@ to an arbitrary PID. Detached jobs require verified identity. Closing one child
 must not stop sibling processes. Process reads and control continuations join
 the same lifetime barriers as launches and writes.
 
+PTYs and foreground shells end with the daemon; detached jobs outlive it, and a
+restored root refreshes their records against verified identity, while live
+records left running by a previous daemon become interrupted. A failed probe of
+one process leaves its record unchanged; store or ownership failures during
+that refresh fence the registry. `activeWork` (and `host.status` `active.work`)
+therefore counts busy sessions, in-flight runtime operations and live
+non-transport processes, not detached jobs. It first probes unsettled live
+handles, so a PTY that exited unread no longer counts. Shutdown settles every
+root that still holds live handles, including PTYs kept by a failed reload.
+
 ## Projection and UI
 
 Session projection consumes actual Pi events and entries. Durable revisions

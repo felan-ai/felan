@@ -32,7 +32,6 @@ export function createDaemonExecutionServices(registry: SessionRegistry, broker:
         assertOwnsPath: path => registry.options.owner.assertOwnsPath(path),
         assertNewWork: id => { inRoot(id); registry.assertNewWork(); registry.assertDispatch(id); },
         assertDispatch: id => { inRoot(id); registry.assertDispatch(id); },
-        activatePolicy: () => registry.activatePolicy(current.root),
         session: id => { inRoot(id); return registry.binding(id)?.runtime.session; },
         executions: () => registry.executionHost(current.id),
         configureExecutions: settings => registry.executionHost(current.id).configure(settings),
