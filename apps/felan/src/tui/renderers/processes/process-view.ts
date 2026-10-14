@@ -35,6 +35,13 @@ export class ProcessViewPanel {
     if (this.element) return { ...(this.element.source.kind === 'view' && this.element.source.items[this.selected] ? { selectedId: this.element.source.items[this.selected]!.id } : {}), scroll: this.scroll };
     return { ...(this.state.jobs[this.selected] ? { selectedId: this.state.jobs[this.selected]!.id } : {}),
     ...(this.state.detail ? { detailKey: `${this.state.detail.id}:${this.state.detail.index}` } : {}), scroll: this.scroll }; }
+  update(source: UiView | UiDocument): void {
+    if (!this.element || this.closed) return;
+    const selectedId = this.navigation.selectedId;
+    this.element.source = source;
+    this.selected = source.kind === 'view' ? Math.max(0, source.items.findIndex(item => item.id === selectedId)) : 0;
+    this.redraw();
+  }
   dispose(): void { this.closed = true; }
   invalidate(): void {}
   private send(action: Parameters<typeof processViewAction>[1]): void {

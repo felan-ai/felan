@@ -1,7 +1,7 @@
 import { TASKS_HINT } from './data.js';
 import type { ExtensionUi, UiActionRequest, UiAction, UiElementHandle, UiField, UiInteractiveElement, UiPresentOptions, UiValues, UiView } from '@felan-ai/agent-core';
 import { TASK_STATUS_VALUES, TASK_VIEW_VALUES, type CreateTaskInput, type Task, type TaskState, type TaskView, type UpdateTaskInput } from './contracts.js';
-import { getTask, listTasks, TASK_ID_PATTERN, taskAvailability, taskCounts, taskDependents } from './graph.js';
+import { getTask, incompleteBlockers, listTasks, TASK_ID_PATTERN, taskAvailability, taskCounts, taskDependents } from './graph.js';
 import type { TaskDataSource, TaskPresentationMutations } from './host.js';
 import { assembleTaskView, createTaskViewPublication } from './data.js';
 
@@ -93,12 +93,12 @@ export function createTasksUi(ui: ExtensionUi) {
             fields: [
               { id: 'id', label: 'Task ID', valueKind: 'text' },
               { id: 'title', label: 'Title', valueKind: 'text' }, { id: 'priority', label: 'Priority', valueKind: 'number' },
-              ...['status', 'availability', 'owner', 'blockedBy', 'blockedReason', 'createdAt', 'updatedAt', 'claimedAt', 'completedAt'].map(key => ({ id: key, label: key, valueKind: 'text' as const })),
+              ...['status', 'availability', 'owner', 'blockedBy', 'waitingOn', 'blockedReason', 'createdAt', 'updatedAt', 'claimedAt', 'completedAt'].map(key => ({ id: key, label: key, valueKind: 'text' as const })),
             ],
             items: tasks.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(task => ({
               id: task.id, fallback: `${task.id}, ${taskAvailability(task, state)}, priority ${task.priority}.`,
               values: { id: task.id, title: plain(task.title), priority: task.priority, status: task.status, availability: taskAvailability(task, state),
-                owner: plain(task.ownerSessionId ?? ''), blockedBy: task.blockedBy.join(', '), blockedReason: plain(task.blockedReason ?? ''),
+                owner: plain(task.ownerSessionId ?? ''), blockedBy: task.blockedBy.join(', '), waitingOn: incompleteBlockers(task, state).map(entry => entry.id).join(', '), blockedReason: plain(task.blockedReason ?? ''),
                 createdAt: plain(task.createdAt), updatedAt: plain(task.updatedAt), claimedAt: plain(task.claimedAt ?? ''), completedAt: plain(task.completedAt ?? '') },
             })),
             actions: [

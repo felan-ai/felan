@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ExtensionContext, UiActionRequest, UiDocument, UiPresentation, UiView } from '@felan-ai/agent-core';
-import { presentProcessesElement, PROCESSES_HINT } from '../../src/tui/renderers/processes.js';
+import { presentProcessesElement, updateProcessesElement, PROCESSES_HINT } from '../../src/tui/renderers/processes.js';
 
 const theme = { fg: (_name: string, text: string) => text, bold: (text: string) => text, italic: (text: string) => text, underline: (text: string) => text, strikethrough: (text: string) => text };
 const view: UiView = {
@@ -57,7 +57,9 @@ describe('PROCESSES_HINT', () => {
 
   it('does not invent an item action for an empty view', async () => {
     const { ui } = fixture(panel => { panel.handleInput('\r'); panel.handleInput('\x1b'); });
-    expect(await presentProcessesElement({ ...view, items: [] }, ui, new AbortController().signal, vi.fn())).toBeUndefined();
+    expect(await presentProcessesElement({ ...view, items: [] }, ui, new AbortController().signal, vi.fn())).toEqual({
+      elementId: 'view', revision: 3, actionId: 'close', outcome: 'cancel', values: {},
+    });
   });
 
   it('aborts an open screen without returning an action', async () => {
@@ -72,4 +74,26 @@ describe('PROCESSES_HINT', () => {
     expect(await presentProcessesElement(view, ui, controller.signal, vi.fn())).toBeUndefined();
     expect(custom).not.toHaveBeenCalled();
   });
+});
+
+it('updates the mounted panel in place without polling or losing selection', async () => {
+  vi.useFakeTimers();
+  try {
+    let panel!: { handleInput(key: string): void; render(width: number): string[] };
+    const f = fixture(value => { panel = value; });
+    const control = new AbortController();
+    const source: UiView = { ...view, items: [...view.items, { ...view.items[0]!, id: 'second' }] };
+    const work = presentProcessesElement(source, f.ui, control.signal, vi.fn());
+    panel.handleInput('\x1b[B');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(f.custom).toHaveBeenCalledOnce();
+    const next: UiView = { ...source, revision: 4, items: source.items.map(item => ({ ...item, values: { ...item.values, status: 'completed' } })) };
+    expect(updateProcessesElement(next, control.signal)).toBe(true);
+    expect(panel.render(100).join('\n')).toContain('▶ second  completed');
+    panel.handleInput('\x1b[A');
+    panel.handleInput('\r');
+    expect(await work).toMatchObject({ revision: 4, itemId: 'item', actionId: 'read' });
+    expect(updateProcessesElement(next, control.signal)).toBe(false);
+  } finally { vi.useRealTimers(); }
 });

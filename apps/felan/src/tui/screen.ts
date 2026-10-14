@@ -1,17 +1,19 @@
 import type { KeybindingsManager, Theme } from '@earendil-works/pi-coding-agent';
-import { Container, Key, Loader, matchesKey, getKeybindings, ScrollView, Text, VStack, type Component, type TUI } from '@earendil-works/pi-tui';
+import { Container, Loader, getKeybindings, ScrollView, Text, VStack, type Component, type TUI } from '@earendil-works/pi-tui';
 import type { AgentViewTranscript } from '../subagents/types.js';
 import { AgentTranscript, type AgentToolPresentation } from '../subagents/agent-transcript.js';
 import { TuiSessionController } from './controller.js';
 import { projectTuiTranscript } from './transcript.js';
 import { TuiDialogs } from './dialogs.js';
-import { createCommandAutocomplete, submitTuiInput, type DaemonAction } from './commands.js';
+import { createCommandAutocomplete, submitTuiInput, tuiCommands, type DaemonAction } from './commands.js';
 import { statusText, uiText } from '../client/ui.js';
 import type { Execution, Presentation } from '@felan-ai/session-protocol';
 import { AgentRailEditor } from '../subagents/agent-navigator.js';
 import { clientSelectListTheme, defaultClientTheme } from './theme.js';
-import { isPowerlinePresentation } from '../client/powerline-presenter.js';
+import { isPowerlinePresentation, processStatus } from '../client/powerline-presenter.js';
 import { startupHeader } from './startup-header.js';
+import { ToolInspector, inspectTools } from './tool-inspector.js';
+import { CommandHelp, commandHelp } from './command-help.js';
 
 const WORKING_FRAMES = ['⠐◉ ', '⠈◉ ', ' ◉⠁', ' ◉⠂', ' ◉⠄', '⠠◉ '];
 
@@ -52,6 +54,7 @@ export class DaemonTuiScreen {
     settings?: () => AgentViewTranscript['settings'];
     toolPresentation?: (name: string) => AgentToolPresentation | undefined;
     theme?: () => Theme;
+    quietStartup?: () => boolean | 'header';
   }) {
     const initialTheme = options.theme ? undefined : defaultClientTheme();
     const theme = options.theme ?? (() => initialTheme!);
@@ -82,7 +85,9 @@ export class DaemonTuiScreen {
     };
     this.removeInput = tui.addInputListener(data => {
       if (tui.hasOverlay() || this.inlineActive) return undefined;
-      if (matchesKey(data, Key.alt('a'))) { this.action('/agents'); return { consume: true }; }
+      for (const [key, command] of [['app.agents.open', '/agents'], ['app.history.search', '/prompt-history'], ['app.tools.inspect', '/tools']] as const) {
+        if (this.keys.matches(data, key)) { this.action(command); return { consume: true }; }
+      }
       if (this.keys.matches(data, 'app.exit') && !this.editor.getText()) { options.exit(); return { consume: true }; }
       if (this.keys.matches(data, 'app.interrupt') && !this.editor.isRailFocused() && controller.snapshot && !['idle', 'interrupted'].includes(controller.snapshot.run.state)) {
         void controller.cancel().catch(error => controller.setNotice(errorText(error))); return { consume: true };
@@ -126,7 +131,13 @@ export class DaemonTuiScreen {
         }
         return { consume: true };
       }
-      if (this.transcript.handleInput(data)) return { consume: true };
+      if (this.transcript.handleInput(data)) {
+        if (this.keys.matches(data, 'app.tools.expand')) {
+          const inspect = this.keys.getKeys('app.tools.inspect').map(key => key.replace(/\b[a-z]/gu, letter => letter.toUpperCase())).join('/');
+          this.controller.setNotice(`Tool output: ${this.transcript.toolsExpanded ? 'expanded' : 'collapsed'}${inspect ? ` · ${inspect} full details` : ''}`);
+        }
+        return { consume: true };
+      }
       return undefined;
     });
     this.unsubscribe = controller.subscribe(() => this.refresh()); this.refresh();
@@ -167,11 +178,21 @@ export class DaemonTuiScreen {
   async submit(text: string, preserveDraft = false): Promise<void> {
     if (!preserveDraft) { this.editor.addToHistory(text); this.editor.setText(''); this.tui.requestRender(); }
     try {
+      if (text.trim() === '/tools') {
+        await this.dialogs.custom<void>(done => new ToolInspector(() => inspectTools(this.controller.history, this.controller.snapshot),
+          this.theme, () => this.tui.requestRender(), () => done()));
+        return;
+      }
+      if (text.trim() === '/help' || text.trim() === '/hotkeys') {
+        await this.dialogs.custom<void>(done => new CommandHelp(commandHelp(this.keys, tuiCommands(this.controller)), () => this.tui.requestRender(), () => done()), { overlay: true, overlayOptions: { width: '90%', maxHeight: '90%' } });
+        return;
+      }
       if (/^\/agents(?:\s|$)/u.test(text.trim())) {
         await this.options.agents?.(text.trim().slice(7).trim() || undefined);
         return;
       }
-      if (await submitTuiInput(this.controller, this.dialogs, text, { ...this.options, setDraft: value => this.editor.setText(value) })) {
+      if (await submitTuiInput(this.controller, this.dialogs, text, { ...this.options, theme: this.theme,
+        requestRender: () => this.tui.requestRender(), setDraft: value => this.editor.setText(value) })) {
         if (!preserveDraft) {
           this.scroll.scrollToEnd();
         }
@@ -187,7 +208,7 @@ export class DaemonTuiScreen {
     if (this.disposed) return;
     const snapshot = this.controller.snapshot; const state = this.controller.state;
     const connection = this.controller.client.status;
-    this.header.setText(startupHeader(this.theme(), this.keys));
+    this.header.setText(startupHeader(this.theme(), this.keys, this.transcript.toolsExpanded, this.options.quietStartup?.()));
     this.notices.clear(); this.activity.clear();
     const notice = (text: string, color: 'warning' | 'error' | 'muted' = 'muted') => {
       this.notices.addChild(new Text(this.theme().fg(color, uiText(text)), 1, 1));
@@ -201,6 +222,8 @@ export class DaemonTuiScreen {
     try {
       const presentation = fallbackPresentations(snapshot?.presentation ?? [], this.options.hasRenderer);
       const hasPowerline = snapshot?.presentation.some(item => item.kind === 'view' && isPowerlinePresentation(item));
+      const processes = processStatus(snapshot?.processes ?? []);
+      if (!hasPowerline && processes) notice(processes);
       for (const item of presentation) {
         if (item.kind === 'notification') notice(`${item.level === 'info' ? '' : item.level === 'warning' ? 'Warning: ' : 'Error: '}${item.text}`, item.level === 'info' ? 'muted' : item.level);
         else if (item.kind === 'status' && item.id !== 'working' && !hasPowerline) notice(statusText(item));
@@ -208,7 +231,8 @@ export class DaemonTuiScreen {
       }
     } catch { notice('Extension status is unavailable.', 'warning'); }
     if (this.controller.notice) notice(this.controller.notice);
-    const running = state?.status === 'live' && snapshot && !['idle', 'interrupted'].includes(snapshot.run.state);
+    const running = state?.status === 'live' && snapshot && ['running', 'cancelling'].includes(snapshot.run.state);
+    if (state?.status === 'live' && snapshot?.run.state === 'waiting') notice('Waiting for UI');
     if (running) {
       const status = snapshot.presentation.find(item => item.kind === 'status' && item.id === 'working');
       const message = status?.kind === 'status' ? statusText(status) : 'Working';

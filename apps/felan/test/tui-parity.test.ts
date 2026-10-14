@@ -242,6 +242,15 @@ it('clears submitted commands and prompts immediately and retains history after 
   f.terminal.input('\x03'); f.terminal.input('\x03'); expect(f.exit).toHaveBeenCalledOnce();
 });
 
+it('shows a static UI wait instead of an active-work spinner and clears it on idle', () => {
+  const f = fixture();
+  f.change({ run: { id: 'view-command', state: 'waiting' } });
+  expect(f.lines().join('\n')).toContain('Waiting for UI');
+  expect(f.lines().join('\n')).not.toContain('Working');
+  f.change({ run: { id: 'view-command', state: 'idle' } });
+  expect(f.lines().join('\n')).not.toContain('Waiting for UI');
+});
+
 class TestTerminal implements Terminal {
   columns = 100; rows = 30; kittyProtocolActive = false;
   input: (data: string) => void = () => {};
@@ -259,3 +268,15 @@ class TestTerminal implements Terminal {
   setProgress(_active: boolean): void {}
   setProgramStatus(_status: ProgramStatus): void {}
 }
+
+
+it('shows process activity without Powerline and removes it on completion', () => {
+  const f = fixture();
+  const process = { id: 'process', kind: 'background' as const, owner: 'session', state: 'running' as const, startedAt: 0 };
+  f.change({ presentation: [], processes: [process] });
+  expect(f.lines().join('\n')).toContain('● 1 process');
+  f.change({ processes: [process, { ...process, id: 'second' }] });
+  expect(f.lines().join('\n')).toContain('● 2 processes');
+  f.change({ processes: [{ ...process, state: 'completed' }] });
+  expect(f.lines().join('\n')).not.toContain('● 1 process');
+});

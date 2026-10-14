@@ -328,3 +328,33 @@ describe('common process presentation', () => {
     cleanups.pop();
   });
 });
+
+it('acknowledges unchanged list refreshes and then publishes process completion', async () => {
+  const f = fixture(); await f.open();
+  const first = f.view();
+  await f.invoke(first, 'refresh');
+  expect(f.view().revision).toBeGreaterThan(first.revision);
+  expect(f.view().title).toContain('1 running');
+  f.setJobs([job(1, 'completed')]);
+  await f.invoke(f.view(), 'refresh');
+  expect(f.view().title).toContain('0 running');
+  expect(f.view().items[0]?.values.status).toBe('completed');
+});
+
+
+it('pushes off-page completions without unchanged list revisions and stops after close', async () => {
+  const jobs = Array.from({ length: PROCESS_VIEW_PAGE_SIZE + 1 }, (_, index) => job(index + 1));
+  const f = fixture(jobs); await f.open();
+  const first = f.view();
+  await f.adapter.refresh();
+  expect(f.view().revision).toBe(first.revision);
+  f.setJobs(jobs.map((value, index) => index === jobs.length - 1 ? job(index + 1, 'completed') : value));
+  await f.adapter.refresh();
+  expect(f.view().revision).toBe(first.revision + 1);
+  expect(f.view().title).toContain(`${PROCESS_VIEW_PAGE_SIZE} running`);
+  expect(f.present).toHaveBeenCalledOnce();
+  await f.invoke(f.view(), 'close');
+  const calls = f.source.list.mock.calls.length;
+  await f.adapter.refresh();
+  expect(f.source.list).toHaveBeenCalledTimes(calls);
+});

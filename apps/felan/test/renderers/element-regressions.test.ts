@@ -16,7 +16,7 @@ const view = (id: string): UiView => ({ kind: 'view', id, revision: 1, title: 'I
   actions: [{ id: 'detail', label: 'Detail', target: 'item', outcome: 'submit' }, { id: 'read', label: 'Read', target: 'item', outcome: 'submit' },
     { id: 'close', label: 'Close', target: 'element', outcome: 'cancel' }] });
 const document = (id: string, page: number, markdown: string): UiDocument => ({ kind: 'document', id, revision: page,
-  title: 'Title does not encode pagination', data: { pageIndex: page - 1, pageCount: 2 }, fallback: 'Full prompt', markdown,
+  title: 'Title does not encode pagination', data: { itemId: 'full-prompt-item', pageIndex: page - 1, pageCount: 2 }, fallback: 'Full prompt', markdown,
   actions: [{ id: page === 1 ? 'next' : 'previous', label: 'Page', target: 'element', outcome: 'submit' }] });
 
 describe('client-owned element behavior', () => {
@@ -25,7 +25,8 @@ describe('client-owned element behavior', () => {
     const source = view(`selection-${name}`);
     const signal = new AbortController().signal;
     const editor = vi.fn();
-    expect(await present(source, ui(panel => { panel.handleInput('\x1b[B'); panel.handleInput('\x1b'); }), signal, vi.fn(), editor)).toBeUndefined();
+    const closed = await present(source, ui(panel => { panel.handleInput('\x1b[B'); panel.handleInput('\x1b'); }), signal, vi.fn(), editor);
+    expect(closed).toMatchObject({ actionId: 'close', outcome: 'cancel' });
     const updated = { ...source, revision: 2, items: [...source.items].reverse() };
     expect(await present(updated, ui(panel => panel.handleInput('\r')), signal, vi.fn(), editor)).toMatchObject({ actionId, itemId: 'two' });
   });

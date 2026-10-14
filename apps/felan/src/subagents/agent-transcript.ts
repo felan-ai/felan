@@ -10,6 +10,7 @@ import {
   Container,
   Markdown,
   Spacer,
+  Text,
   type Component,
   type MarkdownTheme,
   type TUI,
@@ -21,6 +22,13 @@ import { createToolActivityDisplayDefinition } from '../tool-activity/presentati
 import { ToolActivityState } from '../tool-activity/state.js';
 import { clientMarkdownTheme, defaultClientTheme } from '../tui/theme.js';
 import { TranscriptAssistant, TranscriptCompaction, TranscriptTool } from './transcript-components.js';
+import { renderThinkingGroupMarkdown } from '../thinking-groups.js';
+import { clientMarkdownTransform, type MermaidMode } from '../tui/markdown.js';
+import { ShellExecution } from '../tui/shell-execution.js';
+import { completionNotices, SubagentCompletionComponent } from './completion-presentation.js';
+import { SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE } from '../execution-completion.js';
+import { BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE } from '@felan-ai/ext-background-bash/data';
+import { BackgroundBashCompletionComponent, completionJob } from '../tui/renderers/processes/completion-message.js';
 import {
   compactionMethodForMessage,
   type CompactionMethodLabel,
@@ -64,6 +72,7 @@ export class AgentTranscript implements Component {
   #showImages = true;
   #imageWidthCells = 60;
   #outputPad: number = 1;
+  #mermaid: MermaidMode = 'streaming';
 
   constructor(
     private readonly tui: TUI,
@@ -106,6 +115,7 @@ export class AgentTranscript implements Component {
       this.#showImages = session.settingsManager.getShowImages();
       this.#imageWidthCells = session.settingsManager.getImageWidthCells();
       this.#outputPad = session.settingsManager.getOutputPad();
+      this.#mermaid = session.settingsManager.getMermaidRenderingMode();
       this.#rebuildFromSession(session);
 
       replaying = false;
@@ -133,6 +143,7 @@ export class AgentTranscript implements Component {
     this.#snapshotToolActivityState = toolActivityState;
     this.#hideThinkingBlock = false;
     this.#showImages = false;
+    this.#mermaid = 'streaming';
     for (const message of messages) this.#replayMessage(message);
     this.#failTools(this.#pendingToolIds, 'No retained tool result.');
     this.tui.requestRender();
@@ -149,6 +160,7 @@ export class AgentTranscript implements Component {
     this.#showImages = settings.showImages;
     this.#imageWidthCells = settings.imageWidthCells;
     this.#outputPad = settings.outputPad;
+    this.#mermaid = settings.mermaid ?? 'streaming';
     const pendingToolCalls = new Set(projection.pendingTools);
     const toolActivityState = new ToolActivityState(settings.toolMode, false);
     toolActivityState.showSnapshot(messages, projection.cwd, { pendingToolCalls, ...(streaming ? { streaming } : {}) });
@@ -165,10 +177,18 @@ export class AgentTranscript implements Component {
     }
     for (let index = 0; index <= messages.length; index++) {
       for (const fallback of projection.fallbacks ?? []) if (fallback.before === index) this.#container.addChild(new Markdown(fallback.text, this.#outputPad, 0, this.#markdownTheme));
-      if (index < messages.length) this.#replayMessage(messages[index]!);
+      if (index < messages.length) this.#replayMessage(messages[index]!, projection.runningShells?.includes(index));
     }
     if (streaming?.role === 'assistant') this.#startAssistant(streaming);
-    else if (projection.streamingText) this.#container.addChild(new Markdown(projection.streamingText, this.#outputPad, 0, this.#markdownTheme));
+    else for (const part of projection.streamingContent ?? []) {
+      this.#container.addChild(new Spacer(1));
+      if (part.type === 'text') this.#container.addChild(new Markdown(part.text, this.#outputPad, 0, this.#markdownTheme, undefined,
+        { transform: clientMarkdownTransform(this.#theme(), this.#mermaid, true) }));
+      else if (this.#hideThinkingBlock) this.#container.addChild(new Text(this.#theme().fg('thinkingText', this.#theme().italic('Thinking...')), this.#outputPad, 0));
+      else this.#container.addChild(new Markdown(part.thinking, this.#outputPad, 0, this.#markdownTheme,
+        { color: value => this.#theme().fg('thinkingText', value), italic: true },
+        { transform: (value, width) => renderThinkingGroupMarkdown(value, { messageType: 'assistant-thinking', isStreaming: true, availableWidth: width }) }));
+    }
     for (const id of pendingToolCalls) this.#toolComponents.get(id)?.markExecutionStarted();
     for (const tool of projection.tools ?? []) {
       if (!this.#pendingToolIds.has(tool.id)) continue;
@@ -223,6 +243,8 @@ export class AgentTranscript implements Component {
     return false;
   }
 
+  get toolsExpanded(): boolean { return this.#toolsExpanded; }
+
   getToggleHints(): { tools: string; thinking: string } {
     return {
       tools: `${keyText('app.tools.expand')} ${this.#toolsExpanded ? 'collapse tools' : 'expand tools'}`,
@@ -272,7 +294,26 @@ export class AgentTranscript implements Component {
     }
   }
 
-  #replayMessage(message: AgentMessage): void {
+  #replayMessage(message: AgentMessage, runningShell = false): void {
+    if (message.role === 'bashExecution') {
+      const component = new ShellExecution(message, runningShell, this.#outputPad, this.#theme);
+      component.setExpanded(this.#toolsExpanded);
+      this.#expandableComponents.add(component);
+      this.#container.addChild(component);
+      return;
+    }
+    if (message.role === 'custom' && message.display) {
+      const text = typeof message.content === 'string' ? message.content : message.content.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n');
+      if (message.customType !== SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE && message.customType !== BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE) return;
+      this.#container.addChild(new Spacer(1));
+      this.#container.addChild({
+        render: width => (message.customType === SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE
+          ? new SubagentCompletionComponent(completionNotices(message.details), text, this.#toolsExpanded, this.#outputPad, this.#theme())
+          : new BackgroundBashCompletionComponent(completionJob(message.details), text, this.#toolsExpanded, this.#outputPad, this.#theme())).render(width),
+        invalidate() {},
+      });
+      return;
+    }
     if (message.role === 'user') {
       this.#addUserMessage(message);
       return;
@@ -353,7 +394,7 @@ export class AgentTranscript implements Component {
   #startAssistant(message: AssistantMessage): void {
     const key = this.#assistantKey(message);
     this.#activeAssistantKey = key;
-    this.#addAssistantMessage(message);
+    this.#addAssistantMessage(message, true);
   }
 
   #updateAssistant(message: AssistantMessage): void {
@@ -363,7 +404,7 @@ export class AgentTranscript implements Component {
       this.#startAssistant(message);
       return;
     }
-    component.updateContent(message);
+    component.updateContent(message, true);
     this.#activeAssistantKey = key;
     this.#addToolsFromAssistant(message);
   }
@@ -371,7 +412,7 @@ export class AgentTranscript implements Component {
   #endAssistant(message: AssistantMessage): void {
     const key = this.#activeAssistantKey ?? this.#assistantKey(message);
     const component = this.#assistantComponents.get(key);
-    if (component) component.updateContent(message);
+    if (component) component.updateContent(message, false);
     else this.#addAssistantMessage(message);
 
     const toolIds = this.#addToolsFromAssistant(message);
@@ -383,7 +424,7 @@ export class AgentTranscript implements Component {
     this.#activeAssistantKey = undefined;
   }
 
-  #addAssistantMessage(message: AssistantMessage): Set<string> {
+  #addAssistantMessage(message: AssistantMessage, isStreaming = false): Set<string> {
     const key = this.#assistantKey(message);
     let component = this.#assistantComponents.get(key);
     if (!component) {
@@ -393,11 +434,13 @@ export class AgentTranscript implements Component {
         this.#markdownTheme,
         this.#outputPad,
         this.#theme,
+        this.#mermaid,
+        isStreaming,
       );
       this.#assistantComponents.set(key, component);
       this.#container.addChild(component);
     } else {
-      component.updateContent(message);
+      component.updateContent(message, isStreaming);
     }
     return this.#addToolsFromAssistant(message);
   }

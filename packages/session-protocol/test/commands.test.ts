@@ -22,8 +22,9 @@ describe('complete operation inventory', () => {
     expect(() => parseClientEnvelope(request('config.set', { scope: 'session', values: {} }), { now })).toThrow();
   });
 
-  it('preserves all 64 inventoried configuration options without credential setters', () => {
-    const names = Object.keys(ConfigValuesSchema.properties).filter(key => !['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions', 'codemode', 'extensionConfig'].includes(key));
+  it('preserves all 64 inventoried extension configuration options without credential setters', () => {
+    const names = Object.keys(ConfigValuesSchema.properties).filter(key => !['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions', 'codemode', 'extensionConfig', 'imageAutoResize', 'blockImages',
+      'autoCompact', 'skillCommands', 'steeringMode', 'followUpMode', 'transport', 'cacheWarming', 'httpIdleTimeoutMs', 'modelThinkingLevels'].includes(key));
     expect(names).toHaveLength(64);
     expect(names.some(name => /api-key|secret|token|headers|placeholder/.test(name))).toBe(false);
     expect(parseSchema(ConfigValuesSchema, { 'powerline-lines': [{ segments: { git: { enabled: true, showSha: true } } }], 'prewalk-entry-approval': 'ask' })).toBeTruthy();

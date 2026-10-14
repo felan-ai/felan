@@ -26,6 +26,10 @@ export function createCommonProcessPresentation(ui: ExtensionUi) {
       })();
       try { await opening; } finally { opening = undefined; }
     },
+    async refresh(): Promise<void> {
+      if (disposed || !active || active.closed) return;
+      await active.update();
+    },
     async dispose(): Promise<void> {
       disposed = true;
       const cleanup = active?.dispose();
@@ -64,6 +68,14 @@ class ProcessUiView {
     this.queue = this.opening.catch(() => {});
     try { await this.opening; }
     catch (error) { await this.dispose(); throw error; }
+  }
+
+  update(): Promise<void> {
+    const operation = this.queue.then(async () => {
+      if (!this.closed) await this.refresh();
+    });
+    this.queue = operation.catch(() => {});
+    return operation;
   }
 
   private assertOpen(context?: UiActionContext): void {
@@ -121,6 +133,7 @@ class ProcessUiView {
         this.chunk = this.chunks.length - 1;
         await this.publish(context);
       } else if (action.actionId === 'refresh') {
+        this.view = undefined;
         await this.refresh(context);
       } else {
         const id = action.itemId ?? this.selected;

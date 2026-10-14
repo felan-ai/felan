@@ -9,7 +9,8 @@ it('renders and updates only the built-in extension map returned by the daemon',
     ? { hideThinking: false, showImages: true, imageWidthCells: 60, outputPad: 1, toolDisplay: 'grouped', keybindings: {} }
     : operation === 'config.get' ? { values: { builtinExtensions: { remoteOnly: true, mcp: false } } } : {} }));
   const controller = { perform, setNotice: vi.fn(), notice: '' } as unknown as TuiSessionController;
-  const themes = { load: async () => {}, value: 'fixture', theme: {}, names: ['fixture'] } as unknown as ClientThemes;
+  const preview = vi.fn();
+  const themes = { load: async () => {}, value: 'fixture', theme: {}, names: ['fixture'], preview } as unknown as ClientThemes;
   const settings = vi.fn<TuiDialogs['settings']>(async entries => {
     const builtins = entries.find(entry => entry.id === 'general')!.children!.find(entry => entry.id === 'builtins')!.children!;
     expect(builtins.map(({ id, currentValue }) => [id, currentValue])).toEqual([['remoteOnly', 'true'], ['mcp', 'false']]);
@@ -19,5 +20,6 @@ it('renders and updates only the built-in extension map returned by the daemon',
   try {
     await preferences.open({ settings });
     expect(perform).toHaveBeenCalledWith('config.set', { scope: 'global', values: { builtinExtensions: { remoteOnly: false } } });
+    expect(preview).toHaveBeenCalledExactlyOnceWith(undefined);
   } finally { preferences.dispose(); }
 });

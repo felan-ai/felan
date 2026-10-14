@@ -28,6 +28,14 @@ async function fixture(initial: unknown = {}) {
 }
 
 describe('daemon locked configuration', () => {
+  it('persists model-input image policy separately from terminal image visibility', async () => {
+    const f = await fixture({ terminal: { showImages: true }, images: { retained: true } });
+    await f.config.set('global', { imageAutoResize: false, blockImages: true });
+    expect(await f.read()).toMatchObject({ terminal: { showImages: true }, images: { retained: true, autoResize: false, blockImages: true } });
+    const reopened = new DaemonConfiguration({ agentDir: f.agentDir, definitions: [definition], assertCurrent: f.assertCurrent });
+    expect((await reopened.get('global')).values).toMatchObject({ imageAutoResize: false, blockImages: true });
+    expect(() => reopened.sessionOverrides({ blockImages: false })).toThrow('global');
+  });
   it('prepares session-only field merges without writing global settings', async () => {
     const f = await fixture(); const before = await readFile(f.path);
     const first = f.config.sessionOverrides({ 'codex-fast': true });

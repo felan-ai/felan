@@ -181,7 +181,7 @@ describe('local daemon profile', () => {
   });
 
   it('keeps resource helpers and packaged assets free of client themes', async () => {
-    expect(Object.keys(await import('../src/providers/local-resources.js')).sort()).toEqual(['getLocalSkillPaths']);
+    expect(Object.keys(await import('../src/providers/local-resources.js')).sort()).toEqual(['getLocalSkillPaths', 'getLocalSkillSources']);
     const manifest = JSON.parse(await readFile(new URL('../../daemon/package.json', import.meta.url), 'utf8'));
     expect(manifest.scripts.build).not.toContain('themes');
   });

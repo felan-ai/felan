@@ -30,7 +30,8 @@ it('lets host.json narrow builtinExtensions settings but never lets settings wid
 
 it('maps the exact existing 64 noncredential fields from built-in definitions', async () => {
   const agentDir = await fixture(); const definitions = await configuredDefinitions();
-  const globalFields = ['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions', 'extensionConfig', 'codemode'];
+  const globalFields = ['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions', 'extensionConfig', 'codemode',
+    'imageAutoResize', 'blockImages', 'autoCompact', 'skillCommands', 'steeringMode', 'followUpMode', 'transport', 'httpIdleTimeoutMs', 'cacheWarming', 'modelThinkingLevels'];
   const expected = Object.keys(ConfigValuesSchema.properties).filter(key => !globalFields.includes(key));
   const fields = getExtensionConfigCliOptions(definitions).filter(field => expected.includes(field.name));
   expect(new Set(fields.map(field => field.name))).toEqual(new Set(expected)); expect(fields).toHaveLength(64);

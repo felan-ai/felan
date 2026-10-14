@@ -1,3 +1,4 @@
+import { messageText } from '../../src/tui/completion-text.js';
 import {
   createExtensionServiceAccess,
   createFelanServiceRegistry,
@@ -17,7 +18,7 @@ import {
   type BackgroundBashStatus,
 } from '../../../../packages/ext-background-bash/src/index.js';
 import backgroundBashExtension from '../../../../packages/ext-background-bash/src/extension.js';
-import { registerBackgroundBashCompletionRenderer } from '../../src/tui/renderers/processes/completion-message.js';
+import { BackgroundBashCompletionComponent, completionJob } from '../../src/tui/renderers/processes/completion-message.js';
 import { BackgroundBashView } from '../../src/tui/renderers/processes/background-bash-view.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
@@ -176,12 +177,8 @@ describe('background bash extension activation', () => {
 
 
   it('renders existing completion messages with current process labels and optional details', async () => {
-    const clientRenderers = new Map<string, CompletionRenderer>();
-    registerBackgroundBashCompletionRenderer({ registerMessageRenderer: (name, renderer) => clientRenderers.set(name, renderer as CompletionRenderer) });
-
-    const harness = createHarness();
-    await harness.activate();
-    const renderer = clientRenderers.get('felan-background-bash-completion')!;
+    const renderer: CompletionRenderer = (message, options, currentTheme) => new BackgroundBashCompletionComponent(
+      completionJob(message.details), messageText(message.content), options.expanded, options.outputPad, currentTheme);
     const id = 'bash-20260904074143-fbba66';
     const message = {
       role: 'custom',
@@ -387,14 +384,23 @@ describe('background bash extension activation', () => {
     const running = backgroundJob('running');
     const completed = backgroundJob('completed');
     vi.spyOn(BackgroundBashManager.prototype, 'start').mockResolvedValue(running);
-    vi.spyOn(BackgroundBashManager.prototype, 'get').mockResolvedValue(completed);
+    let current = running;
+    vi.spyOn(BackgroundBashManager.prototype, 'get').mockImplementation(async () => { current = completed; return current; });
+    vi.spyOn(BackgroundBashManager.prototype, 'list').mockImplementation(async () => [current]);
     const harness = createHarness();
+    const update = vi.fn(async () => {}); const close = vi.fn(async () => {});
+    const present = vi.fn(async () => ({ update, close }));
+    Object.assign(harness.pi, { ui: { ...createUnavailableExtensionUi(), present } });
     const ctx = context('anthropic');
     await harness.activate();
     await harness.emit('session_start', {}, ctx);
     const bash = registeredTool(harness, 'bash');
 
     try {
+      const command = harness.registerCommand.mock.calls.find(([name]) => name === 'processes')?.[1] as {
+        handler(args: string, ctx: ExtensionContext): Promise<void>;
+      };
+      await command.handler('', ctx);
       const started = await bash.execute(
         'start',
         { command: "printf 'finished\\n'", background: true },
@@ -415,6 +421,9 @@ describe('background bash extension activation', () => {
       const message = harness.sendMessage.mock.calls[0]?.[0] as { content: string; details: unknown };
       expect(message.content).toContain('Background process reached terminal status: completed.');
       expect(JSON.stringify(message.details)).not.toContain('processToken');
+      await vi.waitFor(() => expect(update).toHaveBeenCalledOnce());
+      expect(update).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining('0 running') }));
+      expect(present).toHaveBeenCalledOnce();
     } finally {
       await harness.emit('session_shutdown', {}, ctx);
     }

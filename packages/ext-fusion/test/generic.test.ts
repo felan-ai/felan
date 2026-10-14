@@ -234,6 +234,7 @@ describe('Fusion generic default', () => {
 
   it('saves a paginated searchable lineup in the session without inference and restores it on the next command', async () => {
     const h = fixture({ catalogue: Array.from({ length: 85 }, (_, index) => info(`model-${index}`)), participants: [] });
+    Object.assign(h.pi.config, { fusionModel: 'fixture/model-84' });
     const selecting = h.modelsCommand();
     await vi.waitFor(() => expect(h.views.some(row => row.value.kind === 'view')).toBe(true));
     const view = h.current('view');
@@ -255,6 +256,50 @@ describe('Fusion generic default', () => {
     const command = h.start();
     await vi.waitFor(() => expect(h.forms.some(form => form.pending)).toBe(true));
     expect(h.forms.at(-1)!.form.markdown).toContain('fixture/model'); h.answer('cancel'); await command;
+    expect(h.models.completeSimple).not.toHaveBeenCalled();
+  });
+
+  it('retains unavailable saved models as removable rows with recovery guidance and rejects invalid saves', async () => {
+    const h = fixture();
+    h.pi.appendEntry('felan.fusion-lineup.v1', {
+      participants: ['anthropic/missing-one', 'anthropic/missing-two'], fusionModel: 'anthropic/missing-judge',
+    });
+    vi.mocked(h.pi.appendEntry).mockClear();
+    const command = h.modelsCommand();
+    await vi.waitFor(() => expect(h.views.some(row => row.value.kind === 'view')).toBe(true));
+    const view = h.current('view');
+    expect(view.value).toMatchObject({ title: 'Fusion model lineup' });
+    expect(view.value.fallback).toContain('Unavailable saved model choices must be replaced before saving.');
+    expect(view.value.fallback).toContain('Remove or replace unavailable participants.');
+    expect(view.value.fallback).toContain('Choose an available comparison / fusion model.');
+    if (view.value.kind !== 'view') throw new Error('Expected model picker');
+    expect(view.value.items.slice(0, 3).map(item => item.values)).toEqual([
+      { model: 'Unavailable: anthropic/missing-one', participant: true, comparison: false },
+      { model: 'Unavailable: anthropic/missing-two', participant: true, comparison: false },
+      { model: 'Unavailable: anthropic/missing-judge', participant: false, comparison: true },
+    ]);
+    await expect(h.act(view, 'save')).rejects.toThrow('available participants');
+    expect(h.pi.appendEntry).not.toHaveBeenCalled();
+    expect(h.pi.updateConfig).not.toHaveBeenCalled();
+    await h.act(view, 'participant', {}, 'model-0');
+    await expect(h.act(view, 'participant', {}, 'model-0')).rejects.toThrow('Remove or replace');
+    await expect(h.act(view, 'comparison', {}, 'model-2')).rejects.toThrow('available comparison');
+    await h.act(view, 'participant', {}, 'model-1');
+    await h.act(view, 'participant', {}, 'model-3');
+    await h.act(view, 'participant', {}, 'model-4');
+    await h.act(view, 'comparison', {}, 'model-5');
+    expect(view.value.fallback).not.toContain('Unavailable saved');
+    await h.act(view, 'save');
+    await command;
+    expect(h.pi.updateConfig).toHaveBeenCalledWith({ participants: ['fixture/one', 'fixture/two'], fusionModel: 'fixture/judge' });
+    expect(h.models.completeSimple).not.toHaveBeenCalled();
+  });
+
+  it('still requires two available models before opening the picker', async () => {
+    const h = fixture({ catalogue: [info('one')], participants: ['unavailable/one', 'unavailable/two'] });
+    await h.modelsCommand();
+    expect(h.ui.notify).toHaveBeenCalledWith({ level: 'error', text: 'Fusion requires at least two available authenticated text models.' });
+    expect(h.views).toHaveLength(0);
     expect(h.models.completeSimple).not.toHaveBeenCalled();
   });
 

@@ -134,6 +134,23 @@ describe.each(['tui', 'acp'] as const)('default Background Bash through a no-hin
     expect(h.shutdown).toHaveBeenCalledOnce();
   });
 
+  it.each([false, true])('reopens after semantic close with changed process data: %s', async changed => {
+    const h = await fixture();
+    const first = h.elements[0]!;
+    await action(kind, first, { actionId: 'close' });
+    await vi.waitFor(() => expect(first.closed).toBe(true));
+    if (changed) await h.stop('job-1', 'SIGTERM');
+    await h.command('processes');
+    const reopened = h.elements.at(-1)!;
+    expect(reopened.value.id).not.toBe(first.value.id);
+    expect(reopened.closed).toBe(false);
+    expect(reopened.value.kind).toBe('view');
+    if (reopened.value.kind !== 'view') throw new Error('Expected process list.');
+    expect(reopened.value.items[0]?.values.status).toBe(changed ? 'killed' : 'running');
+    await action(kind, reopened, { actionId: 'close' });
+    await vi.waitFor(() => expect(reopened.closed).toBe(true));
+  });
+
   it('preserves process data without offering controls when action capability is absent', async () => {
     const h = await fixture();
     const client = clientRoute(kind, h.elements[0]!.value, ['ui.view', 'ui.document']);

@@ -151,7 +151,7 @@ async function captureManualTerminal(output: string): Promise<void> {
     await preferences.set({ keybindings: { 'app.model.select': 'alt+m', 'app.exit': 'alt+x' } });
     await server.start(); pty = new Capture(output, checkpoints, f.directory, f.cwd, f.root.sessionId); const terminal = pty;
     const idle = () => f.store.session(f.root.sessionId).run.state === 'idle' && !terminal.screen.includes('Working');
-    const modelSelector = () => /Model\s+>\s+→ Fixture/u.test(terminal.screen);
+    const modelSelector = () => /Model\s+>\s+→ ✓ fixture \[offline\]/u.test(terminal.screen);
     const settingsSelector = () => terminal.screen.includes('Type to search');
     await terminal.wait('initial connected frame', () => idle() && terminal.screen.includes('Felan Code')
       && terminal.screen.split('\n').at(-2) === '─'.repeat(terminal.grid.screenColumns));
@@ -181,7 +181,8 @@ async function captureManualTerminal(output: string): Promise<void> {
 
     terminal.send('/settings\r'); await terminal.wait('settings reopened', () => settingsSelector() && terminal.screen.includes('General settings'));
     terminal.send('\r'); await terminal.wait('general settings reopened', () => terminal.screen.includes('Hide thinking'));
-    terminal.send('Theme\r'); await terminal.wait('local theme picker', () => settingsSelector() && terminal.screen.includes('Custom value'));
+    terminal.send('Theme\r'); await terminal.wait('local theme picker', () => /Theme\s+>/u.test(terminal.screen)
+      && terminal.screen.includes('→ ✓ felan-dark') && terminal.screen.includes('Custom value'));
     await terminal.snapshot('06-local-theme-picker');
     const paletteOffset = terminal.frameRaw.length;
     terminal.send('felan-light\r'); await terminal.wait('light palette applied immediately', () => /Theme\s+felan-light/u.test(terminal.screen) && terminal.screen.includes('Display preferences saved')

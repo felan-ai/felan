@@ -1,5 +1,7 @@
 import type { AgentSession } from '@felan-ai/agent-core';
 import { MESSAGE_DISPLAY_ID, parseActiveMessageDisplay, readMessageDisplay, type Message, type SessionSnapshot } from '@felan-ai/session-protocol';
+import { BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE } from '@felan-ai/ext-background-bash/data';
+import { SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE } from '../execution-completion.js';
 
 type NativeMessage = AgentSession['messages'][number];
 type Assistant = Extract<NativeMessage, { role: 'assistant' }>;
@@ -7,6 +9,21 @@ type User = Extract<NativeMessage, { role: 'user' }>;
 type Tool = Extract<NativeMessage, { role: 'toolResult' }>;
 
 export function projectedNativeMessage(message: Message): NativeMessage | undefined {
+  if (message.role === 'custom' && [SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE, BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE].includes(message.customType ?? '')) {
+    return { role: 'custom', customType: message.customType!, timestamp: message.timestamp, display: true, details: message.details,
+      content: message.content.flatMap(part => part.type === 'text' ? [{ type: 'text' as const, text: part.text }] : []) };
+  }
+  if (message.role === 'custom' && message.customType === 'bashExecution') {
+    const data = message.details;
+    if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.command !== 'string'
+      || !(data.exitCode === null || typeof data.exitCode === 'number' && Number.isSafeInteger(data.exitCode))
+      || typeof data.cancelled !== 'boolean' || typeof data.truncated !== 'boolean' || typeof data.excludeFromContext !== 'boolean'
+      || data.fullOutputPath !== undefined && typeof data.fullOutputPath !== 'string') return undefined;
+    return { role: 'bashExecution', timestamp: message.timestamp, command: data.command,
+      output: message.content.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n'),
+      exitCode: data.exitCode ?? undefined, cancelled: data.cancelled, truncated: data.truncated,
+      excludeFromContext: data.excludeFromContext, ...(data.fullOutputPath ? { fullOutputPath: data.fullOutputPath } : {}) };
+  }
   if (message.role === 'user') {
     const content: Exclude<User['content'], string> = [];
     for (const part of message.content) {
@@ -42,6 +59,20 @@ export function projectedNativeMessage(message: Message): NativeMessage | undefi
       content, isError: result.isError, ...(result.details === undefined ? {} : { details: result.details }) };
   }
   return undefined;
+}
+
+export function projectedStreamingContent(snapshot: Pick<SessionSnapshot, 'activeStreams' | 'history'>): Array<
+  { type: 'text'; text: string } | { type: 'thinking'; thinking: string }
+> {
+  const completed = new Set(snapshot.history.entries.map(message => message.id));
+  const groups = new Map<string, SessionSnapshot['activeStreams']>();
+  for (const stream of snapshot.activeStreams) {
+    if (completed.has(stream.message)) continue;
+    const group = groups.get(stream.message) ?? [];
+    group.push(stream); groups.set(stream.message, group);
+  }
+  return [...groups.values()].flatMap(group => group.sort((a, b) => Number(a.id.slice(a.message.length + 1)) - Number(b.id.slice(b.message.length + 1)))
+    .map(stream => stream.kind === 'thinking' ? { type: 'thinking' as const, thinking: stream.text } : { type: 'text' as const, text: stream.text }));
 }
 
 export function projectedStreamingMessage(snapshot: Pick<SessionSnapshot, 'presentation' | 'activeStreams' | 'history'>): Assistant | undefined {

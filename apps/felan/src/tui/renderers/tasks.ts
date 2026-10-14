@@ -73,7 +73,7 @@ export async function presentTasksElement(value: UiPresentation, ui: Pick<Extens
         if (!action || action.target === 'item' && (source.kind !== 'view' || !source.items.some(item => item.id === itemId))) return;
         finish({ actionId, ...(itemId === undefined ? {} : { itemId }) });
       };
-      panel = new TasksOverlay(undefined, theme, () => finish(undefined), () => tui.requestRender(), undefined, displayMode, { ...(elementNavigation.has(source.id) ? { initial: elementNavigation.get(source.id)! } : {}) }, { source, action: choose });
+      panel = new TasksOverlay(undefined, theme, () => choose('close'), () => tui.requestRender(), undefined, displayMode, { ...(elementNavigation.has(source.id) ? { initial: elementNavigation.get(source.id)! } : {}) }, { source, action: choose });
       if (signal.aborted) abort();
       return panel;
     }, displayMode === 'overlay' ? { overlay: true, overlayOptions: { width: '85%', minWidth: 72, maxHeight: '90%', margin: 2 } } : undefined);

@@ -10,11 +10,11 @@ const document: UiDocument = {
   actions: [{ id: 'close', label: 'Close report', target: 'element', outcome: 'cancel' }],
 };
 
-function harness() {
+function harness(rows = 15) {
   let component!: Component;
   const custom = vi.fn<ExtensionContext['ui']['custom']>(factory => new Promise(resolve => {
     const plain = (text: string) => text;
-    component = factory({ terminal: { rows: 15 }, requestRender: vi.fn() } as never,
+    component = factory({ terminal: { rows }, requestRender: vi.fn() } as never,
       { fg: (_name: string, text: string) => text, bold: plain, italic: plain, strikethrough: plain, underline: plain } as never,
       {} as never, resolve) as Component;
   }));
@@ -42,4 +42,24 @@ describe('context document hint', () => {
     await expect(presentContextDocument(document, h.ui, controller.signal)).resolves.toBeUndefined();
     expect(h.ui.custom).toHaveBeenCalledOnce();
   });
+});
+
+it('keeps category percentages, memory and detail rows on a compact initial screen', async () => {
+  const h = harness(40);
+  const compact = { ...document, id: 'compact-context', markdown: [
+    'Model: Test  ', 'Used: 16.9k / 272k (6.2%) estimated  ',
+    'System Prompt: 500 (0.2%) · System Tools: 1k (0.4%) · Extensions: 3k (1.1%)  ',
+    'Context Files: 600 (0.2%) · Skills: 200 (0.1%) · Memory: 100 (<0.1%)  ',
+    'Messages: 10k (3.7%) · Other: 0 (0.0%) · Free Space: 255k (94%)  ',
+    'Memory: summary 50 · index 20 · schema 10 · recalls 20  ',
+    '', '**Extensions (1)**', '- processes · 3 tools · 200 tokens',
+    '', '**Skills (1)**', '- check · 80 tokens',
+  ].join('\n') };
+  const result = presentContextDocument(compact, h.ui, new AbortController().signal);
+  const lines = h.component().render(120).join('\n');
+  expect(lines).toContain('System Prompt: 500 (0.2%)');
+  expect(lines).toContain('Memory: summary 50');
+  expect(lines).toContain('processes');
+  expect(lines).toContain('check');
+  h.component().handleInput?.('\r'); await result;
 });

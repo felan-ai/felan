@@ -158,7 +158,7 @@ describe.each(['tui', 'acp'] as const)('migrated extension defaults through no-h
     const work = h.command('context');
     await vi.waitFor(() => expect(h.elements).toHaveLength(1));
     const row = h.elements[0]!;
-    expect(row.value).toMatchObject({ kind: 'document', title: 'Context usage', markdown: expect.stringContaining('8192') });
+    expect(row.value).toMatchObject({ kind: 'document', title: 'Context usage', markdown: expect.stringContaining('Used: 5 / 8.2k') });
     const sent = await action(kind, row, { actionId: 'close' });
     expect(sent).toMatchObject({ elementId: row.value.id, revision: 1, actionId: 'close', outcome: 'cancel', values: {} });
     await work; expect(row.closed).toBe(true);

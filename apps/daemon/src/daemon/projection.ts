@@ -122,6 +122,11 @@ export class SessionProjection {
   }
 
   publish(change: KnownSessionChange, patch?: Parameters<DaemonControlStore['updateSession']>[1]): void {
+    if (change.type === 'presentation.updated' || change.type === 'presentation.removed') {
+      const rev = this.options.store.advanceTransientRevision(this.id);
+      this.options.publish({ v: 1, session: this.id, rev, change });
+      return;
+    }
     const commit = patch
       ? this.options.store.updateSession(this.id, patch)
       : this.options.store.project(this.id, [{ type: 'status', id: `projection:${change.type}`, text: digest(change) }]);
@@ -243,8 +248,10 @@ export class SessionProjection {
     return { revision, branch, entries: page, ...(end ? { cursor: Buffer.from(JSON.stringify([this.id, revision, branch, end])).toString('base64url') } : {}) };
   }
 
+  presentations(): readonly Presentation[] { return [...this.presentation.values()]; }
+
   setPresentation(value: Presentation | { id: string; remove: true }): void {
-    if ('remove' in value) { this.publish({ type: 'presentation.removed', id: value.id }); this.presentation.delete(value.id); if (this.compactionDirty || this.displayDirty) this.schedule(); return; }
+    if ('remove' in value) { this.presentation.delete(value.id); if (this.compactionDirty || this.displayDirty) this.schedule(); this.publish({ type: 'presentation.removed', id: value.id }); return; }
     const parsed = parseSchema(PresentationSchema, value);
     if (!this.presentation.has(parsed.id) && this.presentation.size >= LIMITS.pageEntries) throw new ControlStoreError('request_capacity', 'Presentation capacity reached.');
     this.publish({ type: 'presentation.updated', presentation: parsed });
@@ -272,7 +279,7 @@ export class SessionProjection {
     }
     if (event.type === 'agent_start') {
       const previous = this.options.store.session(this.id).run;
-      const run = { state: 'running' as const, id: previous.state === 'running' && previous.id ? previous.id : randomUUID(), ...(this.origin ? { origin: this.origin } : {}) };
+      const run = { state: 'running' as const, id: (previous.state === 'running' || previous.state === 'waiting') && previous.id ? previous.id : randomUUID(), ...(this.origin ? { origin: this.origin } : {}) };
       this.publish({ type: 'run.updated', run }, { run });
       this.runtimeRunId = run.id;
     }
@@ -289,6 +296,13 @@ export class SessionProjection {
       catch (error) { if (!isProjectionCapacityError(error)) throw error; this.schedule(); }
     }
     if (event.type === 'message_update' && (this.liveIds.get(event.message) ?? this.assistant)) {
+      if (!this.activeDisplay) {
+        const display = messageDisplay(event.message);
+        if (display?.kind === 'assistant') {
+          this.activeDisplay = { message: (this.liveIds.get(event.message) ?? this.assistant)!, display };
+          this.displayDirty = true;
+        }
+      }
       const delta = event.assistantMessageEvent;
       if (delta.type === 'text_delta' || delta.type === 'thinking_delta') this.delta((this.liveIds.get(event.message) ?? this.assistant)!, delta.contentIndex, delta.type === 'text_delta' ? 'assistant' : 'thinking', delta.delta);
     }
@@ -444,12 +458,12 @@ export class SessionProjection {
         provenance: source?.source ?? 'external', source: boundedText(source?.sourceId ?? 'unknown', 128), active: active.has(tool.name) };
     });
     const commands: SessionSnapshot['catalog']['commands'] = this.session.extensionRunner.getRegisteredCommands().filter(command => this.options.commandAvailable?.(command.name) ?? false).map(command => ({ name: command.name,
-      description: command.description ?? '', source: boundedText(command.sourceInfo?.path ?? 'extension', 128), kind: 'extension' as const }));
+      description: command.description ?? '', source: boundedText(command.sourceInfo?.path ?? 'extension', 128), scope: command.sourceInfo?.scope, kind: 'extension' as const }));
     const skills = this.session.settingsManager?.getEnableSkillCommands() === false ? [] : this.session.resourceLoader.getSkills().skills;
     for (const skill of skills) {
       const name = `skill:${skill.name}`;
       if (!commands.some(command => command.name === name) && (this.options.commandAvailable?.(name) ?? false)) commands.push({ name,
-        description: skill.description, source: boundedText(skill.filePath, 128), kind: 'skill' });
+        description: skill.description, source: boundedText(skill.filePath, 128), scope: skill.sourceInfo.scope, kind: 'skill' });
     }
     const available = this.session.scopedModels.length ? this.session.scopedModels.map(({ model }) => model)
       : this.session.modelRuntime.getAvailableSnapshot();
@@ -474,7 +488,7 @@ export class SessionProjection {
   }
 }
 
-function isProjectionCapacityError(error: unknown): boolean {
+export function isProjectionCapacityError(error: unknown): boolean {
   return error instanceof ControlStoreError && error.code === 'request_capacity'
     && (error.message === 'Control capacity is reserved for outcomes and safety operations.' || error.message === 'Presentation capacity reached.');
 }
@@ -503,6 +517,11 @@ export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Or
   }
   const display = entry.type === 'message' ? messageDisplay(entry.message) : undefined;
   let details = 'details' in raw ? raw.details : undefined;
+  if (raw.role === 'bashExecution') {
+    details = { command: raw.command, exitCode: raw.exitCode ?? null, cancelled: raw.cancelled, truncated: raw.truncated,
+      excludeFromContext: raw.excludeFromContext ?? false, ...(raw.fullOutputPath ? { fullOutputPath: raw.fullOutputPath } : {}) };
+    content.splice(0, content.length, { type: 'text', text: raw.output });
+  }
   if (display && (details === undefined || details !== null && typeof details === 'object' && !Array.isArray(details))) {
     details = { ...(details as Record<string, unknown> | undefined), [MESSAGE_DISPLAY_KEY]: display };
   }
@@ -510,6 +529,7 @@ export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Or
     role: raw.role === 'toolResult' ? 'tool' : ['user', 'assistant', 'system', 'custom'].includes(raw.role) ? raw.role : 'custom',
     content, timestamp: Math.max(0, Date.parse(entry.timestamp) || 0),
     ...('customType' in raw ? { customType: raw.customType } : {}),
+    ...(raw.role === 'bashExecution' ? { customType: 'bashExecution' } : {}),
     ...(details === undefined ? {} : { details }),
     ...(origin ? { origin } : {}),
   });

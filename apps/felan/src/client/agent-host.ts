@@ -3,7 +3,7 @@ import { COMPACTION_MESSAGE_TYPE, parseCompactionPresentation } from '@felan-ai/
 import type { Execution, Message } from '@felan-ai/session-protocol';
 import type { AgentNavigatorHost, AgentNavigatorRecord } from '../subagents/agent-navigator.js';
 import type { SessionClient } from './client.js';
-import { projectedNativeMessage, projectedStreamingMessage } from './message-display.js';
+import { projectedNativeMessage, projectedStreamingContent, projectedStreamingMessage } from './message-display.js';
 
 type Client = Pick<SessionClient, 'getAttachment' | 'subscribe' | 'attach' | 'detach' | 'request' | 'status' | 'capabilities'>;
 interface ChildAttachment { owned: boolean; id?: string; pending?: Promise<void> }
@@ -248,9 +248,9 @@ export class ClientAgentHost implements AgentNavigatorHost {
               }
               let streaming: AgentViewTranscript['streaming'];
               try { streaming = projectedStreamingMessage(snapshot); } catch (error) { this.status = errorText(error); }
-              const streamingText = !streaming ? snapshot.activeStreams.map(stream => stream.text).join('\n') : undefined;
+              const streamingContent = !streaming ? projectedStreamingContent(snapshot) : undefined;
               projection = { key, value: { agentId: id, cwd: snapshot.cwd, messages, pendingTools: snapshot.tools.filter(tool => tool.state === 'running').map(tool => tool.id),
-                tools: snapshot.tools, settings, fallbacks, compactions, ...(streaming ? { streaming } : {}), ...(streamingText ? { streamingText } : {}) } };
+                tools: snapshot.tools, settings, fallbacks, compactions, ...(streaming ? { streaming } : {}), ...(streamingContent ? { streamingContent } : {}) } };
               this.projections.set(session, projection);
             }
             row.projection = projection.value; delete row.transcriptStatus;

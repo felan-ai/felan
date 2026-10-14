@@ -14,7 +14,7 @@ it('configures daemon concurrency and depth from local session settings after ac
   const root = { savings: { hasPendingWork: () => false }, settle: async () => {}, close: async () => {} };
   const bindings = await createLocalExecutionServices({ open: async () => root, dispose: async () => {} })(context, port);
   expect(configureExecutions).not.toHaveBeenCalled();
-  await bindings.onSession!({ sessionManager: { getEntries: () => [] }, subscribe: () => () => {}, clearQueue() {}, dispose() {} } as never);
+  await bindings.onSession!({ resourceLoader: { getSkills: () => ({ skills: [] }) }, sessionManager: { getEntries: () => [] }, subscribe: () => () => {}, clearQueue() {}, dispose() {} } as never);
   expect(configureExecutions).toHaveBeenCalledWith(settings);
   await bindings.disposeUi?.();
 });

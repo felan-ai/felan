@@ -36,7 +36,8 @@ describe('DependencyInstallationChecklist', () => {
     const lines = checklist.render(64).join('\n');
     expect(lines).toContain('[ ] Browser');
     expect(lines).toContain('[ ] Codebase Memory');
-    expect(lines).toContain('Unchecked extensions will use their safe fallback.');
+    expect(lines).toContain('Manage optional extensions');
+    expect(lines).toContain('Unchecked extensions remain unchanged.');
     expect(lines).not.toContain('[✓]');
   });
 
@@ -81,11 +82,11 @@ describe('DependencyOnboardingView', () => {
     view.handleInput('\r');
 
     expect(onSubmit).toHaveBeenCalledExactlyOnceWith(['browser']);
-    expect(view.render(64).join('\n')).toContain('Install optional extensions');
+    expect(view.render(64).join('\n')).toContain('Manage optional extensions');
 
     view.beginInstall('Installing Browser...');
     expect(view.render(64).join('\n')).toContain('Installing Browser...');
-    expect(view.render(64).join('\n')).not.toContain('Install optional extensions');
+    expect(view.render(64).join('\n')).not.toContain('Manage optional extensions');
 
     view.setInstallMessage('Downloading the pinned installer...');
     expect(view.render(64).join('\n')).toContain('Downloading the pinned installer...');

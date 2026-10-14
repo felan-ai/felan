@@ -209,8 +209,7 @@ export class HostSetupManager {
         if (!(await dependency.check(runtime)).available) throw new Error('Installed dependency is unavailable.');
       } else if (choice.action === 'skip') {
         const current = await readDaemonGlobalSettings(this.options.agentDir, this.options.assertCurrent);
-        const available = (await dependency.check(runtime)).available;
-        enabled = dependency.skipDisables && !available ? false : isBuiltinExtensionEnabled(current, dependency.extension);
+        enabled = isBuiltinExtensionEnabled(current, dependency.extension);
       }
       job.control.signal.throwIfAborted();
       await mergeDaemonGlobalSettings(this.options.agentDir, { extensions: [], dependencyDecisions: [{ extension: dependency.extension, revision: dependency.revision, enabled }] }, this.options.assertCurrent);

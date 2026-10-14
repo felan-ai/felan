@@ -91,8 +91,9 @@ export async function presentUiElement(value: UiPresentation, driver: GenericUiD
   if (renderer) {
     const action = await renderer(structuredClone(source), signal);
     if (signal.aborted || action === undefined) return undefined;
-    if (source.kind === 'status') throw new Error('Status items cannot return actions.');
-    return validateUiAction(source, action);
+    const current = hints!.currentPresentation(source, signal);
+    if (current.kind === 'status') throw new Error('Status items cannot return actions.');
+    return validateUiAction(current, action);
   }
   const message = presentationText(source);
   if (source.kind === 'status') { await driver.display(message, signal); return undefined; }

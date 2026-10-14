@@ -39,8 +39,7 @@ export async function presentContextDocument(element: UiPresentation, ui: Pick<E
 				},
 				invalidate: () => body.invalidate(),
 				handleInput(data) {
-					if (matchesKey(data, Key.escape) || data === 'q') { done(undefined); return; }
-					if (matchesKey(data, Key.enter)) {
+					if (matchesKey(data, Key.escape) || data === 'q' || matchesKey(data, Key.enter)) {
 						done({ elementId: element.id, revision: element.revision, actionId: close.id, outcome: close.outcome, values: {} });
 					} else {
 						if (matchesKey(data, Key.up)) offset--;

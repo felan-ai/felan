@@ -1,3 +1,5 @@
+import { presentProcessesElement, updateProcessesElement, PROCESSES_HINT } from '../src/tui/renderers/processes.js';
+import { defaultClientTheme } from '../src/tui/theme.js';
 import { describe, expect, it, vi } from 'vitest';
 import { parseInteraction, type UiDocument, type UiForm, type UiInput, type UiView } from '@felan-ai/session-protocol';
 import { presentUiElement, presentUiForm, presentationText, statusText, type GenericUiDriver } from '../src/client/ui.js';
@@ -104,4 +106,26 @@ describe('generic client UI vocabulary', () => {
       answer: { kind: 'form', actionId: 'send', outcome: 'submit', values: { answer: 'Typed' } } });
     expect(custom).toHaveBeenCalledOnce();
   });
+});
+
+
+it('validates in-place process actions against the updated presentation, not its initial revision', async () => {
+  let panel!: { handleInput(key: string): void };
+  const custom = vi.fn((factory: Parameters<InteractionPresenterUi['custom']>[0]) => new Promise(resolve => {
+    panel = factory({ requestRender: vi.fn() } as never, defaultClientTheme(), {} as never, resolve) as typeof panel;
+  }));
+  const ui = { custom } as unknown as InteractionPresenterUi;
+  const presenters = new ClientInteractionPresenters(ui);
+  presenters.hints.register(PROCESSES_HINT, {
+    presentation: (source, lifetime) => presentProcessesElement(source, ui, lifetime, async () => undefined),
+    updatePresentation: updateProcessesElement,
+  });
+  const source: UiView = { id: 'processes', kind: 'view', revision: 1, hint: PROCESSES_HINT, title: 'Processes', fallback: 'Processes',
+    fields: [], items: [], actions: [{ id: 'close', label: 'Close', target: 'element', outcome: 'cancel' }] };
+  const lifetime = signal();
+  const work = presenters.presentElement(source, lifetime);
+  expect(presenters.updateElement({ ...source, revision: 2, title: 'Updated processes' }, lifetime)).toBe(true);
+  panel.handleInput('\x1b');
+  expect(await work).toEqual({ elementId: source.id, revision: 2, actionId: 'close', outcome: 'cancel', values: {} });
+  expect(custom).toHaveBeenCalledOnce();
 });

@@ -163,9 +163,13 @@ export class TerminalSetup {
       !value.available && value.installable ? 'install' : value.available && !value.enabled ? 'enable' : value.enabled ? 'disable' : 'skip';
     const selected = await this.ui.checklist(dependencies.map(value => ({ id: value.id,
       label: `${actionFor(value)}: ${value.label}${value.version ? ` (${value.version})` : ''}`,
-      description: `${value.description}${value.reason ? ` ${value.reason}` : ''} Checked: ${actionFor(value)}. Unchecked: use the safe fallback.` })), signal);
+      description: `${actionFor(value) === 'install' ? value.description : actionFor(value) === 'disable'
+        ? `Disable ${value.label}; installed software is kept.` : actionFor(value) === 'enable'
+        ? `Enable the installed ${value.label} extension.` : `No changes are available for ${value.label}.`}${value.reason ? ` ${value.reason}` : ''} Checked: ${actionFor(value)}. Unchecked: leave unchanged.` })), signal);
     if (selected === undefined || signal.aborted) return false;
     if (selected.some(id => !dependencies.some(value => value.id === id))) throw new Error('Unknown dependency choice.');
+    const summary = dependencies.map(value => `${selected.includes(value.id) ? actionFor(value) : 'unchanged'}: ${value.label}`).join('\n');
+    if (!await this.ui.confirm('Apply extension changes?', summary, { signal }) || signal.aborted) return false;
     return this.start(flow, { kind: 'dependencies', confirmed: true,
       choices: dependencies.map(value => ({ id: value.id, action: selected.includes(value.id) ? actionFor(value) : 'skip' })) });
   }

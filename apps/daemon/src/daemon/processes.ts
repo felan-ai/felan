@@ -184,7 +184,7 @@ export class RegistryProcesses {
     })().catch(error => { this.foregroundStarts.delete(requestId); throw error; }), lifetime.scope);
   }
 
-  async waitForeground(requester: string, id: string): Promise<{ output: string; exitCode: number | undefined; cancelled: boolean; truncated: boolean; fullOutputPath?: string }> {
+  async waitForeground(requester: string, id: string, onOutput?: (output: string) => void): Promise<{ output: string; exitCode: number | undefined; cancelled: boolean; truncated: boolean; fullOutputPath?: string }> {
     const row = this.authorizeResource(requester, id); const live = this.live.get(id);
     if (row.kind !== 'foreground' || !live) throw new Error('Foreground process is unavailable.');
     const lifetime = this.currentLifetime(row.session); this.assertLifetime(lifetime);
@@ -203,6 +203,7 @@ export class RegistryProcesses {
         if (fullOutputPath) await storage.appendFile(fullOutputPath, Buffer.from(text));
         chunks.push(text); retained += Buffer.byteLength(text);
         while (retained > DEFAULT_MAX_BYTES * 2 && chunks.length > 1) { retained -= Buffer.byteLength(chunks.shift()!); discarded = true; }
+        onOutput?.(truncateTail(chunks.join('')).content);
       };
       try { for (;;) {
         const result = await live.process.read(offset, { waitMs: 1000, maxBytes: LIMITS.processReadBytes });
@@ -460,7 +461,7 @@ export class RegistryProcesses {
         const value: unknown = Reflect.get(target, key, target);
         if (typeof value !== 'function') return value;
         return (...args: unknown[]) => {
-          if (live.disposed && (key === 'dispose' || key === 'terminate')) return Promise.resolve();
+          if (live.disposed && (key === 'dispose' || key === 'terminate' || key === 'closeInput')) return Promise.resolve();
           current();
           if (key === 'write' || key === 'resize') this.assertLifetime(lifetime);
           return this.track(Promise.resolve(Reflect.apply(value, target, args)).then(result => {

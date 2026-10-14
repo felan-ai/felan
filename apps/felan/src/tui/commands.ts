@@ -1,7 +1,9 @@
 import { resolve } from 'node:path';
-import { ThinkingSchema, parseSchema } from '@felan-ai/session-protocol';
+import { ThinkingSchema, parseSchema, parseOperationResult } from '@felan-ai/session-protocol';
 import type { TuiSessionController } from './controller.js';
-import type { TuiDialogHost } from './dialogs.js';
+import type { Theme } from '@earendil-works/pi-coding-agent';
+import { pickSession, type NavigationDialogs } from './session-navigator.js';
+import { pickTreeEntry } from './tree-navigator.js';
 import { CombinedAutocompleteProvider, type AutocompleteProvider, type SlashCommand } from '@earendil-works/pi-tui';
 
 export type DaemonAction = 'stop' | 'restart';
@@ -29,16 +31,23 @@ const BUILTINS: SlashCommand[] = [
   { name: 'close', description: 'Close the current session' },
   { name: 'history', description: 'Load session history' },
   { name: 'ui', description: 'Open session UI' },
-  { name: 'help', description: 'Show available commands' },
+  { name: 'help', description: 'Show keyboard shortcuts and commands' },
+  { name: 'hotkeys', description: 'Show keyboard shortcuts and commands' },
+  { name: 'tools', description: '[t] Inspect tool calls and results' },
+  { name: 'agents', description: '[t] Open agent navigator' },
   { name: 'exit', description: 'Quit Felan' },
   { name: 'daemon', description: 'Manage the daemon' },
 ];
 
-export function createCommandAutocomplete(controller: TuiSessionController): AutocompleteProvider {
+export function tuiCommands(controller: TuiSessionController): SlashCommand[] {
   const builtinNames = new Set(BUILTINS.map(command => command.name));
-  const provider = () => new CombinedAutocompleteProvider([
-    ...BUILTINS, ...(controller.snapshot?.catalog.commands.filter(command => !builtinNames.has(command.name)) ?? []),
-  ], controller.snapshot?.cwd ?? process.cwd(), null);
+  const markers = { temporary: 't', project: 'p', user: 'u' };
+  return [...BUILTINS, ...(controller.snapshot?.catalog.commands.filter(command => !builtinNames.has(command.name)) ?? [])
+    .map(command => ({ ...command, description: command.scope ? `[${markers[command.scope]}] ${command.description}` : command.description }))];
+}
+
+export function createCommandAutocomplete(controller: TuiSessionController): AutocompleteProvider {
+  const provider = () => new CombinedAutocompleteProvider(tuiCommands(controller), controller.snapshot?.cwd ?? process.cwd(), null);
   return {
     triggerCharacters: ['/'],
     async getSuggestions(lines, line, column, { signal }) {
@@ -52,8 +61,8 @@ export function createCommandAutocomplete(controller: TuiSessionController): Aut
   };
 }
 
-export async function submitTuiInput(controller: TuiSessionController, dialogs: TuiDialogHost, text: string,
-  options: { cwd: string; exit(): void; setDraft?(text: string): void; preferences?(): Promise<boolean>; login?(provider?: string): Promise<boolean>; logout?(): Promise<boolean>; dependencies?(): Promise<boolean>; ui?(): Promise<boolean>; daemon?(action: DaemonAction, force: boolean): Promise<void> }): Promise<boolean> {
+export async function submitTuiInput(controller: TuiSessionController, dialogs: NavigationDialogs, text: string,
+  options: { cwd: string; exit(): void; theme?: () => Theme; requestRender?(): void; setDraft?(text: string): void; preferences?(): Promise<boolean>; login?(provider?: string): Promise<boolean>; logout?(): Promise<boolean>; dependencies?(): Promise<boolean>; ui?(): Promise<boolean>; daemon?(action: DaemonAction, force: boolean): Promise<void> }): Promise<boolean> {
   const trimmed = text.trim();
   if (trimmed === '/exit' || trimmed === '/quit') { options.exit(); return true; }
   if (trimmed === '/history') { await controller.loadHistory(); return true; }
@@ -111,7 +120,10 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     if (mode === 'force' && !await dialogs.confirm('Interrupt all active work', 'Cancel active runs, descendants and processes across every session?')) return false;
     await options.daemon(action, mode === 'force'); return true;
   }
-  if (name === 'new') { await controller.create({ cwd: resolve(controller.snapshot?.cwd ?? options.cwd, argument || '.') }); return true; }
+  if (name === 'new') {
+    await controller.create({ cwd: resolve(controller.snapshot?.cwd ?? options.cwd, argument || '.') });
+    controller.setNotice('✓ New session started'); return true;
+  }
   if (name === 'cwd') {
     if (controller.snapshot && !['idle', 'interrupted'].includes(controller.snapshot.run.state)) throw new Error('Wait for the current run before changing directories.');
     const cwd = argument || await dialogs.input('Working directory', controller.snapshot?.cwd ?? options.cwd);
@@ -125,10 +137,20 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
   }
   if (name === 'resume' || name === 'sessions') {
     const rows = await controller.sessions();
-    const selected = await dialogs.select('Sessions', rows.map((row, index) => ({ value: String(index),
-      label: row.title || row.session, description: `${row.cwd} · ${row.run.state}` })));
+    const selected = await pickSession(dialogs, rows, controller.snapshot?.cwd ?? options.cwd, controller.sessionId, options.theme);
     if (selected === undefined) return false;
-    const row = rows[Number(selected)]; if (!row) throw new Error('The selected session is unavailable.');
+    const row = rows.find(row => row.session === selected.session); if (!row) throw new Error('The selected session is unavailable.');
+    if (selected.action === 'delete') {
+      if (!await dialogs.confirm('Delete session', `Permanently delete ${row.title || row.session}? This cannot be undone.`)) return false;
+      if ((await controller.perform('session.delete', { confirmed: true, expectedRevision: row.revision }, row.session)).outcome !== 'accepted') return false;
+      controller.setNotice('Session deleted'); return true;
+    }
+    if (selected.action === 'rename') {
+      if (row.session !== controller.sessionId) throw new Error('Attach to a session before renaming it.');
+      const title = await dialogs.input('Session name', row.title);
+      if (title === undefined || (await controller.perform('session.rename', { name: title }, row.session)).outcome !== 'accepted') return false;
+      controller.setNotice(`Session name set: ${title}`); return true;
+    }
     try { await controller.attach(row.session); return true; }
     catch (error) {
       if ((error as { code?: string }).code !== 'configuration_recovery_required') throw error;
@@ -146,22 +168,73 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     case 'compact': return (await controller.perform('compact', argument ? { instructions: argument } : {}, session)).outcome === 'accepted';
     case 'rename': {
       const title = argument || await dialogs.input('Session name', snapshot.title);
-      return title === undefined ? false : (await controller.perform('session.rename', { name: title }, session)).outcome === 'accepted';
+      if (title === undefined || (await controller.perform('session.rename', { name: title }, session)).outcome !== 'accepted') return false;
+      controller.setNotice(`Session name set: ${title}`); return true;
     }
     case 'model': {
       const models = snapshot.catalog.models;
-      const selected = argument || await dialogs.select('Model', models.map(model => ({ value: `${model.provider}/${model.id}`, label: model.label,
-        description: `${model.provider}/${model.id}` })));
+      let persist = !argument;
+      let selected = argument;
+      if (!argument) {
+        const response = await controller.perform('config.get', { scope: 'global' });
+        if (response.outcome !== 'accepted') return false;
+        const { defaultModel } = parseOperationResult('config.get', response.result).values;
+        const current = `${snapshot.model.provider}/${snapshot.model.id}`;
+        const reference = (model: typeof models[number]) => `${model.provider}/${model.id}`;
+        const rank = (model: typeof models[number]) => reference(model) === current ? 0 : reference(model) === defaultModel ? 1 : 2;
+        selected = await dialogs.select('Model', [...models].sort((a, b) => rank(a) - rank(b) || a.provider.localeCompare(b.provider))
+          .map(model => ({ value: reference(model), label: `${reference(model) === current ? '✓ ' : '  '}${model.id} [${model.provider}]${reference(model) === defaultModel ? ' · default' : ''}`,
+            description: `Model Name: ${model.label}` })), { initialValue: current, confirmLabel: 'set as default',
+            secondary: { key: 'app.models.save', label: 'select for this session', select: () => { persist = false; } } }) ?? '';
+      }
       if (!selected) return false;
       const model = models.find(model => `${model.provider}/${model.id}` === selected);
       if (!model) throw new Error('Choose a model advertised by this daemon.');
-      return (await controller.perform('set_model', { provider: model.provider, id: model.id }, session)).outcome === 'accepted';
+      if ((await controller.perform('set_model', { provider: model.provider, id: model.id }, session)).outcome !== 'accepted') return false;
+      if (persist) {
+        try {
+          if ((await controller.perform('config.set', { scope: 'global', values: { defaultModel: selected } })).outcome !== 'accepted') throw new Error('Default save rejected.');
+        } catch {
+          controller.setNotice(`Model: ${model.id} set for this session; saving default failed`);
+          return true;
+        }
+      }
+      controller.setNotice(persist ? `Default model: ${selected}` : `Model: ${model.id}`);
+      return true;
     }
     case 'thinking': {
       const choices = snapshot.catalog.models.find(model => model.provider === snapshot.model.provider && model.id === snapshot.model.id)?.thinking ?? [];
-      const selected = argument || await dialogs.select('Thinking level', choices.map(level => ({ value: level, label: level })));
+      let persist = false;
+      let selected = argument;
+      let modelThinkingLevels: ReturnType<typeof parseOperationResult<'config.get'>>['values']['modelThinkingLevels'];
+      if (!argument) {
+        const response = await controller.perform('config.get', { scope: 'global' }, session);
+        if (response.outcome !== 'accepted') return false;
+        const values = parseOperationResult('config.get', response.result).values;
+        const { defaultThinking } = values;
+        modelThinkingLevels = values.modelThinkingLevels;
+        const descriptions = { off: 'No reasoning', minimal: 'Very brief reasoning (~1k tokens)', low: 'Light reasoning (~2k tokens)',
+          medium: 'Moderate reasoning (~8k tokens)', high: 'Deep reasoning (~16k tokens)', xhigh: 'Extra-high reasoning (~32k tokens)', max: 'Maximum reasoning' };
+        selected = await dialogs.select('Thinking Level', choices.map(level => ({ value: level,
+          label: `${level === snapshot.thinking ? '✓ ' : '  '}${level}${level === defaultThinking ? ' · default' : ''}`, description: descriptions[level] })),
+        { initialValue: snapshot.thinking, confirmLabel: 'select for this session',
+          secondary: { key: 'app.thinking.save', label: 'set as default', select: () => { persist = true; } } }) ?? '';
+      }
       if (!selected) return false;
-      return (await controller.perform('set_thinking', { thinking: parseSchema(ThinkingSchema, selected) }, session)).outcome === 'accepted';
+      const thinking = parseSchema(ThinkingSchema, selected);
+      if ((await controller.perform('set_thinking', { thinking }, session)).outcome !== 'accepted') return false;
+      if (persist) {
+        const reference = `${snapshot.model.provider}/${snapshot.model.id}`;
+        try {
+          if ((await controller.perform('config.set', { scope: 'global', values: { defaultThinking: thinking,
+            ...(modelThinkingLevels?.[reference] === undefined ? {} : { modelThinkingLevels: { ...modelThinkingLevels, [reference]: thinking } }) } })).outcome !== 'accepted') throw new Error('Default save rejected.');
+        } catch {
+          controller.setNotice(`Thinking level: ${thinking} set for this session; saving default failed`);
+          return true;
+        }
+      }
+      controller.setNotice(persist ? `Default thinking level: ${thinking}` : `Thinking level: ${thinking}`);
+      return true;
     }
     case 'fork': {
       const tree = await controller.tree(); const choices = tree.entries.filter(entry => entry.role === 'user');
@@ -186,18 +259,35 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       return true;
     }
     case 'tree': {
-      const tree = await controller.tree();
-      const entryId = await dialogs.select('Session branches', tree.entries.map(entry => ({ value: entry.id, label: entry.label || entry.summary, description: entry.kind })));
-      if (entryId === undefined) return false;
-      const result = await controller.perform('session.branch.select', { entryId, expectedRevision: tree.revision }, session);
-      if (result.outcome !== 'accepted') return false;
-      await controller.loadHistory(); return true;
+      let selected: string | undefined;
+      while (controller.sessionId === session) {
+        const tree = await controller.tree();
+        const choice = await pickTreeEntry(dialogs, tree, options.theme, selected, options.requestRender);
+        if (!choice) return false;
+        selected = choice.entryId;
+        if (choice.action === 'label') {
+          const result = await controller.perform('session.entry.label', { entryId: choice.entryId, label: choice.label, expectedRevision: tree.revision }, session);
+          if (result.outcome !== 'accepted') return false;
+          continue;
+        }
+        if (choice.entryId === tree.branch) { controller.setNotice('Already at this point'); return true; }
+        const summarize = await dialogs.select('Summarize branch?', [{ value: 'no', label: 'No summary' }, { value: 'yes', label: 'Summarize' }]);
+        if (summarize === undefined) continue;
+        const entry = tree.entries.find(entry => entry.id === choice.entryId);
+        const message = controller.history.find(message => message.entryId === choice.entryId);
+        const result = await controller.perform('session.branch.select', { entryId: choice.entryId, expectedRevision: tree.revision, summarize: summarize === 'yes' }, session);
+        if (result.outcome !== 'accepted') return false;
+        await controller.loadHistory();
+        if (entry?.role === 'user') {
+          if (message) options.setDraft?.(message.content.filter(part => part.type === 'text').map(part => part.text).join('\n'));
+          else controller.setNotice('Branch selected. Full prompt text is not in the loaded history; the draft was not replaced with a truncated preview.');
+        }
+        return true;
+      }
+      return false;
     }
     case 'queue':
       await dialogs.select('Queue (read-only; targeted editing is unavailable)', snapshot.queue.map(item => ({ value: item.id, label: `${item.kind}: ${item.prompt.text}` })));
-      return true;
-    case 'help':
-      controller.setNotice('/new /cwd /sessions /model /thinking /settings /login /logout /dependencies /compact /fork /tree /rename /reload /reconnect /queue /steer /follow-up /cancel /close /ui /exit; ! shell, !! shell without context');
       return true;
     default: {
       const command = snapshot.catalog.commands.find(command => command.name === name);

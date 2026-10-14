@@ -35,7 +35,7 @@ describe('memory history hint', () => {
     await expect(result).resolves.toEqual({ elementId: 'memory', revision: 2, actionId: 'inspect', itemId: 'opaque-run', outcome: 'submit', values: {} });
   });
 
-  it.each([['\x1b[C', 'next'], ['\x12', 'refresh'], ['\x1b', undefined]])('maps %j to %s', async (key, actionId) => {
+  it.each([['\x1b[C', 'next'], ['\x12', 'refresh'], ['\x1b', 'close']])('maps %j to %s', async (key, actionId) => {
     const h = harness(); const result = presentMemoryHistory(view, h.ui, new AbortController().signal);
     h.component().handleInput?.(key);
     if (actionId) await expect(result).resolves.toMatchObject({ actionId, elementId: 'memory', revision: 2 });

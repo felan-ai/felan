@@ -2,9 +2,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { TuiAltScreen, stripTerminalSequences, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
+import { ScrollView, TuiAltScreen, stripTerminalSequences, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
 import { identityFor } from '../../daemon/src/daemon/target.js';
-import type { Interaction, Operation, SetupJob } from '@felan-ai/session-protocol';
+import type { Interaction, Operation, SetupJob, TuiPreferencesUpdate } from '@felan-ai/session-protocol';
 import { SessionClient } from '../src/client/client.js';
 import { TuiSessionController } from '../src/tui/controller.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
@@ -19,7 +19,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, createdAt: 1, state: 'waiting', request: { kind: 'input', title: 'Model question must wait' } };
 
-async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean } = {}) {
+async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tui-startup-')); const fake = new FakeTransport();
   const operations: Operation[] = ['attach', 'detach', 'sessions.create', 'prompt', 'interaction.answer', 'tui.preferences.get',
     'host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link',
@@ -37,7 +37,7 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
         identity, operations, interactionKinds: [...TERMINAL_INTERACTION_KINDS] }, connection); break;
       case 'host.status': fake.reply(request, { identity, daemonVersion: 'fixture', protocol: 1, state: 'ready',
         active: { sessions: 0, runs: 0, attachments: 0 }, setupNeeds: loggedIn ? [] : [{ code: 'provider', message: 'No model available' }] }, connection); break;
-      case 'tui.preferences.get': fake.reply(request, { hideThinking: false, showImages: false, imageWidthCells: 60, outputPad: 1, toolDisplay: 'grouped', keybindings: {} }, connection); break;
+      case 'tui.preferences.get': fake.reply(request, { hideThinking: false, showImages: false, imageWidthCells: 60, outputPad: 1, toolDisplay: 'grouped', keybindings: {}, ...options.preferences }, connection); break;
       case 'sessions.create':
         if (options.createError) fake.frame({ v: 1, re: request.id, outcome: 'rejected', error: { code: 'invalid_request', message: 'Invalid working directory.', retryable: false } }, connection);
         else fake.reply(request, { sessionId: 'session' }, connection);
@@ -74,6 +74,19 @@ async function openLogin(f: Awaited<ReturnType<typeof fixture>>) {
   f.terminal.input('\r');
   await vi.waitFor(() => expect(f.text()).toContain('Secret API key'));
 }
+
+it('applies persisted fullscreen controls and quiet startup to the active terminal', async () => {
+  const scroll = vi.spyOn(ScrollView.prototype, 'setScrollbar');
+  const wheel = vi.spyOn(TuiAltScreen.prototype, 'setWheelScrollLines');
+  const cursor = vi.spyOn(TuiAltScreen.prototype, 'setShowHardwareCursor');
+  const clear = vi.spyOn(TuiAltScreen.prototype, 'setClearOnShrink');
+  const f = await fixture({ provider: true, preferences: { quietStartup: true, fullscreenScrollbar: 'hidden',
+    fullscreenCopyOnSelect: false, fullscreenWheelScrollLines: 5, hardwareCursor: true, clearOnShrink: true } });
+  f.start(); await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  expect(scroll).toHaveBeenCalledWith('hidden'); expect(wheel).toHaveBeenCalledWith(5);
+  expect(cursor).toHaveBeenCalledWith(true); expect(clear).toHaveBeenCalledWith(true);
+  expect(f.tui.getCopyOnSelect()).toBe(false); expect(f.text()).not.toContain('Felan Code');
+});
 
 it('shows an update notice without waiting for the version check before attaching', async () => {
   let complete!: (version: string) => void;

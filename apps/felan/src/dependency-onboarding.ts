@@ -153,9 +153,9 @@ export class DependencyInstallationChecklist implements Component {
   render(width: number): string[] {
     const renderWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 80;
     const lines = [
-      this.theme.fg('accent', this.theme.bold('Install optional extensions')),
-      this.theme.fg('text', 'Check the extensions whose reviewed dependencies Felan Code may install.'),
-      this.theme.fg('muted', 'Unchecked extensions will use their safe fallback. Escape decides later.'),
+      this.theme.fg('accent', this.theme.bold('Manage optional extensions')),
+      this.theme.fg('text', 'Check an extension to apply its listed operation: install, enable, or disable.'),
+      this.theme.fg('muted', 'Unchecked extensions remain unchanged. Escape decides later.'),
       '',
     ];
 

@@ -198,7 +198,7 @@ describe("generic prompt history", () => {
 		const f = fixture([entry("long", text)]);
 		await f.open(); await f.settled();
 		expect(f.view().items[0]?.values.clipped).toBe(true);
-		await f.invoke(f.view(), "detail", { itemId: "item-0" });
+		await f.invoke(f.view(), "detail", { itemId: f.view().items[0]!.id });
 		const pages = splitPromptHistoryText(text).chunks.length;
 		const documentId = f.document().id;
 		let output = f.document().markdown;
@@ -213,7 +213,8 @@ describe("generic prompt history", () => {
 		expect(output).toContain("first"); expect(output).toContain("last");
 		expect(output).toContain("&lt;script&gt;\\[unsafe\\]\\(file:///x\\)&lt;/script&gt;");
 		expect(f.document().actions.some(action => action.id === "next")).toBe(false);
-		expect(f.document().data).toEqual({ pageIndex: pages - 1, pageCount: pages });
+		expect(f.view().items[0]!.id).toContain(f.view().id);
+		expect(f.document().data).toEqual({ itemId: f.view().items[0]!.id, pageIndex: pages - 1, pageCount: pages });
 		expect(f.document().actions.some(action => action.id === "use")).toBe(false);
 		await f.invoke(f.document(), "previous");
 		await f.invoke(f.document(), "back");
@@ -232,12 +233,12 @@ describe("generic prompt history", () => {
 		for (const values of badValues) await expect(f.invoke(f.view(), "search", { values })).rejects.toThrow();
 		await expect(f.invoke(old, "search", { values: { query: "", scope: "all" } })).rejects.toThrow();
 		await expect(f.invoke(f.view(), "detail", { itemId: "foreign" })).rejects.toThrow();
-		await expect(f.invoke(f.view(), "detail", { itemId: "item-0", elementId: "foreign" })).rejects.toThrow();
+		await expect(f.invoke(f.view(), "detail", { itemId: f.view().items[0]!.id, elementId: "foreign" })).rejects.toThrow();
 		await expect(f.invoke(f.view(), "insert")).rejects.toThrow();
 		expect(f.listSessions).not.toHaveBeenCalled();
 		const current = f.view();
 		await f.invoke(current, "close");
-		await expect(f.invoke(current, "detail", { itemId: "item-0" })).rejects.toThrow("closed");
+		await expect(f.invoke(current, "detail", { itemId: f.view().items[0]!.id })).rejects.toThrow("closed");
 		await f.shutdown();
 		expect(f.rows.get(current.id)?.handle.close).toHaveBeenCalledOnce();
 	});

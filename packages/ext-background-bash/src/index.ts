@@ -161,6 +161,7 @@ export function createBackgroundBashExtension(): FelanExtension {
     ) return;
     completionPollRunningGeneration = generation;
     try {
+      let changed = false;
       for (const id of [...watchedJobIds]) {
         let job: BackgroundBashJob;
         try {
@@ -176,8 +177,10 @@ export function createBackgroundBashExtension(): FelanExtension {
         if (!isTerminalStatus(job.status.status)) continue;
 
         watchedJobIds.delete(id);
+        changed = true;
         deliverCompletion(job);
       }
+      if (changed) await commonPresentation.refresh().catch(() => {});
     } finally {
       if (completionPollRunningGeneration === generation) {
         completionPollRunningGeneration = undefined;
@@ -347,6 +350,7 @@ export function createBackgroundBashExtension(): FelanExtension {
         for (const job of jobs) {
           if (isTerminalStatus(job.status.status)) suppressCompletion(job.meta.id);
         }
+        await commonPresentation.refresh().catch(() => {});
         return {
           content: [{ type: 'text', text: formatJobList(jobs) }],
           details: { jobs: jobs.map((job) => ({ meta: job.meta, status: job.status })) },
@@ -364,6 +368,7 @@ export function createBackgroundBashExtension(): FelanExtension {
         const output = await manager.tail(params.id, params.lines ?? 80);
         const job = await manager.get(params.id);
         if (isTerminalStatus(job.status.status)) suppressCompletion(job.meta.id);
+        await commonPresentation.refresh().catch(() => {});
         return {
           content: [{ type: 'text', text: output }],
           details: { id: params.id, status: job.status.status, lines: params.lines ?? 80 },
@@ -387,6 +392,7 @@ export function createBackgroundBashExtension(): FelanExtension {
           throw error;
         }
         if (wasWatched && result.timedOut) watchCompletion(params.id);
+        await commonPresentation.refresh().catch(() => {});
         return {
           content: [{ type: 'text', text: formatWaitResult(result.job, result.timedOut) }],
           details: { job: result.job, timedOut: result.timedOut },
@@ -409,6 +415,7 @@ export function createBackgroundBashExtension(): FelanExtension {
           if (wasWatched) watchCompletion(params.id);
           throw error;
         }
+        await commonPresentation.refresh().catch(() => {});
         return {
           content: [{ type: 'text', text: `Background process stop result.\n\n${formatJobDetails(job)}` }],
           details: { job },

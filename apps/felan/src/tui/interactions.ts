@@ -49,6 +49,10 @@ export class TerminalInteractions {
 
   private refresh(): void {
     if (this.closed) return;
+    if (this.controller.state?.status === 'live') {
+      const current = new Set(this.elements().map(element => JSON.stringify([this.controller.sessionId, element.id])));
+      for (const key of this.seenElements.keys()) if (!current.has(key)) this.seenElements.delete(key);
+    }
     const pending = this.pending();
     if (this.elementActive) {
       const active = this.elementActive;
@@ -58,6 +62,14 @@ export class TerminalInteractions {
       }
       if (this.controller.client.status === 'ready' && this.controller.state?.status === 'recovering') return;
       if (!this.currentElement(active.session, active.element)) {
+        const next = this.controller.sessionId === active.session && this.controller.state?.status === 'live'
+          && this.controller.client.status === 'ready'
+          ? this.elements().find(element => element.id === active.element.id && element.kind === active.element.kind) : undefined;
+        if (next && next.hint?.id === active.element.hint?.id && next.hint?.version === active.element.hint?.version
+          && this.presenters.updateElement(next, active.control.signal)) {
+          active.element = next;
+          return;
+        }
         if (!this.requestedElement && active.manual && this.controller.sessionId === active.session
           && this.elements().some(element => element.id === active.element.id)) this.requestedElement = active.element.id;
         active.control.abort();
@@ -118,9 +130,9 @@ export class TerminalInteractions {
         const interactive = capabilities.includes(uiCapability(element)) && capabilities.includes('ui.action')
           && Boolean(this.controller.client.capabilities?.operations.includes('ui.action'));
         const action = await this.presenters.presentElement(element, active.control.signal, interactive);
-        if (!await this.availableElement(session, element, active.control.signal)
-          || active.control.signal.aborted || !this.currentElement(session, element)) return;
-        this.rememberElement(key, version);
+        if (!await this.availableElement(session, active.element, active.control.signal)
+          || active.control.signal.aborted || !this.currentElement(session, active.element)) return;
+        this.rememberElement(key, JSON.stringify(active.element));
         if (action && interactive) {
           const response = await this.controller.perform('ui.action', action, session);
           if (response.outcome !== 'accepted') throw new Error(`${response.error.code}: ${response.error.message}`);

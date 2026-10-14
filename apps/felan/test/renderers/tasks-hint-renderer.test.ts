@@ -57,7 +57,9 @@ describe('TASKS_HINT', () => {
 
   it('does not invent an item action for an empty view', async () => {
     const { ui } = fixture(panel => { panel.handleInput('\r'); panel.handleInput('\x1b'); });
-    expect(await presentTasksElement({ ...view, items: [] }, ui, new AbortController().signal, vi.fn())).toBeUndefined();
+    expect(await presentTasksElement({ ...view, items: [] }, ui, new AbortController().signal, vi.fn())).toEqual({
+      elementId: 'view', revision: 3, actionId: 'close', outcome: 'cancel', values: {},
+    });
   });
 
   it('aborts an open screen without returning an action', async () => {

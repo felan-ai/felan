@@ -152,9 +152,9 @@ it('keeps an editor draft when the model shortcut opens and cancels its selector
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     const before = f.root.runtime.session.messages.length;
     terminal.input('unsubmitted draft'); terminal.input('\x0c');
-    await vi.waitFor(() => expect(screenText(tui)).toMatch(/Model\s+>\s+→ Fixture/u));
+    await vi.waitFor(() => expect(screenText(tui)).toMatch(/Model\s+>\s+→ ✓ fixture \[offline\]/u));
     expect(screenText(tui)).not.toContain('Filter choices');
-    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('→ Fixture'));
+    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('→ ✓ fixture [offline]'));
     tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('unsubmitted draft');
     expect(f.root.runtime.session.messages).toHaveLength(before);
     terminal.input('\x03'); terminal.input('\x04'); await running;
@@ -195,8 +195,8 @@ it('uses daemon shortcuts in the active terminal and retains the saved setting a
   try {
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     terminal.input('retained draft'); terminal.input('\x1bm');
-    await vi.waitFor(() => expect(screenText(tui)).toMatch(/Model\s+>\s+→ Fixture/u));
-    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('→ Fixture'));
+    await vi.waitFor(() => expect(screenText(tui)).toMatch(/Model\s+>\s+→ ✓ fixture \[offline\]/u));
+    terminal.input('\x1b'); await vi.waitFor(() => expect(screenText(tui)).not.toContain('→ ✓ fixture [offline]'));
     tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('retained draft');
     terminal.input('\x03');
     vi.spyOn(f.preferences, 'set').mockRejectedValueOnce(new Error('cannot write preferences'));

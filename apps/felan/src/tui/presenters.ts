@@ -5,7 +5,7 @@ import { PREWALK_FORM_HINT, presentPrewalkForm } from './renderers/prewalk.js';
 import { CONTEXT_DOCUMENT_HINT } from '@felan-ai/ext-context-view/data';
 import { presentContextDocument } from './renderers/context-view.js';
 import { TASKS_HINT, presentTasksElement } from './renderers/tasks.js';
-import { PROCESSES_HINT, presentProcessesElement } from './renderers/processes.js';
+import { PROCESSES_HINT, presentProcessesElement, updateProcessesElement } from './renderers/processes.js';
 import { PROMPT_HISTORY_HINT, presentPromptHistoryElement } from './renderers/prompt-history.js';
 import { type AgentViewTranscript } from '../subagents/types.js';
 import { INSIGHTS_DOCUMENT_HINT } from '@felan-ai/ext-insights/data';
@@ -55,7 +55,7 @@ export function createTerminalPresenters(controller: TuiSessionController, ui: I
     presenters.hints.register(FUSION_REVIEW_HINT, { presentation: (element, signal) => presentFusionReviewDocument(element, ui, signal) }),
     presenters.hints.register(TASKS_HINT, { presentation: async (element, signal) => presentTasksElement(element, ui, signal, genericActions,
       (await presentationSettings())['tasks-display-mode'] ?? 'inline') }),
-    presenters.hints.register(PROCESSES_HINT, { presentation: (element, signal) => presentProcessesElement(element, ui, signal, genericActions) }),
+    presenters.hints.register(PROCESSES_HINT, { updatePresentation: updateProcessesElement, presentation: (element, signal) => presentProcessesElement(element, ui, signal, genericActions) }),
     presenters.hints.register(PROMPT_HISTORY_HINT, { presentation: async (element, signal) => presentPromptHistoryElement(element, ui, signal, genericActions, options.setEditorText,
       (await presentationSettings())['prompt-history-display-mode'] ?? 'inline') }),
   ];

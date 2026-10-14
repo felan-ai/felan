@@ -46,6 +46,7 @@ class HistoryView {
 	private chunks: string[] = [];
 	private bytes = 0;
 	private page = 0;
+	private selectedItemId = "";
 	private view: UiView | undefined;
 	private document: UiDocument | undefined;
 	private viewHandle: UiElementHandle | undefined;
@@ -158,6 +159,7 @@ class HistoryView {
 			const item = this.state.items[index];
 			if (!item) throw new Error("Prompt history item is unavailable.");
 			const text = splitPromptHistoryText(item.text);
+			this.selectedItemId = action.itemId!;
 			this.chunks = text.chunks; this.bytes = text.bytes; this.page = 0;
 			await this.publishText(context);
 		} else if (action.actionId === "back") {
@@ -188,7 +190,7 @@ class HistoryView {
 				{ id: "timestamp", label: "Time (epoch ms)", valueKind: "number" }],
 			items: this.state.items.map((item, index) => {
 				const preview = clip(item.text, 512);
-				return { id: `item-${index}`, values: { preview: displayText(preview), clipped: preview !== item.text,
+				return { id: `${this.id}:item-${index}`, values: { preview: displayText(preview), clipped: preview !== item.text,
 					project: displayText(clip(item.cwd, 128)), session: displayText(clip(item.sessionName ?? item.sessionLabel, 128)), timestamp: item.timestamp },
 				fallback: `Prompt result ${index + 1}; select to read its full text.` };
 			}),
@@ -216,7 +218,7 @@ class HistoryView {
 			title: `Full prompt — page ${this.page + 1} of ${this.chunks.length}`,
 			fallback: `Full prompt, ${this.bytes} UTF-8 bytes, page ${this.page + 1} of ${this.chunks.length}. No prompt is submitted.`,
 			markdown: markdownText(this.chunks[this.page]!) || "(empty prompt)",
-			data: { pageIndex: this.page, pageCount: this.chunks.length },
+			data: { itemId: this.selectedItemId, pageIndex: this.page, pageCount: this.chunks.length },
 			actions: [
 				...(this.page > 0 ? [{ id: "previous", label: "Previous text", target: "element" as const, outcome: "submit" as const }] : []),
 				...(this.page + 1 < this.chunks.length ? [{ id: "next", label: "Next text", target: "element" as const, outcome: "submit" as const }] : []),

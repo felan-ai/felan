@@ -1,6 +1,6 @@
 import { getExtensionConfigCliOptions, parseModelReference, validateExtensionConfigValue, type ExtensionConfigDefinition, type ExtensionConfigOverride } from '@felan-ai/agent-core';
 import { assertJson, ConfigValuesSchema, parseOperationResult, parseSchema, type OperationParams, type OperationResult, type JsonValue } from '@felan-ai/session-protocol';
-import { mergeDaemonGlobalSettings, readDaemonGlobalSettings, type DaemonGlobalSettingsUpdate } from './global-settings.js';
+import { EXECUTION_DEFAULT_KEYS, mergeDaemonGlobalSettings, readDaemonGlobalSettings, type DaemonGlobalSettingsUpdate } from './global-settings.js';
 import type { HostConfiguration } from '@felan-ai/daemon/session-runtime';
 import { builtinExtensionPackages, validateBuiltinExtensionKeys } from './extension-catalog.js';
 
@@ -19,7 +19,7 @@ export class DaemonConfiguration implements HostConfiguration {
       .filter(field => Object.hasOwn(ConfigValuesSchema.properties, field.name)).map(field => [field.name, field]));
   }
 
-  async get(scope: OperationParams<'config.get'>['scope']): Promise<OperationResult<'config.get'>> {
+  async get(scope: OperationParams<'config.get'>['scope'], model?: { provider: string; id: string }): Promise<OperationResult<'config.get'>> {
     this.requireGlobal(scope);
     const settings = await readDaemonGlobalSettings(this.options.agentDir, this.options.assertCurrent);
     const values: Record<string, unknown> = {};
@@ -49,12 +49,28 @@ export class DaemonConfiguration implements HostConfiguration {
     values.extensionConfig = extensionConfig;
     if (settings.codemode !== undefined && !record(settings.codemode)) throw new Error('codemode must be an object');
     values.codemode = record(settings.codemode) ? settings.codemode.mode ?? 'on' : 'on';
+    if (settings.compaction !== undefined && !record(settings.compaction)) throw new Error('compaction must be an object');
+    values.autoCompact = record(settings.compaction) ? settings.compaction.enabled ?? true : true;
+    values.cacheWarming = settings.cacheWarming ?? 'off';
+    values.skillCommands = settings.enableSkillCommands ?? true;
+    values.steeringMode = settings.steeringMode ?? 'one-at-a-time';
+    values.followUpMode = settings.followUpMode ?? 'one-at-a-time';
+    values.transport = settings.transport ?? 'auto';
+    values.httpIdleTimeoutMs = settings.httpIdleTimeoutMs ?? 300000;
+    values.modelThinkingLevels = settings.modelThinkingLevels ?? {};
+    if (settings.images !== undefined && !record(settings.images)) throw new Error('images must be an object');
+    if (record(settings.images)) {
+      if (settings.images.autoResize !== undefined) values.imageAutoResize = settings.images.autoResize;
+      if (settings.images.blockImages !== undefined) values.blockImages = settings.images.blockImages;
+    }
     if (settings.enabledModels !== undefined) values.scopedModels = settings.enabledModels;
     if (settings.defaultProvider !== undefined || settings.defaultModel !== undefined) {
       if (typeof settings.defaultProvider !== 'string' || typeof settings.defaultModel !== 'string') throw new Error('Incomplete configured default model.');
       values.defaultModel = `${settings.defaultProvider}/${settings.defaultModel}`;
     }
-    if (settings.defaultThinkingLevel !== undefined) values.defaultThinking = settings.defaultThinkingLevel;
+    const modelThinkingLevels = parseSchema(ConfigValuesSchema, { modelThinkingLevels: values.modelThinkingLevels }).modelThinkingLevels;
+    const defaultThinking = (model ? modelThinkingLevels?.[`${model.provider}/${model.id}`] : undefined) ?? settings.defaultThinkingLevel;
+    if (defaultThinking !== undefined) values.defaultThinking = defaultThinking;
     if (settings.felanClassifier !== undefined) {
       if (!record(settings.felanClassifier)) throw new Error('felanClassifier must be an object');
       if (settings.felanClassifier.model !== undefined) values.classifierModel = settings.felanClassifier.model;
@@ -73,6 +89,8 @@ export class DaemonConfiguration implements HostConfiguration {
 
   sessionOverrides(input: unknown, previous: readonly ExtensionConfigOverride[] = []): ReturnType<HostConfiguration['sessionOverrides']> {
     const update = this.prepare('global', input);
+    if (EXECUTION_DEFAULT_KEYS.some(key => update[key] !== undefined)) throw new ConfigurationUnavailable('Execution defaults are global; use a new session or /reload, or restart the daemon for HTTP idle timeout.');
+    if (update.imageAutoResize !== undefined || update.blockImages !== undefined) throw new ConfigurationUnavailable('Image settings are global; use a new session or /reload to apply them.');
     if (update.scopedModels !== undefined || update.defaultModel !== undefined || update.defaultThinking !== undefined) throw new ConfigurationUnavailable('Model defaults are global; use session model/thinking operations.');
     if (update.classifierModel !== undefined || update.builtinExtensions !== undefined || update.codemode !== undefined) throw new ConfigurationUnavailable('Classifier, code mode and built-in extension settings are global; use a new session or /reload to apply them.');
     const groups = new Map<string, { extensionId: string; source: string; values: Record<string, unknown> }>(previous.map(row => [row.extensionId, { ...row, values: { ...row.values } }]));
@@ -111,7 +129,8 @@ export class DaemonConfiguration implements HostConfiguration {
     validateBuiltinExtensionKeys(values.builtinExtensions);
     const extensions: DaemonGlobalSettingsUpdate['extensions'][number][] = [];
     for (const [name, value] of Object.entries(values)) {
-      if (name === 'scopedModels' || name === 'defaultModel' || name === 'defaultThinking' || name === 'classifierModel' || name === 'builtinExtensions' || name === 'extensionConfig' || name === 'codemode') continue;
+      if (EXECUTION_DEFAULT_KEYS.some(key => key === name)) continue;
+      if (name === 'scopedModels' || name === 'defaultModel' || name === 'defaultThinking' || name === 'classifierModel' || name === 'builtinExtensions' || name === 'extensionConfig' || name === 'codemode' || name === 'imageAutoResize' || name === 'blockImages') continue;
       const field = this.fields.get(name);
       if (!field) throw new ConfigurationUnavailable('Configuration field is not available in this daemon.');
       extensions.push({ definition: field.definition, field: field.field, value: validateExtensionConfigValue(field.definition, field.field, value, 'daemon configuration') });
@@ -129,6 +148,9 @@ export class DaemonConfiguration implements HostConfiguration {
     if (values.defaultModel && (!parseModelReference(values.defaultModel) || /[\x00-\x1f\x7f]/u.test(values.defaultModel))) throw new Error('Default model must be an exact provider/model-id.');
     if (values.scopedModels?.some(value => /[\x00-\x1f\x7f]/u.test(value))) throw new Error('Invalid configured model scope.');
     return { extensions,
+      ...Object.fromEntries(EXECUTION_DEFAULT_KEYS.flatMap(key => values[key] === undefined ? [] : [[key, values[key]]])),
+      ...(values.imageAutoResize === undefined ? {} : { imageAutoResize: values.imageAutoResize }),
+      ...(values.blockImages === undefined ? {} : { blockImages: values.blockImages }),
       ...(values.codemode === undefined ? {} : { codemode: values.codemode }),
       ...(values.scopedModels === undefined ? {} : { scopedModels: values.scopedModels }),
       ...(values.defaultModel === undefined ? {} : { defaultModel: values.defaultModel }),

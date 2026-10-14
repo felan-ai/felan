@@ -44,6 +44,21 @@ function open(element: UiView | UiDocument, signal = new AbortController().signa
 }
 
 describe('Fusion vocabulary hint renderers', () => {
+  it.each([80, 120])('keeps unavailable model rows and recovery guidance visible at %s columns', async width => {
+    const source = view();
+    source.fallback = 'Unavailable saved model choices must be replaced before saving.\nRemove or replace unavailable participants.\nChoose an available comparison / fusion model.';
+    source.items = [{ id: 'model-0', fallback: 'anthropic/missing',
+      values: { model: 'Unavailable: anthropic/missing', participant: true, comparison: true } }];
+    const h = open(source);
+    const output = h.panel.render(width).join(' ').replace(/\s+/gu, ' ');
+    expect(output).toContain('Unavailable saved model choices must be replaced before saving.');
+    expect(output).toContain('Remove or replace unavailable participants.');
+    expect(output).toContain('Choose an available comparison / fusion model.');
+    expect(output).toContain('Unavailable: anthropic/missing');
+    h.key('\x1b');
+    expect(await h.result).toMatchObject({ actionId: 'cancel', outcome: 'cancel' });
+  });
+
   it('renders declared model fields and returns the exact item/revision without saving implicitly', async () => {
     const source = view(); const h = open(source);
     expect(h.panel.render(100).join('\n')).toContain('Participant: true');
@@ -56,7 +71,7 @@ describe('Fusion vocabulary hint renderers', () => {
 
   it.each([
     ['\t', 'comparison', 'model-40'], ['\x1b[C', 'next', undefined], ['\x1b[D', 'previous', undefined],
-    ['\x13', 'save', undefined], ['\x0c', 'clear', undefined], ['\x1b', undefined, undefined],
+    ['\x13', 'save', undefined], ['\x0c', 'clear', undefined], ['\x1b', 'cancel', undefined],
   ])('maps picker key %j to declared action %s', async (key, id, itemId) => {
     const source = view(); const h = open(source); h.key(key);
     if (key === '\t') h.key('\r');
@@ -87,7 +102,7 @@ describe('Fusion vocabulary hint renderers', () => {
     const h = open(source); let finished = false; void h.result.then(() => { finished = true; });
     for (const key of ['\x13', '\x0c', '/', '\x1b[C']) h.key(key);
     await Promise.resolve(); expect(finished).toBe(false);
-    h.key('\x1b'); expect(await h.result).toBeUndefined();
+    h.key('\x1b'); expect(await h.result).toMatchObject({ actionId: 'cancel', outcome: 'cancel' });
   });
 
   it.each(['retry-participants', 'retry-comparison', 'retry-synthesis', 'close'])('maps review action %s without running inference', async id => {

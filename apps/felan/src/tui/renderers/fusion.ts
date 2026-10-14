@@ -114,7 +114,8 @@ class FusionVocabularyPanel implements Component, Focusable {
       this.requestRender(); return;
     }
     if (matchesKey(data, Key.escape)) {
-      this.done(undefined);
+      const cancel = this.element.actions.find(action => action.target === 'element' && action.outcome === 'cancel');
+      if (cancel) this.activate(cancel); else this.done(undefined);
     } else if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown)) {
       this.scrollBy(matchesKey(data, Key.pageUp) ? -this.viewport : this.viewport);
     } else if (matchesKey(data, Key.home) || matchesKey(data, Key.end)) {
