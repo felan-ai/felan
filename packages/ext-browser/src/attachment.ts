@@ -83,6 +83,7 @@ export class BrowserAttachments {
     origin: string,
     context: ExtensionContext,
     signal?: AbortSignal,
+    reason?: string,
   ): Promise<AuthorizationResult> {
     if (this.#closed || signal?.aborted) return { state: 'cancelled' };
     if (!this.host) return { state: 'unavailable', message: 'Existing-browser authorization is unavailable in this host.' };
@@ -115,11 +116,11 @@ export class BrowserAttachments {
     };
     this.#attempts.set(key, attempt);
     this.#history.add(attempt);
-    attempt.authorization = this.#authorize(attempt, context, signal);
+    attempt.authorization = this.#authorize(attempt, context, signal, reason);
     return attempt.authorization;
   }
 
-  async #authorize(attempt: BrowserAttachment, context: ExtensionContext, signal?: AbortSignal): Promise<AuthorizationResult> {
+  async #authorize(attempt: BrowserAttachment, context: ExtensionContext, signal?: AbortSignal, reason?: string): Promise<AuthorizationResult> {
     const authorizationSignal = attempt.controller.signal;
     const onAbort = () => attempt.controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -128,6 +129,7 @@ export class BrowserAttachments {
     try {
       const outcome = await abortable(this.host!.authorize({
         origin: attempt.origin,
+        ...(reason === undefined ? {} : { reason }),
         signal: authorizationSignal,
         extensionContext: context,
         attach: (connection, lease) => this.#attach(attempt, connection, lease, authorizationSignal),

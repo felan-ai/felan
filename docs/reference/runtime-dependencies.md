@@ -3,7 +3,7 @@
 Felan treats an executable as an extension runtime dependency only when the
 extension's primary capability cannot operate without it. The extension owns
 portable detection, optional installation, and safe unavailable behavior;
-`apps/tui` owns interactive onboarding and global enable/disable choices.
+`apps/felan` owns interactive onboarding and global enable/disable choices.
 
 ## Lifecycle
 
@@ -13,7 +13,7 @@ portable detection, optional installation, and safe unavailable behavior;
    not trigger installation, repeatedly execute a missing command, or break
    unrelated extension behavior.
 3. The local TUI's source-controlled registry in
-   `apps/tui/src/dependencies.ts` probes dependency-backed extensions without a
+   `apps/felan/src/dependencies.ts` probes dependency-backed extensions without a
    current onboarding record, then shows one initially unchecked checklist for
    unavailable dependencies with managed installers. Checking an item is the
    explicit authorization to install it; unchecked items use their safe fallback.

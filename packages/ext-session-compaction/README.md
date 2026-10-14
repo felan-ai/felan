@@ -73,9 +73,9 @@ searches sibling branches, or reads RTK recovery artifacts. Transcript and
 generated summary text are untrusted historical evidence.
 
 The package is host-neutral and does not provide cross-session memory, a TUI,
-provider-specific storage, or ambient extension discovery. The local TUI
-enables it by default and disables it with
-`builtinExtensions.sessionCompaction: false`.
+provider-specific storage, or ambient extension discovery. Configured hosts
+enable it through their extension list; execution does not require a client
+renderer or feature service.
 
 The local configuration is:
 

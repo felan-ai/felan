@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-subagents",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Portable Felan subagent tools",
   "license": "MIT",
   "type": "module",
@@ -20,8 +20,12 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
+    },
+    "./extension": {
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
     }
   },
   "scripts": {

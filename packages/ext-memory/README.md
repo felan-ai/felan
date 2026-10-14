@@ -3,22 +3,36 @@
 Portable local-first memory contracts, Markdown artifact policy, validation,
 and Pi extension behavior for Felan hosts.
 
-Applications bind the extension to their own storage and coordinator:
+The package root requires the core `felan.runtime@1`, `felan.models@1`, and
+`felan.sessions@1` services. It owns the local store, project coordination,
+checkpoint recovery, dreaming, retention and `/memory` commands. There is no
+memory-specific provider or service contract.
 
-```ts
-import { createMemoryExtension } from '@felan-ai/ext-memory';
+Only a loaded root extension schedules work. Reader sessions recall the current
+artifact without recording checkpoints or starting workers. Files and atomic
+storage operations use the scoped Runtime; model selection uses the authenticated
+Models facade. Restricted dreaming sessions and lifecycle settlement go through
+Sessions. Missing capabilities prevent activation rather than opening an
+independent, untracked worker.
 
-createMemoryExtension({
-  role: 'root',
-  host,
-});
-```
+The canonical layout remains `<agentDir>/memory/v1/projects/<projectKey>` and
+retained journals remain under `<agentDir>/sessions/memory`. A session's `.memory`
+directory is a non-authoritative projection. Existing checkpoints and artifacts
+are not migrated or reset by this change.
 
-`root` sessions read memory and report settled transcript cursors. `reader`
-sessions only read memory. The package does not choose a project/team scope,
-schedule workers, call a model, publish artifacts, or import a cloud/local host.
-After a root checkpoint is recorded, the application host decides whether to
-schedule processing. The portable extension never wakes a worker itself.
+Retained workers compose an in-memory Pi journal; Runtime appends its entries to
+the retained file and flushes them before recording run outcomes. The extension
+does not use Pi's native filesystem persistence.
+
+`materializeMemorySessionCheckpoint` reads revision-pinned, paginated Sessions
+history with original identities and complete journals, including abandoned
+branches. Missing history, revision drift and changed evidence remain explicit
+failures, not empty successful projections.
+
+Status, history views and command feedback use `pi.ui`. A client may render the
+memory history hint, but it receives the same generic elements and actions as
+other clients. `/memory open` asks an eligible host console before launching a
+filesystem viewer. Unavailable presentation never prevents checkpoint capture.
 
 Memory is a Markdown wiki containing `summary.md`, `index.md`, and topical
 pages under `pages/`. The summary is orientation only: substantive claims
@@ -50,18 +64,18 @@ claim an immediate canonical update. A later dreamer treats the original
 user-authored request as direct evidence; the assistant note is only a pointer
 to that request.
 
-Local Felan's host-owned coordinator runs dreaming as a disposable headless Pi
+The extension's coordinator runs dreaming as a disposable headless Pi
 session over staged `.dreaming/input` and `.memory` directories. The dreamer
 uses read/list/grep/edit/write file tools plus a scoped tool that removes
 individual non-index Markdown pages under staged `.memory/pages`. It has no
 normal extensions, skills, repository access, or shell execution. Grep can
 launch only `rg` over staged inputs and wiki files; arbitrary commands remain denied. It returns
-a summary only after editing the staged Markdown artifact. The host validates
+a summary only after editing the staged Markdown artifact. The extension validates
 and publishes that filesystem output; failed or cancelled work remains pending.
 With an optional runtime classifier, the portable extension groups contiguous
 session evidence into provider-sized chunks and asks whether each entry needs
-inspection or is wholly transient noise. The host supplies and calls the
-classifier through its unified `classify` operation, stages read-only inspect and noise JSONL for each session, and
+inspection or is wholly transient noise. The Models service supplies the
+classifier; the extension stages read-only inspect and noise JSONL for each session, and
 writes a compact map of the staged paths. For text-only inspect records the host
 also stages a worker-readable `inspect.txt` view with session/entry IDs, role,
 tool name and complete text. Mixed or unsupported blocks remain in the original
@@ -87,8 +101,8 @@ execution failsafe is a one-hour wall-clock timeout. Hosts can pass a replayable
 async JSONL line source to `materializeMemoryInputDelta` to validate checkpoint
 lineage and create a deterministic, redacted visible-branch delta. Diverged
 lineages emit the complete current branch. Output limits reject an oversized
-projection instead of truncating a JSONL record. Hosts remain responsible for
-reading session files and staging successful projections. Large source session
+projection instead of truncating a JSONL record. Sessions providers supply the complete journal; the extension stages successful
+projections. Large source session
 files are not rejected solely for their total size. Deterministic source
 failures remain pending for retry, while valid checkpoints in the same batch
 can still be published.
@@ -116,14 +130,11 @@ pnpm --filter @felan-ai/ext-memory test
 
 ## Package boundary and requirements
 
-The package owns the portable memory schema, validation, hydration, checkpoint
-contracts, checkpoint-delta projection, bounded candidate extraction and
-classifier-decision policy, and root/reader extension behavior. The host owns
-project scoping, canonical storage, transcript I/O, classifier credentials and
-calls, scheduling, model/session execution, staging, locking, validation
-publication, and retry policy. It requires a compatible
-`@felan-ai/agent-core` peer and remains independent of TUI, Supabase, and cloud
-application modules.
+The package owns memory policy and lifecycle behavior. Runtime providers own
+filesystem/process access, Models providers own credentials and allowed-model
+scope, and Sessions providers own worker admission and canonical session
+lifetime. The package requires a compatible `@felan-ai/agent-core` peer and has
+no application, TUI, Supabase or cloud-runtime dependency.
 
 Memory and transcript content is untrusted reference data and cannot override
 system, developer, user, authorization, or tool-safety rules.

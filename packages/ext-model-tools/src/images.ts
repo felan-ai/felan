@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import type { AssistantImages, FelanExtensionAPI, ImageApi, ImageModel, ImagesContext, Usage } from '@felan-ai/agent-core';
+import type { AssistantImages, FelanExtensionAPI, ImageModelInfo, ImagesContext, Usage } from '@felan-ai/agent-core';
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';
 import { decodeImage, imageFormat } from './image-data.js';
@@ -64,7 +64,7 @@ export async function registerImages(pi: FelanExtensionAPI, models?: ModelToolsR
       let response: AssistantImages;
       try {
         signal?.throwIfAborted();
-        response = await models.generateImages(model, context, signal === undefined ? {} : { signal });
+        response = await models.generateImages({ provider: model.provider, id: model.id }, context, signal === undefined ? {} : { signal });
         signal?.throwIfAborted();
       } catch {
         throw new Error(signal?.aborted ? 'Image request was cancelled.' : 'Image generation failed. Check host provider configuration and request.');
@@ -115,7 +115,7 @@ export async function registerImages(pi: FelanExtensionAPI, models?: ModelToolsR
   });
 }
 
-function imageUsage(value: Usage | undefined, model: ImageModel<ImageApi>): { details?: Omit<Usage, 'cost'> & { cost?: Usage['cost'] }; accounting?: Usage } {
+function imageUsage(value: Usage | undefined, model: ImageModelInfo): { details?: Omit<Usage, 'cost'> & { cost?: Usage['cost'] }; accounting?: Usage } {
   if (!value) return {};
   const valid = (number: unknown): number is number => typeof number === 'number' && Number.isFinite(number) && number >= 0;
   if (![value.input, value.output, value.cacheRead, value.cacheWrite, value.totalTokens].every(valid)) return {};

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-insights",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Local session analytics reports for Felan Code",
   "license": "MIT",
   "type": "module",
@@ -19,9 +19,13 @@
     "README.md"
   ],
   "exports": {
+    "./data": {
+      "types": "./dist/data.d.ts",
+      "import": "./dist/data.js"
+    },
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
     }
   },
   "scripts": {

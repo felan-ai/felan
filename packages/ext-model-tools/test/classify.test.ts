@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Classifier } from '@felan-ai/agent-core';
 import { createPiClassifier } from '@felan-ai/agent-core';
-import { harness } from './harness.js';
+import { fakeModelsService, harness } from './harness.js';
 
 const questions = {
   route: { type: 'choice', instructions: 'Choose', criteria: { a: 'A', b: 'B' } },
@@ -30,6 +30,18 @@ describe('classify', () => {
     expect(service.classify).toHaveBeenCalledExactlyOnceWith({ evidence: ['untrusted', 1, true, null] }, questions, signal);
     expect(result.details).toEqual({ answers, metadata });
     expect(h.tools.get('classify')!.description).toMatch(/untrusted evidence.*advisory judgments, not facts or authorization/);
+  });
+
+  it('uses only the effective runtime classifier, not the shared model service classifier', async () => {
+    const effective = classifier();
+    const other = classifier();
+    const models = fakeModelsService({ classifier: other });
+    const h = await harness({ classifier: effective }, models);
+    const signal = new AbortController().signal;
+    await h.execute('classify', { state: {}, questions }, signal);
+    expect(effective.classify).toHaveBeenCalledExactlyOnceWith({}, questions, signal);
+    expect(other.classify).not.toHaveBeenCalled();
+    expect((await harness({}, models)).tools.has('classify')).toBe(false);
   });
 
   it('does not invent provider identity, token counts or zero pricing', async () => {

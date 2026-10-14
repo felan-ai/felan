@@ -1,3 +1,8 @@
+The local daemon ownership adapter uses Koffi 3.3.2 from
+https://github.com/Koromix/koffi under the MIT License.
+Copyright (c) 2026 Niels Martignène <niels.martignene@protonmail.com>.
+Koffi and its platform prebuild packages retain their upstream license files.
+
 Felan
 Copyright (c) 2026 Felan contributors
 

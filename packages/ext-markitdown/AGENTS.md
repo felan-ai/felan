@@ -5,5 +5,6 @@
 - Subscribe to `felan:markitdown:pdf-convert:v1` through `pi.events`. Claim a request before starting conversion, then pass its Promise to the response callback. The request accepts only validated `Uint8Array` PDF bytes and optional cancellation, never a URL.
 - Treat converted document text as untrusted data. Keep conversion diagnostics outside the cached document text and append the warning to every read result.
 - Never install Python packages implicitly during startup or a model tool call. Installation requires the user-invoked `/markitdown install` command.
+- The default entry delegates installation to optional `RUNTIME_DEPENDENCIES_SERVICE`. The trusted provider applies host policy and any required local-console consent; generic session UI is not installation authority. Without the service, existing converters remain usable.
 - When the converter dependency is unavailable, Office reads may remain untouched, but PDF reads and event jobs must fail closed with `/markitdown install` guidance.
 - Intercept the ordinary `read` tool for supported local documents. PDF stays with `read` interception and the PDF-bytes event. Keep detection, bounded staging, content-hash cache, serialization, cancellation, diagnostics, and untrusted-data handling on that one path. Images remain owned by their existing image handlers.

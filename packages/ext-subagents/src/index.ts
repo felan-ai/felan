@@ -1,6 +1,10 @@
 import { Type, type TSchema } from 'typebox';
 import {
   formatModelReference,
+  SessionsServiceError,
+  SESSION_EXECUTION_LIMITS,
+  type SessionsService,
+  type SessionExecution,
   FELAN_THINKING_LEVELS,
   isModelTier,
   parseModelReference,
@@ -13,40 +17,40 @@ import {
 import type {
   SubagentDescriptor,
   SubagentError,
-  SubagentHost,
-  SubagentHostResult,
-  SubagentSpawnRequest,
+  SubagentResult,
   SubagentThinking,
 } from './contracts.js';
 import { classifySubagentModelTier } from './model-tier.js';
-import { compactRecords, renderError, renderRecord, renderRecords } from './presentation.js';
+import { compactRecords, executionRecord, renderError, renderRecord, renderRecords } from './presentation.js';
+import type { SubagentDefinition } from './catalog.js';
 import { formatSubagentDescriptor, registerClassifierRouting } from './routing.js';
 
 const thinkingSchema = StringEnum(FELAN_THINKING_LEVELS);
-const MAX_TURNS = 100;
-const MAX_TIMEOUT_SECONDS = 86_400;
+const MAX_TURNS = SESSION_EXECUTION_LIMITS.maxTurns;
+const MAX_TIMEOUT_SECONDS = SESSION_EXECUTION_LIMITS.timeoutMs / 1000;
 const MAX_LIST_RECORDS = 50;
 const DEFAULT_LIST_RECORDS = 20;
 
-export function createSubagentsExtension(host: SubagentHost): FelanExtension {
+export function createSubagentsExtension(sessions: SessionsService, definitions: readonly SubagentDefinition[]): FelanExtension {
+  const descriptors = definitions.map(item => item.descriptor);
   return (pi) => {
-    registerClassifierRouting(pi, host);
+    registerClassifierRouting(pi, sessions, descriptors);
     pi.registerCapability({
       id: 'subagents',
-      instructions: formatSubagentCapability(host.descriptors),
+      instructions: formatSubagentCapability(descriptors),
     });
-    registerAgent(pi, host);
-    registerList(pi, host);
-    registerResult(pi, host);
-    registerSteer(pi, host);
-    registerCancel(pi, host);
+    registerAgent(pi, sessions, definitions);
+    registerList(pi, sessions);
+    registerResult(pi, sessions);
+    registerSteer(pi, sessions);
+    registerCancel(pi, sessions);
   };
 }
 
 const genericSubagentGuidance = [
   'Delegate only when a child lowers cost, protects correctness, or saves time: broad discovery across many unknown files on a cheaper model that returns a compact summary instead of the parent reading them; an independent review or completion check in a fresh context; or independent tasks with disjoint file scopes that can run in parallel. Keep small, sequential, known-location, and critical-path work in the parent. Never re-read a scope you delegated, delegate trivial lookups, or launch several reviewers when one suffices. Explicit user, routing, or Prewalk guidance takes precedence.',
   'Use the xhigh model tier selectively for unusually complex architecture, design, planning, difficult debugging, or high-stakes code review; do not use it for routine delegation.',
-  'Child model selection follows definition model, classifier-selected tier when available, per-call model, then parent model. Thinking follows definition, per-call, then parent settings. If classification fails, per-call model or parent model applies.',
+  'Child model selection follows definition model, per-call model, classifier-selected tier when available, then parent model. Thinking follows definition, per-call, then parent settings. If classification fails, parent model applies.',
   'Child agents always run asynchronously. Give each child a self-contained task with a disjoint scope, constraints, and expected output. Do not duplicate delegated work or enter a child-owned scope. Continue non-overlapping parent work while children run; if no independent parent work remains, yield and rely on completion notices instead of polling. Cancel a child before taking over its unfinished scope.',
   'Treat max_turns as a hard assistant-turn budget and leave enough room for the child to return a final result.',
   'Completion notices surface finished work automatically; rely on them during normal execution. Use list_subagents and get_subagent_result for an immediate status check when current state is needed, steer_subagent to refine active work, and cancel_subagent when work is no longer needed. Integrate and verify child results before reporting completion. When using session tasks, create or claim only work you own, keep at most one active task per session, and never force-recover another session\'s active claim unless it is stale and you are explicitly taking ownership.',
@@ -66,8 +70,8 @@ function formatSubagentCapability(descriptors: readonly SubagentDescriptor[]): s
   ].join(' ');
 }
 
-function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
-  const typeSchema = descriptorSchema(host.descriptors);
+function registerAgent(pi: FelanExtensionAPI, sessions: SessionsService, definitions: readonly SubagentDefinition[]): void {
+  const typeSchema = descriptorSchema(definitions.map(item => item.descriptor));
   const parameters = Type.Object({
     prompt: Type.String({ minLength: 1, description: 'Task for the child agent' }),
     description: Type.String({ minLength: 1, description: 'Short status label' }),
@@ -97,47 +101,42 @@ function registerAgent(pi: FelanExtensionAPI, host: SubagentHost): void {
     parameters,
     async execute(_id, params, signal, _update, ctx) {
       const type = params.subagent_type as string;
-      const descriptor = host.descriptors.find((entry) => entry.id === type);
-      if (!descriptor) return toolError(error('unknown_agent_type', `unknown subagent type: ${type}`));
-      const validation = validateSpawn(host, descriptor, params);
+      const definition = definitions.find(entry => entry.descriptor.id === type);
+      if (!definition) return toolError(error('unknown_agent_type', `unknown subagent type: ${type}`));
+      const descriptor = definition.descriptor;
+      const validation = validateModel(descriptor, params);
       if (validation) return toolError(validation);
       const parentThinking = normalizeThinking(pi.getThinkingLevel());
-      const classifiedTier = descriptor.model === undefined ? await classifySubagentModelTier(pi, descriptor, {
+      const classifiedTier = descriptor.model === undefined && params.model === undefined ? await classifySubagentModelTier(pi, descriptor, {
         prompt: params.prompt,
         description: params.description,
         subagent_type: type,
       }, signal) : undefined;
-      let model = normalizeModel(descriptor.model ?? classifiedTier ?? params.model, ctx);
+      let model = normalizeModel(descriptor.model ?? params.model ?? classifiedTier, ctx);
       if (!model.ok && classifiedTier !== undefined) {
         pi.runtime?.logger?.child({ component: 'subagent-model' })?.warn({
           event: 'decision', outcome: 'unavailable_tier', type, tier: classifiedTier,
-        }, 'subagent classifier tier unavailable; using the call or parent model');
-        model = normalizeModel(params.model, ctx);
+        }, 'subagent classifier tier unavailable; using the parent model');
+        model = normalizeModel(undefined, ctx);
       }
       if (!model.ok) return toolError(model.error);
       const thinking = descriptor.thinking
         ?? params.thinking
         ?? parentThinking;
-      const request: SubagentSpawnRequest = {
-        type,
-        description: params.description,
-        prompt: params.prompt,
-        ...(ctx.model === undefined ? {} : { parentModel: formatModelReference(ctx.model) }),
-        ...(model.value.reference === undefined ? {} : { model: model.value.reference }),
+      return executeSessions(async () => executionRecord(await sessions.create({
+        prompt: params.prompt, description: params.description, label: type,
+        appendSystemPrompt: definition.prompt, allowChildren: descriptor.allowNesting, notifyOnCompletion: true,
+        ...(definition.toolProfile === 'inspection' ? { excludedTools: inspectionExclusions } : {}),
+        ...(model.value.reference ? { model: parseModelReference(model.value.reference)! } : {}),
         ...(thinking === undefined ? {} : { thinking }),
-        ...(params.max_turns ?? descriptor.defaultMaxTurns) === undefined
-          ? {}
-          : { maxTurns: params.max_turns ?? descriptor.defaultMaxTurns },
-        ...(params.timeout_seconds ?? descriptor.defaultTimeoutSeconds) === undefined
-          ? {}
-          : { timeoutSeconds: params.timeout_seconds ?? descriptor.defaultTimeoutSeconds },
-      };
-      return executeHost(() => host.spawn(request, signal), renderRecord);
+        ...((params.max_turns ?? descriptor.defaultMaxTurns) === undefined ? {} : { maxTurns: params.max_turns ?? descriptor.defaultMaxTurns }),
+        ...((params.timeout_seconds ?? descriptor.defaultTimeoutSeconds) === undefined ? {} : { timeoutMs: (params.timeout_seconds ?? descriptor.defaultTimeoutSeconds)! * 1000 }),
+      }, signal ? { signal } : undefined)), renderRecord);
     },
   });
 }
 
-function registerList(pi: FelanExtensionAPI, host: SubagentHost): void {
+function registerList(pi: FelanExtensionAPI, sessions: SessionsService): void {
   const parameters = Type.Object({
     include_descendants: Type.Optional(Type.Boolean({ default: false })),
     limit: Type.Optional(Type.Integer({
@@ -152,22 +151,24 @@ function registerList(pi: FelanExtensionAPI, host: SubagentHost): void {
     label: 'List Subagents',
     description: `List compact status records for tracked direct children or a read-only descendant view; results are bounded to ${MAX_LIST_RECORDS}.`,
     parameters,
-    execute: async (_id, params, _signal, _update, _ctx) => executeHost(
+    execute: async (_id, params, _signal, _update, _ctx) => executeSessions(
       async () => {
         const limit = params.limit ?? DEFAULT_LIST_RECORDS;
-        const result = await host.list({
-          includeDescendants: params.include_descendants ?? false,
-          limit,
-        });
-        if (!result.ok) return result;
-        return { ok: true as const, value: compactRecords(result.value) };
+        const rows: SessionExecution[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await sessions.executions({ includeDescendants: params.include_descendants ?? false, ...(cursor ? { cursor } : {}) });
+          rows.push(...page.items); cursor = page.nextCursor;
+        } while (cursor);
+        const priority = (row: SessionExecution) => row.state === 'running' ? 0 : row.state === 'queued' ? 1 : row.state === 'completed' ? 3 : 2;
+        return compactRecords(rows.sort((a, b) => priority(a) - priority(b) || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')).slice(0, limit).map(executionRecord));
       },
       (records) => renderRecords(records, params.limit ?? DEFAULT_LIST_RECORDS),
     ),
   });
 }
 
-function registerResult(pi: FelanExtensionAPI, host: SubagentHost): void {
+function registerResult(pi: FelanExtensionAPI, sessions: SessionsService): void {
   const parameters = Type.Object({
     agent_id: Type.String({ minLength: 1 }),
     acknowledge_completion: Type.Optional(Type.Boolean({ default: false })),
@@ -177,14 +178,14 @@ function registerResult(pi: FelanExtensionAPI, host: SubagentHost): void {
     label: 'Get Subagent Result',
     description: 'Read the latest direct child status or result; completion delivery is non-consuming unless acknowledge_completion is true.',
     parameters,
-    execute: async (_id, params, _signal, _update, _ctx) => executeHost(
-      () => host.getResult(params.agent_id, { acknowledge: params.acknowledge_completion ?? false }),
+    execute: async (_id, params, _signal, _update, _ctx) => executeSessions(
+      async () => executionRecord(await sessions.execution(params.agent_id, { acknowledge: params.acknowledge_completion ?? false })),
       renderRecord,
     ),
   });
 }
 
-function registerSteer(pi: FelanExtensionAPI, host: SubagentHost): void {
+function registerSteer(pi: FelanExtensionAPI, sessions: SessionsService): void {
   const parameters = Type.Object({
     agent_id: Type.String({ minLength: 1 }),
     message: Type.String({ minLength: 1 }),
@@ -195,18 +196,15 @@ function registerSteer(pi: FelanExtensionAPI, host: SubagentHost): void {
     description: 'Queue guidance for a direct child or resume a completed child.',
     parameters,
     async execute(_id, params, _signal, _update, _ctx) {
-      if (byteLength(params.message) > host.policy.maxSteerBytes) {
-        return toolError(error('invalid_request', `message exceeds ${host.policy.maxSteerBytes} bytes`));
-      }
-      return executeHost(
-        () => host.steer(params.agent_id, params.message),
+      return executeSessions(
+        async () => { await sessions.steer(params.agent_id, params.message); return executionRecord(await sessions.execution(params.agent_id)); },
         renderRecord,
       );
     },
   });
 }
 
-function registerCancel(pi: FelanExtensionAPI, host: SubagentHost): void {
+function registerCancel(pi: FelanExtensionAPI, sessions: SessionsService): void {
   const parameters = Type.Object({
     agent_id: Type.String({ minLength: 1 }),
     reason: Type.Optional(Type.String({ minLength: 1 })),
@@ -216,15 +214,14 @@ function registerCancel(pi: FelanExtensionAPI, host: SubagentHost): void {
     label: 'Cancel Subagent',
     description: 'Idempotently cancel a direct child and its active descendants.',
     parameters,
-    execute: async (_id, params, _signal, _update, _ctx) => executeHost(
-      () => host.cancel(params.agent_id, params.reason),
+    execute: async (_id, params, _signal, _update, _ctx) => executeSessions(
+      async () => { await sessions.cancel(params.agent_id, params.reason); return executionRecord(await sessions.execution(params.agent_id)); },
       renderRecord,
     ),
   });
 }
 
-function validateSpawn(
-  host: SubagentHost,
+function validateModel(
   descriptor: SubagentDescriptor,
   params: {
     prompt: string;
@@ -233,12 +230,6 @@ function validateSpawn(
     thinking?: SubagentThinking;
   },
 ): SubagentError | undefined {
-  if (byteLength(params.prompt) > host.policy.maxPromptBytes) {
-    return error('invalid_request', `prompt exceeds ${host.policy.maxPromptBytes} bytes`);
-  }
-  if (byteLength(params.description) > host.policy.maxDescriptionBytes) {
-    return error('invalid_request', `description exceeds ${host.policy.maxDescriptionBytes} bytes`);
-  }
   const model = descriptor.model ?? params.model;
   if (model && !isCanonicalModelSelector(model)) {
     return error(
@@ -251,7 +242,7 @@ function validateSpawn(
 function normalizeModel(
   requested: string | undefined,
   ctx: ExtensionContext,
-): SubagentHostResult<{ reference?: string }> {
+): SubagentResult<{ reference?: string }> {
   const parentModel = ctx.model;
   const selected = requested?.trim();
   if (!selected) {
@@ -304,19 +295,14 @@ function normalizeThinking(
   return thinking === 'minimal' ? 'low' : thinking;
 }
 
-async function executeHost<T>(
-  operation: () => Promise<SubagentHostResult<T>>,
-  render: (value: T) => string,
-) {
+async function executeSessions<T>(operation: () => Promise<T>, render: (value: T) => string) {
   try {
-    const result = await operation();
-    if (!result.ok) return toolError(result.error);
-    return {
-      content: [{ type: 'text' as const, text: render(result.value) }],
-      details: result.value,
-    };
-  } catch {
-    return toolError(error('internal_error', 'The subagent host failed unexpectedly'));
+    const value = await operation();
+    return { content: [{ type: 'text' as const, text: render(value) }], details: value };
+  } catch (cause) {
+    return toolError(error(cause instanceof SessionsServiceError
+      ? cause.code === 'inaccessible' ? 'not_child' : cause.code === 'stale' ? 'not_steerable' : 'invalid_request'
+      : 'internal_error', cause instanceof Error ? cause.message : 'Session execution failed.'));
   }
 }
 
@@ -336,26 +322,6 @@ function error(code: SubagentError['code'], message: string): SubagentError {
   return { code, message };
 }
 
-function byteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
-}
+const inspectionExclusions = ['bash', 'edit', 'write', 'exec_command', 'write_stdin', 'write_background_bash', 'stop_background_bash', 'apply_patch', 'enter_prewalk'];
 
-export {
-  bindSubagentSession,
-  SUBAGENT_COMPLETION_MESSAGE_TYPE,
-} from './session-binding.js';
-export type {
-  SubagentCompletionNotice,
-  SubagentDescriptor,
-  SubagentError,
-  SubagentErrorCode,
-  SubagentHost,
-  SubagentHostResult,
-  SubagentParentPort,
-  SubagentPolicy,
-  SubagentRecord,
-  SubagentSpawnRequest,
-  SubagentStatus,
-  SubagentTerminalStatus,
-  SubagentThinking,
-} from './contracts.js';
+export type { SubagentDescriptor, SubagentThinking } from './contracts.js';

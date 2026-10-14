@@ -202,6 +202,7 @@ describe('browser extension', () => {
     await expect(authorize.execute('revoke', { operation: 'revoke' }, undefined, undefined, harness.context))
       .resolves.toMatchObject({ details: { state: 'revoked' } });
     expect(authorizationHost.authorize).toHaveBeenCalledOnce();
+    expect(authorizationHost.authorize).toHaveBeenCalledWith(expect.objectContaining({ reason: 'Use the existing authenticated browser session for this task.' }));
     expect(harness.runtime.calls.filter((call) => call.args.includes('--pin-tab'))).toHaveLength(1);
     expect(harness.runtime.calls.some((call) => call.args.includes('--pin-tab'))).toBe(true);
     expect(lease.close).toHaveBeenCalledOnce();
@@ -1033,7 +1034,7 @@ describe('browser extension', () => {
           if (change === 'scheme') session.currentURL = 'file:///private';
           else session.targetId = 'unexpected-target';
           const path = args.find((arg) => arg.endsWith('.png'))!;
-          runtime.files.set(path, VALID_PNG_HEADER);
+          runtime.fileContents.set(path, VALID_PNG_HEADER);
           return jsonSuccess({ path, text: 'PRIVATE_BROWSER_RESPONSE' });
         },
       },
@@ -1274,7 +1275,7 @@ async function createHarness(options: {
       if (key === 'get url') return jsonSuccess({ url: session.currentURL });
       if (args[0] === 'screenshot') {
         const path = args.find((arg, index) => index > 0 && arg.endsWith('.png'))!;
-        runtime.files.set(path, VALID_PNG_HEADER);
+        runtime.fileContents.set(path, VALID_PNG_HEADER);
         return jsonSuccess({ path });
       }
       if (args[0] === 'open' && args.includes('--cdp') && options.failAttachment) {

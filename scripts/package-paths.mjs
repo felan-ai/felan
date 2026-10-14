@@ -1,4 +1,5 @@
 export const packagePaths = [
+  'packages/session-protocol',
   'packages/agent-core',
   'packages/ext-model-tools',
   'packages/ext-memory',
@@ -24,5 +25,6 @@ export const packagePaths = [
   'packages/ext-powerline',
   'packages/ext-session-title',
   'packages/ext-session-compaction',
-  'apps/tui',
+  'apps/daemon',
+  'apps/felan',
 ];

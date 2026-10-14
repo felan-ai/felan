@@ -1,8 +1,34 @@
 # Local CLI
 
-`@felan-ai/felan` is the account-free local terminal host for Felan Agent Core.
-It owns credentials, settings, storage paths, built-in selection, lifecycle,
-and TUI presentation.
+`@felan-ai/felan` is the account-free local daemon client for Felan Agent Core.
+It owns CLI, TUI, ACP, headless presentation, and local themes. The daemon owns
+credentials, settings, storage, session/process execution, and lifecycle.
+
+## Programmatic migration
+
+The prepared, unpublished `@felan-ai/felan` 0.29.0 release removes legacy
+in-process host exports. Consumers use
+`runCli`, `runDaemonFelan`, `runLocalFelanHeadless`, `SessionClient`,
+`newRequestId`, daemon target/client-configuration helpers, version, and
+entrypoint resolution. Runtime/store/model/settings/classifier/subagent-host
+constructors, `CliDependencies.openSession`, and headless host-runtime options
+are removed. Use the daemon service; there is no in-process fallback.
+
+Sessions saved by Felan Code 0.28.3 and earlier stay available after upgrading on
+the same agent directory. They appear in the `/resume` and `--resume` picker,
+`--continue` picks them up in their recorded working folder, and
+`--session <id>`, headless runs and ACP `session/load` open them by ID. Opening
+one adopts it in place: the daemon registers the existing file under its
+existing session ID, and new turns are appended to that same file, so 0.28.3 can
+still read it. Felan finds these files in the per-folder directories
+under `~/.felan/sessions/` and directly in a custom `--session-dir`.
+
+Exit 0.28.3 before resuming one of its sessions. After adoption the daemon is
+the only writer; running 0.28.3 on the same session at the same time is
+unsupported and can interleave or lose history. Malformed files are not listed. Until a session is opened, the picker shows its saved name or
+first prompt, or its ID. `/import <path>` explicitly copies JSONL history into a new
+daemon session without changing the original; `/export` exports a daemon
+session.
 
 ## Invocation
 
@@ -23,6 +49,7 @@ update             Update a global npm installation of Felan Code
 savings            Show persisted estimated API-equivalent savings without starting a model session
 acp                 Serve Agent Client Protocol v1 over stdio
 acp login           Configure model-provider credentials in a finite terminal flow
+daemon <action>     Manage the persistent local daemon
 -h, --help         Show help
 -v, --version      Print the Felan Code version
 --verbose          Show verbose startup details
@@ -66,25 +93,28 @@ The implemented agent surface is:
 - client-bound `session/update`, `session/request_permission`, and
   `elicitation/create` calls when needed.
 
-Each ACP session owns a separate `LocalFelanRuntime`; only the process-level
-model runtime is shared. Loading uses Felan Code's existing local session files and
-replays the complete current branch before the load request succeeds. Prompt
-turns accept ACP's baseline `text` and `resource_link` blocks. Felan Code streams
-ordered user, assistant, thought, and tool lifecycle updates with aggregate,
-per-item, and output limits. Unsupported prompt block types fail before
-the model runs.
+ACP sessions attach to daemon-owned sessions. Loading replays the complete
+current branch before the load request succeeds. Prompt turns accept ACP's
+baseline `text` and `resource_link` blocks. Felan Code streams ordered user,
+assistant, thought, and tool lifecycle updates. Unsupported prompt block types fail before the model runs.
+
+ACP attaches with the daemon's strict policy. It applies to the session tree
+immediately; running tool calls keep the approvals they already had, and the
+tree returns to host defaults when the last ACP client detaches. EOF detaches
+only the ACP attachment. It does not answer pending
+interactions, stop session work, or replay interrupted work.
 
 If the client advertises form elicitation, Pi extension `select`, `confirm`,
-`input`, and `editor` requests are mapped to bounded ACP forms. This enables
+`input`, and `editor` requests are mapped to ACP forms. This enables
 `ask_user` and Prewalk plan review. Without that capability, dialog UI is
 reported as unavailable rather than silently accepted.
 
 Known mutating, process, network, and other external-action tools request ACP
-permission before execution. Unknown tool names are gated conservatively;
-known read-only and internal tools can proceed. Felan Code offers only `allow once`
-and `reject once` because it does not own a durable ACP permission-policy
-store. Rejection, malformed responses, cancellation, or client failure blocks
-the call. The same owning-session channel gates local subagent actions.
+permission before execution. Unknown tool names are gated conservatively; known
+read-only and internal tools can proceed. Felan Code offers only `allow once`
+and `reject once`. The daemon durably owns approvals; rejection, malformed
+responses, cancellation, or client failure blocks the call. The same
+owning-session channel gates local subagent actions.
 
 #### Authentication
 
@@ -169,7 +199,58 @@ The native server intentionally does not provide:
 - session-provided MCP servers or tools;
 - direct injection of remote MCP tools, resources, prompts, sampling, Apps, or
   scripting; or
-- a durable permission policy or sandbox.
+- an OS sandbox.
+
+### Daemon lifecycle
+
+The daemon persists after a TUI, ACP, or headless client disconnects:
+
+```sh
+felan daemon status
+felan daemon start
+felan daemon foreground
+felan daemon logs
+felan daemon stop
+felan daemon restart
+```
+
+`status` and `logs` never start it. `start` attaches to a compatible instance or
+launches the exact installed daemon; `foreground` remains attached to the service.
+`stop` and `restart` wait for active work to finish. If it does not finish
+before the drain deadline, the command fails and the daemon keeps running; add
+`--force` to interrupt the work instead. Restart launches the replacement with the requesting shell
+environment; no per-session environment is transported or persisted.
+
+Use `--daemon-runtime <dir>` only for a private test/CI namespace. Headless
+completion detaches from that daemon; it does not stop it. CI must explicitly
+stop the isolated daemon it started.
+
+In the TUI, `/daemon status`, `/daemon logs`, `/daemon stop`, and `/daemon
+restart` provide the same lifecycle controls. When active work (runs, subagents, interactive PTY or foreground processes, and pending questions) would be
+interrupted, they ask once with the count and then stop or restart immediately.
+A daemon from another Felan version is replaced automatically only when it has
+no active work; otherwise the TUI shows how many active tasks a restart would
+interrupt and asks first. Ctrl+D on an empty editor
+and `/exit` detach the client. Escape interrupts the current run. `/close`
+disposes of the session. These are distinct actions.
+
+If the daemon connection drops, for example because the daemon restarts, the
+TUI keeps the input usable and shows `Daemon disconnected · reconnecting in Ns
+· /reconnect to retry now`. It retries automatically with backoff (250 ms,
+doubling to 10 s, with no attempt limit) and, once the daemon is back,
+reattaches the current session and briefly shows `Reconnected`. Automatic
+retries only connect to a running daemon; they never start one, so an explicit
+`felan daemon stop` stays stopped. `/reconnect` retries immediately and starts
+the daemon when none is running. Input submitted while disconnected stays in
+the editor; requests in flight when the connection dropped report that their
+outcome is unknown, because the daemon may still be running them. ACP clients
+reconnect the same way while the editor connection is open. Headless text runs
+fail if the daemon does not return within 30 seconds; JSON runs fail on any
+interruption because their event stream cannot be replayed.
+
+`/reload` keeps all background processes. A daemon restart keeps detached
+background processes, which the restored session rediscovers, and ends
+interactive (PTY) ones, as quitting Felan Code did before the daemon.
 
 ### Resume a session
 
@@ -260,21 +341,12 @@ extension failures return a non-zero status. `--resume` and UI-only commands are
 interactive-only. Headless startup does not open the TUI, run the update check,
 or wait for dependency onboarding.
 
-### Restart Felan Code
+### Restart the daemon
 
-Use `/restart` to replace the Felan Code process and resume the current session in
-the same directory. The session ID and history are preserved, while Felan Code,
-Agent Core, and extension modules are loaded again. This is useful when
-developing Felan Code itself:
-
-```text
-pnpm build
-/restart
-```
-
-`/restart` is idle-only and interactive-only. Pi's `/reload` remains available
-for reloading resources within the current process; it does not replace the
-Node process.
+`/restart` restarts the daemon and then Felan Code, resuming the current
+session, so rebuilt daemon and client code both take effect. `/daemon restart`
+restarts only the daemon in place: the TUI shows `Daemon restarting…`, starts
+the replacement, reattaches the current session, and keeps your editor input.
 
 ### Herdr integration
 

@@ -1,5 +1,5 @@
 import { chmod, lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostAgentRuntime } from '../src/index.js';
@@ -13,15 +13,46 @@ afterEach(async () => {
 });
 
 describe('HostAgentRuntime', () => {
+  it('reads named environment values through the runtime boundary', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const key = 'FELAN_RUNTIME_ENV_TEST';
+    const previous = process.env[key];
+    try {
+      process.env[key] = 'environment-fixture';
+      expect(runtime.getEnvironmentVariable(key)).toBe('environment-fixture');
+      delete process.env[key];
+      expect(runtime.getEnvironmentVariable(key)).toBeUndefined();
+      expect(() => runtime.getEnvironmentVariable('INVALID-NAME')).toThrow('Invalid environment variable name.');
+    } finally {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+  });
+
+  it('exposes a detached immutable host metadata snapshot', () => {
+    const host = { name: 'Felan', version: '1.2.3' };
+    const runtime = new HostAgentRuntime('/fixture', { sessionStorageRoot: '/fixture/session', agentStorageRoot: '/fixture/agent', host });
+    host.version = 'changed';
+    expect(runtime.host).toEqual({ name: 'Felan', version: '1.2.3' });
+    expect(Object.isFrozen(runtime.host)).toBe(true);
+  });
+
   it('keeps cwd immutable and rejects escaping execution paths', async () => {
     const workspace = await createTemporaryDirectory('workspace');
     const runtime = await createHostRuntime(workspace);
 
     expect(Reflect.set(runtime, 'cwd', join(workspace, 'other'))).toBe(false);
     expect(runtime.cwd).toBe(workspace);
+    expect(runtime.userHome).toBeUndefined();
     await expect(runtime.exec(process.execPath, ['--version'], { cwd: '..' })).rejects.toThrow(
       'escapes runtime root',
     );
+  });
+
+  it('exposes the user resource directory only with host-path access', async () => {
+    const workspace = await createTemporaryDirectory('workspace');
+    const runtime = new HostAgentRuntime(workspace, { sessionStorageRoot: workspace, agentStorageRoot: workspace, pathAccess: 'host' });
+    expect(runtime.userHome).toBe(homedir());
   });
 
   it('preserves literal argv boundaries and nonzero results', async () => {

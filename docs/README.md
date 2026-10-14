@@ -69,7 +69,8 @@ to do.
 
 The package READMEs are the canonical npm-facing API and development references:
 
-- [`@felan-ai/felan`](../apps/tui/README.md)
+- [`@felan-ai/felan`](../apps/felan/README.md)
+- [`@felan-ai/daemon`](../apps/daemon/README.md)
 - [`@felan-ai/agent-core`](../packages/agent-core/README.md)
 - [`@felan-ai/ext-ask-user`](../packages/ext-ask-user/README.md)
 - [`@felan-ai/ext-background-bash`](../packages/ext-background-bash/README.md)

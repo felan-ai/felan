@@ -26,11 +26,11 @@ describe('Codebase Memory cache limits', () => {
     await cache.record('old', 6, 1);
     await cache.record('new', 6, 2);
 
-    const manifest = JSON.parse(new TextDecoder().decode(runtime.files.get('codebase-memory/lru.json'))) as {
+    const manifest = JSON.parse(new TextDecoder().decode(runtime.storedFiles.get('codebase-memory/lru.json'))) as {
       entries: Array<{ project: string }>;
     };
     expect(manifest.entries).toEqual([expect.objectContaining({ project: 'new' })]);
-    expect([...runtime.files.keys()].filter((path) => path.endsWith('/.felan-lru'))).toHaveLength(1);
+    expect([...runtime.storedFiles.keys()].filter((path) => path.endsWith('/.felan-lru'))).toHaveLength(1);
     expect(telemetry).toHaveBeenCalledWith('cache_eviction', expect.objectContaining({
       projectKey: expect.stringMatching(/^[a-f0-9]{64}$/u),
     }));
@@ -44,7 +44,7 @@ describe('Codebase Memory cache limits', () => {
 
     await cache.record('oversized', 6, 1);
 
-    const manifest = JSON.parse(new TextDecoder().decode(runtime.files.get('codebase-memory/lru.json'))) as {
+    const manifest = JSON.parse(new TextDecoder().decode(runtime.storedFiles.get('codebase-memory/lru.json'))) as {
       entries: Array<{ project: string }>;
     };
     expect(manifest.entries).toEqual([]);
@@ -73,20 +73,20 @@ describe('Codebase Memory cache limits', () => {
 
     await cache.record('../outside/project', 1);
 
-    expect([...runtime.files.keys()]).not.toContainEqual(expect.stringContaining('../outside'));
-    expect([...runtime.files.keys()]).toContainEqual(expect.stringMatching(/^codebase-memory\/cache\/[a-f0-9]{64}\/\.felan-lru$/u));
+    expect([...runtime.storedFiles.keys()]).not.toContainEqual(expect.stringContaining('../outside'));
+    expect([...runtime.storedFiles.keys()]).toContainEqual(expect.stringMatching(/^codebase-memory\/cache\/[a-f0-9]{64}\/\.felan-lru$/u));
   });
 
   it('ignores malformed manifest entries at the storage boundary', async () => {
     const runtime = new MemoryRuntime();
-    runtime.files.set('codebase-memory/lru.json', new TextEncoder().encode(JSON.stringify({
+    runtime.storedFiles.set('codebase-memory/lru.json', new TextEncoder().encode(JSON.stringify({
       version: 1,
       entries: [{ project: '../bad', bytes: 'many', lastAccessedAt: null }],
     })));
 
     await new CacheManager(runtime, 100).record('safe', 1, 1);
 
-    const manifest = JSON.parse(new TextDecoder().decode(runtime.files.get('codebase-memory/lru.json'))) as {
+    const manifest = JSON.parse(new TextDecoder().decode(runtime.storedFiles.get('codebase-memory/lru.json'))) as {
       entries: Array<{ project: string }>;
     };
     expect(manifest.entries.map(({ project }) => project)).toEqual(['safe']);

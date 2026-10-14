@@ -73,13 +73,23 @@ felan --diagnostics
 felan update
 ```
 
-Initial messages start the interactive TUI by default. Use `--mode text` for a
-one-shot final response or `--mode json` for Pi-compatible JSONL session events.
-Both modes support `--continue` and exact `--provider`, `--model`, and
-`--thinking` selection. A verified global npm installation also supports the finite
-`felan update` command. See [Getting started](docs/getting-started.md) for
-first-run setup and [Local CLI](docs/user-guide/local-cli.md) for all accepted
-commands, flags, and local state.
+Initial messages attach the interactive TUI to the local daemon by default. Use
+`--mode text` for a one-shot final response or `--mode json` for Pi-compatible
+JSONL session events; both use the same persistent daemon and detach when their
+request finishes. CI/headless namespaces must be stopped explicitly. Both modes
+support `--continue` and exact `--provider`, `--model`, and `--thinking`
+selection. A verified global npm installation also supports the finite `felan
+update` command. See [Getting started](docs/getting-started.md) for first-run
+setup and [Local CLI](docs/user-guide/local-cli.md) for commands, daemon
+lifecycle, and local state.
+
+Sessions from Felan Code 0.28.3 and earlier appear in `--resume`, `--continue`
+and `--session <id>` for their recorded folder. Opening one adopts it in place:
+it keeps its ID and file, and new turns are appended to that file. Exit the old
+version first: refusing a session changed in the last few seconds is only a
+best-effort safeguard, and running 0.28.3 on an adopted session at the same time
+is unsupported. To copy a transcript into a new session ID instead, use
+`/import`. `/export` remains available.
 
 ## Efficient by design
 
@@ -183,9 +193,14 @@ Pinned Pi packages provide the model, session, extension, and TUI primitives;
 Felan owns the host contracts, feature behavior, policy, storage, and
 presentation around them.
 
-Behavior stays in its owning layer: `apps/tui` owns local policy, storage, and
-presentation; `ext-*` packages own portable feature behavior; and Agent Core
-owns adapter-neutral runtime contracts and base composition.
+Behavior stays in its owning layer: `apps/felan` owns CLI, TUI, ACP, headless,
+client-local themes, local service providers and the default `host.json`.
+`apps/daemon` owns admission, canonical session/process lifetime, persistence
+and interaction arbitration. Providers supply local configuration, credentials
+and runtime behavior through explicit contracts. `ext-*` packages own portable
+feature behavior, and Agent Core owns adapter-neutral contracts and base
+composition. Clients depend on the daemon; the daemon never depends on clients.
+See [Extension services and generic UI](docs/maintainers/extension-services-and-ui.md).
 
 ## Documentation
 
@@ -209,7 +224,8 @@ The [documentation hub](docs/README.md) routes readers by audience:
 
 | Package | Purpose | Documentation |
 | --- | --- | --- |
-| [`@felan-ai/felan`](apps/tui/README.md) | Felan Code and the `felan` binary | [Local CLI](docs/user-guide/local-cli.md) |
+| [`@felan-ai/felan`](apps/felan/README.md) | Felan Code and the `felan` binary | [Local CLI](docs/user-guide/local-cli.md) |
+| [`@felan-ai/daemon`](apps/daemon/README.md) | Session daemon, admission and canonical execution lifetime | [Services and UI](docs/maintainers/extension-services-and-ui.md) |
 | [`@felan-ai/agent-core`](packages/agent-core/README.md) | Portable runtime contracts, prompt, tools, model tiers, and Pi composition | [Architecture](docs/concepts/architecture.md) |
 | [`@felan-ai/ext-subagents`](packages/ext-subagents/README.md) | Tracked asynchronous subagent protocol | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
 | [`@felan-ai/ext-tasks`](packages/ext-tasks/README.md) | Dependency-aware root-session task graph | [Agents and tasks](docs/user-guide/agents-tasks-and-prewalk.md) |
@@ -244,14 +260,14 @@ cd felan
 corepack enable
 pnpm install --frozen-lockfile
 pnpm build
-node apps/tui/dist/cli.js
+node apps/felan/dist/cli.js
 ```
 
 Run the complete build, type-check, test, license, packaging, and packed
 installation suite with:
 
 ```sh
-pnpm verify
+scripts/test-isolated.sh pnpm verify
 ```
 
 To review the Felan Code Pi themes in a browser, run `pnpm theme:preview` and open

@@ -1,0 +1,134 @@
+{
+  "name": "@felan-ai/felan",
+  "version": "0.30.0",
+  "description": "Felan Code: an open-source, model-portable coding agent built for cost-efficient, verifiable software work",
+  "keywords": [
+    "ai",
+    "ai-agent",
+    "coding-agent",
+    "developer-tools",
+    "llm",
+    "model-routing",
+    "context-management",
+    "llm-optimization"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felan-ai/felan.git",
+    "directory": "apps/felan"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "bin": {
+    "felan": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./daemon-host": {
+      "types": "./dist/daemon-host.d.ts",
+      "import": "./dist/daemon-host.js"
+    },
+    "./providers/runtime": {
+      "types": "./dist/providers/runtime.d.ts",
+      "import": "./dist/providers/runtime.js"
+    },
+    "./providers/models": {
+      "types": "./dist/providers/models.d.ts",
+      "import": "./dist/providers/models.js"
+    },
+    "./providers/secrets": {
+      "types": "./dist/providers/secrets.d.ts",
+      "import": "./dist/providers/secrets.js"
+    },
+    "./providers/sessions": {
+      "types": "./dist/providers/sessions.d.ts",
+      "import": "./dist/providers/sessions.js"
+    },
+    "./providers/session-runtime": {
+      "types": "./dist/providers/session-runtime.d.ts",
+      "import": "./dist/providers/session-runtime.js"
+    },
+    "./providers/runtime-dependencies": {
+      "types": "./dist/providers/runtime-dependencies.d.ts",
+      "import": "./dist/providers/runtime-dependencies.js"
+    },
+    "./providers/savings": {
+      "types": "./dist/providers/savings.d.ts",
+      "import": "./dist/providers/savings.js"
+    },
+    "./providers/browser-authorization": {
+      "types": "./dist/providers/browser-authorization.d.ts",
+      "import": "./dist/providers/browser-authorization.js"
+    },
+    "./providers/mcp-callback": {
+      "types": "./dist/providers/mcp-callback.d.ts",
+      "import": "./dist/providers/mcp-callback.js"
+    },
+    "./providers/felan-platform": {
+      "types": "./dist/providers/felan-platform.d.ts",
+      "import": "./dist/providers/felan-platform.js"
+    },
+    "./internal/llama/extension": {
+      "types": "./dist/providers/llama/extension.d.ts",
+      "import": "./dist/providers/llama/extension.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp -R src/themes dist/themes && cp src/host.json dist/host.json && chmod +x dist/cli.js",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "@felan-ai/daemon": "workspace:0.2.0",
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@earendil-works/pi-coding-agent": "catalog:pi",
+    "@earendil-works/pi-tui": "catalog:pi",
+    "@felan-ai/agent-core": "workspace:*",
+    "@felan-ai/ext-ask-user": "workspace:*",
+    "@felan-ai/ext-background-bash": "workspace:*",
+    "@felan-ai/ext-browser": "workspace:*",
+    "@felan-ai/ext-codebase-memory": "workspace:*",
+    "@felan-ai/ext-codex": "workspace:*",
+    "@felan-ai/ext-context": "workspace:*",
+    "@felan-ai/ext-context-view": "workspace:*",
+    "@felan-ai/ext-felan-api": "workspace:*",
+    "@felan-ai/ext-fusion": "workspace:*",
+    "@felan-ai/ext-insights": "workspace:*",
+    "@felan-ai/ext-markitdown": "workspace:*",
+    "@felan-ai/ext-mcp": "workspace:*",
+    "@felan-ai/ext-memory": "workspace:*",
+    "@felan-ai/ext-model-tools": "workspace:*",
+    "@felan-ai/ext-output-style": "workspace:*",
+    "@felan-ai/ext-powerline": "workspace:*",
+    "@felan-ai/ext-prewalk": "workspace:*",
+    "@felan-ai/ext-prompt-history": "workspace:*",
+    "@felan-ai/ext-rtk-optimizer": "workspace:*",
+    "@felan-ai/ext-session-compaction": "workspace:*",
+    "@felan-ai/ext-session-title": "workspace:*",
+    "@felan-ai/ext-subagents": "workspace:*",
+    "@felan-ai/ext-tasks": "workspace:*",
+    "@felan-ai/ext-web-access": "workspace:*",
+    "@felan-ai/session-protocol": "workspace:*",
+    "@modelcontextprotocol/client": "2.2.0",
+    "@napi-rs/keyring": "1.3.0",
+    "open": "11.0.0",
+    "typebox": "1.1.38"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

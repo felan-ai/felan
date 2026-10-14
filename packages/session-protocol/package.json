@@ -1,0 +1,24 @@
+{
+  "name": "@felan-ai/session-protocol",
+  "version": "0.2.0",
+  "description": "Browser-compatible Felan session protocol v1 contracts and validation",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felan-ai/felan.git",
+    "directory": "packages/session-protocol"
+  },
+  "files": ["dist", "LICENSE", "NOTICE", "README.md"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepack": "pnpm build"
+  },
+  "dependencies": { "typebox": "1.1.38" },
+  "publishConfig": { "access": "public", "provenance": true }
+}

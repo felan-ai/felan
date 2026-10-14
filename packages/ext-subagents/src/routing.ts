@@ -1,9 +1,10 @@
 import type {
   ClassifierQuestions,
+  SessionsService,
   ExtensionContext,
   FelanExtensionAPI,
 } from '@felan-ai/agent-core';
-import type { SubagentDescriptor, SubagentHost } from './contracts.js';
+import type { SubagentDescriptor } from './contracts.js';
 
 const ROUTING_THRESHOLD = 0.65;
 const ROUTING_PROMPT_SECTION = 'subagent_routing';
@@ -25,10 +26,10 @@ export const DISCOVERY_GUIDANCE = [
   `This request needs broad discovery across a largely unexplored surface. Delegate that discovery to \`${DISCOVERY_AGENT_TYPE}\` children with bounded, disjoint, read-only questions and a requested summary format. While they run, do not read the delegated scopes yourself; continue only with independent work or yield until their completion notices arrive. Then verify the facts you rely on and inspect only the critical-path files you will change.`,
 ].join('\n');
 
-export function registerClassifierRouting(pi: FelanExtensionAPI, host: SubagentHost): void {
+export function registerClassifierRouting(pi: FelanExtensionAPI, sessions: SessionsService, descriptors: readonly SubagentDescriptor[]): void {
   const registry = pi.turnClassification;
   const logger = pi.runtime?.logger?.child({ component: 'subagent-routing' });
-  const discoveryAgent = host.descriptors.find(({ id }) => id === DISCOVERY_AGENT_TYPE);
+  const discoveryAgent = descriptors.find(({ id }) => id === DISCOVERY_AGENT_TYPE);
   if (registry === undefined || discoveryAgent === undefined) {
     logger?.debug({
       event: 'configuration',
@@ -66,15 +67,14 @@ export function registerClassifierRouting(pi: FelanExtensionAPI, host: SubagentH
           if (signal.aborted) return;
         }
       }
-      const activeChildren = await host.list({ includeDescendants: false });
+      const activeChildren = await sessions.executions({ includeDescendants: false });
       if (signal.aborted) return;
-      if (!activeChildren.ok) throw new Error(activeChildren.error.message);
       return {
         questions: DISCOVERY_QUESTIONS,
         state: {
           discovery_agent: discoveryAgent,
-          active_children: activeChildren.value.map(({ agentId, type, status, description }) => ({
-            id: agentId, type, status, description,
+          active_children: activeChildren.items.map(({ id, label, state, description }) => ({
+            id, type: label, status: state, description,
           })),
         },
       };

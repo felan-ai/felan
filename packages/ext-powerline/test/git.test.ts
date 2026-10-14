@@ -80,6 +80,26 @@ describe('Git execution and cache', () => {
     });
   });
 
+  it('forwards scoped cancellation and waits for the interrupted Git call to settle', async () => {
+    let signal: AbortSignal | undefined;
+    let release!: () => void;
+    const exec = vi.fn(async (_command: string, _args: string[], options: { signal?: AbortSignal }) => {
+      signal = options.signal;
+      await new Promise<void>(resolve => { release = resolve; });
+      return { stdout: '/repo', stderr: '', code: 0, killed: false };
+    });
+    const cache = new GitCache({ exec } as unknown as Pick<FelanExtensionAPI, 'exec'>, '/repo');
+    let settled = false;
+    const refresh = cache.refresh().then(() => { settled = true; });
+    cache.dispose();
+    expect(signal?.aborted).toBe(true);
+    expect(settled).toBe(false);
+    release();
+    await refresh;
+    expect(exec).toHaveBeenCalledOnce();
+    expect(cache.get()).toBeUndefined();
+  });
+
   it('retains cached status details when later status probes fail or time out', async () => {
     let statusAttempt = 0;
     const exec = vi.fn(async (_command: string, args: string[]) => {
@@ -165,4 +185,18 @@ describe('Git execution and cache', () => {
     await expect(failed.refresh()).resolves.toBeUndefined();
     expect(failed.get()).toBeUndefined();
   });
+});
+
+it('retains branch and upstream data when working-tree collection is disabled', async () => {
+  const exec = vi.fn(async (_command: string, args: string[]) => ({ code: 0, killed: false, stderr: '', stdout: ({
+    'rev-parse --show-toplevel': '/repo', 'rev-parse --abbrev-ref HEAD': 'main',
+    'rev-parse --abbrev-ref @{upstream}': 'origin/main', 'rev-list --left-right --count HEAD...@{upstream}': '2 3',
+    'stash list --format=%H': 'a\nb',
+  } as Record<string, string>)[args.join(' ')] ?? '' }));
+  const cache = new GitCache({ exec } as never, '/repo', Date.now, { showWorkingTree: false, showStashCount: true });
+  await cache.refresh();
+  expect(cache.get()).toMatchObject({ branch: 'main', upstream: { name: 'origin/main', ahead: 2, behind: 3 }, stashCount: 2 });
+  expect(cache.get()).not.toHaveProperty('changedFiles');
+  expect(exec.mock.calls.some(([, args]) => args[0] === 'status')).toBe(false);
+  cache.dispose();
 });

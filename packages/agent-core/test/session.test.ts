@@ -8,13 +8,23 @@ import {
   SessionManager,
   SettingsManager,
   createAgentSessionRuntime,
+  createAssistantMessageEventStream,
+  associateExtensionConfig,
+  configField,
+  createFelanServiceRegistry,
+  createUnavailableExtensionUi,
+  defineExtensionConfig,
+  defineServiceContract,
+  type ConfiguredFelanExtension,
   type FelanExtension,
+  type ExtensionUi,
   type InlineExtension,
   type StreamFunction,
 } from '../src/index.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createAgentCoreSession,
+  createAgentCoreSessionRuntime,
   createAgentCoreSessionRuntimeFactory,
   createRuntimeCodingTools,
   getProjectInstructions,
@@ -29,6 +39,200 @@ afterEach(async () => {
 });
 
 describe('Agent Core session composition', () => {
+  it('propagates scoped UI through runtime options, configuration and reload', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const modelRuntime = await createModelRuntime(agentDir);
+    const received: ExtensionUi[] = [];
+    const notifications: Array<{ packageName: string; text: string }> = [];
+    const createExtensionUi = vi.fn((packageName: string): ExtensionUi => ({
+      ...createUnavailableExtensionUi(),
+      notify: async message => { notifications.push({ packageName, text: message.text }); },
+    }));
+    const extension: FelanExtension = async pi => {
+      received.push(pi.ui);
+      await pi.ui.notify({ level: 'info', text: String(pi.config.message) });
+    };
+    associateExtensionConfig(extension, defineExtensionConfig({
+      id: 'ui-example', title: 'UI example', fields: {
+        message: configField.string({ default: 'default', description: 'Message' }),
+      },
+    }));
+    const factory = createAgentCoreSessionRuntimeFactory(() => ({
+      runtime: new TestAgentRuntime(cwd), modelRuntime, settingsManager: SettingsManager.inMemory(),
+      extensionPackages: ['first', 'second'], importExtension: async () => ({ default: extension }),
+      extensionConfigOverrides: [{ extensionId: 'ui-example', source: 'test', values: { message: 'configured' } }],
+      createExtensionUi,
+    }));
+    const runtime = await createAgentSessionRuntime(factory, { cwd, agentDir, sessionManager: SessionManager.inMemory(cwd) });
+    try {
+      expect(notifications).toEqual([
+        { packageName: 'first', text: 'configured' }, { packageName: 'second', text: 'configured' },
+      ]);
+      await runtime.session.bindExtensions({ mode: 'print' });
+      await runtime.session.reload();
+      expect(createExtensionUi.mock.calls.map(([name]) => name)).toEqual(['first', 'second', 'first', 'second']);
+      expect(notifications).toEqual([
+        { packageName: 'first', text: 'configured' }, { packageName: 'second', text: 'configured' },
+        { packageName: 'first', text: 'configured' }, { packageName: 'second', text: 'configured' },
+      ]);
+      expect(new Set(received).size).toBe(4);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it.each([false, true])('reports missing required services without secrets (caller callback: %s)', async (withCallback) => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const required = defineServiceContract<{}>('example.required', 2);
+    const optional = defineServiceContract<{ token: string }>('example.optional', 1);
+    const services = createFelanServiceRegistry();
+    services.set(optional, { token: 'provider-secret-value' });
+    const initialize = vi.fn();
+    const execution = vi.fn(() => ({}));
+    const missing: ConfiguredFelanExtension = Object.assign(initialize, {
+      execution, serviceRequirements: { required: [required], optional: [optional] },
+    });
+    associateExtensionConfig(missing, defineExtensionConfig({
+      id: 'missing', title: 'Missing service', fields: {
+        token: configField.string({ default: '', sensitive: true, description: 'Token' }),
+      },
+    }));
+    const available = vi.fn();
+    const onServiceRequirementFailure = vi.fn();
+    const result = await createAgentCoreSessionRuntime({
+      runtime: new TestAgentRuntime(cwd), agentDir,
+      modelRuntime: await createModelRuntime(agentDir),
+      settingsManager: SettingsManager.inMemory(), sessionManager: SessionManager.inMemory(cwd),
+      extensionPackages: ['@example/missing', '@example/available'],
+      importExtension: async (name) => ({ default: name === '@example/missing' ? missing : available }),
+      extensionConfigOverrides: [{ extensionId: 'missing', source: 'test', values: { token: 'config-secret-value' } }],
+      services,
+      ...(withCallback ? { onServiceRequirementFailure } : {}),
+    });
+    try {
+      expect(initialize).not.toHaveBeenCalled();
+      expect(execution).not.toHaveBeenCalled();
+      expect(available).toHaveBeenCalledOnce();
+      expect(result.extensionsResult.extensions.map(({ path }) => path)).not.toContain('<inline:@example/missing>');
+      expect(result.diagnostics).toEqual([{
+        type: 'warning',
+        message: 'Disabled Felan extension @example/missing: required service example.required@2 has no configured provider.',
+      }]);
+      expect(result.services.diagnostics).toBe(result.diagnostics);
+      expect(JSON.stringify(result.diagnostics)).not.toMatch(/provider-secret-value|config-secret-value/u);
+      expect(onServiceRequirementFailure).toHaveBeenCalledTimes(withCallback ? 1 : 0);
+      if (withCallback) expect(onServiceRequirementFailure).toHaveBeenCalledWith('@example/missing', 'example.required@2');
+    } finally {
+      result.session.dispose();
+    }
+  });
+
+  it('composes package wrappers in load order before the external wrapper and never rewraps on reload', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const modelRuntime = await createModelRuntime(agentDir);
+    const model = modelRuntime.getModel('openai-codex', 'gpt-5.6-sol')!;
+    vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+    vi.spyOn(modelRuntime, 'getAuth').mockResolvedValue({ auth: { apiKey: 'test' } });
+    const installed: string[] = [];
+    const invoked: string[] = [];
+    const resolveFirst = vi.fn(() => ({
+      wrapStreamFunction: (_original: StreamFunction): StreamFunction => {
+        installed.push('first');
+        return (...args) => { invoked.push('first'); return completedStream(...args); };
+      },
+    }));
+    const first: ConfiguredFelanExtension = Object.assign(() => {}, { execution: resolveFirst });
+    const second: ConfiguredFelanExtension = Object.assign(() => {}, {
+      execution: () => ({
+        wrapStreamFunction: (original: StreamFunction): StreamFunction => {
+          installed.push('second');
+          return (...args) => { invoked.push('second'); return original(...args); };
+        },
+      }),
+    });
+    const result = await createAgentCoreSession({
+      runtime: new TestAgentRuntime(cwd), agentDir, modelRuntime, model,
+      extensionPackages: ['first', 'second'],
+      importExtension: async (name) => ({ default: name === 'first' ? first : second }),
+      settingsManager: SettingsManager.inMemory(), sessionManager: SessionManager.inMemory(cwd),
+      wrapStreamFunction: (original) => {
+        installed.push('external');
+        return (...args) => { invoked.push('external'); return original(...args); };
+      },
+    });
+    try {
+      expect(installed).toEqual(['first', 'second', 'external']);
+      expect(invoked).toEqual([]);
+      await result.session.bindExtensions({ mode: 'print' });
+      await result.session.prompt('First turn');
+      expect(invoked).toEqual(['external', 'second', 'first']);
+      const stream = result.session.agent.streamFunction;
+      await result.session.reload();
+      expect(result.session.agent.streamFunction).toBe(stream);
+      expect(resolveFirst).toHaveBeenCalledOnce();
+      expect(installed).toEqual(['first', 'second', 'external']);
+      invoked.length = 0;
+      await result.session.prompt('After reload');
+      expect(invoked).toEqual(['external', 'second', 'first']);
+    } finally {
+      result.session.dispose();
+    }
+  });
+
+  it.each(['enabled', 'disabled', 'missing-service', 'unsupported', 'name-only'] as const)(
+    'uses declared native thinking support, not a package name: %s', async (mode) => {
+      const root = await temporaryDirectory();
+      const cwd = join(root, 'workspace');
+      await mkdir(cwd, { recursive: true });
+      const modelRuntime = await createModelRuntime(join(root, 'agent-dir'));
+      const model = { ...modelRuntime.getModel('openai-codex', 'gpt-5.6-sol')!, id: 'gpt-6-astra' };
+      vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+      vi.spyOn(modelRuntime, 'getAuth').mockResolvedValue({ auth: { apiKey: 'test' } });
+      const classify = vi.fn(async () => ({
+        answers: { 'thinking:effort': { type: 'choice' as const, choice: 'low' } },
+      }));
+      const supportsNativeThinkingUpdates = vi.fn(() => mode !== 'unsupported');
+      const required = defineServiceContract<{}>('example.thinking', 1);
+      const extension: ConfiguredFelanExtension = Object.assign(() => {}, {
+        ...(mode === 'name-only' ? {} : { execution: () => ({ supportsNativeThinkingUpdates }) }),
+        ...(mode === 'missing-service' ? { serviceRequirements: { required: [required] } } : {}),
+      });
+      const result = await createAgentCoreSession({
+        runtime: Object.assign(new TestAgentRuntime(cwd), { classifier: { classify } }),
+        modelRuntime, model, thinkingLevel: 'high', dynamicThinking: true,
+        extensionPackages: mode === 'disabled' ? [] : [mode === 'name-only' ? '@felan-ai/ext-codex' : 'example'],
+        importExtension: async () => ({ default: extension }),
+        settingsManager: SettingsManager.inMemory(), sessionManager: SessionManager.inMemory(cwd),
+        services: createFelanServiceRegistry(),
+        wrapStreamFunction: () => completedStream,
+      });
+      try {
+        await result.session.bindExtensions({ mode: 'print' });
+        await result.session.prompt('Summarize the file');
+        expect(classify).toHaveBeenCalledTimes(mode === 'enabled' ? 1 : 0);
+        expect(result.session.thinkingLevel).toBe(mode === 'enabled' ? 'low' : 'high');
+        if (mode === 'enabled') {
+          expect(supportsNativeThinkingUpdates).toHaveBeenCalledWith(expect.objectContaining({ id: model.id }));
+          result.session.setThinkingLevel('high');
+          await result.session.prompt('Manual selection remains authoritative');
+          expect(classify).toHaveBeenCalledOnce();
+          expect(result.session.thinkingLevel).toBe('high');
+        }
+      } finally {
+        result.session.dispose();
+      }
+    },
+  );
+
   it('composes an inactive session, preserves app settings, and wraps streaming last', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
@@ -505,7 +709,7 @@ describe('Agent Core session composition', () => {
     expect(classifier.classify).not.toHaveBeenCalled();
   });
 
-  it('disposes partial Pi sessions when the stream wrapper throws', async () => {
+  it.each(['external', 'contribution'] as const)('disposes partial Pi sessions when the %s stream wrapper throws', async (source) => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent-dir');
@@ -514,13 +718,14 @@ describe('Agent Core session composition', () => {
     const dispose = vi.spyOn(AgentSession.prototype, 'dispose');
     const wrappingSession = SessionManager.inMemory(cwd);
 
+    const wrapStreamFunction = () => { throw new Error('stream wrapper failed'); };
     await expect(createAgentCoreSession({
       runtime: new TestAgentRuntime(cwd),
-      wrapStreamFunction: () => {
-        throw new Error('stream wrapper failed');
-      },
-      extensionPackages: [],
-      importExtension: async () => ({}),
+      ...(source === 'external' ? { wrapStreamFunction } : {}),
+      extensionPackages: source === 'contribution' ? ['example'] : [],
+      importExtension: async () => ({ default: Object.assign(() => {}, {
+        execution: () => ({ wrapStreamFunction }),
+      }) }),
       modelRuntime,
       settingsManager: SettingsManager.inMemory(),
       sessionManager: wrappingSession,
@@ -530,6 +735,20 @@ describe('Agent Core session composition', () => {
     dispose.mockRestore();
   });
 });
+
+const completedStream: StreamFunction = (model) => {
+  const stream = createAssistantMessageEventStream();
+  stream.push({
+    type: 'done', reason: 'stop', message: {
+      role: 'assistant', content: [{ type: 'text', text: 'Done' }],
+      api: model.api, provider: model.provider, model: model.id,
+      usage: { input: 0, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 1,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: 'stop', timestamp: Date.now(),
+    },
+  });
+  return stream;
+};
 
 async function createModelRuntime(agentDir: string): Promise<ModelRuntime> {
   return ModelRuntime.create({

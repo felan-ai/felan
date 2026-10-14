@@ -17,6 +17,7 @@ export interface BrowserAuthorizationLease {
 
 export interface BrowserAuthorizationRequest {
   readonly origin: string;
+  readonly reason?: string;
   readonly signal: AbortSignal;
   readonly extensionContext: ExtensionContext;
   readonly attach: (

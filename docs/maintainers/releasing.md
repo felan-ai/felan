@@ -30,14 +30,20 @@ workflow stores no npm credential.
    ```sh
    pnpm check:licenses
    pnpm check:proposed-version
-   pnpm verify
+   scripts/test-isolated.sh pnpm verify
    ```
 
    `check:proposed-version` reports intended unpublished versions as available
-   and skips unchanged versions already on npm. `verify` builds, type-checks,
+   and skips unchanged versions already on npm. Run `verify` through
+   `scripts/test-isolated.sh` to isolate HOME, agent directories and TMPDIR.
+   It builds, type-checks,
    tests, packs, clean-installs, imports every public package, checks exact
    workspace dependency versions, constructs a runtime, and runs the `felan`
    binary without credentials.
+   Run `node scripts/audit-packed.mjs` separately for a read-only registry audit
+   of typed metadata from the generated actual `packed-lock.json`. It neither
+   runs application code nor installs packages. Pass `--artifacts <directory>`
+   to inspect copied artifacts from an isolated verification run.
 4. Confirm that every package already present on npm trusts this repository's
    `release.yml` workflow and the `npm` GitHub environment.
 5. Commit the release-facing changes and push or merge them to `main`.
@@ -53,12 +59,34 @@ the dependency order defined by `scripts/package-paths.mjs`. Stable versions use
 the `latest` tag and prereleases use `next`. Reruns skip versions already
 published by a partially successful attempt. Releases require no Git tag.
 
+## Story 1 release prerequisites
+
+The services migration targets `@felan-ai/daemon` and
+`@felan-ai/session-protocol` 0.2.0, `@felan-ai/agent-core` 0.13.0 and
+`@felan-ai/felan` 0.30.0. These are incompatible `0.x` minor transitions, not
+patches to the prior profile/presenter APIs. Extensions use the Core 0.13
+compatible-minor peer range and their coordinated next-minor versions;
+Prewalk uses the Tasks 0.9 peer range. Programmatic callers must review the
+configured-service and generic-UI contracts rather than carry forward old
+application host factories.
+
+If the daemon or protocol package has not yet been bootstrapped on npm, it
+still requires the new-package procedure below before CI publication. An
+intended version in a manifest is neither evidence of publication nor
+evidence that trusted publishing has been configured. No publication is
+performed by local release checks. Do not release this migration until its
+complete isolated workflow, package-boundary and packed-install gates
+have all passed and the independent review has closed.
+
+Keep the full Pi runtime family pinned in Agent Core's published dependencies.
+Workspace-only overrides do not constrain npm consumers; inspect the actual
+packed lock for mixed Pi versions before release.
+
 ## Bootstrap a new npm package
 
-`@felan-ai/ext-model-tools` is a new package with intended version `0.1.0`.
-Before its first CI release, a maintainer must complete the manual `0.0.0`
-bootstrap and trusted-publisher setup below. Local build, test, pack, and smoke
-verification do not publish it or establish that trust relationship.
+Before a new package's first CI release, a maintainer must complete the manual
+`0.0.0` bootstrap and trusted-publisher setup below. Local build, test, pack,
+and smoke verification do not publish it or establish that trust relationship.
 
 npm requires a package to exist before it can receive a trusted-publisher
 configuration. Establish a new package with a manually published `0.0.0`
@@ -68,7 +96,7 @@ such as `0.1.0`.
 
 ### 1. Build and verify the intended release
 
-Complete the standard release preparation through `pnpm verify`. Confirm that
+Complete the standard release preparation through `scripts/test-isolated.sh pnpm verify`. Confirm that
 `.artifacts` contains the intended package tarball and inspect its manifest:
 
 ```sh
@@ -210,12 +238,12 @@ npm logout --registry=https://registry.npmjs.org/ # for a bootstrap-only login
 The release workflow records the packed dependency audit for stable versions:
 
 ```sh
-pnpm audit:packed
+node scripts/audit-packed.mjs
 ```
 
-The packed audit evaluates the exact dependencies installed from the generated
-tarballs, including upstream shrinkwrap and extension runtime dependencies.
-Record the audit output with the release evidence; `pnpm audit:packed` is
-advisory and does not gate publication. After publication, record the package
+The audit reads typed metadata from the generated actual `packed-lock.json`; it
+does not execute application code or install packages. Use
+`--artifacts <directory>` for a custom artifact directory. Record the audit
+output with release evidence; it is advisory and does not gate publication. After publication, record the package
 versions, integrities, provenance, and source commit before updating cloud
 dependencies.

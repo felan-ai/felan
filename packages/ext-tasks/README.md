@@ -31,28 +31,53 @@ rejected. Multiple sessions may own work concurrently, while each session may
 claim at most one task at a time. A session cannot change another session's
 active task unless it explicitly requests stale-claim recovery with `force`.
 
-Local TUI sessions expose `/tasks` and `Ctrl+Shift+T` for list, detail, and graph
-views. The compact footer status presents three unlabeled counts in Kanban order:
+The package root exposes `/tasks` through common `pi.ui` views and documents,
+with an optional `felan.tasks` version `1` hint and no feature-specific UI service. TUI clients also
+register `Ctrl+Shift+T`. The compact footer status presents three unlabeled counts in Kanban order:
 not started, in progress, and done. `/tasks` retains ready, blocked, waiting,
 cancelled, and dependency details. Details group lifecycle, execution, dependency,
 work-context, and timeline information. Related tasks show their availability
 and title, while the graph shows both prerequisite and dependent directions.
-Headless and cloud sessions use the same tools and storage without registering TUI
-controls.
+Headless and cloud clients use the same tools, storage, and common presentation;
+an unavailable common UI fails explicitly. Keyboard shortcuts remain TUI-only.
 
-The interactive view defaults to inline rendering with two full-width horizontal
+The overview shows 20 rows per page with IDs, complete titles, priorities,
+statuses, availability, ownership, blockers, and timestamps. Declared actions
+filter by the standard task views, search titles and IDs, page results, refresh,
+and open details. Detail documents show all work fields, dependencies and
+dependents, ownership, and timestamps, with related-task navigation and 128 KiB
+Markdown pages. Changing between overview and detail closes the old handle and
+presents a new element; handles never change kind. Untrusted text is escaped,
+not silently truncated.
+
+Explicit create and update actions collect the same fields as the task tools.
+Updates can claim, release, block, complete, cancel, or reopen tasks, edit work
+metadata and dependencies, and explicitly request stale-claim recovery. They
+use the viewing session as actor and retain all graph and ownership checks.
+Each action validates its declared fields, element revision, current page,
+and a fresh task snapshot. Subscriptions refresh open views after changes.
+Cancellation closes the UI and drains owned work before the store closes.
+
+The store has no conditional-write or cancellable-write API. Its existing
+serialization and fresh graph validation remain authoritative; a concurrent
+write after the UI's snapshot check is not an atomic revision conflict.
+Cancellation before dispatch prevents mutation, but a mutation already queued
+inside the store may still commit. The UI does not claim to roll it back.
+
+Felan's optional native task panel defaults to inline rendering with two full-width horizontal
 separators. Set
-`extensionConfig.tasks.displayMode` to `overlay` for a centered popup:
+`presentation.tasks.displayMode` in `$FELAN_AGENT_DIR/tui/settings.json` to `overlay` for a centered popup:
 
 ```json
 {
-  "extensionConfig": {
+  "presentation": {
     "tasks": { "displayMode": "overlay" }
   }
 }
 ```
 
-The setting is applied when a new runtime is constructed. It is also available
+The setting belongs only to the TUI, with a read-only fallback to the released
+`settings.json` value. It is also available
 through `/settings` and as `--tasks-display-mode overlay`.
 Overlay mode uses a complete four-edge frame.
 
@@ -64,8 +89,18 @@ import tasksExtension from '@felan-ai/ext-tasks';
 const extension = tasksExtension;
 ```
 
+The default export and `createTasksExtension()` own execution and portable
+common-UI presentation without loading a TUI. Native rendering belongs to
+`apps/felan`; the package exports neither a TUI entrypoint nor a presentation
+service. `displayMode` applies to the optional client panel; generic layout
+belongs to the client.
+
+The portable adapter publishes generic elements and actions. Overview data and
+selected details remain separate; large notes and results are not copied into
+every task row.
+
 The package owns the root-session graph, persistence, dependency validation,
-task tools, and optional TUI view. The host supplies `AgentRuntime.storage('session')`
+task tools, and generic UI. The host supplies `AgentRuntime.storage('session')`
 and session identity; task execution remains outside this package and may use
 any available agent mechanism.
 
@@ -74,7 +109,7 @@ any available agent mechanism.
 The graph is execution state for one root session, not a project issue tracker.
 It has no remote synchronization, due dates, labels, comments, or durable
 cross-session backlog. The package requires a compatible
-`@felan-ai/agent-core` peer, TypeBox, and Pi-TUI.
+`@felan-ai/agent-core` peer and TypeBox.
 
 ## Development
 

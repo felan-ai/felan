@@ -4,7 +4,7 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import type { Classifier } from './classifier/index.js';
 import type { Logger } from './logger.js';
-
+import type { RuntimeFiles } from './runtime-files.js';
 export type ExecOptions = PiExecOptions;
 
 export interface AgentRuntimeExecOptions extends PiExecOptions {
@@ -42,6 +42,7 @@ export interface AgentRuntimeProcessSnapshot {
   readonly nextOffset: number;
   readonly running: boolean;
   readonly exitCode?: number;
+  readonly signal?: AgentRuntimeTerminationSignal;
 }
 
 export interface AgentRuntimeProcess {
@@ -95,10 +96,16 @@ export interface AgentRuntimePrivateRuntime {
   ensureDirectory(namespace: string): Promise<string>;
 }
 
+export interface AgentRuntimeTerminalOptions extends AgentRuntimeShellProcessOptions {
+  readonly id?: string;
+}
+
 export interface AgentRuntimeTerminals {
+  /** Reattaches a root-scoped terminal without transferring its host-owned lifetime. */
+  attach?(id: string): AgentRuntimeProcess | undefined;
   startShell(
     command: string,
-    options?: AgentRuntimeShellProcessOptions,
+    options?: AgentRuntimeTerminalOptions,
   ): Promise<AgentRuntimeProcess>;
 }
 
@@ -119,6 +126,8 @@ export interface AgentRuntimeFileReadOptions {
 
 export interface AgentRuntimeFileWriteOptions {
   readonly exclusive?: boolean;
+  readonly noFollow?: boolean;
+  readonly readOnly?: boolean;
 }
 
 export interface AgentRuntimeListFilesOptions {
@@ -126,6 +135,8 @@ export interface AgentRuntimeListFilesOptions {
   readonly recursive?: boolean;
   /** Include directories as well as regular files in the returned paths. */
   readonly includeDirectories?: boolean;
+  /** Include symlinks and special files without traversing them. */
+  readonly includeOther?: boolean;
   /** Maximum entry depth below the requested directory; immediate entries have depth 1. */
   readonly maxDepth?: number;
   /** Match returned paths with `/`-separated glob syntax. */
@@ -141,11 +152,15 @@ export interface AgentRuntimeListFilesOptions {
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
+  readonly host?: { readonly name: string; readonly version: string };
+  /** User directory in the runtime path namespace, when user resources are available. */
+  readonly userHome?: string;
   readonly classifier?: Classifier;
   readonly logger: Logger;
   readonly processes?: AgentRuntimeProcesses;
   readonly privateRuntime?: AgentRuntimePrivateRuntime;
   readonly terminals?: AgentRuntimeTerminals;
+  readonly files?: RuntimeFiles;
 
   storage(scope?: AgentRuntimeStorageScope): AgentRuntimeStorage;
 
@@ -171,4 +186,5 @@ export interface AgentRuntime {
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 
   readAgentFile?(path: string): Promise<Uint8Array>;
+  getEnvironmentVariable?(name: string): string | undefined;
 }

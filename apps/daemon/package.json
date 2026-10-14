@@ -1,0 +1,60 @@
+{
+  "name": "@felan-ai/daemon",
+  "version": "0.2.0",
+  "description": "Felan session daemon with configured service providers",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felan-ai/felan.git",
+    "directory": "apps/daemon"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "prepack": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "catalog:pi",
+    "@felan-ai/agent-core": "workspace:*",
+    "@felan-ai/session-protocol": "workspace:*",
+    "koffi": "3.3.2",
+    "typebox": "1.1.38"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./session-runtime": {
+      "types": "./dist/daemon/session-runtime.d.ts",
+      "import": "./dist/daemon/session-runtime.js"
+    },
+    "./daemon-bootstrap": {
+      "types": "./dist/daemon/bootstrap.d.ts",
+      "import": "./dist/daemon/bootstrap.js"
+    },
+    "./provider": {
+      "types": "./dist/daemon/provider.d.ts",
+      "import": "./dist/daemon/provider.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    }
+  }
+}

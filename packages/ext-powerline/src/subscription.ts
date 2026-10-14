@@ -38,8 +38,7 @@ export interface SubscriptionUsageHostRequest {
   readonly signal: AbortSignal;
 }
 
-/** `REFRESH_DEFERRED` means another holder of the host's refresh lease updates the shared store. */
-export type SubscriptionUsageHostErrorCode = UsageErrorCode | 'REFRESH_DEFERRED';
+export type SubscriptionUsageHostErrorCode = UsageErrorCode;
 
 export type SubscriptionUsageHostResult =
   | { readonly ok: true; readonly data: unknown }
@@ -54,8 +53,7 @@ export type SubscriptionUsageHostResult =
 
 export interface SubscriptionUsageHost {
   fetchUsage(request: SubscriptionUsageHostRequest): Promise<SubscriptionUsageHostResult>;
-  /** Gives up this host's right to refresh the provider so another process can take over. */
-  releaseRefreshLease?(provider: SubscriptionProviderName): void;
+  settle?(): Promise<void>;
 }
 
 export interface SubscriptionRefreshOptions {
@@ -187,17 +185,12 @@ export function createSubscriptionController(
     else delete state.usage;
   }
 
-  function releaseLease(provider: SubscriptionProviderName): void {
-    host.releaseRefreshLease?.(provider);
-  }
-
   async function refresh(
     model: { provider?: string; id?: string } | undefined,
     options: SubscriptionRefreshOptions = {},
   ): Promise<void> {
     const provider = detectSubscriptionProvider(model);
     if (!provider) {
-      if (state.provider) releaseLease(state.provider);
       sequence += 1;
       abortActiveRequests();
       for (const provider of Object.keys(latestRequestSequence) as SubscriptionProviderName[]) {
@@ -214,7 +207,6 @@ export function createSubscriptionController(
     if (previousProvider && previousProvider !== provider) {
       abortActiveRequests();
       delete latestRequestSequence[previousProvider];
-      releaseLease(previousProvider);
     }
     state.provider = provider;
     if (provider === 'openai' && inFlight && inFlightProvider === provider
@@ -288,8 +280,7 @@ export function createSubscriptionController(
   ): Promise<void> {
     const result = await fetchHostUsage(host, provider, modelProvider, modelId, controller);
     const errorCode = result.ok ? undefined : result.error.code;
-    if (latestRequestSequence[provider] === requestSequence && provider === 'openai'
-      && errorCode !== 'REFRESH_DEFERRED') {
+    if (latestRequestSequence[provider] === requestSequence && provider === 'openai') {
       if (result.ok) {
         missingCredentials.delete(provider);
         nativeRateLimitedCount = 0;
@@ -306,7 +297,7 @@ export function createSubscriptionController(
       }
     } else if (errorCode === 'NO_CREDENTIALS') {
       missingCredentials.add(provider);
-    } else if (errorCode !== 'REFRESH_DEFERRED') {
+    } else {
       missingCredentials.delete(provider);
       if (latestRequestSequence[provider] === requestSequence) {
         store.set(provider, nextUsageRecord(provider, store.get(provider), result));
@@ -320,9 +311,6 @@ export function createSubscriptionController(
   }
 
   function clear(): void {
-    releaseLease('codex');
-    releaseLease('anthropic');
-    releaseLease('xai');
     sequence += 1;
     abortActiveRequests();
     delete state.provider;
@@ -644,7 +632,6 @@ function nextUsageRecord(
     };
   }
   const { code, httpStatus, retryAfterMs } = result.error;
-  if (code === 'REFRESH_DEFERRED') return current ?? { rateLimitedCount: 0 };
   const failed: SubscriptionUsageRecord = {
     rateLimitedCount: 0,
     ...current,

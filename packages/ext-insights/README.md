@@ -1,14 +1,26 @@
 # @felan-ai/ext-insights
 
-Local session analytics for Felan Code. The package owns parsing and analytics;
-the local host owns session discovery, bounded reads, report storage, and
-opening a report through `InsightsHost`.
+Local session analytics for Felan Code. The default entry uses shared
+`SESSIONS_HISTORY_SERVICE`, runtime storage, and generic `pi.ui` notifications and paged
+report documents. It does not require the legacy Insights service or native UI.
+Direct integrations can still use `createInsightsExtension(host)` and
+`InsightsHost` for custom discovery, storage, and report opening.
 
 The package does not access the filesystem or ambient Pi directories directly.
 The local host must keep session visibility, transcript size, and cache retention
 explicit.
 
-The generated report is a self-contained `file://` snapshot dashboard. Every
+Shared-history reads pin the complete journal revision and branch, use the exact
+checkpoint byte length, and enforce the 64 MiB limit while collecting entries.
+Cache identity includes the whole-journal revision, not only the active-branch
+digest. Duplicate entries, invalid pagination, inaccessible histories, and stale
+revisions fail rather than silently becoming empty sessions. Default report
+commands are serialized; cancellation and shutdown join pending reads, writes,
+and UI operations before closing report handles. Generic report navigation uses
+revision-checked actions and UTF-8-bounded pages without splitting Unicode code
+points or discarding report text.
+
+The stored HTML report is a self-contained snapshot dashboard. Every
 `/insights` invocation rescans visible root and retained subagent transcripts,
 reparses new or changed files, and replaces the report. Unchanged files reuse
 parser-versioned metadata. Opening the generated HTML later does not reread live

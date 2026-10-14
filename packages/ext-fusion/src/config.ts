@@ -76,6 +76,20 @@ export function isModelReference(value: unknown): value is string {
   return typeof value === 'string' && /^[^/\s]+\/.+$/u.test(value.trim());
 }
 
+export function resolveFusionConfig(config: Readonly<Record<string, unknown>>): FusionConfig {
+  const number = (key: 'concurrency' | 'timeoutSeconds' | 'maxOutputChars', min: number, max: number) => {
+    const value = config[key];
+    return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max ? value : DEFAULT_FUSION_CONFIG[key];
+  };
+  return {
+    participants: Array.isArray(config.participants) ? config.participants.filter((value): value is string => typeof value === 'string') : DEFAULT_FUSION_CONFIG.participants,
+    fusionModel: typeof config.fusionModel === 'string' ? config.fusionModel : DEFAULT_FUSION_CONFIG.fusionModel,
+    concurrency: number('concurrency', 1, 8), timeoutSeconds: number('timeoutSeconds', 10, 600), maxOutputChars: number('maxOutputChars', 1000, 50000),
+    thinking: typeof config.thinking === 'string' && (FUSION_THINKING_LEVELS as readonly string[]).includes(config.thinking)
+      ? config.thinking as FusionConfig['thinking'] : DEFAULT_FUSION_CONFIG.thinking,
+  };
+}
+
 function boundedInteger(minimum: number, maximum: number) {
   return (value: unknown): string | undefined => (
     typeof value === 'number' && Number.isInteger(value) && value >= minimum && value <= maximum

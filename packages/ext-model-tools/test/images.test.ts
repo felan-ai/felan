@@ -1,15 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentRuntime, AgentRuntimeStorage, AssistantImages, ImageApi, ImageModel, Usage } from '@felan-ai/agent-core';
+import type { AgentRuntime, AgentRuntimeStorage, AssistantImages, ImageModelInfo, Usage } from '@felan-ai/agent-core';
 import type { ModelToolsRuntime } from '../src/index.js';
-import { harness } from './harness.js';
+import { fakeModelsService, harness } from './harness.js';
 
 vi.mock('node:crypto', async importOriginal => ({ ...await importOriginal<typeof import('node:crypto')>(), randomUUID: vi.fn((await importOriginal<typeof import('node:crypto')>()).randomUUID) }));
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT1sAAAAASUVORK5CYII=';
-const model: ImageModel<ImageApi> = {
+const model: ImageModelInfo = {
   type: 'image', provider: 'fake', id: 'draw', name: 'Offline image model', api: 'openai-images',
-  baseUrl: 'https://not-used.invalid', headers: { Authorization: 'secret' },
   input: ['text', 'image'], output: ['text', 'image'], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
 };
 const response: AssistantImages = { api: model.api, provider: model.provider, model: model.id,
@@ -45,7 +44,7 @@ async function setup() {
   };
   const getAvailableOfType = vi.fn().mockResolvedValue([model]);
   const generateImages = vi.fn<ModelToolsRuntime['generateImages']>().mockResolvedValue(response);
-  const models = { getAvailableOfType, generateImages } as unknown as ModelToolsRuntime;
+  const models = fakeModelsService({ getAvailableOfType, generateImages });
   const h = await harness(runtime, models);
   return { ...h, runtime, storage, files, directories, models, getAvailableOfType, generateImages };
 }
@@ -58,6 +57,22 @@ describe('generate_images', () => {
     expect(JSON.stringify(result)).not.toMatch(/secret|Authorization|baseUrl/);
     expect(h.generateImages).not.toHaveBeenCalled();
     expect(h.getAvailableOfType).toHaveBeenCalledTimes(2);
+  });
+
+  it('never forwards extra discovery metadata to generation or exposes it in results', async () => {
+    const h = await setup();
+    h.getAvailableOfType.mockResolvedValue([{ ...model, headers: { Authorization: 'private-provider-token' }, compat: { private: true } }]);
+    const listed = await h.execute('generate_images', { action: 'list' });
+    const generated = await h.execute('generate_images', request);
+    expect(h.generateImages).toHaveBeenCalledExactlyOnceWith(
+      { provider: model.provider, id: model.id },
+      { input: [{ type: 'text', text: 'A tree' }] },
+      {},
+    );
+    expect(JSON.stringify([listed, generated])).not.toMatch(/private-provider-token|Authorization|headers|compat/);
+    expect(h.models.getAvailable).not.toHaveBeenCalled();
+    expect(h.models.completeSimple).not.toHaveBeenCalled();
+    expect(h.models.streamSimple).not.toHaveBeenCalled();
   });
 
   it('returns text, image, unique session artifacts and real accounting usage', async () => {
@@ -74,7 +89,7 @@ describe('generate_images', () => {
       expect(path).toMatch(/^model-tools\/images\/[a-f\d-]+\/1.png$/u);
       expect(Buffer.from(bytes).toString('base64')).toBe(png);
     }
-    expect(h.generateImages).toHaveBeenCalledWith(model, { input: [{ type: 'text', text: 'A tree' }] }, { signal });
+    expect(h.generateImages).toHaveBeenCalledWith({ provider: model.provider, id: model.id }, { input: [{ type: 'text', text: 'A tree' }] }, { signal });
     expect(h.runtime.storage).toHaveBeenCalledWith('session');
     expect(h.runtime.writeFile).not.toHaveBeenCalled();
     expect(h.runtime.exec).not.toHaveBeenCalled();
@@ -86,7 +101,7 @@ describe('generate_images', () => {
     const h = await setup();
     await h.execute('generate_images', { ...request, referencePaths: ['reference.jpg'] });
     expect(h.runtime.readFile).toHaveBeenCalledExactlyOnceWith('reference.jpg');
-    expect(h.generateImages).toHaveBeenCalledWith(model, { input: [
+    expect(h.generateImages).toHaveBeenCalledWith({ provider: model.provider, id: model.id }, { input: [
       { type: 'text', text: 'A tree' }, { type: 'image', data: png, mimeType: 'image/png' },
     ] }, {});
   });
@@ -213,7 +228,7 @@ describe('conditional tool availability', () => {
   it.each([false, true])('handles images with classifier=%s and isolates discovery failure', async configured => {
     const classifier = configured ? { classify: vi.fn() } : undefined;
     for (const available of [false, true, 'error']) {
-      const models = { getAvailableOfType: available === 'error' ? vi.fn().mockRejectedValue(new Error('secret')) : vi.fn().mockResolvedValue(available ? [model] : []), generateImages: vi.fn() } as unknown as ModelToolsRuntime;
+      const models = fakeModelsService({ getAvailableOfType: available === 'error' ? vi.fn().mockRejectedValue(new Error('secret')) : vi.fn().mockResolvedValue(available ? [model] : []), generateImages: vi.fn() });
       const h = await harness(classifier ? { classifier } : {}, models);
       expect([...h.tools.keys()]).toEqual([...(configured ? ['classify'] : []), ...(available === true ? ['generate_images'] : [])]);
     }

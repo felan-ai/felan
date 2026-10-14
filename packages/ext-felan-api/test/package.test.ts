@@ -11,9 +11,9 @@ describe('@felan-ai/ext-felan-api package boundary', () => {
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-felan-api',
       license: 'MIT',
-      exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
+      exports: { '.': { import: './dist/extension.js', types: './dist/extension.d.ts' }, './extension': { import: './dist/extension.js' }, './service': { import: './dist/service.js' } },
       dependencies: { typebox: '1.1.38' },
-      peerDependencies: { '@felan-ai/agent-core': 'catalog:agent-core' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.13.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
     });
@@ -25,5 +25,11 @@ describe('@felan-ai/ext-felan-api package boundary', () => {
     expect(source).not.toContain('@felan-cloud');
     expect(source).not.toContain('TEAM_API_KEY');
     expect(source).not.toContain('secret-key');
+  });
+
+  it('keeps root execution free of ambient credentials, hosts, or a legacy factory call', async () => {
+    const source = await readFile(join(packageRoot, 'src', 'extension.ts'), 'utf8');
+    expect(source).toContain('pi.services.get(FELAN_PLATFORM_SERVICE)');
+    expect(source).not.toMatch(/process\.|createFelanApiExtension\(|https?:\/\//u);
   });
 });

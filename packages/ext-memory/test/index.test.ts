@@ -1,24 +1,30 @@
+import { beforeEach as beforeMemoryTest } from "vitest";
+import { createMemoryBackend } from './local/backend.js';
+let { hydrateMemoryDirectory, readMemoryDirectory } = createMemoryBackend();
+beforeMemoryTest(() => { ({ hydrateMemoryDirectory, readMemoryDirectory } = createMemoryBackend()); });
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
+import { createExtensionServiceAccess, createFelanServiceRegistry, type ExtensionContext, type FelanExtensionAPI } from '@felan-ai/agent-core';
+import memoryExtension from '../src/extension.js';
+import { HOST_WORKERS_SERVICE, RUNTIME_LIFETIME_SERVICE, MODELS_SERVICE, SESSIONS_SERVICE } from '@felan-ai/agent-core';
+
+import { createMemoryExtension } from '../src/index.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createEmptyMemoryArtifact,
   createActiveBranchDigester,
   createMemoryDreamerInstructions,
-  createMemoryExtension,
+  type CreateMemoryExtensionOptions,
   createMemoryNavigationGuide,
   createMemoryProjectionSnapshot,
   createMemorySnapshot,
   createSessionCheckpoint,
   digestActiveBranch,
   formatMemoryPromptContext,
-  hydrateMemoryDirectory,
   MEMORY_CONTEXT_CUSTOM_TYPE,
   removeMemoryContextEntries,
   memoryArtifactFingerprint,
-  readMemoryDirectory,
   validateMemoryArtifact,
 } from '../src/index.js';
 
@@ -326,13 +332,17 @@ describe('@felan-ai/ext-memory', () => {
 });
 
 describe('memory extension lifecycle', () => {
+  it('declares only core services', () => {
+    expect(memoryExtension.serviceRequirements).toEqual({ required: [MODELS_SERVICE, SESSIONS_SERVICE], optional: [HOST_WORKERS_SERVICE, RUNTIME_LIFETIME_SERVICE] });
+  });
+
   it('keeps the session usable when memory cannot be read', async () => {
     const host = {
       readCurrent: vi.fn(async () => { throw new Error('memory unavailable'); }),
       recordCheckpoint: vi.fn(async () => {}),
       status: vi.fn(async () => ({ enabled: true, state: 'idle' as const, pendingCheckpoints: 0 })),
     };
-    const extension = await extensionHarness(createMemoryExtension({ role: 'reader', host }));
+    const extension = await extensionHarness({ role: 'reader', host });
     expect(extension.registerCapability).toHaveBeenCalledWith(expect.objectContaining({
       id: 'memory',
       instructions: expect.stringContaining('read the index first'),
@@ -340,6 +350,11 @@ describe('memory extension lifecycle', () => {
     await extension.emit('session_start');
     expect(extension.sendMessage).not.toHaveBeenCalled();
     expect(extension.statuses.at(-1)).toEqual(['memory', 'Memory unavailable']);
+    expect(extension.ui.status).toHaveBeenCalledWith({
+      id: 'memory', kind: 'status', key: 'memory',
+      value: { kind: 'text', text: 'Memory unavailable' },
+      severity: 'warning', fallback: 'Memory unavailable',
+    });
   });
 
   it('lets root sessions checkpoint and reader sessions only recall', async () => {
@@ -348,8 +363,8 @@ describe('memory extension lifecycle', () => {
       recordCheckpoint: vi.fn(async () => {}),
       status: vi.fn(async () => ({ enabled: true, state: 'idle' as const, pendingCheckpoints: 0 })),
     };
-    const root = await extensionHarness(createMemoryExtension({ role: 'root', host }));
-    const reader = await extensionHarness(createMemoryExtension({ role: 'reader', host }));
+    const root = await extensionHarness({ role: 'root', host });
+    const reader = await extensionHarness({ role: 'reader', host });
     await root.emit('session_start');
     await root.emit('session_start');
     expect(root.sendMessage).toHaveBeenCalledTimes(1);
@@ -365,11 +380,51 @@ describe('memory extension lifecycle', () => {
     await root.emit('agent_settled');
     await reader.emit('agent_settled');
     expect(host.recordCheckpoint).toHaveBeenCalledTimes(1);
+    expect(host.recordCheckpoint).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-1', sessionFile: '/sessions/session-1.jsonl', leafId: 'leaf-1',
+      transcriptDigest: digestActiveBranch([]),
+    }));
     expect(reader.handlers.has('agent_settled')).toBe(false);
+    expect(root.ui.removeStatus).toHaveBeenCalledWith('memory');
+  });
+
+  it('does not let unavailable generic presentation prevent checkpoint recording', async () => {
+    const host = {
+      readCurrent: vi.fn(async () => { throw new Error('private provider data'); }),
+      recordCheckpoint: vi.fn(async () => {}),
+      status: vi.fn(async () => ({ enabled: true, state: 'idle' as const, pendingCheckpoints: 0 })),
+    };
+    const root = await extensionHarness({ role: 'root', host });
+    vi.mocked(root.ui.status).mockRejectedValueOnce(new Error('No client'));
+    await expect(root.emit('session_start')).resolves.toBeUndefined();
+    await root.emit('agent_settled');
+    expect(host.recordCheckpoint).toHaveBeenCalledOnce();
+  });
+
+  it('coalesces concurrent reads and retries checkpoint failures without leaking provider errors', async () => {
+    let resolveRead!: (value: null) => void;
+    const host = {
+      readCurrent: vi.fn(() => new Promise<null>(resolve => { resolveRead = resolve; })),
+      recordCheckpoint: vi.fn().mockRejectedValueOnce(new Error('private provider data')).mockResolvedValue(undefined),
+      status: vi.fn(async () => ({ enabled: true, state: 'idle' as const, pendingCheckpoints: 0 })),
+    };
+    const root = await extensionHarness({ role: 'root', host });
+    const first = root.emit('session_start');
+    const second = root.emit('session_tree');
+    expect(host.readCurrent).toHaveBeenCalledOnce();
+    resolveRead(null);
+    await Promise.all([first, second]);
+    await root.emit('agent_settled');
+    expect(root.statuses.at(-1)).toEqual(['memory', 'Memory checkpoint pending retry']);
+    await root.emit('agent_settled');
+    expect(host.recordCheckpoint).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(root.statuses)).not.toContain('private provider data');
   });
 });
 
-async function extensionHarness(extension: ReturnType<typeof createMemoryExtension>) {
+async function extensionHarness(options?: CreateMemoryExtensionOptions) {
+  const registry = createFelanServiceRegistry();
+
   const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
   const statuses: Array<[string, string | undefined]> = [];
   const entries: Array<Record<string, unknown>> = [];
@@ -385,15 +440,19 @@ async function extensionHarness(extension: ReturnType<typeof createMemoryExtensi
   });
   const registerCapability = vi.fn();
   const api = {
+    services: createExtensionServiceAccess(registry, {}),
+    ui: {
+      status: vi.fn(async (item: { readonly key: string; readonly value: { readonly text: string } }) => { statuses.push([item.key, item.value.text]); }),
+      removeStatus: vi.fn(async (id: string) => { statuses.push([id, undefined]); }),
+    },
     registerCapability,
     sendMessage,
     on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
       handlers.set(event, [...(handlers.get(event) ?? []), handler]);
     },
   } as unknown as FelanExtensionAPI;
-  extension(api);
+  await createMemoryExtension(options!)(api);
   const ctx = {
-    ui: { setStatus: (key: string, value: string | undefined) => statuses.push([key, value]) },
     sessionManager: {
       getSessionId: () => 'session-1',
       getSessionFile: () => '/sessions/session-1.jsonl',
@@ -407,6 +466,7 @@ async function extensionHarness(extension: ReturnType<typeof createMemoryExtensi
     statuses,
     sendMessage,
     registerCapability,
+    ui: api.ui,
     clearMemoryContext: () => entries.splice(0, entries.length),
     async emit(event: string, payload: Record<string, unknown> = {}) {
       const results = [];
