@@ -1,15 +1,12 @@
 import { constants, type Dirent, type Stats } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { canonicalPath } from './profile-storage.js';
 import { parseSchema } from '@felan-ai/session-protocol';
 import type { ControlSession } from './control-state.js';
 import type { DaemonOwnership } from './ownership.js';
 import { sessionHeaderSchema } from './session-files.js';
-
-export const LEGACY_SESSION_LIMITS = Object.freeze({
-  headerBytes: 64 * 1024,
-});
 
 export interface LegacySession {
   readonly id: string; readonly cwd: string; readonly path: string; readonly modifiedAt: number; readonly title: string; readonly preview: string;
@@ -17,6 +14,9 @@ export interface LegacySession {
 
 type Owner = Pick<DaemonOwnership, 'target'>;
 const sessionId = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u;
+type Summary = { id: string; cwd: string; title: string; preview: string };
+// Whole-file reads like Pi's session list; unchanged files are not re-read.
+const summaries = new Map<string, { size: number; mtimeMs: number; summary: Summary | undefined }>();
 
 // Pi's default per-cwd directory name under agentDir/sessions, as written by pre-daemon Felan.
 export function legacySessionDirectoryName(cwd: string): string {
@@ -26,7 +26,7 @@ export function legacySessionDirectoryName(cwd: string): string {
 /**
  * Finds unregistered Pi transcripts in the pre-daemon layouts of the owned stores: the per-cwd
  * directories under agentDir/sessions and the top level of each store root (custom session
- * directories). Only a bounded prefix of each file is read; malformed and registered files are skipped.
+ * directories). Malformed and registered files are skipped.
  */
 export async function discoverLegacySessions(owner: Owner, registered: readonly Pick<ControlSession, 'id' | 'piPath'>[], cwd?: string): Promise<LegacySession[]> {
   const sessions = join(owner.target.agentDir, 'sessions');
@@ -49,7 +49,7 @@ export async function discoverLegacySessions(owner: Owner, registered: readonly 
   files.sort((a, b) => a.stat.mtimeMs === b.stat.mtimeMs ? a.path.localeCompare(b.path) : b.stat.mtimeMs - a.stat.mtimeMs);
   const found: LegacySession[] = [];
   for (const file of files) {
-    const header = await readHeader(file.path);
+    const header = await readSummary(file.path, file.stat);
     if (!header || ids.has(header.id)) continue;
     const canonical = await canonicalPath(header.cwd).catch(() => header.cwd);
     if (cwd !== undefined && canonical !== cwd) continue;
@@ -63,56 +63,62 @@ async function entries(directory: string): Promise<Dirent[]> {
   try { return await readdir(directory, { withFileTypes: true }); } catch { return []; }
 }
 
-async function readHeader(path: string): Promise<{ id: string; cwd: string; title: string; preview: string } | undefined> {
-  try {
-    const prefix = await readPrefix(path);
-    const end = prefix?.indexOf(10) ?? -1;
-    if (!prefix || end < 0) return undefined;
-    const header = parseSchema(sessionHeaderSchema, JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(prefix.subarray(0, end))));
-    return sessionId.test(header.id) ? { id: header.id, cwd: header.cwd, ...summarize(entriesOf(prefix.subarray(end + 1))) } : undefined;
-  } catch { return undefined; }
+async function readSummary(path: string, info: Stats): Promise<Summary | undefined> {
+  const cached = summaries.get(path);
+  if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) return cached.summary;
+  const summary = await readTranscript(path, false);
+  summaries.set(path, { size: info.size, mtimeMs: info.mtimeMs, summary });
+  return summary;
 }
 
-/** First user message of a transcript file, from the same bounded prefix as discovery; empty when absent or unreadable. */
+/** First user message of a transcript file; empty when absent or unreadable. */
 export async function readTranscriptPreview(path: string): Promise<string> {
-  try {
-    const prefix = await readPrefix(path);
-    const end = prefix?.indexOf(10) ?? -1;
-    return prefix && end >= 0 ? summarize(entriesOf(prefix.subarray(end + 1))).preview : '';
-  } catch { return ''; }
+  return (await readTranscript(path, true))?.preview ?? '';
 }
 
 /** First user message among in-memory Pi session entries. */
-export function transcriptPreview(entries: Iterable<unknown>): string { return summarize(entries).preview; }
+export function transcriptPreview(entries: Iterable<unknown>): string {
+  const summary = summarizer();
+  for (const entry of entries) summary.add(entry);
+  return summary.result().preview;
+}
 
-async function readPrefix(path: string): Promise<Buffer | undefined> {
-  // Non-blocking open keeps a FIFO named *.jsonl from stalling discovery.
-  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+async function readTranscript(path: string, previewOnly: boolean): Promise<Summary | undefined> {
   try {
-    if (!(await handle.stat()).isFile()) return undefined;
-    const buffer = Buffer.alloc(LEGACY_SESSION_LIMITS.headerBytes);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return buffer.subarray(0, bytesRead);
-  } finally { await handle.close(); }
+    // Non-blocking open keeps a FIFO named *.jsonl from stalling discovery.
+    const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    const input = handle.createReadStream({ encoding: 'utf8', autoClose: false });
+    try {
+      if (!(await handle.stat()).isFile()) return undefined;
+      let header: { id: string; cwd: string } | undefined;
+      const summary = summarizer();
+      for await (const line of createInterface({ input, crlfDelay: Infinity })) {
+        if (!header) {
+          header = parseSchema(sessionHeaderSchema, JSON.parse(line));
+          if (!sessionId.test(header.id)) return undefined;
+          continue;
+        }
+        try { summary.add(JSON.parse(line)); } catch { /* Partial or foreign lines are not entries. */ }
+        if (previewOnly && summary.hasPreview()) break;
+      }
+      return header && { id: header.id, cwd: header.cwd, ...summary.result() };
+    } finally { input.destroy(); await handle.close(); }
+  } catch { return undefined; }
 }
 
-function* entriesOf(prefix: Buffer): Generator<unknown> {
-  const complete = prefix.subarray(0, prefix.lastIndexOf(10) + 1);
-  for (const line of complete.toString('utf8').split('\n')) {
-    try { yield JSON.parse(line); } catch { /* Partial or foreign lines are not entries. */ }
-  }
-}
-
-// Latest Pi session name and first user message; for files only the bounded prefix is seen.
-function summarize(entries: Iterable<unknown>): { title: string; preview: string } {
+// Latest Pi session name and first user message.
+function summarizer() {
   let name: string | undefined; let message: string | undefined;
-  for (const entry of entries) {
-    if (!entry || typeof entry !== 'object') continue;
-    const row = entry as { type?: unknown; name?: unknown; message?: { role?: unknown; content?: unknown } };
-    if (row.type === 'session_info') name = typeof row.name === 'string' ? row.name : undefined;
-    else if (!message?.trim() && row.type === 'message' && row.message?.role === 'user') message = textOf(row.message.content);
-  }
-  return { title: snippet(name?.trim() ?? ''), preview: snippet(message ?? '') };
+  return {
+    add(entry: unknown): void {
+      if (!entry || typeof entry !== 'object') return;
+      const row = entry as { type?: unknown; name?: unknown; message?: { role?: unknown; content?: unknown } };
+      if (row.type === 'session_info') name = typeof row.name === 'string' ? row.name : undefined;
+      else if (!message?.trim() && row.type === 'message' && row.message?.role === 'user') message = textOf(row.message.content);
+    },
+    hasPreview: () => !!message?.trim(),
+    result: () => ({ title: snippet(name?.trim() ?? ''), preview: snippet(message ?? '') }),
+  };
 }
 
 function textOf(content: unknown): string | undefined {

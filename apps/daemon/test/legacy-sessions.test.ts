@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverLegacySessions, LEGACY_SESSION_LIMITS, legacySessionDirectoryName, readTranscriptPreview, transcriptPreview } from '../src/daemon/legacy-sessions.js';
+import { discoverLegacySessions, legacySessionDirectoryName, readTranscriptPreview, transcriptPreview } from '../src/daemon/legacy-sessions.js';
 
 const directories: string[] = [];
 afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }); });
@@ -40,7 +40,7 @@ it('skips registered, duplicate and invalid files but lists linked transcripts a
   await s.write(join(s.perCwd, 'older-duplicate.jsonl'), 'duplicate');
   await s.write(join(s.custom, 'newer-duplicate.jsonl'), 'duplicate');
   await writeFile(join(s.perCwd, 'not-json.jsonl'), '{not json\n', { mode: 0o600 });
-  await writeFile(join(s.perCwd, 'no-newline.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 'unterminated', cwd: s.project }), { mode: 0o600 });
+  await writeFile(join(s.perCwd, 'partial.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 'partial', cwd: s.project }).slice(0, -4), { mode: 0o600 });
   await writeFile(join(s.perCwd, 'not-header.jsonl'), JSON.stringify({ type: 'message', id: 'entry', cwd: s.project }) + '\n', { mode: 0o600 });
   await s.write(join(s.perCwd, 'traversal.jsonl'), '../escape');
   await s.write(join(s.perCwd, 'relative-cwd.jsonl'), 'relative', 'project');
@@ -60,7 +60,7 @@ it('skips registered, duplicate and invalid files but lists linked transcripts a
   ]);
 });
 
-it('reads the latest Pi name and the first user message from the bounded prefix', async () => {
+it('reads the latest Pi name and the first user message from the whole transcript like Pi', async () => {
   const s = await stores();
   const entry = (row: object) => JSON.stringify(row) + '\n';
   const user = (content: unknown) => entry({ type: 'message', id: 'm', parentId: null, timestamp: 't', message: { role: 'user', content } });
@@ -69,12 +69,13 @@ it('reads the latest Pi name and the first user message from the bounded prefix'
   await s.write(join(s.perCwd, 'cleared.jsonl'), 'cleared', s.project, user([{ type: 'image' }]) + user([{ type: 'text', text: 'Fix\n\tthe build' }]) + entry({ type: 'session_info', name: 'Old' }) + entry({ type: 'session_info' }));
   await s.write(join(s.perCwd, 'long.jsonl'), 'long', s.project, user('x'.repeat(500)));
   await s.write(join(s.perCwd, 'empty.jsonl'), 'empty', s.project, entry({ type: 'model_change', id: 'a', parentId: null }));
-  await s.write(join(s.perCwd, 'beyond.jsonl'), 'beyond', s.project, user('y'.repeat(LEGACY_SESSION_LIMITS.headerBytes)) + entry({ type: 'session_info', name: 'Too late' }));
+  await s.write(join(s.perCwd, 'beyond.jsonl'), 'beyond', s.project, entry({ type: 'message', id: 's', parentId: null, timestamp: 't', message: { role: 'system', content: 'z'.repeat(256 * 1024) } })
+    + user('after a large system prompt') + entry({ type: 'session_info', name: 'Renamed later' }));
   const found = await discoverLegacySessions(s.owner, []);
   expect(Object.fromEntries(found.map(row => [row.id, [row.title, row.preview]]))).toEqual({ named: ['Release plan', 'first prompt'], cleared: ['', 'Fix the build'],
-    long: ['', `${'x'.repeat(119)}…`], empty: ['', ''], beyond: ['', ''] });
+    long: ['', `${'x'.repeat(119)}…`], empty: ['', ''], beyond: ['Renamed later', 'after a large system prompt'] });
   expect(await readTranscriptPreview(join(s.perCwd, 'cleared.jsonl'))).toBe('Fix the build');
-  expect(await readTranscriptPreview(join(s.perCwd, 'beyond.jsonl'))).toBe('');
+  expect(await readTranscriptPreview(join(s.perCwd, 'beyond.jsonl'))).toBe('after a large system prompt');
   expect(await readTranscriptPreview(join(s.perCwd, 'missing.jsonl'))).toBe('');
   expect(transcriptPreview([{ type: 'session_info', name: 'Named' }, { type: 'message', message: { role: 'assistant', content: 'no' } },
     { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'live\nprompt' }] } }])).toBe('live prompt');
