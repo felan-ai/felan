@@ -66,17 +66,18 @@ inside the store may still commit. The UI does not claim to roll it back.
 
 Felan's optional native task panel defaults to inline rendering with two full-width horizontal
 separators. Set
-`extensionConfig.tasks.displayMode` to `overlay` for a centered popup:
+`presentation.tasks.displayMode` in `$FELAN_AGENT_DIR/tui/settings.json` to `overlay` for a centered popup:
 
 ```json
 {
-  "extensionConfig": {
+  "presentation": {
     "tasks": { "displayMode": "overlay" }
   }
 }
 ```
 
-The setting is applied when a new runtime is constructed. It is also available
+The setting belongs only to the TUI, with a read-only fallback to the released
+`settings.json` value. It is also available
 through `/settings` and as `--tasks-display-mode overlay`.
 Overlay mode uses a complete four-edge frame.
 

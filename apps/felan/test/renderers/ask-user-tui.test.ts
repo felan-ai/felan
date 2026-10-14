@@ -1,8 +1,8 @@
+import type { AskUserConfig } from '../../src/tui/ask-user-preferences.js';
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import { Key, matchesKey, type Component } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
-  AskUserConfig,
   AskUserHostExecutionContext,
   AskUserRequest,
 } from '../../../../packages/ext-ask-user/src/index.js';

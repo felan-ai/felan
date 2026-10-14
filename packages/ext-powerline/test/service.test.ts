@@ -56,10 +56,10 @@ it.each(['rpc', 'print', 'tui'] as const)('publishes complete generic data in %s
     })));
     expect(h.exec).toHaveBeenCalled();
     const view = h.views.at(-1)!;
-    expect(view).toMatchObject({ kind: 'view', hint: { id: 'felan.powerline', version: '2.0.0' }, actions: [] });
+    expect(view).toMatchObject({ kind: 'view', hint: { id: 'felan.powerline', version: '3.0.0' }, actions: [] });
     if (view.kind !== 'view') throw new Error('Expected a generic view');
-    expect(view.items.some(item => item.values.segment === 'model' && item.values.text === 'claude-fixture')).toBe(true);
-    expect(view.items.some(item => item.values.segment === 'directory' && String(item.values.text).includes('界'))).toBe(true);
+    expect(view.items.some(item => item.values.segment === 'model' && String(item.values.data).includes('claude-fixture'))).toBe(true);
+    expect(view.items.some(item => item.values.segment === 'directory' && String(item.values.data).includes('界'))).toBe(true);
     expect(view.items.some(item => item.values.segment === 'subscription' || item.values.segment === 'savings')).toBe(false);
     expect(JSON.stringify(view)).not.toContain('\u001b');
     expect(h.ui.status).toHaveBeenCalledWith(expect.objectContaining({ value: { kind: 'money', value: 0.12345, currency: 'USD' } }));
@@ -100,9 +100,6 @@ it('uses optional usage in an ACP-like session and cancels outstanding queries o
 
 it('publishes subscription, savings, version and paginated child usage from core services', async () => {
   const h = harness();
-  Object.assign(h.pi, { config: { lines: [{ segments: {
-    subscription: { enabled: true }, savings: { enabled: true }, session: { enabled: true }, version: { enabled: true },
-  } }] } });
   Object.assign(h.pi.runtime, { host: { name: 'Felan', version: '1.2.3' } });
   h.services.set(MODELS_SERVICE, { getSubscriptionUsage: vi.fn(async () => ({ ok: true, data: {
     five_hour: { utilization: 25 }, seven_day: { utilization: 50 },
@@ -126,7 +123,8 @@ it('publishes subscription, savings, version and paginated child usage from core
     })));
     const rendered = JSON.stringify(h.views.at(-1));
     expect(rendered).toContain('subscription');
-    expect(rendered).toContain('25%');
+    expect(rendered).toContain('usedPercent');
+    expect(rendered).not.toContain('25%');
     expect(rendered).toContain('savings');
     expect(rendered).toContain('1.25');
     expect(rendered).toContain('1.2.3');

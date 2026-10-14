@@ -101,7 +101,7 @@ describe('felan CLI', () => {
       launchHeadless: async options => { launches.push(options); return 0; },
     })).toBe(0);
     expect(open).not.toHaveBeenCalled();
-    expect(launches).toEqual([expect.objectContaining({ sessionId: 'known', daemonRuntime: '/tmp/felan-headless-isolated', config: { 'codex-fast': true } })]);
+    expect(launches).toEqual([expect.objectContaining({ sessionId: 'known', daemonRuntime: '/tmp/felan-headless-isolated', config: { extensionConfig: { codex: { fast: true } } } })]);
     expect(launches[0]).not.toHaveProperty('extensionConfigOverrides');
   });
 
@@ -258,7 +258,7 @@ describe('felan CLI', () => {
     ], { launch: async (options) => launches.push(options) });
 
     expect(exitCode).toBe(0);
-    expect(launches[0]?.config).toEqual({ 'prewalk-entry-approval': 'allow' });
+    expect(launches[0]?.config).toEqual({ extensionConfig: { prewalk: { entryApproval: 'allow' } } });
     expect(launches[0]?.initialMessage).toBe('do not replay this');
   });
 
@@ -460,29 +460,24 @@ describe('felan CLI', () => {
   it('parses declarative extension options and passes them to the runtime', async () => {
     const launches: RunDaemonFelanOptions[] = [];
     const exitCode = await runCli([
-      '--prewalk-entry-approval', 'allow',
-      '--no-prewalk-restore-planner',
-      '--powerline-style=capsule',
+      '--prewalk-entry-approval', 'allow', '--prewalk-restore-planner=false', '--powerline-style', 'capsule',
       'inspect',
     ], { launch: async (options) => launches.push(options) });
 
     expect(exitCode).toBe(0);
-    expect(launches[0]?.config).toEqual({ 'prewalk-entry-approval': 'allow', 'prewalk-restore-planner': false, 'powerline-style': 'capsule' });
+    expect(launches[0]?.config).toEqual({ extensionConfig: { prewalk: { entryApproval: 'allow', restorePlanner: false } } });
   });
 
   it('parses ask-user configuration options', async () => {
     const launches: RunDaemonFelanOptions[] = [];
     const exitCode = await runCli([
-      '--ask-user-display-mode', 'overlay',
-      '--ask-user-single-select-layout', 'list',
-      '--ask-user-overlay-toggle-key', 'off',
-      '--ask-user-comment-toggle-key', 'ctrl+x',
+      '--ask-user-display-mode', 'overlay', '--ask-user-single-select-layout', 'list', '--ask-user-overlay-toggle-key', 'off', '--ask-user-comment-toggle-key', 'ctrl+x',
       'inspect',
     ], { launch: async (options) => launches.push(options) });
 
     expect(exitCode).toBe(0);
-    expect(launches[0]?.config).toEqual({ 'ask-user-display-mode': 'overlay', 'ask-user-single-select-layout': 'list',
-      'ask-user-overlay-toggle-key': 'off', 'ask-user-comment-toggle-key': 'ctrl+x' });
+    expect(launches[0]?.presentation).toEqual({ askUser: { displayMode: 'overlay', singleSelectLayout: 'list', overlayToggleKey: 'off', commentToggleKey: 'ctrl+x' } });
+    expect(launches[0]?.config).toBeUndefined();
   });
 
   it('parses browser authorization configuration options', async () => {
@@ -492,7 +487,7 @@ describe('felan CLI', () => {
     });
 
     expect(exitCode).toBe(0);
-    expect(launches[0]?.config).toEqual({ 'browser-authorization-policy': 'always-allow' });
+    expect(launches[0]?.config).toEqual({ extensionConfig: { browser: { authorizationPolicy: 'always-allow' } } });
   });
 
   it('parses Tasks display configuration options', async () => {
@@ -503,7 +498,8 @@ describe('felan CLI', () => {
     ], { launch: async (options) => launches.push(options) });
 
     expect(exitCode).toBe(0);
-    expect(launches[0]?.config).toEqual({ 'tasks-display-mode': 'overlay' });
+    expect(launches[0]?.presentation).toEqual({ tasks: { displayMode: 'overlay' } });
+    expect(launches[0]?.config).toBeUndefined();
   });
 
   it('parses session-compaction model configuration options', async () => {
@@ -514,7 +510,7 @@ describe('felan CLI', () => {
     ], { launch: async (options) => launches.push(options) });
 
     expect(exitCode).toBe(0);
-    expect(launches[0]?.config).toEqual({ 'session-compaction-model': 'low' });
+    expect(launches[0]?.config).toEqual({ extensionConfig: { sessionCompaction: { model: 'low' } } });
   });
 
   it('parses structured declarative extension options as JSON', async () => {
@@ -526,7 +522,8 @@ describe('felan CLI', () => {
     ], { launch: async (options) => launches.push(options) });
 
     expect(exitCode).toBe(0);
-    expect(launches[0]?.config).toEqual({ 'powerline-lines': [{ segments: { status: { enabled: true } } }] });
+    expect(launches[0]?.presentation).toEqual({ powerline: { lines: [{ segments: { status: { enabled: true } } }] } });
+    expect(launches[0]?.config).toBeUndefined();
   });
 
   it.each(['minimal', 'high'] as const)('routes text and JSON modes with %s thinking to the headless launcher', async (thinkingLevel) => {
@@ -591,4 +588,30 @@ describe('felan CLI', () => {
       '--resume is interactive-only; use --continue or --session in headless mode',
     ]);
   });
+});
+
+it('merges generated field flags into session-only generic execution config', async () => {
+  const launches: unknown[] = [];
+  expect(await runCli(['--codex-priority=ultrafast', '--codex-verbosity', 'low', '--no-codex-fast', '--fusion-thinking', 'high', '--fusion-participants', '["openai/a","anthropic/b"]'], {
+    launch: async options => { launches.push(options); },
+  })).toBe(0);
+  expect(launches).toEqual([expect.objectContaining({ config: { extensionConfig: { codex: { priority: 'ultrafast', verbosity: 'low', fast: false }, fusion: { thinking: 'high', participants: ['openai/a', 'anthropic/b'] } } } })]);
+});
+
+it('does not send TUI flags to headless or ACP sessions', async () => {
+  const launchHeadless = vi.fn(); const launchAcp = vi.fn(); const writeError = vi.fn();
+  expect(await runCli(['--mode', 'text', '--tasks-display-mode', 'overlay', 'hello'], { launchHeadless, writeError })).toBe(1);
+  expect(await runCli(['acp', '--codex-fast'], { launchAcp, writeError })).toBe(1);
+  expect(launchHeadless).not.toHaveBeenCalled(); expect(launchAcp).not.toHaveBeenCalled();
+});
+
+it.each([[], ['--session', 'known'], ['--mode', 'text'], ['--mode', 'json', '--session', 'known']].map(args => ({ args })))('maps execution flags into session extensionConfig for %j', async ({ args: launchArgs }) => {
+  const launches: unknown[] = [];
+  const errors: string[] = [];
+  const launch = async (value: unknown) => { launches.push(value); return 0; };
+  expect(await runCli([...launchArgs, '--no-codex-fast', '--codex-priority', 'ultrafast', '--fusion-participants', '["openai/model"]', 'hello'], {
+    launch, launchHeadless: launch, writeError: error => errors.push(error),
+  })).toBe(0);
+  expect(errors).toEqual([]);
+  expect(launches).toEqual([expect.objectContaining({ config: { extensionConfig: { codex: { fast: false, priority: 'ultrafast' }, fusion: { participants: ['openai/model'] } } } })]);
 });

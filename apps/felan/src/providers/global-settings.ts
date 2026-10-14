@@ -4,7 +4,7 @@ import {
   validateExtensionConfigValue,
   type ExtensionConfigDefinition,
 } from '@felan-ai/agent-core';
-import { ConfigValuesSchema, LIMITS, ThinkingSchema, TuiPreferencesUpdateSchema, assertJson, parseSchema, type TuiPreferencesUpdate, type OperationParams } from '@felan-ai/session-protocol';
+import { ConfigValuesSchema, LIMITS, ThinkingSchema, assertJson, parseSchema, type OperationParams } from '@felan-ai/session-protocol';
 import { readDaemonSettingsStore, updateDaemonSettingsStore, type MutableDaemonGlobalSettings } from './settings-store.js';
 import { validateBuiltinExtensionKeys } from './extension-catalog.js';
 
@@ -58,7 +58,6 @@ export interface DaemonGlobalSettingsUpdate extends Pick<OperationParams<'config
   readonly imageAutoResize?: boolean;
   readonly blockImages?: boolean;
   readonly builtinExtensions?: Readonly<Record<string, boolean>>;
-  readonly preferences?: TuiPreferencesUpdate;
   readonly dependencyDecisions?: readonly DependencyOnboardingDecision[];
 }
 
@@ -110,11 +109,10 @@ export async function mergeDaemonGlobalSettings(
   const codemode = update.codemode === undefined ? undefined : parseSchema(ConfigValuesSchema, { codemode: update.codemode }).codemode;
   const builtins = update.builtinExtensions;
   validateBuiltinExtensionKeys(builtins);
-  const preferences = update.preferences === undefined ? undefined : parseSchema(TuiPreferencesUpdateSchema, update.preferences);
   const decisions = update.dependencyDecisions ?? [];
   if (decisions.length > 16 || decisions.some(value => !isExtensionIdentifier(value.extension)
     || !Number.isSafeInteger(value.revision) || value.revision < 1 || typeof value.enabled !== 'boolean')) throw new Error('Invalid dependency decisions.');
-  if (!extensions.length && !Object.keys(defaults).length && !Object.keys(execution).length && !Object.keys(imageSettings).length && !preferences && !decisions.length && !builtins && classifierModel === undefined && codemode === undefined) throw new Error('Empty configuration update.');
+  if (!extensions.length && !Object.keys(defaults).length && !Object.keys(execution).length && !Object.keys(imageSettings).length && !decisions.length && !builtins && classifierModel === undefined && codemode === undefined) throw new Error('Empty configuration update.');
   await updateDaemonGlobalSettings(agentDir, assertCurrent, settings => {
     if (execution.autoCompact !== undefined) {
       if (settings.compaction !== undefined && !isRecord(settings.compaction)) throw new Error('compaction must be an object');
@@ -149,38 +147,6 @@ export async function mergeDaemonGlobalSettings(
         next[id] = { ...existing, [field]: value };
       }
       settings.extensionConfig = next;
-    }
-    if (preferences) {
-      for (const key of ['quietStartup', 'fullscreenScrollbar', 'fullscreenCopyOnSelect', 'fullscreenWheelScrollLines'] as const) {
-        if (preferences[key] !== undefined) settings[key] = preferences[key];
-      }
-      if (preferences.mermaid !== undefined) {
-        if (settings.markdown !== undefined && !isRecord(settings.markdown)) throw new Error('markdown must be an object');
-        settings.markdown = { ...settings.markdown, mermaid: preferences.mermaid };
-      }
-      if (preferences.hideThinking !== undefined) settings.hideThinkingBlock = preferences.hideThinking;
-      if (preferences.outputPad !== undefined) settings.outputPad = preferences.outputPad;
-      if (preferences.hardwareCursor !== undefined) settings.showHardwareCursor = preferences.hardwareCursor;
-      if (preferences.editorPadding !== undefined) settings.editorPaddingX = preferences.editorPadding;
-      if (preferences.autocompleteMaxVisible !== undefined) settings.autocompleteMaxVisible = preferences.autocompleteMaxVisible;
-      if (preferences.clearOnShrink !== undefined || preferences.terminalProgress !== undefined) {
-        if (settings.terminal !== undefined && !isRecord(settings.terminal)) throw new Error('terminal must be an object');
-        settings.terminal = { ...settings.terminal,
-          ...(preferences.clearOnShrink === undefined ? {} : { clearOnShrink: preferences.clearOnShrink }),
-          ...(preferences.terminalProgress === undefined ? {} : { showTerminalProgress: preferences.terminalProgress }) };
-      }
-      if (preferences.toolDisplay !== undefined || preferences.keybindings !== undefined) {
-        if (settings.felanTui !== undefined && !isRecord(settings.felanTui)) throw new Error('felanTui must be an object');
-        settings.felanTui = { ...settings.felanTui,
-          ...(preferences.toolDisplay === undefined ? {} : { toolDisplay: preferences.toolDisplay }),
-          ...(preferences.keybindings === undefined ? {} : { keybindings: preferences.keybindings }) };
-      }
-      if (preferences.showImages !== undefined || preferences.imageWidthCells !== undefined) {
-        if (settings.terminal !== undefined && !isRecord(settings.terminal)) throw new Error('terminal must be an object');
-        settings.terminal = { ...(settings.terminal as Record<string, unknown> | undefined),
-          ...(preferences.showImages === undefined ? {} : { showImages: preferences.showImages }),
-          ...(preferences.imageWidthCells === undefined ? {} : { imageWidthCells: preferences.imageWidthCells }) };
-      }
     }
     if (decisions.length) {
       if (settings.felanTui !== undefined && !isRecord(settings.felanTui)) throw new Error('felanTui must be an object');

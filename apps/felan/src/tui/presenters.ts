@@ -17,47 +17,44 @@ import { ClientInteractionPresenters, type InteractionPresenterUi } from '../cli
 import { MEMORY_HISTORY_HINT, presentMemoryHistory } from './renderers/memory.js';
 import { createClientAgentViews } from '../client/agents-presenter.js';
 import type { AgentToolPresentation } from '../subagents/agent-transcript.js';
+import { defaultPresentationPreferences, type TuiPresentationPreferences } from './preferences-schema.js';
 import type { TuiSessionController } from './controller.js';
 
 export function createTerminalPresenters(controller: TuiSessionController, ui: InteractionPresenterUi, options: {
   setEditorText(text: string): void;
+  presentationPreferences?(): TuiPresentationPreferences;
   settings(): AgentViewTranscript['settings'];
   toolPresentation(name: string): AgentToolPresentation | undefined;
   executionsChanged?(executions: readonly Execution[]): void;
 }): { presenters: ClientInteractionPresenters; openExecutions(id?: string): Promise<void>; dispose(): Promise<void> } {
   const lifetime = new AbortController();
   const presenters = new ClientInteractionPresenters(ui);
-  const presentationSettings = async () => {
-    if (!controller.sessionId || !controller.client.capabilities?.operations.includes('config.get')) return {};
-    const response = await controller.perform('config.get', { scope: 'session' }, controller.sessionId);
-    if (response.outcome !== 'accepted') throw new Error(controller.notice);
-    return response.result.values;
-  };
+  const presentationSettings = () => options.presentationPreferences?.() ?? defaultPresentationPreferences;
   const genericActions = (source: UiPresentation, signal: AbortSignal, actionId?: string, itemId?: string) => {
     const { hint, ...element } = source;
     return presentUiElement(element, createGenericTuiDriver(ui), signal, true, undefined, actionId ? { actionId, ...(itemId ? { itemId } : {}) } : undefined);
   };
   const remove = [
     presenters.hints.register(ASK_USER_FORM_HINT, { form: async (form, signal) => {
-      const settings = await presentationSettings();
+      const settings = presentationSettings().askUser ?? {};
       return presentAskUserForm(form, { ui, signal }, {
-        displayMode: settings['ask-user-display-mode'] ?? 'inline',
-        singleSelectLayout: settings['ask-user-single-select-layout'] ?? 'auto',
-        ...(settings['ask-user-overlay-toggle-key'] === undefined ? {} : { overlayToggleKey: settings['ask-user-overlay-toggle-key'] }),
-        ...(settings['ask-user-comment-toggle-key'] === undefined ? {} : { commentToggleKey: settings['ask-user-comment-toggle-key'] }),
+        displayMode: settings.displayMode === 'overlay' ? 'overlay' : 'inline',
+        singleSelectLayout: settings.singleSelectLayout === 'list' ? 'list' : 'auto',
+        ...(typeof settings.overlayToggleKey === 'string' ? { overlayToggleKey: settings.overlayToggleKey } : {}),
+        ...(typeof settings.commentToggleKey === 'string' ? { commentToggleKey: settings.commentToggleKey } : {}),
       });
     } }),
     presenters.hints.register(PREWALK_FORM_HINT, { form: (form, signal) => presentPrewalkForm(form, ui, signal) }),
-    presenters.hints.register(CONTEXT_DOCUMENT_HINT, { presentation: (element, signal) => presentContextDocument(element, ui, signal) }),
+    presenters.hints.register(CONTEXT_DOCUMENT_HINT, { presentation: (element, signal) => presentContextDocument(element, ui, signal, presentationSettings().contextView.displayMode) }),
     presenters.hints.register(MEMORY_HISTORY_HINT, { presentation: (element, signal) => presentMemoryHistory(element, ui, signal) }),
     presenters.hints.register(INSIGHTS_DOCUMENT_HINT, { presentation: (element, signal) => presentInsightsDocument(element, ui, signal) }),
     presenters.hints.register(FUSION_PICKER_HINT, { presentation: (element, signal) => presentFusionPickerView(element, ui, signal) }),
     presenters.hints.register(FUSION_REVIEW_HINT, { presentation: (element, signal) => presentFusionReviewDocument(element, ui, signal) }),
     presenters.hints.register(TASKS_HINT, { presentation: async (element, signal) => presentTasksElement(element, ui, signal, genericActions,
-      (await presentationSettings())['tasks-display-mode'] ?? 'inline') }),
+      presentationSettings().tasks?.displayMode === 'overlay' ? 'overlay' : 'inline') }),
     presenters.hints.register(PROCESSES_HINT, { updatePresentation: updateProcessesElement, presentation: (element, signal) => presentProcessesElement(element, ui, signal, genericActions) }),
     presenters.hints.register(PROMPT_HISTORY_HINT, { presentation: async (element, signal) => presentPromptHistoryElement(element, ui, signal, genericActions, options.setEditorText,
-      (await presentationSettings())['prompt-history-display-mode'] ?? 'inline') }),
+      presentationSettings().promptHistory?.displayMode === 'overlay' ? 'overlay' : 'inline') }),
   ];
   const agents = new Map<string, ReturnType<typeof createClientAgentViews>>();
   const subscriptions = new Map<string, () => void>();

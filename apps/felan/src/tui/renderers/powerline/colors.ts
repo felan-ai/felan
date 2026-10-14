@@ -1,5 +1,5 @@
 import type { ExtensionContext } from '@felan-ai/agent-core';
-import type { ThemeColorKey } from '@felan-ai/ext-powerline/data';
+import type { ThemeColorKey } from './config.js';
 
 export type ColorMode = 'none' | 'ansi' | 'ansi256' | 'truecolor';
 export type PiTheme = ExtensionContext['ui']['theme'];

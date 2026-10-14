@@ -5,7 +5,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { SettingsManager } from '@felan-ai/agent-core';
 import { stripTerminalSequences, type TUI } from '@earendil-works/pi-tui';
 import { DaemonConfiguration } from '../src/providers/configuration.js';
-import { DaemonTuiPreferences } from '../src/providers/tui-preferences.js';
+import { ClientThemes } from '../src/tui/theme-config.js';
+import { ClientPreferencesStore } from '../src/tui/preferences-store.js';
 import { TerminalPreferences } from '../src/tui/preferences.js';
 import type { TuiSessionController } from '../src/tui/controller.js';
 import { AgentTranscript } from '../src/subagents/agent-transcript.js';
@@ -22,15 +23,13 @@ async function fixture() {
   const file = join(agentDir, 'settings.json');
   await writeFile(file, JSON.stringify({ compaction: { reserveTokens: 1234 }, markdown: { codeBlockIndent: ' ' }, keep: true }));
   const configuration = new DaemonConfiguration({ agentDir, definitions: [], assertCurrent() {} });
-  const display = new DaemonTuiPreferences({ agentDir, assertCurrent() {} });
+  const display = new ClientPreferencesStore(agentDir);
   const controller = { notice: '', setNotice(value: string) { this.notice = value; }, perform: vi.fn(async (op: string, params: any) => {
     if (op === 'config.get') return { outcome: 'accepted', result: await configuration.get(params.scope) };
     if (op === 'config.set') await configuration.set(params.scope, params.values);
-    if (op === 'tui.preferences.get') return { outcome: 'accepted', result: await display.get() };
-    if (op === 'tui.preferences.set') await display.set(params.values);
     return { outcome: 'accepted', result: {} };
   }) };
-  const preferences = new TerminalPreferences(controller as unknown as TuiSessionController, {}, async () => {});
+  const preferences = new TerminalPreferences(controller as unknown as TuiSessionController, {}, async () => {}, new ClientThemes(agentDir));
   return { agentDir, file, configuration, display, preferences, controller };
 }
 
@@ -72,9 +71,9 @@ it('restores client-only controls, preserves unrelated settings and reads them a
       expect(entry.description).toContain('Display only'); await entry.change!(String(value));
     }
   } });
-  expect(await new DaemonTuiPreferences({ agentDir: f.agentDir, assertCurrent() {} }).get()).toMatchObject(expected);
+  const reopened = new ClientPreferencesStore(f.agentDir); await reopened.load(); expect(reopened.values).toMatchObject(expected);
   expect(f.preferences.settings.mermaid).toBe('final');
-  expect(JSON.parse(await readFile(f.file, 'utf8'))).toMatchObject({ markdown: { codeBlockIndent: ' ', mermaid: 'final' }, keep: true });
+  expect(JSON.parse(await readFile(f.file, 'utf8'))).toMatchObject({ markdown: { codeBlockIndent: ' ' }, keep: true });
   expect(f.controller.perform.mock.calls.some(([op]) => op === 'config.set')).toBe(false);
 });
 
@@ -85,7 +84,7 @@ it('rejects invalid execution and display settings before changing any file', as
     await expect(f.configuration.set('global', value)).rejects.toThrow();
   }
   for (const value of [{ mermaid: 'always' }, { fullscreenWheelScrollLines: 0 }, { fullscreenWheelScrollLines: 101 }, { quietStartup: 'yes' }]) {
-    await expect(f.display.set(value as never)).rejects.toThrow();
+    await expect(f.display.update(value as never)).rejects.toThrow();
   }
   expect(await readFile(f.file, 'utf8')).toBe(original);
 });

@@ -1,4 +1,4 @@
-import type { HostConfiguration, HostPreferences, HostSetup } from './host-services.js';
+import type { HostConfiguration, HostSetup } from './host-services.js';
 import { registrySessionExecutions } from './session-services.js';
 import { SessionsServiceError, type AgentSession, type ModelRuntime } from '@felan-ai/agent-core';
 import { truncateTail } from '@earendil-works/pi-coding-agent';
@@ -26,7 +26,6 @@ export interface CommandOptions {
   registry: SessionRegistry;
   configuration: HostConfiguration;
   models: Pick<ModelRuntime, 'getAvailable'>;
-  preferences?: HostPreferences;
   setup?: HostSetup;
   prepareOpenInteraction?(id: string, client: string, signal: AbortSignal): () => Promise<void>;
   invalidated(revisions: Readonly<Record<string, number>>): void;
@@ -38,7 +37,6 @@ export class SessionCommands {
     'config.get', 'config.set', 'processes.list', 'processes.read', 'processes.write', 'processes.stop', 'executions.list', 'executions.read', 'executions.steer', 'executions.cancel',
     'session.delete', 'session.reload', 'session.import', 'session.export', 'ui.action']);
   constructor(private readonly options: CommandOptions) {
-    if (options.preferences) { this.operations.add('tui.preferences.get'); this.operations.add('tui.preferences.set'); }
     if (options.setup) for (const op of ['host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link'] as const) this.operations.add(op);
     if (options.prepareOpenInteraction) this.operations.add('host.open_interaction');
   }
@@ -66,10 +64,6 @@ export class SessionCommands {
         this.options.setup.cancel(request.params.jobId, client);
         return accepted(request, {});
       }
-      case 'tui.preferences.get': {
-        if (!this.options.preferences) throw commandError('unavailable');
-        return accepted(request, await this.options.preferences.get());
-      }
       case 'sessions.list': {
         const keys = new WeakMap<object, string>();
         const entries = [...registry.list().map(row => {
@@ -83,7 +77,7 @@ export class SessionCommands {
       case 'config.get': {
         if (request.params.scope !== 'session') return accepted(request, await configuration.get(request.params.scope, request.session ? registry.binding(request.session)?.runtime.session.model : undefined));
         if (!request.session) throw commandError('invalid_request');
-        return accepted(request, await configuration.sessionValues(registry.options.store.session(request.session).profile?.extensionConfigOverrides ?? []));
+        return accepted(request, { ...await configuration.sessionValues(registry.options.store.session(request.session).profile?.extensionConfigOverrides ?? []), writable: true });
       }
       case 'executions.list': return accepted(request, await executionRequest(() => registrySessionExecutions(registry, request.session).executions(request.params)));
       case 'executions.read': return accepted(request, await executionRequest(() => registrySessionExecutions(registry, request.session).execution(request.params.executionId)));
@@ -148,11 +142,6 @@ export class SessionCommands {
         const open = this.options.prepareOpenInteraction(request.params.interactionId, localClient, context.signal);
         return { response: command.dispatch(open).then(() => accepted(request, {})) };
       }
-      case 'tui.preferences.set': {
-        if (!localClient) throw commandError('forbidden');
-        if (!this.options.preferences) throw commandError('unavailable');
-        return { response: command.dispatch(() => this.options.preferences!.set(request.params.values)).then(() => accepted(request, {})) };
-      }
       case 'sessions.create': {
         const overrides = request.params.config && Object.keys(request.params.config).length ? configuration.sessionOverrides(request.params.config) : [];
         const model = request.params.model && await this.model(request.params.model);
@@ -180,8 +169,8 @@ export class SessionCommands {
             policy: registry.getPolicy(request.session), extensionConfigOverrides: overrides }, binding.resources);
           return { response: registry.reloadAdmitted(request.id, request.session, { values: request.params.values, overrides }).then(() => accepted(request, {})) };
         }
-        if (request.params.scope !== 'global') throw commandError('unavailable');
         if (!localClient) throw commandError('forbidden');
+        if (!(await configuration.get(request.params.scope)).writable) throw Object.assign(new Error('This configuration scope is read-only.'), { code: 'unavailable' });
         configuration.prepare(request.params.scope, request.params.values);
         return { response: command.dispatch(() => configuration.set(request.params.scope, request.params.values)).then(() => accepted(request, {})) };
       }

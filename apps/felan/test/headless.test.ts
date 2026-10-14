@@ -57,23 +57,24 @@ describe('daemon headless application', () => {
     expect(f.errors).toEqual([]);
   });
 
-  it('applies resumed CLI configuration only to the attached session', async () => {
+  it.each([false, true])('applies headless CLI configuration only to its session (resume=%s)', async resume => {
     const definition = defineExtensionConfig({ id: 'codex', title: 'Fixture', fields: { fast: configField.boolean({ default: false, description: 'Fixture' }) } });
     const f = await fixture({ configDefinitions: [definition] });
     const openings = vi.spyOn(f.profile, 'openSession');
-    const result = await runLocalFelanHeadless({ ...f.settings, sessionId: f.root.sessionId, mode: 'text', initialMessage: 'configured', config: { 'codex-fast': true } });
+    const result = await runLocalFelanHeadless({ ...f.settings, ...(resume ? { sessionId: f.root.sessionId } : {}), mode: 'text', initialMessage: 'configured', config: { extensionConfig: { codex: { fast: true } } } });
     expect(result, f.errors.join('\n')).toBe(0);
-    expect(f.store.session(f.root.sessionId).profile?.extensionConfigOverrides).toEqual(expect.arrayContaining([
+    const id = resume ? f.root.sessionId : f.registry.list().find(row => row.id !== f.root.sessionId)!.id;
+    expect(f.store.session(id).profile?.extensionConfigOverrides).toEqual(expect.arrayContaining([
       expect.objectContaining({ extensionId: 'codex', values: { fast: true } }),
     ]));
     expect(f.errors).toEqual([]);
-    expect(openings).toHaveBeenCalledOnce();
+    if (resume) expect(openings).toHaveBeenCalledOnce();
   });
 
   it('finishes session configuration before attaching the native JSON stream', async () => {
     const definition = defineExtensionConfig({ id: 'codex', title: 'Fixture', fields: { fast: configField.boolean({ default: false, description: 'Fixture' }) } });
     const f = await fixture({ configDefinitions: [definition] });
-    const result = await runLocalFelanHeadless({ ...f.settings, sessionId: f.root.sessionId, mode: 'json', initialMessage: 'configured', config: { 'codex-fast': true } });
+    const result = await runLocalFelanHeadless({ ...f.settings, sessionId: f.root.sessionId, mode: 'json', initialMessage: 'configured', config: { extensionConfig: { codex: { fast: true } } } });
     expect(result, f.errors.join('\n')).toBe(0);
     const records = f.output.map(line => JSON.parse(line));
     expect(records.filter(record => record.type === 'session')).toHaveLength(1);

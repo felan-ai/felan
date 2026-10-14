@@ -1,5 +1,4 @@
 import {
-  associateExtensionConfig,
   StringEnum,
   type ExtensionContext,
   type FelanExtension,
@@ -12,9 +11,6 @@ import {
   type TaskState,
   type UpdateTaskInput,
 } from './contracts.js';
-import {
-  TASKS_CONFIG,
-} from './config.js';
 import { hasOpenTasks } from './graph.js';
 import {
   formatTaskContext,
@@ -288,19 +284,12 @@ export function createTasksExtension(): FelanExtension {
       }
     });
   };
-  associateExtensionConfig(extension, TASKS_CONFIG);
   return extension;
 }
 
 const tasksExtension = createTasksExtension();
 
 
-export {
-  DEFAULT_TASKS_DISPLAY_MODE,
-  TASKS_CONFIG,
-  TASKS_DISPLAY_MODES,
-} from './config.js';
-export type { TasksDisplayMode } from './config.js';
 
 export type {
   CreateTaskInput,

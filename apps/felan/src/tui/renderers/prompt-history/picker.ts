@@ -10,7 +10,7 @@ import {
 	type Component,
 	type Focusable,
 } from "@earendil-works/pi-tui";
-import type { PromptHistoryDisplayMode } from "@felan-ai/ext-prompt-history/data";
+type PromptHistoryDisplayMode = 'inline' | 'overlay';
 import {
 	PROMPT_HISTORY_SCOPES,
 	type PromptHistoryItem,

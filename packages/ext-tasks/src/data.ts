@@ -7,7 +7,7 @@ const detailFields = ['description', 'acceptanceCriteria', 'notes', 'result'] as
 type DetailField = typeof detailFields[number];
 type Summary = Omit<Task, DetailField>;
 export type TaskViewAction = { action: 'close' } | { action: 'detail'; taskId: string };
-export interface TaskViewRequest { viewId: string; displayMode: 'inline' | 'overlay'; selectedTaskId?: string }
+export interface TaskViewRequest { viewId: string; selectedTaskId?: string }
 export interface TaskViewManifest {
   kind: 'manifest'; viewId: string; sequence: number; revision: number; pages: number; selectedTaskId?: string;
   detailFields: DetailField[];
@@ -30,10 +30,10 @@ function taskId(value: unknown): value is string { return typeof value === 'stri
 function bytes(value: unknown): number { return new TextEncoder().encode(JSON.stringify(value)).byteLength; }
 
 export function parseTaskViewRequest(value: unknown): TaskViewRequest {
-  if (!record(value) || !viewId(value.viewId) || (value.displayMode !== 'inline' && value.displayMode !== 'overlay')
+  if (!record(value) || !viewId(value.viewId)
     || value.selectedTaskId !== undefined && !taskId(value.selectedTaskId)) invalid();
-  exact(value, ['viewId', 'displayMode', 'selectedTaskId']);
-  return { viewId: value.viewId, displayMode: value.displayMode as TaskViewRequest['displayMode'],
+  exact(value, ['viewId', 'selectedTaskId']);
+  return { viewId: value.viewId,
     ...(value.selectedTaskId === undefined ? {} : { selectedTaskId: value.selectedTaskId as string }) };
 }
 
@@ -162,4 +162,4 @@ export * from './contracts.js';
 export { emptyTaskState, listTasks, taskAvailability } from './graph.js';
 export { formatTaskDetails, formatTaskLine, formatTaskSummary, taskGraphLayers } from './presentation.js';
 export type { TaskDataSource } from './host.js';
-export type { TasksDisplayMode } from './config.js';
+export { readTaskDetailData, type TaskDetailRecord } from './detail-data.js';

@@ -1,21 +1,11 @@
 import {
-	associateExtensionConfig,
 	type ExtensionContext,
 	type FelanExtension,
 } from "@felan-ai/agent-core";
-import {
-	PROMPT_HISTORY_CONFIG,
-} from "./config.js";
 import type { PromptHistoryHost, PromptHistorySearch } from "./contracts.js";
 import { createPromptHistorySource, searchPromptHistory } from "./history.js";
 import { createCommonPromptHistory } from "./common-ui.js";
 
-export {
-	DEFAULT_PROMPT_HISTORY_DISPLAY_MODE,
-	PROMPT_HISTORY_CONFIG,
-	PROMPT_HISTORY_DISPLAY_MODES,
-} from "./config.js";
-export type { PromptHistoryDisplayMode } from "./config.js";
 export type {
 	PromptHistoryHost,
 	PromptHistorySession,
@@ -50,10 +40,8 @@ export function createPromptHistoryExtension(host: PromptHistoryHost): FelanExte
 		});
 		pi.on("session_shutdown", async () => { lifetime.abort(); await Promise.all([...views]); await common.dispose(); });
 	};
-	associateExtensionConfig(extension, PROMPT_HISTORY_CONFIG);
 	return extension;
 }
 
-associateExtensionConfig(createPromptHistoryExtension, PROMPT_HISTORY_CONFIG);
 export default createPromptHistoryExtension;
 

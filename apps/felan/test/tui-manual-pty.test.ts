@@ -1,3 +1,4 @@
+import { ClientPreferencesStore } from '../src/tui/preferences-store.js';
 import { createRequire } from 'node:module';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,7 +11,6 @@ import { clientDaemonTarget } from '../src/client-application.js';
 import { resolveClientHostComposition } from '../src/daemon-entrypoint.js';
 import { bundledClientThemes } from '../src/tui/theme.js';
 import { DaemonConfiguration } from '../src/providers/configuration.js';
-import { DaemonTuiPreferences } from '../src/providers/tui-preferences.js';
 import { createRegistryInteractionBroker } from '../../daemon/src/daemon/broker.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { DAEMON_VERSION } from '../../daemon/src/version.js';
@@ -110,11 +110,11 @@ async function captureManualTerminal(output: string): Promise<void> {
     if (target.kind !== 'isolated') throw new Error('Expected isolated target');
     return target.namespaceId;
   } });
+  const preferences = new ClientPreferencesStore(join(f.directory, 'client'));
   const broker = createRegistryInteractionBroker(f.registry, {  });
-  const preferences = new DaemonTuiPreferences({ agentDir: f.owner.target.agentDir, assertCurrent: () => f.registry.assertAdmission() });
   const daemonTarget = clientDaemonTarget({ daemonRuntime: f.directory });
   const composition = await resolveClientHostComposition(daemonTarget);
-  const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: DAEMON_VERSION, broker, preferences, composition,
+  const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: DAEMON_VERSION, broker, composition,
     configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() }) });
   let pty: Capture | undefined;
   let failure: unknown;
@@ -148,7 +148,7 @@ async function captureManualTerminal(output: string): Promise<void> {
     } });
     await mkdir(join(f.directory, 'client', 'tui'), { recursive: true, mode: 0o700 });
     await writeFile(join(f.directory, 'client', 'tui', 'settings.json'), JSON.stringify({ theme: 'felan-dark' }), { mode: 0o600 });
-    await preferences.set({ keybindings: { 'app.model.select': 'alt+m', 'app.exit': 'alt+x' } });
+    await preferences.update({ keybindings: { 'app.model.select': 'alt+m', 'app.exit': 'alt+x' } });
     await server.start(); pty = new Capture(output, checkpoints, f.directory, f.cwd, f.root.sessionId); const terminal = pty;
     const idle = () => f.store.session(f.root.sessionId).run.state === 'idle' && !terminal.screen.includes('Working');
     const modelSelector = () => /Model\s+>\s+→ ✓ fixture \[offline\]/u.test(terminal.screen);
@@ -174,18 +174,18 @@ async function captureManualTerminal(output: string): Promise<void> {
     await terminal.snapshot('04-dark-settings');
     terminal.send('\r'); await terminal.wait('general settings opened', () => terminal.screen.includes('Hide thinking'));
     terminal.send('Hide thinking\r'); await terminal.wait('thinking saved immediately', () => /Hide thinking\s+true/u.test(terminal.screen) && terminal.screen.includes('Display preferences saved'));
-    expect((await preferences.get()).hideThinking).toBe(true);
+    expect((await preferences.load(), preferences.values.hideThinking)).toBe(true);
     terminal.send('\x1b'); await terminal.wait('general settings closed', () => terminal.screen.includes('General settings'));
     terminal.send('\x1b'); await terminal.wait('settings closed', () => !settingsSelector());
     await terminal.snapshot('05-settings-saved');
 
     terminal.send('/settings\r'); await terminal.wait('settings reopened', () => settingsSelector() && terminal.screen.includes('General settings'));
     terminal.send('\r'); await terminal.wait('general settings reopened', () => terminal.screen.includes('Hide thinking'));
-    terminal.send('Theme\r'); await terminal.wait('local theme picker', () => /Theme\s+>/u.test(terminal.screen)
-      && terminal.screen.includes('→ ✓ felan-dark') && terminal.screen.includes('Custom value'));
+    terminal.send('Theme\r'); await terminal.wait('local theme picker', () => terminal.screen.includes('Select a theme, or choose automatic')
+      && terminal.screen.includes('→ ✓ felan-dark') && terminal.screen.includes('Enter to select · Esc to go back'));
     await terminal.snapshot('06-local-theme-picker');
     const paletteOffset = terminal.frameRaw.length;
-    terminal.send('felan-light\r'); await terminal.wait('light palette applied immediately', () => /Theme\s+felan-light/u.test(terminal.screen) && terminal.screen.includes('Display preferences saved')
+    terminal.send('\x1b[B\r'); await terminal.wait('light palette applied immediately', () => /Theme\s+felan-light/u.test(terminal.screen) && terminal.screen.includes('Display preferences saved')
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getFgAnsi('text'))
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg')));
     expect(JSON.parse(await readFile(join(f.directory, 'client', 'tui', 'settings.json'), 'utf8')).theme).toBe('felan-light');

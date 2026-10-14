@@ -3,7 +3,6 @@ import { BROWSER_AUTHORIZATION_SERVICE, type BrowserAuthorizationService } from 
 import { createLocalBrowserAuthorizationHost } from './browser/authorization-host.js';
 import { createBrowserAuthorizationPresentation } from './ui/extension-ui.js';
 import { openBrowserSetup } from './setup-open.js';
-import { setExtensionConfigValue } from './settings.js';
 
 export default defineServiceProvider({
   scope: 'session',
@@ -13,17 +12,14 @@ export default defineServiceProvider({
     const { context, port } = provider.execution;
     const presentation = createBrowserAuthorizationPresentation({ port: port.ui,
       openBrowserSetup: (path, signal) => openBrowserSetup(context.runtime, path, signal) });
-    const browserOverride = [...context.extensionConfigOverrides].reverse()
-      .find(row => row.extensionId === 'browser' && Object.hasOwn(row.values, 'authorizationPolicy'))?.values.authorizationPolicy;
     const value: BrowserAuthorizationService = {
       checkExecution: () => createLocalBrowserAuthorizationHost().checkExecution?.(),
       authorize: request => createLocalBrowserAuthorizationHost({
         runtime: context.runtime, presentation,
         getAuthorizationPolicy: () => request.authorizationPolicy,
         persistAuthorizationPolicy: async policy => {
-          if (browserOverride !== undefined) throw new Error('Browser policy is overridden for this session.');
-          port.assertCurrent(); await setExtensionConfigValue(context.resources.agentDir, 'browser', 'authorizationPolicy', policy);
-          port.assertCurrent(); await context.settingsManager.reload();
+          port.assertCurrent(); await context.updateExtensionConfig('@felan-ai/ext-browser', { authorizationPolicy: policy });
+          port.assertCurrent();
         },
       }).authorize(request),
     };

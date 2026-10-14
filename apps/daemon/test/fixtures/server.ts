@@ -1,3 +1,4 @@
+import type { HostConfiguration } from '../../src/daemon/host-services.js';
 import type { ProcessAdapter } from '../../src/daemon/process-adapter.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -25,6 +26,7 @@ export function gate() {
 export async function serverFixture(options: { now?: () => number; capacity?: Partial<ControlCapacity>; onStream?: () => Promise<void>; extension?: (pi: ExtensionAPI) => void;
   namespace?: (directory: string) => string;
   configDefinitions?: readonly ExtensionConfigDefinition[];
+  configuration?: HostConfiguration;
   deferActivation?: boolean;
   builtins?: readonly string[];
   extensionPackages?: readonly string[];
@@ -67,6 +69,7 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
     ...(options.openServiceScope ? { openServiceScope: options.openServiceScope } : {}),
     ...(options.skill ? { skillPaths: [join(cwd, '.agents', 'skills')] } : {}),
     runtimeFactory,
+    ...(options.configuration ? { configuration: () => options.configuration! } : {}),
     createModelRuntime: async () => {
       const models = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
       models.registerProvider('offline', { api: 'openai-completions', baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel], streamSimple: () => {
@@ -85,7 +88,7 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
       configuration: async () => options.configDefinitions ?? [], bind: async context => {
         options.onBind?.(context);
         const ui = options.extensionUi?.(context, registry!);
-        return { importExtension: async () => ({ default() {} }), dispose: async () => { await ui?.dispose(); },
+        return { importExtension: context.importExtension, dispose: async () => { await ui?.dispose(); },
           ...(ui ? { uiContext: ui.context } : {}),
           ...(options.extension ? { inlineExtensions: [{ name: 'synthetic', factory: options.extension }] } : {}) };
       },

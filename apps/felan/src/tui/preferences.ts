@@ -1,4 +1,5 @@
-import { ConfigValuesSchema, parseOperationResult, parseSchema, TuiPreferencesSchema, TuiPreferencesUpdateSchema, type OperationParams, type TuiPreferences, type TuiPreferencesUpdate } from '@felan-ai/session-protocol';
+import { ConfigValuesSchema, parseOperationResult, parseSchema, type OperationParams } from '@felan-ai/session-protocol';
+import { defaultPresentationPreferences, validatePresentationPreferences, type TuiPresentationPreferences, type TuiPreferences, type TuiPreferencesUpdate } from './preferences-schema.js';
 import type { KeybindingsConfig } from '@earendil-works/pi-tui';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import type { AgentViewTranscript } from '../subagents/types.js';
@@ -6,26 +7,32 @@ import type { TuiSessionController } from './controller.js';
 import type { TuiDialogs } from './dialogs.js';
 import { parseClientKeybindings } from './keybindings.js';
 import { ClientThemes } from './theme-config.js';
+import { presentationDefinitions } from './presentation-preferences.js';
 import type { SettingsEntry } from './settings-menu.js';
 
 export type ClientTuiPreferences = TuiPreferences & { theme: string };
 type ClientTuiPreferencesUpdate = TuiPreferencesUpdate & { theme?: string };
 
 export class TerminalPreferences {
-  private stored: TuiPreferences = { hideThinking: false, showImages: true, imageWidthCells: 60, outputPad: 1, toolDisplay: 'grouped', keybindings: {} };
+  private get stored(): TuiPreferences { return this.themes.settings.values; }
   private loaded = false;
   private loading: Promise<boolean> | undefined;
   private closed = false;
 
   constructor(private readonly controller: TuiSessionController,
-    private readonly overrides: { theme?: string; keybindings?: KeybindingsConfig },
+    private readonly overrides: { theme?: string; keybindings?: KeybindingsConfig; presentation?: Partial<{ [K in keyof TuiPresentationPreferences]: Partial<TuiPresentationPreferences[K]> }> },
     private readonly changed: (preferences: ClientTuiPreferences, keybindings: KeybindingsConfig, theme: Theme) => Promise<void>,
     private readonly themes = new ClientThemes(undefined, overrides.theme)) {}
 
   get values(): ClientTuiPreferences { return { ...structuredClone(this.stored), theme: this.themes.value }; }
+  get presentation(): TuiPresentationPreferences {
+    const value = this.stored.presentation ?? defaultPresentationPreferences;
+    const merged = Object.fromEntries(Object.entries(value).map(([key, fields]) => [key, { ...fields, ...this.overrides.presentation?.[key as keyof TuiPresentationPreferences] }]));
+    return validatePresentationPreferences(merged);
+  }
   get settings(): AgentViewTranscript['settings'] {
     const value = this.stored;
-    return { hideThinking: value.hideThinking, showImages: value.showImages, imageWidthCells: value.imageWidthCells, outputPad: value.outputPad, toolMode: value.toolDisplay,
+    return { hideThinking: value.hideThinking, showImages: value.showImages, imageWidthCells: value.imageWidthCells, outputPad: value.outputPad === 0 ? 0 : 1, toolMode: value.toolDisplay,
       ...(value.mermaid === undefined ? {} : { mermaid: value.mermaid }) };
   }
 
@@ -36,17 +43,11 @@ export class TerminalPreferences {
   }
 
   private async read(): Promise<boolean> {
-    let themeError: unknown;
-    try { await this.themes.load(); }
-    catch (error) { themeError = error; }
     try {
-      const response = await this.controller.perform('tui.preferences.get', {});
-      if (response.outcome !== 'accepted' || this.closed) return false;
-      const value = parseSchema(TuiPreferencesSchema, response.result);
-      parseClientKeybindings(value.keybindings);
-      this.stored = value; this.loaded = true;
+      await this.themes.load();
+      if (this.closed) return false;
+      this.loaded = true;
       await this.apply();
-      if (themeError !== undefined) this.notice(themeError);
       return true;
     } catch (error) { this.notice(error); return false; }
   }
@@ -54,16 +55,11 @@ export class TerminalPreferences {
   async update(value: ClientTuiPreferencesUpdate): Promise<boolean> {
     if (this.closed) return false;
     try {
-      const { theme, ...remote } = value;
+      if (!await this.load()) return false;
+      const { theme, ...local } = value;
       if (theme !== undefined) this.themes.validate(theme);
-      const values = Object.keys(remote).length ? parseSchema(TuiPreferencesUpdateSchema, remote) : undefined;
-      if (values?.keybindings !== undefined) parseClientKeybindings(values.keybindings);
-      if (values) {
-        const response = await this.controller.perform('tui.preferences.set', { values });
-        if (response.outcome !== 'accepted' || this.closed) return false;
-        this.stored = { ...this.stored, ...values };
-      }
-      if (theme !== undefined) await this.themes.update(theme);
+      await this.themes.settings.update({ ...local, ...(theme === undefined ? {} : { theme }) });
+      if (this.closed) return false;
       this.controller.setNotice('Display preferences saved. Running daemon execution is unchanged.');
       await this.apply(); return true;
     } catch (error) { this.notice(error); return false; }
@@ -78,14 +74,16 @@ export class TerminalPreferences {
   async open(dialogs: Pick<TuiDialogs, 'settings'>): Promise<boolean> {
     if (!await this.load()) return false;
     try {
-      const response = await this.controller.perform('config.get', { scope: 'global' });
-      if (response.outcome !== 'accepted' || this.closed) return false;
-      const { values, extensions = [] } = parseOperationResult('config.get', response.result);
+      const response = await this.controller.perform('config.get', { scope: 'global' }).catch(() => undefined);
+      if (this.closed) return false;
+      const { values, extensions = [], writable } = response?.outcome === 'accepted'
+        ? parseOperationResult('config.get', response.result) : { values: {}, extensions: [], writable: false };
       const executionScope = 'Daemon defaults · new sessions or /reload; running sessions unchanged.';
       const displayScope = 'Display only · saved defaults and this client; execution unchanged.';
       const models = (this.controller.snapshot?.catalog.models ?? []).map(model => ({ value: `${model.provider}/${model.id}`, label: model.label }));
       const save = async (values: OperationParams<'config.set'>['values']) => {
         if (this.closed) throw new Error('Settings closed.');
+        if (!writable) throw new Error('Host configuration is read-only or unavailable.');
         const result = await this.controller.perform('config.set', { scope: 'global', values: parseSchema(ConfigValuesSchema, values) });
         if (result.outcome !== 'accepted') throw new Error(result.error.message);
         this.controller.setNotice(values.httpIdleTimeoutMs === undefined ? 'Settings saved. Apply to new sessions or use /reload; running sessions are unchanged.'
@@ -102,8 +100,7 @@ export class TerminalPreferences {
       });
       const display = (id: keyof ClientTuiPreferences, label: string, description: string, options: Partial<SettingsEntry> = {}): SettingsEntry => ({
         id, label, description: `${description} ${displayScope}`, currentValue: typeof this.values[id] === 'object' ? JSON.stringify(this.values[id])
-          : String(this.values[id] ?? ({ hardwareCursor: false, editorPadding: 1, autocompleteMaxVisible: 5, clearOnShrink: false, terminalProgress: false,
-            mermaid: 'streaming', quietStartup: false, fullscreenScrollbar: 'auto', fullscreenCopyOnSelect: true, fullscreenWheelScrollLines: 'auto' } as Record<string, unknown>)[id]),
+          : String(this.values[id]),
         ...options,
         change: async value => {
           let parsed: unknown = value;
@@ -120,9 +117,9 @@ export class TerminalPreferences {
       });
       const launchOverride = this.overrides.theme !== undefined || Object.values(this.overrides.keybindings ?? {}).some(value => value !== undefined);
       const general: SettingsEntry[] = [
-        display('theme', 'Theme', `Choose a theme or a custom light/dark pair.${launchOverride ? ' Launch overrides remain active.' : ''}`, { edit: true,
+        display('theme', 'Theme', `Choose a theme or a custom light/dark pair.${launchOverride ? ' Launch overrides remain active.' : ''}`, {
           preview: value => { this.themes.preview(value); void this.apply().catch(error => this.notice(error)); },
-          choices: [...this.themes.names.map(name => ({ value: name, label: name, ...(name === 'system' ? { description: "Theme created from your terminal's colors" } : {}) })), { value: 'felan-light/felan-dark', label: 'Automatic · Felan light/dark', description: 'Follow the terminal light/dark appearance.' }] }),
+          choices: this.themes.names.map(name => ({ value: name, label: name })) }),
         display('hideThinking', 'Hide thinking', '', { values: ['false', 'true'] }),
         display('showImages', 'Show images', '', { values: ['true', 'false'] }),
         display('imageWidthCells', 'Image width', 'Width in cells (1–4096).', { edit: true }),
@@ -161,8 +158,27 @@ export class TerminalPreferences {
           children: Object.entries(values.builtinExtensions ?? {}).map(([id, enabled]) => ({ id, label: id, currentValue: String(enabled),
             description: executionScope, values: ['true', 'false'], change: async value => save({ builtinExtensions: { [id]: value === 'true' } }) })) },
       ];
-      await dialogs.settings([
+      const readOnly = (entry: SettingsEntry, local = false): SettingsEntry => {
+        if (entry.id.startsWith('presentation-') || local && Object.hasOwn(this.values, entry.id)) return entry;
+        const { change: _change, edit: _edit, values: _values, choices: _choices, ...display } = entry;
+        return { ...display, description: `${entry.description} Read-only or unavailable on this host.`,
+          ...(entry.children ? { children: entry.children.map(child => readOnly(child, entry.id === 'general')) } : {}) };
+      };
+      const entries: SettingsEntry[] = [
         { id: 'general', label: 'General settings', currentValue: 'open', description: 'Client display settings and daemon execution defaults.', children: general },
+        ...presentationDefinitions.map(definition => ({ id: `presentation-${definition.id}`, label: `${definition.title} display`, currentValue: 'open', description: displayScope,
+          children: Object.entries(definition.fields).map(([field, schema]) => {
+            const id = definition.id as keyof TuiPresentationPreferences;
+            const current = (this.presentation[id] as unknown as Record<string, unknown>)[field];
+            return { id: `presentation-${id}-${field}`, label: schema.label ?? field, description: `${schema.description} ${displayScope}`, currentValue: schema.type === 'json' ? JSON.stringify(current) : String(current),
+              ...(schema.values ? { values: schema.values.map(String) } : schema.type === 'boolean' ? { values: ['true', 'false'] } : { edit: true }),
+              change: async (raw: string) => {
+                const value = schema.type === 'json' ? JSON.parse(raw) : schema.type === 'number' ? Number(raw) : schema.type === 'boolean' ? raw === 'true' : raw;
+                if (!await this.update({ presentation: { ...(this.stored.presentation ?? defaultPresentationPreferences), [id]: { ...(this.stored.presentation ?? defaultPresentationPreferences)[id], [field]: value } } })) throw new Error(this.controller.notice);
+              },
+            };
+          }),
+        })),
         { id: 'codemode', label: 'Code mode', currentValue: values.codemode ?? 'on', description: executionScope,
           values: ['off', 'on', 'only'], change: async value => save({ codemode: value as NonNullable<typeof values.codemode> }) },
         { id: 'classifierModel', label: 'Classifier model', currentValue: values.classifierModel ?? 'auto', description: executionScope,
@@ -185,7 +201,8 @@ export class TerminalPreferences {
             };
           }),
         })),
-      ]);
+      ];
+      await dialogs.settings(writable ? entries : entries.map(entry => readOnly(entry)));
       return true;
     } catch (error) { this.notice(error); return false; }
     finally { this.themes.preview(undefined); if (!this.closed) await this.apply(); }

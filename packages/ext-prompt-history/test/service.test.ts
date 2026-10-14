@@ -1,9 +1,9 @@
 import { SESSIONS_HISTORY_SERVICE, createExtensionServiceAccess, createFelanServiceRegistry, createUnavailableExtensionUi, getExtensionConfigDefinition, type FelanExtensionAPI, type SessionsHistory } from '@felan-ai/agent-core';
 import { expect, it, vi } from 'vitest';
-import extension, { PROMPT_HISTORY_CONFIG } from '../src/extension.js';
+import extension from '../src/extension.js';
 
 it('requires shared Sessions but no feature-specific presentation service', () => {
-  expect(getExtensionConfigDefinition(extension)).toBe(PROMPT_HISTORY_CONFIG);
+  expect(getExtensionConfigDefinition(extension)).toBeUndefined();
   expect(extension.serviceRequirements).toEqual({ required: [SESSIONS_HISTORY_SERVICE] });
   const services = createFelanServiceRegistry();
   const registerCommand = vi.fn(); const registerShortcut = vi.fn(); const on = vi.fn();

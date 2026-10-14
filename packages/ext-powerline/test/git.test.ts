@@ -186,3 +186,17 @@ describe('Git execution and cache', () => {
     expect(failed.get()).toBeUndefined();
   });
 });
+
+it('retains branch and upstream data when working-tree collection is disabled', async () => {
+  const exec = vi.fn(async (_command: string, args: string[]) => ({ code: 0, killed: false, stderr: '', stdout: ({
+    'rev-parse --show-toplevel': '/repo', 'rev-parse --abbrev-ref HEAD': 'main',
+    'rev-parse --abbrev-ref @{upstream}': 'origin/main', 'rev-list --left-right --count HEAD...@{upstream}': '2 3',
+    'stash list --format=%H': 'a\nb',
+  } as Record<string, string>)[args.join(' ')] ?? '' }));
+  const cache = new GitCache({ exec } as never, '/repo', Date.now, { showWorkingTree: false, showStashCount: true });
+  await cache.refresh();
+  expect(cache.get()).toMatchObject({ branch: 'main', upstream: { name: 'origin/main', ahead: 2, behind: 3 }, stashCount: 2 });
+  expect(cache.get()).not.toHaveProperty('changedFiles');
+  expect(exec.mock.calls.some(([, args]) => args[0] === 'status')).toBe(false);
+  cache.dispose();
+});

@@ -5,7 +5,6 @@ import { configField, defineExtensionConfig } from '@felan-ai/agent-core';
 import { stripTerminalSequences, type Component, type TUI } from '@earendil-works/pi-tui';
 import { SessionClient } from '../src/client/client.js';
 import { DaemonConfiguration } from '../src/providers/configuration.js';
-import { DaemonTuiPreferences } from '../src/providers/tui-preferences.js';
 import { TerminalPreferences } from '../src/tui/preferences.js';
 import { TuiDialogs } from '../src/tui/dialogs.js';
 import type { TuiSessionController } from '../src/tui/controller.js';
@@ -22,8 +21,7 @@ it('renders the unified selector and persists extension changes through the daem
   const configuration = new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [definition], assertCurrent: () => f.owner.assertCurrent() });
   const path = join(f.owner.target.agentDir, 'settings.json');
   await writeFile(path, JSON.stringify({ extensionConfig: { example: { token: 'never-render-this-secret' } } }));
-  const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture', configuration,
-    preferences: new DaemonTuiPreferences({ agentDir: f.owner.target.agentDir, assertCurrent: () => f.owner.assertCurrent() }) });
+  const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture', configuration });
   const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
     clientVersion: 'fixture', kind: 'tui', requestTimeoutMs: 3000, retries: 0 });
   let component!: Component;

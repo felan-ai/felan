@@ -24,7 +24,7 @@ export const taskRenderCalls: Record<'TaskCreate' | 'TaskUpdate' | 'TaskList' | 
 };
 
 export async function presentTaskView(ui: Pick<ExtensionContext['ui'], 'custom'>, source: TaskDataSource,
-  request: TaskViewRequest, signal: AbortSignal, initial?: TasksNavigation): Promise<{ action?: TaskViewAction; navigation?: TasksNavigation }> {
+  request: TaskViewRequest & { displayMode: 'inline' | 'overlay' }, signal: AbortSignal, initial?: TasksNavigation): Promise<{ action?: TaskViewAction; navigation?: TasksNavigation }> {
   if (signal.aborted) return {};
   let view: TasksOverlay | undefined;
   let finish: ((value?: TaskViewAction) => void) | undefined;

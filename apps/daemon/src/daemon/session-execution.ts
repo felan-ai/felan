@@ -1,4 +1,4 @@
-import type { AgentRuntime, AgentSession, CreateAgentCoreSessionOptions, ExtensionConfigOverride, ExtensionConfigValue, ExtensionPackageImporter, FelanServiceRegistry, ModelRuntime, SessionManager, SessionRef, SettingsManager } from '@felan-ai/agent-core';
+import type { AgentRuntime, AgentSession, CreateAgentCoreSessionOptions, ExtensionConfigOverride, ExtensionConfigWriter, ExtensionConfigValue, ExtensionPackageImporter, FelanServiceRegistry, ModelRuntime, SessionManager, SessionRef, SettingsManager } from '@felan-ai/agent-core';
 import type { Interaction, InteractionAnswer, InteractionAuthority, Presentation } from '@felan-ai/session-protocol';
 import type { SessionEnvironment } from './session-runtime.js';
 import type { SessionExecutionPolicy } from './session-lifecycle-contracts.js';
@@ -15,6 +15,7 @@ export interface SessionUiPort {
 
 
 export interface SessionExtensionContext {
+  readonly updateExtensionConfig: ExtensionConfigWriter;
   readonly runtime: AgentRuntime;
   readonly modelRuntime: ModelRuntime;
   readonly settingsManager: SettingsManager;

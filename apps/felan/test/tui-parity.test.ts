@@ -16,15 +16,11 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.useRealTimers(); });
 
 function powerline(): UiView {
-  return { id: 'powerline', kind: 'view', revision: 1, title: 'Powerline', hint: { id: 'felan.powerline', version: '2.0.0' },
-    fields: [{ id: 'line', label: 'Line', valueKind: 'number' }, ...['segment', 'text', 'alignment', 'color'].map(id => ({ id, label: id, valueKind: 'text' as const }))],
+  return { id: 'powerline', kind: 'view', revision: 1, title: 'Powerline', hint: { id: 'felan.powerline', version: '3.0.0' },
+    fields: ['segment', 'data', 'color'].map(id => ({ id, label: id, valueKind: 'text' as const })),
     actions: [], fallback: 'Powerline data', items: [
-      ...Object.entries({ style: 'minimal', charset: 'text', autoWrap: 'true', padding: '1', lines: '3' }).map(([key, text]) => ({
-        id: `display-${key}`, values: { line: 0, segment: `display.${key}`, text, alignment: '', color: '' }, fallback: key,
-      })),
-      ...[['directory', '/fixture', 'left'], ['model', '(fixture) fixture · xhigh', 'right']].map(([segment, text, alignment], line) => ({
-        id: `line-${line}-segment-0`, values: { line: line + 1, segment: segment!, text: text!, alignment: alignment!, color: segment! }, fallback: segment!,
-      })),
+      { id: 'directory', values: { segment: 'directory', data: JSON.stringify({ cwd: '/fixture' }), color: 'directory' }, fallback: 'Directory' },
+      { id: 'model', values: { segment: 'model', data: JSON.stringify({ id: 'fixture', provider: 'fixture', reasoning: true, thinkingLevel: 'xhigh', providerCount: 2 }), color: 'model' }, fallback: 'Model' },
     ] };
 }
 
@@ -74,8 +70,8 @@ it('matches the released header, accented editor and three-line footer without d
   const lines = f.lines();
   expect(lines.slice(-3)).toEqual([
     ' /fixture',
-    ' '.repeat(100 - ' (fixture) fixture · xhigh '.length) + ' (fixture) fixture · xhigh',
-    ' Memory: disabled ' + ' '.repeat(100 - ' Memory: disabled '.length - ` Felan ${FELAN_VERSION} `.length) + ` Felan ${FELAN_VERSION}`,
+    ' '.repeat(100 - ' (fixture) fixture • xhigh '.length) + ' (fixture) fixture • xhigh',
+    ' Memory: disabled',
   ]);
   expect(lines.join('\n')).not.toMatch(/live · idle|Enter send|Shift\+Enter|daemon 0\.2\.0|session ·|UI surfaces/u);
   expect(f.screen.editor.render(100)[0]).toContain(f.theme.getThinkingBorderColor('xhigh')('─'.repeat(100)));
@@ -91,7 +87,7 @@ it('places every extension status in the footer, not above the editor or in a UI
   const lines = f.lines();
   expect(lines.at(-1)).toContain('Index: ready');
   expect(lines.at(-1)).toContain('Memory: disabled');
-  expect(lines.at(-1)).toContain(`Felan ${FELAN_VERSION}`);
+  expect(lines.at(-1)).not.toContain(`Felan ${FELAN_VERSION}`);
   expect(lines.slice(0, -1).join('\n')).not.toMatch(/Index: ready|Memory: disabled|UI surfaces/u);
 });
 
@@ -119,7 +115,7 @@ it('preserves the editor borders, scrolling and footer padding below a full tran
   f.change({});
   const footer = f.lines().slice(-3);
   expect(footer[0]).toBe(' /fixture');
-  expect(footer[2]).toMatch(/^ Memory: disabled /u);
+  expect(footer[2]).toBe(' Memory: disabled');
   for (const rows of [30, 20]) {
     f.terminal.rows = rows;
     for (const draft of ['Short draft', Array.from({ length: 30 }, (_, index) => `Draft row ${index}`).join('\n')]) {

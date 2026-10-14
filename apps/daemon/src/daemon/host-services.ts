@@ -1,5 +1,5 @@
 import type { AgentRuntime, ExtensionConfigDefinition, ExtensionConfigOverride, ModelRuntime, RuntimeDependencyInstallResult } from '@felan-ai/agent-core';
-import type { JsonValue, OperationParams, OperationResult, SetupCatalog, SetupJob, SetupStart, TuiPreferences, TuiPreferencesUpdate } from '@felan-ai/session-protocol';
+import type { JsonValue, OperationParams, OperationResult, SetupCatalog, SetupJob, SetupStart } from '@felan-ai/session-protocol';
 import type { InteractionBroker } from './broker.js';
 
 export interface HostConfiguration {
@@ -8,11 +8,6 @@ export interface HostConfiguration {
   prepare(scope: OperationParams<'config.set'>['scope'], input: unknown): void;
   sessionOverrides(input: unknown, previous?: readonly ExtensionConfigOverride[]): { extensionId: string; source: string; values: Record<string, JsonValue> }[];
   sessionValues(overrides: readonly ExtensionConfigOverride[]): Promise<OperationResult<'config.get'>>;
-}
-
-export interface HostPreferences {
-  get(): Promise<TuiPreferences>;
-  set(value: TuiPreferencesUpdate): Promise<void>;
 }
 
 export interface HostSetup {
@@ -32,7 +27,6 @@ export interface HostSetup {
 
 export interface HostServices {
   readonly configuration: HostConfiguration;
-  readonly preferences?: HostPreferences;
   readonly setup: HostSetup;
   prepareRoot?(params: OperationParams<'sessions.create'>, caller: {
     id: string; kind: OperationParams<'hello'>['kind']; localConsole: boolean; signal: AbortSignal;

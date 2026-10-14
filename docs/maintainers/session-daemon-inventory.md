@@ -57,7 +57,7 @@ have been deleted. The daemon TUI routes commands through
 
 | Current command/workflow | Target owner and operation |
 | --- | --- |
-| `/settings`, `/scoped-models` | TUI selector + daemon schema-bound `config.get/set`; explicit reload rules, keep scoped-model ordering/save. |
+| `/settings`, `/scoped-models` | TUI display preferences use client-owned `agentDir/tui/settings.json`, with read-only Felan 0.28.3 fallback and a full effective snapshot on first write. Execution settings use schema-bound `config.get/set` and its scope `writable` flag; explicit reload rules, keep scoped-model ordering/save. |
 | `/settings` → Execution defaults | Implemented in `tui/preferences.ts`: global `classifierModel` and `builtinExtensions` through `config.get/set`; locked host settings persistence. Changes apply to new sessions or explicit `/reload`, never automatically to running sessions. Built-in settings only narrow the configured host allowlist. |
 | `/model`, `/thinking` | TUI selector + `set_model/set_thinking`; dynamic-thinking/manual overrides remain observable. |
 | `/tree`, labels, branch switching | TUI tree + `session.tree/branch.select/entry.label`; one shared active branch. |

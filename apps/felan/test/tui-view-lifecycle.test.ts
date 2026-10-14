@@ -28,6 +28,8 @@ function fixture(name: typeof cases[number][0], kind: 'view' | 'document') {
     ...(kind === 'view' ? { fields: [{ id: 'name', label: 'Name', valueKind: 'text' as const }], items: [] }
       : { markdown: 'Fixture document' }),
   } as UiDocument | UiView;
+  if (name === 'tasks' && source.kind === 'document') source.data = { taskId: 'T-AAAAAA', prerequisites: 0, dependents: 0,
+    records0: JSON.stringify([{ field: 'id', value: 'T-AAAAAA' }, { field: 'title', value: 'tasks document' }]) };
   let current: SessionSnapshot = { ...snapshot(), presentation: [source], run: { state: 'waiting', id: 'run' } };
   const listeners = new Set<() => void>();
   const emit = () => { for (const listener of listeners) listener(); };

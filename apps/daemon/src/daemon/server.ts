@@ -1,4 +1,4 @@
-import type { HostConfiguration, HostPreferences, HostSetup } from './host-services.js';
+import type { HostConfiguration, HostSetup } from './host-services.js';
 import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { ModelRuntime } from '@felan-ai/agent-core';
@@ -17,7 +17,7 @@ import { headlessJsonEvent } from './headless-json.js';
 
 type Kind = OperationParams<'hello'>['kind'];
 const LOCAL_CONSOLE_OPERATIONS = new Set<Operation>(['host.setup.start', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link',
-  'host.open_interaction', 'tui.preferences.set', 'host.stop', 'host.restart']);
+  'host.open_interaction', 'host.stop', 'host.restart']);
 export interface BrokerDispatchPort {
   interactionKinds: OperationParams<'hello'>['interactionKinds'];
   dispatch(command: AdmittedCommand, client: { principal: string; kind: Kind; attachment: string;
@@ -37,7 +37,6 @@ export interface SessionServerOptions {
   models: Pick<ModelRuntime, 'getAvailable'>;
   version: string;
   composition?: HostCompositionInfo;
-  preferences?: HostPreferences;
   setup?: HostSetup;
   prepareOpenInteraction?(id: string, client: string, signal: AbortSignal): () => Promise<void>;
   broker?: BrokerDispatchPort;

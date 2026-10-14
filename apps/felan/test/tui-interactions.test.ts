@@ -176,12 +176,8 @@ it('renders daemon-owned status and powerline data and follows terminal resize',
   const f = await fixture(); const view = await f.terminal();
   f.registry.projection(f.root.sessionId).setPresentation({ id: 'status-fixture', kind: 'status', key: 'fixture', value: { kind: 'text', text: 'Index ready' }, fallback: 'Status' });
   f.registry.projection(f.root.sessionId).setPresentation({ id: 'footer-view', kind: 'view', revision: 1, title: 'Powerline',
-    hint: { id: 'felan.powerline', version: '2.0.0' }, fields: [
-      { id: 'line', label: 'Line', valueKind: 'number' }, { id: 'segment', label: 'Segment', valueKind: 'text' },
-      { id: 'text', label: 'Value', valueKind: 'text' }, { id: 'alignment', label: 'Alignment', valueKind: 'text' }, { id: 'color', label: 'Color', valueKind: 'text' }],
-    items: [...Object.entries({ style: 'minimal', charset: 'text', autoWrap: 'true', padding: '0', lines: '1' }).map(([key, text]) => ({
-      id: `display-${key}`, values: { line: 0, segment: `display.${key}`, text, alignment: '', color: '' }, fallback: key,
-    })), { id: 'line-0-segment-0', values: { line: 1, segment: 'directory', text: 'Projected footer', alignment: 'left', color: 'directory' }, fallback: 'Directory' }],
+    hint: { id: 'felan.powerline', version: '3.0.0' }, fields: ['segment', 'data', 'color'].map(id => ({ id, label: id, valueKind: 'text' as const })),
+    items: [{ id: 'directory', values: { segment: 'directory', data: JSON.stringify({ cwd: 'Projected footer' }), color: 'directory' }, fallback: 'Directory' }],
     actions: [], fallback: 'Powerline data' });
   await vi.waitFor(() => expect(view.terminal.output).toContain('Projected footer'));
   expect(view.terminal.output).toContain('Index ready');
@@ -216,14 +212,10 @@ it('keeps Escape scoped to a question above the agent navigator', async () => {
 it('hides malformed powerline data without losing the terminal and accepts a later valid frame', async () => {
   const f = await fixture(); const view = await f.terminal();
   const footer: UiView = { id: 'footer-recovery', kind: 'view', revision: 1, title: 'Powerline',
-    hint: { id: 'felan.powerline', version: '2.0.0' }, fields: [
-      { id: 'line', label: 'Line', valueKind: 'number' }, { id: 'segment', label: 'Segment', valueKind: 'text' },
-      { id: 'text', label: 'Value', valueKind: 'text' }, { id: 'alignment', label: 'Alignment', valueKind: 'text' }, { id: 'color', label: 'Color', valueKind: 'text' }],
-    items: [...Object.entries({ style: 'minimal', charset: 'text', autoWrap: 'true', padding: '0', lines: '1' }).map(([key, text]) => ({
-      id: `display-${key}`, values: { line: 0, segment: `display.${key}`, text, alignment: '', color: '' }, fallback: key,
-    })), { id: 'line-0-segment-0', values: { line: 1, segment: 'directory', text: 'Recovered footer', alignment: 'left', color: 'directory' }, fallback: 'Directory' }],
+    hint: { id: 'felan.powerline', version: '3.0.0' }, fields: ['segment', 'data', 'color'].map(id => ({ id, label: id, valueKind: 'text' as const })),
+    items: [{ id: 'directory', values: { segment: 'directory', data: JSON.stringify({ cwd: 'Recovered footer' }), color: 'directory' }, fallback: 'Directory' }],
     actions: [], fallback: 'Powerline data' };
-  f.registry.projection(f.root.sessionId).setPresentation({ ...footer, items: footer.items.map(item => item.id === 'line-0-segment-0'
+  f.registry.projection(f.root.sessionId).setPresentation({ ...footer, items: footer.items.map(item => item.id === 'directory'
     ? { ...item, values: { ...item.values, color: 'untrusted-color' } } : item) });
   await vi.waitFor(() => expect(view.controller.notice).toContain('invalid powerline data'));
   expect(view.controller.state?.status).toBe('live');

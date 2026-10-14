@@ -43,16 +43,50 @@ describe('TASKS_HINT', () => {
     expect(actions.mock.calls[0]?.[0]).toEqual(view);
   });
 
-  it('renders documents and returns only declared navigation', async () => {
+  it.each(['\x1b[D', '\x7f'])('renders task details and returns back for %j', async key => {
     const document: UiDocument = { kind: 'document', id: 'document', revision: 8, title: 'Details', fallback: 'Detail text',
       markdown: 'Full detail text: \\[literal\\] \\*text\\* &lt;tag&gt;', hint: TASKS_HINT, actions: [{ id: 'back', label: 'Back', target: 'element', outcome: 'submit' }] };
+    document.data = { taskId: 'T-AAAAAA', prerequisites: 0, dependents: 1, records0: JSON.stringify([
+      ...Object.entries({ id: 'T-AAAAAA', title: 'Compile', status: 'pending', availability: 'ready', priority: '2', ownerSessionId: '',
+        description: '[literal] *text* <tag>\nnext line', acceptanceCriteria: '', blockedReason: '', notes: '', result: '',
+        createdAt: '2026', updatedAt: '2026', completedAt: '' }).map(([field, value]) => ({ field, value })),
+      { relation: 'dependent', id: 'T-BBBBBB', title: 'Check', availability: 'waiting' },
+    ]) };
     const { ui } = fixture(panel => {
-      expect(panel.render(100).join('\n')).toContain('Full detail text: [literal] *text* <tag>');
-      panel.handleInput('\x1b[D');
+      panel.handleInput('\x1b[H');
+      const rendered = panel.render(120).join('\n');
+      for (const text of ['T-AAAAAA  backspace/← tasks • ↑↓ scroll • g graph • r refresh • q/esc close',
+        'Lifecycle', 'Status: pending', 'Availability: ready', 'Priority: P2', 'Execution', 'Owner: -',
+        'Dependencies', 'Depends on (0):', '- None', 'Unblocks (1):', '- T-BBBBBB · waiting · Check',
+        'Work context', 'Description: [literal] *text* <tag>', '    next line', 'Acceptance criteria: -', 'Notes: -']) {
+        expect(rendered).toContain(text);
+      }
+      expect(rendered).not.toContain('##');
+      panel.handleInput('\x1b[F');
+      expect(panel.render(120).join('\n')).toContain('Result: -');
+      panel.handleInput(key);
     });
     expect(await presentTasksElement(document, ui, new AbortController().signal, vi.fn())).toEqual({
       elementId: 'document', revision: 8, actionId: 'back', outcome: 'submit', values: {},
     });
+  });
+
+  it('opens the declared graph and returns from a scrollable graph', async () => {
+    const graphAction = { id: 'graph', label: 'Graph', target: 'element' as const, outcome: 'submit' as const };
+    const { ui } = fixture(panel => panel.handleInput('g'));
+    expect(await presentTasksElement({ ...view, actions: [...view.actions, graphAction] }, ui, new AbortController().signal, vi.fn()))
+      .toMatchObject({ actionId: 'graph' });
+    const graph: UiView = { ...view, fields: [...view.fields, { id: 'depth', label: 'Depth', valueKind: 'number' }],
+      items: [{ ...view.items[0]!, values: { ...view.items[0]!.values, depth: 0,
+        graphRevision: 2, total: 2, completed: 0, active: 0, ready: 1, blocked: 1 } }],
+      actions: [{ id: 'back', label: 'Back', target: 'element', outcome: 'submit' }] };
+    const f = fixture(panel => {
+      expect(panel.render(120).join('\n')).toContain('Task Graph  ↑↓ scroll • g tasks');
+      expect(panel.render(120).join('\n')).toContain('Layer 0');
+      expect(panel.render(120).join('\n')).toContain('Tasks r2: 0/2 completed · 0 active · 1 ready · 1 blocked');
+      panel.handleInput('g');
+    });
+    expect(await presentTasksElement(graph, f.ui, new AbortController().signal, vi.fn())).toMatchObject({ actionId: 'back' });
   });
 
   it('does not invent an item action for an empty view', async () => {

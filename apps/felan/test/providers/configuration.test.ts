@@ -2,12 +2,11 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { getExtensionConfigCliOptions } from '@felan-ai/agent-core';
 import { ConfigValuesSchema } from '@felan-ai/session-protocol';
 import { DaemonConfiguration } from '../../src/providers/configuration.js';
 import { builtinExtensionPackages, resolveConfiguredExtensionPackages } from '../../src/providers/extensions.js';
 import { loadLocalExtensionConfigDefinitions } from '../../src/providers/extensions.js';
-import { createLocalSettingsManager, getClassifierModelSetting, getFelanSettings, setExtensionConfigValues } from '../../src/providers/settings.js';
+import { createLocalSettingsManager, getClassifierModelSetting, getFelanSettings } from '../../src/providers/settings.js';
 
 const paths: string[] = [];
 afterEach(async () => { await Promise.all(paths.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -28,25 +27,21 @@ it('lets host.json narrow builtinExtensions settings but never lets settings wid
   expect(resolveConfiguredExtensionPackages([builtinExtensionPackages.subagents], { subagents: false })).toEqual([]);
 });
 
-it('maps the exact existing 64 noncredential fields from built-in definitions', async () => {
+it('exposes built-in fields only as generic noncredential extension values', async () => {
   const agentDir = await fixture(); const definitions = await configuredDefinitions();
   const globalFields = ['scopedModels', 'defaultModel', 'defaultThinking', 'classifierModel', 'builtinExtensions', 'extensionConfig', 'codemode',
     'imageAutoResize', 'blockImages', 'autoCompact', 'skillCommands', 'steeringMode', 'followUpMode', 'transport', 'httpIdleTimeoutMs', 'cacheWarming', 'modelThinkingLevels'];
-  const expected = Object.keys(ConfigValuesSchema.properties).filter(key => !globalFields.includes(key));
-  const fields = getExtensionConfigCliOptions(definitions).filter(field => expected.includes(field.name));
-  expect(new Set(fields.map(field => field.name))).toEqual(new Set(expected)); expect(fields).toHaveLength(64);
   const result = await new DaemonConfiguration({ agentDir, definitions, assertCurrent() {} }).get('global');
-  expect(Object.keys(result.values).every(key => expected.includes(key) || globalFields.includes(key))).toBe(true);
+  expect(Object.keys(ConfigValuesSchema.properties).sort()).toEqual(globalFields.sort());
+  expect(result.writable).toBe(true);
+  expect(Object.keys(result.values).every(key => globalFields.includes(key))).toBe(true);
   expect(result.values.builtinExtensions).toEqual(Object.fromEntries(Object.keys(builtinExtensionPackages).map(name => [name, true])));
-  expect(result.values.codemode).toBe('on');
   expect(result.extensions?.map(extension => ({ id: extension.id, fields: extension.fields.map(field => field.id) }))).toEqual(
     definitions.map(definition => ({ id: definition.id, fields: Object.entries(definition.fields).filter(([, field]) => !field.deprecated).map(([id]) => id) }))
       .filter(extension => extension.fields.length),
   );
-  for (const field of fields) {
-    expect(result.values.extensionConfig?.[field.extensionId]?.[field.field], field.name).toEqual(
-      field.configField.deprecated ? undefined : result.values[field.name as keyof typeof result.values],
-    );
+  for (const definition of definitions) for (const [id, field] of Object.entries(definition.fields)) {
+    expect(result.values.extensionConfig?.[definition.id]?.[id]).toEqual(field.sensitive || field.deprecated ? undefined : field.default);
   }
 });
 
@@ -65,13 +60,6 @@ it('applies execution defaults to fresh provider settings without mutating exist
   await config.set('global', { builtinExtensions: { memory: true } });
   const reloaded = createLocalSettingsManager(agentDir, agentDir);
   expect(resolveConfiguredExtensionPackages([builtinExtensionPackages.memory], getFelanSettings(reloaded).builtinExtensions)).toEqual([builtinExtensionPackages.memory]);
-});
-
-it('preserves the legacy local settings writer through provider extraction', async () => {
-  const agentDir = await fixture(); await setExtensionConfigValues(agentDir, 'codex', { fast: true });
-  const definitions = await configuredDefinitions();
-  expect(await new DaemonConfiguration({ agentDir, definitions, assertCurrent() {} }).get('global'))
-    .toMatchObject({ values: { 'codex-fast': true } });
 });
 
 it('rejects unknown built-in names before persisting any configuration fields', async () => {

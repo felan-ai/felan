@@ -1,7 +1,8 @@
 import { expect, it } from 'vitest';
-import { ConfigValuesSchema, TuiPreferencesSchema, TuiPreferencesUpdateSchema, parseSchema } from '../src/index.js';
+import { ConfigValuesSchema, parseSchema } from '@felan-ai/session-protocol';
+import { TuiPreferencesSchema, TuiPreferencesUpdateSchema } from '../src/tui/preferences-schema.js';
 
-it('keeps client themes out of daemon preferences', () => {
+it('validates display controls separately from the client theme setting', () => {
   const preferences = { hideThinking: false, showImages: true, imageWidthCells: 60, outputPad: 1, toolDisplay: 'grouped', keybindings: {} };
   expect(parseSchema(TuiPreferencesSchema, preferences)).toEqual(preferences);
   expect(() => parseSchema(TuiPreferencesSchema, { ...preferences, theme: 'client-theme' })).toThrow();

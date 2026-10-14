@@ -12,7 +12,7 @@ import type {
 import { createUnavailableExtensionUi, getExtensionConfigDefinition, HostAgentRuntime } from '@felan-ai/agent-core';
 import serviceBackedExtension from '../../../../packages/ext-tasks/src/extension.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createTasksExtension, TASKS_CONFIG } from '../../../../packages/ext-tasks/src/extension.js';
+import { createTasksExtension } from '../../../../packages/ext-tasks/src/extension.js';
 
 type Handler = (event: any, context: ExtensionContext) => unknown;
 
@@ -61,12 +61,8 @@ describe('@felan-ai/ext-tasks', () => {
     } finally { await act('close'); await work; await harness.shutdown(); }
   });
 
-  it('declares inline as its configurable display default', () => {
-    expect(getExtensionConfigDefinition(serviceBackedExtension)).toBe(TASKS_CONFIG);
-    expect(TASKS_CONFIG.fields.displayMode).toMatchObject({
-      default: 'inline',
-      values: ['inline', 'overlay'],
-    });
+  it('does not declare host display configuration', () => {
+    expect(getExtensionConfigDefinition(serviceBackedExtension)).toBeUndefined();
   });
 
   it('registers the canonical tools and concise task capability', async () => {

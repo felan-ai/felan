@@ -15,14 +15,13 @@ import {
   getLocalCodemodeMode,
   getFelanSettings,
   getPiExtensionSettings,
-  getLocalToolDisplayMode,
   isDependencyOnboardingComplete,
   isBuiltinExtensionEnabled,
   setDependencyOnboardingDecision,
   resolveExtensionConfigSettings,
-  setExtensionConfigValue,
   setLocalCodemodeMode,
 } from '../src/providers/settings.js';
+import { DaemonConfiguration } from '../src/providers/configuration.js';
 import { mergeDaemonGlobalSettings } from '../src/providers/global-settings.js';
 
 const temporaryPaths: string[] = [];
@@ -134,7 +133,6 @@ describe('local settings', () => {
     expect(settings.getSkillPaths()).toEqual([]);
     expect(settings.getPromptTemplatePaths()).toEqual([]);
     expect(settings.getThemePaths()).toEqual([]);
-    expect(settings.getEditorPaddingX()).toBe(1);
     expect(settings.getEnableInstallTelemetry()).toBe(false);
     expect(settings.getCacheWarmingMode()).toBe('streaming');
     expect(settings.getLastChangelogVersion()).toBe(PI_VERSION);
@@ -147,14 +145,12 @@ describe('local settings', () => {
       felanSubagents: { concurrency: 2 },
       felanTui: { toolDisplay: 'full' },
     });
-    expect(getLocalToolDisplayMode(settings)).toBe('full');
 
     await settings.reload();
 
     settings.setProjectTrusted(false);
     expect(settings.isProjectTrusted()).toBe(true);
     expect(settings.getDefaultModel()).toBe('test-model');
-    expect(settings.getEditorPaddingX()).toBe(1);
     expect(settings.getPackages()).toEqual([]);
     expect(settings.getEnableInstallTelemetry()).toBe(false);
     expect(settings.getLastChangelogVersion()).toBe(PI_VERSION);
@@ -179,14 +175,6 @@ describe('local settings', () => {
     const settings = createLocalSettingsManager(root, agentDir);
 
     expect(settings.getCacheWarmingMode()).toBe('off');
-  });
-
-  it('defaults to grouped tool display and rejects invalid values', () => {
-    expect(getLocalToolDisplayMode(settingsWith({}))).toBe('grouped');
-    expect(() => getLocalToolDisplayMode(settingsWith({ felanTui: 'grouped' })))
-      .toThrow('felanTui must be an object');
-    expect(() => getLocalToolDisplayMode(settingsWith({ felanTui: { toolDisplay: 'compact' } })))
-      .toThrow('felanTui.toolDisplay must be "grouped" or "full"');
   });
 
   it('warns and defaults removed caveman extension configuration to concise', () => {
@@ -259,10 +247,6 @@ describe('local settings', () => {
     await mkdir(agentDir, { recursive: true });
     await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ defaultModel: 'model', outputStyle: 'concise' }));
 
-    await setExtensionConfigValue(agentDir, 'prewalk', 'entryApproval', 'allow');
-
-    const settings = getFelanSettings(createLocalSettingsManager(root, agentDir));
-    expect(settings.extensionConfig?.prewalk?.entryApproval).toBe('allow');
     const config = defineExtensionConfig({
       id: 'prewalk',
       title: 'Prewalk',
@@ -273,6 +257,8 @@ describe('local settings', () => {
         }),
       },
     });
+    await new DaemonConfiguration({ agentDir, definitions: [config], assertCurrent() {} }).set('global', { extensionConfig: { prewalk: { entryApproval: 'allow' } } });
+    const settings = getFelanSettings(createLocalSettingsManager(root, agentDir));
     const resolved = resolveExtensionConfigSettings(settings, [config]);
     expect(resolved.overrides).toEqual([{
       extensionId: 'prewalk',
@@ -334,3 +320,29 @@ async function temporaryDirectory(): Promise<string> {
   temporaryPaths.push(path);
   return path;
 }
+
+it('reads released Powerline data-collection options without passing display policy to extensions', async () => {
+  const { POWERLINE_CONFIG } = await import('@felan-ai/ext-powerline');
+  const legacy = { extensionConfig: { powerline: { periodDays: 30, style: 'capsule', lines: [{ segments: {
+    git: { enabled: true, showWorkingTree: false, showStashCount: true }, savings: { enabled: true, periodDays: 14 }, subscription: { enabled: true, maxWindows: 2 },
+  } }] } } };
+  const original = structuredClone(legacy);
+  const resolved = resolveExtensionConfigSettings(legacy, [POWERLINE_CONFIG]);
+  expect(resolved.configs.get('powerline')).toEqual({ showWorkingTree: false, showStashCount: true, periodDays: 30, maxWindows: 2 });
+  expect(legacy).toEqual(original);
+  expect(resolved.warnings).toEqual([]);
+});
+
+it.each([undefined, false, true])('uses the same legacy Powerline mapping for execution and config.get (working tree %s)', async showWorkingTree => {
+  const { POWERLINE_CONFIG } = await import('@felan-ai/ext-powerline');
+  const root = await temporaryDirectory();
+  const settings = { extensionConfig: { powerline: { style: 'capsule', charset: 'unicode', autoWrap: false, padding: 3,
+    lines: [{ segments: { git: { enabled: true, ...(showWorkingTree === undefined ? {} : { showWorkingTree }), showStashCount: true },
+      savings: { enabled: true, periodDays: 14 }, subscription: { enabled: true, maxWindows: 2 } } }] } } };
+  await writeFile(join(root, 'settings.json'), JSON.stringify(settings));
+  const runtime = resolveExtensionConfigSettings(settings, [POWERLINE_CONFIG]);
+  expect(runtime.warnings).toEqual([]);
+  expect(runtime.configs.get('powerline')).toEqual({ showWorkingTree: showWorkingTree ?? false, showStashCount: true, periodDays: 14, maxWindows: 2 });
+  const provider = new DaemonConfiguration({ agentDir: root, definitions: [POWERLINE_CONFIG], assertCurrent() {} });
+  expect((await provider.get('global')).values.extensionConfig?.powerline).toEqual(runtime.configs.get('powerline'));
+});

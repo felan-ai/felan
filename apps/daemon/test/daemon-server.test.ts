@@ -138,7 +138,7 @@ function supportedRequests(f: Awaited<ReturnType<typeof fixture>>): Array<{ op: 
     { op: 'session.export', session, params: { format: 'jsonl', destination: join(f.directory, 'not-created.jsonl'), confirmed: true } },
     { op: 'session.delete', session, params: { confirmed: true, expectedRevision: revision } },
     { op: 'session.history', session, params: { revision, branch: 'not-created' } }, { op: 'shell.execute', session, params: { command: 'must-not-run', includeInContext: false } },
-    { op: 'config.get', params: { scope: 'global' } }, { op: 'config.set', params: { scope: 'global', values: { 'codex-fast': true } } },
+    { op: 'config.get', params: { scope: 'global' } }, { op: 'config.set', params: { scope: 'global', values: { autoCompact: true } } },
     { op: 'session.reload', session, params: {} }, { op: 'processes.list', session, params: { root: session } },
     { op: 'processes.read', session, params: { ...resource, offset: 0, limit: 1 } }, { op: 'processes.write', session, params: { ...resource, data: 'AA==' } },
     { op: 'processes.stop', session, params: { ...resource, signal: 'SIGTERM' } },
@@ -170,7 +170,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
       await client.attach(session); await completedPrompt(f, client, 'history to expire'); await client.request('close', {}, { session });
       const before = await listedRevision(client, session);
       clock += 8 * 24 * 60 * 60 * 1000;
-      expect(await client.request('config.set', { scope: 'global', values: { 'codex-fast': true } })).toMatchObject({ outcome: 'accepted' });
+      expect(await client.request('config.set', { scope: 'global', values: { autoCompact: true } })).toMatchObject({ outcome: 'accepted' });
       expect(await client.request('session.delete', { confirmed: true, expectedRevision: before }, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'stale_request' } });
       const current = await listedRevision(client, session); expect(current).toBeGreaterThan(before);
       expect(await client.request('session.delete', { confirmed: true, expectedRevision: current }, { session })).toMatchObject({ outcome: 'accepted' });
@@ -234,7 +234,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     await client.attach(session);
     const sessions = await client.request('sessions.list', { limit: 1 }); const processes = await client.request('processes.list', { root: session, limit: 1 }, { session });
     if (sessions.outcome !== 'accepted' || processes.outcome !== 'accepted' || !sessions.result.cursor || !processes.result.cursor) throw new Error('Cursor missing');
-    await client.request('config.set', { scope: 'global', values: { 'codex-fast': true } });
+    await client.request('config.set', { scope: 'global', values: { autoCompact: true } });
     expect(await client.request('sessions.list', { limit: 1, cursor: sessions.result.cursor })).toMatchObject({ outcome: 'accepted' });
     expect(await client.request('processes.list', { root: session, limit: 1, cursor: processes.result.cursor }, { session })).toMatchObject({ outcome: 'accepted' });
     expect(await client.request('sessions.list', { root: session, cursor: sessions.result.cursor })).toMatchObject({ outcome: 'rejected', error: { code: 'resync_required' } });
@@ -377,7 +377,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(client.getAttachment(created.id)).toBeUndefined();
     const retry = await f.client(); expect(await retry.request('sessions.create', params, { id })).toEqual(response);
     expect(open.mock.calls.filter(([request]) => request.target.kind === 'new')).toHaveLength(1); expect(f.store.snapshot().sessions).toHaveLength(2);
-    expect(await client.request('sessions.create', { ...params, config: { 'codex-fast': true } })).toMatchObject({ outcome: 'rejected', error: { code: 'unavailable' } });
+    expect(await client.request('sessions.create', { ...params, config: { autoCompact: true } })).toMatchObject({ outcome: 'rejected', error: { code: 'unavailable' } });
     expect(await client.request('sessions.create', { ...params, model: { provider: 'offline', id: 'missing' } })).toMatchObject({ outcome: 'rejected', error: { code: 'not_found' } });
     expect(open.mock.calls.filter(([request]) => request.target.kind === 'new')).toHaveLength(1); expect(await readFile(f.store.session(f.root.sessionId).piPath)).toEqual(original);
   });
@@ -524,11 +524,11 @@ describe('session server over private real Unix IPC with fake ownership', () => 
 
   it('serializes global field merges and exposes real model/history/tree operations', async () => {
     const f = await fixture(); const client = await f.client(); const id = f.root.sessionId; await client.attach(id);
-    expect((await client.request('config.set', { scope: 'global', values: { 'codex-fast': true } })).outcome).toBe('accepted');
-    expect((await client.request('config.set', { scope: 'global', values: { 'codex-fast': false } })).outcome).toBe('accepted');
+    expect((await client.request('config.set', { scope: 'global', values: { autoCompact: true } })).outcome).toBe('accepted');
+    expect((await client.request('config.set', { scope: 'global', values: { autoCompact: false } })).outcome).toBe('accepted');
     const configured = await client.request('config.get', { scope: 'global' });
-    expect(configured).toMatchObject({ outcome: 'accepted', result: { values: { 'codex-fast': false } } });
-    expect((await client.request('config.set', { scope: 'project', values: { 'codex-fast': true } })).outcome).toBe('rejected');
+    expect(configured).toMatchObject({ outcome: 'accepted', result: { values: { autoCompact: false } } });
+    expect((await client.request('config.set', { scope: 'project', values: { autoCompact: true } })).outcome).toBe('rejected');
     expect((await client.request('set_thinking', { thinking: 'off' }, { session: id })).outcome).toBe('accepted');
     expect((await client.request('set_model', { provider: 'offline', id: 'fixture' }, { session: id })).outcome).toBe('accepted');
     expect((await client.request('prompt', { text: 'history' }, { session: id })).outcome).toBe('accepted');
@@ -774,7 +774,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     const client = await f.client(); await client.attach(other.sessionId);
     expect(client.getAttachment(other.sessionId)?.state.snapshot?.processes).toHaveLength(1);
     const mutator = await f.client();
-    expect((await mutator.request('config.set', { scope: 'global', values: { 'codex-fast': true } })).outcome).toBe('accepted');
+    expect((await mutator.request('config.set', { scope: 'global', values: { autoCompact: true } })).outcome).toBe('accepted');
     await vi.waitFor(() => expect(client.getAttachment(other.sessionId)?.state.snapshot?.processes).toHaveLength(0));
     expect(client.getAttachment(other.sessionId)?.state.status).toBe('live');
     expect(f.store.snapshot().resources.some(resource => resource.id === 'expired')).toBe(false);
@@ -786,13 +786,13 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(hello.outcome).toBe('accepted');
     expect(await peer.exchange({ v: 1, id: newRequestId(), op: 'prompt', session: f.root.sessionId, params: { text: 'not attached' } }))
       .toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
-    expect(await peer.exchange({ v: 1, id: newRequestId(), op: 'config.set', params: { scope: 'global', values: { 'codex-fast': true }, expectedRevision: 1 } }))
+    expect(await peer.exchange({ v: 1, id: newRequestId(), op: 'config.set', params: { scope: 'global', values: { autoCompact: true }, expectedRevision: 1 } }))
       .toMatchObject({ outcome: 'rejected', error: { code: 'invalid_request' } });
     const id = newRequestId();
-    expect((await peer.exchange({ v: 1, id, op: 'config.set', params: { scope: 'global', values: { 'codex-fast': true } } })).outcome).toBe('accepted');
-    expect(await peer.exchange({ v: 1, id, op: 'config.set', params: { scope: 'global', values: { 'codex-fast': false } } }))
+    expect((await peer.exchange({ v: 1, id, op: 'config.set', params: { scope: 'global', values: { autoCompact: true } } })).outcome).toBe('accepted');
+    expect(await peer.exchange({ v: 1, id, op: 'config.set', params: { scope: 'global', values: { autoCompact: false } } }))
       .toMatchObject({ outcome: 'rejected', error: { code: 'request_conflict' } });
-    expect(await peer.exchange({ v: 1, id: newRequestId(Date.now() - 8 * 24 * 60 * 60 * 1000), op: 'config.set', params: { scope: 'global', values: { 'codex-fast': false } } }))
+    expect(await peer.exchange({ v: 1, id: newRequestId(Date.now() - 8 * 24 * 60 * 60 * 1000), op: 'config.set', params: { scope: 'global', values: { autoCompact: false } } }))
       .toMatchObject({ outcome: 'rejected', error: { code: 'stale_request' } });
     expect(await peer.exchange({ v: 1, id: newRequestId(), op: 'attach', session: f.root.sessionId, params: { expected: { ...f.owner.identity, instanceId: 'forged' } } }))
       .toMatchObject({ outcome: 'rejected', error: { code: 'target_mismatch' } });

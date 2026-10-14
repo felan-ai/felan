@@ -106,7 +106,9 @@ it('applies changed thinking and output padding preferences without resetting lo
     data.settings.hideThinking = false; data.settings.outputPad = 4; transcript.showProjection(data);
     const lines = transcript.render(80).map(stripTerminalSequences);
     expect(lines.join('\n')).toContain('private thought');
-    expect(lines.find(line => line.includes('assistant padding'))).toMatch(/^ {4}assistant padding/u);
-    expect(lines.find(line => line.includes('user padding'))).toMatch(/^ {4}user padding/u);
+    expect(lines.find(line => line.includes('assistant padding'))).toMatch(/^ assistant padding/u);
+    expect(lines.find(line => line.includes('user padding'))).toMatch(/^ user padding/u);
+    data.settings.outputPad = 0; transcript.showProjection(data);
+    expect(transcript.render(80).map(stripTerminalSequences).find(line => line.includes('assistant padding'))).toMatch(/^assistant padding/u);
   } finally { transcript.dispose(); }
 });

@@ -1,6 +1,5 @@
 import { createDaemonSecretStorage } from './credential-storage.js';
 import { DaemonConfiguration } from './configuration.js';
-import { DaemonTuiPreferences } from './tui-preferences.js';
 import { createRootPreparation } from './project-trust.js';
 import { HostSetupManager } from './setup/manager.js';
 import { initializeLocalDaemonProcess, type DaemonProcessConfiguration } from './process-bootstrap.js';
@@ -23,7 +22,7 @@ import { createLocalAgentLogger } from '@felan-ai/daemon/provider';
 import { getLocalSkillPaths } from './local-resources.js';
 import { acquireFelanModelDefaults } from './model-defaults.js';
 import { createRuntimeStorageRequest, type RuntimeFactory } from '@felan-ai/daemon/provider';
-import { createLocalExtensionConfigWriter, createLocalSettingsManager, getClassifierModelSetting, getDynamicThinkingEnabled, getFelanSettings, getLocalCodemodeMode, resolveExtensionConfigSettings } from './settings.js';
+import { createLocalSettingsManager, getClassifierModelSetting, getDynamicThinkingEnabled, getFelanSettings, getLocalCodemodeMode, resolveExtensionConfigSettings } from './settings.js';
 import { loadLocalAppendSystemPrompt } from './system-prompt.js';
 import { setupDependencies } from './dependencies.js';
 import { createLocalExecutionServices } from './execution-services.js';
@@ -64,7 +63,6 @@ export function createLocalSessionRuntime(options: {
       const { agentDir, homeDir, runtime, models, assertCurrent } = request;
       return {
         configuration: new DaemonConfiguration({ agentDir, definitions: request.definitions, assertCurrent }),
-        preferences: new DaemonTuiPreferences({ agentDir, assertCurrent }),
         prepareRoot: createRootPreparation({ agentDir, homeDir, broker: request.interactions, assertCurrent }),
         setup: new HostSetupManager({ agentDir, runtime, models, assertCurrent, dependencies: setupDependencies,
           open: (value, signal) => openHostUrl(runtime, value, signal),
@@ -168,8 +166,6 @@ export function createLocalSessionRuntime(options: {
           ...packages.map(name => `<inline:${name}>`), ...(codemode ? [`<inline:${codemode.name}>`] : [])] },
         options: { runtime, modelRuntime: models, settingsManager: settings, extensionPackages: packages,
           importExtension: importLocalExtension, extensionConfigOverrides: overrides,
-          updateExtensionConfig: createLocalExtensionConfigWriter({ agentDir: environment.agentDir, definitions: definitionsByPackage,
-            overrides: request.extensionConfigOverrides, reload: () => settings.reload() }),
           ...(paths.length ? { extensionPaths: paths } : {}),
           inlineExtensions: codemode ? [codemode] : [], skillPaths: skills, themePaths: [],
           ...(append ? { appendSystemPrompt: [append] } : {}),
