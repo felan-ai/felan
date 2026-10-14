@@ -1,14 +1,14 @@
 import {
-  ERROR_CODES, IdSchema, LIMITS, OPERATION_CATALOG, ProtocolValidationError, parseClientEnvelope, parseSchema, parseServerEnvelope, validateRequestId,
+  ERROR_CODES, IdSchema, LIMITS, OPERATION_CATALOG, ProtocolValidationError, parseClientEnvelope, parseSchema, parseServerEnvelope,
   type ClientEnvelope, type Response,
 } from '@felan-ai/session-protocol';
 import { ControlStoreError, type ControlRequest } from './control-state.js';
 import type { DaemonControlStore } from './control-store.js';
+import { redact } from '../logger.js';
 
 export interface AdmissionOptions {
   maxPending?: number;
   maxBytes?: number;
-  now?: () => number;
   committed?(revisions: Readonly<Record<string, number>>): void;
   dispatched?(revisions: Readonly<Record<string, number>>): void;
 }
@@ -25,7 +25,8 @@ export interface AdmissionOutcome { response: Response | Promise<Response> }
 export type AdmissionHandler = (command: AdmittedCommand) => AdmissionOutcome | Promise<AdmissionOutcome>;
 
 const safetyOperations = new Set(['cancel', 'executions.cancel', 'interaction.answer', 'processes.stop', 'host.stop', 'host.restart', 'close']);
-const safetyBytes = LIMITS.answerBytes + 4096;
+// Backpressure headroom kept free for cancellation, answers and other safety operations.
+export const SAFETY_BYTES = 64 * 1024;
 
 export class OrderedAdmission {
   private readonly pending = new Map<string, Promise<Response>>();
@@ -34,14 +35,12 @@ export class OrderedAdmission {
   private duplicateWaiters = 0;
   private readonly maxPending: number;
   private readonly maxBytes: number;
-  private readonly now: () => number;
 
   constructor(private readonly store: DaemonControlStore, private readonly options: AdmissionOptions = {}) {
     this.maxPending = options.maxPending ?? LIMITS.inflightRequests;
     this.maxBytes = options.maxBytes ?? LIMITS.unsentBytes;
-    this.now = options.now ?? Date.now;
     if (!Number.isSafeInteger(this.maxPending) || this.maxPending < 2 || this.maxPending > LIMITS.inflightRequests
-      || !Number.isSafeInteger(this.maxBytes) || this.maxBytes <= safetyBytes || this.maxBytes > LIMITS.unsentBytes) {
+      || !Number.isSafeInteger(this.maxBytes) || this.maxBytes <= SAFETY_BYTES || this.maxBytes > LIMITS.unsentBytes) {
       throw new Error('Admission limits must preserve bounded safety capacity.');
     }
   }
@@ -50,13 +49,13 @@ export class OrderedAdmission {
   async submit(value: unknown, principal: string, handler?: AdmissionHandler): Promise<Response> {
     this.store.owner.assertCurrent();
     principal = parseSchema(IdSchema, principal);
-    const request = parseClientEnvelope(value, { checkFreshness: false });
+    const request = parseClientEnvelope(value);
     if (OPERATION_CATALOG[request.op].storage !== 'durable') {
       throw new ProtocolValidationError('invalid_request', 'Only durable commands enter ordered admission.');
     }
     const bytes = Buffer.byteLength(JSON.stringify(request)) + Buffer.byteLength(principal);
     const safety = safetyOperations.has(request.op);
-    const byteLimit = this.maxBytes - (safety ? 0 : safetyBytes);
+    const byteLimit = this.maxBytes - (safety ? 0 : SAFETY_BYTES);
     const previous = this.store.snapshot().requests.find(item => item.id === request.id);
     if (previous) {
       const record = this.store.admit(request, principal).value;
@@ -97,8 +96,8 @@ export class OrderedAdmission {
 
   private retained(record: ControlRequest): Response {
     if (record.phase === 'terminal') return this.savedResponse(record);
-    return this.store.finishRequest(record.id, failure(record.id, record.phase === 'dispatch_intent',
-      record.phase === 'dispatch_intent' ? 'indeterminate' : 'unavailable')).value;
+    return this.store.finishRequest(record.id, record.phase === 'dispatch_intent' ? indeterminate(record.id)
+      : failure(record.id, 'unavailable', 'The daemon stopped before this request was dispatched.')).value;
   }
 
   private savedResponse(record: ControlRequest): Response {
@@ -111,16 +110,14 @@ export class OrderedAdmission {
     let dispatchAllowed = true;
     const assertDispatch = () => {
       if (!dispatchAllowed) throw new Error('Dispatch must start before admission completes.');
-      const state = this.store.snapshot();
-      validateRequestId(request.id, Math.max(this.now(), state.clock));
-      const record = state.requests.find(item => item.id === request.id);
+      const record = this.store.snapshot().requests.find(item => item.id === request.id);
       if (record?.phase !== 'intent') throw new ControlStoreError('already_resolved', 'Request is no longer undispatched.');
     };
     try {
       const current = this.record(request.id);
       if (current.phase !== 'intent') return { response: this.retained(current) };
       assertDispatch();
-      if (!handler) return { response: failure(request.id, false, 'unavailable') };
+      if (!handler) return { response: failure(request.id, 'unavailable', 'No handler is available for this operation.') };
       const outcome = await handler({ request: structuredClone(request), assertDispatch, dispatch: effect => {
         assertDispatch();
         const commit = this.store.markDispatched(request.id);
@@ -155,15 +152,28 @@ export class OrderedAdmission {
   private failedResponse(id: string, error: unknown): Response {
     const record = this.record(id);
     if (record.phase === 'terminal') return this.savedResponse(record);
-    if (record.phase === 'dispatch_intent') return failure(id, true, 'indeterminate');
+    if (record.phase === 'dispatch_intent') return indeterminate(id);
     const candidate: unknown = error !== null && typeof error === 'object' ? Object.getOwnPropertyDescriptor(error, 'code')?.value : undefined;
     const code = error instanceof ProtocolValidationError || error instanceof ControlStoreError ? error.code
       : typeof candidate === 'string' && (ERROR_CODES as readonly string[]).includes(candidate) ? candidate : 'unavailable';
-    return failure(id, false, code);
+    return failure(id, code, diagnosticMessage(error));
   }
 }
 
-function failure(id: string, ambiguous: boolean, code: string): Response {
-  return { v: 1, re: id, outcome: ambiguous ? 'indeterminate' : 'rejected',
-    error: { code, message: 'Operation did not complete. Inspect the current session before retrying.', retryable: false } };
+/** Wire-safe text of an error; diagnostics are single-line, bounded by the protocol and never quote credentials or parsed file content. */
+export function diagnosticMessage(error: unknown): string {
+  const message = error instanceof SyntaxError ? 'A file or response contains invalid JSON.' : error instanceof Error ? redact(error.message) : '';
+  const flat = message.replace(/[\u0000-\u001f\u007f-\u009f]+/gu, ' ').trim();
+  if (!flat) return 'Operation could not be completed.';
+  const bytes = Buffer.from(flat);
+  return bytes.length <= 4096 ? flat : `${bytes.subarray(0, 4090).toString('utf8').replace(/\uFFFD+$/u, '')}…`;
+}
+
+function failure(id: string, code: string, message: string): Response {
+  return { v: 1, re: id, outcome: 'rejected', error: { code, message, retryable: false } };
+}
+
+function indeterminate(id: string): Response {
+  return { v: 1, re: id, outcome: 'indeterminate',
+    error: { code: 'indeterminate', message: 'The operation started but its outcome is unknown. Inspect the current session before retrying.', retryable: false } };
 }

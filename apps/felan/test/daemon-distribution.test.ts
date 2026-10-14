@@ -54,7 +54,7 @@ it('launches the emitted installed entrypoint and remains alive after a client d
   cleanups.push(async () => {
     try {
       await cleanup.connect();
-      expect((await cleanup.control('host.stop', { confirmed: true, mode: 'force' })).outcome).toBe('accepted');
+      expect((await cleanup.control('host.stop', 'force')).outcome).toBe('accepted');
       await vi.waitFor(async () => { const owner = await acquireDaemonOwnership(input); await owner.release(); }, { timeout: 5_000 });
     }
     finally { cleanup.close(); }

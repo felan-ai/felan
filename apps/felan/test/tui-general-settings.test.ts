@@ -13,7 +13,6 @@ import { AgentTranscript } from '../src/subagents/agent-transcript.js';
 import { startupHeader } from '../src/tui/startup-header.js';
 import { createClientKeybindings } from '../src/tui/keybindings.js';
 import { defaultClientTheme } from '../src/tui/theme.js';
-import { localSessionConfiguration } from '../src/providers/session-configuration.js';
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -51,7 +50,6 @@ it('restores meaningful execution controls, persists Pi defaults and never appli
   const values = (await f.configuration.get('global')).values;
   expect(values).toMatchObject({ autoCompact: false, skillCommands: false, steeringMode: 'all', followUpMode: 'all', transport: 'sse',
     cacheWarming: 'idle', modelThinkingLevels: { 'offline/model': 'high' }, httpIdleTimeoutMs: 0 });
-  for (const key of Object.keys(choices)) expect(() => f.configuration.sessionOverrides({ [key]: values[key as keyof typeof values] })).toThrow('global');
   const settings = SettingsManager.create(f.agentDir, f.agentDir, { projectTrusted: false });
   expect(settings.getCompactionEnabled()).toBe(false); expect(settings.getEnableSkillCommands()).toBe(false);
   expect(settings.getSteeringMode()).toBe('all'); expect(settings.getFollowUpMode()).toBe('all');
@@ -87,15 +85,6 @@ it('rejects invalid execution and display settings before changing any file', as
     await expect(f.display.update(value as never)).rejects.toThrow();
   }
   expect(await readFile(f.file, 'utf8')).toBe(original);
-});
-
-it('fingerprints execution defaults but not client display preferences', () => {
-  const input = { packages: [], definitions: [], configs: new Map(), models: [], paths: [], skills: [], append: undefined };
-  const fingerprint = (settings: object) => localSessionConfiguration({ ...input, settings: SettingsManager.inMemory(settings) });
-  const baseline = fingerprint({});
-  expect(fingerprint({ enableSkillCommands: false })).not.toEqual(baseline);
-  expect(fingerprint({ cacheWarming: 'idle' })).not.toEqual(baseline);
-  expect(fingerprint({ quietStartup: true, fullscreenScrollbar: 'hidden', markdown: { mermaid: 'off' } })).toEqual(baseline);
 });
 
 it('keeps quiet startup separate from command execution and displays only the requested header', () => {

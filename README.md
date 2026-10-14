@@ -83,9 +83,13 @@ update` command. See [Getting started](docs/getting-started.md) for first-run
 setup and [Local CLI](docs/user-guide/local-cli.md) for commands, daemon
 lifecycle, and local state.
 
-Pre-daemon session files are not listed or resumable through the daemon. To use
-one, explicitly import its JSONL transcript with `/import`; this creates a new
-session ID and leaves the original file unchanged. `/export` remains available.
+Sessions from Felan Code 0.28.3 and earlier appear in `--resume`, `--continue`
+and `--session <id>` for their recorded folder. Opening one adopts it in place:
+it keeps its ID and file, and new turns are appended to that file. Exit the old
+version first: refusing a session changed in the last few seconds is only a
+best-effort safeguard, and running 0.28.3 on an adopted session at the same time
+is unsupported. To copy a transcript into a new session ID instead, use
+`/import`. `/export` remains available.
 
 ## Efficient by design
 

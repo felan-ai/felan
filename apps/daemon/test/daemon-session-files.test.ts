@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { appendFileSync, constants, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, link, truncate, writeFile } from 'node:fs/promises';
+import { openSync, readSync } from 'node:fs';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, link, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { inspectInventoryHeader, inspectInventorySource, prepareExport, prepareImport, prepareTranscriptDeletion, publishExport, readOwnedOutputRange, stageImport } from '../src/daemon/session-files.js';
+import { prepareExport, prepareImport, prepareTranscriptDeletion, publishExport, readOwnedOutputRange, stageImport } from '../src/daemon/session-files.js';
 import type { DaemonOwnership } from '../src/daemon/ownership.js';
-import { sha256 } from '../src/daemon/persistence.js';
 
 vi.mock('node:fs', async original => {
   const fs = await original<typeof import('node:fs')>();
@@ -31,7 +30,7 @@ async function fixture() {
       assertCurrent(); const path = resolve(input); const child = relative(owned, path);
       if (child === '..' || child.startsWith('../') || isAbsolute(child)) throw new Error('Outside private owned root');
       return path;
-    }, watchPath: () => () => {},
+    }, async ownRoot(input: string) { owner.assertOwnsPath(input); }, watchPath: () => () => {},
   } as unknown as DaemonOwnership;
   return { owner, owned, external, lose: () => { current = false; } };
 }
@@ -50,65 +49,47 @@ describe('identity-checked daemon host file ports', () => {
     expect(() => readOwnedOutputRange(f.owner, path, 0, 1)).toThrow();
   });
 
-  it('prepares only an exact transcript unlink and refuses an identity replacement', async () => {
+  it('deletes a transcript once and tolerates repeated deletion', async () => {
     const f = await fixture(); const path = join(f.owned, 'session.jsonl');
-    await writeFile(path, 'original', { mode: 0o600 }); const remove = prepareTranscriptDeletion(f.owner, path);
-    await rename(path, join(f.owned, 'original')); await writeFile(path, 'replacement', { mode: 0o600 });
-    expect(remove).toThrow(); expect(await readFile(path, 'utf8')).toBe('replacement');
-    expect(await readFile(join(f.owned, 'original'), 'utf8')).toBe('original');
+    await writeFile(path, 'original', { mode: 0o600 });
     prepareTranscriptDeletion(f.owner, path)();
     await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' });
     prepareTranscriptDeletion(f.owner, path)();
   });
 
-  it('never unlinks after ownership loss or treats a directory as a transcript', async () => {
+  it('never unlinks after ownership loss', async () => {
     const f = await fixture(); const path = join(f.owned, 'session.jsonl');
     await writeFile(path, 'original', { mode: 0o600 }); const remove = prepareTranscriptDeletion(f.owner, path);
-    expect(() => prepareTranscriptDeletion(f.owner, f.owned)).toThrow();
     f.lose(); expect(remove).toThrow(); expect(await readFile(path, 'utf8')).toBe('original');
   });
 
-  it('stages a validated external legacy copy without rewriting it and excludes managed sources', async () => {
+  it('stages an external legacy copy without rewriting it', async () => {
     const f = await fixture(); const source = join(f.external, 'legacy.jsonl');
     const bytes = JSON.stringify({ type: 'session', version: 3, id: 'legacy', cwd: f.external }) + '\n';
     await writeFile(source, bytes);
-    const staged = stageImport(f.owner, f.owned, source, []);
+    const staged = stageImport(f.owner, f.owned, source);
     expect(staged.path).toMatch(/\.felan-import-.*\.tmp$/);
     expect(await readFile(staged.path, 'utf8')).toBe(bytes); expect(await readFile(source, 'utf8')).toBe(bytes);
-    expect(() => stageImport(f.owner, f.owned, source, [source])).toThrowError(/Managed/);
     staged.dispose(); await expect(readFile(staged.path)).rejects.toMatchObject({ code: 'ENOENT' });
-    await writeFile(source, bytes + '[]\n'); expect(() => stageImport(f.owner, f.owned, source, [])).toThrowError(/row/);
   });
 
-  it('publishes through a private renderer staging file to explicit output-only paths', async () => {
+  it('publishes through a staging file and protects only daemon-managed paths', async () => {
     const f = await fixture(); const destination = join(f.external, 'export.html');
     await writeFile(destination, 'old');
-    expect(await publishExport(f.owner, f.owned, destination, async path => { await writeFile(path, 'rendered'); })).toBe(destination);
+    expect(await publishExport(f.owner, async path => { await writeFile(path, 'rendered'); }, prepareExport(f.owner, destination, [f.owned]))).toBe(destination);
     expect(await readFile(destination, 'utf8')).toBe('rendered');
-    await expect(publishExport(f.owner, f.owned, join(f.owned, 'forbidden'), async () => {})).rejects.toMatchObject({ code: 'forbidden' });
-    const alias = join(f.external, 'alias'); await symlink(destination, alias);
-    await expect(publishExport(f.owner, f.owned, alias, async () => {})).rejects.toThrow();
+    expect(() => prepareExport(f.owner, join(f.owned, 'forbidden'), [f.owned])).toThrowError(expect.objectContaining({ code: 'forbidden' }));
+    const managed = join(f.owned, 'target.jsonl'); await writeFile(managed, 'managed');
+    const alias = join(f.external, 'alias'); await symlink(managed, alias);
+    expect(() => prepareExport(f.owner, alias, [f.owned])).toThrowError(expect.objectContaining({ code: 'forbidden' }));
     await link(destination, join(f.external, 'hardlink'));
-    await expect(publishExport(f.owner, f.owned, destination, async () => {})).rejects.toThrow();
+    await publishExport(f.owner, async path => { await writeFile(path, 'again'); }, prepareExport(f.owner, destination, [f.owned]));
+    expect(await readFile(destination, 'utf8')).toBe('again');
   });
 
-  it('reports indeterminate rather than no write after publication loses its owner', async () => {
+  it('removes the staging file when rendering fails', async () => {
     const f = await fixture(); const destination = join(f.external, 'export.jsonl'); await writeFile(destination, 'old');
-    f.owner.assertCurrent = () => { if (readFileSync(destination, 'utf8') === 'new') throw new Error('Synthetic post-rename ownership loss'); };
-    await expect(publishExport(f.owner, f.owned, destination, async path => { await writeFile(path, 'new'); })).rejects.toMatchObject({ code: 'indeterminate' });
-    expect(await readFile(destination, 'utf8')).toBe('new');
-  });
-});
-
-describe('bounded legacy source reader', () => {
-
-  it('revalidates a prepared import and export before staging or publication', async () => {
-    const f = await fixture(); const source = join(f.external, 'import.jsonl');
-    const text = JSON.stringify({ type: 'session', version: 3, id: 'staged', cwd: f.external }) + '\n'; await writeFile(source, text);
-    const prepared = prepareImport(f.owner, source, []); await writeFile(source, text + '\n');
-    expect(() => stageImport(f.owner, f.owned, source, [], prepared)).toThrowError(/changed/);
-    const destination = join(f.external, 'export.html'); const output = prepareExport(f.owner, destination);
-    await writeFile(destination, 'appeared');
-    await expect(publishExport(f.owner, f.owned, destination, async () => {}, output)).rejects.toThrowError(/appeared/);
+    await expect(publishExport(f.owner, async path => { await writeFile(path, 'partial'); throw new Error('render failed'); }, prepareExport(f.owner, destination, [f.owned]))).rejects.toThrow('render failed');
+    expect(await readFile(destination, 'utf8')).toBe('old');
   });
 });

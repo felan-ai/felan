@@ -204,22 +204,12 @@ describe('ask-user generic UI root', () => {
     expect(form.hint).toEqual({ id: 'ask-user.wizard', version: '1' });
   });
 
-  it('rejects unrepresentable content instead of truncating questions, context, descriptions, or options', async () => {
-    for (const input of [
-      { question: 'Choose?', options: Array.from({ length: 65 }, (_, index) => ({ title: `Choice ${index}` })) },
-      { question: 'Choose?', options: [{ title: '🙂'.repeat(257) }] },
-      { question: 'q'.repeat(128 * 1024 + 1) },
-      { question: 'Context?', context: 'c'.repeat(128 * 1024 + 1) },
-      { question: 'Description?', options: [{ title: 'One', description: 'd'.repeat(128 * 1024 + 1) }] },
-    ]) {
-      const f = harness();
-      expect(await f.execute(input)).toMatchObject({ isError: true });
-      expect(f.request).not.toHaveBeenCalled();
-    }
-    const f = harness(async () => answered({ 'q1.selection': 'option64' }));
-    const titles = Array.from({ length: 64 }, (_, index) => index === 63 ? '🙂'.repeat(256) : `Choice ${index}`);
-    expect((await f.execute({ question: 'Boundary?', options: titles, allowFreeform: false })).details)
-      .toMatchObject({ status: 'answered', response: { kind: 'selection', selections: [titles[63]] } });
+  it('presents large questions and option lists without truncating them', async () => {
+    const f = harness(async () => answered({ 'q1.selection': 'option100' }));
+    const titles = Array.from({ length: 100 }, (_, index) => index === 99 ? '🙂'.repeat(300) : `Choice ${index}`);
+    const out = await f.execute({ question: "q".repeat(200 * 1024), options: titles, allowFreeform: false });
+    expect(out.details)
+      .toMatchObject({ status: 'answered', response: { kind: 'selection', selections: [titles[99]] } });
     expect(f.request.mock.calls[0]![0].input.fields[0]).toHaveProperty('options', titles.map((label, index) => ({ id: `option${index + 1}`, label })));
   });
 });

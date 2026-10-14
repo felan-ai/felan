@@ -75,7 +75,7 @@ async function requestStop(f: Awaited<ReturnType<typeof fixture>>, mode: 'drain'
     settle: mode => settleDaemonWork(f.registry, broker, mode),
   });
   const admission = new OrderedAdmission(f.store, { now: Date.now }); const id = uuidv7();
-  const response = await admission.submit({ v: 1, id, op: 'host.stop', params: { expected: f.owner.identity, confirmed: true, mode } }, 'client', command => lifecycle.prepare(command));
+  const response = await admission.submit({ v: 1, id, op: 'host.stop', params: { expected: f.owner.identity, mode } }, 'client', command => lifecycle.prepare(command));
   expect(response.outcome).toBe('accepted'); lifecycle.afterResponse(id);
   return { lifecycle, complete };
 }

@@ -158,15 +158,11 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       if (options.resume && !controller.sessionId) exit();
       else if (options.initialMessage) await screen.submit(options.initialMessage);
     }).catch(async error => {
-      if (error?.code === 'configuration_recovery_required' && typeof error.sessionId === 'string') {
-        if (await screen.dialogs.confirm('Reload session configuration', 'Use the current configuration for this saved session? Its transcript and identity are retained.')) {
-          if (await controller.reloadSession(error.sessionId) && options.initialMessage) await screen.submit(options.initialMessage);
-        } else controller.setNotice(`Session was not changed. Use /reload ${error.sessionId} to recover it explicitly.`);
-        return;
-      }
       if (controller.client.status !== 'incompatible' || !options.onDaemonAction) throw error;
-      if (await screen.dialogs.confirm('Daemon version mismatch', 'Restart the verified daemon with the installed version? Active work will be drained, not forced.')) {
-        if (await options.onDaemonAction('restart', false, screen.editor.getExpandedText(), true)) exit();
+      const work = controller.client.incompatibleActiveWork;
+      const interrupted = work === undefined ? 'Active work may be interrupted.' : `${work} active task${work === 1 ? '' : 's'} will be interrupted.`;
+      if (await screen.dialogs.confirm('Restart daemon', `The running daemon belongs to another Felan version or configuration. Restart it now? ${interrupted}`)) {
+        if (await options.onDaemonAction('restart', true, screen.editor.getExpandedText(), true)) exit();
       } else exit();
     });
     await Promise.race([starting.then(() => finished), finished]);

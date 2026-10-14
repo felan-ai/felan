@@ -662,7 +662,10 @@ try {
           await toolClient.connect();
           await toolClient.attach(binding.sessionId);
           await testBackgroundBashTools(runtime, process.env.PACKED_SMOKE_WORKSPACE,
-            () => toolClient.request('session.reload', {}, { session: binding.sessionId }));
+            async () => {
+              const response = await toolClient.request('session.reload', {}, { session: binding.sessionId });
+              return { ...response, runtime: service.registry.binding(binding.sessionId)?.runtime };
+            });
         } finally { await toolClient.close(); }
       } catch (error) {
         hostFailure = error;
@@ -709,7 +712,7 @@ try {
   const headless = runFelanAllowFailure([
     '--daemon-runtime', daemonRuntime, '--mode', 'text', '--provider', 'missing-provider', '--model', 'missing-model', 'packed smoke prompt',
   ], cleanEnvironment);
-  if (headless.status !== 1 || headless.stdout.trim() !== '' || headless.stderr.trim() !== 'Operation did not complete. Inspect the current session before retrying.') {
+  if (headless.status !== 1 || headless.stdout.trim() !== '' || !/No model is available|is not available|Unknown provider/.test(headless.stderr)) {
     throw new Error(`Packed headless Felan invocation did not fail cleanly without credentials: ${JSON.stringify({
       status: headless.status, signal: headless.signal, stdout: headless.stdout.slice(0, 4096), stderr: headless.stderr.slice(0, 4096),
     })}`);
@@ -751,7 +754,7 @@ try {
 }
 
 function stopPackedDaemon() {
-  runFelan(['daemon', 'stop', '--daemon-runtime', daemonRuntime, '--yes', '--force'], cleanEnvironment);
+  runFelan(['daemon', 'stop', '--daemon-runtime', daemonRuntime, '--force'], cleanEnvironment);
   const status = runFelan(['daemon', 'status', '--daemon-runtime', daemonRuntime], cleanEnvironment);
   if (!status.stdout.includes('Daemon is not running.')) throw new Error('Packed smoke daemon remained running');
 }
@@ -934,7 +937,7 @@ async function assertPackedDaemonOnly(tarballs) {
           writeFileSync(join(owner.target.agentDir, 'host.json'), JSON.stringify({ version: 1, services: [
             { id: 'felan.runtime', major: 1, use: '@fixture/host/providers' },
             { id: 'felan.session-runtime', major: 1, use: '@fixture/host/providers' },
-          ], extensions: [], policy: { projectTrust: 'ask', dependencyInstalls: 'ask', requireLocalConsole: true } }), { mode: 0o600 });
+          ], extensions: [], policy: { projectTrust: 'ask', dependencyInstalls: 'ask' } }), { mode: 0o600 });
         } finally { await owner.release(); }
         const piTui = realpathSync(createRequire(paths['@felan-ai/daemon']).resolve('@earendil-works/pi-tui'));
         if (!piTui.startsWith(join(prefix, 'node_modules') + sep)) throw new Error('Escaped Pi TUI dependency resolution');

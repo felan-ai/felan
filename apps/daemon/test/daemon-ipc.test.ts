@@ -60,7 +60,6 @@ describe.skipIf(!supported)('owner-only local daemon IPC and startup', () => {
     expect((await probeDaemon(owner.target, owner.identity)).identity).toEqual(owner.identity);
     await expect(probeDaemon(owner.target, { ...owner.identity, instanceId: randomUUID() })).rejects.toThrow();
     await expect(probeDaemon(owner.target, { ...owner.identity, namespaceId: 'forged' })).rejects.toThrow();
-    await expect(probeDaemon(owner.target, { ...owner.identity, rootSet: [join(owner.target.agentDir, 'wrong')] })).rejects.toThrow();
   });
 
   it('classifies a vanished native endpoint as unavailable and closes its socket descriptor', async () => {

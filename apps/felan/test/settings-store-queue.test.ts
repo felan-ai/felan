@@ -3,9 +3,9 @@ import { beforeEach, expect, it, vi } from 'vitest';
 const lock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<Record<string, unknown>>>());
 vi.mock('@felan-ai/daemon/provider', () => ({ withLocalFileLock: lock }));
 vi.mock('node:fs/promises', () => ({
+  mkdir: async () => undefined,
   realpath: async (path: string) => path,
-  lstat: async () => ({ isDirectory: () => true, uid: process.getuid?.(), mode: 0o700 }),
-  open: vi.fn(), rename: vi.fn(), rm: vi.fn(),
+  readFile: vi.fn(), writeFile: vi.fn(), rename: vi.fn(), rm: vi.fn(),
 }));
 
 import { readDaemonSettingsStore, updateDaemonSettingsStore } from '../src/providers/settings-store.js';

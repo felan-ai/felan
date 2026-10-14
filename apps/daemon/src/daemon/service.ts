@@ -5,9 +5,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { HOST_RUNTIME_SERVICE, type ModelRuntime, type RuntimeDependenciesService } from '@felan-ai/agent-core';
 import { encodeFrame, type DaemonIdentity } from '@felan-ai/session-protocol';
 import { DAEMON_VERSION } from '../version.js';
+import { redact } from '../logger.js';
 import { DaemonAgentLogs } from './agent-logs.js';
 import { createRegistryInteractionBroker, type InteractionBroker } from './broker.js';
-import { commandError } from './commands.js';
 import { DaemonControlStore } from './control-store.js';
 import { createDaemonExecutionServices } from './execution-services.js';
 import { HostLifecycle, type HostAction, type HostMode } from './lifecycle.js';
@@ -55,6 +55,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const composition = loadedProviders.composition;
     const log = new DaemonOperationalLog(sink);
     store = new DaemonControlStore(owner);
+    await store.ownPersistedRoots();
     const homeDir = target.kind === 'isolated' ? dirname(owner.target.runtimeDirectory) : undefined;
     const sessionRuntime = loadedProviders.services.get(SESSION_RUNTIME_SERVICE)!;
     const modelRuntimes = new WeakSet<ModelRuntime>();
@@ -65,7 +66,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
       return models;
     };
     let runtimeDependencies: RuntimeDependenciesService | undefined;
-    sessionLifecycle = createSessionLifecycle({ composition: sessionRuntime, configurationIdentity: composition.configDigest,
+    sessionLifecycle = createSessionLifecycle({ composition: sessionRuntime,
       agentDir: owner.target.agentDir, ...(homeDir ? { homeDir } : {}),
       createModelRuntime: makeModels, deferActivation: true, configuration: () => host.configuration,
       secretStorage: sessionRuntime.secretStorage,
@@ -83,7 +84,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
       onViewCancellationDiagnostic: event => sink!.write('stderr', JSON.stringify({ event: 'view_cancellation', ...event })),
       ...(sessionRuntime.processAdapter ? { processAdapter: sessionRuntime.processAdapter } : {}) });
     const liveRegistry = registry; const liveStore = store; const liveSessionLifecycle = sessionLifecycle; const liveSink = sink;
-    const broker = createRegistryInteractionBroker(registry, { requireLocalConsole: hostConfig.config.policy?.requireLocalConsole ?? false });
+    const broker = createRegistryInteractionBroker(registry);
     const setupRuntime = loadedProviders.services.get(HOST_RUNTIME_SERVICE)!.create(owner.target.agentDir, { pathAccess: 'host', agentDir: owner.target.agentDir,
       agentStorageRoot: join(owner.target.agentDir, 'storage', 'agent'), sessionStorageRoot: join(owner.target.agentDir, 'storage', 'setup') });
     const host = await sessionRuntime.createHostServices({ agentDir: owner.target.agentDir, homeDir: homeDir ?? homedir(),
@@ -96,15 +97,17 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const liveSetup = setup;
     services = createDaemonExecutionServices(registry, broker, sessionRuntime);
     await loadedProviders.activate();
-    const ambiguous = () => liveStore.snapshot().resources.some(resource => ['missing', 'reconciling'].includes(resource.state));
     let finish!: (action: HostAction) => void;
     const stopped = new Promise<HostAction>(resolve => { finish = resolve; });
     let hold: ReturnType<typeof setInterval> | undefined;
-    const lifecycle = new HostLifecycle({ target: owner.target, identity: owner.identity, blocked: ambiguous(),
+    const lifecycle = new HostLifecycle({ target: owner.target, identity: owner.identity,
       ...(options.drainTimeoutMs ? { timeoutMs: options.drainTimeoutMs } : {}),
-      allowControl() { if (ambiguous()) throw commandError('busy'); },
       beginDrain: () => { liveSetup.beginDrain(); liveRegistry.beginDrain(); },
-      settle: async mode => { await Promise.all([liveSetup.drain(), settleDaemonWork(liveRegistry, broker, mode)]); await liveServer.settleCommands(); await loadedProviders.settle(mode); },
+      endDrain: () => { liveRegistry.endDrain(); liveSetup.endDrain?.(); },
+      settle: async (mode, signal) => {
+        await Promise.all([liveSetup.drain(), settleDaemonWork(liveRegistry, broker, mode, signal)]);
+        signal.throwIfAborted(); await liveServer.settleCommands(); await loadedProviders.settle(mode);
+      },
       record: event => log.record(event),
       complete: async action => {
         clearInterval(idleTimer); clearInterval(hold); removeLoss();
@@ -129,8 +132,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
         } }, id, client, signal),
       ...(host.prepareRoot ? { prepareRoot: host.prepareRoot } : {}),
       management: { lifecycle, logs: params => log.page(params) },
-      setupNeeds: () => ambiguous() ? [{ code: 'process_recovery', message: 'Unverified prior processes block new work. Operator reconciliation is required.' }]
-        : models.getAvailableSnapshot().length ? [] : [{ code: 'provider', message: 'Configure a local model provider. A Felan account is not required.' }] });
+      setupNeeds: () => models.getAvailableSnapshot().length ? [] : [{ code: 'provider', message: 'Configure a local model provider. A Felan account is not required.' }] });
     const liveServer = server;
     const idleTimer = setInterval(() => {
       if (lifecycle.state !== 'ready') return;
@@ -148,10 +150,10 @@ export async function startDaemonService(target: DaemonTarget, options: {
     return { owner, registry: liveRegistry, server: liveServer, lifecycle, stopped,
       async requestStop(action: HostAction = 'stop', mode: HostMode = 'drain') {
         return liveServer.requestManagement({ v: 1, id: requestId(), op: action === 'stop' ? 'host.stop' : 'host.restart',
-          params: { expected: owner.identity, confirmed: true, mode } });
+          params: { expected: owner.identity, mode } });
       } };
   } catch (error) {
-    sink?.write('stderr', error instanceof Error ? `${error.name}: ${error.message}` : 'Daemon startup failed.');
+    sink?.write('stderr', error instanceof Error ? redact(`${error.name}: ${error.message}`) : 'Daemon startup failed.');
     try {
       server?.close(); await setup?.drain(); await registry?.shutdown(); await sessionLifecycle?.dispose(); await providers?.dispose(); await agentLogs.close();
       if (error instanceof ProviderStartupError) await error.cleanup();
@@ -164,14 +166,14 @@ export async function startDaemonService(target: DaemonTarget, options: {
   }
 }
 
-export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown' | 'waitForDrain'>, broker: Pick<InteractionBroker, 'drain'>, mode: HostMode): Promise<void> {
+export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown' | 'waitForDrain'>, broker: Pick<InteractionBroker, 'drain'>, mode: HostMode, signal?: AbortSignal): Promise<void> {
   const draining = broker.drain();
   if (mode === 'force') {
     const results = await Promise.allSettled([draining, registry.shutdown({ interrupt: true })]);
     const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     if (failures.length) throw new AggregateError(failures, 'Forced daemon settlement failed.');
   } else {
-    await draining; await registry.waitForDrain(); await registry.shutdown();
+    await draining; await registry.waitForDrain(); signal?.throwIfAborted(); await registry.shutdown();
   }
 }
 

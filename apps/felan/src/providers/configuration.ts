@@ -81,10 +81,6 @@ export class DaemonConfiguration implements HostConfiguration {
 
   sessionOverrides(input: unknown, previous: readonly ExtensionConfigOverride[] = []): ReturnType<HostConfiguration['sessionOverrides']> {
     const update = this.prepare('global', input);
-    if (EXECUTION_DEFAULT_KEYS.some(key => update[key] !== undefined)) throw new ConfigurationUnavailable('Execution defaults are global; use a new session or /reload, or restart the daemon for HTTP idle timeout.');
-    if (update.imageAutoResize !== undefined || update.blockImages !== undefined) throw new ConfigurationUnavailable('Image settings are global; use a new session or /reload to apply them.');
-    if (update.scopedModels !== undefined || update.defaultModel !== undefined || update.defaultThinking !== undefined) throw new ConfigurationUnavailable('Model defaults are global; use session model/thinking operations.');
-    if (update.classifierModel !== undefined || update.builtinExtensions !== undefined || update.codemode !== undefined) throw new ConfigurationUnavailable('Classifier, code mode and built-in extension settings are global; use a new session or /reload to apply them.');
     const groups = new Map<string, { extensionId: string; source: string; values: Record<string, unknown> }>(previous.map(row => [row.extensionId, { ...row, values: { ...row.values } }]));
     for (const { definition, field, value } of update.extensions) {
       const group = groups.get(definition.id) ?? { extensionId: definition.id, source: 'CLI', values: {} };

@@ -65,24 +65,6 @@ describe.skipIf(!supported)('real profile / subagent registry bridge', () => {
     expect(calls).toBe(before);
   });
 
-  it('activates strict policy ahead of queued dispatch rather than counting reservations as active effects', async () => {
-    const gate = deferred(); let calls = 0;
-    const observed: ReturnType<SessionRegistry['getPolicy']>[] = [];
-    const f = await realFixture(async () => { calls++; observed.push(f.registry.getPolicy(f.root.sessionId)); if (calls === 1) await gate.promise; });
-    f.releases.add(gate.resolve);
-    const host = await createRegistryExecutionHost(f.registry, f.root.sessionId, childOptions(f, 1));
-    await host.spawnSession({ label: 'general', description: 'first', prompt: 'first', model: { provider: 'offline', id: 'fixture' } });
-    await vi.waitFor(() => expect(calls).toBe(1));
-    const second = await host.spawnSession({ label: 'general', description: 'queued', prompt: 'second', model: { provider: 'offline', id: 'fixture' } });
-    expect(second.ok).toBe(true); if (!second.ok) return;
-    expect(host.getExecution(second.value.executionId)?.status).toBe('queued');
-    expect(f.registry.tightenPolicy(f.root.sessionId).pending).toBeDefined();
-    gate.resolve();
-    await vi.waitFor(() => expect(host.getExecution(second.value.executionId)?.status).toBe('completed'), { timeout: 4000 });
-    expect(observed[1]).toMatchObject({ mode: 'acp-strict', pendingTightening: false });
-    await host.settle();
-  });
-
   it('rechecks inherited policy after asynchronous child opening', async () => {
     const gate = deferred(); const entered = deferred(); const observed: ReturnType<SessionRegistry['getPolicy']>[] = [];
     const f = await realFixture(async () => { observed.push(f.registry.getPolicy(f.root.sessionId)); });
@@ -96,12 +78,13 @@ describe.skipIf(!supported)('real profile / subagent registry bridge', () => {
     const host = await createRegistryExecutionHost(f.registry, f.root.sessionId, childOptions(f));
     const pending = host.spawnSession({ label: 'general', description: 'opening', prompt: 'child', model: { provider: 'offline', id: 'fixture' } });
     await entered.promise;
-    expect(f.registry.tightenPolicy(f.root.sessionId).effective).toBe('acp-strict');
+    f.registry.tightenPolicy(f.root.sessionId);
+    expect(f.registry.getPolicy(f.root.sessionId).mode).toBe('acp-strict');
     gate.resolve();
     const child = await pending; expect(child.ok).toBe(true); if (!child.ok) return;
     await vi.waitFor(() => expect(host.getExecution(child.value.executionId)?.status).toBe('completed'), { timeout: 4000 });
-    expect(observed[0]).toMatchObject({ mode: 'acp-strict', pendingTightening: false });
-    expect(f.registry.getPolicy(host.getExecution(child.value.executionId)!.sessionId!)).toMatchObject({ mode: 'acp-strict', pendingTightening: false });
+    expect(observed[0]).toMatchObject({ mode: 'acp-strict' });
+    expect(f.registry.getPolicy(host.getExecution(child.value.executionId)!.sessionId!)).toMatchObject({ mode: 'acp-strict' });
     await host.settle();
   });
 
@@ -123,73 +106,6 @@ describe.skipIf(!supported)('real profile / subagent registry bridge', () => {
     session.subscribe = original;
   });
 
-  for (const outcome of ['settles', 'is cancelled', 'fails cancellation', 'closes during cancellation', 'is fenced during cancellation'] as const) {
-    it(`handles a policy-blocked child when a separate root operation ${outcome}`, async () => {
-      const rootGate = deferred(); const childGate = deferred(); let calls = 0;
-      const observed: ReturnType<SessionRegistry['getPolicy']>[] = [];
-      const f = await realFixture(async () => { calls++; observed.push(f.registry.getPolicy(f.root.sessionId)); if (calls === 1) await childGate.promise; });
-      f.releases.add(rootGate.resolve); f.releases.add(childGate.resolve);
-      const starts: string[] = []; const subscriptions: Array<() => void> = [];
-      fixtures.push(async () => { for (const off of subscriptions) off(); });
-      const original = f.profile.openSession;
-      vi.spyOn(f.profile, 'openSession').mockImplementation(async request => {
-        const binding = await original(request);
-        if (request.parentSessionId) subscriptions.push(binding.runtime.session.subscribe(event => {
-          if (event.type === 'agent_start') starts.push(binding.sessionId);
-        }));
-        return binding;
-      });
-      const id = requestId(); f.store.admit({ v: 1, id, op: 'prompt', session: f.root.sessionId, params: { text: 'root blocker' } }, 'owner');
-      const rootWork = f.registry.runAdmitted(id, f.root.sessionId, { kind: 'headless', attachment: 'fixture' }, () => rootGate.promise);
-      const host = await createRegistryExecutionHost(f.registry, f.root.sessionId, childOptions(f, 1));
-      const first = await host.spawnSession({ label: 'general', description: 'first', prompt: 'first', model: { provider: 'offline', id: 'fixture' } });
-      await vi.waitFor(() => expect(calls).toBe(1));
-      const second = await host.spawnSession({ label: 'general', description: 'second', prompt: 'second', model: { provider: 'offline', id: 'fixture' } });
-      expect(first.ok && second.ok).toBe(true); if (!first.ok || !second.ok) return;
-      f.registry.tightenPolicy(f.root.sessionId); childGate.resolve();
-      await vi.waitFor(() => expect(host.getExecution(first.value.executionId)?.status).toBe('completed'));
-      await host.settle();
-      expect(f.registry.getPolicy(f.root.sessionId).pendingTightening).toBe(true);
-      expect(host.getExecution(second.value.executionId)?.status).toBe('queued');
-      const wake = vi.spyOn(host, 'resumeQueued');
-      if (outcome === 'fails cancellation') {
-        const abort = vi.spyOn(f.root.runtime.session, 'abort').mockRejectedValueOnce(new Error('abort failed'));
-        await expect(f.registry.cancel(f.root.sessionId)).rejects.toThrow('abort failed'); abort.mockRestore();
-        await host.settle();
-        expect(wake).not.toHaveBeenCalled();
-        expect(host.getExecution(second.value.executionId)?.status).toBe('queued');
-        expect(starts).toHaveLength(1);
-        const closing = f.registry.close(f.root.sessionId); rootGate.resolve(); await Promise.all([closing, rootWork]);
-        return;
-      }
-      if (outcome !== 'settles') {
-        const cancellation = f.registry.cancel(f.root.sessionId);
-        await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('cancelling'));
-        expect(() => f.registry.assertDispatch(f.root.sessionId)).toThrow('cancelling');
-        if (outcome === 'closes during cancellation') {
-          const closing = f.registry.close(f.root.sessionId); rootGate.resolve();
-          await Promise.all([cancellation, closing, rootWork]); await host.settle();
-          expect(wake).not.toHaveBeenCalled(); expect(starts).toHaveLength(1);
-          expect(host.getExecution(second.value.executionId)?.status).toBe('cancelled');
-          return;
-        }
-        if (outcome === 'is fenced during cancellation') {
-          const fault = f.registry as unknown as { fence(error: Error): void; failure?: unknown; failureSettlement?: Promise<void> };
-          fault.fence(new Error('fenced during cancel')); rootGate.resolve();
-          await Promise.all([cancellation, rootWork, f.registry.settleWriters()]); await host.settle();
-          expect(wake).not.toHaveBeenCalled(); expect(starts).toHaveLength(1);
-          expect(host.getExecution(second.value.executionId)?.status).toBe('cancelled');
-          delete fault.failure; delete fault.failureSettlement;
-          return;
-        }
-        rootGate.resolve(); await Promise.all([cancellation, rootWork]);
-      } else { rootGate.resolve(); await rootWork; }
-      await vi.waitFor(() => expect(host.getExecution(second.value.executionId)?.status).toBe('completed'), { timeout: 4000 });
-      expect(observed[1]).toMatchObject({ mode: 'acp-strict', pendingTightening: false });
-      await host.settle();
-      expect(starts).toHaveLength(2); expect(new Set(starts).size).toBe(2);
-    });
-  }
 });
 
 

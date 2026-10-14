@@ -9,7 +9,9 @@ and first-party extensions.
 | Command | Purpose |
 | --- | --- |
 | `/cwd [directory]` | Start a fresh session in another directory |
-| `/restart` | Restart the daemon; it does not reload client code |
+| `/restart` | Restart the daemon and Felan Code, then resume the current session |
+| `/reload` | Reload the session configuration; background processes keep running |
+| `/reconnect` | Reconnect to the daemon now, starting it if none is running |
 | `/dependencies` | Inspect, install, enable, or disable external runtime dependencies |
 | `/memory` | Show project-memory status and inspect retained runs |
 | `/memory run` | Process pending memory evidence now, recovering backoff when needed |
@@ -19,8 +21,8 @@ and first-party extensions.
 | `/savings` | Show estimated API-equivalent savings for the current root session (`project`, `all`, or `details` also supported) |
 | `/daemon status` | Show daemon state and active counts |
 | `/daemon logs` | Show the first daemon log page |
-| `/daemon stop` / `/daemon restart` | Confirm a graceful daemon stop/restart; add `force` for a second interruption confirmation |
-| `/close` | Confirm session close; `/exit` detaches instead |
+| `/daemon stop` / `/daemon restart` | Stop/restart the daemon; when runs, subagents, interactive PTY or foreground processes, or pending questions would be interrupted, asks once and then interrupts them. Detached background processes survive a restart |
+| `/close` | Close the current session; `/exit` detaches instead |
 
 `/dependencies`, `/memory`, and `/memory open` require the interactive TUI.
 
@@ -31,9 +33,18 @@ target directory, rebuilding cwd-bound settings, instructions, skills, tools,
 memory, and subagents. The parent shell's directory is unchanged; use `/cwd .`
 to start a new session for the current directory.
 
-`/restart` restarts the daemon; it does not reload Felan client code. After
-rebuilding Felan Code from source, detach and relaunch the client. Use `/daemon
-restart` for explicit lifecycle control.
+`/restart` restarts the daemon and then Felan Code itself, resuming the current
+session, so rebuilt daemon and client code both take effect. The TUI shows
+`Daemon restarting…`, waits for the daemon to come back, and restarts the
+client process with the same launch options. `/daemon restart [force]`
+restarts only the daemon and reattaches the current session in place without
+restarting the client. In both cases detached background processes keep
+running and are rediscovered; interactive (PTY) processes end.
+
+When the daemon connection drops, the TUI shows `Daemon disconnected ·
+reconnecting in Ns · /reconnect to retry now` and retries automatically with
+backoff until the daemon is back. Automatic retries never start a daemon;
+`/reconnect` retries immediately and starts one if none is running.
 
 ## Extension commands
 

@@ -169,8 +169,8 @@ parent-folder decisions apply. Trusting a folder authorizes those extension
 files only. It does not load Pi project settings, packages, skills, prompts, or
 themes. These directories are not loaded in headless, ACP, or subagent sessions.
 `--extension`/`-e` remains additive. Executable extension paths are fixed when a
-session is created. An attach cannot replace them: omit `-e` to retain the
-existing paths, or create a new session with another path set.
+session is created. A resumed session keeps its saved paths; `-e` passed while
+resuming is ignored with a notice and applies to new sessions.
 
 `builtinExtensions.sessionTitle` controls automatic names for interactive root
 sessions. Disable it to keep the first prompt as the session-picker fallback.

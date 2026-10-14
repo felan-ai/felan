@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, openSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
+import { chmodSync, closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { AbsolutePathSchema, IdSchema, parseSchema } from '@felan-ai/session-protocol';
+import { AbsolutePathSchema, IdSchema } from '@felan-ai/session-protocol';
 import { Type } from 'typebox';
 import type { DaemonOwnership } from './ownership.js';
 import { guardOwnedPaths, prepareControlDirectory, syncOwnedDirectory } from './persistence.js';
-import { assertPathIdentity, pathIdentity, pathInside, pinPathChain, type PathIdentity } from './target.js';
+import { assertPathIdentity, pathIdentity, pathInside, type PathIdentity } from './target.js';
 
-const maxImportBytes = 64 * 1024 * 1024;
-const headerSchema = Type.Object({ type: Type.Literal('session'), version: Type.Integer({ minimum: 1, maximum: 3 }), id: IdSchema, cwd: AbsolutePathSchema });
+export const sessionHeaderSchema = Type.Object({ type: Type.Literal('session'), version: Type.Integer({ minimum: 1, maximum: 3 }), id: IdSchema, cwd: AbsolutePathSchema });
 const error = (code: string, message: string) => Object.assign(new Error(message), { code });
 const absent = (cause: unknown) => (cause as NodeJS.ErrnoException).code === 'ENOENT';
 
@@ -28,19 +27,12 @@ function unlinkPinned(path: string, pin: PathIdentity): void {
 }
 
 export function prepareTranscriptDeletion(owner: DaemonOwnership, input: string): () => void {
-  const path = owned(owner, input); const directory = dirname(path);
-  const check = guardOwnedPaths(owner, [directory]);
-  let pin: PathIdentity | undefined;
-  try { regular(lstatSync(path, { bigint: true }), owner); pin = pathIdentity(path); }
-  catch (cause) { if (!absent(cause)) throw cause; }
+  const path = owned(owner, input);
   return () => {
-    check(); owned(owner, path);
-    if (pin) { assertPathIdentity(pin); unlinkSync(path); }
-    else {
-      try { lstatSync(path); throw error('ownership_lost', 'A transcript appeared after deletion preparation.'); }
-      catch (cause) { if (!absent(cause)) throw cause; }
-    }
-    check(); if (pin) syncOwnedDirectory(owner, directory); check();
+    owned(owner, path);
+    try { unlinkSync(path); }
+    catch (cause) { if (!absent(cause)) throw cause; return; }
+    syncOwnedDirectory(owner, dirname(path));
   };
 }
 
@@ -58,56 +50,25 @@ export function readOwnedOutputRange(owner: DaemonOwnership, input: string, offs
   } finally { closeSync(fd); }
 }
 
-export interface PreparedImport { bytes: Buffer; assertCurrent(): void }
+export interface PreparedImport { bytes: Buffer }
 export interface StagedImport { path: string; dispose(): void }
-export function prepareImport(owner: DaemonOwnership, source: string, excluded: readonly string[]): PreparedImport {
+export function prepareImport(owner: DaemonOwnership, source: string): PreparedImport {
   owner.assertCurrent();
-  const canonical = realpathSync(source);
-  if (excluded.some(path => pathInside(path, canonical))) throw error('invalid_request', 'Managed transcripts must use clone, not import.');
-  const fd = openSync(source, constants.O_RDONLY | constants.O_NONBLOCK);
-  let bytes: Buffer; let checked: BigIntStats;
-  try {
-    const before = fstatSync(fd, { bigint: true }); regular(before);
-    const current = statSync(canonical, { bigint: true });
-    if (current.dev !== before.dev || current.ino !== before.ino || realpathSync(source) !== canonical) throw error('invalid_request', 'Import source changed.');
-    if (before.size > BigInt(maxImportBytes)) throw error('invalid_request', 'Import exceeds 64 MiB.');
-    const buffer = Buffer.alloc(Number(before.size) + 1); let count = 0;
-    while (count < buffer.length) {
-      const read = readSync(fd, buffer, count, Math.min(65536, buffer.length - count), count);
-      if (!read) break;
-      count += read;
-    }
-    const after = fstatSync(fd, { bigint: true });
-    if (count !== Number(before.size) || after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) throw error('invalid_request', 'Import source changed.');
-    bytes = buffer.subarray(0, count);
-    const end = bytes.indexOf(10);
-    if (end < 0 || end > 65536) throw error('invalid_request', 'Import header exceeds its bound.');
-    const lines = new TextDecoder('utf-8', { fatal: true }).decode(bytes).trimEnd().split('\n');
-    parseSchema(headerSchema, JSON.parse(lines[0]!));
-    for (const line of lines.slice(1)) {
-      if (!line.trim()) continue;
-      const row: unknown = JSON.parse(line);
-      if (!row || typeof row !== 'object' || Array.isArray(row)) throw error('invalid_request', 'Invalid import row.');
-    }
-    owner.assertCurrent();
-    checked = after;
-  } finally { closeSync(fd); }
-  const pin = pathIdentity(canonical);
-  return { bytes, assertCurrent() {
-    owner.assertCurrent(); assertPathIdentity(pin);
-    const current = statSync(canonical, { bigint: true });
-    if (realpathSync(source) !== canonical || current.dev !== checked.dev || current.ino !== checked.ino || current.size !== checked.size
-      || current.mtimeNs !== checked.mtimeNs || current.ctimeNs !== checked.ctimeNs) throw error('invalid_request', 'Import source changed after validation.');
-  } };
+  const bytes = readFileSync(source); const end = bytes.indexOf(10);
+  let header: unknown;
+  try { header = JSON.parse(bytes.subarray(0, end < 0 ? bytes.length : end).toString('utf8')); }
+  catch { header = undefined; }
+  if ((header as { type?: unknown } | undefined)?.type !== 'session') throw error('invalid_request', 'Import source is not a session transcript.');
+  return { bytes };
 }
 
-export function stageImport(owner: DaemonOwnership, directory: string, source: string, excluded: readonly string[], prepared = prepareImport(owner, source, excluded)): StagedImport {
-  prepared.assertCurrent();
+export function stageImport(owner: DaemonOwnership, directory: string, source: string, prepared = prepareImport(owner, source)): StagedImport {
+  owner.assertCurrent();
   const target = prepareControlDirectory(owner, join(owned(owner, directory), '.felan-import')); const check = guardOwnedPaths(owner, [target]);
   const path = join(target, `.felan-import-${randomUUID()}.tmp`);
   const output = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   let pin: PathIdentity | undefined;
-  try { pin = pathIdentity(path); check(); prepared.assertCurrent(); writeFileSync(output, prepared.bytes); fsyncSync(output); check(); prepared.assertCurrent(); }
+  try { pin = pathIdentity(path); check(); writeFileSync(output, prepared.bytes); fsyncSync(output); check(); }
   catch (cause) { owner.assertCurrent(); if (pin) unlinkPinned(path, pin); throw cause; }
   finally { closeSync(output); }
   const pinned = pin;
@@ -116,74 +77,33 @@ export function stageImport(owner: DaemonOwnership, directory: string, source: s
   catch (cause) { dispose(); throw cause; }
 }
 
-export interface PreparedExport { target: string; parent: string; parentPin: PathIdentity; previous?: PathIdentity; check(): void; checkParent(): void }
-export function prepareExport(owner: DaemonOwnership, destination: string): PreparedExport {
+export interface PreparedExport { target: string }
+/** Resolves an export destination; only daemon-managed files (transcripts, control and runtime state) are protected. */
+export function prepareExport(owner: DaemonOwnership, destination: string, managed: readonly string[]): PreparedExport {
   owner.assertCurrent();
   if (['.', '..', ''].includes(basename(destination))) throw error('invalid_request', 'Export requires an explicit file name.');
-  const parent = realpathSync(dirname(destination)); const target = join(parent, basename(destination));
-  if (owner.target.rootSet.some(root => pathInside(root, target))) throw error('forbidden', 'Export destinations cannot be inside a managed store.');
-  const parents = pinPathChain(parent, owner.target.uid);
-  const checkParent = () => { owner.assertCurrent(); for (const pin of parents) assertPathIdentity(pin); };
-  let previous: PathIdentity | undefined;
-  try { regular(lstatSync(target, { bigint: true }), owner); previous = pathIdentity(target); }
-  catch (cause) { if (!absent(cause)) throw cause; }
-  const checkDestination = () => {
-    checkParent();
-    if (previous) assertPathIdentity(previous);
-    else {
-      try { lstatSync(target); throw error('ownership_lost', 'Export destination appeared before publication.'); }
-      catch (cause) { if (!absent(cause)) throw cause; }
-    }
-  };
-  checkDestination();
-  return { target, parent, parentPin: parents[0]!, ...(previous ? { previous } : {}), check: checkDestination, checkParent };
+  const target = join(realpathSync(dirname(destination)), basename(destination));
+  let resolved = target;
+  try { resolved = realpathSync(target); } catch (cause) { if (!absent(cause)) throw cause; }
+  if (managed.some(path => pathInside(path, target) || pathInside(path, resolved))) throw error('forbidden', 'Export cannot overwrite files managed by the session daemon.');
+  return { target };
 }
 
-export async function publishExport(owner: DaemonOwnership, storageRoot: string, destination: string, render: (path: string) => Promise<unknown>, prepared = prepareExport(owner, destination)): Promise<string> {
-  const { target, parent, parentPin, previous, check: checkDestination, checkParent } = prepared;
-  if (target !== join(realpathSync(dirname(destination)), basename(destination))) throw error('invalid_request', 'Export destination differs from preparation.');
-  checkDestination();
-  const stageDir = prepareControlDirectory(owner, join(owned(owner, storageRoot), 'exports'));
-  const checkStage = guardOwnedPaths(owner, [stageDir]); const stage = join(stageDir, `.staging-${randomUUID()}.tmp`);
-  const stageFd = openSync(stage, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  closeSync(stageFd); const stagePin = pathIdentity(stage);
-  const temp = join(parent, `.felan-export-${randomUUID()}.tmp`);
-  let tempPin: PathIdentity | undefined; let published = false;
+export async function publishExport(owner: DaemonOwnership, render: (path: string) => Promise<unknown>, prepared: PreparedExport): Promise<string> {
+  const { target } = prepared;
+  const temp = join(dirname(target), `.felan-export-${randomUUID()}.tmp`);
   try {
-    checkDestination(); await render(stage); checkStage(); assertPathIdentity(stagePin); checkDestination();
-    const input = openSync(stage, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-      const before = fstatSync(input, { bigint: true }); regular(before, owner); sameFile(before, stagePin);
-      const output = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o666);
-      try {
-        tempPin = pathIdentity(temp);
-        if (previous) { fchmodSync(output, Number(previous.mode & 0o777n)); tempPin = pathIdentity(temp); }
-        const buffer = Buffer.alloc(65536); let offset = 0;
-        while (BigInt(offset) < before.size) {
-          const count = readSync(input, buffer, 0, Math.min(buffer.length, Number(before.size - BigInt(offset))), offset);
-          if (!count) throw error('invalid_request', 'Export staging shrank during publication.');
-          writeFileSync(output, buffer.subarray(0, count)); offset += count;
-        }
-        const after = fstatSync(input, { bigint: true });
-        if (after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) throw error('invalid_request', 'Export staging changed during publication.');
-        fsyncSync(output); checkStage(); checkDestination(); assertPathIdentity(tempPin);
-        renameSync(temp, target); published = true;
-      } finally { closeSync(output); }
-    } finally { closeSync(input); }
-    const directory = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    try { sameFile(fstatSync(directory, { bigint: true }), parentPin); checkParent(); fsyncSync(directory); checkParent(); }
-    finally { closeSync(directory); }
-    return target;
+    await render(temp);
+    owner.assertCurrent();
+    try { chmodSync(temp, statSync(target).mode & 0o777); } catch (cause) { if (!absent(cause)) throw cause; }
+    const fd = openSync(temp, constants.O_RDONLY);
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+    renameSync(temp, target);
   } catch (cause) {
-    if (published) throw error('indeterminate', 'Export was published but its durability could not be confirmed.');
+    try { unlinkSync(temp); } catch {}
     throw cause;
-  } finally {
-    try {
-      owner.assertCurrent(); checkStage(); unlinkPinned(stage, stagePin); syncOwnedDirectory(owner, stageDir);
-      if (tempPin && !published) { checkParent(); unlinkPinned(temp, tempPin); }
-    } catch (cause) {
-      if (published) throw error('indeterminate', 'Export was published but staging cleanup could not be confirmed.');
-      throw cause;
-    }
   }
+  const directory = openSync(dirname(target), constants.O_RDONLY | constants.O_DIRECTORY);
+  try { fsyncSync(directory); } finally { closeSync(directory); }
+  return target;
 }

@@ -98,6 +98,20 @@ describe('daemon headless application', () => {
     expect(f.output).toEqual([]);
   });
 
+  it('resolves session dialogs during its run with cancelled defaults, like a client without UI', async () => {
+    const stream = gate();
+    const f = await fixture({ onStream: () => stream.promise });
+    cleanups.push(async () => stream.resolve());
+    const run = runLocalFelanHeadless({ ...f.settings, mode: 'text', initialMessage: 'hello', sessionId: f.root.sessionId });
+    await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('running'));
+    const session = { kind: 'session' as const, session: f.root.sessionId, root: f.root.sessionId };
+    await expect(f.broker.request({ kind: 'confirm', title: 'Proceed?', message: 'Fixture' }, session)).resolves.toEqual({ state: 'cancelled', reason: 'user' });
+    await expect(f.broker.request({ kind: 'tool_approval', toolCallId: 'call', toolName: 'bash', summary: 'bash',
+      options: [{ id: 'allow-once', title: 'Allow once' }] }, session)).resolves.toEqual({ state: 'cancelled', reason: 'user' });
+    stream.resolve();
+    expect(await run, f.errors.join('\n')).toBe(0);
+  });
+
   it('rejects concurrent prompts rather than creating a second writer', async () => {
     const stream = gate();
     const f = await fixture({ onStream: () => stream.promise });
@@ -167,12 +181,12 @@ describe('daemon headless application', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it('bounds queued native output and rejects flush rather than blocking daemon execution', async () => {
-    const onError = vi.fn();
-    const writer = new HeadlessJsonWriter(() => {}, onError);
-    for (let index = 0; index < 4097; index++) writer.enqueue({ index });
-    expect(onError).toHaveBeenCalledOnce();
-    await expect(writer.flush()).rejects.toThrow('consumer is too slow');
+  it('queues native output for a slow consumer without dropping lines', async () => {
+    const onError = vi.fn(); const lines: string[] = [];
+    const writer = new HeadlessJsonWriter((line, done) => { lines.push(line); setImmediate(done); }, onError);
+    for (let index = 0; index < 5000; index++) writer.enqueue({ index });
+    await writer.flush();
+    expect(lines).toHaveLength(5000); expect(onError).not.toHaveBeenCalled();
   });
 
   it('fails native JSON explicitly on a sequence gap without cancelling its admitted run', async () => {
@@ -195,6 +209,29 @@ describe('daemon headless application', () => {
     expect(f.errors.join('\n')).toContain('sequence was interrupted');
     expect(f.store.session(f.root.sessionId).run.state).toBe('running');
     stream.resolve();
+  });
+
+  it('keeps a text run through a daemon restart within its bounded reconnect window', async () => {
+    const stream = gate();
+    const f = await fixture({ onStream: () => stream.promise });
+    cleanups.push(async () => stream.resolve());
+    const statuses: string[] = []; const limits: Array<number | undefined> = [];
+    const createClient: typeof f.createClient = options => {
+      limits.push(options.reconnectAttempts);
+      const client = f.createClient({ ...options, reconnectDelayMs: 20 });
+      client.subscribe(() => statuses.push(client.status));
+      return client;
+    };
+    const running = runLocalFelanHeadless({ ...f.settings, createClient, mode: 'text', initialMessage: 'hello', sessionId: f.root.sessionId });
+    await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('running'));
+    f.server.close();
+    await vi.waitFor(() => expect(f.clients.at(-1)!.reconnection?.attempt).toBeGreaterThanOrEqual(3));
+    await f.restartServer();
+    await vi.waitFor(() => expect(f.clients.at(-1)!.status).toBe('ready'));
+    stream.resolve();
+    expect(await running).toBe(0);
+    expect(f.output).toEqual(['done\n']); expect(f.errors).toEqual([]);
+    expect(limits).toEqual([8]); expect(statuses).toContain('disconnected'); expect(statuses).not.toContain('blocked');
   });
 
   it('fails native JSON explicitly on disconnect without cancelling its admitted run', async () => {

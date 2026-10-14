@@ -8,7 +8,7 @@ import {
   MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, type ActiveMessageDisplay,
 } from '@felan-ai/session-protocol';
 import type { DaemonControlStore } from './control-store.js';
-import { ControlStoreError, type ControlSession } from './control-state.js';
+import type { ControlSession } from './control-state.js';
 import type { SessionBinding } from './session-lifecycle-contracts.js';
 import { messageDisplay } from './message-display.js';
 import { sessionTip } from './session-cursor.js';
@@ -143,11 +143,7 @@ export class SessionProjection {
     if (this.disposed) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    try { this.refreshNow(); }
-    catch (error) {
-      if (!isProjectionCapacityError(error)) throw error;
-      this.schedule();
-    }
+    this.refreshNow();
   }
 
   syncCursor(): void {
@@ -253,7 +249,6 @@ export class SessionProjection {
   setPresentation(value: Presentation | { id: string; remove: true }): void {
     if ('remove' in value) { this.presentation.delete(value.id); if (this.compactionDirty || this.displayDirty) this.schedule(); this.publish({ type: 'presentation.removed', id: value.id }); return; }
     const parsed = parseSchema(PresentationSchema, value);
-    if (!this.presentation.has(parsed.id) && this.presentation.size >= LIMITS.pageEntries) throw new ControlStoreError('request_capacity', 'Presentation capacity reached.');
     this.publish({ type: 'presentation.updated', presentation: parsed });
     this.presentation.set(parsed.id, parsed);
   }
@@ -292,8 +287,7 @@ export class SessionProjection {
       const display = messageDisplay(event.message);
       this.activeDisplay = display?.kind === 'assistant' ? { message: this.assistant, display } : undefined;
       this.displayDirty = true;
-      try { this.flushDisplay(); }
-      catch (error) { if (!isProjectionCapacityError(error)) throw error; this.schedule(); }
+      this.flushDisplay();
     }
     if (event.type === 'message_update' && (this.liveIds.get(event.message) ?? this.assistant)) {
       if (!this.activeDisplay) {
@@ -356,8 +350,7 @@ export class SessionProjection {
       if (this.streams.size + this.completionOnly.size >= LIMITS.activeStreams) throw new Error('Active stream capacity exceeded.');
       const stream = { id, message, kind, reason: 'limit' as const };
       this.completionOnly.set(id, stream); this.dirtyCompletionOnly.add(id);
-      try { this.publishCompletionOnly(id); }
-      catch (error) { if (!isProjectionCapacityError(error)) throw error; this.schedule(); }
+      this.publishCompletionOnly(id);
       return;
     }
     const offset = old?.offset ?? 0;
@@ -488,11 +481,6 @@ export class SessionProjection {
   }
 }
 
-export function isProjectionCapacityError(error: unknown): boolean {
-  return error instanceof ControlStoreError && error.code === 'request_capacity'
-    && (error.message === 'Control capacity is reserved for outcomes and safety operations.' || error.message === 'Presentation capacity reached.');
-}
-
 type MessageEntry = Extract<SessionEntry, { type: 'message' | 'custom_message' | 'compaction' | 'branch_summary' }>;
 function isMessageEntry(entry: SessionEntry): entry is MessageEntry { return entry.type === 'message' || entry.type === 'custom_message' || entry.type === 'compaction' || entry.type === 'branch_summary'; }
 export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Origin): Message {
@@ -505,7 +493,7 @@ export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Or
     if (part.type === 'text') content.push({ type: 'text', text: part.text });
     else if (part.type === 'thinking') content.push({ type: 'thinking', text: part.thinking });
     else if (part.type === 'image') {
-      validateBase64(part.data, LIMITS.attachmentBytes);
+      validateBase64(part.data);
       content.push({ type: 'image', mimeType: part.mimeType as 'image/png', data: part.data });
     }
     else if (part.type === 'toolCall') content.push({ type: 'tool_call', id: part.id, name: part.name, arguments: parseSchema(JsonValueSchema, part.arguments) });
@@ -546,5 +534,5 @@ function resultText(value: unknown): string {
   return value.content.filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n');
 }
 export function profilePolicy(session: ControlSession) {
-  return { mode: session.policy.effective, pendingTightening: !!session.policy.pending, generation: session.policy.generation };
+  return { mode: session.policy.effective, generation: session.policy.generation };
 }

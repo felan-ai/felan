@@ -91,7 +91,7 @@ describe('daemon ACP sessions', () => {
     expect(await prompt).toEqual({ stopReason: 'cancelled' });
   });
 
-  it('loads a busy session for observation, exposing policy blockers without admitting an ungated prompt', async () => {
+  it('loads a busy session for observation and applies the strict ACP policy immediately', async () => {
     const stream = gate();
     const f = await fixture({ onStream: () => stream.promise });
     cleanups.push(async () => stream.resolve());
@@ -100,11 +100,9 @@ describe('daemon ACP sessions', () => {
     const running = await tui.request('prompt', { text: 'already running' }, { session: f.root.sessionId });
     expect(running.outcome).toBe('accepted');
     await f.sessions.loadSession({ ...request(f.cwd), sessionId: f.root.sessionId }, f.editor);
-    expect(f.clients[0]!.getAttachment(f.root.sessionId)?.state.snapshot?.policy.pending).toBeDefined();
-    expect(JSON.stringify(f.updates)).toContain('policy is pending');
-    await expect(f.sessions.prompt({ sessionId: f.root.sessionId, prompt: [{ type: 'text', text: 'not yet' }] }, f.editor)).rejects.toThrow();
+    expect(f.store.session(f.root.sessionId).policy.effective).toBe('acp-strict');
     stream.resolve();
-    await vi.waitFor(() => expect(f.store.session(f.root.sessionId).policy.effective).toBe('acp-strict'));
+    await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('idle'));
     expect(await f.sessions.prompt({ sessionId: f.root.sessionId, prompt: [{ type: 'text', text: 'now' }] }, f.editor)).toEqual({ stopReason: 'end_turn' });
   });
 

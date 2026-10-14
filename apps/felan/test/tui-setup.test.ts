@@ -23,7 +23,7 @@ function pending<T>(signal?: AbortSignal): Promise<T | undefined> {
   });
 }
 
-function fixture(overrides: Partial<Endpoints> = {}, supported: SetupOperation[] = operations, localConsole = true) {
+function fixture(overrides: Partial<Endpoints> = {}, supported: SetupOperation[] = operations) {
   const calls: Call[] = [];
   const endpoints: Endpoints = {
     'host.setup.catalog': () => structuredClone(catalog), 'host.setup.start': () => structuredClone(waiting),
@@ -31,7 +31,7 @@ function fixture(overrides: Partial<Endpoints> = {}, supported: SetupOperation[]
     'host.setup.open_link': () => ({}), ...overrides,
   };
   const client = {
-    capabilities: { operations: supported, localConsole },
+    capabilities: { operations: supported },
     async request<O extends Operation>(op: O, params: OperationParams<O>): Promise<ResponseFor<O>> {
       calls.push({ op, params: structuredClone(params) } as Call);
       const endpoint = endpoints[op as SetupOperation] as (value: OperationParams<O>) => OperationResult<O> | Promise<OperationResult<O>>;
@@ -74,7 +74,7 @@ it('asks for an auth type before a provider and sends secrets only through the e
   const f = fixture(); const work = f.setup.login();
   await vi.advanceTimersByTimeAsync(500);
   expect(await work).toBe(true);
-  expect(f.calls.find(call => call.op === 'host.setup.start')).toEqual({ op: 'host.setup.start', params: { kind: 'login', provider: 'provider', method: 'api_key', confirmed: true } });
+  expect(f.calls.find(call => call.op === 'host.setup.start')).toEqual({ op: 'host.setup.start', params: { kind: 'login', provider: 'provider', method: 'api_key' } });
   expect(f.ui.select).toHaveBeenCalledExactlyOnceWith('Select authentication method:', [
     { value: 'oauth', label: 'Sign in with an account' }, { value: 'api_key', label: 'Sign in with an API key' },
   ], expect.any(Object));
@@ -88,12 +88,6 @@ it('asks for an auth type before a provider and sends secrets only through the e
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it('does not start login after confirmation dismissal', async () => {
-  const f = fixture({ 'host.setup.catalog': () => ({ ...catalog, providers: [{ ...catalog.providers[0]!, configured: true }] }) }); f.ui.confirm.mockResolvedValueOnce(false);
-  expect(await f.setup.login()).toBe(false);
-  expect(f.calls.map(call => call.op)).toEqual(['host.setup.catalog']);
-});
-
 it.each(['oauth', 'api_key'] as const)('starts a single-method %s provider directly', async method => {
   const f = fixture({ 'host.setup.catalog': () => ({ ...catalog, providers: [{ ...catalog.providers[0]!, methods: [method] }] }) });
   const work = f.setup.login('Fixture provider'); await vi.advanceTimersByTimeAsync(500); expect(await work).toBe(true);
@@ -101,13 +95,13 @@ it.each(['oauth', 'api_key'] as const)('starts a single-method %s provider direc
   expect(f.calls.find(call => call.op === 'host.setup.start')?.params).toMatchObject({ method });
 });
 
-it('confirms replacement only for configured providers and preserves provider method labels', async () => {
+it('replaces configured credentials without confirmation and preserves provider method labels', async () => {
   const f = fixture({ 'host.setup.catalog': () => ({ ...catalog, providers: [{ ...catalog.providers[0]!, configured: true, status: { type: 'oauth', source: 'OAuth' }, oauthLabel: 'Use subscription' }] }) });
   const work = f.setup.login('PROVIDER'); await vi.advanceTimersByTimeAsync(500); expect(await work).toBe(true);
   expect(f.ui.select.mock.calls[0]?.[0]).toBe('Select authentication method for Fixture provider:');
   expect(f.ui.select.mock.calls[0]?.[1]).toEqual([{ value: 'oauth', label: 'Use subscription' }, { value: 'api_key', label: 'Sign in with an API key' }]);
   expect(f.ui.providers).not.toHaveBeenCalled();
-  expect(f.ui.confirm).toHaveBeenCalledExactlyOnceWith('Replace credentials', 'Replace existing credentials for Fixture provider?', expect.any(Object));
+  expect(f.ui.confirm).not.toHaveBeenCalled();
 });
 
 it('uses prompt-specific selection IDs instead of labels', async () => {
@@ -164,7 +158,7 @@ it('requires explicit unchecked checklist submission and maps unchecked choices 
   expect(rows.find(row => row.id === 'enable')?.description).toBe('Enable the installed Installed extension. Checked: enable. Unchecked: leave unchanged.');
   expect(rows.find(row => row.id === 'skip')?.description).toContain('No changes are available');
   expect(f.ui.confirm).toHaveBeenCalledWith('Apply extension changes?', 'install: Installable\nenable: Installed\ndisable: Enabled\nunchanged: Fallback', expect.anything());
-  expect(f.calls.find(call => call.op === 'host.setup.start')?.params).toEqual({ kind: 'dependencies', confirmed: true,
+  expect(f.calls.find(call => call.op === 'host.setup.start')?.params).toEqual({ kind: 'dependencies',
     choices: [{ id: 'install', action: 'install' }, { id: 'enable', action: 'enable' }, { id: 'disable', action: 'disable' }, { id: 'skip', action: 'skip' }] });
 });
 
@@ -203,17 +197,17 @@ it('submits skip for every unchecked dependency only after Enter', async () => {
   ] }), 'host.setup.start': () => ({ ...finished, kind: 'dependencies' }) });
   f.ui.checklist.mockResolvedValueOnce([]);
   expect(await f.setup.dependencies(true)).toBe(true);
-  expect(f.calls.find(call => call.op === 'host.setup.start')?.params).toEqual({ kind: 'dependencies', confirmed: true, choices: [{ id: 'needs', action: 'skip' }] });
+  expect(f.calls.find(call => call.op === 'host.setup.start')?.params).toEqual({ kind: 'dependencies', choices: [{ id: 'needs', action: 'skip' }] });
 });
 
-it.each([true, false])('auto-opens authorization URLs once only for a local console (%s)', async localConsole => {
+it('auto-opens authorization URLs once', async () => {
   const links = [{ label: 'Enter code: TEST-CODE', url: 'https://example.test/login', autoOpen: true as const },
     { label: 'Documentation', url: 'https://example.test/docs' }];
   let reads = 0;
   const f = fixture({ 'host.setup.start': () => ({ ...running, links }),
-    'host.setup.read': () => ++reads < 3 ? { ...running, links } : finished }, operations, localConsole);
+    'host.setup.read': () => ++reads < 3 ? { ...running, links } : finished });
   const work = f.setup.login(); await vi.advanceTimersByTimeAsync(1_500); expect(await work).toBe(true);
-  expect(f.openBrowser.mock.calls).toEqual(localConsole ? [['https://example.test/login']] : []);
+  expect(f.openBrowser.mock.calls).toEqual([['https://example.test/login']]);
   expect(f.ui.login).toHaveBeenCalledWith(expect.objectContaining({ links }), 'Fixture provider', expect.any(AbortSignal));
   expect(f.calls.some(call => call.op === 'host.setup.open_link')).toBe(false);
 });
@@ -362,7 +356,7 @@ it('lists only stored credentials for logout and starts the daemon removal job',
   expect(f.ui.providers.mock.calls[0]?.[1]).toEqual([
     { value: 'account', label: 'Alpha [subscription] ✓ configured' }, { value: 'key', label: 'Zulu [API key] ✓ configured' },
   ]);
-  expect(f.calls.find(call => call.op === 'host.setup.start')?.params).toEqual({ kind: 'logout', provider: 'account', confirmed: true });
+  expect(f.calls.find(call => call.op === 'host.setup.start')?.params).toEqual({ kind: 'logout', provider: 'account' });
   expect(f.controller.setNotice).toHaveBeenLastCalledWith('Logged out of Alpha');
   expect(f.ui.confirm).not.toHaveBeenCalled();
 });

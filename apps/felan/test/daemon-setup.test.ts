@@ -27,13 +27,13 @@ async function fixture(login?: typeof startAuthWorker, dependencies: readonly Se
     const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
       kind: 'tui', clientVersion: 'fixture', retries: 0 }); clients.push(client); await client.connect(); return client;
   }
-  return { ...f, manager, client, refreshModels, start: { kind: 'login' as const, provider: provider.id, method: 'api_key' as const, confirmed: true as const } };
+  return { ...f, manager, client, refreshModels, start: { kind: 'login' as const, provider: provider.id, method: 'api_key' as const } };
 }
 
 it('refreshes the attached session model catalog after authentication and before reporting success', async () => {
   const complete = gate();
   const f = await fixture(async () => ({ done: complete.promise, answer: async () => {} }));
-  const client = await f.client(); expect(client.capabilities?.localConsole).toBe(true);
+  const client = await f.client();
   const models = f.root.runtime.session.modelRuntime; const model = models.getModels()[0]!;
   let available = false;
   vi.spyOn(models, 'getAvailableSnapshot').mockImplementation(() => available ? [model] : []);
@@ -107,15 +107,15 @@ it('never installs on catalog reads or without an explicit selected action', asy
   const f = await fixture(undefined, [dependency]);
   expect((await f.manager.catalog()).dependencies).toMatchObject([{ available: false, needsSetup: true }]); expect(install).not.toHaveBeenCalled();
   expect(() => f.manager.start({ kind: 'dependencies', choices: [{ id: 'fixture', action: 'install' }], confirmed: false } as never, 'owner')).toThrow();
-  const skipped = f.manager.start({ kind: 'dependencies', choices: [{ id: 'fixture', action: 'skip' }], confirmed: true }, 'owner');
+  const skipped = f.manager.start({ kind: 'dependencies', choices: [{ id: 'fixture', action: 'skip' }] }, 'owner');
   await vi.waitFor(() => expect(f.manager.read(skipped.id, 'owner').state).toBe('completed'));
   expect(install).not.toHaveBeenCalled();
   expect((await f.manager.catalog()).dependencies).toMatchObject([{ available: false, enabled: true }]);
-  const selected = f.manager.start({ kind: 'dependencies', choices: [{ id: 'fixture', action: 'install' }], confirmed: true }, 'owner');
+  const selected = f.manager.start({ kind: 'dependencies', choices: [{ id: 'fixture', action: 'install' }] }, 'owner');
   await vi.waitFor(() => expect(f.manager.read(selected.id, 'owner').state).toBe('completed'));
   expect(install).toHaveBeenCalledOnce();
   expect((await f.manager.catalog()).dependencies).toMatchObject([{ available: true, enabled: true, needsSetup: false }]);
-  const unchanged = f.manager.start({ kind: 'dependencies', choices: [{ id: 'fixture', action: 'skip' }], confirmed: true }, 'owner');
+  const unchanged = f.manager.start({ kind: 'dependencies', choices: [{ id: 'fixture', action: 'skip' }] }, 'owner');
   await vi.waitFor(() => expect(f.manager.read(unchanged.id, 'owner').state).toBe('completed'));
   expect((await f.manager.catalog()).dependencies).toMatchObject([{ available: true, enabled: true }]);
   expect(install).toHaveBeenCalledOnce();
@@ -128,7 +128,7 @@ it('blocks further work and shutdown completion when an auth child cannot be cle
   const manager = new HostSetupManager({ agentDir: f.owner.target.agentDir, runtime: f.root.agentRuntime, models,
     assertCurrent: () => f.owner.assertCurrent(), dependencies: [], open: async () => {},
     login: async () => ({ done: Promise.reject(new AuthCleanupError('Failed to stop owned test process')), answer: async () => {} }) });
-  const request = { kind: 'login' as const, provider: provider.id, method: 'api_key' as const, confirmed: true as const };
+  const request = { kind: 'login' as const, provider: provider.id, method: 'api_key' as const };
   const job = manager.start(request, 'owner');
   await vi.waitFor(() => expect(manager.read(job.id, 'owner').state).toBe('failed'));
   await expect(manager.drain()).rejects.toBeInstanceOf(AuthCleanupError);
@@ -168,7 +168,7 @@ it('catalogs ambient methods, OAuth labels, subscriptions and safe configured so
       status: { type: 'api_key', source: 'FIXTURE_API_KEY' } }),
   ]);
   expect(catalog.credentials).toEqual([{ id: 'dual', label: 'Alpha Dual', type: 'oauth', subscription: true }]);
-  expect(() => f.manager.start({ kind: 'login', provider: 'ambient', method: 'api_key', confirmed: true }, 'owner')).toThrow();
+  expect(() => f.manager.start({ kind: 'login', provider: 'ambient', method: 'api_key' }, 'owner')).toThrow();
 });
 
 it('removes only stored credentials through the daemon and refreshes model availability', async () => {
@@ -176,7 +176,7 @@ it('removes only stored credentials through the daemon and refreshes model avail
   vi.spyOn(models, 'listCredentials').mockResolvedValue([{ providerId: f.start.provider, type: 'api_key' }]);
   const logout = vi.spyOn(models, 'logout').mockResolvedValue(undefined);
   const client = await f.client();
-  const response = await client.request('host.setup.start', { kind: 'logout', provider: f.start.provider, confirmed: true });
+  const response = await client.request('host.setup.start', { kind: 'logout', provider: f.start.provider });
   if (response.outcome !== 'accepted') throw new Error('Logout did not start.');
   await vi.waitFor(async () => expect(await client.request('host.setup.read', { jobId: response.result.id })).toMatchObject({ result: {
     kind: 'logout', state: 'completed', message: expect.stringContaining('Environment variables and models.json config are unchanged.'),
@@ -189,7 +189,7 @@ it('does not invoke logout for providers without a stored credential', async () 
   const f = await fixture(); const models = f.root.runtime.session.modelRuntime;
   vi.spyOn(models, 'listCredentials').mockResolvedValue([]);
   const logout = vi.spyOn(models, 'logout').mockResolvedValue(undefined);
-  const job = f.manager.start({ kind: 'logout', provider: f.start.provider, confirmed: true }, 'owner');
+  const job = f.manager.start({ kind: 'logout', provider: f.start.provider }, 'owner');
   await vi.waitFor(() => expect(f.manager.read(job.id, 'owner').state).toBe('failed'));
   expect(logout).not.toHaveBeenCalled();
 });

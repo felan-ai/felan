@@ -20,7 +20,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, createdAt: 1, state: 'waiting', request: { kind: 'input', title: 'Model question must wait' } };
 
-async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate } = {}) {
+async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tui-startup-')); const fake = new FakeTransport();
   await mkdir(join(directory, 'tui'));
   await writeFile(join(directory, 'tui/settings.json'), JSON.stringify({ showImages: false, ...options.preferences }));
@@ -28,7 +28,8 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
     'host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link',
     ...(options.statusAvailable === false ? [] : ['host.status' as const])];
   const client = new SessionClient({ target: { kind: 'isolated', directory, namespaceId: 'startup-test' }, kind: 'tui', clientVersion: 'fixture',
-    interactionKinds: [...TERMINAL_INTERACTION_KINDS], connector: fake.connector, retries: 0 });
+    interactionKinds: [...TERMINAL_INTERACTION_KINDS], connector: fake.connector, retries: 0,
+    ...(options.incompatibleWork === undefined ? {} : { expectedDaemonVersion: 'installed' }) });
   const identity = identityFor(client.target, 'instance'); const controller = new TuiSessionController(client);
   const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal); const abort = new AbortController();
   let loggedIn = options.provider ?? false; let cancelled = false;
@@ -36,10 +37,10 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
     prompt: { id: 'key', kind: 'input', message: 'Secret API key', secret: true } };
   fake.onSend = (request, connection) => {
     switch (request.op) {
-      case 'hello': fake.reply(request, { attachmentId: 'client', localConsole: true, principal: 'principal', daemonVersion: 'fixture', protocol: 1,
+      case 'hello': fake.reply(request, { attachmentId: 'client', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
         identity, operations, interactionKinds: [...TERMINAL_INTERACTION_KINDS] }, connection); break;
       case 'host.status': fake.reply(request, { identity, daemonVersion: 'fixture', protocol: 1, state: 'ready',
-        active: { sessions: 0, runs: 0, attachments: 0 }, setupNeeds: loggedIn ? [] : [{ code: 'provider', message: 'No model available' }] }, connection); break;
+        active: { sessions: 0, runs: 0, work: options.incompatibleWork ?? 0, attachments: 0 }, setupNeeds: loggedIn ? [] : [{ code: 'provider', message: 'No model available' }] }, connection); break;
       case 'sessions.create':
         if (options.createError) fake.frame({ v: 1, re: request.id, outcome: 'rejected', error: { code: 'invalid_request', message: 'Invalid working directory.', retryable: false } }, connection);
         else fake.reply(request, { sessionId: 'session' }, connection);
@@ -215,3 +216,12 @@ class TestTerminal implements Terminal {
   setProgress(_active: boolean): void {}
   setProgramStatus(_status: ProgramStatus): void {}
 }
+
+it('asks before restarting an incompatible daemon whose only active work is a background process', async () => {
+  const f = await fixture({ provider: true, incompatibleWork: 1 }); const onDaemonAction = vi.fn(async () => true);
+  const running = f.start({ onDaemonAction });
+  await vi.waitFor(() => expect(f.text().replace(/\s+/gu, ' ')).toContain('1 active task will be interrupted'));
+  f.terminal.input('\x1b'); await running;
+  expect(onDaemonAction).not.toHaveBeenCalled();
+  expect(f.fake.controls).toEqual([]);
+});

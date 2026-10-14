@@ -59,7 +59,6 @@ export interface SessionExecutionPort {
   assertOwnsPath(path: string): string;
   assertNewWork(parent: string): void;
   assertDispatch(session: string): void;
-  activatePolicy(): void;
   session(id: string): AgentSession | undefined;
   executions(): ExecutionHost;
   configureExecutions(settings: ExecutionSettings): void;

@@ -273,7 +273,6 @@ export class ClientAgentHost implements AgentNavigatorHost {
         if (this.closed || this.histories.get(session) !== target) return;
         if (response.outcome !== 'accepted') { if (response.error.code === 'resync_required') { retry = true; break; } throw new Error(response.error.message); }
         entries = [...response.result.entries, ...entries]; cursor = response.result.cursor;
-        if (entries.length > 100_000 || new TextEncoder().encode(JSON.stringify(entries)).length > 64 * 1024 * 1024) throw new Error('Transcript exceeds its display bound.');
       }
       if (retry || this.client.getAttachment(session)?.state.snapshot?.branch !== snapshot.branch) continue;
       target.entries = entries; target.branch = snapshot.branch; target.loaded = true; return;

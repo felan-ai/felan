@@ -10,12 +10,12 @@ afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(
 async function setup(overrides: Partial<HostLifecycleOptions> = {}) {
   const f = await fixture(); const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
   const broker = createRegistryInteractionBroker(f.registry); const complete = vi.fn(async () => {});
-  const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity, beginDrain: () => f.registry.beginDrain(),
+  const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity, beginDrain: () => f.registry.beginDrain(), endDrain: () => f.registry.endDrain(),
     settle: async mode => { await broker.drain(); if (mode === 'drain') await f.registry.waitForDrain(); await f.registry.shutdown({ interrupt: mode === 'force' }); },
     complete, ...overrides });
   const admission = new OrderedAdmission(f.store, { now: () => now });
   async function request(mode: 'drain' | 'force' = 'drain', op: 'host.stop' | 'host.restart' = 'host.stop', notify = true) {
-    const id = requestId(); const envelope = { v: 1, id, op, params: { expected: f.owner.identity, confirmed: true, mode } } as const;
+    const id = requestId(); const envelope = { v: 1, id, op, params: { expected: f.owner.identity, mode } } as const;
     const response = await admission.submit(envelope, 'test-client', command => lifecycle.prepare(command));
     if (notify) lifecycle.afterResponse(id, response.outcome === 'accepted');
     return { id, envelope, response };
@@ -37,10 +37,10 @@ it('never retries the effect of the same durable request', async () => {
   f.lifecycle.afterResponse(result.id); expect(f.complete).toHaveBeenCalledOnce();
 });
 
-it('does not begin shutdown when the management outcome could not be committed', async () => {
+it('returns to ready without shutdown when the management outcome could not be committed', async () => {
   const settle = vi.fn(async () => {}); const f = await setup({ settle }); const result = await f.request('drain', 'host.stop', false);
   f.lifecycle.afterResponse(result.id, false);
-  expect(f.lifecycle.state).toBe('blocked'); expect(settle).not.toHaveBeenCalled(); expect(f.complete).not.toHaveBeenCalled();
+  expect(f.lifecycle.state).toBe('ready'); expect(settle).not.toHaveBeenCalled(); expect(f.complete).not.toHaveBeenCalled();
 });
 
 it('waits for existing work without aborting it and refuses new turns', async () => {
@@ -62,19 +62,26 @@ it('defers a waiting question before releasing the host', async () => {
   expect(f.store.snapshot().interactions.at(-1)?.state).toBe('deferred');
 });
 
-it('stays blocked at the drain deadline and never auto-forces or releases later', async () => {
+it('returns to ready and reopens admission when a drain misses its deadline', async () => {
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   const settle = vi.fn(() => gate); const f = await setup({ settle, timeoutMs: 5 }); f.releases.add(release);
-  await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('blocked'));
-  expect(settle).toHaveBeenCalledWith('drain'); expect(f.complete).not.toHaveBeenCalled();
-  release(); await gate; await Promise.resolve(); expect(f.lifecycle.state).toBe('blocked'); expect(f.complete).not.toHaveBeenCalled();
+  await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('ready'));
+  expect(settle.mock.calls.map(([mode]) => mode)).toEqual(['drain']); expect(f.complete).not.toHaveBeenCalled();
+  expect(() => f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).not.toThrow();
+  release(); await gate; await Promise.resolve(); expect(f.lifecycle.state).toBe('ready'); expect(f.complete).not.toHaveBeenCalled();
+});
+
+it('returns to ready when drain settlement fails', async () => {
+  const settle = vi.fn(async () => { throw new Error('fixture drain failure'); }); const f = await setup({ settle });
+  await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('ready'));
+  expect(f.complete).not.toHaveBeenCalled();
 });
 
 it('fences an old drain continuation when explicit force supersedes it', async () => {
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   const settle = vi.fn((mode: 'drain' | 'force') => mode === 'drain' ? gate : Promise.resolve());
   const f = await setup({ settle }); f.releases.add(release);
-  await f.request(); await vi.waitFor(() => expect(settle).toHaveBeenCalledWith('drain'));
+  await f.request(); await vi.waitFor(() => expect(settle.mock.calls.map(([mode]) => mode)).toEqual(['drain']));
   await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.state).toBe('stopped'));
   release(); await gate; await Promise.resolve(); expect(f.complete).toHaveBeenCalledOnce();
   expect(settle.mock.calls.map(([mode]) => mode)).toEqual(['drain', 'force']);
@@ -94,13 +101,11 @@ it('persists the original run identity and origin as interrupted after forced se
   expect(f.store.session(f.root.sessionId).revision).toBe(revision);
 });
 
-it('rejects a wrong instance and unconfirmed requests without starting drain', async () => {
+it('rejects a wrong instance without starting drain', async () => {
   const f = await setup(); const begin = vi.spyOn(f.registry, 'beginDrain');
-  const value: ClientEnvelope = { v: 1, id: requestId(), op: 'host.stop', params: { expected: { ...f.owner.identity, instanceId: 'wrong' }, confirmed: true, mode: 'force' } };
+  const value: ClientEnvelope = { v: 1, id: requestId(), op: 'host.stop', params: { expected: { ...f.owner.identity, instanceId: 'wrong' }, mode: 'force' } };
   const response = await f.admission.submit(value, 'test-client', command => f.lifecycle.prepare(command));
   expect(response.outcome).toBe('rejected'); expect(begin).not.toHaveBeenCalled(); expect(f.lifecycle.state).toBe('ready');
-  await expect(f.admission.submit({ ...value, id: requestId(), params: { ...value.params, expected: f.owner.identity, confirmed: false } }, 'test-client', command => f.lifecycle.prepare(command))).rejects.toThrow();
-  expect(begin).not.toHaveBeenCalled();
 });
 
 it('keeps cleanup failures blocked without releasing ownership', async () => {

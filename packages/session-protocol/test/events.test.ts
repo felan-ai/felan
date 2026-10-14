@@ -66,7 +66,6 @@ describe('durable revisions and coalesced state changes', () => {
   it('bounds replacement tool/status projections and preserves authoritative completion', () => {
     expect(parseSessionEvent({ v: 1, session: 'session', rev: 8, change: { type: 'tool.updated', tool: { ...tool, state: 'completed', output: 'final' } } })).toBeTruthy();
     expect(() => parseSessionEvent({ v: 1, session: 'session', rev: 8, change: { type: 'tool.updated', tool: { ...tool, output: 'a'.repeat(LIMITS.statusTextBytes + 1) } } })).toThrow();
-    expect(() => parseSessionEvent({ v: 1, session: 'session', rev: 8, change: { type: 'presentation.updated', presentation: { id: 's', kind: 'status', key: 'working', value: { kind: 'text', text: 'a'.repeat(LIMITS.structuredBytes) }, fallback: 'Status' } } })).toThrow();
     expect(parseSessionEvent({ v: 1, session: 'session', rev: 9, change: { type: 'message.completed', message } })).toMatchObject({ rev: 9 });
   });
   it('ignores unknown additive event kinds without forgiving malformed known kinds', () => {
@@ -79,12 +78,12 @@ describe('durable revisions and coalesced state changes', () => {
     expect(classifyRevision(7, 9)).toBe('gap');
     expect(() => classifyRevision(7, Number.MAX_SAFE_INTEGER + 1)).toThrow();
   });
-  it('bounds snapshot/history page entries', () => {
-    expect(() => parseSchema(SessionSnapshotSchema, { ...snapshot, history: { ...history, entries: Array.from({ length: 257 }, () => message) } })).toThrow();
+  it('accepts large snapshot/history pages and rejects unknown or out-of-order events', () => {
+    expect(parseSchema(SessionSnapshotSchema, { ...snapshot, history: { ...history, entries: Array.from({ length: 257 }, () => message) } }).history.entries).toHaveLength(257);
     expect(() => parseSessionEvent({ v: 1, session: 's', rev: 0, change: { type: 'future.addition' } })).toThrow();
     expect(() => parseSessionEvent({ v: 1, session: 's', rev: 8, change: { type: 'interaction.resolved', interaction } })).toThrow();
     const entries = Array.from({ length: 200 }, () => ({ ...message, content: [{ type: 'text', text: 'a'.repeat(65536) }] }));
-    expect(() => parseSessionSnapshot({ ...snapshot, history: { ...history, entries } })).toThrow(/limit/);
+    expect(parseSessionSnapshot({ ...snapshot, history: { ...history, entries } }).history.entries).toHaveLength(200);
     expect([LIMITS.unsentBytes, LIMITS.inflightRequests]).toEqual([32 * 1024 * 1024, 64]);
   });
 });

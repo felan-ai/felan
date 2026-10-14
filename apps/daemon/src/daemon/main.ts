@@ -37,7 +37,7 @@ export async function runDaemonProcess(args: readonly string[], manager?: HostMa
   try {
     if (foreground) process.stdout.write(`Felan daemon ${DAEMON_VERSION}: ${service.lifecycle.state}\n`);
     else {
-      try { await publishDaemonReadiness(service.owner, DAEMON_VERSION, 10_000, service.lifecycle.state === 'blocked' ? 'blocked' : 'ready'); }
+      try { await publishDaemonReadiness(service.owner, DAEMON_VERSION, 10_000); }
       catch { failed = true; stop(); }
     }
     await service.stopped;

@@ -1,9 +1,9 @@
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import { DaemonSecurityError, tryKernelLock } from './native-ownership.js';
-import { assertPathIdentity, assertPrivateStat, canonicalProspectivePath, identityFor, openPrivateFile, pathIdentity, pathInside, pathsOverlap, pinPathChain, prepareDaemonTarget, privateDirectory, resolveDaemonTarget, type DaemonTarget, type PathIdentity, type ResolvedDaemonTarget } from './target.js';
+import { assertPathIdentity, assertPrivateStat, canonicalProspectivePath, identityFor, openPrivateFile, pathIdentity, pathInside, pathsOverlap, pinPathAncestry, pinPathChain, prepareDaemonTarget, privateDirectory, resolveDaemonTarget, storeDirectory, type DaemonTarget, type PathIdentity, type ResolvedDaemonTarget } from './target.js';
 
 interface Claim {
   kind: 'production' | 'isolated'; namespaceId: string; instanceId: string; lock: string;
@@ -11,25 +11,27 @@ interface Claim {
 }
 interface NodeIdentity { dev: string; ino: string }
 interface Ledger { version: 1; claims: Claim[] }
-const LEDGER_LIMIT = 1_048_576;
+const STORE_LOCK = '.felan-store.lock';
+const KNOWN_ROOTS = 'daemon-store-roots.json';
 
-function readLedger(directory: string, uid: number): Ledger {
-  const path = join(directory, 'claims.json');
+/** Claims are only advisory hints about live daemons, so an unreadable ledger is rebuilt rather than trusted. */
+function readLedger(directory: string): Ledger {
   let fd: number;
-  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, claims: [] }; throw error; }
+  try { fd = openSync(join(directory, 'claims.json'), constants.O_RDONLY | constants.O_NOFOLLOW); }
+  catch { return { version: 1, claims: [] }; }
   try {
-    const stat = fstatSync(fd, { bigint: true }); assertPrivateStat(stat, uid, false);
-    if (stat.size > BigInt(LEDGER_LIMIT)) throw new Error('oversize');
     const value: unknown = JSON.parse(readFileSync(fd, 'utf8'));
-    if (!value || typeof value !== 'object' || !('version' in value) || value.version !== 1 || !('claims' in value) || !Array.isArray(value.claims) || value.claims.length > 1024) throw new Error('schema');
-    for (const c of value.claims) {
-      if (!c || (c.kind !== 'production' && c.kind !== 'isolated') || typeof c.namespaceId !== 'string' || typeof c.instanceId !== 'string' || typeof c.lock !== 'string' || !/^(production|isolated-[a-f0-9]{64})\.lock$/.test(c.lock) || !validNode(c.lockNode) || !Array.isArray(c.roots) || c.roots.length > 128 || c.roots.some((r: unknown) => typeof r !== 'string' || !r.startsWith('/') || r.includes('\0')) || !Array.isArray(c.nodes) || c.nodes.length !== c.roots.length || !c.nodes.every(validNode) || !Array.isArray(c.ancestors) || c.ancestors.length > 4096 || !c.ancestors.every(validNode)) throw new Error('schema');
-    }
-    return value as Ledger;
-  } catch {
-    throw new DaemonSecurityError('ownership_blocked', 'Account claim ledger is invalid or unsafe. Recovery requires operator inspection, never automatic deletion.');
-  } finally { closeSync(fd); }
+    if (!value || typeof value !== 'object' || !('version' in value) || value.version !== 1 || !('claims' in value) || !Array.isArray(value.claims)) return { version: 1, claims: [] };
+    return { version: 1, claims: value.claims.filter(validClaim) };
+  } catch { return { version: 1, claims: [] }; }
+  finally { closeSync(fd); }
+}
+
+function validClaim(c: Claim): boolean {
+  return !!c && (c.kind === 'production' || c.kind === 'isolated') && typeof c.namespaceId === 'string' && typeof c.instanceId === 'string'
+    && typeof c.lock === 'string' && /^(production|isolated-[a-f0-9]{64})\.lock$/.test(c.lock) && validNode(c.lockNode)
+    && Array.isArray(c.roots) && c.roots.every((r: unknown) => typeof r === 'string' && r.startsWith('/') && !r.includes('\0'))
+    && Array.isArray(c.nodes) && c.nodes.length === c.roots.length && c.nodes.every(validNode) && Array.isArray(c.ancestors) && c.ancestors.every(validNode);
 }
 
 function validNode(value: unknown): value is NodeIdentity {
@@ -47,57 +49,26 @@ function existingNodes(paths: readonly string[]): NodeIdentity[] {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
   });
 }
-
-function retainDistinctClaims(claims: Claim[]): Claim[] {
-  const retained: Claim[] = [];
-  const production = new Map<string, number>();
-  for (const claim of claims) {
-    if (claim.kind !== 'production') { retained.push(claim); continue; }
-    const stores = claim.roots.map((root, i) => JSON.stringify([root, claim.nodes[i]!.dev, claim.nodes[i]!.ino])).sort();
-    const key = JSON.stringify([claim.namespaceId, claim.lock, stores]);
-    const index = production.get(key);
-    if (index === undefined) { production.set(key, retained.length); retained.push(claim); continue; }
-    const ancestors = [...new Map([...retained[index]!.ancestors, ...claim.ancestors].map(n => [`${n.dev}:${n.ino}`, n])).values()];
-    if (ancestors.length > 4096) throw new DaemonSecurityError('ownership_blocked', 'Production store ancestry history is full.');
-    retained[index] = { ...claim, ancestors };
-  }
-  return retained;
+function uniqueNodes(pins: readonly PathIdentity[]): NodeIdentity[] {
+  return [...new Map(pins.map(pin => { const n = node(pin); return [`${n.dev}:${n.ino}`, n] as const; })).values()];
 }
 
-function prepareIsolation(target: ResolvedDaemonTarget): PathIdentity | undefined {
-  if (target.kind !== 'isolated') return undefined;
-  const root = dirname(target.runtimeDirectory);
-  privateDirectory(root, target.uid);
-  const rootNode = node(pathIdentity(root));
-  const path = join(root, '.felan-isolated.json');
+/** A claim is live only while another process still holds its registered lifetime lock. */
+function claimActive(target: ResolvedDaemonTarget, claim: Claim): boolean {
   let fd: number;
-  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    if (readdirSync(root).length !== 0) throw new DaemonSecurityError('invalid_target', 'A new isolated target must be an empty private directory, not an existing store. Reuse requires its matching isolation marker.');
-    fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    try { writeFileSync(fd, JSON.stringify({ version: 1, namespaceId: target.namespaceId, ...rootNode })); fsyncSync(fd); }
-    finally { closeSync(fd); }
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  }
+  try { fd = openSync(join(target.accountDirectory, claim.lock), constants.O_RDWR | constants.O_NOFOLLOW); }
+  catch { return false; }
   try {
-    const stat = fstatSync(fd, { bigint: true }); assertPrivateStat(stat, target.uid, false);
-    if (stat.size > 4096n) throw new Error('oversize');
-    const marker = JSON.parse(readFileSync(fd, 'utf8')) as { version?: unknown; namespaceId?: unknown; dev?: unknown; ino?: unknown };
-    if (marker.version !== 1 || marker.namespaceId !== target.namespaceId || marker.dev !== rootNode.dev || marker.ino !== rootNode.ino) throw new Error('mismatch');
-    const pin = pathIdentity(path);
-    if (stat.dev !== pin.dev || stat.ino !== pin.ino) throw new Error('replacement');
-    return pin;
-  } catch { throw new DaemonSecurityError('invalid_target', 'Isolated target marker does not match this namespace and canonical directory identity.'); }
-  finally { closeSync(fd); }
+    const pin = pathIdentity(join(target.accountDirectory, claim.lock));
+    if (String(pin.dev) !== claim.lockNode.dev || String(pin.ino) !== claim.lockNode.ino) return false;
+    return !tryKernelLock(fd);
+  } finally { closeSync(fd); }
 }
 
 function saveLedger(directory: string, uid: number, ledger: Ledger): void {
-  const bytes = JSON.stringify(ledger);
-  if (Buffer.byteLength(bytes) > LEDGER_LIMIT) throw new DaemonSecurityError('ownership_blocked', 'Account claim ledger is full.');
   const temp = join(directory, `claims-${randomUUID()}.tmp`);
   const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
+  try { writeFileSync(fd, JSON.stringify(ledger)); fsyncSync(fd); } finally { closeSync(fd); }
   try {
     assertPrivateStat(lstatSync(directory, { bigint: true }), uid, true);
     renameSync(temp, join(directory, 'claims.json'));
@@ -128,6 +99,35 @@ export function namespaceLockName(target: ResolvedDaemonTarget): string {
   return target.kind === 'production' ? 'production.lock' : `isolated-${createHash('sha256').update(target.namespaceId).digest('hex')}.lock`;
 }
 
+function storeRootAllowed(target: ResolvedDaemonTarget, root: string): boolean {
+  if (pathsOverlap(root, target.accountDirectory) || pathsOverlap(root, target.runtimeDirectory)) return false;
+  return target.kind !== 'isolated' || pathInside(dirname(target.runtimeDirectory), root);
+}
+
+/** Session directories used before stay addressable after restart; they are locked again when a session opens there. */
+function readKnownRoots(target: ResolvedDaemonTarget): string[] {
+  let value: unknown;
+  try { value = JSON.parse(readFileSync(join(target.agentDir, KNOWN_ROOTS), 'utf8')); } catch { return []; }
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(root => {
+    if (typeof root !== 'string' || !isAbsolute(root)) return [];
+    try { const canonical = canonicalProspectivePath(root); return storeRootAllowed(target, canonical) ? [canonical] : []; } catch { return []; }
+  });
+}
+
+function writeKnownRoots(agentDir: string, roots: readonly string[]): void {
+  const path = join(agentDir, KNOWN_ROOTS); const temp = `${path}.${randomUUID()}.tmp`;
+  try { writeFileSync(temp, JSON.stringify(roots), { flag: 'wx', mode: 0o600 }); renameSync(temp, path); }
+  finally { try { unlinkSync(temp); } catch { /* Already renamed. */ } }
+}
+
+function lockStoreRoot(root: string): number {
+  const fd = openSync(join(root, STORE_LOCK), constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  if (tryKernelLock(fd)) return fd;
+  closeSync(fd);
+  throw new DaemonSecurityError('root_conflict', 'The canonical store has a live kernel ownership lock.');
+}
+
 export class DaemonOwnership {
   readonly identity: DaemonIdentity;
   private lost: DaemonSecurityError | undefined;
@@ -136,13 +136,18 @@ export class DaemonOwnership {
   private timer: NodeJS.Timeout;
   private listeners = new Set<(error: DaemonSecurityError) => void>();
   private extraPins: PathIdentity[] = [];
+  private current: ResolvedDaemonTarget;
+  private readonly owning = new Map<string, Promise<void>>();
 
-  constructor(readonly target: ResolvedDaemonTarget, readonly instanceId: string, private readonly fds: number[], private readonly pins: readonly PathIdentity[]) {
+  constructor(target: ResolvedDaemonTarget, readonly instanceId: string, private readonly fds: number[], private readonly pins: readonly PathIdentity[],
+    private readonly lockedRoots: string[] = [...target.rootSet]) {
+    this.current = target;
     const identity = identityFor(target, instanceId); Object.freeze(identity.rootSet);
     this.identity = Object.freeze(identity);
     this.timer = setInterval(() => { try { this.assertCurrent(); } catch { /* assertCurrent synchronously fences and notifies. */ } }, 25);
     this.timer.unref();
   }
+  get target(): ResolvedDaemonTarget { return this.current; }
   assertCurrent(): void {
     if (this.lost) throw this.lost;
     if (this.released) throw new DaemonSecurityError('ownership_lost', 'Daemon ownership has been released.');
@@ -164,9 +169,41 @@ export class DaemonOwnership {
   assertOwnsPath(path: string): string {
     this.assertCurrent();
     const canonical = canonicalProspectivePath(path);
-    if (!this.target.rootSet.some(root => pathInside(root, canonical))) throw new DaemonSecurityError('root_not_owned', 'This store is outside the daemon launch root set. Restart with the root explicitly declared before opening it.');
+    if (!this.current.rootSet.some(root => pathInside(root, canonical))) throw new DaemonSecurityError('root_not_owned', 'This path is outside the daemon store roots.');
     this.assertCurrent();
     return canonical;
+  }
+  /** Adds a session directory to the owned stores, locking it against other daemons. */
+  ownRoot(directory: string): Promise<void> {
+    this.assertCurrent();
+    const root = canonicalProspectivePath(directory);
+    if (this.lockedRoots.some(owned => pathInside(owned, root))) return Promise.resolve();
+    let pending = this.owning.get(root);
+    if (!pending) {
+      pending = this.lockRoot(root).finally(() => this.owning.delete(root));
+      this.owning.set(root, pending);
+    }
+    return pending;
+  }
+  private async lockRoot(root: string): Promise<void> {
+    if (!storeRootAllowed(this.current, root)) throw new DaemonSecurityError('root_not_owned', 'Session stores cannot use daemon runtime paths or leave an isolated fixture.');
+    storeDirectory(root);
+    const coordinator = await coordination(this.current);
+    try {
+      this.assertCurrent();
+      const ledger = readLedger(this.current.accountDirectory);
+      if (ledger.claims.some(claim => claim.instanceId !== this.instanceId && claim.roots.some(other => pathsOverlap(other, root)) && claimActive(this.current, claim))) {
+        throw new DaemonSecurityError('root_conflict', 'Another daemon owns an overlapping canonical store root.');
+      }
+      this.fds.push(lockStoreRoot(root));
+      this.lockedRoots.push(root);
+      const own = ledger.claims.find(claim => claim.instanceId === this.instanceId);
+      if (own) { own.roots.push(root); own.nodes.push(node(pathIdentity(root))); saveLedger(this.current.accountDirectory, this.current.uid, ledger); }
+    } finally { closeSync(coordinator.fd); }
+    if (this.current.rootSet.includes(root)) return;
+    const rootSet = Object.freeze([...this.current.rootSet, root]);
+    this.current = Object.freeze({ ...this.current, rootSet });
+    writeKnownRoots(this.current.agentDir, rootSet.filter(known => known !== this.current.agentDir));
   }
   onLost(listener: (error: DaemonSecurityError) => void): () => void {
     this.listeners.add(listener);
@@ -179,13 +216,11 @@ export class DaemonOwnership {
     this.released = true; clearInterval(this.timer);
     let coordinator: Awaited<ReturnType<typeof coordination>> | undefined;
     try {
-      if (this.target.kind === 'isolated') {
-        for (const pin of this.pins.filter(p => p.path === this.target.accountDirectory || p.path.startsWith(`${this.target.accountDirectory}/`))) assertPathIdentity(pin);
-        coordinator = await coordination(this.target);
-        const ledger = readLedger(this.target.accountDirectory, this.target.uid);
-        ledger.claims = ledger.claims.filter(c => c.instanceId !== this.instanceId);
-        saveLedger(this.target.accountDirectory, this.target.uid, ledger);
-      }
+      for (const pin of this.pins.filter(p => p.path === this.current.accountDirectory || p.path.startsWith(`${this.current.accountDirectory}/`))) assertPathIdentity(pin);
+      coordinator = await coordination(this.current);
+      const ledger = readLedger(this.current.accountDirectory);
+      ledger.claims = ledger.claims.filter(c => c.instanceId !== this.instanceId);
+      saveLedger(this.current.accountDirectory, this.current.uid, ledger);
     } finally {
       for (const fd of this.fds.splice(0).reverse()) closeSync(fd);
       if (coordinator) closeSync(coordinator.fd);
@@ -199,57 +234,35 @@ export async function acquireDaemonOwnership(input: DaemonTarget): Promise<Daemo
   const coordinator = await coordination(target);
   const held: number[] = [];
   try {
-    const ledger = readLedger(target.accountDirectory, target.uid);
     const guardedRoots = [...target.rootSet, target.kind === 'isolated' ? dirname(target.runtimeDirectory) : target.runtimeDirectory];
     const candidateNodes = existingNodes(guardedRoots);
     const candidateAncestors = target.pins.map(node);
     const lock = namespaceLockName(target);
-    for (const claim of ledger.claims) {
-      let pin: PathIdentity;
-      try { pin = pathIdentity(join(target.accountDirectory, claim.lock)); }
-      catch { throw new DaemonSecurityError('ownership_blocked', 'A registered lifetime lock disappeared; operator recovery is required.'); }
-      if (String(pin.dev) !== claim.lockNode.dev || String(pin.ino) !== claim.lockNode.ino) throw new DaemonSecurityError('ownership_blocked', 'A registered lock identity changed; operator recovery is required.');
-    }
     const lifetime = openPrivateFile(join(target.accountDirectory, lock), target.uid);
     held.push(lifetime);
     if (!tryKernelLock(lifetime)) throw new DaemonSecurityError('owner_running', 'This OS account/namespace already has a daemon. Attach using its pinned roots; do not delete locks.');
-    const kept: Claim[] = [];
-    for (const claim of ledger.claims) {
-      const overlap = claim.roots.some(root => guardedRoots.some(other => pathsOverlap(root, other))) || nodesIntersect(claim.nodes, candidateAncestors) || nodesIntersect(candidateNodes, claim.ancestors);
-      if (target.kind === 'isolated' && claim.kind === 'production' && overlap) throw new DaemonSecurityError('target_mismatch', 'Isolated targets cannot claim a current or previously registered production store.');
-      if (claim.lock === lock) {
-        if (claim.kind === 'production') kept.push(claim);
-        continue;
+    const live = readLedger(target.accountDirectory).claims.filter(claim => claim.lock !== lock && claimActive(target, claim));
+    for (const claim of live) {
+      if (claim.roots.some(root => guardedRoots.some(other => pathsOverlap(root, other))) || nodesIntersect(claim.nodes, candidateAncestors) || nodesIntersect(candidateNodes, claim.ancestors)) {
+        throw new DaemonSecurityError('root_conflict', 'Another daemon owns an overlapping canonical store root.');
       }
-      const path = join(target.accountDirectory, claim.lock);
-      let fd: number;
-      try { fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW); }
-      catch { throw new DaemonSecurityError('ownership_blocked', 'A registered lifetime lock disappeared; operator recovery is required.'); }
-      let active: boolean;
-      try { assertPrivateStat(fstatSync(fd, { bigint: true }), target.uid, false); active = !tryKernelLock(fd); } finally { closeSync(fd); }
-      if (active && overlap) throw new DaemonSecurityError('root_conflict', 'Another daemon owns an overlapping canonical store root.');
-      if (active || claim.kind === 'production') kept.push(claim);
     }
-    const isolationPin = prepareIsolation(target);
     target = prepareDaemonTarget(target);
     const nodes = guardedRoots.map(root => node(pathIdentity(root)));
-    const ancestors = [...new Map(guardedRoots.flatMap(root => pinPathChain(root, target.uid)).map(pin => { const n = node(pin); return [`${n.dev}:${n.ino}`, n] as const; })).values()];
-    if (ancestors.length > 4096) throw new DaemonSecurityError('invalid_target', 'Too many store ancestor identities.');
-    for (const claim of kept) {
-      if (claim.lock !== lock && (nodesIntersect(claim.nodes, ancestors) || nodesIntersect(nodes, claim.ancestors))) throw new DaemonSecurityError('root_conflict', 'A store inode or ancestor is already registered under another path.');
+    const ancestors = uniqueNodes(guardedRoots.flatMap(pinPathAncestry));
+    for (const claim of live) {
+      if (nodesIntersect(claim.nodes, ancestors) || nodesIntersect(nodes, claim.ancestors)) throw new DaemonSecurityError('root_conflict', 'A store inode or ancestor is already registered under another path.');
     }
-    for (const root of target.rootSet) {
-      const fd = openPrivateFile(join(root, '.felan-store.lock'), target.uid); held.push(fd);
-      if (!tryKernelLock(fd)) throw new DaemonSecurityError('root_conflict', 'The canonical store has a live kernel ownership lock.');
-    }
+    for (const root of target.rootSet) held.push(lockStoreRoot(root));
     const instanceId = randomUUID();
     const lockPin = pathIdentity(join(target.accountDirectory, lock));
-    const claims = retainDistinctClaims([...kept, { kind: target.kind, namespaceId: target.namespaceId, instanceId, lock, lockNode: node(lockPin), roots: guardedRoots, nodes, ancestors }]);
-    if (claims.length > 1024) throw new DaemonSecurityError('ownership_blocked', 'Account claim ledger is full.');
     for (const pin of coordinator.pins) assertPathIdentity(pin);
-    saveLedger(target.accountDirectory, target.uid, { version: 1, claims });
-    const lockPins = [join(target.accountDirectory, lock), ...target.rootSet.map(root => join(root, '.felan-store.lock'))].map(pathIdentity);
-    return new DaemonOwnership(target, instanceId, held, [...coordinator.pins, ...target.pins, ...lockPins, ...(isolationPin ? [isolationPin] : [])]);
+    saveLedger(target.accountDirectory, target.uid, { version: 1, claims: [...live, { kind: target.kind, namespaceId: target.namespaceId, instanceId, lock, lockNode: node(lockPin), roots: guardedRoots, nodes, ancestors }] });
+    const lockPins = [join(target.accountDirectory, lock), ...target.rootSet.map(root => join(root, STORE_LOCK))].map(pathIdentity);
+    const lockedRoots = [...target.rootSet];
+    const known = [...new Set(readKnownRoots(target))].filter(root => !lockedRoots.some(owned => pathInside(owned, root)));
+    const owned = known.length ? Object.freeze({ ...target, rootSet: Object.freeze([...target.rootSet, ...known]) }) : target;
+    return new DaemonOwnership(owned, instanceId, held, [...coordinator.pins, ...target.pins, ...lockPins], lockedRoots);
   } catch (error) { for (const fd of held.reverse()) closeSync(fd); throw error; }
   finally { closeSync(coordinator.fd); }
 }

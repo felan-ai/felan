@@ -1,6 +1,5 @@
 import { stripVTControlCharacters } from 'node:util';
 import type { ExtensionContext } from '@felan-ai/agent-core';
-import { LIMITS } from '@felan-ai/session-protocol';
 import type { HuggingFaceModel, LlamaModelInfo, LlamaProgress } from './sdk.js';
 
 export interface LlamaProgressOptions<T> {
@@ -30,21 +29,13 @@ export function createLlamaPresentation(ui: ExtensionContext['ui'], signal: Abor
     ui.setStatus('llama', label(detail ? `${title}: ${detail}` : title));
   };
   const select = async (title: string, options: readonly string[]) => {
-    const pageSize = LIMITS.choices - 2;
-    let start = 0;
-    while (options.length > 0) {
-      signal.throwIfAborted();
-      const page = options.slice(start, start + pageSize).map((value, index) => `${start + index + 1}. ${label(value)}`);
-      const choices = [...page, ...(start ? ['Previous page'] : []), ...(start + pageSize < options.length ? ['Next page'] : [])];
-      const selected = await ui.select(label(title), choices, { signal });
-      signal.throwIfAborted();
-      if (selected === undefined) return undefined;
-      if (selected === 'Previous page') { start -= pageSize; continue; }
-      if (selected === 'Next page') { start += pageSize; continue; }
-      const index = page.indexOf(selected);
-      return index < 0 ? undefined : options[start + index];
-    }
-    return undefined;
+    if (!options.length) return undefined;
+    signal.throwIfAborted();
+    const choices = options.map((value, index) => `${index + 1}. ${label(value)}`);
+    const selected = await ui.select(label(title), choices, { signal });
+    signal.throwIfAborted();
+    const index = selected === undefined ? -1 : choices.indexOf(selected);
+    return index < 0 ? undefined : options[index];
   };
   return {
     select,

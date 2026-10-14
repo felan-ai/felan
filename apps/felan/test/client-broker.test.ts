@@ -23,11 +23,11 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function fixture(extension?: (pi: ExtensionAPI) => void, policy: { requireLocalConsole?: boolean } = {}) {
+async function fixture(extension?: (pi: ExtensionAPI) => void) {
   const f = await serverFixture({ now: () => Date.now(), ...(extension ? { extension } : {}) });
   const published: Interaction[] = [];
   const resumed = vi.fn(async (_session: string, _answer: unknown, _id: string, dispatch: () => void) => { dispatch(); });
-  const broker = new InteractionBroker({ store: f.store, ...policy, now: () => Date.now(), resume: resumed,
+  const broker = new InteractionBroker({ store: f.store, now: () => Date.now(), resume: resumed,
     publish: (interaction, revisions) => { published.push(interaction); f.registry.publishInteraction(interaction, revisions); } });
   const configuration = new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() });
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'fixture', broker });
@@ -55,10 +55,10 @@ async function fixture(extension?: (pi: ExtensionAPI) => void, policy: { require
 }
 
 function setClientAuthority(f: Awaited<ReturnType<typeof fixture>>, client: SessionClient, kind: 'tui' | 'acp',
-  authority: { principal?: string; localConsole: boolean }) {
+  authority: { principal?: string }) {
   const capabilities = client.capabilities!;
   f.broker.connected({ principal: authority.principal ?? f.server.principal, kind, attachment: capabilities.attachmentId,
-    sessions: [f.root.sessionId], interactionKinds: capabilities.interactionKinds, localConsole: authority.localConsole });
+    sessions: [f.root.sessionId], interactionKinds: capabilities.interactionKinds });
 }
 
 function askUserHost(f: Awaited<ReturnType<typeof fixture>>) {
@@ -90,9 +90,9 @@ describe('InteractionBroker', () => {
     expect(f.store.snapshot().interactions.find(item => item.id === interaction.id)).toMatchObject({ state: 'answered' });
   });
 
-  it('requires the owner principal for session approvals without requiring a local console', async () => {
+  it('requires the owner principal for session approvals', async () => {
     const f = await fixture(); const client = await f.client('acp');
-    setClientAuthority(f, client, 'acp', { principal: 'remote:other-user', localConsole: false });
+    setClientAuthority(f, client, 'acp', { principal: 'remote:other-user' });
     const request = { kind: 'confirm', title: 'Owner approval', message: 'Approve this session action?' } as const;
     const waiting = f.broker.request(request, f.scope, { authority: 'owner' });
     const item = f.broker.pending()[0]!;
@@ -101,44 +101,11 @@ describe('InteractionBroker', () => {
     expect(() => f.broker.presentationRequest(item.id, client.capabilities!.attachmentId)).toThrow();
     expect((await client.request('interaction.answer', { interactionId: item.id,
       answer: { kind: 'confirm', confirmed: true } }, { session: f.root.sessionId })).outcome).toBe('rejected');
-    setClientAuthority(f, client, 'acp', { localConsole: false });
+    setClientAuthority(f, client, 'acp', {});
     expect(f.broker.canReceive(client.capabilities!.attachmentId, item)).toBe(true);
     expect((await client.request('interaction.answer', { interactionId: item.id,
       answer: { kind: 'confirm', confirmed: true } }, { session: f.root.sessionId })).outcome).toBe('accepted');
     await expect(waiting).resolves.toMatchObject({ state: 'answered' });
-  });
-
-  it.each(['tui', 'acp'] as const)('does not turn a %s label or form interaction support into local-console authority', async kind => {
-    const f = await fixture(); const client = await f.client(kind);
-    setClientAuthority(f, client, kind, { localConsole: false });
-    const bridge = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); bridge.activate(() => {});
-    cleanups.push(async () => bridge.dispose());
-    await expect(bridge.vocabulary.createExtensionUi('@felan-ai/ext-mcp').request({
-      title: 'Authorize MCP server', fallback: 'Authorize locally', input: { fields: [] },
-      actions: [{ id: 'cancel', label: 'Cancel', target: 'element', outcome: 'cancel' }],
-    }, { audience: 'host' })).resolves.toEqual({ state: 'cancelled', reason: 'unsupported' });
-    expect(f.broker.pending()).toEqual([]);
-    const request = { kind: 'dependency', dependency: 'fixture', message: 'Install?' } as const;
-    const scope = { kind: 'host' } as const;
-    expect(f.broker.canPresent(request, scope)).toBe(false);
-    const waiting = f.broker.request(request, scope);
-    const item = f.broker.pending()[0]!;
-    expect(item.authority).toBe('local-console');
-    expect(f.broker.canReceive(client.capabilities!.attachmentId, item)).toBe(false);
-    expect((await client.request('interaction.answer', { interactionId: item.id,
-      answer: { kind: 'dependency', approved: true } })).outcome).toBe('rejected');
-    f.broker.cancel(item.id, 'abort'); await waiting;
-  });
-
-  it('applies the host-wide local-console requirement to owner and ordinary session approvals', async () => {
-    const f = await fixture(undefined, { requireLocalConsole: true }); const client = await f.client('acp');
-    setClientAuthority(f, client, 'acp', { localConsole: false });
-    const request = { kind: 'confirm', title: 'Continue?', message: 'Check authority' } as const;
-    expect(f.broker.canPresent(request, f.scope)).toBe(false);
-    expect(f.broker.canPresent(request, f.scope, { authority: 'owner' })).toBe(false);
-    setClientAuthority(f, client, 'acp', { localConsole: true });
-    expect(f.broker.canPresent(request, f.scope)).toBe(true);
-    expect(f.broker.canPresent(request, f.scope, { authority: 'owner' })).toBe(true);
   });
 
   it('keeps creator-affine host trust prompts bound to their original local connection', async () => {

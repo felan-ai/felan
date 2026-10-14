@@ -13,6 +13,9 @@ import { FakeTransport, delta, snapshot } from './client-fixtures.js';
 const clients: SessionClient[] = [];
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const client of clients.splice(0)) client.close(); vi.useRealTimers(); await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+function indeterminate(fake: FakeTransport, request: { id: string }) {
+  fake.frame({ v: 1, re: request.id, outcome: 'indeterminate', error: { code: 'indeterminate', message: 'Unknown', retryable: false } });
+}
 async function flushMicrotasks() { for (let index = 0; index < 30; index++) await Promise.resolve(); }
 async function fixture(options: Partial<ConstructorParameters<typeof SessionClient>[0]> = {}) {
   const directory = await mkdtemp(join(tmpdir(), 's110-')); roots.push(directory);
@@ -22,7 +25,7 @@ async function fixture(options: Partial<ConstructorParameters<typeof SessionClie
   clients.push(client);
   const identity = identityFor(client.target, 'instance');
   fake.onSend = (request, connection) => {
-    if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, localConsole: true, principal: 'principal', daemonVersion: 'fixture',
+    if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: 'fixture',
       protocol: 1, identity, operations: ['attach', 'detach', 'prompt', 'sessions.create', 'host.status'], interactionKinds: [] }, connection);
     else if (request.op === 'attach') fake.reply(request, { attachmentId: `binding-${connection}`, snapshot: snapshot() }, connection);
     else fake.reply(request, request.op === 'prompt' ? { runId: 'run' } : {}, connection);
@@ -37,7 +40,7 @@ describe('shared session client', () => {
     offered.pop();
     const original = fake.onSend;
     fake.onSend = (request, connection) => {
-      if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, localConsole: true, principal: 'principal', daemonVersion: 'fixture',
+      if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: 'fixture',
         protocol: 1, identity, operations: ['attach', 'ui.action'], interactionKinds: ['form'], capabilities: ['ui.action'] }, connection);
       else original(request, connection);
     };
@@ -62,36 +65,121 @@ describe('shared session client', () => {
     const state = client.getAttachment('session')!; state.state.snapshot!.title = 'external mutation';
     expect(client.getAttachment('session')?.state.snapshot?.title).toBe('fixture');
   });
-  it.each(['instanceId', 'namespaceId', 'agentDir', 'rootSet'] as const)('fails closed on mismatched %s', async field => {
+  it.each(['namespaceId', 'agentDir'] as const)('fails closed on mismatched %s', async field => {
     const { client, fake, identity } = await fixture({ reconnectAttempts: 0 });
     await client.connect(); fake.lose();
-    fake.onSend = request => fake.reply(request, { attachmentId: 'a', localConsole: true, principal: 'p', daemonVersion: 'fixture', protocol: 1,
-      identity: { ...identity, [field]: field === 'rootSet' ? ['/wrong'] : field === 'agentDir' ? '/wrong' : 'wrong' }, operations: [], interactionKinds: [] });
+    fake.onSend = request => fake.reply(request, { attachmentId: 'a', principal: 'p', daemonVersion: 'fixture', protocol: 1,
+      identity: { ...identity, [field]: field === 'agentDir' ? '/wrong' : 'wrong' }, operations: [], interactionKinds: [] });
     await expect(client.connect()).rejects.toThrow(); expect(client.status).toBe('blocked');
+  });
+  it('follows a restarted daemon instance unless an expected identity is pinned', async () => {
+    const { client, fake, identity } = await fixture({ reconnectAttempts: 0 });
+    const restarted = { ...identity, instanceId: 'restarted' };
+    await client.connect(); fake.lose();
+    fake.onSend = request => fake.reply(request, { attachmentId: 'a', principal: 'p', daemonVersion: 'fixture', protocol: 1,
+      identity: restarted, operations: [], interactionKinds: [] });
+    await client.connect(); expect(client.identity).toEqual(restarted);
+    const pinned = new SessionClient({ target: { kind: 'isolated', directory: client.target.runtimeDirectory.replace(/\/runtime$/, ''), namespaceId: client.target.namespaceId },
+      expected: identity, kind: 'tui', clientVersion: 'fixture', connector: fake.connector, reconnectAttempts: 0 });
+    clients.push(pinned);
+    await expect(pinned.connect()).rejects.toThrow(/pinned target/); expect(pinned.status).toBe('blocked');
+  });
+  it('reconnects with capped exponential backoff and no attempt limit, then re-attaches to a restarted daemon', async () => {
+    let delegate!: TransportConnector;
+    const { client, fake, identity } = await fixture({ reconnectDelayMs: 250, launch: { entrypoint: '/fixture/entrypoint.js' }, connector: receiver => delegate(receiver) });
+    const original = fake.onSend; delegate = fake.connector;
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon');
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    await client.connect(); await client.attach('session');
+    const statuses: string[] = []; client.subscribe(() => statuses.push(client.status));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    fake.onSend = () => {};
+    const pending = client.request('prompt', { text: 'in flight' }, { session: 'session' });
+    await flushMicrotasks();
+    delegate = () => Promise.reject(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    fake.lose();
+    expect(client.status).toBe('disconnected'); expect(client.getAttachment('session')?.state.status).toBe('disconnected');
+    const delays: number[] = [];
+    for (let attempt = 1; attempt <= 9; attempt++) {
+      const retry = client.reconnection!;
+      expect(retry.attempt).toBe(attempt); delays.push(Math.round(retry.retryAt - Date.now()));
+      await vi.advanceTimersByTimeAsync(retry.retryAt - Date.now());
+      for (let tick = 0; tick < 5; tick++) await flushMicrotasks();
+      if (attempt === 1) expect(await pending).toMatchObject({ outcome: 'indeterminate', error: { message: expect.stringContaining('may still be running') } });
+    }
+    expect(delays).toEqual([250, 500, 1000, 2000, 4000, 8000, 10000, 10000, 10000]);
+    expect(client.status).toBe('disconnected'); expect(launch).not.toHaveBeenCalled();
+    const restarted = { ...identity, instanceId: 'restarted' };
+    fake.onSend = (request, connection) => {
+      if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: 'fixture',
+        protocol: 1, identity: restarted, operations: ['attach', 'detach', 'prompt'], interactionKinds: [] }, connection);
+      else original(request, connection);
+    };
+    delegate = fake.connector;
+    await vi.advanceTimersByTimeAsync(client.reconnection!.retryAt - Date.now());
+    for (let tick = 0; tick < 5; tick++) await flushMicrotasks();
+    expect(client.status).toBe('ready'); expect(client.reconnection).toBeUndefined(); expect(client.identity).toEqual(restarted);
+    expect(client.getAttachment('session')?.state.status).toBe('live');
+    expect(fake.requests.filter(request => request.op === 'attach').at(-1)).toMatchObject({ params: { expected: restarted } });
+    expect(launch).not.toHaveBeenCalled();
+    expect(statuses).toContain('connecting'); expect(statuses).not.toContain('blocked');
+  });
+  it('starts an absent daemon on an explicit reconnect while automatic attempts only probe', async () => {
+    let delegate!: TransportConnector;
+    const { client, fake, identity } = await fixture({ reconnectDelayMs: 5, launch: { entrypoint: '/fixture/entrypoint.js' }, connector: receiver => delegate(receiver) });
+    const original = fake.onSend; delegate = fake.connector;
+    await client.connect();
+    const restarted = { ...identity, instanceId: 'restarted' };
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon').mockImplementation(async () => {
+      delegate = fake.connector; return { target: { kind: 'isolated', directory: '/fixture', namespaceId: 'client-test' }, identity: restarted, daemonVersion: 'fixture' };
+    });
+    fake.onSend = (request, connection) => {
+      if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: 'fixture',
+        protocol: 1, identity: restarted, operations: ['attach'], interactionKinds: [] }, connection);
+      else original(request, connection);
+    };
+    delegate = () => Promise.reject(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    fake.lose();
+    await vi.waitFor(() => expect(client.reconnection?.attempt).toBeGreaterThanOrEqual(3));
+    expect(launch).not.toHaveBeenCalled(); expect(client.status).toBe('disconnected');
+    await client.connect();
+    expect(launch).toHaveBeenCalledOnce(); expect(client.status).toBe('ready'); expect(client.identity).toEqual(restarted);
+    expect(client.reconnection).toBeUndefined();
+  });
+  it('accepts a daemon whose session root set grew', async () => {
+    const { client, fake, identity } = await fixture({ reconnectAttempts: 0 });
+    await client.connect(); fake.lose();
+    fake.onSend = request => fake.reply(request, { attachmentId: 'a', principal: 'p', daemonVersion: 'fixture', protocol: 1,
+      identity: { ...identity, rootSet: [...identity.rootSet, '/added'] }, operations: [], interactionKinds: [] });
+    await client.connect(); expect(client.status).toBe('ready');
   });
   it('blocks session attachment when the trusted host-composition fingerprint differs', async () => {
     const expectedComposition = { managerPackage: '@felan-ai/felan', managerVersion: '0.29.0', providerDigest: 'a'.repeat(64) };
     const { client, fake, identity } = await fixture({ expectedComposition });
-    fake.onSend = request => fake.reply(request, { attachmentId: 'hello', localConsole: true, principal: 'principal', daemonVersion: 'fixture', protocol: 1,
+    fake.onSend = request => fake.reply(request, { attachmentId: 'hello', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
       identity, operations: ['attach'], interactionKinds: [], composition: { ...expectedComposition, configDigest: 'b'.repeat(64), providerDigest: 'b'.repeat(64) } });
     await expect(client.connect()).rejects.toThrow('configuration differs');
     expect(client.status).toBe('incompatible');
     expect(fake.requests.some(request => request.op === 'attach')).toBe(false);
   });
-  it('retries the exact immutable command and ID, exposing pending then accepted without completion inference', async () => {
-    const { client, fake } = await fixture({ requestTimeoutMs: 10 }); await client.connect();
-    fake.onSend = request => { if (fake.requests.filter(item => item.op === 'prompt').length === 2) fake.reply(request, { runId: 'run' }); };
+  it('waits for an interactive reply beyond the liveness deadline without resending, exposing pending then accepted', async () => {
+    const { client, fake } = await fixture({ requestTimeoutMs: 5 }); await client.connect();
+    fake.onSend = () => {}; vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const id = newRequestId(); const params = { text: 'same' };
     const pending = client.request('prompt', params, { session: 'session', id }); params.text = 'changed';
-    expect(client.getRequest(id)?.status).toBe('pending');
-    expect(await pending).toMatchObject({ outcome: 'accepted', result: { runId: 'run' } });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(client.getRequest(id)?.status).toBe('pending'); expect(vi.getTimerCount()).toBe(0);
     const sent = fake.requests.filter(item => item.op === 'prompt');
-    expect(sent).toHaveLength(2); expect(sent[0]).toEqual(sent[1]); expect(sent[0]?.params).toEqual({ text: 'same' });
+    expect(sent).toHaveLength(1); expect(sent[0]?.params).toEqual({ text: 'same' });
+    fake.reply(sent[0]!, { runId: 'run' });
+    expect(await pending).toMatchObject({ outcome: 'accepted', result: { runId: 'run' } });
     expect(await client.request('prompt', { text: 'different' }, { session: 'session', id })).toMatchObject({ outcome: 'rejected', error: { code: 'request_conflict' } });
   });
-  it('rejects stale fresh commands and never turns an exhausted request into a new command', async () => {
-    const { client, fake } = await fixture({ requestTimeoutMs: 5, retries: 1 }); await client.connect(); fake.onSend = () => {};
-    expect(() => client.request('prompt', { text: 'old' }, { session: 'session', id: newRequestId(Date.now() - LIMITS.requestRetentionMs - 10) })).toThrow();
+  it('accepts request IDs of any age and replays the recorded outcome for a repeated ID', async () => {
+    const { client, fake } = await fixture(); await client.connect();
+    const old = newRequestId(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    expect(await client.request('prompt', { text: 'old' }, { session: 'session', id: old })).toMatchObject({ outcome: 'accepted' });
+    fake.onSend = request => indeterminate(fake, request);
     const id = newRequestId();
     const result = await client.request('prompt', { text: 'never acked' }, { session: 'session', id });
     expect(result).toMatchObject({ outcome: 'indeterminate' });
@@ -129,6 +217,42 @@ describe('shared session client', () => {
     expect(await client.request('prompt', { text: 'hello' }, { session: 'session' })).toMatchObject({ outcome: 'indeterminate' });
     expect(client.status).toBe('blocked');
   });
+  describe('replacing a daemon from another installation', () => {
+    async function mismatched(work: number, stoppedState: 'stopped' | 'ready' = 'stopped') {
+      const f = await fixture({ expectedDaemonVersion: 'installed', launch: { entrypoint: '/fixture/entrypoint.js' } });
+      let version = 'previous';
+      f.fake.onSend = (request, connection) => {
+        if ('control' in request) {
+          const control = request as unknown as { id: string; op: string };
+          if (control.op === 'host.restart' && stoppedState === 'stopped') version = 'installed';
+          f.fake.frame({ control: 1, re: control.id, identity: f.identity, daemonVersion: 'previous', supportedProtocol: 1,
+            state: control.op === 'host.restart' ? 'draining' : stoppedState, outcome: 'accepted' }, connection);
+        } else if (request.op === 'hello') f.fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: version,
+          protocol: 1, identity: f.identity, operations: ['attach', 'host.status'], interactionKinds: [] }, connection);
+        else if (request.op === 'host.status') f.fake.reply(request, { identity: f.identity, daemonVersion: version, protocol: 1, state: 'ready',
+          active: { sessions: 1, runs: 0, work, attachments: 1 }, setupNeeds: [] }, connection);
+      };
+      return f;
+    }
+    it('restarts an idle daemon by draining without asking', async () => {
+      const { client, fake } = await mismatched(0);
+      await client.connect();
+      expect(client.status).toBe('ready'); expect(client.capabilities?.daemonVersion).toBe('installed');
+      expect(fake.controls).toMatchObject([{ op: 'host.restart', params: { mode: 'drain' } }, { op: 'host.status' }]);
+    });
+    it('reports active background work instead of restarting', async () => {
+      const { client, fake } = await mismatched(1);
+      await expect(client.connect()).rejects.toThrow('Daemon version differs');
+      expect(client.status).toBe('incompatible'); expect(client.incompatibleActiveWork).toBe(1);
+      expect(fake.controls).toEqual([]);
+    });
+    it('fails instead of waiting when the daemon abandons its drain', async () => {
+      vi.spyOn(supervisor, 'connectLocalIpc').mockResolvedValue({ destroy() {} } as never);
+      const { client, fake } = await mismatched(0, 'ready');
+      await expect(client.connect()).rejects.toThrow('Daemon shutdown failed: the daemon kept running');
+      expect(fake.controls).toMatchObject([{ op: 'host.restart', params: { mode: 'drain' } }, { op: 'host.status' }]);
+    });
+  });
   it('uses the separate pinned status/drain channel after normal version mismatch', async () => {
     const { client, fake, identity } = await fixture();
     fake.onSend = (request, connection) => {
@@ -139,13 +263,13 @@ describe('shared session client', () => {
     await expect(client.connect()).rejects.toThrow(); expect(client.status).toBe('incompatible');
     expect(await client.control('host.status')).toMatchObject({ supportedProtocol: 2 });
     await expect(client.control('host.restart')).rejects.toThrow();
-    expect(await client.control('host.restart', { confirmed: true, mode: 'drain' })).toMatchObject({ outcome: 'accepted', state: 'draining' });
+    expect(await client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted', state: 'draining' });
     expect(fake.controls).toHaveLength(2);
   });
   it('never treats advertised presenters as operation permission', async () => {
     const { client, fake } = await fixture({  }); const original = fake.onSend;
     fake.onSend = (request, index) => original(request, index); await client.connect();
-    expect(await client.request('host.stop', { expected: client.identity!, confirmed: true, mode: 'force' })).toMatchObject({ outcome: 'rejected', error: { code: 'unsupported_operation' } });
+    expect(await client.request('host.stop', { expected: client.identity!, mode: 'force' })).toMatchObject({ outcome: 'rejected', error: { code: 'unsupported_operation' } });
     expect(fake.requests.some(item => item.op === 'host.stop')).toBe(false);
   });
   it('starts only an absent unpinned target through the S1.03 launch seam', async () => {
@@ -177,6 +301,18 @@ describe('shared session client', () => {
     const { client, fake } = await fixture(); await client.connect();
     fake.onSend = request => fake.reply(request, { attachmentId: 'bad', snapshot: { ...snapshot(), session: 'other' } });
     expect(await client.attach('session')).toMatchObject({ outcome: 'indeterminate' }); expect(client.status).toBe('blocked');
+  });
+  it('stays disconnected through failed automatic attempts and reports blocked only after the last one', async () => {
+    let delegate!: TransportConnector;
+    const { client, fake } = await fixture({ reconnectAttempts: 2, connector: receiver => delegate(receiver) });
+    delegate = fake.connector; await client.connect();
+    const statuses: string[] = []; client.subscribe(() => statuses.push(client.status));
+    delegate = () => Promise.reject(Object.assign(new Error('refused'), { code: 'ECONNREFUSED' }));
+    fake.lose();
+    await vi.waitFor(() => expect(client.status).toBe('blocked'));
+    expect(statuses.filter(status => status === 'connecting')).toHaveLength(2);
+    expect(statuses.slice(0, statuses.lastIndexOf('connecting'))).not.toContain('blocked');
+    expect(client.reconnection).toBeUndefined();
   });
   it('caps flapping reconnects even when each new hello succeeds', async () => {
     const { client, fake } = await fixture({ reconnectAttempts: 2 }); await client.connect();
@@ -216,7 +352,7 @@ describe('shared session client', () => {
       daemonVersion: 'fixture', supportedProtocol: 1, state: 'ready', outcome: 'accepted' });
     await expect(client.control('host.status')).rejects.toThrow(/indeterminate/);
     fake.onSend = () => {};
-    await expect(client.control('host.restart', { confirmed: true, mode: 'drain' })).rejects.toThrow(/indeterminate/);
+    await expect(client.control('host.restart', 'drain')).rejects.toThrow(/indeterminate/);
     expect(fake.controls).toHaveLength(2);
   });
   it('bounds pending requests without sending over-capacity commands', async () => {
@@ -339,10 +475,10 @@ describe('shared session client', () => {
     client.close(); await rejected; expect(launch).not.toHaveBeenCalled(); expect(client.status).toBe('closed');
   });
   it('retries an indeterminate initial attach while retaining identity/policy and rejecting stale late cutovers', async () => {
-    const { client, fake } = await fixture({ kind: 'acp', requestTimeoutMs: 5, retries: 0 }); const original = fake.onSend;
-    await client.connect(); fake.onSend = () => {}; vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const attached = client.attach('session', { requirePolicy: 'acp-strict' }); await flushMicrotasks(); const originalRequest = fake.requests.at(-1)!;
-    await vi.advanceTimersByTimeAsync(5); expect(await attached).toMatchObject({ outcome: 'indeterminate' });
+    const { client, fake } = await fixture({ kind: 'acp' }); const original = fake.onSend;
+    await client.connect(); fake.onSend = request => indeterminate(fake, request);
+    const attached = client.attach('session', { requirePolicy: 'acp-strict' }); const originalRequest = fake.requests.at(-1)!;
+    expect(await attached).toMatchObject({ outcome: 'indeterminate' });
     const originalId = client.getAttachment('session')!.id;
     fake.reply(originalRequest, { attachmentId: 'late', snapshot: snapshot() }); await flushMicrotasks();
     expect(client.getAttachment('session')).toMatchObject({ id: originalId, state: { status: 'blocked' } });
@@ -355,13 +491,13 @@ describe('shared session client', () => {
     expect(fake.requests.some(request => request.op === 'cancel' || request.op === 'sessions.create')).toBe(false);
   });
   it('bounds explicit attach retries and can abandon an unknown binding locally without disrupting the connection', async () => {
-    const { client, fake } = await fixture({ requestTimeoutMs: 5, retries: 0 }); await client.connect();
-    fake.onSend = () => {}; vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const initial = client.attach('session'); await flushMicrotasks(); const originalRequest = fake.requests.at(-1)!;
-    await vi.advanceTimersByTimeAsync(5); expect((await initial).outcome).toBe('indeterminate');
+    const { client, fake } = await fixture(); await client.connect();
+    fake.onSend = request => indeterminate(fake, request); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const initial = client.attach('session'); const originalRequest = fake.requests.at(-1)!;
+    expect((await initial).outcome).toBe('indeterminate');
     const id = client.getAttachment('session')!.id;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const retry = client.retryAttach('session'); await flushMicrotasks(); await vi.advanceTimersByTimeAsync(5);
+      const retry = client.retryAttach('session');
       expect((await retry).outcome).toBe('indeterminate'); expect(client.getAttachment('session')!.id).toBe(id);
     }
     await expect(client.retryAttach('session')).rejects.toThrow(/limit/);
@@ -371,12 +507,12 @@ describe('shared session client', () => {
     expect(fake.requests.every(request => request.op === 'hello' || request.op === 'attach')).toBe(true);
   });
   it.each(['retry', 'replace'] as const)('ignores delayed errors from a completed attach after %s without consuming recovery budget', async action => {
-    const { client, fake } = await fixture({ requestTimeoutMs: 5, retries: 2 }); const original = fake.onSend;
-    await client.connect(); fake.onSend = () => {}; vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const pending = client.attach('session'); await flushMicrotasks(); const old = fake.requests.at(-1)!;
+    const { client, fake } = await fixture(); const original = fake.onSend;
+    await client.connect(); fake.onSend = request => indeterminate(fake, request); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const pending = client.attach('session'); const old = fake.requests.at(-1)!;
     const initialId = client.getAttachment('session')!.id;
-    await vi.advanceTimersByTimeAsync(15); expect((await pending).outcome).toBe('indeterminate');
-    expect(fake.requests.filter(request => request.id === old.id)).toHaveLength(3);
+    expect((await pending).outcome).toBe('indeterminate');
+    expect(fake.requests.filter(request => request.id === old.id)).toHaveLength(1);
     fake.onSend = original;
     if (action === 'retry') await client.retryAttach('session');
     else { await client.detach('session'); await client.attach('session'); }

@@ -72,7 +72,7 @@ export class AcpSessionRegistry {
         this.#supportsForms ? [...ACP_UI_CAPABILITIES] : ACP_UI_CAPABILITIES.filter(capability => capability !== 'ui.action'));
       this.#unsubscribe = this.#client.subscribe(() => this.#observe());
       this.#connecting = this.#client.connect();
-    }
+    } else if (this.#client.status !== 'ready') this.#connecting = this.#client.connect();
     await this.#connecting;
     this.#assertOpen();
     return this.#client;
@@ -82,7 +82,7 @@ export class AcpSessionRegistry {
     const daemon = this.#client!;
     let active: ActiveAcpSession | undefined;
     try {
-      const { snapshot } = accepted(await daemon.attach(sessionId, { requirePolicy: 'acp-strict', policyWaitMs: 0 }));
+      const { snapshot } = accepted(await daemon.attach(sessionId, { requirePolicy: 'acp-strict' }));
       this.#assertOpen();
       if (!pathsEqual(snapshot.cwd, cwd)) throw RequestError.invalidParams({ sessionId, cwd }, 'Session cwd does not match the persisted session');
       const ids = new AcpToolCallIdRegistry();
@@ -97,10 +97,6 @@ export class AcpSessionRegistry {
       if (lifetime.signal.aborted) throw new Error('Session detached while loading');
       active.ready = true;
       this.#observe();
-      if (snapshot.policy.pending) {
-        updates.send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text',
-          text: 'ACP safety policy is pending active execution. History is available; retry prompts after the active root and child turns settle.\n' } });
-      }
       await updates.flush();
     } catch (error) {
       if (active) { active.lifetime.abort(); active.interactions.close(); this.#sessions.delete(sessionId); }
@@ -220,7 +216,7 @@ function toAcpDaemonError(error: unknown): RequestError {
     const message = sanitizeAcpErrorMessage(error.message);
     if (error.code === 'auth_required' || error.code === 'authentication_required') return RequestError.authRequired(data, message);
     if (error.code === 'not_found') return RequestError.resourceNotFound('session');
-    if (['busy', 'policy_pending', 'invalid_request', 'legacy_session'].includes(error.code)) return RequestError.invalidRequest(data, message);
+    if (['busy', 'invalid_request', 'legacy_session'].includes(error.code)) return RequestError.invalidRequest(data, message);
     return RequestError.internalError(data, message);
   }
   return RequestError.internalError(undefined, sanitizeAcpErrorMessage(error));

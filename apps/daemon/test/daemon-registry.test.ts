@@ -40,6 +40,19 @@ describe.skipIf(!supported)('daemon session registry', () => {
     expect(await readFile(before.piPath)).toEqual(bytes); expect(f.opened).toHaveLength(3);
   });
 
+  it('previews the first user message from a live runtime or an evicted transcript', async () => {
+    const f = await fixture();
+    const live = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    expect(await f.registry.preview(f.store.session(live.sessionId))).toBe('');
+    await live.runtime.session.prompt('first\n\tquestion'); await live.runtime.session.prompt('second');
+    expect(await f.registry.preview(f.store.session(live.sessionId))).toBe('first question');
+    const stored = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    await stored.runtime.session.prompt('from the transcript file');
+    expect(await f.registry.evictIdle()).toEqual([live.sessionId, stored.sessionId]);
+    expect(f.registry.binding(stored.sessionId)).toBeUndefined();
+    expect(await f.registry.preview(f.store.session(stored.sessionId))).toBe('from the transcript file');
+  });
+
   it('retains active runs and queued turns with zero attachments; cancel does not close', async () => {
     const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const id = binding.sessionId; const request = requestId();
@@ -60,13 +73,14 @@ describe.skipIf(!supported)('daemon session registry', () => {
     expect(JSON.stringify(f.store.snapshot())).not.toContain('not yet consumed');
   });
 
-  it('never evicts live PTY or detached-job references; these do not block policy activation', async () => {
+  it('never evicts live PTY or detached-job references; these do not block policy changes', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     for (const kind of ['pty', 'detached'] as const) {
       f.store.putResource({ id: kind, session: b.sessionId, root: b.sessionId, kind, state: 'running', updatedAt: now });
       expect(await f.registry.evictIdle()).toEqual([]);
     }
-    expect(f.registry.tightenPolicy(b.sessionId).effective).toBe('acp-strict');
+    f.registry.tightenPolicy(b.sessionId);
+    expect(f.store.session(b.sessionId).policy.effective).toBe('acp-strict');
   });
 
   it('holds nondeferred interaction runtime, allows deferred waits to survive eviction', async () => {
@@ -201,8 +215,8 @@ describe.skipIf(!supported)('daemon session registry', () => {
     delete fault.failure; delete fault.failureSettlement;
   });
 
-  it('cancels an admitted run at full reserve and automatically reconciles deferred Pi entries', async () => {
-    const f = await fixture({ capacity: { bytes: 2_200_000 } });
+  it('cancels an admitted run and projects Pi entries appended during it', async () => {
+    const f = await fixture();
     const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const gate = deferred(); f.releases.add(gate.resolve); const id = requestId();
     const events: Array<{ state: string; revision: number }> = []; const completed: string[] = [];
@@ -217,13 +231,11 @@ describe.skipIf(!supported)('daemon session registry', () => {
     });
     f.store.admit({ v: 1, id, op: 'prompt', session: b.sessionId, params: { text: 'work' } }, 'owner');
     const work = f.registry.runAdmitted(id, b.sessionId, { kind: 'headless', attachment: 'fixture' }, () => gate.promise);
-    expect(() => f.store.admit({ v: 1, id: requestId(), op: 'prompt', session: b.sessionId, params: { text: 'full' } }, 'owner')).toThrow(/capacity/);
     const cancelId = requestId(); f.store.admit({ v: 1, id: cancelId, op: 'cancel', session: b.sessionId, params: {} }, 'owner'); f.store.markDispatched(cancelId);
-    const retained = f.store.snapshot().requests;
     const manager = b.runtime.session.sessionManager;
     manager.appendMessage({ role: 'user', content: 'only in Pi', timestamp: now }); manager.appendMessage(assistant());
     f.registry.projection(b.sessionId).refresh();
-    expect(completed).toEqual([]);
+    expect(completed).toHaveLength(2);
     const fake = f.instances.get(b.sessionId)!; const abort = vi.mocked(b.runtime.session.abort).getMockImplementation()!;
     fake.abort.mockImplementationOnce(async () => { expect(f.store.session(b.sessionId).run.state).toBe('cancelling'); await abort(); });
     const cancel = f.registry.cancel(b.sessionId);
@@ -231,11 +243,9 @@ describe.skipIf(!supported)('daemon session registry', () => {
     expect(f.store.session(b.sessionId).run.state).toBe('cancelling');
     expect(events.map(event => event.state)).toEqual(['idle', 'running', 'cancelling']);
     expect(events.every((event, index) => index === 0 || event.revision > events[index - 1]!.revision)).toBe(true);
-    expect(f.store.snapshot().requests).toEqual(retained);
     gate.resolve(); await Promise.all([work, cancel]);
     expect(events.map(event => event.state)).toEqual(['idle', 'running', 'cancelling', 'idle']);
     expect(events.every((event, index) => index === 0 || event.revision > events[index - 1]!.revision)).toBe(true);
-    expect(f.store.snapshot().requests).toEqual(retained);
     for (const request of [id, cancelId]) f.store.finishRequest(request, { v: 1, re: request, outcome: 'accepted', result: request === id ? { runId: 'accepted' } : {} });
     await vi.waitFor(() => expect(completed).toHaveLength(2));
     expect(new Set(completed).size).toBe(2);
@@ -243,8 +253,8 @@ describe.skipIf(!supported)('daemon session registry', () => {
     expect(fake.abort).toHaveBeenCalledOnce();
   });
 
-  it('uses safety capacity for runtime agent_settled and admitted finalization without cancelling', async () => {
-    const f = await fixture({ capacity: { bytes: 2_200_000 } });
+  it('settles runtime agent_settled and admitted finalization without cancelling', async () => {
+    const f = await fixture();
     const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const request = requestId(); f.store.admit({ v: 1, id: request, op: 'prompt', session: b.sessionId, params: { text: 'runtime' } }, 'owner'); f.store.markDispatched(request);
     const fake = f.instances.get(b.sessionId)!;
@@ -276,8 +286,8 @@ describe.skipIf(!supported)('daemon session registry', () => {
     expect(f.store.session(b.sessionId).run).toEqual({ state: 'running', id: 'newer' });
   });
 
-  it('closes, evicts and drains separate sessions while ordinary capacity is exhausted', async () => {
-    const f = await fixture({ capacity: { bytes: 2_200_000 } });
+  it('closes, evicts and drains separate sessions', async () => {
+    const f = await fixture();
     const sessions = [];
     for (let i = 0; i < 4; i++) sessions.push(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } }));
     const [closed, evicted, other, drained] = sessions;
@@ -285,7 +295,6 @@ describe.skipIf(!supported)('daemon session registry', () => {
     const id = requestId(); f.store.admit({ v: 1, id, op: 'prompt', session: closed!.sessionId, params: { text: 'reserved only' } }, 'owner');
     const cancel = requestId(); f.store.admit({ v: 1, id: cancel, op: 'cancel', session: closed!.sessionId, params: {} }, 'owner'); f.store.markDispatched(cancel);
     const retained = f.store.snapshot().requests;
-    expect(() => f.store.updateSession(evicted!.sessionId, { title: 'ordinary' })).toThrow(/reserved/);
     await f.registry.close(closed!.sessionId);
     expect(await f.registry.evictIdle()).toEqual([evicted!.sessionId, other!.sessionId]);
     await f.registry.shutdown();

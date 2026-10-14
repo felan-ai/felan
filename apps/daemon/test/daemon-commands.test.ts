@@ -149,19 +149,19 @@ describe('registry-backed command dispatch', () => {
     expect(mark).toHaveBeenCalledExactlyOnceWith(request);
   });
 
-  it('holds a non-run writer across async work and activates pending policy only after it settles', async () => {
+  it('holds a non-run writer across async work and applies tightening without waiting for it', async () => {
     const f = await fixture(); const id = f.root.sessionId; const entered = gate(); const release = gate();
     const request = requestId(); f.store.admit({ v: 1, id: request, op: 'session.rename', session: id, params: { name: 'later' } }, 'owner');
     const operation = f.registry.mutateAdmitted(request, id, async context => {
       entered.resolve(); await release.promise; context.assertCurrent(); context.session.setSessionName('later');
     });
-    const rejected = expect(operation).rejects.toThrow('policy_pending');
     try {
       await entered.promise; expect(await f.registry.evictIdle()).toEqual([]);
-      expect(f.registry.tightenPolicy(id).pending?.blockers).toContainEqual({ session: id, reason: 'admitted_dispatch' });
+      f.registry.tightenPolicy(id);
+      expect(f.store.session(id).policy.effective).toBe('acp-strict');
     } finally { release.resolve(); }
-    await rejected;
-    expect(f.store.session(id).policy.effective).toBe('acp-strict'); expect(f.store.session(id).title).not.toBe('later');
+    await operation;
+    expect(f.store.session(id).policy.effective).toBe('acp-strict');
   });
 
   it('lets close join a non-run mutation without the mutation joining its own barrier', async () => {
@@ -247,24 +247,6 @@ describe('registry-backed command dispatch', () => {
     const request = requestId(); const from = { kind: 'position', position: 0 } as const;
     f.store.admit({ v: 1, id: request, op: 'fork', session: empty.sessionId, params: { from } }, 'owner');
     await expect(forkSession(f.registry, request, empty.sessionId, { from })).rejects.toThrow('stored user message');
-  });
-
-  it('inherits tightening that arrives while the fork profile is opening', async () => {
-    const f = await fixture(); const id = f.root.sessionId;
-    await f.root.runtime.session.prompt('source'); f.registry.projection(id).refresh();
-    const entered = gate(); const release = gate(); const open = f.profile.openSession.bind(f.profile);
-    vi.spyOn(f.profile, 'openSession').mockImplementation(async request => {
-      if (request.target.kind === 'fork') { entered.resolve(); await release.promise; }
-      return open(request);
-    });
-    const request = requestId(); const from = { kind: 'position', position: 0 } as const;
-    f.store.admit({ v: 1, id: request, op: 'fork', session: id, params: { from } }, 'owner');
-    const operation = forkSession(f.registry, request, id, { from });
-    try { await entered.promise; expect(f.registry.tightenPolicy(id).pending).toBeDefined(); }
-    finally { release.resolve(); }
-    const result = await operation;
-    expect(f.store.session(result.sessionId).policy.effective).toBe('acp-strict');
-    expect(f.store.session(id).policy.effective).toBe('acp-strict');
   });
 
   it('starts only a dispatched foreground operation and preserves arbitrary output and stdin bytes', async () => {

@@ -75,10 +75,10 @@ fields, including additions to an empty result, are stripped before use.
 
 `ERROR_CODES` exports the known codes, with `KnownErrorCode` as their literal
 union: `invalid_request`, `unsupported_operation`, `protocol_mismatch`,
-`unavailable`, `authentication_required`, `busy`, `policy_pending`, `request_conflict`, `stale_request`,
+`unavailable`, `authentication_required`, `busy`, `request_conflict`, `stale_request`,
 `expired`, `not_found`, `forbidden`, `already_resolved`, `storage_failure`,
 `ownership_lost`, `resync_required`, `indeterminate`,
-`configuration_recovery_required`, `request_capacity` and `target_mismatch`. `ProtocolError.code` remains a bounded
+`request_capacity` and `target_mismatch`. `ProtocolError.code` remains a bounded
 wire string so clients can handle future codes with a generic fallback.
 
 - Host: `hello`, `host.status`, `sessions.list`,
@@ -161,7 +161,7 @@ the client's attachment.
 and the last successful writer wins for the same field. It takes no revision.
 The runtime parser rejects any own obsolete `params.expectedRevision` before
 normalization and request identity, rather than silently discarding a CAS
-expectation. Branch, label and deletion operations retain their revision checks.
+expectation. Branch, label and deletion operations take no expected revision either.
 The local host supports global configuration fields and model defaults, plus
 session-scoped extension overrides. Session model/thinking changes use their
 dedicated operations. Project configuration remains unavailable.
@@ -191,13 +191,9 @@ indeterminate replies carry a bounded typed error instead. A returned `runId`
 means admitted/started, not completed.
 
 Mutation IDs are UUIDv7. Other IDs remain opaque nonempty strings up to 128
-UTF-8 bytes, including legacy Pi IDs. `validateRequestId` checks the embedded
-timestamp: seven-day retry lifetime and five-minute future skew. Unknown fields
-cannot renew an old ID. `requestRetainUntil` retains records until **both** the
-embedded timestamp and admission age expire. Normalize UUID spelling before
-lookup. For retained duplicate lookup, parse with `checkFreshness:false`, then
-look up the outcome **before** deciding whether a new admission is fresh.
-Never use that option to admit an unrecorded stale request.
+UTF-8 bytes, including legacy Pi IDs. Request IDs have no freshness window.
+`requestRetainUntil` retains records for seven days after the later of the
+embedded timestamp and admission time. Normalize UUID spelling before lookup.
 
 `canonicalRequestPayload` compares normalized semantic data, excluding `id` and
 wire version. `compareRequestPayload` distinguishes same/conflict/unavailable;
@@ -275,12 +271,12 @@ does not answer/cancel. Deferral without a prior timeout uses 30 minutes; live
 nonserializable approval/OAuth operations require fresh requests after restart.
 
 The separate `CONTROL_VERSION=1` grammar supports authenticated mismatch status
-and explicitly confirmed stop/restart only. `BootstrapHelloSchema` extracts the
+and drain/force stop/restart only. `BootstrapHelloSchema` extracts the
 initial version mismatch from a full hello while stripping unknown fields;
 `ControlResponseSchema` accepts positive advertised protocol versions and
 additive fields and provides binary/protocol,
 canonical roots, instance and lifecycle state. `ControlRequestSchema` rejects
-session work, environment transfer and unconfirmed force. Attach and management
+session work and environment transfer. Attach and management
 pin the complete namespace/instance/root identity; the host must verify it.
 `DaemonTarget` selects production or an explicit isolated fixture namespace;
 canonicalization, root containment, peer authentication and ownership are host
@@ -288,18 +284,15 @@ responsibilities, not filesystem functionality in this package.
 
 ## Limits and verification
 
-`LIMITS` is the authoritative numeric table: 16 MiB LF-inclusive frames, JSON
-depth 32, 1 MiB prompt text, 16 attachments/12 MiB encoded total, 64 KiB structured
-data, 8 active streams/1 MiB each/4 MiB
-total, 256 KiB interactions/64 KiB answers, 100 choices/4 wizard pages,
-64 KiB process reads/16 KiB writes, 256-entry/12 MiB pages, 32 MiB unsent bytes and
-64 in-flight requests. The 64 KiB/1,024-entry structured JSON limits apply to
+`LIMITS` is the authoritative numeric table: JSON depth 32, 64 KiB structured
+data, 8 active streams/1 MiB each/4 MiB total, 64 KiB process reads/16 KiB
+writes, 256-entry/12 MiB pages, 32 MiB unsent bytes and 64 in-flight requests. The 64 KiB/1,024-entry structured JSON limits apply to
 structured presentation data, tool catalog parameters and coalesced tool
 status details, not transcript payloads. Transcript tool arguments, result
 details and message details instead use the enclosing 12 MiB message/page/
 snapshot budgets and depth 32; they are preserved without truncation, including
-collections larger than 1,024 entries. The host enforces queue/backpressure, retention, socket
-platform limits and policy activation waits (at most 30 seconds).
+collections larger than 1,024 entries. The host enforces queue/backpressure, retention and socket
+platform limits.
 
 ```sh
 pnpm --filter @felan-ai/session-protocol build

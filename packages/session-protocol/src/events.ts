@@ -2,31 +2,31 @@ import { Type, type Static } from 'typebox';
 import { CatalogSchema, ChildSchema, HistoryPageSchema, MessageSchema, PolicySchema, PresentationSchema, ProcessSchema, QueueItemSchema, RunSchema, ToolStateSchema, parsePresentation, validatePrompt } from './data.js';
 import { InteractionSchema, parseInteraction } from './interactions.js';
 import { LIMITS, PROTOCOL_VERSION, ROW_SCHEMA_VERSION, ProtocolValidationError, codePointLength, utf8Bytes } from './limits.js';
-import { AbsolutePathSchema, CounterSchema, CursorSchema, IdSchema, JsonValueSchema, ModelSchema, RevisionSchema, ThinkingSchema, assertJson, enumOf, parseSchema, text } from './schema.js';
+import { AbsolutePathSchema, CounterSchema, CursorSchema, IdSchema, JsonValueSchema, ModelSchema, RevisionSchema, ThinkingSchema, assertJson, enumOf, parseSchema, text, unboundedText } from './schema.js';
 
 export const ActiveStreamSchema = Type.Object({ message: IdSchema, id: IdSchema, kind: enumOf(['assistant', 'thinking'] as const), text: text(LIMITS.activeStreamBytes), offset: CounterSchema });
 export const CompletionOnlyStreamSchema = Type.Object({ message: IdSchema, id: IdSchema, kind: enumOf(['assistant', 'thinking'] as const), reason: enumOf(['limit', 'lost'] as const) });
 export const SessionSnapshotSchema = Type.Object({
   session: IdSchema, root: IdSchema, parent: Type.Optional(IdSchema), revision: RevisionSchema,
-  cwd: AbsolutePathSchema, title: text(4096), state: enumOf(['open', 'closed'] as const), residency: enumOf(['warm', 'evicted'] as const),
+  cwd: AbsolutePathSchema, title: unboundedText(), state: enumOf(['open', 'closed'] as const), residency: enumOf(['warm', 'evicted'] as const),
   branch: IdSchema, history: HistoryPageSchema, model: ModelSchema, thinking: ThinkingSchema,
-  queue: Type.Array(QueueItemSchema, { maxItems: LIMITS.pageEntries }), run: RunSchema, catalog: CatalogSchema,
-  policy: PolicySchema, interactions: Type.Array(InteractionSchema, { maxItems: LIMITS.pageEntries }),
-  children: Type.Array(ChildSchema, { maxItems: LIMITS.pageEntries }), processes: Type.Array(ProcessSchema, { maxItems: LIMITS.pageEntries }),
-  tools: Type.Array(ToolStateSchema, { maxItems: LIMITS.pageEntries }), presentation: Type.Array(PresentationSchema, { maxItems: LIMITS.pageEntries }),
+  queue: Type.Array(QueueItemSchema), run: RunSchema, catalog: CatalogSchema,
+  policy: PolicySchema, interactions: Type.Array(InteractionSchema),
+  children: Type.Array(ChildSchema), processes: Type.Array(ProcessSchema),
+  tools: Type.Array(ToolStateSchema), presentation: Type.Array(PresentationSchema),
   activeStreams: Type.Array(ActiveStreamSchema, { maxItems: LIMITS.activeStreams }),
   completionOnlyStreams: Type.Array(CompletionOnlyStreamSchema, { maxItems: LIMITS.activeStreams }),
   cursor: Type.Optional(CursorSchema),
   executionsGeneration: Type.Optional(text(64, 64)),
-}, { 'x-maxEncodedBytes': LIMITS.pageBytes });
+});
 const changes = [
   Type.Object({ type: Type.Literal('message.completed'), message: MessageSchema }),
   Type.Object({ type: Type.Literal('tool.updated'), tool: ToolStateSchema }),
   Type.Object({ type: Type.Literal('run.updated'), run: RunSchema }),
-  Type.Object({ type: Type.Literal('queue.updated'), queue: Type.Array(QueueItemSchema, { maxItems: LIMITS.pageEntries }) }),
+  Type.Object({ type: Type.Literal('queue.updated'), queue: Type.Array(QueueItemSchema) }),
   Type.Object({ type: Type.Literal('interaction.requested'), interaction: InteractionSchema }),
   Type.Object({ type: Type.Literal('interaction.resolved'), interaction: InteractionSchema }),
-  Type.Object({ type: Type.Literal('metadata.updated'), title: text(4096), state: enumOf(['open', 'closed'] as const), residency: enumOf(['warm', 'evicted'] as const) }),
+  Type.Object({ type: Type.Literal('metadata.updated'), title: unboundedText(), state: enumOf(['open', 'closed'] as const), residency: enumOf(['warm', 'evicted'] as const) }),
   Type.Object({ type: Type.Literal('model.updated'), model: ModelSchema, thinking: ThinkingSchema }),
   Type.Object({ type: Type.Literal('branch.updated'), branch: IdSchema, history: HistoryPageSchema }),
   Type.Object({ type: Type.Literal('policy.updated'), policy: PolicySchema }),
@@ -42,7 +42,7 @@ export const KNOWN_CHANGE_TYPES = changes.map(schema => schema.properties.type.c
 export const KnownSessionChangeSchema = Type.Union([...changes]);
 export const UnknownSessionChangeSchema = Type.Object({
   type: Type.String({ minLength: 1, maxLength: LIMITS.commandBytes, pattern: `^(?!(?:${KNOWN_CHANGE_TYPES.map(name => name.replaceAll('.', '\\.')).join('|')})$).+$` }),
-}, { additionalProperties: JsonValueSchema, 'x-maxEncodedBytes': LIMITS.structuredBytes });
+}, { additionalProperties: JsonValueSchema });
 export const SessionChangeSchema = Type.Union([KnownSessionChangeSchema, UnknownSessionChangeSchema]);
 export const SessionEventSchema = Type.Object({ v: Type.Literal(PROTOCOL_VERSION), session: IdSchema, rev: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }), change: SessionChangeSchema });
 export const TextStreamEventSchema = Type.Object({

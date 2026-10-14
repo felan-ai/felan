@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createRegistrySessionsService } from '../src/daemon/session-services.js';
 import { recoverControlState } from '../src/daemon/control-recovery.js';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
-import { fixture, fixtures, realFixture, deferred } from './fixtures/registry.js';
+import { fixture, fixtures, realFixture, deferred, requestId } from './fixtures/registry.js';
 import type { ExecutionHost, ExecutionCompletionNotice } from '../src/daemon/executions.js';
 
 const request = (description = 'task') => ({ prompt: description, description, label: 'general', model: { provider: 'offline', id: 'fixture' } });
@@ -62,6 +62,30 @@ describe('registry-owned executions', () => {
     const cancel = host.cancel(child.value.executionId); gate.resolve(); await cancel;
     expect(host.listExecutions(true).map(row => row.status)).toEqual(['cancelled', 'cancelled']);
     expect(await nested.spawnSession(request('after cancellation'))).toMatchObject({ ok: false, error: { code: 'parent_unavailable' } });
+  });
+
+  it('reloads only the root while a child runs and delivers the child completion to the reloaded root', async () => {
+    const gate = deferred(); let calls = 0;
+    const f = await realFixture(async () => { calls++; await gate.promise; }); f.releases.add(gate.resolve);
+    const root = f.root.sessionId; const host = f.registry.executionHost(root);
+    const stale: ExecutionCompletionNotice[] = []; const delivered: ExecutionCompletionNotice[] = [];
+    const detach = host.attachParent({ deliverCompletion: async notice => { stale.push(notice); return 'unavailable'; } });
+    const child = await host.spawnSession({ ...request(), notifyOnCompletion: true }); if (!child.ok) throw new Error(child.error.message);
+    const id = child.value.executionId; const childBinding = f.registry.binding(id);
+    await vi.waitFor(() => expect(calls).toBe(1));
+    const open = f.profile.openSession.bind(f.profile);
+    // The child finishes while the root has no runtime, as when the old runtime detached before the new one attaches.
+    vi.spyOn(f.profile, 'openSession').mockImplementationOnce(async input => {
+      detach(); gate.resolve();
+      await vi.waitFor(() => expect(f.store.session(id).execution).toMatchObject({ outcome: 'completed', completionPending: true }));
+      return open(input);
+    });
+    const reload = requestId(); f.store.admit({ v: 1, id: reload, op: 'session.reload', session: root, params: {} }, 'client');
+    await f.registry.reloadAdmitted(reload, root);
+    expect(f.registry.binding(id)).toBe(childBinding);
+    f.registry.executionHost(root).attachParent({ deliverCompletion: async notice => { delivered.push(notice); return 'delivered'; } });
+    await vi.waitFor(() => expect(f.store.session(id).execution?.completionPending).toBe(false));
+    expect(stale).toEqual([]); expect(delivered).toEqual([expect.objectContaining({ executionId: id, status: 'completed', summary: 'done' })]);
   });
 
   it('retains completion delivery in canonical state until acknowledged, with non-consuming reads', async () => {

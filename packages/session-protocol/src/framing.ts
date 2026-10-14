@@ -1,12 +1,10 @@
-import { LIMITS, ProtocolValidationError } from './limits.js';
+import { ProtocolValidationError } from './limits.js';
 import { assertJson, type JsonValue } from './schema.js';
 
 export function encodeFrame(value: unknown): Uint8Array {
   assertJson(value);
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ProtocolValidationError('invalid_request', 'Frame must contain one JSON object');
-  const bytes = new TextEncoder().encode(`${JSON.stringify(value)}\n`);
-  if (bytes.byteLength > LIMITS.frameBytes) throw new ProtocolValidationError('invalid_request', 'Frame byte limit exceeded');
-  return bytes;
+  return new TextEncoder().encode(`${JSON.stringify(value)}\n`);
 }
 
 export class JsonLineDecoder {
@@ -43,9 +41,8 @@ export class JsonLineDecoder {
   }
 
   #append(bytes: Uint8Array): void {
-    if (this.#length + bytes.length + 1 > LIMITS.frameBytes) throw new ProtocolValidationError('invalid_request', 'Frame byte limit exceeded');
     if (this.#length + bytes.length > this.#buffer.length) {
-      const buffer = new Uint8Array(Math.min(LIMITS.frameBytes, Math.max(this.#length + bytes.length, this.#buffer.length * 2)));
+      const buffer = new Uint8Array(Math.max(this.#length + bytes.length, this.#buffer.length * 2));
       buffer.set(this.#buffer.subarray(0, this.#length));
       this.#buffer = buffer;
     }

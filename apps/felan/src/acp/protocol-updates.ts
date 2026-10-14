@@ -8,8 +8,6 @@ export class AcpProtocolUpdates {
   readonly #tools = new Map<string, string>();
   #tail = Promise.resolve();
   #failure: unknown;
-  #updates = 0;
-  #bytes = 0;
 
   constructor(
     readonly sessionId: string,
@@ -86,8 +84,6 @@ export class AcpProtocolUpdates {
   }
 
   send(update: SessionUpdate): void {
-    this.#bytes += Buffer.byteLength(JSON.stringify(update));
-    if (++this.#updates > 100_000 || this.#bytes > 64 * 1024 * 1024) { this.#failure ??= new Error('ACP update budget exceeded'); return; }
     this.#tail = this.#tail.then(async () => {
       if (this.isActive() && this.#failure === undefined) await this.client.notify(methods.client.session.update, { sessionId: this.sessionId, update });
     }).catch(error => { this.#failure ??= error; });

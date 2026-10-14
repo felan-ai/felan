@@ -9,11 +9,11 @@ import { serverFixture } from '../../daemon/test/fixtures/server.js';
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
 
-async function fixture(localConsole = true) {
+async function fixture() {
   const f = await serverFixture({ now: Date.now }); const broker = createRegistryInteractionBroker(f.registry, {  });
   const exec = vi.spyOn(f.root.agentRuntime, 'exec').mockResolvedValue({ code: 0, stdout: '', stderr: '', killed: false });
   cleanup.push(async () => { await broker.drain(); await f.dispose(); });
-  broker.connected({ attachment: 'owner', principal: 'local', kind: 'tui', localConsole, sessions: [f.root.sessionId], interactionKinds: ['form'] });
+  broker.connected({ attachment: 'owner', principal: 'local', kind: 'tui', sessions: [f.root.sessionId], interactionKinds: ['form'] });
   return { ...f, broker, exec, options: { broker, assertCurrent: () => f.owner.assertCurrent(),
     prepareOpen: (request: Interaction['request'], signal: AbortSignal) => prepareLocalInteractionOpen({ runtime: f.root.agentRuntime,
       assertOwnsPath: (path: string) => f.owner.assertOwnsPath(path) }, request, signal) } };

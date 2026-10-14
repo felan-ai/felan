@@ -13,7 +13,7 @@ behind admitted daemon operations.
   queues a follow-up. Shift+Enter keeps a newline in the editor.
 - Escape cancels the current run. Ctrl+D on an empty editor and `/exit` detach
   the client; they do not stop a run or dispose the daemon.
-- `/close` is a distinct, confirmed session-close operation. `/cwd` creates a
+- `/close` closes the session without a confirmation; attaching later reopens it. `/cwd` creates a
   new session in the chosen directory after the current run settles.
 - `/model`, `/thinking`, `/compact`, `/rename`, `/reload`, `/queue`, `/fork` and
   `/tree` use the server's catalog and operations. Targeted queue editing remains
@@ -25,9 +25,8 @@ behind admitted daemon operations.
   Ctrl+O expands tools and Ctrl+T toggles thinking. The key map uses public TUI
   primitives and loads daemon-owned preferences and keybinding overrides.
 
-Rejected or uncertain submissions retain editor input. An immediate identical
-resubmission of uncertain work is blocked rather than assigned a fresh request
-ID. Connection, recovery, policy restrictions and queued work remain visible.
+Rejected or uncertain submissions retain editor input and may be resubmitted.
+Connection, recovery, policy restrictions and queued work remain visible.
 `/reconnect` retries bounded client recovery; it does not authorize a different
 daemon instance or silently weaken policy.
 

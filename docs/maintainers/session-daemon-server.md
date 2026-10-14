@@ -42,7 +42,8 @@ Both protocol selectors preserve the existing interactive `/fork` meaning:
 [ADR 0024](../decisions/0024-serialize-configuration-field-updates.md) selects
 locked unconditional field merges with last-writer-wins behavior on the same
 field. `config.set.expectedRevision` is obsolete and must be rejected explicitly.
-Other operations retain their revision checks.
+Tree label, branch selection and delete carry no expected revision either; only
+history paging and queue edits keep revision checks.
 
 The approved target/lifetime boundaries are:
 
@@ -57,12 +58,11 @@ No configuration operation accepts environment/proxy reconfiguration, arbitrary
 settings paths or credentials. A configuration read must describe the same
 layer that its corresponding write would change.
 
-The daemon-only settings entry points leave existing callers unchanged. They
-bound the UTF-8 document to 1 MiB, refuse malformed/non-object data and aliased
-or hard-linked targets, validate a complete update before I/O, and merge under
-the existing settings lock. They recheck ownership at lock and rename boundaries,
-sync the replacement and directory, and propagate failures without pretending
-an uncertain post-rename write had no effect.
+The daemon-only settings entry points leave existing callers unchanged. Like
+Felan 0.28.3, they refuse malformed/non-object data, validate a complete update
+before I/O, and merge under the existing settings lock with a temporary file and
+rename. A symlinked `settings.json` is written at its target so dotfile links
+survive. They recheck daemon ownership before the rename and propagate failures.
 
 ## Queued and handled input
 
@@ -106,28 +106,35 @@ S1.14. None may be implemented as a silently successful placeholder.
 
 ## Lifecycle and host-file boundaries
 
-Session listing reads only registered daemon sessions. Pre-daemon transcripts are
-not discovered. Explicit import creates a fresh managed identity without changing
-the source; no adoption operation exists.
+Session listing returns registered daemon sessions plus unregistered pre-daemon
+transcripts discovered in owned store roots, shown as open, evicted and idle at
+revision 0 with a bounded name or first-prompt title. The `cwd` filter is
+canonicalized before matching. Attaching to a discovered ID adopts it in place under its existing ID
+and file (see [persistence](session-daemon-persistence.md#pre-daemon-files-and-downgrade)).
+Explicit import still creates a fresh managed identity without changing the
+source.
 
-Deletion requires an explicit close first, removes only the identity-checked
-managed transcript after a durable tombstone and never runs a trash program.
-S1.11/S1.12 must display a permanent-deletion warning, not promise undo. Deleted
-IDs are absent from session/child lists and cannot be restored; retained outcomes
-remain available for retries.
-Owned list rows expose the current revision, including for closed sessions.
-Deletion clears obsolete projections and terminal outcomes expire normally;
-late expired IDs still cannot replay. Deleted IDs are retired permanently. Import
-can make a separate new-ID copy. Closed roots with unreconciled detached-job rows
-remain conservatively busy until host lifecycle reconciliation proves their state;
-deletion does not infer that an unobserved job finished.
+Deletion closes the session tree if needed (no prior close, idle or revision
+precondition), then removes only the managed transcript after a durable
+tombstone and never runs a trash program. Clients show one permanent-deletion
+confirmation, not undo. Deleted IDs are absent from session/child lists and
+cannot be restored; retained outcomes remain available for retries. Closing is
+not permanent: attaching to a closed session reopens it with the current
+configuration. Import can make a separate new-ID copy.
 
-Reload rebuilds a quiescent root through the existing profile restore path and
-current service factory, retaining attachments and monotonic policy, then requests
-a fresh snapshot. It does not call Pi's in-place reload or reset global providers.
-Children are unavailable because generic restore cannot reproduce their injected
-instructions. Any registered service currently makes the session busy, even if
-its `busy()` method returns false. Reload inherits restore's headless source and
+Reload rebuilds an idle root (refused only while the root itself runs, as Pi's
+`/reload` is) through the existing profile restore path and current service
+factory, retaining attachments and policy, then requests a fresh snapshot.
+Background processes keep running: detached jobs are independent of the
+runtime, and the daemon keeps PTY handles so the reloaded runtime reattaches
+them by ID; a PTY started by a disposed child is then controlled through the
+root. Only the root runtime reloads: busy children and queued executions stay
+resident and keep running, and idle children are disposed. Completions are
+canonical execution state and retry until the reloaded root's parent port
+accepts them; queued executions resume after reload. It does not call Pi's
+in-place reload or reset global providers. Disposed children are unavailable
+until restored because generic restore cannot reproduce their injected
+instructions. Reload inherits restore's headless source and
 external-extension limitations; it does not require the later service split.
 Session model/thinking operations never write global defaults. The later TUI
 preserves interactive default selection through explicit `config.set` calls only
@@ -149,9 +156,7 @@ an explicit destination outside every held store root; that output gains no
 executable store authority. Publication durability failures after rename are
 indeterminate.
 
-Settings and export destination symlinks or hard links are deliberately refused,
-even when a dotfiles setup or the old interactive UI followed them. Choose a real
-single-link file instead. Import may follow a readable source symlink because it
+Export destination symlinks or hard links are deliberately refused. Import may follow a readable source symlink because it
 binds and validates the opened file's identity and never writes that source.
 
 Import validation, export destination checks, model authentication and process
@@ -175,9 +180,9 @@ reaped, while durable resource intent still rejects redispatch.
 
 Loaded trusted skills appear as `skill:<name>` commands for TUI/headless and use
 native explicit skill expansion when `getEnableSkillCommands()` permits it.
-ACP prompt expansion remains disabled. Typed
-extension/skill invocation is currently idle-only; S1.09/S1.11 must preserve that
-restriction unless a separate safe effect boundary is designed.
+ACP prompt expansion remains disabled. Like Pi, typed extension commands run
+immediately during an active run and join it; skill commands start a run and
+return `busy` while one is active.
 
 List paging uses scope-bound keysets; unrelated commits do not invalidate a
 cursor. Label edits intentionally require a resnapshot because the wire has no

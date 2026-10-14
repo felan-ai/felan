@@ -9,6 +9,7 @@ export function enumOf<const T extends readonly [string, ...string[]]>(values: T
 }
 
 export const text = (bytes: number, minLength = 0) => Type.String({ minLength, maxLength: bytes, 'x-maxBytes': bytes });
+export const unboundedText = (minLength = 0) => Type.String({ minLength });
 export const IdSchema = text(LIMITS.idBytes, 1);
 export const NameSchema = text(LIMITS.commandBytes, 1);
 export const PathSchema = Type.String({ minLength: 1, maxLength: LIMITS.pathBytes, pattern: '^[^\u0000]+$', 'x-maxBytes': LIMITS.pathBytes });
@@ -19,11 +20,9 @@ export const ClientKindSchema = enumOf(['tui', 'acp', 'headless'] as const);
 export const ThinkingSchema = enumOf(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const);
 export const ModelSchema = Type.Object({ provider: IdSchema, id: IdSchema });
 export const CursorSchema = text(4096, 1);
-export const PageRequestSchema = Type.Object({ cursor: Type.Optional(CursorSchema), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: LIMITS.pageEntries })) });
+export const PageRequestSchema = Type.Object({ cursor: Type.Optional(CursorSchema), limit: Type.Optional(Type.Integer({ minimum: 1 })) });
 export const DiagnosticTextSchema = Type.String({ ...text(4096), pattern: '^[^\u0000-\u001f\u007f-\u009f]*$' });
-export const JsonValueSchema = Type.Unsafe<JsonValue>(Type.Unknown({
-  'x-jsonValue': true, 'x-maxEncodedBytes': LIMITS.structuredBytes, 'x-maxCollectionEntries': LIMITS.catalogEntries,
-}));
+export const JsonValueSchema = Type.Unsafe<JsonValue>(Type.Unknown({ 'x-jsonValue': true }));
 
 export const DaemonTargetSchema = Type.Union([
   Type.Object({ kind: Type.Literal('production') }),
@@ -31,12 +30,12 @@ export const DaemonTargetSchema = Type.Union([
 ]);
 export const DaemonIdentitySchema = Type.Object({
   namespaceId: IdSchema, instanceId: IdSchema, agentDir: AbsolutePathSchema,
-  rootSet: Type.Array(AbsolutePathSchema, { minItems: 1, maxItems: LIMITS.catalogEntries, uniqueItems: true }),
+  rootSet: Type.Array(AbsolutePathSchema, { minItems: 1, uniqueItems: true }),
 });
 export type DaemonTarget = Static<typeof DaemonTargetSchema>;
 export type DaemonIdentity = Static<typeof DaemonIdentitySchema>;
 
-export function assertJson(value: unknown, maxBytes = LIMITS.frameBytes): asserts value is JsonValue {
+export function assertJson(value: unknown, maxBytes?: number): asserts value is JsonValue {
   const ancestors = new Set<object>();
   function visit(item: unknown, depth: number): void {
     if (depth > LIMITS.depth) throw new ProtocolValidationError('invalid_request', 'JSON nesting limit exceeded');
@@ -64,7 +63,7 @@ export function assertJson(value: unknown, maxBytes = LIMITS.frameBytes): assert
     ancestors.delete(item);
   }
   visit(value, 0);
-  if (utf8Bytes(JSON.stringify(value)) > maxBytes) throw new ProtocolValidationError('invalid_request', 'Encoded data limit exceeded');
+  if (maxBytes !== undefined && utf8Bytes(JSON.stringify(value)) > maxBytes) throw new ProtocolValidationError('invalid_request', 'Encoded data limit exceeded');
 }
 
 function wellFormed(value: string): boolean {
@@ -73,7 +72,7 @@ function wellFormed(value: string): boolean {
 
 type SchemaNode = TSchema & {
   type?: string; const?: unknown; enum?: unknown[]; required?: string[];
-  'x-jsonValue'?: boolean; 'x-maxBytes'?: number; 'x-maxEncodedBytes'?: number; 'x-maxCollectionEntries'?: number; anyOf?: SchemaNode[];
+  'x-jsonValue'?: boolean; 'x-maxBytes'?: number; 'x-maxEncodedBytes'?: number; anyOf?: SchemaNode[];
   items?: SchemaNode; properties?: Record<string, SchemaNode>; patternProperties?: Record<string, SchemaNode>;
   additionalProperties?: boolean | SchemaNode;
 };
@@ -115,19 +114,9 @@ function enforceLimits(schema: SchemaNode, value: unknown): void {
   }
 }
 
-function checkJsonCollections(value: unknown, maxEntries: number): void {
-  if (value === null || typeof value !== 'object') return;
-  const values = Array.isArray(value) ? value : Object.values(value);
-  if (values.length > maxEntries) throw new ProtocolValidationError('invalid_request', 'JSON collection limit exceeded');
-  for (const child of values) checkJsonCollections(child, maxEntries);
-}
-
 function normalize(schema: SchemaNode, value: unknown): unknown {
   enforceLimits(schema, value);
-  if (schema['x-jsonValue']) {
-    if (typeof schema['x-maxCollectionEntries'] === 'number') checkJsonCollections(value, schema['x-maxCollectionEntries']);
-    return JSON.parse(JSON.stringify(value));
-  }
+  if (schema['x-jsonValue']) return JSON.parse(JSON.stringify(value));
   if (schema.anyOf) return normalize(selectBranch(schema, value, true), value);
   if (Array.isArray(value) && schema.items) return value.map(item => normalize(schema.items!, item));
   if (schema.type === 'object' && value !== null && typeof value === 'object') {

@@ -37,14 +37,14 @@ describe('trusted host configuration', () => {
     await expect(loadHostConfig({ agentDir: join(root, 'missing-agent') })).rejects.toThrow('no default configuration');
   });
 
-  it('rejects unsafe paths, malformed or oversized input, duplicate providers and unknown keys', async () => {
+  it('rejects writable or malformed input, duplicate providers and unknown keys', async () => {
     const root = await fixture();
     const agentDir = join(root, 'agent');
     const target = join(root, 'target.json');
     const link = join(root, 'link.json');
     await writeFile(target, config(), { mode: 0o600 });
     await symlink(target, link);
-    await expect(loadHostConfig({ agentDir, explicitPath: link })).rejects.toThrow();
+    expect((await loadHostConfig({ agentDir, explicitPath: link })).source.path).toBe(link);
     await expect(loadHostConfig({ agentDir, explicitPath: 'relative.json' })).rejects.toThrow('absolute path');
     await writeFile(join(agentDir, 'host.json'), JSON.stringify({ version: 1, services: [], extensions: [], unexpected: true }), { mode: 0o600 });
     await expect(loadHostConfig({ agentDir })).rejects.toThrow('Schema validation failed');
@@ -52,13 +52,12 @@ describe('trusted host configuration', () => {
       { id: 'felan.models', major: 1, use: '@test/provider' }, { id: 'felan.models', major: 1, use: '@test/other' },
     ], extensions: [] }), { mode: 0o600 });
     await expect(loadHostConfig({ agentDir })).rejects.toThrow('more than one configured provider');
-    await writeFile(join(agentDir, 'host.json'), JSON.stringify({ version: 1, services: Array(129).fill({ id: 'svc', major: 1, use: '@test/provider' }), extensions: [] }), { mode: 0o600 });
-    await expect(loadHostConfig({ agentDir })).rejects.toThrow();
     await writeFile(join(agentDir, 'host.json'), config());
     await chmod(join(agentDir, 'host.json'), 0o664);
-    await expect(loadHostConfig({ agentDir })).rejects.toThrow('owner-controlled');
-    await writeFile(join(agentDir, 'host.json'), 'x'.repeat(64 * 1024 + 1), { mode: 0o600 });
-    await expect(loadHostConfig({ agentDir })).rejects.toThrow();
+    await expect(loadHostConfig({ agentDir })).rejects.toThrow('not group or world writable');
+    await chmod(join(agentDir, 'host.json'), 0o644);
+    await writeFile(join(agentDir, 'host.json'), 'x'.repeat(64), { mode: 0o600 });
+    await expect(loadHostConfig({ agentDir })).rejects.toThrow('not valid JSON');
   });
 
   it('accepts package export specifiers and refuses paths, URLs and traversal', () => {
@@ -72,6 +71,9 @@ describe('trusted host configuration', () => {
     await writeFile(join(agentDir, 'host.json'), JSON.stringify({ version: 1, services: [{ id: 'felan.platform', major: 1,
       use: '@felan-ai/felan/providers/platform', options: { apiKey: 'synthetic-secret' } }], extensions: [] }), { mode: 0o600 });
     await expect(loadHostConfig({ agentDir })).rejects.toThrow('cannot contain credential values');
+    await writeFile(join(agentDir, 'host.json'), JSON.stringify({ version: 1, services: [{ id: 'felan.platform', major: 1,
+      use: '@felan-ai/felan/providers/platform', options: { maxTokens: 4096, tokenizer: 'default' } }], extensions: [] }), { mode: 0o600 });
+    await expect(loadHostConfig({ agentDir })).resolves.toMatchObject({ config: { services: [{ options: { maxTokens: 4096 } }] } });
   });
 
   it('validates extension grants as bounded service contract references', async () => {

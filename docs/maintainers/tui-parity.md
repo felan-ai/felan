@@ -94,7 +94,7 @@ Step kinds:
 - `{ resize: [columns, rows] }`: resize each selected tmux window.
 - `{ commands: true }`: scroll the open slash list until its position counter wraps, saving every page and both extracted lists.
 - `{ blocked: reason }`: record an unexecutable action and skip subsequent driving on that side (checkpoints remain available).
-- `{ side: 'new', daemonStop: 'force' }`: run `daemon stop --yes --force` against this run's explicit isolated target while the current view remains open. Record the bounded command in `daemon-cleanup.json`; do not dismiss the view or send process signals. Ordinary scoped teardown still runs afterwards.
+- `{ side: 'new', daemonStop: 'force' }`: run `daemon stop --force` against this run's explicit isolated target while the current view remains open. Record the bounded command in `daemon-cleanup.json`; do not dismiss the view or send process signals. Ordinary scoped teardown still runs afterwards.
 - `{ side: 'old' | 'new', ... }`: optional on any step when the two TUIs need different keys for the same action (record why in `intentional`).
 
 ## Report
@@ -217,6 +217,7 @@ Scenario IDs are stable across runs. Each row is implemented in `scripts/tui-par
 | B-login-nav | B | `/login`, choose account, back, cancel | type-first order, provider list filtering, back navigation, no login completed |
 | B-logout-nav | B | `/logout`, cancel | list contents, cancel behaviour |
 | B-sessions | B | `/new`, `/sessions` or `/resume`, `/rename x`, `/fork` | session list layout, names, fork notice |
+| B-resume | B | seed 12 pre-daemon transcripts, `/resume`, scroll, Tab, Ctrl+P, resize to 120x24 | stable viewport, counter, first-message labels, age metadata, folder only in All scope |
 | B-tree | B | `/tree` after two prompts | tree layout and navigation keys |
 | B-history | B | Ctrl+R after two prompts | picker layout, scopes, selection inserts text |
 | B-themes | B | `/settings` theme row | theme list, preview, live colour change |

@@ -1,13 +1,9 @@
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LIMITS, requestRetainUntil } from '@felan-ai/session-protocol';
-import { CONTROL_LIMITS, type ControlState } from '../src/daemon/control-state.js';
-import {
-  CONTROL_CONFIGURATION_SNAPSHOT_MAX_BYTES, ControlStateValidationError,
-  computeControlConfigurationSnapshotIdentity, parseControlState, validateControlConfigurationSnapshot,
-} from '../src/daemon/control-state.js';
+import { requestRetainUntil } from '@felan-ai/session-protocol';
+import { ControlStateValidationError, parseControlState, type ControlState } from '../src/daemon/control-state.js';
 
 import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { fixture as storeFixture, fixtures } from './fixtures/registry.js';
@@ -16,20 +12,6 @@ afterEach(async () => { for (const dispose of fixtures.splice(0)) await dispose(
 
 const NOW = 1_800_000_000_000;
 const DIGEST = 'a'.repeat(64);
-
-function configuration() {
-  return {
-    manager: { package: '@example/manager', version: '1.2.3' },
-    services: [{ id: 'example.service', major: 1, use: '@example/manager/provider', options: { enabled: true, budget: 12, labels: ['one', 'two'] } }],
-    extensions: [{ package: '@example/feature', grants: ['example.service@1'] }],
-    settings: { model: 'provider/model', project: '世界', nested: { exact: null } },
-  };
-}
-
-function snapshotRow(sessionId = 'root') {
-  const snapshot = configuration();
-  return { sessionId, snapshot, identity: computeControlConfigurationSnapshotIdentity(snapshot) };
-}
 
 function requestId(index: number): string {
   const timestamp = NOW.toString(16).padStart(12, '0');
@@ -41,7 +23,7 @@ function fixture(): ControlState {
     id: 'root', root: 'root', cwd: '/workspace/original', piPath: '/agent/sessions/root.jsonl',
     revision: 42, updatedAt: NOW + 91, state: 'open', residency: 'warm', title: 'Original title 界',
     run: { state: 'waiting', id: 'run', turnId: 'turn' },
-    policy: { effective: 'host-default', generation: 7, pending: { target: 'acp-strict', blockers: [{ session: 'root', reason: 'turn', runId: 'run' }] } },
+    policy: { effective: 'host-default', generation: 7 },
     branch: 'selected-leaf', observedTip: 'newer-tip', model: { provider: 'provider', id: 'model' }, thinking: 'high',
     profile: { source: 'tui', extensionPaths: ['/installed/extension.mjs'],
       extensionConfigOverrides: [{ extensionId: 'feature', source: 'original profile', values: { enabled: true, unknownOptions: { retain: [null, 'original'] } } }] },
@@ -49,7 +31,7 @@ function fixture(): ControlState {
       { key: 'queue', updatedAt: NOW + 18, value: { type: 'queue', ids: ['queued-turn'], identity: { sha256: DIGEST, bytes: 123 } } }],
   };
   const state: ControlState = {
-    version: 1, configurationSnapshots: [], namespace: 'original-namespace', agentDir: '/agent', clock: NOW + 99,
+    version: 1, namespace: 'original-namespace', agentDir: '/agent', clock: NOW + 99,
     sessions: [root, { ...root, id: 'child', parent: 'root', cwd: '/workspace/child', piPath: '/agent/sessions/child.jsonl',
       revision: 4, run: { state: 'running', id: 'child-run' }, profile: { source: 'headless' }, projections: [] }],
     requests: [0, 1, 2, 3, 4].map((index): ControlState['requests'][number] => {
@@ -84,7 +66,7 @@ function fixture(): ControlState {
   return state;
 }
 
-async function expectInvalidStore(input: ControlState): Promise<void> {
+async function reopenStore(input: ControlState): Promise<{ store: DaemonControlStore; original: string; directory: string }> {
   const f = await storeFixture();
   await f.registry.shutdown();
   const path = join(f.store.directory, 'control.json');
@@ -99,8 +81,26 @@ async function expectInvalidStore(input: ControlState): Promise<void> {
   envelope.digest = createHash('sha256').update(JSON.stringify(state)).digest('hex');
   const original = JSON.stringify(envelope);
   await writeFile(path, original, { mode: 0o600 });
-  expect(() => new DaemonControlStore(f.owner)).toThrow(/preserve/);
-  expect(await readFile(path, 'utf8')).toBe(original);
+  return { store: new DaemonControlStore(f.owner), original, directory: f.store.directory };
+}
+
+async function expectQuarantinedStore(input: ControlState): Promise<void> {
+  const { store, original, directory } = await reopenStore(input);
+  expect(store.snapshot().sessions).toEqual([]);
+  expect(store.needsRecovery).toBe(false);
+  store.close();
+  const quarantined = (await readdir(directory)).filter(name => name.startsWith('control-corrupt-'));
+  expect(quarantined).toHaveLength(1);
+  expect(await readFile(join(directory, quarantined[0]!), 'utf8')).toBe(original);
+}
+
+async function expectRepairedStore(input: ControlState): Promise<ControlState> {
+  const { store, directory } = await reopenStore(input);
+  const snapshot = store.snapshot();
+  expect(store.needsRecovery).toBe(true);
+  store.close();
+  expect((await readdir(directory)).filter(name => name.startsWith('control-corrupt-'))).toEqual([]);
+  return snapshot;
 }
 
 describe('control-state validation', () => {
@@ -112,7 +112,6 @@ describe('control-state validation', () => {
     expect(result).toEqual(before);
     expect(result).not.toBe(input);
     expect(input).toEqual(before);
-    expect(result.configurationSnapshots).toEqual([]);
     expect(result.sessions[0]!.profile).toEqual(before.sessions[0]!.profile);
     expect(result.requests.map(row => row.phase)).toEqual(['intent', 'dispatch_intent', 'terminal', 'terminal', 'terminal']);
     expect(result.requests[4]!.response?.outcome).toBe('indeterminate');
@@ -127,15 +126,6 @@ describe('control-state validation', () => {
     expect(result.sessions[0]!.title).toBe('Original title 界');
     expect(parseControlState(result)).toEqual(result);
     expect(parseControlState(result)).not.toBe(result);
-  });
-
-  it('keeps configuration snapshots alongside sessions without inferring missing snapshots', () => {
-    const input = fixture();
-    delete input.sessions[1]!.profile;
-    const snapshot = snapshotRow();
-    const result = parseControlState({ ...input, configurationSnapshots: [snapshot] });
-    expect(result.configurationSnapshots).toEqual([snapshot]);
-    expect(result.configurationSnapshots!.some(row => row.sessionId === 'child')).toBe(false);
   });
 
   it.each([undefined, null, {}, { version: 0 }, { version: 3 }, { version: '1' }, { version: 2, legacy: {} }, { version: 1 }])('rejects absent, unsupported or malformed input without creating an empty state', input => {
@@ -154,79 +144,25 @@ describe('control-state validation', () => {
     (state: ControlState) => { state.continuations[0]!.interaction = 'waiting'; },
     (state: ControlState) => { state.resources[0]!.root = 'missing'; },
     (state: ControlState) => { state.interactions[0]!.scope = { kind: 'session', session: 'child', root: 'child' }; },
-  ])('rejects inconsistent control relationships without changing the input', async mutate => {
+  ])('drops inconsistent control rows individually without quarantining the file', async mutate => {
     const input = fixture(); mutate(input);
     const before = structuredClone(input);
-    await expectInvalidStore(input);
+    const repaired = await expectRepairedStore(input);
+    expect(repaired.sessions.map(session => session.id)).toContain('root');
     expect(input).toEqual(before);
   });
 
-  it('rejects unknown, duplicate, hash-only or malformed snapshots rather than assigning them to another session', async () => {
+  it('drops a session whose parent is missing together with its dependent rows', async () => {
+    const input = fixture(); input.sessions[1]!.parent = 'missing';
+    const repaired = await expectRepairedStore(input);
+    expect(repaired.sessions.map(session => session.id)).toEqual(['root']);
+    expect(repaired.requests.every(request => request.session !== 'child')).toBe(true);
+  });
+
+  it('rejects unknown state fields', async () => {
     const base = parseControlState(fixture());
-    const snapshot = snapshotRow();
-    for (const configurationSnapshots of [[{ ...snapshot, sessionId: 'foreign' }], [snapshot, snapshot],
-      [{ ...snapshot, identity: { sha256: 'invalid', bytes: 123 } }],
-      [{ sessionId: snapshot.sessionId, identity: snapshot.identity }],
-      [{ ...snapshot, identity: { ...snapshot.identity, options: {} } }], undefined]) {
-      await expectInvalidStore({ ...base, configurationSnapshots } as ControlState);
-    }
     expect(() => parseControlState({ ...base, fabricatedOptions: {} })).toThrow(ControlStateValidationError);
-  });
-
-  it('hashes canonical UTF-8 JSON with sorted object keys and ordered arrays', () => {
-    const first = { z: ['界', 2], a: { b: false, a: null }, '2': 'two', '10': 'ten' };
-    const second = { '10': 'ten', '2': 'two', a: { a: null, b: false }, z: ['界', 2] };
-    const canonical = '{"10":"ten","2":"two","a":{"a":null,"b":false},"z":["界",2]}';
-    const expected = { sha256: createHash('sha256').update(canonical, 'utf8').digest('hex'), bytes: new TextEncoder().encode(canonical).byteLength };
-    expect(computeControlConfigurationSnapshotIdentity(first)).toEqual(expected);
-    expect(computeControlConfigurationSnapshotIdentity(second)).toEqual(expected);
-    expect(computeControlConfigurationSnapshotIdentity({ ...first, z: [2, '界'] })).not.toEqual(expected);
-  });
-
-  it('validates, detaches and freezes the full inline configuration without dropping options', () => {
-    const original = snapshotRow();
-    const captured = structuredClone(original);
-    const checked = validateControlConfigurationSnapshot(original);
-    const state = parseControlState({ ...parseControlState(fixture()), configurationSnapshots: [original] });
-    original.snapshot.services[0]!.options.labels.push('later mutation');
-    original.snapshot.settings.project = 'changed';
-    expect(checked).toEqual(captured);
-    expect(state.configurationSnapshots![0]).toEqual(captured);
-    expect(Object.isFrozen(checked.snapshot)).toBe(true);
-    expect(parseControlState(state)).toEqual(state);
-    expect(state).toEqual({ ...fixture(), configurationSnapshots: [captured] });
-  });
-
-  it.each(['payload', 'digest', 'bytes'] as const)('blocks a %s mismatch instead of reconstructing configuration', corruption => {
-    const snapshot = snapshotRow();
-    if (corruption === 'payload') snapshot.snapshot.services[0]!.options.budget++;
-    else if (corruption === 'digest') snapshot.identity = { ...snapshot.identity, sha256: 'b'.repeat(64) };
-    else snapshot.identity = { ...snapshot.identity, bytes: snapshot.identity.bytes + 1 };
-    expect(() => validateControlConfigurationSnapshot(snapshot)).toThrow('snapshot identity does not match');
-  });
-
-  it('enforces UTF-8, nesting, collection and total persisted-state bounds', () => {
-    const exact = 'x'.repeat(CONTROL_CONFIGURATION_SNAPSHOT_MAX_BYTES - 2);
-    expect(computeControlConfigurationSnapshotIdentity(exact).bytes).toBe(CONTROL_CONFIGURATION_SNAPSHOT_MAX_BYTES);
-    for (const value of [exact + 'x', '界'.repeat(Math.ceil(CONTROL_CONFIGURATION_SNAPSHOT_MAX_BYTES / 3)),
-      Array.from({ length: LIMITS.catalogEntries + 1 }, () => null)]) {
-      expect(() => computeControlConfigurationSnapshotIdentity(value)).toThrow(ControlStateValidationError);
-    }
-    let nested: unknown = null;
-    for (let depth = 0; depth <= LIMITS.depth; depth++) nested = { child: nested };
-    expect(() => computeControlConfigurationSnapshotIdentity(nested)).toThrow(ControlStateValidationError);
-    const base = parseControlState(fixture());
-    let withinPayloadDepth: unknown = null;
-    for (let depth = 0; depth < LIMITS.depth - 1; depth++) withinPayloadDepth = { child: withinPayloadDepth };
-    const deepRow = { sessionId: 'root', snapshot: withinPayloadDepth, identity: computeControlConfigurationSnapshotIdentity(withinPayloadDepth) };
-    expect(() => parseControlState({ ...base, configurationSnapshots: [deepRow] })).toThrow(ControlStateValidationError);
-    const count = Math.ceil(CONTROL_LIMITS.bytes / CONTROL_CONFIGURATION_SNAPSHOT_MAX_BYTES);
-    const sessions = Array.from({ length: count }, (_, index) => ({ ...base.sessions[0]!, id: `root-${index}`, root: `root-${index}` }));
-    const input = { ...base, sessions: [...base.sessions, ...sessions], configurationSnapshots: sessions.map(session => ({
-      sessionId: session.id, snapshot: exact, identity: computeControlConfigurationSnapshotIdentity(exact),
-    })) };
-    expect(Buffer.byteLength(JSON.stringify(input))).toBeGreaterThan(CONTROL_LIMITS.bytes);
-    expect(() => parseControlState(input)).toThrow(ControlStateValidationError);
+    await expectQuarantinedStore({ ...base, fabricatedOptions: {} } as ControlState);
   });
 
   it('rejects lossy or executable non-JSON values without leaking diagnostics', () => {
@@ -236,8 +172,7 @@ describe('control-state validation', () => {
     const cyclic = fixture(); Object.assign(cyclic, { loop: cyclic });
     const nonJson = fixture(); Object.assign(nonJson, { lost: undefined });
     const sparse = fixture(); Object.assign(sparse, { sparse: new Array(2) });
-    const oversized = fixture(); Object.assign(oversized, { data: 'x'.repeat(CONTROL_LIMITS.bytes) });
-    for (const value of [accessor, cyclic, nonJson, sparse, oversized]) {
+    for (const value of [accessor, cyclic, nonJson, sparse]) {
       try { parseControlState(value); throw new Error('Expected rejection'); }
       catch (error) { expect(error).toBeInstanceOf(ControlStateValidationError); expect((error as Error).message).toBe('Control state is invalid.'); }
     }
@@ -246,7 +181,7 @@ describe('control-state validation', () => {
 
   it('accepts a genuine empty v1 state only when explicitly supplied', () => {
     const input = { version: 1, namespace: 'namespace', agentDir: '/agent', clock: 0,
-      sessions: [], requests: [], interactions: [], continuations: [], resources: [], configurationSnapshots: [] };
+      sessions: [], requests: [], interactions: [], continuations: [], resources: [] };
     expect(parseControlState(input)).toEqual(input);
   });
 });

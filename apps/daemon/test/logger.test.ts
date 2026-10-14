@@ -36,3 +36,13 @@ describe('local agent logger', () => {
     expect(line.error).not.toContain('secret-token');
   });
 });
+
+describe('redact', () => {
+  it('masks query keys, Google API keys and URL credentials', async () => {
+    const { redact } = await import('../src/logger.js');
+    const google = `AIza${'A1b2C3d4'.repeat(4)}`;
+    const value = redact(`GET https://api.example.test/v1?key=k-secret&api-key=a-secret&apikey=b-secret&q=1 ${google} postgres://admin:pa55@db.example.test/x`);
+    for (const secret of ['k-secret', 'a-secret', 'b-secret', google, 'admin:pa55']) expect(value).not.toContain(secret);
+    expect(value).toContain('q=1'); expect(value).toContain('postgres://[redacted]@db.example.test/x');
+  });
+});

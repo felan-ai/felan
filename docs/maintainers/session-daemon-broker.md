@@ -31,8 +31,7 @@ registration or custom interaction kind is required or supported.
 Answers require the appropriate negotiated interaction kind and a current
 session attachment, or an eligible host recipient. Verified transport supplies
 local-console authority; the client-kind label does not. Owner-only requests
-also require the owner principal. `requireLocalConsole` can further restrict
-answers. An ordinary form never grants authority to install a dependency or
+also require the owner principal. An ordinary form never grants authority to install a dependency or
 perform another host operation.
 
 Host prompts and transient OAuth presentation use out-of-band notifications.

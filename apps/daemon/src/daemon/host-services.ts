@@ -22,6 +22,8 @@ export interface HostSetup {
   prepareOpenLink(id: string, index: number, client: string): () => Promise<void>;
   disconnected(client: string): void;
   beginDrain(): void;
+  /** Accepts new jobs again after an abandoned drain. */
+  endDrain?(): void;
   drain(): Promise<void>;
 }
 
@@ -29,7 +31,7 @@ export interface HostServices {
   readonly configuration: HostConfiguration;
   readonly setup: HostSetup;
   prepareRoot?(params: OperationParams<'sessions.create'>, caller: {
-    id: string; kind: OperationParams<'hello'>['kind']; localConsole: boolean; signal: AbortSignal;
+    id: string; kind: OperationParams<'hello'>['kind']; signal: AbortSignal;
   }): Promise<{ cwd: string; extensionPaths: readonly string[] }>;
 }
 

@@ -87,8 +87,8 @@ it('skips untrusted project extensions without a capable TUI and rejects noninte
   const headless = await f.client('headless', false);
   const request = { ...f.request, source: 'headless' as const, interactiveExtensions: false, extensions: [f.extension] };
   expect(await headless.request('sessions.create', request)).toMatchObject({ outcome: 'rejected' });
-  await expect(f.prepareRoot(request, { id: 'headless', kind: 'headless', localConsole: false, signal: new AbortController().signal }))
-    .rejects.toThrow('External extensions require a local-console interactive root session.');
+  await expect(f.prepareRoot(request, { id: 'headless', kind: 'headless', signal: new AbortController().signal }))
+    .rejects.toThrow('External extensions require an interactive root session.');
 });
 
 it('cancels recipient-bound prompts from a prior broker instance on restart', async () => {

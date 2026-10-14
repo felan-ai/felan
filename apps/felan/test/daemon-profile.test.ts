@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -18,7 +18,7 @@ vi.mock('../../felan/src/runtime.js', () => { throw new Error('Profile imported 
 vi.mock('../../felan/src/dependency-onboarding.js', () => { throw new Error('Profile imported terminal prompts'); });
 
 const roots: string[] = [];
-const policy = { mode: 'host-default', pendingTightening: false, generation: 0 } as const;
+const policy = { mode: 'host-default', generation: 0 } as const;
 const model: Model<Api> = {
   id: 'fixture', name: 'Fixture', api: 'openai-completions', provider: 'offline', baseUrl: 'https://example.invalid',
   reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 1024,
@@ -276,15 +276,16 @@ describe('local daemon profile', () => {
     }
     const outside = join(cwd, 'outside.jsonl');
     await writeFile(outside, contents);
-    await expect(profile.openSession({ ...base, target: { kind: 'resume', sessionFile: outside } })).rejects.toThrow('outside the owned');
+    const external = await profile.openSession({ ...base, target: { kind: 'resume', sessionFile: outside } });
+    expect(external.sessionId).toBe(initial.sessionId);
+    await external.runtime.dispose();
   });
 
-  it('does not weaken inherited policy or admit external extensions without explicit interactive root permission', async () => {
+  it('does not admit external extensions without explicit interactive root permission', async () => {
     const { cwd, agentDir } = await fixture();
     const profile = await createTestSessionLifecycle({ agentDir, initializeProcess, createModelRuntime: fakeModels });
     const base: SessionOpenRequest = { resources: await profile.resolveResources({ cwd }), ownership: { assertOwned() {} },
-      policy: { mode: 'acp-strict', pendingTightening: false, generation: 1 }, services: services(), target: { kind: 'new' }, model };
-    await expect(profile.openSession(base)).rejects.toThrow('cannot be weakened');
+      policy: { mode: 'acp-strict', generation: 1 }, services: services(), target: { kind: 'new' }, model };
     await expect(profile.openSession({ ...base, source: 'acp', extensionPaths: ['/not-loaded.js'] })).rejects.toThrow('trusted interactive root');
   });
 
@@ -332,10 +333,9 @@ describe('local daemon profile', () => {
     } finally { await binding.runtime.dispose(); }
   });
 
-  it('rejects cross-cwd resume and fork before model creation or filesystem effects', async () => {
+  it('resumes and forks a session persisted for another cwd without rewriting it', async () => {
     const { root, cwd, agentDir } = await fixture();
-    const models = vi.fn(fakeModels);
-    const profile = await createTestSessionLifecycle({ agentDir, initializeProcess, createModelRuntime: models });
+    const profile = await createTestSessionLifecycle({ agentDir, initializeProcess, createModelRuntime: fakeModels });
     const base = { ownership: { assertOwned() {} }, policy, services: services(), model };
     const initial = await profile.openSession({ ...base, resources: await profile.resolveResources({ cwd }), target: { kind: 'new' } });
     await initial.runtime.session.prompt('persist');
@@ -346,17 +346,15 @@ describe('local daemon profile', () => {
     const other = join(root, 'other');
     await mkdir(other);
     const resources = await profile.resolveResources({ cwd: other });
-    const files = await readdir(resources.sessionDir);
     for (const target of [{ kind: 'resume' as const, sessionFile: file },
       { kind: 'fork' as const, sourceSessionFile: file, entryId, position: 'at' as const }]) {
-      await expect(profile.openSession({ ...base, resources, target })).rejects.toThrow('cwd does not match');
+      const binding = await profile.openSession({ ...base, resources, target });
+      await binding.runtime.dispose();
     }
-    expect(models).toHaveBeenCalledOnce();
-    expect(await readdir(resources.sessionDir)).toEqual(files);
     expect(await readFile(file, 'utf8')).toBe(before);
   });
 
-  it.each(['resume-cwd', 'resume-id', 'fork-cwd', 'fork-id', 'import-limit'] as const)(
+  it.each(['resume-cwd', 'resume-id', 'fork-cwd', 'fork-id'] as const)(
     'revalidates %s under the acquired claim before any session effects', async change => {
       const { root, cwd, agentDir } = await fixture();
       const otherCwd = join(root, 'other');
@@ -381,25 +379,22 @@ describe('local daemon profile', () => {
       const assertOwned = vi.fn(async () => { acquiring(); await claim; });
       const target: SessionOpenRequest['target'] = change.startsWith('fork')
         ? { kind: 'fork', sourceSessionFile: file, entryId, position: 'at' }
-        : change === 'import-limit' ? { kind: 'import', sessionFile: file } : { kind: 'resume', sessionFile: file };
+        : { kind: 'resume', sessionFile: file };
       const opening = profile.openSession({ ...base, ownership: { assertOwned }, target,
         ...(change === 'resume-id' ? { rootSessionId: initial.sessionId } : {}),
       }).then(async binding => { await binding.runtime.dispose(); return undefined; }, error => error as unknown);
       await started;
-      if (change === 'import-limit') await truncate(file, 64 * 1024 * 1024 + 1);
-      else {
-        const lines = (await readFile(file, 'utf8')).split('\n');
-        const header = JSON.parse(lines[0]!);
-        if (change.endsWith('-cwd')) header.cwd = otherCwd;
-        else header.id = 'changed-before-claim';
-        lines[0] = JSON.stringify(header);
-        await writeFile(file, lines.join('\n'));
-      }
+      const lines = (await readFile(file, 'utf8')).split('\n');
+      const header = JSON.parse(lines[0]!);
+      if (change.endsWith('-cwd')) header.cwd = otherCwd;
+      else header.id = 'changed-before-claim';
+      lines[0] = JSON.stringify(header);
+      await writeFile(file, lines.join('\n'));
       const updatedSource = await readFile(file);
       claimed();
       const error = await opening;
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toMatch(/cwd does not match|identity changed|64 MiB/);
+      expect((error as Error).message).toMatch(/identity changed/);
       expect(assertOwned).toHaveBeenCalledOnce();
       expect(models).toHaveBeenCalledOnce();
       expect(contexts).toHaveLength(1);
@@ -410,7 +405,7 @@ describe('local daemon profile', () => {
     },
   );
 
-  it('gives ownership the canonical source identity before opening and bounds owned-copy imports', async () => {
+  it('gives ownership the canonical source identity before opening and imports external transcripts', async () => {
     const { root, cwd, agentDir } = await fixture();
     const models = vi.fn(fakeModels);
     const profile = await createTestSessionLifecycle({ agentDir, initializeProcess, createModelRuntime: models });
@@ -430,11 +425,9 @@ describe('local daemon profile', () => {
     expect(models).toHaveBeenCalledOnce();
     const outside = join(root, 'external.jsonl');
     await writeFile(outside, await readFile(file));
-    await expect(profile.openSession({ ...base, target: { kind: 'import', sessionFile: outside } })).rejects.toThrow('outside the owned');
-    const oversized = join(resources.sessionDir, 'large.jsonl');
-    await writeFile(oversized, await readFile(file));
-    await truncate(oversized, 64 * 1024 * 1024 + 1);
-    await expect(profile.openSession({ ...base, target: { kind: 'import', sessionFile: oversized } })).rejects.toThrow('64 MiB');
+    const imported = await profile.openSession({ ...base, target: { kind: 'import', sessionFile: outside } });
+    expect(imported.sessionId).not.toBe(initial.sessionId);
+    await imported.runtime.dispose();
     const invalid = join(resources.sessionDir, 'invalid.jsonl');
     await writeFile(invalid, '{}\n');
     await expect(profile.openSession({ ...base, target: { kind: 'import', sessionFile: invalid } })).rejects.toThrow('Invalid session header');
@@ -477,7 +470,7 @@ describe('local daemon profile', () => {
     try {
       expect(binding.toolProvenance).toContainEqual({ name: 'read', source: 'builtin', sourceId: '<inline:@felan-ai/agent-core/runtime-tools>' });
       expect(binding.toolProvenance).toContainEqual({ name: 'external_tool', source: 'external', sourceId: external });
-      const strict = { mode: 'acp-strict', pendingTightening: false, generation: 1 } as const;
+      const strict = { mode: 'acp-strict', generation: 1 } as const;
       expect(binding.tools.requiresApproval(strict, 'read')).toBe(false);
       expect(binding.tools.requiresApproval(strict, 'external_tool')).toBe(true);
       const definitions = Reflect.get(binding.runtime.session, '_toolDefinitions') as Map<string, { definition: ToolDefinition }>;

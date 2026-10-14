@@ -44,7 +44,6 @@ function createForm(request: AskUserRequest): UiForm {
   const wizard = request.questions.length > 1;
   const fields: UiField[] = [];
   const sections = request.questions.map((question, index) => {
-    if (question.options.length > 64) throw new Error(`${question.id}: Generic forms support at most 64 options per question.`);
     const choices = question.options.length > 0;
     const mode = wizard || choices && question.allowFreeform;
     const label = `Question ${index + 1}`;

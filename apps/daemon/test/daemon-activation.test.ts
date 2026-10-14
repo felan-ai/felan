@@ -44,6 +44,7 @@ it('binds a replacement view inside activation while keeping reload dispatch and
       if (!reloading) return;
       expect(f.registry.executionHost(binding.sessionId)).toBeDefined();
       expect(() => f.registry.assertDispatch(binding.sessionId)).toThrow('lifecycle operation');
+      expect(() => f.registry.assertServiceAccess(binding.sessionId)).not.toThrow();
       entered.resolve(); await release.promise;
     } };
   });

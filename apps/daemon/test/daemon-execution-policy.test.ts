@@ -3,12 +3,12 @@ import type { AgentSession } from '@felan-ai/agent-core';
 import { inheritExecutionPolicy, TrustedToolCatalog } from '../src/daemon/execution-policy.js';
 
 describe('daemon execution policy', () => {
-  it('inherits pending and strict policy without a per-attachment downgrade', () => {
-    const pending = { mode: 'host-default', pendingTightening: true, generation: 1 } as const;
-    const child = inheritExecutionPolicy(pending);
-    expect(child).toEqual(pending);
-    expect(child).not.toBe(pending);
-    const strict = inheritExecutionPolicy({ mode: 'acp-strict', pendingTightening: false, generation: 2 });
+  it('inherits host-default and strict policy as frozen copies', () => {
+    const host = { mode: 'host-default', generation: 1 } as const;
+    const child = inheritExecutionPolicy(host);
+    expect(child).toEqual(host);
+    expect(child).not.toBe(host);
+    const strict = inheritExecutionPolicy({ mode: 'acp-strict', generation: 2 });
     expect(inheritExecutionPolicy(strict)).toEqual(strict);
     expect(Object.isFrozen(strict)).toBe(true);
   });
@@ -18,7 +18,7 @@ describe('daemon execution policy', () => {
     const external = {};
     let current = builtin;
     const catalog = new TrustedToolCatalog(() => current, ['read']);
-    const policy = { mode: 'acp-strict', pendingTightening: false, generation: 0 } as const;
+    const policy = { mode: 'acp-strict', generation: 0 } as const;
     catalog.register('read', builtin, 'builtin', '@felan-ai/agent-core');
     expect(catalog.requiresApproval(policy, 'read')).toBe(false);
     current = external;
@@ -42,7 +42,7 @@ describe('daemon execution policy', () => {
         { name: 'native', sourceInfo: { path: 'builtin:native' } },
       ],
     } as unknown as AgentSession;
-    const policy = { mode: 'acp-strict', pendingTightening: false, generation: 0 } as const;
+    const policy = { mode: 'acp-strict', generation: 0 } as const;
     const configured = TrustedToolCatalog.fromSession(session, {
       trustedInlinePaths: ['<inline:configured-provider>'], approvalExemptTools: ['inspect', 'external', 'native'],
     });
@@ -58,8 +58,8 @@ describe('daemon execution policy', () => {
 
   it('rejects invalid restored policy', () => {
     for (const policy of [
-      { mode: 'host-default', pendingTightening: false, generation: -1 },
-      { mode: 'acp-strict', pendingTightening: true, generation: 1 },
+      { mode: 'host-default', generation: -1 },
+      { mode: 'unknown', generation: 1 },
     ]) expect(() => inheritExecutionPolicy(policy as never)).toThrow('Invalid');
   });
 });

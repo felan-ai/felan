@@ -19,7 +19,7 @@ import { initializeLocalDaemonProcess } from '../../src/providers/process-bootst
 
 
 const roots: string[] = [];
-const policy = { mode: 'host-default', pendingTightening: false, generation: 0 } as const;
+const policy = { mode: 'host-default', generation: 0 } as const;
 const model: Model<Api> = {
   id: 'fixture', name: 'Fixture', api: 'openai-completions', provider: 'offline', baseUrl: 'https://example.invalid',
   reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 1024,

@@ -7,12 +7,11 @@ import { InteractionAnswerSchema, InteractionKindSchema, UserCancellationSchema 
 import { LIMITS } from './limits.js';
 import { UiActionRequestSchema, UiCapabilitySchema } from './ui.js';
 import { SetupCatalogSchema, SetupJobSchema, SetupStartSchema } from './setup.js';
-import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, IdSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text } from './schema.js';
+import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, IdSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text, unboundedText } from './schema.js';
 
 const empty = Type.Object({});
 const identity = { expected: DaemonIdentitySchema };
 const resource = { root: IdSchema, resourceId: IdSchema };
-const confirmed = { confirmed: Type.Literal(true) };
 const lifecycle = Type.Object({ state: enumOf(['starting', 'ready', 'draining', 'stopped', 'blocked'] as const) });
 export const HostCompositionSchema = Type.Object({
   managerPackage: text(256, 1), managerVersion: text(128, 1), providerDigest: Type.String({ pattern: '^[a-f0-9]{64}$' }),
@@ -21,8 +20,8 @@ export const HostCompositionSchema = Type.Object({
 export const HostStatusSchema = Type.Object({
   ...lifecycle.properties, identity: DaemonIdentitySchema, daemonVersion: text(128, 1), protocol: Type.Literal(1),
   composition: Type.Optional(HostCompositionSchema),
-  active: Type.Object({ sessions: CounterSchema, runs: CounterSchema, attachments: CounterSchema }),
-  setupNeeds: Type.Array(Type.Object({ code: IdSchema, message: DiagnosticTextSchema, provisioningId: Type.Optional(IdSchema) }), { maxItems: LIMITS.pageEntries }),
+  active: Type.Object({ sessions: CounterSchema, runs: CounterSchema, work: CounterSchema, attachments: CounterSchema }),
+  setupNeeds: Type.Array(Type.Object({ code: IdSchema, message: DiagnosticTextSchema, provisioningId: Type.Optional(IdSchema) })),
 });
 export const Base64Schema = Type.String({ pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$' });
 const bytes = (limit: number) => Type.String({ ...Base64Schema, maxLength: Math.ceil(limit / 3) * 4 });
@@ -35,8 +34,8 @@ export const OperationSchemas = {
   'sessions.create': Type.Object({ cwd: AbsolutePathSchema, sessionDir: Type.Optional(AbsolutePathSchema),
     model: Type.Optional(ModelSchema), thinking: Type.Optional(ThinkingSchema), config: Type.Optional(ConfigValuesSchema), source: ClientKindSchema,
     requirePolicy: Type.Optional(Type.Literal('acp-strict')), interactiveExtensions: Type.Optional(Type.Boolean()),
-    extensions: Type.Optional(Type.Array(AbsolutePathSchema, { maxItems: LIMITS.catalogEntries, uniqueItems: true })) }),
-  attach: Type.Object({ ...identity, requirePolicy: Type.Optional(Type.Literal('acp-strict')), policyWaitMs: Type.Optional(Type.Integer({ minimum: 0, maximum: LIMITS.policyWaitMs })) }),
+    extensions: Type.Optional(Type.Array(AbsolutePathSchema, { uniqueItems: true })) }),
+  attach: Type.Object({ ...identity, requirePolicy: Type.Optional(Type.Literal('acp-strict')) }),
   detach: Type.Object({ attachmentId: IdSchema }),
   close: empty,
   prompt: PromptSchema,
@@ -45,32 +44,32 @@ export const OperationSchemas = {
   cancel: Type.Object({ runId: Type.Optional(IdSchema) }),
   set_model: ModelSchema,
   set_thinking: Type.Object({ thinking: ThinkingSchema }),
-  compact: Type.Object({ instructions: Type.Optional(text(LIMITS.promptTextBytes)), method: Type.Optional(text(128, 1)) }),
+  compact: Type.Object({ instructions: Type.Optional(unboundedText()), method: Type.Optional(text(128, 1)) }),
   fork: Type.Object({ from: Type.Union([Type.Object({ kind: Type.Literal('entry'), entryId: IdSchema }), Type.Object({ kind: Type.Literal('position'), position: CounterSchema })]) }),
-  'command.invoke': Type.Object({ name: text(LIMITS.commandBytes, 1), arguments: text(LIMITS.structuredBytes) }),
+  'command.invoke': Type.Object({ name: text(LIMITS.commandBytes, 1), arguments: unboundedText() }),
   'interaction.answer': Type.Object({ interactionId: IdSchema, answer: Type.Union([InteractionAnswerSchema, UserCancellationSchema]) }),
   'ui.action': UiActionRequestSchema,
-  'session.rename': Type.Object({ name: text(4096, 1) }),
+  'session.rename': Type.Object({ name: unboundedText(1) }),
   'session.tree': PageRequestSchema,
-  'session.branch.select': Type.Object({ entryId: IdSchema, summarize: Type.Optional(Type.Boolean()), expectedRevision: CounterSchema }),
-  'session.entry.label': Type.Object({ entryId: IdSchema, label: text(4096), expectedRevision: CounterSchema }),
+  'session.branch.select': Type.Object({ entryId: IdSchema, summarize: Type.Optional(Type.Boolean()) }),
+  'session.entry.label': Type.Object({ entryId: IdSchema, label: unboundedText() }),
   'session.clone': empty,
-  'session.import': Type.Object({ path: AbsolutePathSchema, cwd: AbsolutePathSchema, requirePolicy: Type.Optional(Type.Literal('acp-strict')), ...confirmed }),
-  'session.export': Type.Object({ format: enumOf(['html', 'jsonl'] as const), destination: AbsolutePathSchema, ...confirmed }),
-  'session.delete': Type.Object({ ...confirmed, expectedRevision: CounterSchema }),
+  'session.import': Type.Object({ path: AbsolutePathSchema, cwd: AbsolutePathSchema, requirePolicy: Type.Optional(Type.Literal('acp-strict')) }),
+  'session.export': Type.Object({ format: enumOf(['html', 'jsonl'] as const), destination: AbsolutePathSchema }),
+  'session.delete': empty,
   'session.history': Type.Object({ ...PageRequestSchema.properties, revision: CounterSchema, branch: IdSchema }),
   'queue.update': Type.Object({ kind: enumOf(['steer', 'follow_up'] as const), expectedRevision: CounterSchema,
-    edits: Type.Array(Type.Union([Type.Object({ op: Type.Literal('remove'), id: IdSchema }), Type.Object({ op: Type.Literal('replace'), id: IdSchema, prompt: PromptSchema })]), { minItems: 1, maxItems: LIMITS.pageEntries }) }),
-  'shell.execute': Type.Object({ command: text(LIMITS.promptTextBytes, 1), includeInContext: Type.Boolean() }),
+    edits: Type.Array(Type.Union([Type.Object({ op: Type.Literal('remove'), id: IdSchema }), Type.Object({ op: Type.Literal('replace'), id: IdSchema, prompt: PromptSchema })]), { minItems: 1 }) }),
+  'shell.execute': Type.Object({ command: unboundedText(1), includeInContext: Type.Boolean() }),
   'config.get': Type.Object({ scope: ConfigScopeSchema }),
   'config.set': Type.Object({ scope: ConfigScopeSchema, values: ConfigValuesSchema }),
   'host.setup.catalog': empty,
   'host.setup.start': SetupStartSchema,
   'host.setup.read': Type.Object({ jobId: IdSchema }),
-  'host.setup.answer': Type.Object({ jobId: IdSchema, promptId: IdSchema, text: text(64 * 1024) }),
+  'host.setup.answer': Type.Object({ jobId: IdSchema, promptId: IdSchema, text: unboundedText() }),
   'host.setup.cancel': Type.Object({ jobId: IdSchema }),
-  'host.setup.open_link': Type.Object({ jobId: IdSchema, index: Type.Integer({ minimum: 0, maximum: 15 }), confirmed: Type.Literal(true) }),
-  'host.open_interaction': Type.Object({ interactionId: IdSchema, confirmed: Type.Literal(true) }),
+  'host.setup.open_link': Type.Object({ jobId: IdSchema, index: Type.Integer({ minimum: 0, maximum: 15 }) }),
+  'host.open_interaction': Type.Object({ interactionId: IdSchema }),
   'session.reload': empty,
   'processes.list': Type.Object({ ...PageRequestSchema.properties, root: IdSchema }),
   'processes.read': Type.Object({ ...resource, offset: CounterSchema, limit: Type.Integer({ minimum: 1, maximum: LIMITS.processReadBytes }) }),
@@ -78,10 +77,10 @@ export const OperationSchemas = {
   'processes.stop': Type.Object({ ...resource, signal: enumOf(['SIGTERM', 'SIGKILL'] as const) }),
   'executions.list': Type.Object({ ...PageRequestSchema.properties, includeDescendants: Type.Optional(Type.Boolean()) }),
   'executions.read': Type.Object({ executionId: IdSchema }),
-  'executions.steer': Type.Object({ executionId: IdSchema, message: text(32 * 1024, 1) }),
-  'executions.cancel': Type.Object({ executionId: IdSchema, reason: Type.Optional(text(4096)) }),
-  'host.stop': Type.Object({ ...identity, ...confirmed, mode: enumOf(['drain', 'force'] as const) }),
-  'host.restart': Type.Object({ ...identity, ...confirmed, mode: enumOf(['drain', 'force'] as const) }),
+  'executions.steer': Type.Object({ executionId: IdSchema, message: unboundedText(1) }),
+  'executions.cancel': Type.Object({ executionId: IdSchema, reason: Type.Optional(unboundedText()) }),
+  'host.stop': Type.Object({ ...identity, mode: enumOf(['drain', 'force'] as const) }),
+  'host.restart': Type.Object({ ...identity, mode: enumOf(['drain', 'force'] as const) }),
   'host.logs': PageRequestSchema,
 } as const;
 export type Operation = keyof typeof OperationSchemas;
@@ -116,8 +115,8 @@ export const OPERATION_CATALOG = Object.freeze({
 
 export const HelloResultSchema = Type.Object({
   attachmentId: IdSchema, principal: IdSchema, daemonVersion: text(128, 1), protocol: Type.Literal(1), identity: DaemonIdentitySchema,
-  composition: Type.Optional(HostCompositionSchema), localConsole: Type.Boolean(),
-  operations: Type.Array(NameSchema, { maxItems: LIMITS.catalogEntries, uniqueItems: true }),
+  composition: Type.Optional(HostCompositionSchema),
+  operations: Type.Array(NameSchema, { uniqueItems: true }),
   interactionKinds: Type.Array(InteractionKindSchema, { maxItems: 32, uniqueItems: true }),
   capabilities: Type.Optional(Type.Array(UiCapabilitySchema, { maxItems: 32, uniqueItems: true })),
 });
@@ -148,7 +147,7 @@ export const ResultSchemas = {
   'processes.write': Type.Object({ writtenBytes: Type.Integer({ minimum: 0, maximum: LIMITS.processWriteBytes }) }), 'processes.stop': emptyResult,
   'executions.list': ExecutionsPageSchema, 'executions.read': ExecutionSchema, 'executions.steer': ExecutionSchema, 'executions.cancel': ExecutionSchema,
   'host.stop': lifecycle, 'host.restart': lifecycle, 'host.logs': Type.Object({ entries: Type.Array(Type.Object({ timestamp: CounterSchema,
-    level: enumOf(['info', 'warning', 'error'] as const), message: DiagnosticTextSchema }), { maxItems: LIMITS.pageEntries }), cursor: Type.Optional(text(4096, 1)) }, { 'x-maxEncodedBytes': LIMITS.pageBytes }),
+    level: enumOf(['info', 'warning', 'error'] as const), message: DiagnosticTextSchema })), cursor: Type.Optional(unboundedText(1)) }),
 } as const satisfies Record<Operation, TSchema>;
 
 export type OperationParams<O extends Operation> = Static<(typeof OperationSchemas)[O]>;

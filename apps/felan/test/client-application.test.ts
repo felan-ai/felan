@@ -25,25 +25,45 @@ it('closes the transport after terminal startup fails without disposing a daemon
   expect(close).toHaveBeenCalledOnce();
 });
 
-it('restarts with a new client while retaining the session and draft without resubmitting launch input', async () => {
+it('restarts the daemon in place and reconnects the same terminal with the previous identity as the replaced owner', async () => {
   const oldIdentity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
-  const close = vi.fn(); const control = vi.fn(async () => ({ outcome: 'accepted' })); let clients = 0;
-  const createClient = vi.fn((_options: SessionClientOptions) => ({ subscribe: () => () => {}, close, control,
-    identity: clients++ === 0 ? oldIdentity : { ...oldIdentity, instanceId: 'new' } }) as unknown as SessionClient);
-  const waitForStop = vi.fn(async () => {}); let terminals = 0;
-  const runTerminal: NonNullable<Parameters<typeof runDaemonFelan>[1]>['runTerminal'] = async (_controller, options) => {
-    if (terminals++ === 0) expect(await options.onDaemonAction!('restart', false, 'unsubmitted draft')).toBe(true);
-    else {
-      expect(options).toMatchObject({ sessionId: 'keep-session', initialDraft: 'unsubmitted draft' });
-      expect(options.initialMessage).toBeUndefined(); expect(options.extensions).toBeUndefined(); expect(options.config).toBeUndefined();
-    }
-  };
-  await runDaemonFelan({ agentDir: '/agent', sessionId: 'keep-session', initialMessage: 'submit only once', extensionPaths: ['/extension.ts'] },
-    { createClient, runTerminal, waitForStop });
-  expect(createClient).toHaveBeenCalledTimes(2);
-  expect(createClient.mock.calls[1]![0].launch?.replacing).toEqual(oldIdentity);
-  expect(control).toHaveBeenCalledWith('host.restart', { confirmed: true, mode: 'drain' });
-  expect(waitForStop).toHaveBeenCalledOnce(); expect(close).toHaveBeenCalledTimes(2);
+  const close = vi.fn(); const control = vi.fn(async () => ({ outcome: 'accepted' })); const connect = vi.fn(async () => ({}));
+  const createClient = vi.fn((_options: SessionClientOptions) => ({ subscribe: () => () => {}, close, control, connect, identity: oldIdentity }) as unknown as SessionClient);
+  const waitForStop = vi.fn(async () => {}); const notices: string[] = [];
+  await runDaemonFelan({ agentDir: '/agent', sessionId: 'keep-session' }, { createClient, waitForStop, runTerminal: async (controller, options) => {
+    controller.subscribe(() => notices.push(controller.notice));
+    expect(await options.onDaemonAction!('restart', false, 'unsubmitted draft')).toBe(false);
+  } });
+  expect(createClient).toHaveBeenCalledOnce();
+  expect(control).toHaveBeenCalledWith('host.restart', 'drain');
+  expect(waitForStop).toHaveBeenCalledOnce(); expect(connect).toHaveBeenCalledExactlyOnceWith({ replacing: oldIdentity });
+  expect(notices).toEqual(['Daemon restarting…', 'Daemon restarted']); expect(close).toHaveBeenCalledOnce();
+});
+
+it('restarts the daemon in place for /restart, then re-executes the client on the same session with its launch options', async () => {
+  const oldIdentity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
+  const order: string[] = [];
+  const control = vi.fn(async (op: string) => { order.push(op); return { outcome: 'accepted' }; });
+  const connect = vi.fn(async () => { order.push('connect'); return {}; });
+  const close = vi.fn(() => { order.push('close'); });
+  const createClient = vi.fn((_options: SessionClientOptions) => ({ subscribe: () => () => {}, close, control, connect, identity: oldIdentity }) as unknown as SessionClient);
+  const waitForStop = vi.fn(async () => { order.push('stopped'); });
+  const restartProcess = vi.fn(async (_options: { sessionId?: string; cwd: string; restartArgs?: readonly string[] }) => { order.push('exec'); return undefined as never; });
+  await runDaemonFelan({ cwd: '/workspace', agentDir: '/agent', sessionId: 'keep-session', restartArgs: ['--verbose'] }, { createClient, waitForStop, restartProcess,
+    runTerminal: async (_controller, options) => { expect(await options.onDaemonAction!('relaunch', false, '')).toBe(true); } });
+  expect(order).toEqual(['host.restart', 'stopped', 'connect', 'close', 'exec']);
+  expect(connect).toHaveBeenCalledExactlyOnceWith({ replacing: oldIdentity });
+  expect(restartProcess).toHaveBeenCalledExactlyOnceWith({ sessionId: 'keep-session', cwd: '/workspace', restartArgs: ['--verbose'] });
+  expect(createClient).toHaveBeenCalledOnce();
+});
+
+it('keeps /daemon restart daemon-only without re-executing the client', async () => {
+  const identity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
+  const createClient = vi.fn(() => ({ subscribe: () => () => {}, close() {}, identity, connect: async () => ({}), control: async () => ({ outcome: 'accepted' }) }) as unknown as SessionClient);
+  const restartProcess = vi.fn(async () => undefined as never);
+  await runDaemonFelan({ agentDir: '/agent', sessionId: 'keep-session' }, { createClient, waitForStop: async () => {}, restartProcess,
+    runTerminal: async (_controller, options) => { expect(await options.onDaemonAction!('restart', false, '')).toBe(false); } });
+  expect(restartProcess).not.toHaveBeenCalled();
 });
 
 it('preserves unsubmitted startup input when version consent happens before attachment', async () => {
@@ -62,15 +82,12 @@ it('preserves unsubmitted startup input when version consent happens before atta
 
 it('reports a failed replacement launch without silently retrying or claiming success', async () => {
   const identity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
-  const close = vi.fn(); let calls = 0;
-  const createClient = vi.fn(() => {
-    if (calls++) throw new Error('replacement failed');
-    return { subscribe: () => () => {}, close, identity, control: async () => ({ outcome: 'accepted' }) } as unknown as SessionClient;
-  });
+  const close = vi.fn(); const connect = vi.fn(async () => { throw new Error('replacement failed'); });
+  const createClient = vi.fn(() => ({ subscribe: () => () => {}, close, identity, connect, control: async () => ({ outcome: 'accepted' }) }) as unknown as SessionClient);
   await expect(runDaemonFelan({ agentDir: '/agent', sessionId: 'retained' }, {
     createClient, waitForStop: async () => {}, runTerminal: async (_controller, options) => { await options.onDaemonAction!('restart', false, ''); },
   })).rejects.toThrow('replacement failed');
-  expect(createClient).toHaveBeenCalledTimes(2); expect(close).toHaveBeenCalledOnce();
+  expect(createClient).toHaveBeenCalledOnce(); expect(connect).toHaveBeenCalledOnce(); expect(close).toHaveBeenCalledOnce();
 });
 
 it('uses isolated daemon selection only when explicitly supplied, with a stable namespace', () => {

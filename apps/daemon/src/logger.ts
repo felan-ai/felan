@@ -53,8 +53,15 @@ export async function appendLocalLogLine(agentStorageRoot: string, record: LogRe
   }
 }
 
-function redact(value: string): string {
+/** Masks credential-shaped substrings in diagnostics that may quote provider responses or credential files. */
+export function redact(value: string): string {
   return value
     .replace(/\bBearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
-    .replace(/([?&](?:code|state|token|access_token|refresh_token|client_secret)=)[^&#\s]*/giu, '$1[redacted]');
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@:]+:[^\s/?#@]*@/giu, '$1[redacted]@')
+    .replace(/([?&](?:code|state|token|access_token|refresh_token|client_secret|key|api[_-]?key)=)[^&#\s]*/giu, '$1[redacted]')
+    .replace(/(["']?\b[\w-]*(?:api[_-]?key|token|secret|password|authorization|credential)[\w-]*["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}&]+)/giu, '$1[redacted]')
+    .replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/gu, '[redacted]')
+    .replace(/\b(?:gh[pousr]_|github_pat_|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/gu, '[redacted]')
+    .replace(/\bAIza[0-9A-Za-z_-]{20,}/gu, '[redacted]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, '[redacted]');
 }

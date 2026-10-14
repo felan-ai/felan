@@ -120,10 +120,9 @@ export class TerminalSetup {
         await this.ui.select(`${provider.label} setup`, [{ value: 'back', label: `${provider.apiKeyName ?? 'Authentication'} is configured outside Felan.` }], { signal });
         if (!canGoBack) return false;
       } else {
-        if (provider.configured && !await this.ui.confirm('Replace credentials', `Replace existing credentials for ${provider.label}?`, { signal })) return false;
         if (signal.aborted) return false;
         flow.provider = provider.label;
-        const completed = await this.start(flow, { kind: 'login', provider: provider.id, method: type, confirmed: true });
+        const completed = await this.start(flow, { kind: 'login', provider: provider.id, method: type });
         if (completed || !canGoBack || !flow.job || terminal(flow.job)) return completed;
         await this.cancel(flow);
         while (!signal.aborted && !terminal(flow.job)) {
@@ -148,7 +147,7 @@ export class TerminalSetup {
       value: value.id, label: `${value.label}${showTypes ? ` [${providerType(value.type, value.subscription)}]` : ''} ✓ configured`,
     })), undefined, signal);
     if (selected === undefined || signal.aborted || !credentials.some(value => value.id === selected)) return false;
-    return this.start(flow, { kind: 'logout', provider: selected, confirmed: true });
+    return this.start(flow, { kind: 'logout', provider: selected });
   }
 
   private async dependenciesFlow(flow: Flow, automatic: boolean): Promise<boolean> {
@@ -170,7 +169,7 @@ export class TerminalSetup {
     if (selected.some(id => !dependencies.some(value => value.id === id))) throw new Error('Unknown dependency choice.');
     const summary = dependencies.map(value => `${selected.includes(value.id) ? actionFor(value) : 'unchanged'}: ${value.label}`).join('\n');
     if (!await this.ui.confirm('Apply extension changes?', summary, { signal }) || signal.aborted) return false;
-    return this.start(flow, { kind: 'dependencies', confirmed: true,
+    return this.start(flow, { kind: 'dependencies',
       choices: dependencies.map(value => ({ id: value.id, action: selected.includes(value.id) ? actionFor(value) : 'skip' })) });
   }
 
@@ -200,7 +199,7 @@ export class TerminalSetup {
             : `Dependency setup ${job.state}. ${job.message}`);
           return job.state === 'completed';
         }
-        if (job.kind === 'login' && this.controller.client.capabilities?.localConsole) {
+        if (job.kind === 'login') {
           for (const link of job.links ?? []) {
             if (!link.autoOpen || opened.has(link.url) || !isBrowserUrl(link.url)) continue;
             opened.add(link.url);
@@ -225,7 +224,7 @@ export class TerminalSetup {
         view.abort.abort(); view = undefined;
         if (event.value.kind === 'cancel') { this.controller.setNotice('Setup cancellation requested.'); return false; }
         if (event.value.kind === 'link') {
-          await this.request('host.setup.open_link', { jobId: job.id, index: event.value.index, confirmed: true }, signal);
+          await this.request('host.setup.open_link', { jobId: job.id, index: event.value.index }, signal);
         } else {
           if (event.value.promptId !== job.prompt?.id) continue;
           if (Buffer.byteLength(event.value.text, 'utf8') > 64 * 1024) {
@@ -257,7 +256,7 @@ export class TerminalSetup {
           { value: 'cancel', label: 'Cancel setup' },
         ], { signal });
         if (signal.aborted || choice === undefined || choice === 'cancel') return { kind: 'cancel' };
-        if (choice.startsWith('link:')) return this.confirmLink(job, Number(choice.slice(5)), signal);
+        if (choice.startsWith('link:')) return linkAction(job, Number(choice.slice(5)));
         if (choice !== 'respond') return { kind: 'cancel' };
       }
       const prompt = job.prompt;
@@ -272,13 +271,7 @@ export class TerminalSetup {
     if (await this.ui.progress({ ...job, ...(canOpen ? {} : { links: [] }) }, signal) !== 'links' || signal.aborted) return { kind: 'cancel' };
     const selected = await this.ui.select('Open a setup link through the daemon', job.links!.map((link, index) => ({ value: String(index), label: link.label, description: link.url })), { signal });
     if (selected === undefined || signal.aborted) return { kind: 'cancel' };
-    return this.confirmLink(job, Number(selected), signal);
-  }
-
-  private async confirmLink(job: SetupJob, index: number, signal: AbortSignal): Promise<Action> {
-    const link = job.links?.[index];
-    if (!link || !await this.ui.confirm('Open in the daemon browser', link.url, { signal }) || signal.aborted) return { kind: 'cancel' };
-    return { kind: 'link', index };
+    return linkAction(job, Number(selected));
   }
 
   private async request<O extends SetupOperation>(op: O, params: OperationParams<O>, signal: AbortSignal,
@@ -311,6 +304,10 @@ export class TerminalSetup {
   }
 
   private emit(): void { for (const listener of this.listeners) listener(); }
+}
+
+function linkAction(job: SetupJob, index: number): Action {
+  return job.links?.[index] ? { kind: 'link', index } : { kind: 'cancel' };
 }
 
 function terminal(job: SetupJob): boolean { return job.state === 'completed' || job.state === 'cancelled' || job.state === 'failed'; }

@@ -6,7 +6,8 @@ import { pickSession, type NavigationDialogs } from './session-navigator.js';
 import { pickTreeEntry } from './tree-navigator.js';
 import { CombinedAutocompleteProvider, type AutocompleteProvider, type SlashCommand } from '@earendil-works/pi-tui';
 
-export type DaemonAction = 'stop' | 'restart';
+/** `relaunch` restarts the daemon in place and then re-executes this client on the same session. */
+export type DaemonAction = 'stop' | 'restart' | 'relaunch';
 const BUILTINS: SlashCommand[] = [
   { name: 'settings', description: 'Open settings menu' },
   { name: 'model', description: 'Select model (opens selector UI)' },
@@ -23,7 +24,8 @@ const BUILTINS: SlashCommand[] = [
   { name: 'sessions', description: 'Select a session' },
   { name: 'dependencies', description: 'Set up runtime dependencies' },
   { name: 'rename', description: 'Set session display name' },
-  { name: 'reconnect', description: 'Reconnect to the daemon' },
+  { name: 'reconnect', description: 'Reconnect to the daemon now, starting it if needed' },
+  { name: 'restart', description: 'Restart the daemon and Felan Code, resuming this session' },
   { name: 'queue', description: 'Show queued messages' },
   { name: 'steer', description: 'Steer the active run' },
   { name: 'follow-up', description: 'Queue a follow-up message' },
@@ -94,8 +96,8 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     if (!setup) throw new Error('Interactive daemon setup is unavailable in this client.');
     return setup(name === 'login' ? argument || undefined : undefined);
   }
-  if (name === 'daemon') {
-    const [action = 'status', mode, extra] = argument.split(/\s+/u).filter(Boolean);
+  if (name === 'daemon' || name === 'restart') {
+    const [action = 'status', mode, extra] = [...name === 'restart' ? ['restart'] : [], ...argument.split(/\s+/u).filter(Boolean)];
     if (extra || mode !== undefined && mode !== 'force') throw new Error('Usage: /daemon status|logs|stop|restart [force]');
     if (action === 'status' || action === 'logs') {
       if (mode) throw new Error('Force applies only to daemon stop/restart.');
@@ -103,7 +105,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
         const response = await controller.perform('host.status', {}); if (response.outcome !== 'accepted') return false;
         const host = response.result;
         await dialogs.select(`Daemon ${host.daemonVersion} · ${host.state}`, [
-          { value: 'summary', label: `${host.active.sessions} sessions · ${host.active.runs} runs · ${host.active.attachments} attachments` },
+          { value: 'summary', label: `${host.active.sessions} sessions · ${host.active.runs} runs · ${host.active.work} active tasks · ${host.active.attachments} attachments` },
           ...host.setupNeeds.map(need => ({ value: need.code, label: need.message })),
         ]);
       } else {
@@ -114,11 +116,15 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       return true;
     }
     if (action !== 'stop' && action !== 'restart') throw new Error('Usage: /daemon status|logs|stop|restart [force]');
-    requireSession(controller);
     if (!options.daemon) throw new Error('Daemon lifecycle controls are unavailable in this client.');
-    if (!await dialogs.confirm(`${action === 'stop' ? 'Stop' : 'Restart'} daemon`, 'This affects every session and attached client. Graceful shutdown waits for active work. Continue?')) return false;
-    if (mode === 'force' && !await dialogs.confirm('Interrupt all active work', 'Cancel active runs, descendants and processes across every session?')) return false;
-    await options.daemon(action, mode === 'force'); return true;
+    const status = controller.client.capabilities?.operations.includes('host.status') ? await controller.perform('host.status', {}) : undefined;
+    const active = status?.outcome === 'accepted' ? status.result.active.work : undefined;
+    // Draining never interrupts work, so stopping busy work means choosing force.
+    if (active !== 0) {
+      const work = active === undefined ? 'Active work' : `${active} active task${active === 1 ? '' : 's'}`;
+      if (!await dialogs.confirm(`${action === 'stop' ? 'Stop' : 'Restart'} daemon`, `${work} across all sessions will be interrupted. Continue?`)) return false;
+    }
+    await options.daemon(name === 'restart' ? 'relaunch' : action, mode === 'force' || active !== 0); return true;
   }
   if (name === 'new') {
     await controller.create({ cwd: resolve(controller.snapshot?.cwd ?? options.cwd, argument || '.') });
@@ -131,9 +137,8 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     await controller.create({ cwd: resolve(controller.snapshot?.cwd ?? options.cwd, cwd) }); return true;
   }
   if (name === 'reload') {
-    const session = argument || controller.sessionId;
-    if (!session) throw new Error('Use /reload <session-id> to recover a saved session.');
-    return controller.reloadSession(session);
+    if (argument) throw new Error('Usage: /reload');
+    return controller.reloadSession(requireSession(controller));
   }
   if (name === 'resume' || name === 'sessions') {
     const rows = await controller.sessions();
@@ -141,8 +146,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     if (selected === undefined) return false;
     const row = rows.find(row => row.session === selected.session); if (!row) throw new Error('The selected session is unavailable.');
     if (selected.action === 'delete') {
-      if (!await dialogs.confirm('Delete session', `Permanently delete ${row.title || row.session}? This cannot be undone.`)) return false;
-      if ((await controller.perform('session.delete', { confirmed: true, expectedRevision: row.revision }, row.session)).outcome !== 'accepted') return false;
+      if ((await controller.perform('session.delete', {}, row.session)).outcome !== 'accepted') return false;
       controller.setNotice('Session deleted'); return true;
     }
     if (selected.action === 'rename') {
@@ -151,17 +155,11 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       if (title === undefined || (await controller.perform('session.rename', { name: title }, row.session)).outcome !== 'accepted') return false;
       controller.setNotice(`Session name set: ${title}`); return true;
     }
-    try { await controller.attach(row.session); return true; }
-    catch (error) {
-      if ((error as { code?: string }).code !== 'configuration_recovery_required') throw error;
-      if (!await dialogs.confirm('Reload session configuration', 'Use the current configuration for this saved session? Its transcript and identity are retained.')) return false;
-      return controller.reloadSession(row.session);
-    }
+    await controller.attach(row.session); return true;
   }
   const session = requireSession(controller); const snapshot = controller.snapshot!;
   switch (name) {
     case 'close':
-      if (!await dialogs.confirm('Close session', `Stop work and close ${snapshot.title || session}? Exiting the client instead only detaches.`)) return false;
       await controller.closeSession(); return controller.sessionId === undefined;
     case 'steer': return argument ? controller.submit(argument, 'steer') : false;
     case 'follow-up': return argument ? controller.submit(argument, 'follow_up') : false;
@@ -267,7 +265,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
         if (!choice) return false;
         selected = choice.entryId;
         if (choice.action === 'label') {
-          const result = await controller.perform('session.entry.label', { entryId: choice.entryId, label: choice.label, expectedRevision: tree.revision }, session);
+          const result = await controller.perform('session.entry.label', { entryId: choice.entryId, label: choice.label }, session);
           if (result.outcome !== 'accepted') return false;
           continue;
         }
@@ -276,7 +274,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
         if (summarize === undefined) continue;
         const entry = tree.entries.find(entry => entry.id === choice.entryId);
         const message = controller.history.find(message => message.entryId === choice.entryId);
-        const result = await controller.perform('session.branch.select', { entryId: choice.entryId, expectedRevision: tree.revision, summarize: summarize === 'yes' }, session);
+        const result = await controller.perform('session.branch.select', { entryId: choice.entryId, summarize: summarize === 'yes' }, session);
         if (result.outcome !== 'accepted') return false;
         await controller.loadHistory();
         if (entry?.role === 'user') {

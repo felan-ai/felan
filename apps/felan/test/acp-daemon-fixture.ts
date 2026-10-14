@@ -16,7 +16,9 @@ export async function acpDaemonFixture(options: Parameters<typeof serverFixture>
     resume: async (_session, _answer, _id, dispatch) => { dispatch(); },
     publish: (interaction, revisions) => fixture.registry.publishInteraction(interaction, revisions) });
   const configuration = new DaemonConfiguration({ agentDir: fixture.owner.target.agentDir, definitions: options.configDefinitions ?? [], assertCurrent: () => fixture.registry.assertAdmission() });
-  const server = new SessionServer({ registry: fixture.registry, configuration, models: fixture.root.runtime.session.modelRuntime, version: DAEMON_VERSION, broker, composition });
+  const createServer = () => new SessionServer({ registry: fixture.registry, configuration, models: fixture.root.runtime.session.modelRuntime, version: DAEMON_VERSION, broker, composition });
+  const server = createServer();
+  const servers = [server];
   await server.start();
   const clients: SessionClient[] = [];
   const createClient = (options: SessionClientOptions) => {
@@ -33,9 +35,11 @@ export async function acpDaemonFixture(options: Parameters<typeof serverFixture>
   const editor = { notify: vi.fn(async (_method, notification: SessionNotification) => { updates.push(notification); }),
     request: vi.fn(async () => ({ outcome: { outcome: 'selected', optionId: 'allow-once' } })) } as unknown as AgentContext;
   return { ...fixture, broker, server, clients, createClient, editor, updates,
+    /** Serves the same daemon identity again after `server.close()`, as a restarted daemon would. */
+    async restartServer() { const next = createServer(); servers.push(next); await next.start(); return next; },
     async dispose() {
       for (const client of clients) client.close();
-      server.close();
+      for (const item of servers) item.close();
       await broker.drain();
       await fixture.dispose();
     } };
