@@ -95,8 +95,9 @@ it('renders a running execution in the subagent rail and its canonical completio
   const f = fixture();
   f.screen.setExecutions([{ id: 'child', label: 'Build worker', description: 'Compile the project', state: 'running',
     model: { provider: 'fixture', id: 'fixture' } }]);
-  expect(f.lines().at(-4)).toContain('● Build worker');
-  expect(f.lines().at(-4)).toContain('fixture');
+  expect(f.lines().at(-1)).toContain('● Build worker');
+  expect(f.lines().at(-1)).toContain('fixture');
+  expect(f.lines().at(-2)).toContain('Memory: disabled');
   f.terminal.input('\x1b[B'); f.terminal.input('\r');
   expect(f.agents).toHaveBeenCalledWith('child');
   f.terminal.input('\x1b'); expect(f.screen.editor.isRailFocused()).toBe(false);

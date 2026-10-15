@@ -95,7 +95,10 @@ export class RegistryExecutions {
     return row;
   }
   private update(id: string, execution: ExecutionMetadata): void {
-    try { this.registry.options.store.updateSession(id, { execution }); }
+    try {
+      const commit = this.registry.options.store.updateSession(id, { execution });
+      this.registry.publishCommitted(commit.revisions);
+    }
     catch (error) { this.registry.failExecution(error); throw error; }
     this.emit();
   }

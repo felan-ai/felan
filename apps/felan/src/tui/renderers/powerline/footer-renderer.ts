@@ -1,5 +1,5 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
-import { colorBlock, colorForeground, colorPairText, type ColorMode, type ThemePalette } from './colors.js';
+import { colorForeground, colorPairText, type ColorMode, type ThemePalette } from './colors.js';
 import type { PowerlineConfig } from './config.js';
 import type { RenderedSegment } from './segments.js';
 import type { PowerlineSymbols } from './symbols.js';
@@ -87,11 +87,8 @@ function renderPowerline(
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index]!;
     const pair = palette.colors[segment.colorKey];
-    const next = segments[index + 1];
-    output += colorBlock(pad(segment.text, config.display.padding), pair, mode);
-    output += next
-      ? colorBlock(symbols.separator, { fg: pair.bg, bg: palette.colors[next.colorKey].bg }, mode)
-      : colorForeground(symbols.separator, pair.bg, mode);
+    output += colorPairText(pad(segment.text, config.display.padding), pair, mode);
+    output += colorForeground(symbols.separator, pair.fg, mode);
   }
   return output;
 }
@@ -105,9 +102,9 @@ function renderCapsule(
 ): string {
   return segments.map((segment) => {
     const pair = palette.colors[segment.colorKey];
-    return colorForeground(symbols.capsuleLeft, pair.bg, mode)
-      + colorBlock(pad(segment.text, config.display.padding), pair, mode)
-      + colorForeground(symbols.capsuleRight, pair.bg, mode);
+    return colorForeground(symbols.capsuleLeft, pair.fg, mode)
+      + colorPairText(pad(segment.text, config.display.padding), pair, mode)
+      + colorForeground(symbols.capsuleRight, pair.fg, mode);
   }).join(' ');
 }
 

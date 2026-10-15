@@ -1,4 +1,4 @@
-import { closeSync, constants, fsyncSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, futimesSync, lstatSync, lutimesSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
@@ -12,7 +12,13 @@ interface Claim {
 interface NodeIdentity { dev: string; ino: string }
 interface Ledger { version: 1; claims: Claim[] }
 const STORE_LOCK = '.felan-store.lock';
+const CLAIMS_LOCK = 'claims.lock';
 const KNOWN_ROOTS = 'daemon-store-roots.json';
+/**
+ * Temp reapers (macOS tmp_cleaner, systemd-tmpfiles) delete files whose atime, mtime and ctime are all days old.
+ * Holding a flock never updates them, and deleting a pinned lock permanently fences the running owner.
+ */
+const TIMESTAMP_REFRESH_MS = 60 * 60_000;
 
 /** Claims are only advisory hints about live daemons, so an unreadable ledger is rebuilt rather than trusted. */
 function readLedger(directory: string): Ledger {
@@ -80,7 +86,7 @@ function saveLedger(directory: string, uid: number, ledger: Ledger): void {
 async function coordination(target: ResolvedDaemonTarget): Promise<{ fd: number; pins: PathIdentity[] }> {
   privateDirectory(target.accountDirectory, target.uid);
   const pins = pinPathChain(target.accountDirectory, target.uid);
-  const file = join(target.accountDirectory, 'claims.lock');
+  const file = join(target.accountDirectory, CLAIMS_LOCK);
   const fd = openPrivateFile(file, target.uid);
   const pin = pathIdentity(file); pins.push(pin);
   try {
@@ -138,13 +144,14 @@ export class DaemonOwnership {
   private extraPins: PathIdentity[] = [];
   private current: ResolvedDaemonTarget;
   private readonly owning = new Map<string, Promise<void>>();
+  private refreshedAt = 0;
 
   constructor(target: ResolvedDaemonTarget, readonly instanceId: string, private readonly fds: number[], private readonly pins: readonly PathIdentity[],
     private readonly lockedRoots: string[] = [...target.rootSet]) {
     this.current = target;
     const identity = identityFor(target, instanceId); Object.freeze(identity.rootSet);
     this.identity = Object.freeze(identity);
-    this.timer = setInterval(() => { try { this.assertCurrent(); } catch { /* assertCurrent synchronously fences and notifies. */ } }, 25);
+    this.timer = setInterval(() => { try { this.assertCurrent(); this.refreshTimestamps(); } catch { /* assertCurrent synchronously fences and notifies. */ } }, 25);
     this.timer.unref();
   }
   get target(): ResolvedDaemonTarget { return this.current; }
@@ -161,6 +168,15 @@ export class DaemonOwnership {
       for (const listener of this.listeners) { try { listener(this.lost); } catch { /* One observer must not suppress the remaining fences. */ } }
       throw this.lost;
     }
+  }
+  /** Wall-clock throttling refreshes on the first tick after sleep, when reapers may run immediately. */
+  private refreshTimestamps(): void {
+    const now = Date.now(); const elapsed = now - this.refreshedAt;
+    if (elapsed >= 0 && elapsed < TIMESTAMP_REFRESH_MS) return;
+    this.refreshedAt = now;
+    const time = new Date(now);
+    for (const fd of this.fds) futimesSync(fd, time, time);
+    lutimesSync(join(this.current.accountDirectory, CLAIMS_LOCK), time, time);
   }
   watchPath(path: string): () => void {
     this.assertCurrent(); const pin = pathIdentity(path); this.extraPins.push(pin);

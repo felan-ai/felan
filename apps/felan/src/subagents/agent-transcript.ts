@@ -65,6 +65,9 @@ export class AgentTranscript implements Component {
   #snapshotCwd: string | undefined;
   #projectionAgent: string | undefined;
   #projectionHideThinking: boolean | undefined;
+  #projectionContent: string | undefined;
+  #projectionStream: string | undefined;
+  #projectionStreamContent: string | undefined;
   #projectedCompactions = new WeakMap<object, CompactionMethodLabel>();
   #activeAssistantKey: string | undefined;
   #hideThinkingBlock = false;
@@ -150,12 +153,29 @@ export class AgentTranscript implements Component {
   }
 
   showProjection(projection: AgentViewTranscript): void {
+    const { streaming, ...retained } = projection;
+    const content = JSON.stringify(retained);
+    const assistant = streaming?.role === 'assistant' ? streaming : undefined;
+    const stream = assistant ? this.#assistantKey(assistant) : undefined;
+    const streamContent = streaming ? JSON.stringify(streaming) : undefined;
+    if (this.#projectionContent === content && this.#projectionStream === stream
+      && (!streaming || assistant) && !assistant?.content.some(part => part.type === 'toolCall')) {
+      if (assistant && this.#projectionStreamContent !== streamContent) {
+        this.#updateAssistant(assistant);
+        this.#projectionStreamContent = streamContent;
+        this.tui.requestRender();
+      }
+      return;
+    }
     const initialize = this.#projectionAgent !== projection.agentId || this.#projectionHideThinking !== projection.settings.hideThinking;
     this.detach();
     this.#projectionAgent = projection.agentId;
     this.#projectionHideThinking = projection.settings.hideThinking;
+    this.#projectionContent = content;
+    this.#projectionStream = stream;
+    this.#projectionStreamContent = streamContent;
     this.#snapshotCwd = projection.cwd;
-    const { settings, messages, streaming } = projection;
+    const { settings, messages } = projection;
     if (initialize) this.#hideThinkingBlock = settings.hideThinking;
     this.#showImages = settings.showImages;
     this.#imageWidthCells = settings.imageWidthCells;
@@ -206,6 +226,9 @@ export class AgentTranscript implements Component {
     this.#snapshotCwd = undefined;
     this.#projectionAgent = undefined;
     this.#projectionHideThinking = undefined;
+    this.#projectionContent = undefined;
+    this.#projectionStream = undefined;
+    this.#projectionStreamContent = undefined;
     this.#projectedCompactions = new WeakMap();
     if (attachment && !attachment.released) {
       attachment.released = true;

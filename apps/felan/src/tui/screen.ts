@@ -41,6 +41,9 @@ export class DaemonTuiScreen {
   private queuedSubmit: string | undefined;
   private countdown: ReturnType<typeof setTimeout> | undefined;
   private connectionNotice: Text | undefined;
+  private notificationSession: string | undefined;
+  private readonly seenNotifications = new Map<string, { text: string; expires: number }>();
+  private notificationTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly controller: TuiSessionController, private readonly tui: TUI, private readonly options: {
     cwd: string;
@@ -80,8 +83,8 @@ export class DaemonTuiScreen {
       { component: this.activity, shrink: 0, visible: () => !this.inlineActive },
       { component: this.editor, shrink: 0, visible: () => !this.inlineActive },
       { component: this.inline, visible: () => this.inlineActive, shrink: 1, minSize: 1 },
-      { component: { render: width => this.editor.renderRail(width), invalidate() {} }, shrink: 0 },
-      { component: this.footer, shrink: 0 }]);
+      { component: this.footer, shrink: 0 },
+      { component: { render: width => this.editor.renderRail(width), invalidate() {} }, shrink: 0 }]);
     this.component = stack;
     this.editor.onSubmit = text => {
       this.editor.setText(text);
@@ -212,6 +215,11 @@ export class DaemonTuiScreen {
   private refresh(): void {
     if (this.disposed) return;
     const snapshot = this.controller.snapshot; const state = this.controller.state;
+    if (this.notificationSession !== snapshot?.session) {
+      this.notificationSession = snapshot?.session; this.seenNotifications.clear();
+    }
+    clearTimeout(this.notificationTimer); this.notificationTimer = undefined;
+    let nextNotificationExpiry = Infinity;
     const connection = this.controller.client.status;
     this.header.setText(startupHeader(this.theme(), this.keys, this.transcript.toolsExpanded, this.options.quietStartup?.()));
     this.notices.clear(); this.activity.clear();
@@ -231,15 +239,29 @@ export class DaemonTuiScreen {
     if (snapshot?.queue.length) notice(`${snapshot.queue.length} queued`);
     try {
       const presentation = fallbackPresentations(snapshot?.presentation ?? [], this.options.hasRenderer);
+      const notificationIds = new Set(presentation.filter(item => item.kind === 'notification').map(item => item.id));
+      for (const id of this.seenNotifications.keys()) if (!notificationIds.has(id)) this.seenNotifications.delete(id);
       const hasPowerline = snapshot?.presentation.some(item => item.kind === 'view' && isPowerlinePresentation(item));
       const processes = processStatus(snapshot?.processes ?? []);
       if (!hasPowerline && processes) notice(processes);
       for (const item of presentation) {
-        if (item.kind === 'notification') notice(`${item.level === 'info' ? '' : item.level === 'warning' ? 'Warning: ' : 'Error: '}${item.text}`, item.level === 'info' ? 'muted' : item.level);
+        if (item.kind === 'notification') {
+          const text = `${item.level === 'info' ? '' : item.level === 'warning' ? 'Warning: ' : 'Error: '}${item.text}`;
+          let notification = this.seenNotifications.get(item.id);
+          if (notification?.text !== text) {
+            notification = { text, expires: Date.now() + 5_000 };
+            this.seenNotifications.set(item.id, notification);
+          }
+          if (notification.expires > Date.now()) {
+            notice(text, item.level === 'info' ? 'muted' : item.level);
+            nextNotificationExpiry = Math.min(nextNotificationExpiry, notification.expires);
+          }
+        }
         else if (item.kind === 'status' && item.id !== 'working' && !hasPowerline) notice(statusText(item));
         else if (item.kind === 'progress') notice(`${item.label}: ${item.state}${item.fraction === undefined ? '' : ` (${Math.round(item.fraction * 100)}%)`}`);
       }
     } catch { notice('Extension status is unavailable.', 'warning'); }
+    if (Number.isFinite(nextNotificationExpiry)) this.notificationTimer = setTimeout(() => this.refresh(), Math.max(0, nextNotificationExpiry - Date.now()));
     if (this.controller.notice) notice(this.controller.notice);
     const running = state?.status === 'live' && snapshot && ['running', 'cancelling'].includes(snapshot.run.state);
     if (state?.status === 'live' && snapshot?.run.state === 'waiting') notice('Waiting for UI');
@@ -278,7 +300,7 @@ export class DaemonTuiScreen {
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
-    this.disposed = true; clearTimeout(this.countdown); this.working?.stop(); this.unsubscribe(); this.removeInput(); this.dialogs.dispose(); this.transcript.dispose();
+    this.disposed = true; clearTimeout(this.countdown); clearTimeout(this.notificationTimer); this.working?.stop(); this.unsubscribe(); this.removeInput(); this.dialogs.dispose(); this.transcript.dispose();
     if (this.submitting) await this.submitting;
   }
 }

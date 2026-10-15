@@ -9,6 +9,7 @@ import { snapshot } from './client-fixtures.js';
 import { createClientPowerlineFooter } from '../src/client/powerline-presenter.js';
 import type { SessionClient } from '../src/client/client.js';
 import { ShellExecution } from '../src/tui/shell-execution.js';
+import { ToolActivityState } from '../src/tool-activity/state.js';
 
 const settings = { hideThinking: false, showImages: false, imageWidthCells: 60, outputPad: 1, toolMode: 'grouped' as const };
 const metadata = { kind: 'assistant' as const, timestamp: 1, api: 'fixture', provider: 'fixture', model: 'fixture', stopReason: 'stop' as const,
@@ -34,6 +35,25 @@ function fixture() {
     },
   };
 }
+
+it('updates streaming content without rebuilding retained transcript components', () => {
+  const f = fixture();
+  const rebuild = vi.spyOn(ToolActivityState.prototype, 'showSnapshot');
+  const history: Message[] = Array.from({ length: 100 }, (_, index) => ({ id: `user-${index}`, entryId: `user-${index}`,
+    role: 'user', timestamp: index, content: [{ type: 'text', text: `Retained message ${index}` }] }));
+  f.state.presentation = [{ id: MESSAGE_DISPLAY_ID, kind: 'message_display', data: { message: 'live', display: metadata } }];
+  try {
+    for (const text of ['First', 'First second', 'First second third']) {
+      f.state.activeStreams = [{ id: 'live:0', message: 'live', kind: 'assistant', offset: text.length, text }];
+      expect(stripTerminalSequences(f.render(history))).toContain(text);
+    }
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(stripTerminalSequences(f.render(history))).toContain('Retained message 99');
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    f.render([...history, { id: 'another', entryId: 'another', role: 'user', timestamp: 101, content: [{ type: 'text', text: 'New input' }] }]);
+    expect(rebuild).toHaveBeenCalledTimes(2);
+  } finally { rebuild.mockRestore(); f.transcript.dispose(); }
+});
 
 it.each(['absent', 'invalid', 'valid'] as const)('keeps thinking typed from the first partial frame with %s metadata', mode => {
   const f = fixture();

@@ -283,6 +283,8 @@ export class SessionProjection {
       this.runtimeRunId = undefined;
     }
     if (event.type === 'message_start' && event.message.role === 'assistant') {
+      // Cursor changes clear client streams, so publish them before response deltas.
+      this.syncCursor();
       this.assistant = randomUUID(); this.liveIds.set(event.message, this.assistant);
       const display = messageDisplay(event.message);
       this.activeDisplay = display?.kind === 'assistant' ? { message: this.assistant, display } : undefined;

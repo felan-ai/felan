@@ -47,6 +47,13 @@ function contrast(foreground: string, background: string): number {
 }
 
 describe('Felan Pi themes', () => {
+  it('matches the dark canvas and body text from the 0.28.3 reference appearance', () => {
+    const theme = loadTheme('felan-dark');
+    expect(theme.vars.bg).toBe('#1a1b26');
+    expect(resolveColor(theme, theme.colors.text)).toBe('#c0caf5');
+    expect(resolveColor(theme, theme.colors.customMessageBg)).toBe('#1e202b');
+  });
+
   for (const mode of ['light', 'dark'] as const) {
     it(`${mode} has complete semantic variables and Pi tokens`, () => {
       const theme = loadTheme(`felan-${mode}`);
