@@ -11,6 +11,7 @@ export interface AgentViewTranscript {
   tools?: Array<{ id: string; state: 'running' | 'completed' | 'failed' | 'interrupted'; output: string; truncated: boolean }>;
   compactions?: Array<{ message: number; method: 'Classifier' | 'Summary' | 'Native' }>;
   fallbacks?: Array<{ before: number; text: string }>;
+  notes?: Array<{ before: number; text: string; level: 'info' | 'warning' | 'error' }>;
   streamingContent?: Array<{ type: 'text'; text: string } | { type: 'thinking'; thinking: string }>;
   runningShells?: number[];
   result?: string;

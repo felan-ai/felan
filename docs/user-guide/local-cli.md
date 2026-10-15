@@ -353,12 +353,13 @@ the replacement, reattaches the current session, and keeps your editor input.
 When Felan Code runs inside Herdr, the local TUI automatically reports its Felan Code
 session and lifecycle state to Herdr. The integration is active only when Herdr
 provides `HERDR_ENV=1`, `HERDR_PANE_ID`, and `HERDR_SOCKET_PATH`; it reports
-`working`, `idle`, and supported blocking prompts over Herdr's local socket.
-Pi UI prompts used by `ask_user` and Prewalk approval/plan review are reported
-as `blocked`; local MCP browser authorization is also reported while it waits
-for the callback. Delegated subagent work keeps the root session `working`
-through intermediate completion delivery, so the overall workflow produces
-one completion notification rather than one per child.
+`working`, `idle`, and `blocked` over Herdr's local socket. Each terminal reports
+only for its own pane and the session it is attached to; the shared daemon does
+not report. A session prompt waiting for your answer, such as `ask_user` or
+Prewalk approval and plan review, is reported as `blocked` with the prompt's
+title. Delegated subagent work keeps the session `working` until the session
+has consumed every subagent result, so the overall workflow produces one
+completion notification rather than one per child.
 Headless text and JSON sessions do not report terminal-agent state.
 
 This is a local terminal integration and is separate from ACP support. Felan Code

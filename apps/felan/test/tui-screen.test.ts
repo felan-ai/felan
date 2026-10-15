@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { initTheme } from '@earendil-works/pi-coding-agent';
 import { TuiAltScreen, setKeybindings, stripTerminalSequences, Text, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -42,6 +45,29 @@ it('retains an explicit submission while the previous local action settles', asy
   expect(f.transport.requests).toHaveLength(0);
 });
 
+it('completes a later-line file path through the editor Tab and selection keys', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'tui-editor-autocomplete-'));
+  await writeFile(join(cwd, 'example.ts'), 'export {};\n');
+  const transport = new FakeTransport();
+  const client = new SessionClient({ target: { kind: 'isolated', directory: '/unused', namespaceId: 'autocomplete-screen-test' },
+    kind: 'tui', clientVersion: 'fixture', connector: transport.connector, retries: 0 });
+  const controller = new TuiSessionController(client);
+  vi.spyOn(controller, 'snapshot', 'get').mockReturnValue({ ...snapshot(), cwd });
+  const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
+  const screen = new DaemonTuiScreen(controller, tui, { cwd, exit: vi.fn() });
+  tui.setLayoutRoot(screen.component); screen.focus(); tui.start();
+  cleanups.push(async () => { await screen.dispose(); tui.stop(); await controller.dispose(); await rm(cwd, { recursive: true, force: true }); });
+
+  screen.editor.setText('Review this file:\nexa'); terminal.input('\t');
+  await vi.waitFor(() => {
+    tui.renderNow(true);
+    expect(stripTerminalSequences(tui.getScreenLines().join('\n'))).toContain('example.ts');
+  });
+  expect(screen.editor.getExpandedText()).toBe('Review this file:\nexample.ts');
+  terminal.input('\x1b');
+  expect(tui.hasOverlay()).toBe(false);
+});
+
 it.each(['edit', 'clear'] as const)('does not submit stale input after a queued command is %sed', async change => {
   const f = fixture();
   f.terminal.input('\x03'); f.terminal.input('/login'); f.terminal.input('\r');
@@ -52,26 +78,51 @@ it.each(['edit', 'clear'] as const)('does not submit stale input after a queued 
   expect(f.transport.requests).toHaveLength(0);
 });
 
-it('expires notifications without replaying them on refresh and shows changed notifications', () => {
-  vi.useFakeTimers();
+it('shows notices and notifications once as transcript lines instead of pinning them', () => {
   const f = fixture(); const state = snapshot();
   state.presentation.push({ id: 'warning', kind: 'notification', level: 'warning', text: 'Memory processing disabled' });
   vi.spyOn(f.controller, 'snapshot', 'get').mockReturnValue(state);
   const render = () => { f.tui.renderNow(true); return stripTerminalSequences(f.tui.getScreenLines().join('\n')); };
-  f.controller.setNotice('');
-  expect(render()).toContain('Warning: Memory processing disabled');
-  vi.advanceTimersByTime(4_000); f.controller.setNotice('');
-  vi.advanceTimersByTime(1_000);
-  expect(render()).not.toContain('Memory processing disabled');
-  f.controller.setNotice('');
-  expect(render()).not.toContain('Memory processing disabled');
+  const count = (text: string) => render().split(text).length - 1;
+  f.controller.setNotice(''); f.controller.setNotice('Model: first');
+  expect(render()).toContain('Warning: Memory processing disabled'); expect(render()).toContain('Model: first');
+  f.controller.setNotice('Model: second'); f.controller.setNotice('');
+  expect(render()).not.toContain('Model: first'); expect(count('Model: second')).toBe(1);
+  expect(count('Memory processing disabled')).toBe(1);
   state.presentation[0] = { id: 'warning', kind: 'notification', level: 'warning', text: 'A new warning' };
   f.controller.setNotice('');
-  expect(render()).toContain('Warning: A new warning');
+  expect(count('Memory processing disabled')).toBe(1); expect(count('Warning: A new warning')).toBe(1);
+  expect(f.screen.transcript.render(100).map(stripTerminalSequences).join('\n')).toContain('Warning: A new warning');
   state.presentation.length = 0; f.controller.setNotice('');
   state.presentation.push({ id: 'warning', kind: 'notification', level: 'warning', text: 'A new warning' });
   f.controller.setNotice('');
-  expect(render()).toContain('Warning: A new warning');
+  expect(count('Warning: A new warning')).toBe(1);
+});
+
+it('uses the activity slot for reconnecting and retains the editor while the session snapshot stays visible', () => {
+  const f = fixture();
+  const state = { status: 'live', snapshot: { ...snapshot(), run: { state: 'running' as const } } } as const;
+  vi.spyOn(f.controller, 'state', 'get').mockReturnValue(state as never);
+  const connection = vi.spyOn(f.controller.client, 'status', 'get').mockReturnValue('ready');
+  const retry = vi.spyOn(f.controller.client, 'reconnection', 'get').mockReturnValue(undefined);
+  f.controller.setNotice('');
+  const render = () => { f.tui.renderNow(true); return stripTerminalSequences(f.tui.getScreenLines().join('\n')); };
+  expect(render()).toContain('Working');
+  f.screen.editor.setText('draft');
+  connection.mockReturnValue('disconnected');
+  retry.mockReturnValue({ attempt: 1, retryAt: Date.now() + 1_000 });
+  f.controller.setNotice('');
+  expect(render()).toContain('Reconnecting…');
+  expect(render()).not.toContain('Daemon disconnected');
+  expect(f.screen.editor.getExpandedText()).toBe('draft');
+  retry.mockReturnValue(undefined);
+  f.controller.setNotice('');
+  expect(render()).toContain('Use /reconnect to retry');
+  expect(render()).not.toContain('Reconnecting…');
+  connection.mockReturnValue('ready');
+  f.controller.setNotice('');
+  expect(render()).toContain('Working');
+  expect(render()).not.toContain('Reconnecting…');
 });
 
 it('places the active subagent rail below the status footer while retaining keyboard navigation', () => {

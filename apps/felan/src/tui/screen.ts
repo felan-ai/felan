@@ -1,9 +1,9 @@
 import type { KeybindingsManager, Theme } from '@earendil-works/pi-coding-agent';
-import { Container, Loader, getKeybindings, ScrollView, Text, VStack, type Component, type TUI } from '@earendil-works/pi-tui';
+import { Container, Loader, getKeybindings, isKeyRelease, ScrollView, Text, VStack, type Component, type TUI } from '@earendil-works/pi-tui';
 import type { AgentViewTranscript } from '../subagents/types.js';
 import { AgentTranscript, type AgentToolPresentation } from '../subagents/agent-transcript.js';
 import { TuiSessionController, connectionText } from './controller.js';
-import { projectTuiTranscript } from './transcript.js';
+import { projectTuiTranscript, transcriptNoteText } from './transcript.js';
 import { TuiDialogs } from './dialogs.js';
 import { createCommandAutocomplete, submitTuiInput, tuiCommands, type DaemonAction } from './commands.js';
 import { statusText, uiText } from '../client/ui.js';
@@ -39,11 +39,6 @@ export class DaemonTuiScreen {
   private disposed = false;
   private submitting: Promise<void> | undefined;
   private queuedSubmit: string | undefined;
-  private countdown: ReturnType<typeof setTimeout> | undefined;
-  private connectionNotice: Text | undefined;
-  private notificationSession: string | undefined;
-  private readonly seenNotifications = new Map<string, { text: string; expires: number }>();
-  private notificationTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly controller: TuiSessionController, private readonly tui: TUI, private readonly options: {
     cwd: string;
@@ -74,7 +69,7 @@ export class DaemonTuiScreen {
     this.keys as unknown as KeybindingsManager, { listLocalSubagents: () => this.executions }, theme,
     id => { void options.agents?.(id).catch(error => controller.setNotice(errorText(error))); }, () => false);
     this.editor.setPaddingX(1);
-    this.editor.setAutocompleteProvider(createCommandAutocomplete(controller));
+    this.editor.setAutocompleteProvider(createCommandAutocomplete(controller, options.cwd));
     this.transcript = new AgentTranscript(tui, this.keys, options.toolPresentation, theme);
     const content = new Container();
     content.addChild(this.header); content.addChild(this.transcript); content.addChild(this.notices);
@@ -97,7 +92,7 @@ export class DaemonTuiScreen {
         if (this.keys.matches(data, key)) { this.action(command); return { consume: true }; }
       }
       if (this.keys.matches(data, 'app.exit') && !this.editor.getText()) { options.exit(); return { consume: true }; }
-      if (this.keys.matches(data, 'app.interrupt') && !this.editor.isRailFocused() && controller.snapshot && !['idle', 'interrupted'].includes(controller.snapshot.run.state)) {
+      if (this.keys.matches(data, 'app.interrupt') && !isKeyRelease(data) && !this.editor.isRailFocused() && !this.editor.isShowingAutocomplete() && controller.snapshot && !['idle', 'interrupted'].includes(controller.snapshot.run.state)) {
         void controller.cancel().catch(error => controller.setNotice(errorText(error))); return { consume: true };
       }
       if (this.keys.matches(data, 'app.clear')) {
@@ -215,11 +210,6 @@ export class DaemonTuiScreen {
   private refresh(): void {
     if (this.disposed) return;
     const snapshot = this.controller.snapshot; const state = this.controller.state;
-    if (this.notificationSession !== snapshot?.session) {
-      this.notificationSession = snapshot?.session; this.seenNotifications.clear();
-    }
-    clearTimeout(this.notificationTimer); this.notificationTimer = undefined;
-    let nextNotificationExpiry = Infinity;
     const connection = this.controller.client.status;
     this.header.setText(startupHeader(this.theme(), this.keys, this.transcript.toolsExpanded, this.options.quietStartup?.()));
     this.notices.clear(); this.activity.clear();
@@ -227,47 +217,32 @@ export class DaemonTuiScreen {
       const component = new Text(this.theme().fg(color, uiText(text)), 1, 1);
       this.notices.addChild(component); return component;
     };
-    const disconnected = connectionText(this.controller.client);
-    this.connectionNotice = undefined;
-    if (disconnected) this.connectionNotice = notice(disconnected, 'warning');
-    else if (state?.status === 'blocked') notice('Session recovery did not complete. Use /reconnect to retry.', 'warning');
-    else if (state && state.status !== 'live') notice('Reattaching session…');
-    clearTimeout(this.countdown); this.countdown = undefined;
-    if (connection !== 'ready' && this.controller.client.reconnection) this.countdown = setTimeout(() => this.tickCountdown(), 1_000);
-    else if (!snapshot) notice('No session attached. Use /new or /sessions.', 'warning');
+    const reconnecting = connection === 'connecting' || (connection === 'disconnected' && !!this.controller.client.reconnection)
+      || (connection === 'ready' && (state?.status === 'disconnected' || state?.status === 'recovering'));
+    if (state?.status === 'blocked') notice(`${this.controller.blockedText} Use /reconnect to retry.`, 'warning');
+    else if (!reconnecting && connection !== 'ready') notice(connectionText(this.controller.client) ?? 'Daemon connection is unavailable.', 'warning');
+    else if (!snapshot && !reconnecting) notice('No session attached. Use /new or /sessions.', 'warning');
     if (snapshot?.policy.effective === 'acp-strict') notice('Approvals required.');
     if (snapshot?.queue.length) notice(`${snapshot.queue.length} queued`);
     try {
       const presentation = fallbackPresentations(snapshot?.presentation ?? [], this.options.hasRenderer);
-      const notificationIds = new Set(presentation.filter(item => item.kind === 'notification').map(item => item.id));
-      for (const id of this.seenNotifications.keys()) if (!notificationIds.has(id)) this.seenNotifications.delete(id);
       const hasPowerline = snapshot?.presentation.some(item => item.kind === 'view' && isPowerlinePresentation(item));
       const processes = processStatus(snapshot?.processes ?? []);
       if (!hasPowerline && processes) notice(processes);
       for (const item of presentation) {
-        if (item.kind === 'notification') {
-          const text = `${item.level === 'info' ? '' : item.level === 'warning' ? 'Warning: ' : 'Error: '}${item.text}`;
-          let notification = this.seenNotifications.get(item.id);
-          if (notification?.text !== text) {
-            notification = { text, expires: Date.now() + 5_000 };
-            this.seenNotifications.set(item.id, notification);
-          }
-          if (notification.expires > Date.now()) {
-            notice(text, item.level === 'info' ? 'muted' : item.level);
-            nextNotificationExpiry = Math.min(nextNotificationExpiry, notification.expires);
-          }
-        }
-        else if (item.kind === 'status' && item.id !== 'working' && !hasPowerline) notice(statusText(item));
+        if (item.kind === 'status' && item.id !== 'working' && !hasPowerline) notice(statusText(item));
         else if (item.kind === 'progress') notice(`${item.label}: ${item.state}${item.fraction === undefined ? '' : ` (${Math.round(item.fraction * 100)}%)`}`);
       }
     } catch { notice('Extension status is unavailable.', 'warning'); }
-    if (Number.isFinite(nextNotificationExpiry)) this.notificationTimer = setTimeout(() => this.refresh(), Math.max(0, nextNotificationExpiry - Date.now()));
-    if (this.controller.notice) notice(this.controller.notice);
+    // Without a session there is no transcript to scroll with, so pending notes stay visible here.
+    if (!snapshot) for (const note of this.controller.notes) {
+      notice(transcriptNoteText(note), note.level === 'info' ? 'muted' : note.level);
+    }
     const running = state?.status === 'live' && snapshot && ['running', 'cancelling'].includes(snapshot.run.state);
     if (state?.status === 'live' && snapshot?.run.state === 'waiting') notice('Waiting for UI');
-    if (running) {
-      const status = snapshot.presentation.find(item => item.kind === 'status' && item.id === 'working');
-      const message = status?.kind === 'status' ? statusText(status) : 'Working';
+    if (reconnecting || running) {
+      const status = snapshot?.presentation.find(item => item.kind === 'status' && item.id === 'working');
+      const message = reconnecting ? 'Reconnecting…' : status?.kind === 'status' ? statusText(status) : 'Working';
       this.working ??= new Loader(this.tui, text => this.editor.borderColor(text), text => this.editor.borderColor(text), message, this.workingIndicator());
       this.working.setMessage(message);
       this.activity.addChild(this.working);
@@ -277,20 +252,9 @@ export class DaemonTuiScreen {
       try {
         this.transcript.showProjection(projectTuiTranscript(snapshot, this.controller.history, this.options.settings?.() ?? {
           hideThinking: false, showImages: true, imageWidthCells: 60, outputPad: 1, toolMode: 'grouped',
-        }));
+        }, this.controller.notes));
       } catch (error) { notice(`Cannot render transcript: ${errorText(error)}`, 'error'); }
     }
-    this.tui.requestRender();
-  }
-
-  /** Connection changes refresh through the controller; ticks only rewrite the countdown so the transcript is not re-projected every second. */
-  private tickCountdown(): void {
-    this.countdown = undefined;
-    if (this.disposed) return;
-    const text = connectionText(this.controller.client);
-    if (!text || !this.connectionNotice || !this.controller.client.reconnection) { this.refresh(); return; }
-    this.connectionNotice.setText(this.theme().fg('warning', uiText(text)));
-    this.countdown = setTimeout(() => this.tickCountdown(), 1_000);
     this.tui.requestRender();
   }
 
@@ -300,7 +264,7 @@ export class DaemonTuiScreen {
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
-    this.disposed = true; clearTimeout(this.countdown); clearTimeout(this.notificationTimer); this.working?.stop(); this.unsubscribe(); this.removeInput(); this.dialogs.dispose(); this.transcript.dispose();
+    this.disposed = true; this.working?.stop(); this.unsubscribe(); this.removeInput(); this.dialogs.dispose(); this.transcript.dispose();
     if (this.submitting) await this.submitting;
   }
 }

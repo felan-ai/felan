@@ -17,11 +17,11 @@ const row = (session: string, overrides: Partial<SessionRow> = {}): SessionRow =
   run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 }, ...overrides,
 });
 const tree = (): OperationResult<'session.tree'> => ({ revision: 9, branch: 'reply', entries: [
-  { id: 'model', kind: 'model_change', summary: 'model_change', timestamp: 1 },
+  { id: 'model', kind: 'model_change', title: 'model: fixture', summary: '', timestamp: 1 },
   { id: 'prompt', parent: 'model', kind: 'message', role: 'user', summary: 'say hi', timestamp: 2 },
-  { id: 'reply', parent: 'prompt', kind: 'message', role: 'assistant', summary: 'Hello', timestamp: 3 },
-  { id: 'alternate', parent: 'prompt', kind: 'message', role: 'assistant', summary: 'Other branch', timestamp: 4, label: 'Alternative' },
-  { id: 'tool', parent: 'alternate', kind: 'message', role: 'toolResult', summary: 'done', timestamp: 5 },
+  { id: 'reply', parent: 'prompt', kind: 'message', role: 'assistant', summary: 'Hello', stopReason: 'stop', timestamp: 3 },
+  { id: 'alternate', parent: 'prompt', kind: 'message', role: 'assistant', summary: 'Other branch', stopReason: 'stop', timestamp: 4, label: 'Alternative' },
+  { id: 'tool', parent: 'alternate', kind: 'message', role: 'toolResult', title: 'read: a.ts', summary: 'done', timestamp: 5 },
 ] });
 
 describe('session navigator (R17)', () => {
@@ -112,8 +112,9 @@ describe('tree navigator (R18)', () => {
   it('renders roles, hierarchy and current leaf, hiding bookkeeping by default', () => {
     const done = vi.fn(); const picker = new TreeNavigator(tree(), done);
     const output = clean(picker);
-    expect(output).toContain('user: say hi'); expect(output).toContain('› ├─ ◉ assistant: Hello');
-    expect(output).toContain('└─ ○ [Alternative] assistant: Other branch'); expect(output).not.toContain('[model_change]');
+    expect(output).toContain('user: say hi'); expect(output).toContain('› ├─ • assistant: Hello');
+    expect(output).toContain('└⊟ [Alternative] assistant: Other branch'); expect(output).toContain('[read: a.ts]');
+    expect(output).not.toContain('[model: fixture]');
     picker.handleInput('\r'); expect(done).toHaveBeenCalledWith({ action: 'select', entryId: 'reply' });
     for (const width of [40, 80, 120]) expect(picker.render(width).every(line => visibleWidth(line) <= width)).toBe(true);
   });
@@ -121,10 +122,10 @@ describe('tree navigator (R18)', () => {
   it('filters user, tools, labels and all nodes, searches and restores the current selection', () => {
     const done = vi.fn(); const picker = new TreeNavigator(tree(), done);
     picker.handleInput('\x15'); expect(clean(picker)).toContain('user: say hi'); expect(clean(picker)).not.toContain('assistant:');
-    picker.handleInput('\x01'); expect(clean(picker)).toContain('[model_change]');
-    picker.handleInput('\x14'); expect(clean(picker)).not.toContain('tool: done');
+    picker.handleInput('\x01'); expect(clean(picker)).toContain('[model: fixture]');
+    picker.handleInput('\x14'); expect(clean(picker)).not.toContain('[read: a.ts]');
     picker.handleInput('\x0c'); expect(clean(picker)).toContain('[Alternative]'); expect(clean(picker)).not.toContain('say hi');
-    picker.handleInput('\x04'); picker.handleInput('\r'); expect(done).toHaveBeenLastCalledWith({ action: 'select', entryId: 'reply' });
+    picker.handleInput('\x04'); picker.handleInput('\r'); expect(done).toHaveBeenLastCalledWith({ action: 'select', entryId: 'alternate' });
     picker.handleInput('Other'); expect(clean(picker)).toContain('Other branch'); expect(clean(picker)).not.toContain('assistant: Hello');
   });
 
@@ -137,7 +138,7 @@ describe('tree navigator (R18)', () => {
     picker.handleInput('L');
     expect(picker.render(100).join('\n').split(CURSOR_MARKER)).toHaveLength(2);
     picker.handleInput('Bookmark'); picker.handleInput('\r');
-    expect(done).toHaveBeenCalledWith({ action: 'label', entryId: 'reply', label: 'Bookmark' });
+    expect(done).toHaveBeenCalledWith({ action: 'label', entryId: 'reply', label: 'Bookmark', view: expect.any(Object) });
   });
 
   it('uses effective keys, handles empty filtered trees and cancels label editing without mutation', () => {
@@ -145,9 +146,18 @@ describe('tree navigator (R18)', () => {
     const done = vi.fn(); const picker = new TreeNavigator(tree(), done);
     picker.handleInput('\x07'); expect(clean(picker)).not.toContain('assistant:');
     picker.handleInput('\x04'); picker.handleInput('L'); picker.handleInput('No save'); picker.handleInput('\x1b'); expect(done).not.toHaveBeenCalled();
-    picker.handleInput('not found'); expect(clean(picker)).toContain('No matching entries.'); picker.handleInput('\r'); expect(done).not.toHaveBeenCalled();
-    picker.handleInput('\x1b'); expect(done).toHaveBeenCalledWith(undefined);
-    expect(clean(new TreeNavigator({ entries: [], branch: 'empty', revision: 0 }, () => {}))).toContain('No conversation entries yet.');
+    picker.handleInput('not found'); expect(clean(picker)).toContain('No entries found'); picker.handleInput('\r'); expect(done).not.toHaveBeenCalled();
+    picker.handleInput('\x1b'); expect(done).not.toHaveBeenCalled(); picker.handleInput('\x1b'); expect(done).toHaveBeenCalledWith(undefined);
+    expect(clean(new TreeNavigator({ entries: [], branch: 'empty', revision: 0 }, () => {}))).toContain('No entries found');
+  });
+
+  it('returns view state with a label edit so the reopened tree keeps filter, search and label times', () => {
+    const done = vi.fn(); const picker = new TreeNavigator(tree(), done);
+    picker.handleInput('\x15'); picker.handleInput('T'); picker.handleInput('L'); picker.handleInput('Mark'); picker.handleInput('\r');
+    const view = done.mock.calls[0]![0].view;
+    expect(view).toEqual({ filter: 'userOnly', query: '', folded: [], showLabelTimestamps: true });
+    const reopened = clean(new TreeNavigator(tree(), vi.fn(), undefined, 'prompt', undefined, undefined, undefined, view));
+    expect(reopened).toContain('[user]'); expect(reopened).toContain('[+label time]'); expect(reopened).not.toContain('assistant:');
   });
 
   it('shows clipboard failure without dismissing the tree or changing selection', async () => {
@@ -177,6 +187,11 @@ function commandFixture(inputs: string[][] = []) {
 }
 
 describe('session commands (R17–R19)', () => {
+  it('reports an empty session without opening an empty tree', async () => {
+    const f = commandFixture(); f.controller.tree.mockResolvedValueOnce({ revision: 1, branch: 'none', entries: [] });
+    expect(await f.submit('/tree')).toBe(true); expect(f.controller.notice).toBe('No entries in session'); expect(f.controller.perform).not.toHaveBeenCalled();
+  });
+
   it('sets new and rename success notices only after authoritative success', async () => {
     const f = commandFixture();
     expect(await f.submit('/new')).toBe(true); expect(f.controller.notice).toBe('✓ New session started');
@@ -245,7 +260,7 @@ it('keeps tree and picker headings, current selection and draft usable in an 80�
     ] });
     const treeView = screen.submit('/tree', true);
     await vi.waitFor(() => expect(lines()).toContain('Session Tree'));
-    expect(lines()).toContain('◉ assistant: Hello'); expect(lines()).toContain('Footer three');
+    expect(lines()).toContain('├─ • assistant: Hello'); expect(lines()).toContain('Footer three');
     terminal.input('\x1b'); await treeView; expect(screen.editor.getText()).toBe('retained draft');
     f.controller.sessions.mockResolvedValueOnce([row('session', { title: 'Current' }), ...Array.from({ length: 25 }, (_, index) => row(`extra-${index}`))]);
     const picker = screen.submit('/sessions', true);
@@ -285,5 +300,5 @@ it('wraps tree arrows at both boundaries without wrapping page navigation', () =
   picker.handleInput('\x1b[A'); expect(clean(picker)).toContain('(2/2)');
   picker.handleInput('\x1b[6~'); expect(clean(picker)).toContain('(2/2)');
   const empty = new TreeNavigator({ ...source, entries: [] }, vi.fn());
-  empty.handleInput('\x1b[B'); expect(clean(empty)).toContain('No conversation entries');
+  empty.handleInput('\x1b[B'); expect(clean(empty)).toContain('No entries found');
 });

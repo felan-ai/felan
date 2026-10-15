@@ -70,8 +70,8 @@ published by a partially successful attempt. Releases require no Git tag.
 
 ## Story 1 release prerequisites
 
-The services migration targets `@felan-ai/daemon` and
-`@felan-ai/session-protocol` 0.2.0, `@felan-ai/agent-core` 0.13.0 and
+The services migration targets
+`@felan-ai/session-protocol` 0.1.0 (its first release), `@felan-ai/daemon` 0.2.0, `@felan-ai/agent-core` 0.13.0 and
 `@felan-ai/felan` 0.30.0. These are incompatible `0.x` minor transitions, not
 patches to the prior profile/presenter APIs. Extensions use the Core 0.13
 compatible-minor peer range and their coordinated next-minor versions;

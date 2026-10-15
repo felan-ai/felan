@@ -427,7 +427,7 @@ export class ToolActivityState {
   #markAssistantFailure(message: AssistantMessage): void {
     if (message.stopReason !== 'error' && message.stopReason !== 'aborted') return;
     const error = message.stopReason === 'aborted'
-      ? message.errorMessage || 'Operation aborted'
+      ? 'Interrupted'
       : message.errorMessage || 'Error';
     for (const content of message.content) {
       if (content.type !== 'toolCall') continue;

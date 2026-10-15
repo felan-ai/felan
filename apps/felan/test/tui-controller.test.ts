@@ -4,12 +4,15 @@ import { KeybindingsManager, TUI_KEYBINDINGS, TuiAltScreen, setKeybindings, stri
 import { SessionClient } from '../src/client/client.js';
 import { TuiSessionController } from '../src/tui/controller.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
+import { HerdrPane, type HerdrRequest } from '../src/tui/herdr.js';
 import { createCommandAutocomplete, submitTuiInput } from '../src/tui/commands.js';
 import type { TuiDialogHost } from '../src/tui/dialogs.js';
 import { ClientPreferencesStore } from '../src/tui/preferences-store.js';
 import { DaemonConfiguration } from '../src/providers/configuration.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { gate, serverFixture } from '../../daemon/test/fixtures/server.js';
+import type { Message } from '@felan-ai/session-protocol';
+import { snapshot } from './client-fixtures.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 beforeAll(() => setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS)));
@@ -119,6 +122,17 @@ it('resumes the first session matching an ambiguous ID prefix', async () => {
   expect(attach).toHaveBeenCalledExactlyOnceWith('abc-1'); expect(controller.sessionId).toBe('abc-1');
 });
 
+it('explains a blocked attachment in the recovery notice', async () => {
+  let blocked: unknown;
+  const client = { status: 'ready', capabilities: { operations: [] }, connect: async () => {}, subscribe: () => () => {}, close() {},
+    getAttachment: () => ({ state: { status: 'blocked' }, blocked }), attach: async () => ({ outcome: 'accepted' }) };
+  const controller = new TuiSessionController(client as unknown as SessionClient);
+  await controller.attach('session');
+  expect(controller.blockedText).toBe('Session recovery did not complete.');
+  blocked = { kind: 'attach_failed', outcome: 'indeterminate', code: 'indeterminate', message: 'Request timed out' };
+  expect(controller.blockedText).toBe('Session recovery did not complete (re-attach got no answer: indeterminate: Request timed out).');
+});
+
 it('renders the real protocol session, resizes and restores the terminal on client exit without closing the session', async () => {
   const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal();
   const tui = new TuiAltScreen(terminal); const signal = new AbortController();
@@ -131,6 +145,22 @@ it('renders the real protocol session, resizes and restores the terminal on clie
     expect(tui.getScreenLines().join('\n')).toContain('Felan');
     terminal.input('\x04'); await running;
     expect(terminal.active).toBe(false); expect(f.store.session(f.root.sessionId).state).toBe('open');
+  } finally { signal.abort(); await running; }
+});
+
+it('reports the attached session to its Herdr pane from the terminal client: session first, working during the run, then idle', async () => {
+  const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
+  const requests: HerdrRequest[] = []; const signal = new AbortController();
+  const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId,
+    terminal, createTui: () => tui, signal: signal.signal, herdr: new HerdrPane('w1:p1', async request => { requests.push(request); }) });
+  try {
+    await vi.waitFor(() => expect(requests.map(request => request.params.state ?? 'session')).toEqual(['session', 'idle']));
+    expect(requests[0]).toMatchObject({ method: 'pane.report_agent_session', params: { pane_id: 'w1:p1', agent: 'felan', agent_session_id: f.root.sessionId } });
+    terminal.input('terminal input'); terminal.input('\r');
+    await vi.waitFor(() => expect(controller.history.some(row => row.role === 'assistant')).toBe(true));
+    await vi.waitFor(() => expect(requests.map(request => request.params.state ?? 'session')).toEqual(['session', 'idle', 'working', 'idle']));
+    expect(requests.every(request => request.params.agent_session_id === f.root.sessionId)).toBe(true);
+    terminal.input('\x04'); await running;
   } finally { signal.abort(); await running; }
 });
 
@@ -345,7 +375,7 @@ it('stops or restarts an idle daemon without confirmation or an attached session
   expect(daemon).toHaveBeenLastCalledWith('relaunch', false);
 });
 
-it('keeps input usable with a clear notice while the daemon is disconnected, and announces reconnection', async () => {
+it('keeps input usable with a clear notice while the daemon is disconnected without announcing routine reconnection', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const listeners = new Set<() => void>();
   const client = { status: 'ready', reconnection: { attempt: 2, retryAt: Date.now() + 4_000 } as { attempt: number; retryAt: number } | undefined,
@@ -360,9 +390,33 @@ it('keeps input usable with a clear notice while the daemon is disconnected, and
     await expect(controller.perform('prompt', { text: 'hello' }, 'session')).rejects.toThrow('reconnecting automatically');
     expect(client.request).not.toHaveBeenCalled();
     client.status = 'ready'; client.reconnection = undefined; emit();
-    expect(controller.notice).toBe('Reconnected');
-    vi.advanceTimersByTime(3_000); expect(controller.notice).toBe('');
+    expect(controller.notes.some(note => note.text === 'Reconnected')).toBe(false);
   } finally { vi.useRealTimers(); await controller.dispose(); }
+});
+
+it('anchors notes to the latest entry, replaces back-to-back status lines and starts fresh per session', async () => {
+  const listeners = new Set<() => void>();
+  const message = (id: string): Message => ({ id, entryId: id, role: 'user', timestamp: 1, content: [{ type: 'text', text: id }] });
+  const sessions = new Map(['a', 'b'].map(session => [session, { ...snapshot(), session, root: session, history: { revision: 0, branch: 'branch', entries: [message(`${session}1`)] } }]));
+  const client = { status: 'ready', subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+    getAttachment: (session: string) => sessions.has(session) ? { state: { status: 'live', snapshot: sessions.get(session) } } : undefined,
+    attach: vi.fn(async () => ({ outcome: 'accepted' })), detach: vi.fn(async () => {}), close: vi.fn() };
+  const emit = () => { for (const listener of listeners) listener(); };
+  const controller = new TuiSessionController(client as unknown as SessionClient);
+  const notes = () => controller.notes.map(({ after, text, level }) => ({ after, text, level }));
+  try {
+    controller.setNotice('Before attach');
+    await controller.attach('a');
+    expect(notes()).toEqual([{ after: 'a1', text: 'Before attach', level: 'info' }]);
+    const a = sessions.get('a')!; a.history = { ...a.history, entries: [...a.history.entries, message('a2')] }; emit();
+    controller.setNotice('Model: first'); controller.setNotice('Model: second');
+    a.presentation = [{ id: 'notification:warning', kind: 'notification', level: 'warning', text: 'Disk almost full' }]; emit(); emit();
+    controller.setNotice('Thinking level: high');
+    expect(notes()).toEqual([{ after: 'a1', text: 'Before attach', level: 'info' }, { after: 'a2', text: 'Model: second', level: 'info' },
+      { after: 'a2', text: 'Disk almost full', level: 'warning' }, { after: 'a2', text: 'Thinking level: high', level: 'info' }]);
+    await controller.attach('b');
+    expect(controller.notes).toEqual([]);
+  } finally { await controller.dispose(); }
 });
 
 it('confirms once before a daemon action would interrupt active runs', async () => {

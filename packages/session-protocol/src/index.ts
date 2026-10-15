@@ -15,3 +15,4 @@ export * from './request-id.js';
 export * from './requests.js';
 export * from './control.js';
 export * from './framing.js';
+export * from './publication.js';

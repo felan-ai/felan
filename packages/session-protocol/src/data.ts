@@ -3,7 +3,7 @@ import { LIMITS, ProtocolValidationError } from './limits.js';
 import { AbsolutePathSchema, ClientKindSchema, CounterSchema, CursorSchema, IdSchema, JsonValueSchema, ModelSchema, NameSchema, ThinkingSchema, enumOf, parseSchema, text, unboundedText } from './schema.js';
 import { UiPresentationSchema, parseUiPresentation } from './ui.js';
 
-import { ActiveMessageDisplaySchema } from './message-display.js';
+import { ActiveMessageDisplaySchema, StopReasonSchema } from './message-display.js';
 
 export const PromptAttachmentSchema = Type.Union([
   Type.Object({ type: Type.Literal('text'), text: unboundedText(), name: Type.Optional(text(256)) }),
@@ -14,6 +14,7 @@ export const PromptSchema = Type.Object({ text: unboundedText(), attachments: Ty
 export const OriginSchema = Type.Union([
   Type.Object({ kind: ClientKindSchema, attachment: IdSchema }),
   Type.Object({ kind: Type.Literal('automation'), source: IdSchema, parentRunId: Type.Optional(IdSchema) }),
+  Type.Object({ kind: Type.Literal('web'), user: IdSchema, command: IdSchema }),
 ]);
 export const QueueItemSchema = Type.Object({ id: IdSchema, kind: enumOf(['steer', 'follow_up'] as const), prompt: PromptSchema, origin: OriginSchema });
 export const RunSchema = Type.Object({
@@ -56,7 +57,9 @@ export const HistoryPageSchema = Type.Object({
 });
 export const TreePageSchema = Type.Object({
   revision: CounterSchema, branch: IdSchema,
-  entries: Type.Array(Type.Object({ id: IdSchema, parent: Type.Optional(IdSchema), kind: NameSchema, role: Type.Optional(NameSchema), label: Type.Optional(unboundedText()), summary: unboundedText(), timestamp: CounterSchema })),
+  entries: Type.Array(Type.Object({ id: IdSchema, parent: Type.Optional(IdSchema), kind: NameSchema, role: Type.Optional(NameSchema), label: Type.Optional(unboundedText()),
+    labelTimestamp: Type.Optional(CounterSchema), title: Type.Optional(unboundedText()), summary: unboundedText(), timestamp: CounterSchema,
+    stopReason: Type.Optional(StopReasonSchema), errorMessage: Type.Optional(unboundedText()) })),
   cursor: Type.Optional(CursorSchema),
 });
 export const ToolStateSchema = Type.Object({

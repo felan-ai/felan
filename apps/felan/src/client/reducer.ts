@@ -4,6 +4,9 @@ import {
 } from '@felan-ai/session-protocol';
 
 type Update = SessionEvent | TextStreamEvent;
+/** Why the client discarded its live view and asked the daemon for a new snapshot. */
+export type RecoveryCause = 'revision_gap' | 'stream_mismatch' | 'stream_gap' | 'stream_limit' | 'presentation_conflict'
+  | 'collection_limit' | 'state_size_limit' | 'buffer_overflow' | 'stale_snapshot' | 'daemon_resync';
 export interface SessionState {
   readonly session: string;
   readonly snapshot?: SessionSnapshot;
@@ -13,13 +16,14 @@ export interface SessionState {
   readonly bufferGeneration: number;
   readonly discardedRevision: number;
   readonly recoveryAttempts: number;
+  readonly recoveryCause?: RecoveryCause;
   readonly recoveredStreams: readonly string[];
 }
 export type SessionAction =
   | { type: 'snapshot'; snapshot: SessionSnapshot; bufferGeneration?: number }
   | { type: 'update'; update: Update }
   | { type: 'recovery_started' }
-  | { type: 'resync' }
+  | { type: 'resync'; cause: RecoveryCause }
   | { type: 'disconnected' };
 
 export function createSessionState(session: string): SessionState {
@@ -33,16 +37,26 @@ const upsert = <T>(items: T[], value: T, key: (item: T) => string): T[] => {
   return index < 0 ? [...items, value] : items.map((item, i) => i === index ? value : item);
 };
 
-function buffer(state: SessionState, update: Update): SessionState {
+function buffer(state: SessionState, update: Update, cause?: RecoveryCause): SessionState {
   const bytes = utf8Bytes(JSON.stringify(update));
   if (state.buffered.length >= MAX_BUFFERED_EVENTS || state.bufferedBytes + bytes > LIMITS.unsentBytes) {
     const discardedRevision = state.buffered.reduce((revision, item) => 'rev' in item ? Math.max(revision, item.rev) : revision,
       'rev' in update ? Math.max(state.discardedRevision, update.rev) : state.discardedRevision);
-    return { ...state, status: state.recoveryAttempts >= MAX_RECOVERIES ? 'blocked' : 'recovering',
+    return { ...state, status: state.recoveryAttempts >= MAX_RECOVERIES ? 'blocked' : 'recovering', recoveryCause: 'buffer_overflow',
       buffered: [], bufferedBytes: 0, bufferGeneration: state.bufferGeneration + 1, discardedRevision };
   }
-  return { ...state, status: state.status === 'awaiting_snapshot' ? state.status : 'recovering',
+  return { ...state, status: state.status === 'awaiting_snapshot' ? state.status : 'recovering', ...(cause ? { recoveryCause: cause } : {}),
     buffered: [...state.buffered, update], bufferedBytes: state.bufferedBytes + bytes };
+}
+
+/** Mirrors the daemon projection's retention: past the page limit, the oldest finished tools are dropped first. */
+function retainRecentTools(tools: SessionSnapshot['tools']): SessionSnapshot['tools'] {
+  let excess = tools.length - LIMITS.pageEntries;
+  if (excess <= 0) return tools;
+  return tools.filter(tool => {
+    if (excess > 0 && tool.state !== 'running') { excess--; return false; }
+    return true;
+  });
 }
 
 function completionOnly(snapshot: SessionSnapshot, stream: TextStreamEvent['stream'], reason: 'lost' | 'limit' = 'lost'): SessionSnapshot {
@@ -61,17 +75,17 @@ function applyStream(state: SessionState, update: TextStreamEvent): SessionState
   const openMessages = [...snapshot.activeStreams, ...snapshot.completionOnlyStreams].map(item => item.message);
   if (openMessages.some(message => message !== stream.message) ||
       (prefix && (prefix.message !== stream.message || prefix.kind !== stream.kind))) {
-    return buffer(state, update);
+    return buffer(state, update, 'stream_mismatch');
   }
   if (kind === 'gap') {
     if (state.recoveredStreams.includes(stream.id)) return { ...state, snapshot: completionOnly(snapshot, stream) };
-    return buffer({ ...state, recoveredStreams: [...state.recoveredStreams, stream.id] }, update);
+    return buffer({ ...state, recoveredStreams: [...state.recoveredStreams, stream.id] }, update, 'stream_gap');
   }
   const text = (kind === 'append' ? prefix!.text : '') + update.text;
   const active = upsert(snapshot.activeStreams, { ...stream, text, offset: stream.offset + codePointLength(update.text) }, item => item.id);
   if (active.length + snapshot.completionOnlyStreams.length > LIMITS.activeStreams || utf8Bytes(text) > LIMITS.activeStreamBytes ||
       active.reduce((sum, item) => sum + utf8Bytes(item.text), 0) > LIMITS.activeStreamsBytes) {
-    return buffer(state, update);
+    return buffer(state, update, 'stream_limit');
   }
   return { ...state, snapshot: { ...snapshot, activeStreams: active } };
 }
@@ -80,7 +94,7 @@ function applyEvent(state: SessionState, event: SessionEvent): SessionState {
   const snapshot = state.snapshot!;
   const order = classifyRevision(snapshot.revision, event.rev);
   if (order === 'duplicate') return state;
-  if (order === 'gap') return buffer(state, event);
+  if (order === 'gap') return buffer(state, event, 'revision_gap');
   let next = { ...snapshot, revision: event.rev, history: { ...snapshot.history, revision: event.rev } };
   const change = event.change as KnownSessionChange;
   switch (change.type) {
@@ -91,7 +105,7 @@ function applyEvent(state: SessionState, event: SessionEvent): SessionState {
         completionOnlyStreams: next.completionOnlyStreams.filter(item => item.message !== change.message.id) };
       break;
     }
-    case 'tool.updated': next.tools = upsert(next.tools, change.tool, item => item.id); break;
+    case 'tool.updated': next.tools = retainRecentTools(upsert(next.tools, change.tool, item => item.id)); break;
     case 'run.updated': next.run = change.run; break;
     case 'queue.updated': next.queue = change.queue; break;
     case 'interaction.requested': case 'interaction.resolved': next.interactions = upsert(next.interactions, change.interaction, item => item.id); break;
@@ -106,31 +120,31 @@ function applyEvent(state: SessionState, event: SessionEvent): SessionState {
       const presentation = change.presentation;
       const previous = next.presentation.find(item => item.id === presentation.id);
       if (previous && ['document', 'view', 'progress', 'status'].includes(presentation.kind) && (previous.kind !== presentation.kind
-        || 'revision' in previous && 'revision' in presentation && presentation.revision <= previous.revision)) return buffer(state, event);
+        || 'revision' in previous && 'revision' in presentation && presentation.revision <= previous.revision)) return buffer(state, event, 'presentation_conflict');
       next.presentation = upsert(next.presentation, presentation, item => item.id); break;
     }
     case 'presentation.removed': next.presentation = next.presentation.filter(item => item.id !== change.id); break;
     case 'catalog.updated': next.catalog = change.catalog; break;
     case 'stream.completion_only': next = completionOnly(next, { ...change.stream, offset: 0 }, change.stream.reason); break;
   }
-  if ([next.tools, next.interactions, next.children, next.processes, next.presentation].some(items => items.length > LIMITS.pageEntries) ||
-      utf8Bytes(JSON.stringify(next)) > LIMITS.pageBytes) return buffer(state, event);
+  if ([next.tools, next.interactions, next.children, next.processes, next.presentation].some(items => items.length > LIMITS.pageEntries)) return buffer(state, event, 'collection_limit');
+  if (utf8Bytes(JSON.stringify(next)) > LIMITS.pageBytes) return buffer(state, event, 'state_size_limit');
   return { ...state, snapshot: next };
 }
 
 export function reduceSession(state: SessionState, action: SessionAction): SessionState {
   if (action.type === 'disconnected') return { ...state, status: 'disconnected', buffered: [], bufferedBytes: 0 };
-  if (action.type === 'resync') return { ...state, status: state.recoveryAttempts >= MAX_RECOVERIES ? 'blocked' : 'recovering' };
+  if (action.type === 'resync') return { ...state, status: state.recoveryAttempts >= MAX_RECOVERIES ? 'blocked' : 'recovering', recoveryCause: action.cause };
   if (action.type === 'recovery_started') return { ...state, recoveryAttempts: state.recoveryAttempts + 1,
     status: state.recoveryAttempts >= MAX_RECOVERIES ? 'blocked' : state.status };
   if (action.type === 'snapshot') {
     const snapshot = parseSessionSnapshot(action.snapshot);
     if (snapshot.session !== state.session) throw new Error('Snapshot session mismatch');
-    if (state.snapshot && snapshot.revision < state.snapshot.revision) return reduceSession(state, { type: 'resync' });
+    if (state.snapshot && snapshot.revision < state.snapshot.revision) return reduceSession(state, { type: 'resync', cause: 'stale_snapshot' });
     let next: SessionState = { ...state, snapshot, status: 'live', buffered: [], bufferedBytes: 0 };
     for (const update of state.buffered) next = reduceSession(next, { type: 'update', update });
     // A snapshot requested before discarded updates cannot certify their cutover, especially unrevisioned text.
-    if ((action.bufferGeneration ?? 0) !== next.bufferGeneration || next.snapshot!.revision < next.discardedRevision) return reduceSession(next, { type: 'resync' });
+    if ((action.bufferGeneration ?? 0) !== next.bufferGeneration || next.snapshot!.revision < next.discardedRevision) return reduceSession(next, { type: 'resync', cause: 'stale_snapshot' });
     return next;
   }
   if (action.update.session !== state.session || state.status === 'blocked' || state.status === 'disconnected') return state;

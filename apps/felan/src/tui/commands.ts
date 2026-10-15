@@ -1,10 +1,14 @@
 import { resolve } from 'node:path';
+import { CombinedAutocompleteProvider, type AutocompleteProvider, type SlashCommand } from '@earendil-works/pi-tui';
 import { ThinkingSchema, parseSchema, parseOperationResult } from '@felan-ai/session-protocol';
 import type { TuiSessionController } from './controller.js';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import { pickSession, type NavigationDialogs } from './session-navigator.js';
-import { pickTreeEntry } from './tree-navigator.js';
-import { CombinedAutocompleteProvider, type AutocompleteProvider, type SlashCommand } from '@earendil-works/pi-tui';
+import { pickTreeEntry, type TreeViewState } from './tree-navigator.js';
+
+type ToolsManager = { getToolPath(tool: 'fd' | 'rg'): string | null };
+const toolsManager = import(new URL('./utils/tools-manager.js', import.meta.resolve('@earendil-works/pi-coding-agent')).href)
+  .catch(() => undefined) as Promise<ToolsManager | undefined>;
 
 /** `relaunch` restarts the daemon in place and then re-executes this client on the same session. */
 export type DaemonAction = 'stop' | 'restart' | 'relaunch';
@@ -48,17 +52,25 @@ export function tuiCommands(controller: TuiSessionController): SlashCommand[] {
     .map(command => ({ ...command, description: command.scope ? `[${markers[command.scope]}] ${command.description}` : command.description }))];
 }
 
-export function createCommandAutocomplete(controller: TuiSessionController): AutocompleteProvider {
-  const provider = () => new CombinedAutocompleteProvider(tuiCommands(controller), controller.snapshot?.cwd ?? process.cwd(), null);
+export function createCommandAutocomplete(controller: TuiSessionController, fallbackCwd = process.cwd()): AutocompleteProvider {
+  let fdPath: Promise<string | null> | undefined;
+  const provider = async () => {
+    fdPath ??= toolsManager.then(manager => manager?.getToolPath('fd') ?? null);
+    return new CombinedAutocompleteProvider(tuiCommands(controller), controller.snapshot?.cwd ?? fallbackCwd, await fdPath);
+  };
   return {
-    triggerCharacters: ['/'],
-    async getSuggestions(lines, line, column, { signal }) {
-      const prefix = lines[line]?.slice(0, column) ?? '';
-      if (signal.aborted || line !== 0 || !/^\/[^\s]*$/u.test(prefix)) return null;
-      return provider().getSuggestions(lines, line, column, { signal });
+    triggerCharacters: ['/', '@'],
+    async getSuggestions(lines, line, column, options) {
+      if (options.signal.aborted) return null;
+      return (await provider()).getSuggestions(lines, line, column, options);
     },
     applyCompletion(lines, line, column, item, prefix) {
-      return provider().applyCompletion(lines, line, column, item, prefix);
+      return new CombinedAutocompleteProvider(tuiCommands(controller), controller.snapshot?.cwd ?? fallbackCwd, null)
+        .applyCompletion(lines, line, column, item, prefix);
+    },
+    shouldTriggerFileCompletion(lines, line, column) {
+      return new CombinedAutocompleteProvider(tuiCommands(controller), controller.snapshot?.cwd ?? fallbackCwd, null)
+        .shouldTriggerFileCompletion(lines, line, column);
     },
   };
 }
@@ -258,13 +270,15 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       return true;
     }
     case 'tree': {
-      let selected: string | undefined;
+      let selected: string | undefined; let view: TreeViewState | undefined;
       while (controller.sessionId === session) {
         const tree = await controller.tree();
-        const choice = await pickTreeEntry(dialogs, tree, options.theme, selected, options.requestRender);
+        if (!tree.entries.length) { controller.setNotice('No entries in session'); return true; }
+        const choice = await pickTreeEntry(dialogs, tree, { theme: options.theme, selected, requestRender: options.requestRender, view });
         if (!choice) return false;
         selected = choice.entryId;
         if (choice.action === 'label') {
+          view = choice.view;
           const result = await controller.perform('session.entry.label', { entryId: choice.entryId, label: choice.label }, session);
           if (result.outcome !== 'accepted') return false;
           continue;

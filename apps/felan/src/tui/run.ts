@@ -16,6 +16,7 @@ import { TerminalSetup } from './setup.js';
 import { createSetupUi } from './setup-ui.js';
 import { themedClientTerminal } from './theme.js';
 import { checkForFelanUpdate } from '../update.js';
+import { reportHerdrPane, type HerdrPane } from './herdr.js';
 
 export async function runDaemonTerminal(controller: TuiSessionController, options: TuiSessionOptions & {
   initialMessage?: string;
@@ -28,6 +29,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
   createTui?: (terminal: Terminal) => TUI;
   signal?: AbortSignal;
   initialDraft?: string;
+  herdr?: HerdrPane;
   onDaemonAction?(action: DaemonAction, force: boolean, draft: string, beforeAttachment?: boolean): Promise<boolean>;
 }): Promise<void> {
   const themes = new ClientThemes(options.clientConfigDir, options.theme);
@@ -93,6 +95,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
   let unsubscribeFooter: (() => void) | undefined;
   let unsubscribeSetup: (() => void) | undefined;
   let unsubscribeColors: (() => void) | undefined;
+  let unsubscribeHerdr: (() => void) | undefined;
   const interrupt = () => exit();
   options.signal?.addEventListener('abort', interrupt, { once: true });
   process.once('SIGTERM', interrupt); process.once('SIGHUP', interrupt); process.once('SIGINT', interrupt);
@@ -134,6 +137,8 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       screen.setFooter(footer);
     });
     interactions = new TerminalInteractions(controller, builtins.presenters, setup);
+    const prompts = interactions;
+    if (options.herdr) unsubscribeHerdr = reportHerdrPane(controller, options.herdr, () => prompts.pending());
     const starting = controller.start(options, async sessions => (await pickSession(screen.dialogs, sessions, options.cwd, undefined, () => theme, false))?.session, async () => {
       await loadingPreferences;
       if (stopped) return false;
@@ -151,7 +156,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
     }).then(async () => {
       if (stopped) return;
       void checkForFelanUpdate({ signal: updateCheck.signal }).then(version => {
-        if (version && !stopped) controller.setNotice([controller.notice, `Felan ${version} is available. Run felan update to upgrade.`].filter(Boolean).join('\n'));
+        if (version && !stopped) controller.announce(`Felan ${version} is available. Run felan update to upgrade.`);
       });
       if (startupDeferred) return;
       if (options.verbose) controller.setNotice(`Daemon ${controller.client.capabilities?.daemonVersion ?? 'unavailable'} · ${controller.sessionId ?? 'no session'}`);
@@ -170,7 +175,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
     updateCheck.abort();
     stopped = true; preferences.dispose();
     options.signal?.removeEventListener('abort', interrupt); process.removeListener('SIGTERM', interrupt); process.removeListener('SIGHUP', interrupt); process.removeListener('SIGINT', interrupt);
-    unsubscribeColors?.(); unsubscribeSetup?.(); unsubscribeFooter?.(); footer?.dispose();
+    unsubscribeColors?.(); unsubscribeSetup?.(); unsubscribeFooter?.(); unsubscribeHerdr?.(); footer?.dispose();
     const stopInteractions = interactions?.dispose();
     void stopInteractions?.catch(() => {});
     await setup?.dispose();

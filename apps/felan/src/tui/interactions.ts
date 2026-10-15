@@ -40,7 +40,8 @@ export class TerminalInteractions {
     this.refresh();
   }
 
-  private pending(): readonly Interaction[] {
+  /** Prompts this terminal presents: host prompts and those of live attached sessions. */
+  pending(): readonly Interaction[] {
     if (this.controller.client.status !== 'ready') return [];
     const items = new Map(this.controller.client.getInteractions({ includeSessions: true }).map(item => [item.id, item]));
     return [...items.values()].filter(item => ['waiting', 'deferred'].includes(item.state)
@@ -60,7 +61,7 @@ export class TerminalInteractions {
         if (!this.requestedElement && active.manual) this.requestedElement = active.element.id;
         active.control.abort(); return;
       }
-      if (this.controller.client.status === 'ready' && this.controller.state?.status === 'recovering') return;
+      if (this.recoveringSession(active.session)) return;
       if (!this.currentElement(active.session, active.element)) {
         const next = this.controller.sessionId === active.session && this.controller.state?.status === 'live'
           && this.controller.client.status === 'ready'
@@ -156,8 +157,7 @@ export class TerminalInteractions {
     return new Promise(resolve => {
       let unsubscribe = () => {};
       const check = () => {
-        if (!this.closed && !signal.aborted && this.controller.client.status === 'ready'
-          && this.controller.sessionId === session && this.controller.state?.status === 'recovering') return;
+        if (!this.closed && !signal.aborted && this.recoveringSession(session)) return;
         unsubscribe(); signal.removeEventListener('abort', check);
         resolve(!signal.aborted && this.currentElement(session, element));
       };
@@ -168,8 +168,19 @@ export class TerminalInteractions {
   }
 
   private recovering(item: Interaction): boolean {
-    return this.controller.client.status === 'ready' && item.scope.kind === 'session'
-      && this.controller.client.getAttachment(item.scope.session)?.state.status === 'recovering';
+    if (item.scope.kind === 'host') return this.controller.client.status === 'connecting' || this.controller.client.status === 'disconnected';
+    const attachment = this.controller.client.getAttachment(item.scope.session);
+    if (!attachment || attachment.state.status === 'blocked') return false;
+    return this.controller.client.status === 'connecting' || this.controller.client.status === 'disconnected'
+      || attachment?.state.status === 'disconnected' || attachment?.state.status === 'recovering';
+  }
+
+  private recoveringSession(session: string): boolean {
+    if (this.controller.sessionId !== session) return false;
+    const attachment = this.controller.client.getAttachment(session);
+    if (!attachment || attachment.state.status === 'blocked') return false;
+    return this.controller.client.status === 'connecting' || this.controller.client.status === 'disconnected'
+      || attachment?.state.status === 'disconnected' || attachment?.state.status === 'recovering';
   }
 
   private available(item: Interaction, signal: AbortSignal): Promise<boolean> {

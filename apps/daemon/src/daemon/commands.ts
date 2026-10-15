@@ -6,6 +6,7 @@ import { LIMITS, parseOperationResult, type ClientEnvelope, type Operation, type
 import type { SessionRegistry } from './registry.js';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
 import { boundedText, digest } from './projection.js';
+import { projectTreeEntries } from './tree.js';
 import { prepareExport, prepareImport, publishExport, stageImport } from './session-files.js';
 import { sha256 } from './persistence.js';
 import { canonicalPath } from './profile-storage.js';
@@ -98,13 +99,7 @@ export class SessionCommands {
       }
       case 'session.tree': {
         const binding = registry.binding(request.session)!; const snapshot = registry.projection(request.session).snapshot(); const manager = binding.runtime.session.sessionManager;
-        const entries = manager.getEntries().map(entry => ({ id: entry.id, ...(entry.parentId ? { parent: entry.parentId } : {}), kind: entry.type,
-          ...(entry.type === 'message' ? { role: entry.message.role } : {}),
-          ...(manager.getLabel(entry.id) ? { label: manager.getLabel(entry.id) } : {}), summary: boundedText(entry.type === 'message' && 'content' in entry.message
-            ? typeof entry.message.content === 'string' ? entry.message.content : entry.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-            : entry.type === 'custom_message' ? `[${entry.customType}]: ${typeof entry.content === 'string' ? entry.content : entry.content.filter(part => part.type === 'text').map(part => part.text).join('\n')}`
-            : entry.type === 'branch_summary' || entry.type === 'compaction' ? entry.summary : entry.type,
-          16384), timestamp: Math.max(0, Date.parse(entry.timestamp) || 0) }));
+        const entries = projectTreeEntries(manager);
         return accepted(request, { revision: snapshot.revision, branch: snapshot.branch,
           ...page(entries, request.params, `tree:${request.session}:${snapshot.revision}:${snapshot.branch}`) });
       }

@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, PresentationSchema, parseActiveMessageDisplay, parseMessageDisplay, parseSchema, readMessageDisplay } from '../src/index.js';
+import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, PresentationSchema, parseActiveMessageDisplay, parseMessageDisplay, parseOperationResult, parseSchema, readMessageDisplay } from '../src/index.js';
 
 const display = { kind: 'assistant', timestamp: 42, api: 'fixture-api', provider: 'fixture', model: 'model', stopReason: 'toolUse',
   usage: { input: 17, output: 23, cacheRead: 2, cacheWrite: 3, totalTokens: 45, cost: { input: 0.01, output: 0.02, cacheRead: 0.003, cacheWrite: 0.004, total: 0.037 } } };
@@ -29,4 +29,12 @@ it('rejects unknown, oversized, non-finite and incomplete display data without d
   const getter = vi.fn(() => display);
   expect(() => readMessageDisplay(Object.defineProperty({}, MESSAGE_DISPLAY_KEY, { get: getter }))).toThrow();
   expect(getter).not.toHaveBeenCalled();
+});
+
+it('parses session tree display facts and rejects unknown stop reasons', () => {
+  const page = { revision: 1, branch: 'reply', entries: [
+    { id: 'reply', parent: 'prompt', kind: 'message', role: 'assistant', summary: '', timestamp: 2, labelTimestamp: 3, title: 'read: a.ts', stopReason: 'error', errorMessage: 'boom' },
+  ] };
+  expect(parseOperationResult('session.tree', page)).toEqual(page);
+  expect(() => parseOperationResult('session.tree', { ...page, entries: [{ ...page.entries[0], stopReason: 'unknown' }] })).toThrow();
 });

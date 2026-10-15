@@ -10,8 +10,10 @@ import { FELAN_VERSION } from './version.js';
 import type { TuiPresentationPreferences } from './tui/preferences-schema.js';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import { waitForDaemonStop } from './client/daemon-stop.js';
+import { clientDiagnosticsLog } from './client/diagnostics.js';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { TERMINAL_INTERACTION_KINDS, TERMINAL_UI_CAPABILITIES } from './tui/interactions.js';
+import { createHerdrPane } from './tui/herdr.js';
 import { restartFelanProcess, type RestartProcess } from './process-restart.js';
 
 export interface RunDaemonFelanOptions extends Omit<TuiSessionOptions, 'cwd' | 'extensions'> {
@@ -42,25 +44,49 @@ export function clientConfigurationRoot(options: RunDaemonFelanOptions): string 
   return options.daemonRuntime ? join(resolve(options.daemonRuntime), 'client') : resolve(options.agentDir ?? getClientAgentDir());
 }
 
+/** The command that reattaches to `session` through the same daemon and session folder. */
+export function resumeCommand(session: string, options: Pick<RunDaemonFelanOptions, 'daemonRuntime' | 'sessionDir'>): string {
+  return ['felan', ...(options.daemonRuntime ? ['--daemon-runtime', shellQuote(resolve(options.daemonRuntime))] : []),
+    ...(options.sessionDir ? ['--session-dir', shellQuote(resolve(options.sessionDir))] : []), '--session', shellQuote(session)].join(' ');
+}
+
+function shellQuote(value: string): string {
+  return /^[\w\-./~:@]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/** Like Pi's interactive quit, the hint goes only to a terminal, with a dim label. */
+function writeResumeHint(text: string): void {
+  if (process.stdout.isTTY) process.stdout.write(text.replace('To resume this session:', '\x1b[2mTo resume this session:\x1b[22m'));
+}
+
+/** Client diagnostics live next to the daemon's `felan.jsonl`, in `client.jsonl`. */
+export function clientLogDirectory(options: RunDaemonFelanOptions): string {
+  return join(clientConfigurationRoot(options), 'storage', 'agent', 'logs');
+}
+
 export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, dependencies: {
   createClient?: (options: SessionClientOptions) => SessionClient;
   runTerminal?: typeof runDaemonTerminal;
   waitForStop?: typeof waitForDaemonStop;
   restartProcess?: RestartProcess;
+  writeOutput?: (text: string) => void;
 } = {}): Promise<void> {
   let replacing: DaemonIdentity | undefined;
   let selected = options.sessionId;
   let cwd = resolve(options.cwd ?? process.cwd());
   let draft = '';
   let first = true;
+  const diagnostics = clientDiagnosticsLog(clientLogDirectory(options));
+  const herdr = createHerdrPane();
   while (!options.signal?.aborted) {
     const target = clientDaemonTarget(options);
     const expectedComposition = dependencies.createClient ? undefined : await resolveClientHostComposition(target, options.hostConfigPath);
-    const client = (dependencies.createClient ?? (options => new SessionClient(options)))({ target,
+    const client = (dependencies.createClient ?? (options => new SessionClient(options)))({ target, diagnostics: diagnostics.write,
       clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}), kind: 'tui', interactionKinds: [...TERMINAL_INTERACTION_KINDS], capabilities: [...TERMINAL_UI_CAPABILITIES],
       launch: { entrypoint: resolveInstalledDaemonEntrypoint(), ...(options.hostConfigPath ? { hostConfigPath: resolve(options.hostConfigPath) } : {}), ...(replacing ? { replacing } : {}) } });
     const controller = new TuiSessionController(client);
     const outcome: { restart?: { identity: DaemonIdentity; sessionId?: string; cwd: string; draft: string; keepStartup: boolean }; relaunch?: { sessionId?: string; cwd: string } } = {};
+    let resumable: string | undefined;
     try {
       await (dependencies.runTerminal ?? runDaemonTerminal)(controller, { cwd, clientConfigDir: clientConfigurationRoot(options),
         ...(selected ? { sessionId: selected } : {}), ...(options.sessionDir ? { sessionDir: resolve(options.sessionDir) } : {}),
@@ -68,7 +94,7 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
         ...(first && options.extensionPaths?.length ? { extensions: options.extensionPaths.map(path => resolve(path)) } : {}),
         ...(first && options.config ? { config: options.config } : {}), ...(first && options.initialMessage ? { initialMessage: options.initialMessage } : {}),
         ...(options.presentation ? { presentation: options.presentation } : {}),
-        ...(draft ? { initialDraft: draft } : {}),
+        ...(draft ? { initialDraft: draft } : {}), ...(herdr ? { herdr } : {}),
         ...(options.signal ? { signal: options.signal } : {}), ...(options.verbose ? { verbose: true } : {}),
         onDaemonAction: async (action, force, text, beforeAttachment) => {
           const identity = client.identity;
@@ -97,13 +123,17 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
           return true;
         },
       });
-    } finally { await controller.dispose(); }
+      resumable = controller.sessionId;
+    } finally { await controller.dispose(); await diagnostics.flush(); }
     if (outcome.relaunch) {
       await (dependencies.restartProcess ?? restartFelanProcess)({ ...outcome.relaunch, ...(options.restartArgs ? { restartArgs: options.restartArgs } : {}) });
       return;
     }
     const restart = outcome.restart;
-    if (!restart) return;
+    if (!restart) {
+      if (resumable) (dependencies.writeOutput ?? writeResumeHint)(`To resume this session: ${resumeCommand(resumable, options)}\n`);
+      return;
+    }
     replacing = restart.identity; selected = restart.sessionId; cwd = restart.cwd; draft = restart.draft; first = restart.keepStartup;
   }
 }
