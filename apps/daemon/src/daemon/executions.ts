@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { CURRENT_SESSION_VERSION, SESSION_EXECUTION_LIMITS, type ModelReference, type SessionExecutionInput, type SessionManager } from '@felan-ai/agent-core';
-import type { ControlSession, ExecutionMetadata } from './control-state.js';
+import type { ControlSession, ControlSessionMetadata, ExecutionMetadata } from './control-state.js';
 import type { SessionRegistry } from './registry.js';
 import { redact } from '../logger.js';
 
@@ -71,7 +71,7 @@ export class RegistryExecutions {
   }
   activate(id: string): void { this.closed.delete(id); }
   host(id: string): ExecutionHost { return new ExecutionHost(this, id); }
-  private rows(): ControlSession[] { return this.registry.list().filter(row => row.root === this.root && row.execution); }
+  private rows(): ControlSessionMetadata[] { return this.registry.list().filter(row => row.root === this.root && row.execution); }
   private descendants(id: string): Set<string> {
     const ids = new Set([id]);
     for (let previous = -1; previous !== ids.size;) {
@@ -89,7 +89,7 @@ export class RegistryExecutions {
     this.registry.assertNewWork(); this.registry.assertDispatch(id);
     if (this.closed.has(this.root) || this.closed.has(id)) throw new Error('Execution host is closed.');
   }
-  private direct(parent: string, id: string): ControlSession {
+  private direct(parent: string, id: string): ControlSessionMetadata {
     const row = this.rows().find(row => row.id === id && row.parent === parent);
     if (!row) throw Object.assign(new Error('Execution is not a direct child of this session.'), { code: 'not_child' });
     return row;
@@ -279,7 +279,7 @@ export class RegistryExecutions {
     const { message: _message, ...retained } = execution;
     this.update(id, { ...retained, completedAt: new Date().toISOString(), outcome, ...(error ? { error } : {}), completionPending: execution.request.notifyOnCompletion === true });
   }
-  private view(row: ControlSession): ExecutionRecord {
+  private view(row: ControlSessionMetadata): ExecutionRecord {
     const execution = row.execution!;
     let entries: ReturnType<SessionManager['getEntries']> | undefined;
     try { entries = this.registry.binding(row.id)?.runtime.session.sessionManager.getEntries() ?? readEntries(this.registry, row); } catch {}
@@ -350,7 +350,7 @@ export class RegistryExecutions {
   }
 }
 
-function readEntries(registry: SessionRegistry, row: ControlSession): ReturnType<SessionManager['getEntries']> {
+function readEntries(registry: SessionRegistry, row: ControlSessionMetadata): ReturnType<SessionManager['getEntries']> {
   const path = registry.options.owner.assertOwnsPath(row.piPath);
   if (statSync(path).size > 64 * 1024 * 1024) throw new Error('Retained execution exceeds the file bound.');
   const [header, ...entries] = readFileSync(path, 'utf8').split('\n').filter(line => line.trim()).map(line => JSON.parse(line));

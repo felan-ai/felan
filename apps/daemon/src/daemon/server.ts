@@ -226,7 +226,7 @@ export class SessionServer {
         connection.out.send(accepted(request, {})); return;
       }
       const durable = OPERATION_CATALOG[request.op].storage === 'durable';
-      const retained = durable && this.options.registry.options.store.snapshot().requests.some(item => item.id === request.id);
+      const retained = durable && this.options.registry.options.store.request(request.id) !== undefined;
       if (this.stopping() && !retained
         && !['host.status', 'host.logs', 'host.stop', 'host.restart', 'cancel', 'close', 'executions.cancel', 'processes.stop', 'interaction.answer', 'detach', 'host.setup.read', 'host.setup.cancel'].includes(request.op)) throw commandError('busy');
       if (request.op === 'sessions.create' && !retained && this.options.prepareRoot) {
@@ -242,7 +242,7 @@ export class SessionServer {
         rootPreparation = await preparing.work;
         if (connection.closed) return;
       }
-      if (request.session && !retained && this.options.registry.options.store.snapshot().sessions.some(session => session.id === request.session && session.deletedAt !== undefined)
+      if (request.session && !retained && this.options.registry.options.store.findSessionMetadata(request.session)?.deletedAt !== undefined
         && request.op !== 'session.delete') throw commandError('not_found');
       const unattached = request.op === 'session.delete' || request.op === 'session.reload';
       if (request.session && !retained && !unattached && !connection.attachments.has(request.session)) throw commandError('forbidden');
@@ -270,7 +270,7 @@ export class SessionServer {
     } catch (error) {
       let ambiguous = admissionAttempt;
       if (admissionAttempt && id) {
-        try { ambiguous = this.options.registry.options.store.snapshot().requests.find(record => record.id === id)?.phase === 'dispatch_intent'; }
+        try { ambiguous = this.options.registry.options.store.request(id)?.phase === 'dispatch_intent'; }
         catch {}
       }
       if (id) connection.out.send(rejected(id, error, ambiguous), invalidateAfterSend);
@@ -332,7 +332,7 @@ export class SessionServer {
   /** Everything a restart would interrupt: busy sessions, child executions, processes and unanswered host questions. */
   private async activeWork(): Promise<number> {
     const { registry } = this.options;
-    const interactions = (this.options.broker?.pending?.() ?? registry.options.store.snapshot().interactions)
+    const interactions = (this.options.broker?.pending?.() ?? registry.options.store.interactions())
       .filter(item => item.state === 'waiting' && item.scope.kind === 'host').length;
     return await registry.activeWork() + interactions;
   }
@@ -350,7 +350,7 @@ export class SessionServer {
   private async attach(connection: Connection, request: Extract<ClientEnvelope, { op: 'attach' }>): Promise<void> {
     const { registry } = this.options;
     assertTargetIdentity(registry.options.owner.target, request.params.expected, registry.options.owner.identity);
-    if (!registry.options.store.snapshot().sessions.some(session => session.id === request.session)) {
+    if (!registry.options.store.findSessionMetadata(request.session)) {
       await registry.adopt(request.session, { source: connection.kind!, ...(connection.kind === 'tui' ? { interactiveExtensions: true } : {}),
         ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } } : {}) });
       if (connection.closed) return;

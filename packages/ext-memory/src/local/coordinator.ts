@@ -1,13 +1,14 @@
 import { removeIfPresent } from './context.js';
 import { createDefaultLocalMemoryDreamRunner, materializeMemoryInput } from './dreamer.js';
 import { LocalMemoryRun } from './run.js';
+import { readMemorySessionCheckpoint } from '../session-history.js';
 import { LocalMemoryStore } from './store.js';
 import { acquireLocalMemoryLease } from './lease.js';
 import { resolveLocalMemoryProject } from './project.js';
 import { hydrateMemoryDirectory, readMemoryDirectory } from './hydration.js';
 import type { MemoryContext } from './context.js';
 import { join } from 'node:path';
-import { createMemorySnapshot, createMemoryProjectionSnapshot, createSessionCheckpoint, extractSourceIds, type MemoryHost, type MemoryProcessingState, type MemorySnapshot, type MemoryStatus, type SessionCheckpoint } from '../index.js';
+import { createMemorySnapshot, createMemoryProjectionSnapshot, extractSourceIds, type MemoryHost, type MemoryProcessingState, type MemorySnapshot, type MemoryStatus, type SessionCheckpoint } from '../index.js';
 
 import {
   type ModelsService,
@@ -35,6 +36,8 @@ export interface ProjectContext {
   ready: Promise<void> | undefined;
   initialized: boolean;
   recovery: Promise<void> | undefined;
+  recoveryAbort: AbortController | undefined;
+  recoveryRetryAt: number | undefined;
   recoveryCompleted: boolean;
   diagnosticsReconciled: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -69,6 +72,8 @@ export interface LocalMemoryCoordinatorOptions {
   readonly maxInputBytes?: number;
   readonly maxTranscriptBytes?: number;
   readonly recoveryStableMs?: number;
+  /** Delay before the single retry of a startup recovery whose session listing failed. */
+  readonly recoveryRetryMs?: number;
   readonly recover?: boolean;
   readonly dreamRunner?: LocalMemoryDreamRunner;
   readonly selectedModel?: Model<Api>;
@@ -185,6 +190,7 @@ export class LocalMemoryCoordinator {
       this.#monitor = undefined;
     }
     for (const context of this.#contexts.values()) {
+      if (!enabled) context.recoveryAbort?.abort();
       if (!enabled) this.#cancelScheduledRun(context);
       if (!enabled) this.#cancelContext(context, 'Memory processing was disabled', true);
       if (enabled) {
@@ -317,7 +323,10 @@ export class LocalMemoryCoordinator {
     this.#draining = true;
     if (this.#monitor) clearInterval(this.#monitor);
     this.#monitor = undefined;
-    for (const context of this.#contexts.values()) this.#cancelScheduledRun(context);
+    for (const context of this.#contexts.values()) {
+      context.recoveryAbort?.abort();
+      this.#cancelScheduledRun(context);
+    }
     while (true) {
       const work = [...this.#contexts.values()].flatMap(context => [
         ...(context.run ? [context.run] : []), ...(context.ready ? [context.ready] : []),
@@ -337,6 +346,7 @@ export class LocalMemoryCoordinator {
     if (this.#monitor) clearInterval(this.#monitor);
     this.#monitor = undefined;
     for (const context of this.#contexts.values()) {
+      context.recoveryAbort?.abort();
       this.#cancelScheduledRun(context);
       this.#cancelContext(context, 'Memory processing was cancelled during shutdown', false);
     }
@@ -374,6 +384,8 @@ export class LocalMemoryCoordinator {
       ready: undefined,
       initialized: false,
       recovery: undefined,
+      recoveryAbort: undefined,
+      recoveryRetryAt: undefined,
       recoveryCompleted: false,
       diagnosticsReconciled: false,
       timer: undefined,
@@ -448,15 +460,21 @@ export class LocalMemoryCoordinator {
 
   #startRecovery(context: ProjectContext): void {
     if (this.#disposed || this.#draining || !this.#enabled || this.#options.recover === false
-      || context.recoveryCompleted || context.recovery) return;
-    const recovery = this.#recover(context).then((completed) => {
+      || context.recoveryCompleted || context.recovery
+      || context.recoveryRetryAt !== undefined && this.#now() < context.recoveryRetryAt) return;
+    const abort = new AbortController();
+    const recovery = this.#recover(context, abort.signal).then((completed) => {
       if (completed) context.recoveryCompleted = true;
     }).catch(() => {
       context.message = 'Memory startup recovery could not complete';
     }).finally(() => {
-      if (context.recovery === recovery) context.recovery = undefined;
+      if (context.recovery === recovery) {
+        context.recovery = undefined;
+        context.recoveryAbort = undefined;
+      }
     });
     context.recovery = recovery;
+    context.recoveryAbort = abort;
   }
 
   #now(): number { return this.#options.now?.() ?? Date.now(); }
@@ -820,23 +838,37 @@ export class LocalMemoryCoordinator {
     return control;
   }
 
-  async #recover(context: ProjectContext): Promise<boolean> {
+  async #recover(context: ProjectContext, signal: AbortSignal): Promise<boolean> {
     let cursor: string | undefined;
     let recovered = false;
     const stableAfter = this.#options.recoveryStableMs ?? 30_000;
-    do {
-      const page = await this.environment.sessions.list({ scope: 'project' }, { ...(cursor ? { cursor } : {}) });
-      for (const info of page.items) {
-        if (this.#disposed || !this.#enabled) return false;
-        if (info.parent || this.#now() - info.updatedAt < stableAfter) continue;
-        const snapshot = await this.environment.sessions.checkpoint(info.id);
-        if (this.#disposed || !this.#enabled) return false;
-        const checkpoint: SessionCheckpoint = { sessionId: snapshot.sessionId, sessionFile: info.id,
-          leafId: snapshot.branch, transcriptDigest: snapshot.transcriptDigest };
-        recovered = (await context.store.recordCheckpoint(checkpoint)) || recovered;
+    const stopped = () => this.#disposed || this.#draining || !this.#enabled || signal.aborted;
+    try {
+      do {
+        const page = await this.environment.sessions.list({ scope: 'project' }, { ...(cursor ? { cursor } : {}), signal });
+        for (const info of page.items) {
+          if (stopped()) return false;
+          if (info.parent || this.#now() - info.updatedAt < stableAfter) continue;
+          try {
+            const checkpoint = await readMemorySessionCheckpoint(this.environment.sessions, info.id, signal);
+            if (stopped()) return false;
+            recovered = (await context.store.recordCheckpoint(checkpoint)) || recovered;
+          } catch {
+            if (stopped()) return false;
+            // A session that cannot be read now is skipped; its live checkpoint or a later run records it.
+          }
+        }
+        cursor = page.nextCursor;
+      } while (cursor);
+    } catch {
+      if (stopped()) return false;
+      if (context.recoveryRetryAt === undefined) {
+        context.recoveryRetryAt = this.#now() + (this.#options.recoveryRetryMs ?? 30_000);
+        return false;
       }
-      cursor = page.nextCursor;
-    } while (cursor);
+      context.message = 'Memory startup recovery could not inspect sessions';
+      return true;
+    }
     if (recovered && !this.#disposed && this.#enabled) {
       await this.#trackScheduleIfPending(context);
       this.#emitStatusChange();

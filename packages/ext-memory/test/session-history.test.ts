@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionsHistory } from '@felan-ai/agent-core';
+import { readMemorySessionCheckpoint } from '../src/session-history.js';
 import {
   MEMORY_CONTEXT_CUSTOM_TYPE,
   digestActiveBranch,
@@ -167,3 +168,35 @@ function fixture() {
   }));
   return { checkpoint, history } satisfies Pick<SessionsHistory, 'checkpoint' | 'history'>;
 }
+
+describe('startup recovery checkpoints', () => {
+  it('records the same checkpoint a live session records, from paginated history', async () => {
+    const sessions = fixture();
+    await expect(readMemorySessionCheckpoint(sessions, 'session-1')).resolves.toEqual({
+      sessionId: 'session-1', sessionFile: 'session-1', leafId: 'new-leaf', transcriptDigest: current.transcriptDigest,
+    });
+    expect(sessions.history).toHaveBeenCalledTimes(2);
+  });
+
+  it('excludes memory-context entries from the active branch digest exactly as live checkpoints do', async () => {
+    const sessions = fixture();
+    sessions.history.mockImplementation(async (_id, options) => ({
+      sessionId: 'session-1', revision: 'revision-7', branch: 'old-leaf',
+      entries: entries.slice(options?.cursor ? 3 : 0, options?.cursor ? undefined : 3) as never,
+      ...(options?.cursor ? {} : { nextCursor: 'next' }),
+    }));
+    await expect(readMemorySessionCheckpoint(sessions, 'session-1')).resolves.toMatchObject({
+      leafId: 'old-leaf', transcriptDigest: old.transcriptDigest,
+    });
+  });
+
+  it('fails instead of mixing pages when the history revision changes between pages', async () => {
+    const sessions = fixture();
+    sessions.history.mockImplementation(async (_id, options) => ({
+      sessionId: 'session-1', revision: options?.cursor ? 'revision-8' : 'revision-7', branch: 'new-leaf',
+      entries: entries.slice(options?.cursor ? 3 : 0, options?.cursor ? undefined : 3) as never,
+      ...(options?.cursor ? {} : { nextCursor: 'next' }),
+    }));
+    await expect(readMemorySessionCheckpoint(sessions, 'session-1')).rejects.toThrow('revision changed');
+  });
+});

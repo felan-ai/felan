@@ -39,11 +39,13 @@ export function registerClassifierRouting(pi: FelanExtensionAPI, sessions: Sessi
     return;
   }
 
+  // Subagents run below their root session; a forked session is a root of its own.
+  const subagent = sessions.current.id !== sessions.current.root;
   let attempt = 0;
   registry.register({
     id: ROUTING_CONTRIBUTION,
     async prepare(_input, ctx, signal) {
-      if (isChildSession(ctx) || isOneShotSession(ctx) || signal.aborted) return;
+      if (subagent || isOneShotSession(ctx) || signal.aborted) return;
       if (typeof pi.runtime?.listFiles === 'function') {
         try {
           const paths = await pi.runtime.listFiles('.', {
@@ -82,7 +84,7 @@ export function registerClassifierRouting(pi: FelanExtensionAPI, sessions: Sessi
   });
 
   pi.on('before_agent_start', async (event, ctx) => {
-    if (isChildSession(ctx) || isOneShotSession(ctx)) return;
+    if (subagent || isOneShotSession(ctx)) return;
     const routingAttempt = ++attempt;
     const sessionId = ctx.sessionManager.getSessionId();
     try {
@@ -119,10 +121,6 @@ export function registerClassifierRouting(pi: FelanExtensionAPI, sessions: Sessi
       }, 'subagent routing failed');
     }
   });
-}
-
-function isChildSession(ctx: ExtensionContext): boolean {
-  return ctx.sessionManager.getHeader()?.parentSession !== undefined;
 }
 
 function isOneShotSession(ctx: ExtensionContext): boolean {

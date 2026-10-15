@@ -1,4 +1,5 @@
 import {
+  SESSIONS_SERVICE,
   associateExtensionConfig,
   configField,
   defineExtensionConfig,
@@ -23,7 +24,6 @@ import {
 import { Type } from 'typebox';
 import { plannerProfiles, type PlannerProfile } from './planner-profile.js';
 import {
-  isChildSession,
   ENTRY_QUESTIONS,
   createPrewalkClassifier,
   strongerThinking,
@@ -195,6 +195,10 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
     instructions: 'Use Prewalk for complex repository work that benefits from substantial exploration, coordinated multi-file changes, dependency-aware planning, or broad verification. Do not use it for small localized edits, routine one-file fixes, read-only requests, or when injected planning or implementation guidance is already present. For a new complex file-changing task without that guidance, call enter_prewalk as the only tool call in the response. Conversation or repository activity from earlier requests does not prevent entry. Prefer to enter before exploring the current task; if its complexity becomes clear after read-only exploration, enter before its first mutation. Depending on the configured entry policy, the tool may ask the user for approval or decline model-requested entry; if declined, continue on the regular path. The tool is available in the root session and mutation-capable subagents. During an active run, follow the injected planning, task-tracking, implementation, and verification guidance. The user can enter explicitly with /prewalk or exit with /prewalk exit (or /prewalk off).',
   });
 
+  // Subagents run below their root session; a forked session is a root of its own. Without the Sessions service no
+  // subagents exist. A subagent cannot ask the user to approve Prewalk: its prompts would reach the user out of context.
+  const current = pi.services.get(SESSIONS_SERVICE)?.current;
+  const subagent = current !== undefined && current.id !== current.root;
   let config = pi.config as unknown as PrewalkConfig;
   let targetModel = parseTargetModel(config.targetModel)!;
   let state: PrewalkState = { phase: 'idle' };
@@ -290,7 +294,7 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
     return config.entryApproval !== 'deny'
       && activeTools.includes(ENTER_PREWALK_TOOL)
       && validateArmingTools(activeTools).ok
-      && !isChildSession(ctx);
+      && !subagent;
   }
 
   pi.turnClassification?.register({
@@ -298,7 +302,7 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
     prepare(_input, ctx) {
       entryProfile = undefined;
       preparedProfiles = [];
-      if (isChildSession(ctx) || (state.phase !== 'armed' && !entryClassificationEligible(ctx))) return undefined;
+      if (subagent || (state.phase !== 'armed' && !entryClassificationEligible(ctx))) return undefined;
       preparedProfiles = plannerProfiles(ctx, pi.getThinkingLevel());
       const questions: Record<string, ClassifierChoiceQuestion> = state.phase === 'armed' ? {} : { ...ENTRY_QUESTIONS };
       if (preparedProfiles.length > 1) {
@@ -436,8 +440,8 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
     runDetails = {
       request: lastPrompt,
       tasks: [],
-      classified: classifier !== undefined && !isChildSession(ctx),
-      completionGate: classifier !== undefined && !isChildSession(ctx),
+      classified: classifier !== undefined && !subagent,
+      completionGate: classifier !== undefined && !subagent,
       completionChecks: 0,
       completionAccepted: false,
       completionMessagePending: false,
@@ -818,6 +822,9 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
     executionMode: 'sequential',
     parameters: EnterPrewalkParams,
     async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
+      if (subagent) {
+        return prewalkToolError('Prewalk is available only in the user\'s session, not in subagents. Continue the current task without Prewalk.');
+      }
       if (state.phase === 'idle') refreshConfig();
       publishConfigWarning(ctx);
 
@@ -999,6 +1006,9 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
   });
 
   pi.on('session_start', (_event, ctx) => {
+    if (subagent) {
+      pi.setActiveTools(pi.getActiveTools().filter(name => name !== ENTER_PREWALK_TOOL && name !== EXIT_PLAN_MODE_TOOL));
+    }
     selectionContext = ctx;
     if (state.phase === 'idle') refreshConfig();
     publishConfigWarning(ctx);
@@ -1348,7 +1358,8 @@ function savingsModelReference(model: PlannerModel): SavingsModelReference {
 }
 
 export function createPrewalkExtension(host?: PrewalkHost): FelanExtension {
-  const extension: FelanExtension = pi => registerPrewalk(pi, host);
+  const extension: FelanExtension = Object.assign((pi: FelanExtensionAPI) => registerPrewalk(pi, host),
+    { serviceRequirements: { optional: [SESSIONS_SERVICE] } });
   associateExtensionConfig(extension, PREWALK_CONFIG);
   return extension;
 }

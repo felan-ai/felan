@@ -17,7 +17,7 @@ function recorder() {
   const requests: HerdrRequest[] = [];
   return { requests, send: vi.fn(async (request: HerdrRequest) => { requests.push(request); }),
     sent: () => requests.map(request => request.method === 'pane.report_agent_session'
-      ? `session ${String(request.params.agent_session_id)}` : `${String(request.params.state)}${request.params.message ? ` ${String(request.params.message)}` : ''}`) };
+      ? `session ${String(request.params.agent_session_id)} ${String(request.params.session_start_source)}` : `${String(request.params.state)}${request.params.message ? ` ${String(request.params.message)}` : ''}`) };
 }
 
 describe('Herdr pane reporting', () => {
@@ -63,35 +63,35 @@ describe('Herdr pane reporting', () => {
     };
     const emit = () => { for (const listener of listeners) listener(); };
     const stop = reportHerdrPane(controller as never, new HerdrPane('w1:p1', herdr.send), () => []);
-    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one', 'working']));
+    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one startup', 'working']));
     expect(controller.client.request).toHaveBeenCalledWith('executions.list', { includeDescendants: true, limit: 100 }, { session: 'one' });
     rows = [execution({ id: 'child', parent: 'one', completionPending: true }), execution({ id: 'grandchild', parent: 'child' })];
     controller.state = state('one', 'b'); emit();
     await vi.waitFor(() => expect(controller.client.request).toHaveBeenCalledTimes(3));
     rows = [execution({ id: 'child', parent: 'one' })];
     controller.state = state('one', 'c'); emit();
-    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one', 'working', 'idle']));
+    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one startup', 'working', 'idle']));
     rows = [execution({ id: 'other', state: 'running' })]; failing = true;
     controller.sessionId = 'two'; controller.state = state('two', 'd'); emit();
-    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one', 'working', 'idle', 'session two', 'idle']));
+    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one startup', 'working', 'idle', 'session two resume', 'idle']));
     stop(); controller.state = { ...state('two', 'd'), snapshot: { ...state('two', 'd').snapshot, run: { state: 'running', id: 'run' } } }; emit();
     await Promise.resolve();
     expect(herdr.sent()).toHaveLength(5);
   });
 
-  it('announces the session before its state, reports only changes and re-announces a switched session', async () => {
+  it('announces the session with its start reason before its state, reports only changes and re-announces a switched session', async () => {
     const herdr = recorder(); const pane = new HerdrPane('w1:p1', herdr.send);
     pane.update({ state: 'idle' });
     pane.update({ session: 'one', state: 'idle' });
-    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one', 'idle']));
+    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one startup', 'idle']));
     pane.update({ session: 'one', state: 'working' });
     pane.update({ session: 'one', state: 'working' });
-    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one', 'idle', 'working']));
+    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one startup', 'idle', 'working']));
     pane.update({ session: 'one', state: 'blocked', message: 'Approve plan' });
     await vi.waitFor(() => expect(herdr.sent()).toHaveLength(4));
-    pane.update({ session: 'two', state: 'blocked', message: 'Approve plan' });
+    pane.update({ session: 'two', entry: 'fork', state: 'blocked', message: 'Approve plan' });
     pane.update({ state: 'idle' });
-    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one', 'idle', 'working', 'blocked Approve plan', 'session two', 'idle']));
+    await vi.waitFor(() => expect(herdr.sent()).toEqual(['session one startup', 'idle', 'working', 'blocked Approve plan', 'session two fork', 'idle']));
     const sequences = herdr.requests.map(request => request.params.seq as number);
     expect(sequences).toEqual([...sequences].sort((left, right) => left - right));
     expect(herdr.requests.at(-1)!.params).toMatchObject({ pane_id: 'w1:p1', source: 'herdr:felan', agent: 'felan', agent_session_id: 'two' });

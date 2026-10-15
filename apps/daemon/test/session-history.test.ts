@@ -103,7 +103,7 @@ describe('read-only session history', () => {
     expect((await f.backend.history('root')).entries[0]!.timestamp).toBe(timestamp);
   });
 
-  it('pins both full content and the selected branch across history pages', async () => {
+  it('pins both full content and the active tip across history pages', async () => {
     const entries = [message('one', null), message('two', 'one')];
     const f = fixture(undefined, entries);
     const first = await f.backend.history('root', { limit: 1 });
@@ -113,32 +113,27 @@ describe('read-only session history', () => {
     f.files.set(privateKey, transcript('root', [message('one', null, 'different'), message('two', 'one')]));
     await expect(f.backend.history('root', { cursor: first.nextCursor! })).rejects.toMatchObject({ code: 'stale' });
     await expect(f.backend.history('root', { at })).rejects.toMatchObject({ code: 'stale' });
-    f.files.set(privateKey, transcript('root', entries));
-    f.rows[0] = source('root', { branch: 'one', observedTip: 'two' });
-    await expect(f.backend.history('root', { cursor: first.nextCursor! })).rejects.toMatchObject({ code: 'stale' });
   });
 
-  it('keeps a selected branch rather than assuming the last record is the active leaf', async () => {
+  it('treats the last transcript entry as the active leaf even when it branches from an earlier entry', async () => {
     const entries = [message('one', null), message('left', 'one'), message('right', 'one')];
-    const f = fixture([source('root', { branch: 'left', observedTip: 'right' })], entries);
-    expect((await f.backend.history('root')).entries).toEqual(entries);
+    const f = fixture(undefined, entries);
+    const history = await f.backend.history('root');
+    expect(history.entries).toEqual(entries);
+    expect(history.branch).toBe('right');
     const checkpoint = await f.backend.checkpoint('root');
-    expect(checkpoint).toMatchObject({ sessionId: 'root', branch: 'left', byteLength: f.files.get(privateKey)!.byteLength });
+    expect(checkpoint).toMatchObject({ sessionId: 'root', branch: 'right', byteLength: f.files.get(privateKey)!.byteLength });
     expect(checkpoint).not.toHaveProperty('leafId');
-    const selected = [entries[0]!, entries[1]!];
-    expect(checkpoint.transcriptDigest).toBe(hash(canonical(selected)));
-    f.rows[0] = source('root', { branch: 'root', observedTip: 'right' });
-    expect(await f.backend.checkpoint('root')).toMatchObject({ branch: null, transcriptDigest: hash('[]') });
+    expect(checkpoint.transcriptDigest).toBe(hash(canonical([entries[0]!, entries[2]!])));
   });
 
-  it('recognizes unobserved appended entries only when they extend the selected branch', async () => {
+  it('never reports stale for entries appended after a branch, wherever they attach', async () => {
     const entries = [message('one', null), message('left', 'one'), message('right', 'one'), message('later', 'left')];
-    const f = fixture([source('root', { branch: 'left', observedTip: 'right' })], entries);
+    const f = fixture(undefined, entries);
     expect((await f.backend.history('root')).branch).toBe('later');
     f.files.set(privateKey, transcript('root', [...entries.slice(0, -1), message('later', 'right')]));
-    await expect(f.backend.history('root')).rejects.toMatchObject({ code: 'stale' });
-    f.rows[0] = source('root', { branch: 'missing', observedTip: 'right' });
-    await expect(f.backend.checkpoint('root')).rejects.toMatchObject({ code: 'stale' });
+    expect((await f.backend.history('root')).branch).toBe('later');
+    expect((await f.backend.checkpoint('root')).branch).toBe('later');
   });
 
   it('uses a feature-neutral canonical branch digest including custom context and usage', async () => {

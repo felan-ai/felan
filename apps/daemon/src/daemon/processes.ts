@@ -145,7 +145,7 @@ export class RegistryProcesses {
   }
 
   list(root: string): ProcessView[] {
-    return this.options.store.snapshot().resources.filter(row => row.root === root).map(row => {
+    return this.options.store.resources().filter(row => row.root === root).map(row => {
       const known = this.views.get(row.id);
       return known ?? { id: row.id, session: row.session, root, kind: row.kind as ProcessView['kind'],
         state: row.state === 'reconciling' ? 'interrupted' : row.state, command: '', startedAt: row.updatedAt, controllable: false, outputOffset: 0 };
@@ -163,14 +163,14 @@ export class RegistryProcesses {
     prepared = this.prepareForeground(session)): Promise<{ resourceId: string }> {
     const lifetime = this.currentLifetime(session);
     this.assertLifetime(lifetime, true);
-    const request = this.options.store.snapshot().requests.find(item => item.id === requestId);
+    const request = this.options.store.request(requestId);
     if (request?.session !== session || request.op !== 'shell.execute' || request.phase !== 'dispatch_intent') throw new Error('Foreground start requires its committed shell dispatch.');
     const payload = canonicalRequestPayload({ v: 1, id: requestId, op: 'shell.execute', session, params });
     if (request.identity.bytes !== Buffer.byteLength(payload) || request.identity.sha256 !== createHash('sha256').update(payload).digest('hex')) throw new Error('Shell command differs from its admitted payload.');
     if (!lifetime.runtime.processes) throw new Error('Foreground processes are unavailable.');
     if (this.foregroundStarts.has(requestId)) throw new Error('Foreground dispatch cannot be repeated.');
     const resourceId = `foreground:${requestId}`;
-    if (this.options.store.snapshot().resources.some(row => row.id === resourceId)) throw processFault('already_resolved', 'Foreground dispatch already has a durable resource intent.');
+    if (this.options.store.resource(resourceId)) throw processFault('already_resolved', 'Foreground dispatch already has a durable resource intent.');
     this.foregroundStarts.set(requestId, resourceId);
     return this.track((async () => {
       prepared.assertCurrent();
@@ -224,7 +224,7 @@ export class RegistryProcesses {
   }
 
   async cancelForeground(session: string): Promise<void> {
-    const rows = this.options.store.snapshot().resources.filter(row => row.session === session && row.kind === 'foreground' && row.state === 'running');
+    const rows = this.options.store.resources().filter(row => row.session === session && row.kind === 'foreground' && row.state === 'running');
     for (const row of rows) await this.stop(row.root, row.id);
   }
 
@@ -316,7 +316,7 @@ export class RegistryProcesses {
   }
 
   private openLifetime(session: string): Lifetime | undefined {
-    const stored = this.options.store.session(session);
+    const stored = this.options.store.sessionMetadata(session);
     return stored.state === 'open' ? [...this.lifetimes].reverse().find(item => !item.revoked && item.scope.session === session && item.scope.root === stored.root) : undefined;
   }
 
@@ -327,15 +327,15 @@ export class RegistryProcesses {
 
   private authorizeResource(requester: string, id: string): ControlResource {
     this.options.assertCurrent();
-    const state = this.options.store.snapshot(); const session = state.sessions.find(item => item.id === requester);
-    const row = state.resources.find(item => item.id === id);
+    const sessions = this.options.store.sessionMetadatas(); const session = sessions.find(item => item.id === requester);
+    const row = this.options.store.resource(id);
     if (!session || session.state !== 'open' || !row || row.root !== session.root) throw new Error('Process not found in the authorized session scope.');
-    const creator = state.sessions.find(item => item.id === row.session);
+    const creator = sessions.find(item => item.id === row.session);
     if (!creator || creator.root !== row.root) throw new Error('Process creator identity is invalid.');
     let ancestor = creator; const seen = new Set<string>();
     while (ancestor.id !== requester && ancestor.parent && !seen.has(ancestor.id)) {
       seen.add(ancestor.id);
-      const parent = state.sessions.find(item => item.id === ancestor.parent && item.root === row.root);
+      const parent = sessions.find(item => item.id === ancestor.parent && item.root === row.root);
       if (!parent) break;
       ancestor = parent;
     }
@@ -351,7 +351,7 @@ export class RegistryProcesses {
   /** In-flight runtime operations plus running or unverified processes of a root; stdio service transports are excluded. */
   activeCount(root: string): number {
     return [...this.operations.values()].filter(({ scope, passive }) => scope.root === root && !passive).length
-      + this.options.store.snapshot().resources.filter(row => row.root === root && !this.live.get(row.id)?.transport && (row.state === 'running' || row.state === 'reconciling')).length;
+      + this.options.store.resources().filter(row => row.root === root && !this.live.get(row.id)?.transport && (row.state === 'running' || row.state === 'reconciling')).length;
   }
   /** Work a daemon stop would interrupt: in-flight runtime operations and live non-transport processes. Detached jobs survive the daemon. */
   async interruptibleCount(): Promise<number> {
@@ -369,7 +369,7 @@ export class RegistryProcesses {
 
   /** Reconciles a root's processes; a failed per-process probe leaves that row unchanged, while store and ownership failures propagate. */
   async refresh(root: string): Promise<void> {
-    for (const row of this.options.store.snapshot().resources.filter(row => row.root === root)) {
+    for (const row of this.options.store.resources().filter(row => row.root === root)) {
       const live = this.live.get(row.id);
       if (live) { await this.observe(live); continue; }
       // Live handles end with the daemon that started them.
@@ -403,8 +403,8 @@ export class RegistryProcesses {
 
   async stop(root: string, id: string, signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'): Promise<void> {
     this.options.assertCurrent();
-    const row = this.options.store.snapshot().resources.find(row => row.id === id && row.root === root);
-    if (!row) throw new Error('Process not found in this root session.');
+    const row = this.options.store.resource(id);
+    if (!row || row.root !== root) throw new Error('Process not found in this root session.');
     const live = this.live.get(id);
     if (live) { await live.process.terminate(signal); await live.process.read(0, { maxBytes: 0 }); return; }
     await this.refresh(root);
@@ -441,7 +441,7 @@ export class RegistryProcesses {
         item.settled = true;
         if (!fenced) {
           item.view = { ...item.view, state: 'exited', controllable: false, outputOffset: snapshot.nextOffset, ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }) };
-          const row = this.options.store.snapshot().resources.find(row => row.id === item.view.id)!;
+          const row = this.options.store.resource(item.view.id)!;
           this.update(row, 'exited', item.view);
         }
         await item.raw.dispose(); item.disposed = true;
@@ -456,7 +456,7 @@ export class RegistryProcesses {
     return this.track((async () => {
       this.assertLifetime(lifetime, true);
       const id = requestedId ?? randomUUID();
-      const previous = this.options.store.snapshot().resources.find(row => row.id === id);
+      const previous = this.options.store.resource(id);
       if (this.live.has(id) || this.starting.has(id) || previous && (previous.session !== scope.session || previous.root !== scope.root || previous.kind !== kind)) throw new Error('Process identity is already registered.');
       this.starting.add(id);
       const row: ControlResource = previous ?? { id, ...scope, kind, state: 'running', updatedAt: this.now() };
@@ -516,7 +516,7 @@ export class RegistryProcesses {
     if (!directory || !pathInside(directory, absolute)) return;
     const info = this.describeJob(runtime, absolute, bytes);
     if (!info) return;
-    const previous = this.options.store.snapshot().resources.find(row => row.id === info.id);
+    const previous = this.options.store.resource(info.id);
     const row: ControlResource = previous ?? { id: info.id, ...scope, kind: info.kind, state: 'running', reference: absolute,
       ...(info.startIdentity ? { startIdentity: info.startIdentity } : {}), updatedAt: this.now() };
     if (previous && (previous.root !== scope.root || previous.reference !== absolute || previous.startIdentity !== info.startIdentity)) throw new Error('Background job identity changed.');
@@ -536,14 +536,14 @@ export class RegistryProcesses {
     if (live.settled || live.disposed) return;
     const snapshot = await this.track(live.raw.read(live.view.outputOffset, { maxBytes: 0 }), live.view, true).catch(() => undefined);
     this.options.assertCurrent();
-    const row = this.options.store.snapshot().resources.find(item => item.id === live.view.id);
+    const row = this.options.store.resource(live.view.id);
     if (!snapshot || !row || this.live.get(live.view.id) !== live || live.disposed) return;
     this.record(live, row, snapshot, false);
   }
 
   private update(row: ControlResource, state: ControlResource['state'], view?: ProcessView): void {
     this.options.assertCurrent();
-    const old = this.options.store.snapshot().resources.find(item => item.id === row.id);
+    const old = this.options.store.resource(row.id);
     const known = view ?? this.views.get(row.id);
     const next: ProcessView = known ? { ...known, state: state === 'reconciling' ? 'interrupted' : state, controllable: state === 'running' && known.controllable }
       : { id: row.id, session: row.session, root: row.root, kind: row.kind as ProcessView['kind'], state: state === 'reconciling' ? 'interrupted' : state,

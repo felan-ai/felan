@@ -155,7 +155,7 @@ it('reports the attached session to its Herdr pane from the terminal client: ses
     terminal, createTui: () => tui, signal: signal.signal, herdr: new HerdrPane('w1:p1', async request => { requests.push(request); }) });
   try {
     await vi.waitFor(() => expect(requests.map(request => request.params.state ?? 'session')).toEqual(['session', 'idle']));
-    expect(requests[0]).toMatchObject({ method: 'pane.report_agent_session', params: { pane_id: 'w1:p1', agent: 'felan', agent_session_id: f.root.sessionId } });
+    expect(requests[0]).toMatchObject({ method: 'pane.report_agent_session', params: { pane_id: 'w1:p1', agent: 'felan', agent_session_id: f.root.sessionId, session_start_source: 'startup' } });
     terminal.input('terminal input'); terminal.input('\r');
     await vi.waitFor(() => expect(controller.history.some(row => row.role === 'assistant')).toBe(true));
     await vi.waitFor(() => expect(requests.map(request => request.params.state ?? 'session')).toEqual(['session', 'idle', 'working', 'idle']));
@@ -304,9 +304,11 @@ it('treats exit as a client-only action and closes on /close', async () => {
 
 it('forks before a selected zero-based user position without resubmitting that message', async () => {
   const f = await fixture(); const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
+  expect(controller.sessionEntry).toBe('resume');
   await controller.submit('original prompt'); await vi.waitFor(() => expect(controller.snapshot?.run.state).toBe('idle'));
   expect(await submitTuiInput(controller, fakeDialogs(), '/fork 0', { cwd: f.cwd, exit: vi.fn() })).toBe(true);
-  expect(controller.sessionId).not.toBe(f.root.sessionId);
+  expect(controller.sessionId).not.toBe(f.root.sessionId); expect(controller.sessionEntry).toBe('fork');
+  await controller.create({ cwd: f.cwd }); expect(controller.sessionEntry).toBe('new');
   expect(controller.history.some(message => JSON.stringify(message.content).includes('original prompt'))).toBe(false);
 });
 

@@ -56,7 +56,7 @@ describe('Pi subagent-routing integration', () => {
         }),
       },
     });
-    const sessions = { executions: vi.fn(async () => ({ items: [] })) } as unknown as SessionsService;
+    const sessions = { current: { id: 'root', root: 'root' }, executions: vi.fn(async () => ({ items: [] })) } as unknown as SessionsService;
     const result = await createAgentCoreSession({
       runtime,
       extensionPackages: ['@felan-ai/ext-subagents'],

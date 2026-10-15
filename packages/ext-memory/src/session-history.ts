@@ -1,9 +1,47 @@
-import type { SessionsHistory } from '@felan-ai/agent-core';
+import { SESSION_HISTORY_LIMITS, type SessionEntry, type SessionsHistory } from '@felan-ai/agent-core';
+import { digestActiveBranch, removeMemoryContextEntries } from './checkpoint.js';
 import type { SessionCheckpoint } from './contracts.js';
 import {
   materializeMemoryInputDelta,
   type MemoryInputMaterializationResult,
 } from './input-materializer.js';
+
+/**
+ * Builds the checkpoint a live session would record: the same active-branch digest as
+ * createSessionCheckpoint, computed from the complete history at one pinned revision.
+ */
+export async function readMemorySessionCheckpoint(
+  sessions: Pick<SessionsHistory, 'history'>,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<SessionCheckpoint> {
+  const first = await sessions.history(sessionId, { limit: SESSION_HISTORY_LIMITS.pageEntries, ...(signal ? { signal } : {}) });
+  const at = { sessionId: first.sessionId, revision: first.revision, branch: first.branch };
+  const entries: SessionEntry[] = [...first.entries];
+  const cursors = new Set<string>();
+  let cursor = first.nextCursor;
+  while (cursor !== undefined) {
+    signal?.throwIfAborted();
+    if (typeof cursor !== 'string' || cursor.length === 0 || cursors.has(cursor)) throw new Error('Memory history cursor is invalid');
+    cursors.add(cursor);
+    const page = await sessions.history(sessionId, { at, cursor, limit: SESSION_HISTORY_LIMITS.pageEntries, ...(signal ? { signal } : {}) });
+    if (page.sessionId !== at.sessionId || page.revision !== at.revision || page.branch !== at.branch) {
+      throw new Error('Memory history revision changed');
+    }
+    entries.push(...page.entries);
+    cursor = page.nextCursor;
+  }
+  const byId = new Map(entries.map(entry => [entry.id, entry]));
+  const branch: SessionEntry[] = [];
+  for (let id = first.branch; id !== null; ) {
+    const entry = byId.get(id);
+    if (!entry) throw new Error('Memory history branch is incomplete');
+    branch.push(entry);
+    id = entry.parentId;
+  }
+  branch.reverse();
+  return { sessionId, sessionFile: sessionId, leafId: first.branch, transcriptDigest: digestActiveBranch(removeMemoryContextEntries(branch)) };
+}
 
 export interface MaterializeMemorySessionCheckpointOptions {
   readonly sessions: Pick<SessionsHistory, 'checkpoint' | 'history'>;

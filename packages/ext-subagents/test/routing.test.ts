@@ -205,16 +205,26 @@ describe('shared discovery routing', () => {
     });
   });
 
-  it.each(['child', 'print', 'json'])('skips preparation and consumption for %s sessions', async (mode) => {
+  it.each(['subagent', 'print', 'json'])('skips preparation and consumption for %s sessions', async (mode) => {
     const harness = createHarness();
-    extensionFor(harness.host)(harness.pi);
-    const ctx = { ...context([], mode === 'child'), mode: mode === 'child' ? 'interactive' : mode };
+    const host = mode === 'subagent' ? { ...harness.host, current: { id: 'child-session', root: 'root-session', parent: 'root-session' } } : harness.host;
+    extensionFor(host)(harness.pi);
+    const ctx = { ...context(), mode: mode === 'subagent' ? 'interactive' : mode };
     const event = routingEvent({ prompt: 'Survey' });
     await harness.turn(event, ctx);
     expect(harness.host.executions).not.toHaveBeenCalled();
     expect(harness.classify).not.toHaveBeenCalled();
     expect(harness.registry.result).not.toHaveBeenCalled();
     expect(event.systemPromptOptions.sections).toEqual({});
+  });
+
+  it('routes a forked root session, which records its source in parentSession', async () => {
+    const harness = createHarness();
+    extensionFor(harness.host)(harness.pi);
+    const event = routingEvent({ prompt: 'Survey' });
+    await harness.turn(event, context([], '/parent/session.jsonl'));
+    expect(harness.classify).toHaveBeenCalledOnce();
+    expect(Object.keys(event.systemPromptOptions.sections)).not.toHaveLength(0);
   });
 
   it('skips small repositories before listing children or classifying', async () => {
@@ -444,18 +454,18 @@ function routingEvent(overrides: { prompt: string; images?: unknown[] }) {
   };
 }
 
-function createHost(descriptors: any[]) {
-  return { descriptors, executions: vi.fn(async () => ({ items: [{ id: 'child', label: 'explore', state: 'running', description: 'active' }] })) };
+function createHost(descriptors: any[], current: { id: string; root: string; parent?: string } = { id: 'root-session', root: 'root-session' }) {
+  return { descriptors, current, executions: vi.fn(async () => ({ items: [{ id: 'child', label: 'explore', state: 'running', description: 'active' }] })) };
 }
 function extensionFor(host: ReturnType<typeof createHost>) {
   return createSubagentsExtension(host as unknown as SessionsService, host.descriptors.map(descriptor => ({ descriptor, prompt: '' })));
 }
 
-function context(messages: unknown[] = [], child = false): any {
+function context(messages: unknown[] = [], forkedFrom?: string): any {
   return {
     sessionManager: {
       getSessionId: () => 'root-session',
-      getHeader: () => child ? { parentSession: '/parent/session.jsonl' } : { id: 'root' },
+      getHeader: () => ({ id: 'root-session', ...(forkedFrom ? { parentSession: forkedFrom } : {}) }),
       buildContextEntries: vi.fn(() => messages.map((message, index) => ({
         type: 'message',
         id: `message-${index}`,

@@ -130,7 +130,7 @@ export class InteractionBroker {
   }
 
   pending(): Interaction[] {
-    return structuredClone([...this.options.store.snapshot().interactions, ...this.transient.values()]
+    return structuredClone([...this.options.store.interactions(), ...this.transient.values()]
       .filter(item => item.state === 'waiting' || item.state === 'deferred'));
   }
 
@@ -273,7 +273,7 @@ export class InteractionBroker {
   }
 
   private find(id: string): Interaction {
-    const item = this.transient.get(id) ?? this.options.store.snapshot().interactions.find(item => item.id === id);
+    const item = this.transient.get(id) ?? this.options.store.interactions().find(item => item.id === id);
     if (!item) throw commandError('not_found');
     return item;
   }

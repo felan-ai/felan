@@ -4,7 +4,6 @@ import { AGENT_CORE_VERSION, createAgentCoreSessionRuntimeFactory, createAgentSe
 import { createRuntimeStorageRequest } from '../runtime-factory.js';
 import { inheritExecutionPolicy, TrustedToolCatalog } from './execution-policy.js';
 import { resolveTarget, assertTargetUnchanged, assertSessionManagerMatches, openSessionManager, createWorkerBinding, assertAbsolutePath, canonicalPath } from './profile-storage.js';
-import { restoreSessionCursor } from './session-cursor.js';
 import { interruptProviderScope, type LoadedProviders } from './provider-loader.js';
 import type { SessionExtensionBindings, SessionExtensionContext } from './session-execution.js';
 import type { ProviderSecretStorage, ProviderWorkerLauncher } from './provider.js';
@@ -72,7 +71,6 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
       const manager = await openSessionManager(request, owned);
       assertSessionManagerMatches(manager,
         target.identity.kind === 'resume' ? owned.identity.sourceSessionId : request.target.kind === 'new' ? request.target.id : undefined);
-      if (request.target.kind === 'resume' && request.target.cursor) restoreSessionCursor(manager, request.target.cursor);
       if (request.worker) return createWorkerBinding(request, manager, options);
       const id = manager.getSessionId(); const root = request.parentSessionId === undefined ? id : request.rootSessionId!;
       if (!root || root === '.' || root === '..' || root.includes('\0')) throw new Error('Invalid root session identity');

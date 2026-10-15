@@ -92,6 +92,18 @@ async function completedPrompt(f: Awaited<ReturnType<typeof fixture>>, client: S
   });
 }
 
+it('serves attach, session reads and a prompt turn without copying the whole control state', async () => {
+  const f = await fixture(); const client = await f.client(); const session = f.root.sessionId;
+  const snapshot = vi.spyOn(f.store, 'snapshot');
+  await client.attach(session);
+  const tree = await client.request('session.tree', {}, { session });
+  if (tree.outcome !== 'accepted') throw new Error('Tree unavailable');
+  expect(await client.request('session.history', { revision: tree.result.revision, branch: tree.result.branch }, { session })).toMatchObject({ outcome: 'accepted' });
+  expect(await client.request('processes.list', { root: session }, { session })).toMatchObject({ outcome: 'accepted' });
+  await completedPrompt(f, client, 'served without full state copies');
+  expect(snapshot).not.toHaveBeenCalled();
+});
+
 it('negotiates the same operations for equally capable local TUI and ACP clients', async () => {
   const f = await fixture(); const tui = await f.client('tui'); const acp = await f.client('acp');
   expect(acp.capabilities?.operations).toEqual(tui.capabilities?.operations);

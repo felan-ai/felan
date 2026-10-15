@@ -56,7 +56,7 @@ export class OrderedAdmission {
     const bytes = Buffer.byteLength(JSON.stringify(request)) + Buffer.byteLength(principal);
     const safety = safetyOperations.has(request.op);
     const byteLimit = this.maxBytes - (safety ? 0 : SAFETY_BYTES);
-    const previous = this.store.snapshot().requests.find(item => item.id === request.id);
+    const previous = this.store.request(request.id);
     if (previous) {
       const record = this.store.admit(request, principal).value;
       const pending = this.pending.get(request.id);
@@ -89,7 +89,7 @@ export class OrderedAdmission {
   }
 
   private record(id: string): ControlRequest {
-    const record = this.store.snapshot().requests.find(item => item.id === id);
+    const record = this.store.request(id);
     if (!record) throw new ControlStoreError('storage_failure', 'Admitted request identity is missing.');
     return record;
   }
@@ -110,7 +110,7 @@ export class OrderedAdmission {
     let dispatchAllowed = true;
     const assertDispatch = () => {
       if (!dispatchAllowed) throw new Error('Dispatch must start before admission completes.');
-      const record = this.store.snapshot().requests.find(item => item.id === request.id);
+      const record = this.store.request(request.id);
       if (record?.phase !== 'intent') throw new ControlStoreError('already_resolved', 'Request is no longer undispatched.');
     };
     try {

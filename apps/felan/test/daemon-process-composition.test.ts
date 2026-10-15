@@ -247,7 +247,7 @@ it('loses a committed acknowledgement, crashes and restarts the daemon, then ret
   await accepted(b.worker, 'close', {}, session); await replacement.worker.stop();
 }, 20_000);
 
-it('retains an explicitly selected older branch across a restart without new Pi appends', async () => {
+it('resumes at the transcript tip after a restart that follows an explicit older branch selection', async () => {
   const f = await fixture(); const original = await f.daemon('daemon-before-branch-restart');
   const a = await f.client('client-a'); const b = await f.client('client-b');
   await a.worker.call('connect', { identity: original.ready.identity }); await b.worker.call('connect', { identity: original.ready.identity });
@@ -296,12 +296,11 @@ it('retains an explicitly selected older branch across a restart without new Pi 
   const restoredA = await attach(a.worker, session); const restoredB = await attach(b.worker, session);
   for (const restored of [restoredA, restoredB]) {
     expect(restored.identity).toEqual(replacement.ready.identity);
-    expect(snapshot(restored).branch).toBe(firstAssistant!.entryId);
-    expect(snapshot(restored).branch).not.toBe(laterBranch);
-    expect(userTexts(snapshot(restored))).toEqual(['keep the first branch']);
+    expect(snapshot(restored).branch).toBe(laterBranch);
+    expect(userTexts(snapshot(restored))).toEqual(['keep the first branch', 'retain but do not select the later branch']);
   }
   const restoredTree = await accepted(b.worker, 'session.tree', {}, session);
-  expect(restoredTree.cursor).toBeUndefined(); expect(restoredTree.branch).toBe(firstAssistant!.entryId);
+  expect(restoredTree.cursor).toBeUndefined(); expect(restoredTree.branch).toBe(laterBranch);
   expect(restoredTree.entries.map(entry => entry.id).sort()).toEqual(entryIds);
   expect(restoredTree.entries).toContainEqual(expect.objectContaining({ id: laterBranch }));
   expect(await replacement.worker.call('stats')).toMatchObject({ calls: 0, live: [] });

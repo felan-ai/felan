@@ -19,8 +19,11 @@ export interface TuiSessionOptions {
   config?: OperationParams<'sessions.create'>['config'];
 }
 
+export type SessionEntry = 'new' | 'resume' | 'fork';
+
 export class TuiSessionController {
   private selected: string | undefined;
+  private entered: SessionEntry = 'resume';
   private retained: { session: string; branch: string; entries: Message[] } | undefined;
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Set<Promise<unknown>>();
@@ -40,6 +43,8 @@ export class TuiSessionController {
   }
 
   get sessionId(): string | undefined { return this.selected; }
+  /** How the attached session was entered, in Pi's `session_start` terms. */
+  get sessionEntry(): SessionEntry { return this.entered; }
   get state() { return this.selected ? this.client.getAttachment(this.selected)?.state : undefined; }
   /** Explains a blocked attachment, e.g. `Session recovery did not complete (re-attach got no answer: …).` */
   get blockedText(): string {
@@ -134,11 +139,11 @@ export class TuiSessionController {
       ...(options.sessionDir ? { sessionDir: options.sessionDir } : {}),
       ...(options.extensions?.length ? { extensions: options.extensions } : {}), ...(options.config ? { config: options.config } : {}) });
     if (result.outcome !== 'accepted') throw new Error(this.notice);
-    if (!this.closed) await this.attach(result.result.sessionId);
+    if (!this.closed) await this.attach(result.result.sessionId, 'new');
   }
 
-  attach(session: string): Promise<void> {
-    const operation = this.selection.then(() => this.attachSelected(session));
+  attach(session: string, entry: SessionEntry = 'resume'): Promise<void> {
+    const operation = this.selection.then(() => this.attachSelected(session, entry));
     this.selection = operation.then(() => {}, () => {});
     return operation;
   }
@@ -148,7 +153,7 @@ export class TuiSessionController {
     return accepted;
   }
 
-  private async attachSelected(session: string): Promise<void> {
+  private async attachSelected(session: string, entry: SessionEntry): Promise<void> {
     if (this.closed || session === this.selected) return;
     const old = this.selected;
     const response = await this.client.attach(session);
@@ -157,7 +162,7 @@ export class TuiSessionController {
       throw Object.assign(new Error(this.notice), { code: response.error.code });
     }
     if (this.closed) return;
-    this.selected = session; this.retained = undefined; this.mergeSnapshot();
+    this.selected = session; this.entered = entry; this.retained = undefined; this.mergeSnapshot();
     // Switching sessions starts a fresh transcript; notes from before the first attachment join its end.
     const after = this.history.at(-1)?.id;
     this.sessionNotes = this.sessionNotes.flatMap(note => note.session ? [] : [{ ...note, session, ...(after ? { after } : {}) }]);

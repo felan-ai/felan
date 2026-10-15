@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Type } from 'typebox';
 import { canonicalProspectivePath, pathInside } from './target.js';
-import { CONTROL_LIMITS, ControlResourceSchema, ControlSessionSchema, ControlStoreError, SessionProfileSchema, parseControlState, type ControlContinuation, type ControlProjection, type ControlRequest, type ControlSession, type ControlState, type SessionProfile } from './control-state.js';
+import { CONTROL_LIMITS, ControlResourceSchema, ControlSessionSchema, ControlStoreError, SessionProfileSchema, parseControlState, type ControlContinuation, type ControlProjection, type ControlRequest, type ControlResource, type ControlSession, type ControlSessionMetadata, type ControlState, type SessionProfile } from './control-state.js';
 import { AtomicControlFile, sha256, type PersistenceBoundary } from './persistence.js';
 import type { DaemonOwnership } from './ownership.js';
 import { recoverControlState, type RecoveryPlan } from './control-recovery.js';
@@ -71,6 +71,15 @@ export class DaemonControlStore {
   get needsRecovery(): boolean { return this.recoveryRequired; }
   snapshot(): ControlState { this.file.assertCurrent(); return structuredClone(this.state); }
   session(id: string): ControlSession { this.file.assertCurrent(); return structuredClone(this.findSession(this.state, id)); }
+  /** Copies a session without its projections, which dominate the stored size. */
+  sessionMetadata(id: string): ControlSessionMetadata { this.file.assertCurrent(); return metadataCopy(this.findSession(this.state, id)); }
+  sessionMetadatas(): ControlSessionMetadata[] { this.file.assertCurrent(); return this.state.sessions.map(metadataCopy); }
+  findSessionMetadata(id: string): ControlSessionMetadata | undefined { this.file.assertCurrent(); const item = this.state.sessions.find(item => item.id === id); return item && metadataCopy(item); }
+  interactions(): Interaction[] { this.file.assertCurrent(); return structuredClone(this.state.interactions); }
+  request(id: string): ControlRequest | undefined { this.file.assertCurrent(); const item = this.state.requests.find(item => item.id === id); return item && structuredClone(item); }
+  resource(id: string): ControlResource | undefined { this.file.assertCurrent(); const item = this.state.resources.find(item => item.id === id); return item && structuredClone(item); }
+  resources(): ControlResource[] { this.file.assertCurrent(); return structuredClone(this.state.resources); }
+  assertCurrent(): void { this.file.assertCurrent(); }
   createSession(input: Omit<ControlSession, 'revision' | 'updatedAt' | 'projections'>): ControlCommit<ControlSession> {
     const session = parseSchema(ControlSessionSchema, { ...input, revision: 0, updatedAt: this.time(this.state.clock), projections: [] });
     if (session.deletedAt !== undefined) throw new ControlStoreError('invalid_request', 'Only explicit deletion can create a tombstone.');
@@ -476,4 +485,9 @@ export class DaemonControlStore {
   private time(previous: number): number {
     const now = this.now(); if (!Number.isSafeInteger(now) || now < 0) throw new ControlStoreError('invalid_request', 'Invalid clock.'); return Math.max(previous, now);
   }
+}
+
+function metadataCopy(session: ControlSession): ControlSessionMetadata {
+  const { projections: _projections, ...metadata } = session;
+  return structuredClone(metadata);
 }

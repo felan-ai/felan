@@ -4,7 +4,7 @@ import type { DaemonControlStore } from '../src/daemon/control-store.js';
 
 it('keeps transient host forms out of persistence and cancels when the local console detaches', async () => {
   const putInteraction = vi.fn(() => { throw new Error('Transient form must not be persisted'); });
-  const store = { owner: { assertCurrent() {} }, snapshot: () => ({ clock: 0, interactions: [], continuations: [] }), putInteraction } as unknown as DaemonControlStore;
+  const store = { owner: { assertCurrent() {} }, snapshot: () => ({ clock: 0, interactions: [], continuations: [] }), interactions: () => [], putInteraction } as unknown as DaemonControlStore;
   const publish = vi.fn();
   const broker = new InteractionBroker({ store, ownerPrincipal: 'owner', publish });
   broker.connected({ principal: 'owner', kind: 'tui', attachment: 'console', sessions: [],
