@@ -3,7 +3,7 @@ import type {
   FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import { SettingsManager, createSilentLogger } from '@felan-ai/agent-core';
+import { SESSIONS_SERVICE, SettingsManager, createSilentLogger } from '@felan-ai/agent-core';
 import { createTurnClassificationRegistry } from '../../../../packages/agent-core/src/classifier/turn-classification.js';
 import { installModelSelectionPersistenceScope } from '../../../../packages/agent-core/src/model-selection.js';
 import { createPrewalkExtension, type PrewalkHost } from '../../../../packages/ext-prewalk/src/index.js';
@@ -124,6 +124,7 @@ function createHarness(
     savings?: { report(measurement: unknown): Promise<void> };
     classifier?: { classify: (state: any, questions: any, signal?: AbortSignal) => Promise<any> };
     childSession?: boolean;
+    forkedFrom?: string;
     sessionMessages?: any[];
   } = {},
 ) {
@@ -252,7 +253,7 @@ function createHarness(
     waitForIdle,
     sessionManager: {
       getSessionId: () => 'root-session',
-      getHeader: () => options.childSession ? { parentSession: '/parent.jsonl' } : { id: 'root' },
+      getHeader: () => ({ id: 'root-session', ...(options.forkedFrom ? { parentSession: options.forkedFrom } : {}) }),
       buildContextEntries: () => (options.sessionMessages ?? []).map((message, index) => ({
         type: 'message', id: `message-${index}`, parentId: null, timestamp: '', message,
       })),
@@ -303,6 +304,10 @@ function createHarness(
     registerCommand: vi.fn((name: string, command: any) => commands.set(name, command)),
     config: configValues,
     getActiveTools: vi.fn(() => options.activeTools ?? ['read', 'TaskCreate', 'TaskUpdate', 'edit', 'write']),
+    setActiveTools: vi.fn(),
+    services: { get: (contract: unknown) => contract === SESSIONS_SERVICE
+      ? { current: options.childSession ? { id: 'child-session', root: 'root-session', parent: 'root-session' } : { id: 'root-session', root: 'root-session' } }
+      : undefined },
     getThinkingLevel: vi.fn(() => thinkingLevel),
     setThinkingLevel,
     setModel,
@@ -2838,6 +2843,19 @@ describe('classifier guidance', () => {
     await harness.emit('input', { type: 'input', text: 'Continue implementation', source: 'interactive' });
     await harness.emit('before_agent_start', beforeStartEvent('Continue implementation'));
     expect(classifier.classify).toHaveBeenCalledTimes(3);
+  });
+
+  it('withholds Prewalk from subagent sessions without asking the user, but not from forked sessions', async () => {
+    const child = createHarness({ childSession: true, activeTools: [...entryTools, 'exit_plan_mode'] });
+    await child.emit('session_start', { type: 'session_start', reason: 'startup' });
+    expect(child.pi.setActiveTools).toHaveBeenCalledExactlyOnceWith(entryTools.filter(name => name !== 'enter_prewalk'));
+    await expect(enterPrewalk(child)).rejects.toThrow('not in subagents');
+    expect(child.ui.confirm).not.toHaveBeenCalled();
+
+    const fork = createHarness({ forkedFrom: '/parent.jsonl', activeTools: entryTools, prewalkOptions: { entryApproval: 'allow' } });
+    await fork.emit('session_start', { type: 'session_start', reason: 'fork' });
+    expect(fork.pi.setActiveTools).not.toHaveBeenCalled();
+    expect(await enterPrewalk(fork)).toMatchObject({ details: { phase: 'planning' } });
   });
 
   it('adds no entry guidance for regular requests, denied entry, child sessions, or failures', async () => {

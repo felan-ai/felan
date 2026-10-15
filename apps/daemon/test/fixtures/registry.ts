@@ -9,7 +9,6 @@ import { DaemonControlStore, type ControlStoreOptions } from '../../src/daemon/c
 import { SessionRegistry } from '../../src/daemon/registry.js';
 import type { SessionLifecycle, SessionOpenRequest, SessionBinding } from '../../src/daemon/session-lifecycle-contracts.js';
 import { createTestSessionLifecycle } from './session-runtime.js';
-import { restoreSessionCursor } from '../../src/daemon/session-cursor.js';
 import { fakeProcessAdapter } from './process-provider.js';
 import type { ProcessAdapter } from '../../src/daemon/process-adapter.js';
 
@@ -83,7 +82,6 @@ export async function fixture(options: ControlStoreOptions = {}, processAdapter:
       const source = request.target.kind === 'resume' ? request.target.sessionFile : undefined;
       await request.ownership.assertOwned(request.resources, { kind: request.target.kind, destinationDirectory: request.resources.sessionDir, ...(source ? { sourceSessionFile: source } : {}) });
       const manager = source ? SessionManager.open(source, request.resources.sessionDir, request.resources.cwd) : SessionManager.create(request.resources.cwd, request.resources.sessionDir);
-      if (request.target.kind === 'resume' && request.target.cursor) restoreSessionCursor(manager, request.target.cursor);
       const id = manager.getSessionId();
       const listeners = new Set<(event: AgentSessionEvent) => void>();
       const emit = (event: AgentSessionEvent) => { for (const listener of listeners) listener(event); };

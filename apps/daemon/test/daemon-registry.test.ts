@@ -103,18 +103,28 @@ describe.skipIf(!supported)('daemon session registry', () => {
     expect(next.recovery).toBeDefined();
     await next.restore(b.sessionId); expect(f.opened).toHaveLength(3);
   });
-  it('restores an explicitly selected older branch and refuses duplicate dispatched work', async () => {
+  it('restores the transcript tip after eviction, even if an older branch was selected, and refuses duplicate dispatched work', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     await b.runtime.session.prompt('first'); const selected = b.runtime.session.sessionManager.getLeafId()!;
-    await b.runtime.session.prompt('second'); b.runtime.session.sessionManager.branch(selected);
+    await b.runtime.session.prompt('second'); const tip = b.runtime.session.sessionManager.getLeafId()!;
+    b.runtime.session.sessionManager.branch(selected);
     f.registry.projection(b.sessionId).refresh();
     await f.registry.evictIdle(); await f.registry.restore(b.sessionId);
-    expect(f.registry.binding(b.sessionId)!.runtime.session.sessionManager.getLeafId()).toBe(selected);
+    expect(f.registry.binding(b.sessionId)!.runtime.session.sessionManager.getLeafId()).toBe(tip);
     const id = requestId(); f.store.admit({ v: 1, id, op: 'prompt', session: b.sessionId, params: { text: 'once' } }, 'owner');
     const effect = vi.fn(async () => {});
     await f.registry.runAdmitted(id, b.sessionId, { kind: 'tui', attachment: 'one' }, effect);
     await expect(f.registry.runAdmitted(id, b.sessionId, { kind: 'tui', attachment: 'one' }, effect)).rejects.toThrow('never dispatch');
     expect(effect).toHaveBeenCalledOnce();
+  });
+
+  it('restores at the last transcript entry when work was appended on an older branch', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    await b.runtime.session.prompt('first'); const selected = b.runtime.session.sessionManager.getLeafId()!;
+    await b.runtime.session.prompt('abandoned'); b.runtime.session.sessionManager.branch(selected);
+    await b.runtime.session.prompt('continued on older branch'); const tip = b.runtime.session.sessionManager.getLeafId()!;
+    await f.registry.evictIdle(); await expect(f.registry.restore(b.sessionId)).resolves.toBeDefined();
+    expect(f.registry.binding(b.sessionId)!.runtime.session.sessionManager.getLeafId()).toBe(tip);
   });
 
   it('serializes attachment behind an in-flight eviction instead of exposing its disposed binding', async () => {
@@ -161,19 +171,18 @@ describe.skipIf(!supported)('daemon session registry', () => {
     expect(service.settle).toHaveBeenCalledOnce(); expect(service.dispose).toHaveBeenCalledOnce();
   });
 
-  it('restores real finalized context and active tools before exposing a historical branch', async () => {
+  it('restores real finalized context and active tools at the transcript tip after navigation', async () => {
     const f = await realFixture(); const session = f.root.runtime.session;
     const tools = session.getActiveToolNames();
     await session.prompt('first-only'); const selected = session.sessionManager.getLeafId()!;
-    session.setActiveToolsByName([]); await session.prompt('second-excluded');
+    session.setActiveToolsByName([]); await session.prompt('second-included');
+    const tip = session.sessionManager.getLeafId()!;
     await session.navigateTree(selected, { summarize: false });
     f.registry.projection(f.root.sessionId).refresh(); await f.registry.evictIdle();
     const restored = await f.registry.restore(f.root.sessionId);
-    expect(restored.runtime.session.sessionManager.getLeafId()).toBe(selected);
-    expect(JSON.stringify(restored.runtime.session.messages)).not.toContain('second-excluded');
+    expect(restored.runtime.session.sessionManager.getLeafId()).toBe(tip);
+    expect(JSON.stringify(restored.runtime.session.messages)).toContain('second-included');
     expect(restored.runtime.session.getActiveToolNames()).toEqual(tools);
-    await restored.runtime.session.prompt('third-on-first');
-    expect(JSON.stringify(restored.runtime.session.messages)).not.toContain('second-excluded');
   });
 
   it('fenced writer settlement waits for effects that outlive session abort', async () => {

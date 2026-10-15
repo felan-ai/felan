@@ -10,10 +10,8 @@ import type {
   SessionManager,
   SettingsManager,
 } from '@felan-ai/agent-core';
-import type { SessionBranchCursor } from './session-cursor.js';
 import type { SessionEnvironment, SessionRuntime } from './session-runtime.js';
 import type { SessionExtensionBindings, SessionExtensionContext, SessionExecutionPort } from './session-execution.js';
-export type { SessionBranchCursor } from './session-cursor.js';
 
 export const SESSION_LIFECYCLE_API_VERSION = 1;
 
@@ -58,7 +56,7 @@ export interface DaemonSessionServices {
 
 export type SessionTarget =
   | { readonly kind: 'new'; readonly id?: string }
-  | { readonly kind: 'resume'; readonly sessionFile: string; readonly cursor?: SessionBranchCursor }
+  | { readonly kind: 'resume'; readonly sessionFile: string }
   | { readonly kind: 'fork'; readonly sourceSessionFile: string; readonly entryId: string; readonly position: 'before' | 'at' }
   | { readonly kind: 'clone'; readonly sourceSessionFile: string }
   | { readonly kind: 'import'; readonly sessionFile: string };

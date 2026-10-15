@@ -8,7 +8,7 @@ import {
   MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, type ActiveMessageDisplay,
 } from '@felan-ai/session-protocol';
 import type { DaemonControlStore } from './control-store.js';
-import type { ControlSession } from './control-state.js';
+import type { ControlSession, ControlSessionMetadata } from './control-state.js';
 import type { SessionBinding } from './session-lifecycle-contracts.js';
 import { messageDisplay } from './message-display.js';
 import { sessionTip } from './session-cursor.js';
@@ -535,6 +535,6 @@ function resultText(value: unknown): string {
   if (!value || typeof value !== 'object' || !('content' in value) || !Array.isArray(value.content)) return '';
   return value.content.filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n');
 }
-export function profilePolicy(session: ControlSession) {
+export function profilePolicy(session: ControlSessionMetadata) {
   return { mode: session.policy.effective, generation: session.policy.generation };
 }

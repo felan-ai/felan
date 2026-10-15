@@ -8,7 +8,7 @@ import { RegistryExecutions, ExecutionHost } from './executions.js';
 import type { ExecutionMetadata } from './control-state.js';
 import type { ProcessAdapter } from './process-adapter.js';
 import type { ControlCommit, DaemonControlStore } from './control-store.js';
-import { SessionProfileSchema, type ControlSession, type SessionProfile } from './control-state.js';
+import { SessionProfileSchema, type ControlSession, type ControlSessionMetadata, type SessionProfile } from './control-state.js';
 import { discoverLegacySessions, readTranscriptPreview, transcriptPreview, type LegacySession } from './legacy-sessions.js';
 import type { DaemonOwnership } from './ownership.js';
 import type { SessionLifecycle, DaemonSessionServices, SessionOpenRequest, SessionResources, SessionBinding, SessionTargetIdentity, SessionExecutionPolicy } from './session-lifecycle-contracts.js';
@@ -120,7 +120,7 @@ export class SessionRegistry {
   }
 
   assertAdmission(): void {
-    this.options.owner.assertCurrent(); this.options.store.snapshot();
+    this.options.owner.assertCurrent(); this.options.store.assertCurrent();
     if (this.failure) throw new Error('Registry is not admitting work.');
     if (this.stopping) throw new RegistryOpeningCancelled('Registry is not admitting work.');
   }
@@ -135,7 +135,7 @@ export class SessionRegistry {
 
   private assertSessionAccess(id: string, activatingBinding: boolean): void {
     this.assertAdmission();
-    const session = this.options.store.session(id);
+    const session = this.options.store.sessionMetadata(id);
     if (session.deletedAt !== undefined) throw registryError('not_found', 'Session was deleted.');
     if (this.reservations.has(session.piPath) && !activatingBinding) throw registryError('busy', 'Session has a lifecycle operation in progress.');
     if (session.state !== 'open' || this.entries.get(id)?.disposing || this.entries.get(id)?.cancelling || this.closing.has(id) || this.closing.has(session.root) || this.copyClaims.has(session.piPath)) throw new Error('Session is closing, cancelling or has a pinned copy in progress.');
@@ -149,7 +149,7 @@ export class SessionRegistry {
   failExecution(error: unknown): void { this.fence(error); }
 
   beginDrain(): void {
-    if (this.draining && this.stopping && !this.failure) { this.options.owner.assertCurrent(); this.options.store.snapshot(); return; }
+    if (this.draining && this.stopping && !this.failure) { this.options.owner.assertCurrent(); this.options.store.assertCurrent(); return; }
     this.assertAdmission(); this.draining = true;
   }
 
@@ -260,7 +260,7 @@ export class SessionRegistry {
 
   restore(id: string, context: Pick<RegistryOpenRequest, 'systemPromptAppend' | 'providerContext'> = {}): Promise<SessionBinding> {
     this.assertAdmission();
-    const stored = this.options.store.snapshot().sessions.find(session => session.id === id);
+    const stored = this.options.store.findSessionMetadata(id);
     if (!stored) throw registryError('not_found', 'Session is not registered.');
     if (stored.deletedAt !== undefined) throw registryError('not_found', 'Session was deleted.');
     if (this.reloadAttachments.has(id) && this.opening.has(id)) return this.opening.get(id)!;
@@ -276,7 +276,7 @@ export class SessionRegistry {
       rootSessionId: stored.root, ...(stored.parent ? { parentSessionId: stored.parent } : {}), policy: profilePolicy(stored), ...profileOptions(stored.profile), ...context }, stored)
       .catch(error => {
         // A failed reopen leaves the session closed, as it was before.
-        if (reopening && !this.failure && !this.entries.has(id) && this.options.store.session(id).state === 'open') this.options.store.transitionSessionForSafety(id, 'closed');
+        if (reopening && !this.failure && !this.entries.has(id) && this.options.store.sessionMetadata(id).state === 'open') this.options.store.transitionSessionForSafety(id, 'closed');
         throw error;
       });
     this.opening.set(id, operation);
@@ -287,13 +287,13 @@ export class SessionRegistry {
   /** Unregistered pre-daemon transcripts that `adopt` can register in place. */
   async legacySessions(cwd?: string, fresh = false): Promise<LegacySession[]> {
     this.assertAdmission();
-    const sessions = this.options.store.snapshot().sessions; const now = Date.now();
+    const sessions = this.options.store.sessionMetadatas(); const now = Date.now();
     // Paged listings repeat discovery per page; a short-lived result keeps pages consistent and bounded.
     if (fresh || !this.legacyListing || this.legacyListing.cwd !== cwd || this.legacyListing.expires <= now) {
       this.legacyListing = { cwd, expires: now + 2_000, value: discoverLegacySessions(this.options.owner, sessions, cwd) };
     }
     const rows = await this.legacyListing.value;
-    const current = this.options.store.snapshot().sessions;
+    const current = this.options.store.sessionMetadatas();
     const ids = new Set(current.map(session => session.id)); const paths = new Set(current.map(session => session.piPath));
     return rows.filter(row => !ids.has(row.id) && !paths.has(row.path));
   }
@@ -301,7 +301,7 @@ export class SessionRegistry {
   /** Registers a discovered pre-daemon transcript under its existing ID and file; later turns append to that file. */
   adopt(id: string, profile: Pick<RegistryOpenRequest, 'source' | 'interactiveExtensions' | 'policy'>): Promise<SessionBinding> {
     this.assertNewWork();
-    if (this.options.store.snapshot().sessions.some(session => session.id === id)) return this.restore(id);
+    if (this.options.store.findSessionMetadata(id)) return this.restore(id);
     const pending = this.opening.get(id);
     if (pending) return pending;
     const operation = (async () => {
@@ -325,7 +325,7 @@ export class SessionRegistry {
     return preview;
   }
 
-  list(): ControlSession[] { this.options.owner.assertCurrent(); return this.options.store.snapshot().sessions.filter(session => session.deletedAt === undefined); }
+  list(): ControlSessionMetadata[] { return this.options.store.sessionMetadatas().filter(session => session.deletedAt === undefined); }
   binding(id: string): SessionBinding | undefined { return this.entries.get(id)?.binding; }
   projection(id: string): SessionProjection { return this.require(id).projection; }
   async refreshModelAvailability(signal: AbortSignal): Promise<void> {
@@ -424,9 +424,9 @@ export class SessionRegistry {
   async runAdmitted<T>(requestId: string, id: string, origin: Origin, effect: (session: AgentSession) => Promise<T>): Promise<T> {
     this.assertNewWork();
     this.assertDispatch(id);
-    const entry = this.require(id); const stored = this.options.store.session(id);
+    const entry = this.require(id); const stored = this.options.store.sessionMetadata(id);
     if (stored.state !== 'open' || stored.execution && !stored.execution.completedAt || this.closing.has(id) || this.copyClaims.has(stored.piPath) || this.running(id)) throw registryError('busy', 'Wait for the current run to finish.');
-    const request = this.options.store.snapshot().requests.find(item => item.id === requestId);
+    const request = this.options.store.request(requestId);
     if (request?.session !== id) throw new Error('Admitted request belongs to another session.');
     const run = { state: 'running' as const, id: randomUUID(), origin };
     let finish!: () => void;
@@ -487,7 +487,7 @@ export class SessionRegistry {
 
   async mutateAdmitted<T>(requestId: string, id: string, effect: (context: RegistryMutationContext) => Promise<T>): Promise<T> {
     const entry = this.require(id);
-    const request = this.options.store.snapshot().requests.find(item => item.id === requestId);
+    const request = this.options.store.request(requestId);
     if (request?.session !== id || !nonRunMutations.has(request.op)) throw new Error('Request is not a supported non-run mutation for this session.');
     let active = true;
     const assertCurrent = () => {
@@ -599,7 +599,7 @@ export class SessionRegistry {
 
   reloadAdmitted(requestId: string, id: string, configuration?: { values: OperationParams<'config.set'>['values']; overrides: NonNullable<SessionProfile['extensionConfigOverrides']> }): Promise<SessionBinding> {
     this.assertDispatch(id); const stored = this.options.store.session(id); const entry = this.entries.get(id);
-    const request = this.options.store.snapshot().requests.find(item => item.id === requestId);
+    const request = this.options.store.request(requestId);
     if (request?.op !== (configuration ? 'config.set' : 'session.reload') || request.session !== id || request.phase !== 'intent') throw registryError('request_conflict', 'Reload request differs.');
     if (stored.parent) throw registryError('unavailable', 'Only root sessions can reload.');
     if (!['idle', 'interrupted'].includes(stored.run.state) || entry && this.running(id)) throw registryError('busy', 'Wait for the current run to finish before reloading.');
@@ -653,7 +653,7 @@ export class SessionRegistry {
   cancelAdmitted(requestId: string, id: string, runId?: string): Promise<void> {
     this.assertAdmission();
     if (!this.entries.has(id)) throw registryError('not_found', 'Cancel session is not resident.');
-    const request = this.options.store.snapshot().requests.find(item => item.id === requestId);
+    const request = this.options.store.request(requestId);
     if (request?.session !== id || request.op !== 'cancel') throw registryError('request_conflict', 'Cancel request belongs to another operation or session.');
     if (runId && this.options.store.session(id).run.id !== runId) throw registryError('not_found', 'Run not found.');
     this.commitDispatch(requestId, id);
@@ -662,7 +662,7 @@ export class SessionRegistry {
 
   closeAdmitted(requestId: string, id: string): Promise<void> {
     this.assertAdmission();
-    const request = this.options.store.snapshot().requests.find(item => item.id === requestId);
+    const request = this.options.store.request(requestId);
     if (request?.session !== id || request.op !== 'close') throw new Error('Close request belongs to another operation or session.');
     this.commitDispatch(requestId, id);
     return this.close(id);
@@ -681,7 +681,7 @@ export class SessionRegistry {
     this.assertDispatch(id);
     const source = this.require(id);
     const stored = this.options.store.session(id);
-    const request = this.options.store.snapshot().requests.find(item => item.id === requestId);
+    const request = this.options.store.request(requestId);
     if (request?.session !== id || request.op !== (from ? 'fork' : 'session.clone')) throw new Error('Copy request belongs to another operation or session.');
     const path = this.options.owner.assertOwnsPath(stored.piPath);
     this.copyClaims.add(path);
@@ -854,11 +854,11 @@ export class SessionRegistry {
   }
 
   private busy(id: string): boolean {
-    const entry = this.require(id); const stored = this.options.store.session(id);
+    const entry = this.require(id); const stored = this.options.store.sessionMetadata(id);
     return this.copyClaims.has(stored.piPath) || this.reservations.has(stored.piPath) || !entry.binding.runtime.session.isIdle || entry.binding.runtime.session.pendingMessageCount > 0 || entry.dispatches.size > 0
       || ['running', 'waiting', 'cancelling'].includes(stored.run.state) || !!entry.host?.hasPendingWork() || !!entry.host?.hasActiveJobs() || !!entry.host?.hasExecutingJobs()
       || [...entry.services].some(service => !service.disposeWhenIdle || service.busy()) || this.processes.blocksEviction(stored.root)
-      || this.options.store.snapshot().interactions.some(item => item.scope.kind === 'session' && item.scope.root === stored.root && item.state === 'waiting');
+      || this.options.store.interactions().some(item => item.scope.kind === 'session' && item.scope.root === stored.root && item.state === 'waiting');
   }
 
   /** Whether a turn or admitted run is in progress, the condition Pi itself uses to defer conflicting work. */
@@ -874,7 +874,7 @@ export class SessionRegistry {
 
   private hasWarmChildren(id: string): boolean { return [...this.entries].some(([child, value]) => child !== id && value.binding.rootSessionId === id); }
 
-  private async open(request: RegistryOpenRequest, restored?: ControlSession, copySource?: string, reservation?: symbol): Promise<SessionBinding> {
+  private async open(request: RegistryOpenRequest, restored?: ControlSessionMetadata, copySource?: string, reservation?: symbol): Promise<SessionBinding> {
     const resources = await this.options.lifecycle.resolveResources({ cwd: request.cwd, ...(request.sessionDir ? { sessionDir: request.sessionDir } : {}) });
     this.assertAdmission();
     if (request.clientRoot) this.assertClientSessionDirectory(resources);
@@ -920,10 +920,7 @@ export class SessionRegistry {
       }
     } };
     try {
-      const target = restored?.branch && request.target.kind === 'resume' ? { ...request.target, cursor: {
-        branch: restored.branch, ...(restored.observedTip === undefined ? {} : { observedTip: restored.observedTip }),
-      } } : request.target;
-      binding = await this.runtimeOpening.run({}, () => this.options.lifecycle.openSession({ ...request, target, resources, ownership, policy: initialPolicy, services }));
+      binding = await this.runtimeOpening.run({}, () => this.options.lifecycle.openSession({ ...request, resources, ownership, policy: initialPolicy, services }));
       this.assertAdmission();
       if (restored && this.closing.has(restored.id) || request.parentSessionId && (this.closing.has(request.parentSessionId) || this.closing.has(request.rootSessionId!))) throw new RegistryOpeningCancelled('Session is closing.');
       let manager = binding.runtime.session.sessionManager;
@@ -1024,7 +1021,7 @@ export class SessionRegistry {
     }
   }
   private settleInteractions(id: string, reason: 'cancel' | 'close' | 'shutdown'): void {
-    for (const interaction of this.options.store.snapshot().interactions) {
+    for (const interaction of this.options.store.interactions()) {
       if (interaction.scope.kind !== 'session' || interaction.scope.session !== id || !['waiting', 'deferred'].includes(interaction.state)) continue;
       const commit = reason === 'shutdown' && interaction.deferrable
         ? this.options.store.deferInteraction(interaction.id)
@@ -1095,9 +1092,9 @@ export class SessionRegistry {
   }
 
   private extras(id: string): { children: SessionSnapshot['children']; processes: SessionSnapshot['processes']; interactions: SessionSnapshot['interactions'] } {
-    const state = this.options.store.snapshot(); const session = this.options.store.session(id);
-    return { children: state.sessions.filter(item => item.parent === id && item.deletedAt === undefined).map(item => ({ session: item.id, parent: id, root: item.root, title: item.title, state: item.state, run: item.run })),
-      processes: this.processes.list(session.root).slice(0, 256), interactions: state.interactions.filter(item => item.scope.kind === 'session' && item.scope.session === id && (item.state === 'waiting' || item.state === 'deferred')) };
+    const sessions = this.options.store.sessionMetadatas(); const session = this.options.store.sessionMetadata(id);
+    return { children: sessions.filter(item => item.parent === id && item.deletedAt === undefined).map(item => ({ session: item.id, parent: id, root: item.root, title: item.title, state: item.state, run: item.run })),
+      processes: this.processes.list(session.root).slice(0, 256), interactions: this.options.store.interactions().filter(item => item.scope.kind === 'session' && item.scope.session === id && (item.state === 'waiting' || item.state === 'deferred')) };
   }
   private publish(event: ProjectionOutput): void {
     if ('change' in event && 'interaction' in event.change && (event.change.type === 'interaction.requested' || event.change.type === 'interaction.resolved')) {

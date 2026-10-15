@@ -265,7 +265,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       const original = entry && controller.history.find(message => message.entryId === entry.id);
       const result = await controller.perform('fork', { from: entry ? { kind: 'entry', entryId: entry.id } : { kind: 'position', position: Number(position) } }, session);
       if (result.outcome !== 'accepted') return false;
-      await controller.attach(result.result.sessionId);
+      await controller.attach(result.result.sessionId, 'fork');
       if (original) options.setDraft?.(original.content.filter(part => part.type === 'text').map(part => part.text).join('\n'));
       return true;
     }

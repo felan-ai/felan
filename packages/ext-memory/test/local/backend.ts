@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { HostAgentRuntime, SessionManager, type SessionsService } from '@felan-ai/agent-core';
-import { digestActiveBranch, type SessionCheckpoint } from '../../src/index.js';
+import type { SessionCheckpoint } from '../../src/index.js';
 import { LocalMemoryCoordinator as Coordinator, type LocalMemoryCoordinatorOptions } from '../../src/local/coordinator.js';
 import { materializeMemoryInput as rawMaterializeMemoryInput, createDefaultLocalMemoryDreamRunner as rawCreateDefaultLocalMemoryDreamRunner, type MaterializeMemoryInputOptions, type LocalMemoryDreamRunnerOptions } from '../../src/local/dreamer.js';
 import { LocalMemoryStore as Store, type LocalMemoryStoreOptions } from '../../src/local/store.js';
@@ -14,6 +15,19 @@ import { listLocalSessionHistory as rawListLocalSessionHistory, readMemoryHistor
 import type { LocalMemoryProject } from '../../src/local/project.js';
 import type { MemoryHydrationOptions, MemoryArtifact, MemoryFile, MemorySnapshot } from '../../src/contracts.js';
 
+/** The daemon's checkpoint digest: canonical JSON of the full branch, memory-context entries included. */
+function daemonBranchDigest(branch: readonly unknown[]): string {
+  const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record).sort().filter(key => record[key] !== undefined).map(key => `${JSON.stringify(key)}:${canonical(record[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value) as string;
+  };
+  return createHash('sha256').update(canonical(branch)).digest('hex');
+}
+
 export function createMemoryBackend() {
   function registerCheckpoint(checkpoint: SessionCheckpoint) {
     if (checkpoint.sessionFile !== checkpoint.sessionId) sources.set(checkpoint.sessionId, checkpoint.sessionFile);
@@ -22,9 +36,12 @@ export function createMemoryBackend() {
   const directories = new Set<string>();
   let historyCwd: string | undefined;
   const runtime = new HostAgentRuntime('/', { pathAccess: 'host', sessionStorageRoot: tmpdir(), agentStorageRoot: tmpdir() });
+  const faults = { failingHistory: new Set<string>(), heldHistory: new Set<string>(), abortedReads: [] as string[], listFailures: 0, listCalls: 0, historyReads: [] as string[] };
   const sessions: SessionsService = {
     current: { id: 'test', root: 'test' },
     async list() {
+      faults.listCalls += 1;
+      if (faults.listFailures > 0) { faults.listFailures -= 1; throw new Error('Session list is unavailable'); }
       const rows = (await Promise.all([...directories].map(directory => SessionManager.list(historyCwd ?? directory, directory)))).flat();
       return { items: rows.map(row => {
         sources.set(row.id, row.path);
@@ -37,9 +54,17 @@ export function createMemoryBackend() {
       if (!path) throw new Error('Missing test source');
       const text = await readFile(path, 'utf8');
       const manager = SessionManager.open(path);
-      return { sessionId: id, revision: text, branch: manager.getLeafId(), transcriptDigest: digestActiveBranch(manager.getBranch()), byteLength: (await stat(path)).size };
+      return { sessionId: id, revision: text, branch: manager.getLeafId(), transcriptDigest: daemonBranchDigest(manager.getBranch()), byteLength: (await stat(path)).size };
     },
-    async history(id: string, options: { at?: { revision: string } } = {}) {
+    async history(id: string, options: { at?: { revision: string }; signal?: AbortSignal } = {}) {
+      faults.historyReads.push(id);
+      if (faults.failingHistory.has(id)) throw new Error('Session history is unavailable');
+      if (faults.heldHistory.has(id)) await new Promise<never>((_resolve, reject) => {
+        const { signal } = options;
+        if (!signal) return;
+        const abort = () => { faults.abortedReads.push(id); reject(new Error('Session history read was aborted')); };
+        if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+      });
       const snapshot = await sessions.checkpoint(id);
       if (options.at && options.at.revision !== snapshot.revision) throw new Error('Stale test history');
       return { ...snapshot, entries: SessionManager.open(sources.get(id)!).getEntries() };
@@ -99,7 +124,7 @@ export function createMemoryBackend() {
     directories.add(options.sessionDir); return backend.listLocalSessionHistory(options);
   }
 
-  return { ...backend, LocalMemoryCoordinator, materializeMemoryInput, listLocalSessionHistory };
+  return { ...backend, LocalMemoryCoordinator, materializeMemoryInput, listLocalSessionHistory, faults };
 }
 
 export { LocalMemoryControlError } from '../../src/local/store.js';

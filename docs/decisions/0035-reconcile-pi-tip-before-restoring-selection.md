@@ -2,6 +2,7 @@
 
 ## Status
 
+Superseded by [ADR 0038](0038-resume-transcripts-at-their-last-entry.md).
 Implementation decision within the approved Story 1 content-authority contract.
 No automatic request replay is introduced.
 

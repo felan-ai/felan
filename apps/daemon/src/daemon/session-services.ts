@@ -19,7 +19,7 @@ function sessionExecutions(registry: SessionRegistry, sessionId: string): Sessio
   if (!ports) { ports = new Map(); executionPorts.set(registry, ports); }
   let operations = ports.get(sessionId);
   if (!operations) {
-    const row = registry.options.store.session(sessionId);
+    const row = registry.options.store.sessionMetadata(sessionId);
     operations = createSessionExecutions(registry.executionHost(sessionId), { id: sessionId, root: row.root, ...(row.parent ? { parent: row.parent } : {}) });
     ports.set(sessionId, operations);
   }
@@ -30,7 +30,7 @@ export function createRegistrySessionsService(registry: SessionRegistry, current
   const identity = Object.freeze({ ...current });
   const assertCurrent = () => {
     registry.assertServiceAccess(identity.id);
-    const stored = registry.options.store.session(identity.id);
+    const stored = registry.options.store.sessionMetadata(identity.id);
     if (stored.root !== identity.root || stored.parent !== identity.parent) throw new SessionsServiceError('inaccessible');
   };
   const execution = () => {
@@ -47,15 +47,18 @@ export function createRegistrySessionsService(registry: SessionRegistry, current
         signal?.throwIfAborted();
         let bytes: number | undefined;
         let diagnostic: 'inaccessible' | 'oversize' | undefined;
+        let updatedAt = stored.updatedAt;
         try {
           const info = await stat(registry.options.owner.assertOwnsPath(stored.piPath));
           if (!info.isFile()) diagnostic = 'inaccessible';
-          else { bytes = info.size; if (bytes > 64 * 1024 * 1024) diagnostic = 'oversize'; }
+          else {
+            bytes = info.size; updatedAt = Math.max(updatedAt, Math.floor(info.mtimeMs));
+            if (bytes > 64 * 1024 * 1024) diagnostic = 'oversize';
+          }
         } catch { diagnostic = 'inaccessible'; }
         rows.push({ key: stored.piPath, sessionId: stored.id, id: stored.id, root: stored.root,
           ...(stored.parent ? { parent: stored.parent } : {}), cwd: stored.cwd, title: stored.title,
-          updatedAt: stored.updatedAt, state: stored.state,
-          ...(stored.branch ? { branch: stored.branch } : {}), ...(stored.observedTip ? { observedTip: stored.observedTip } : {}),
+          updatedAt, state: stored.state,
           ...(bytes === undefined ? {} : { bytes }), ...(diagnostic ? { diagnostic } : {}) });
       }
       return rows;
@@ -72,7 +75,7 @@ export function createRegistrySessionsService(registry: SessionRegistry, current
         const buffer = Buffer.alloc(Number(before.size) + 1);
         let offset = 0;
         while (offset < buffer.length) {
-          assertCurrent(); signal?.throwIfAborted();
+          signal?.throwIfAborted();
           const { bytesRead } = await file.read(buffer, offset, Math.min(65_536, buffer.length - offset), offset);
           if (!bytesRead) break;
           offset += bytesRead;

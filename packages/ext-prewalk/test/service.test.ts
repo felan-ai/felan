@@ -1,4 +1,5 @@
 import {
+  SESSIONS_SERVICE,
   getExtensionConfigDefinition,
   type ExtensionContext,
   type ExtensionUi,
@@ -16,12 +17,21 @@ const answer = (actionId: string, values = {}, outcome: 'submit' | 'cancel' = 's
 });
 
 describe('common-UI Prewalk root', () => {
-  it('needs no feature service and preserves configuration metadata', async () => {
-    expect(prewalkExtension.serviceRequirements).toBeUndefined();
+  it('needs no feature service, reads only the optional session identity and preserves configuration metadata', async () => {
+    expect(prewalkExtension.serviceRequirements).toEqual({ optional: [SESSIONS_SERVICE] });
     expect(getExtensionConfigDefinition(prewalkExtension)).toBe(PREWALK_CONFIG);
     const h = harness();
     expect([...h.tools.keys()]).toEqual(['enter_prewalk', 'exit_plan_mode']);
-    expect(h.getService).not.toHaveBeenCalled();
+    expect(h.getService.mock.calls).toEqual([[SESSIONS_SERVICE]]);
+    await h.shutdown();
+  });
+
+  it('withholds Prewalk from a subagent session without requesting UI', async () => {
+    const h = harness(undefined, {}, { id: 'child', root: 'root', parent: 'root' });
+    await h.start();
+    expect(h.setActiveTools).toHaveBeenCalledExactlyOnceWith(['read', 'write']);
+    await expect(h.execute('enter_prewalk', {})).rejects.toThrow('not in subagents');
+    expect(h.request).not.toHaveBeenCalled();
     await h.shutdown();
   });
 
@@ -198,14 +208,19 @@ describe('common-UI Prewalk root', () => {
   });
 });
 
-function harness(request = vi.fn<ExtensionUi['request']>().mockResolvedValue(answer('approve')), config: Record<string, unknown> = {}) {
+function harness(request = vi.fn<ExtensionUi['request']>().mockResolvedValue(answer('approve')), config: Record<string, unknown> = {},
+  current: { id: string; root: string; parent?: string } = { id: 'root', root: 'root' }) {
   const tools = new Map<string, ToolDefinition>();
   const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => unknown>>();
   const model = { provider: 'test', id: 'model-pro', name: 'Planner', reasoning: true };
   const select = vi.fn();
   const setModel = vi.fn().mockResolvedValue(true);
   const setThinkingLevel = vi.fn();
-  const getService = vi.fn(() => { throw new Error('Feature UI service must not be read'); });
+  const getService = vi.fn((contract: unknown) => {
+    if (contract === SESSIONS_SERVICE) return { current };
+    throw new Error('Feature UI service must not be read');
+  });
+  const setActiveTools = vi.fn();
   const context = {
     model, mode: 'tui', hasUI: true, scopedModels: [],
     modelRegistry: { getAvailable: () => [model], hasConfiguredAuth: () => true },
@@ -217,13 +232,14 @@ function harness(request = vi.fn<ExtensionUi['request']>().mockResolvedValue(ans
     config: { targetModel: 'low', targetThinking: 'medium', restorePlanner: true, entryApproval: 'allow', planReview: 'ask', ...config },
     services: { get: getService },
     ui: { request, notify: vi.fn(), status: vi.fn(), removeStatus: vi.fn(), present: vi.fn() },
-    runtime: {}, getThinkingLevel: () => 'high', getActiveTools: () => ['read', 'write'],
+    runtime: {}, getThinkingLevel: () => 'high', getActiveTools: () => ['read', 'write', 'enter_prewalk', 'exit_plan_mode'], setActiveTools,
     setThinkingLevel, setModel, registerCapability: vi.fn(), registerCommand: vi.fn(),
     registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
     on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => handlers.set(name, [...handlers.get(name) ?? [], handler]),
   } as unknown as FelanExtensionAPI);
   return {
-    tools, context, select, request, getService, setModel, setThinkingLevel,
+    tools, context, select, request, getService, setModel, setThinkingLevel, setActiveTools,
+    start: async () => { for (const handler of handlers.get('session_start') ?? []) await handler({ type: 'session_start', reason: 'startup' }, context); },
     execute: (name: string, args: unknown, signal?: AbortSignal) => tools.get(name)!.execute('call', args, signal, undefined, context),
     shutdown: async () => { for (const handler of handlers.get('session_shutdown') ?? []) await handler({}, context); },
   };

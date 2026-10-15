@@ -24,8 +24,6 @@ export interface SessionHistorySource {
   readonly title: string;
   readonly updatedAt: number;
   readonly state: 'open' | 'closed';
-  readonly branch?: string;
-  readonly observedTip?: string;
   readonly bytes?: number;
   readonly fingerprint?: string;
   readonly diagnostic?: SessionHistoryInfo['diagnostic'];
@@ -137,7 +135,8 @@ export function createSessionHistoryBackend(options: CreateSessionHistoryBackend
     if (row.source.bytes !== undefined && row.source.bytes !== bytes.byteLength) fail('stale');
     const parsed = await parseTranscript(bytes, row.source.sessionId, signal);
     const { entries } = parsed;
-    const branch = selectedBranch(row.source, entries);
+    // Pi resumes a transcript at its last entry, so that entry is the active leaf.
+    const branch = entries.at(-1)?.id ?? null;
     const after = await snapshot(signal);
     if (after.rows.find(item => item.info.id === id)?.identity !== row.identity) fail('stale');
     return { ...parsed, revision, branch, byteLength: bytes.byteLength };
@@ -222,16 +221,13 @@ function sourceCopy(value: SessionHistorySource): SessionHistorySource {
     || value.parent !== undefined && !validId(value.parent)
     || typeof value.cwd !== 'string' || value.cwd.length > 4096 || typeof value.title !== 'string' || value.title.length > 4096
     || !Number.isSafeInteger(value.updatedAt) || value.updatedAt < 0 || !['open', 'closed'].includes(value.state)
-    || value.branch !== undefined && !validId(value.branch) || value.observedTip !== undefined && !validId(value.observedTip)
-    || value.observedTip !== undefined && value.branch === undefined
     || value.bytes !== undefined && (!Number.isSafeInteger(value.bytes) || value.bytes < 0)
     || value.fingerprint !== undefined && !validDigest(value.fingerprint)
     || value.diagnostic !== undefined && !['inaccessible', 'oversize', 'unsupported'].includes(value.diagnostic)) fail('inaccessible');
   return Object.freeze({ key: value.key, sessionId: value.sessionId, cwd: value.cwd, title: value.title,
     updatedAt: value.updatedAt, state: value.state,
     ...(value.id === undefined ? {} : { id: value.id }), ...(value.root === undefined ? {} : { root: value.root }),
-    ...(value.parent === undefined ? {} : { parent: value.parent }), ...(value.branch === undefined ? {} : { branch: value.branch }),
-    ...(value.observedTip === undefined ? {} : { observedTip: value.observedTip }),
+    ...(value.parent === undefined ? {} : { parent: value.parent }),
     ...(value.bytes === undefined ? {} : { bytes: value.bytes }),
     ...(value.fingerprint === undefined ? {} : { fingerprint: value.fingerprint }),
     ...(value.diagnostic === undefined ? {} : { diagnostic: value.diagnostic }),
@@ -302,24 +298,6 @@ function validateEntry(value: Record<string, unknown>): asserts value is Record<
     case 'session_info': if (!optionalString('name')) fail('invalid'); break;
     default: fail('unsupported');
   }
-}
-
-function selectedBranch(source: SessionHistorySource, entries: readonly SessionEntry[]): string | null {
-  const byId = new Map(entries.map((entry, index) => [entry.id, index]));
-  const tip = entries.at(-1)?.id ?? source.sessionId;
-  let selected = source.branch ?? tip;
-  if (selected !== source.sessionId && !byId.has(selected)) fail('stale');
-  if (source.observedTip !== undefined && tip !== source.observedTip) {
-    const offset = source.observedTip === source.sessionId ? -1 : byId.get(source.observedTip);
-    if (offset === undefined) fail('stale');
-    let parent = selected === source.sessionId ? null : selected;
-    for (const entry of entries.slice(offset + 1)) {
-      if (entry.parentId !== parent) fail('stale');
-      parent = entry.id;
-    }
-    selected = tip;
-  }
-  return selected === source.sessionId ? null : selected;
 }
 
 function requestOptions(value?: SessionsRequestOptions): SessionsRequestOptions {

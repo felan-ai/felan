@@ -313,7 +313,7 @@ async function createHarness(options: { startLow?: boolean } = {}) {
     agentDir,
     classifier,
   });
-  const host = { executions: vi.fn(async () => ({ items: [] })), create: vi.fn(async () => { throw new Error('Child execution is prohibited in this fixture'); }) };
+  const host = { current: { id: 'root', root: 'root' }, executions: vi.fn(async () => ({ items: [] })), create: vi.fn(async () => { throw new Error('Child execution is prohibited in this fixture'); }) };
   const extensions: Record<string, ConfiguredFelanExtension> = {
     // The scripted provider supports effort changes without replacing edit/write.
     '@felan-ai/test-native-thinking': Object.assign(() => {}, {

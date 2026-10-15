@@ -1,6 +1,6 @@
 import net, { type Socket } from 'node:net';
 import type { Execution, Interaction, SessionSnapshot } from '@felan-ai/session-protocol';
-import type { TuiSessionController } from './controller.js';
+import type { SessionEntry, TuiSessionController } from './controller.js';
 
 const HERDR_SOURCE = 'herdr:felan';
 const HERDR_AGENT = 'felan';
@@ -10,6 +10,7 @@ export type HerdrAgentState = 'working' | 'blocked' | 'idle';
 
 export interface HerdrStatus {
   readonly session?: string;
+  readonly entry?: SessionEntry;
   readonly state: HerdrAgentState;
   readonly message?: string;
 }
@@ -63,7 +64,7 @@ export function reportHerdrPane(controller: TuiSessionController, pane: HerdrPan
     if (closed) return;
     const rows = executions && executions.session === controller.sessionId ? executions.rows : undefined;
     if (!rows && target()) return;
-    pane.update(herdrStatus(controller.snapshot, prompts(), rows ?? []));
+    pane.update({ ...herdrStatus(controller.snapshot, prompts(), rows ?? []), entry: controller.sessionEntry });
   };
   const refresh = async () => {
     if (loading) return;
@@ -126,7 +127,7 @@ export class HerdrPane {
   readonly #sendRequest: (request: HerdrRequest) => Promise<void>;
   #sequence = Date.now() * 1_000;
   #session: string | undefined;
-  #sessionPending = false;
+  #sessionStart: 'startup' | SessionEntry | undefined;
   #lastState: string | undefined;
   #queued: { state: HerdrAgentState; message?: string } | undefined;
   #sending = false;
@@ -136,10 +137,15 @@ export class HerdrPane {
     this.#sendRequest = sendRequest;
   }
 
-  /** Reports only changes; nothing is sent until a session is attached. A newly attached session is announced before its state. */
+  /**
+   * Reports only changes; nothing is sent until a session is attached. A newly attached session is announced before its
+   * state with Pi's `session_start` reason: Herdr ignores a Felan session report without a recognized reason and lets
+   * only `new`, `resume` and `fork` replace the session of a pane whose Felan process is still running.
+   */
   update(status: HerdrStatus): void {
     if (status.session && status.session !== this.#session) {
-      this.#session = status.session; this.#sessionPending = true; this.#lastState = undefined;
+      this.#sessionStart = this.#session === undefined ? 'startup' : status.entry ?? 'resume';
+      this.#session = status.session; this.#lastState = undefined;
     }
     if (!this.#session) return;
     const key = `${status.state}\0${status.message ?? ''}`;
@@ -153,10 +159,11 @@ export class HerdrPane {
     if (this.#sending) return;
     this.#sending = true;
     try {
-      while (this.#sessionPending || this.#queued) {
-        if (this.#sessionPending) {
-          this.#sessionPending = false;
-          await this.#deliver('session', 'pane.report_agent_session', {});
+      while (this.#sessionStart || this.#queued) {
+        if (this.#sessionStart) {
+          const start = this.#sessionStart;
+          this.#sessionStart = undefined;
+          await this.#deliver('session', 'pane.report_agent_session', { session_start_source: start });
           continue;
         }
         const queued = this.#queued!;

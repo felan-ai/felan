@@ -163,10 +163,6 @@ export function strongerThinking(configured: FelanThinkingLevel, chosen: Impleme
   return FELAN_THINKING_LEVELS.indexOf(chosen) > FELAN_THINKING_LEVELS.indexOf(configured) ? chosen : configured;
 }
 
-export function isChildSession(ctx: ExtensionContext): boolean {
-  return ctx.sessionManager.getHeader()?.parentSession !== undefined;
-}
-
 function runState(run: RunContext, ctx: ExtensionContext, includeSession = true) {
   return {
     request: run.request,

@@ -58,6 +58,7 @@ export const ControlSessionSchema = Type.Object({
   projections: Type.Array(projection, { maxItems: CONTROL_LIMITS.projections }),
 });
 export type ControlSession = Static<typeof ControlSessionSchema>;
+export type ControlSessionMetadata = Omit<ControlSession, 'projections'>;
 export type ControlProjection = Static<typeof projection>['value'];
 export const ControlRequestSchema = Type.Object({
   id: Type.String({ pattern: UUID_V7_PATTERN }), principal: IdSchema, session: Type.Optional(IdSchema), op: IdSchema,

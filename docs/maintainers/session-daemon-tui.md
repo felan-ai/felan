@@ -30,9 +30,9 @@ Connection, recovery, policy restrictions and queued work remain visible.
 `/reconnect` retries bounded client recovery; it does not authorize a different
 daemon instance or silently weaken policy.
 
-ADR [0035](../decisions/0035-reconcile-pi-tip-before-restoring-selection.md)
-fixes the observed Pi-tip crash by hiding a Pi user entry at the current tip while
-preserving the older branch selection. It does not alter transcript history.
+ADR [0038](../decisions/0038-resume-transcripts-at-their-last-entry.md)
+resumes each transcript at its last entry, so Pi-durable work is always visible and
+never stale. It does not alter transcript history.
 
 ## Configuration and resources
 
