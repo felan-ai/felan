@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { stripTerminalSequences, TuiAltScreen, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
+import { backgroundAnsi, parseColor, stripTerminalSequences, TuiAltScreen, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
 import { createRegistryInteractionBroker } from '../../daemon/src/daemon/broker.js';
 import { createSessionExtensionUi } from '../../daemon/src/daemon/extension-ui.js';
 import { sessionUiPort } from './session-ui-fixture.js';
@@ -54,17 +54,29 @@ it('uses real light and dark theme objects from bounded installed assets', () =>
 it('paints terminal clears and resets with client colors and restores terminal defaults on stop', () => {
   const terminal = new TestTerminal(); const themes = bundledClientThemes(); let theme = themes.get('felan-dark')!;
   const wrapped = themedClientTerminal(terminal, () => theme);
+  const darkCanvas = backgroundAnsi(parseColor('#1a1b26'), theme.getColorMode());
   wrapped.write('\x1b[2Jbefore\x1b[0mafter');
-  expect(terminal.output).toContain(theme.getBgAnsi('customMessageBg'));
-  expect(terminal.output.indexOf(theme.getBgAnsi('customMessageBg'))).toBeLessThan(terminal.output.indexOf('\x1b[2J'));
+  expect(terminal.output).toContain(darkCanvas);
+  expect(terminal.output.indexOf(darkCanvas)).toBeLessThan(terminal.output.indexOf('\x1b[2J'));
   expect(terminal.output).toContain(theme.getFgAnsi('text'));
-  expect(terminal.output.lastIndexOf(theme.getBgAnsi('customMessageBg'))).toBeLessThan(terminal.output.indexOf('after'));
+  expect(terminal.output).toContain(`before\x1b[0m${theme.getFgAnsi('text')}${darkCanvas}after`);
   const offset = terminal.output.length; theme = themes.get('felan-light')!; wrapped.write('light');
-  expect(terminal.output.slice(offset)).toContain(theme.getBgAnsi('customMessageBg'));
+  expect(terminal.output.slice(offset)).toContain(backgroundAnsi(parseColor('#fcfcfc'), theme.getColorMode()));
   expect(terminal.output.slice(offset)).toContain(theme.getFgAnsi('text'));
   expect(terminal.output).not.toContain('\x1b]11;');
   const stop = vi.spyOn(terminal, 'stop'); wrapped.stop();
   expect(stop).toHaveBeenCalledOnce(); expect(terminal.output.endsWith('\x1b[0m')).toBe(true);
+});
+
+it('restores default text and background independently without changing explicit colors or cursor attributes', () => {
+  const terminal = new TestTerminal(); const theme = bundledClientThemes().get('felan-dark')!;
+  const wrapped = themedClientTerminal(terminal, () => theme);
+  const fg = theme.getFgAnsi('text'); const bg = backgroundAnsi(parseColor('#1a1b26'), theme.getColorMode());
+  wrapped.write('first\x1b[7mcursor\x1b[0mlast\x1b[22;39mtext\x1b[49mbackground\x1b[38;2;0;39;49mcolor\x1b[48;5;0mindexed');
+  expect(terminal.output).toBe(`${fg}${bg}first\x1b[7mcursor\x1b[0m${fg}${bg}last\x1b[22m\x1b[39m${fg}text\x1b[49m${bg}background\x1b[38;2;0;39;49mcolor\x1b[48;5;0mindexed`);
+  terminal.output = '';
+  wrapped.write('\x1b[mreset\x1b[0;31mred');
+  expect(terminal.output).toBe(`${fg}${bg}\x1b[m${fg}${bg}reset\x1b[0m${fg}${bg}\x1b[31mred`);
 });
 
 it('presents an input interaction and commits only the entered protocol answer', async () => {

@@ -3,7 +3,7 @@
   "name": "felan-dark",
   "vars": {
     "bg": "#1a1b26",
-    "fg": "#d7d9e2",
+    "fg": "#c0caf5",
     "surface1": "#1e202b",
     "surface2": "#242631",
     "surface3": "#2b2d39",

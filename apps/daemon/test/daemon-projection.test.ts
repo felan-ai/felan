@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, parseSessionSnapshot, readMessageDisplay, type SessionEvent } from '@felan-ai/session-protocol';
+import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, parseSessionSnapshot, readMessageDisplay, type SessionEvent, type TextStreamEvent } from '@felan-ai/session-protocol';
 import { ControlStoreError } from '../src/daemon/control-state.js';
 import { projectPiMessage } from '../src/daemon/projection.js';
 import type { SessionEntry } from '@felan-ai/agent-core';
@@ -155,6 +155,24 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     runtime.emit({ type: 'message_end', message }); b.runtime.session.sessionManager.appendMessage(message);
     f.registry.projection(b.sessionId).refresh();
     expect(f.registry.projection(b.sessionId).snapshot().activeStreams).toEqual([]);
+  });
+
+  it('publishes the prompt cursor before the first response delta so a delayed refresh cannot clear it', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    const events: Array<SessionEvent | TextStreamEvent> = [];
+    f.registry.subscribe(b.sessionId, event => { if ('rev' in event || 'stream' in event) events.push(event); });
+    b.runtime.session.sessionManager.appendMessage({ role: 'user', content: 'Start streaming', timestamp: 0 });
+    const message = assistant('First delta');
+    runtime.emit({ type: 'message_start', message });
+    runtime.emit({ type: 'message_update', message, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'First delta', partial: message } });
+    projection.refresh();
+    const cursor = events.findIndex(event => 'change' in event && event.change.type === 'branch.updated');
+    const delta = events.findIndex(event => 'stream' in event);
+    expect(cursor).toBeGreaterThanOrEqual(0);
+    expect(delta).toBeGreaterThan(cursor);
+    expect(events.slice(delta + 1).some(event => 'change' in event && event.change.type === 'branch.updated')).toBe(false);
+    expect(projection.snapshot().activeStreams[0]?.text).toBe('First delta');
   });
 
   it('proves absence only against complete Pi entries, not an inactive branch', async () => {

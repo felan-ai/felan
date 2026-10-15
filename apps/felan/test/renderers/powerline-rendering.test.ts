@@ -59,6 +59,30 @@ describe('powerline rendering', () => {
     expect(sanitizePlainText(lines[0]!)).not.toContain('\x1b');
   });
 
+  it('keeps every footer style foreground-only, including warning and critical segments', () => {
+    const palette = getThemePalette(theme);
+    const segments = [segment('directory', 'directory'), segment('git', 'warning'), segment('model', 'critical', 'right')];
+    segments[1]!.colorKey = 'warning';
+    segments[2]!.colorKey = 'critical';
+
+    for (const style of ['minimal', 'powerline', 'capsule'] as const) {
+      for (const charset of ['text', 'unicode'] as const) {
+        for (const mode of ['ansi', 'ansi256', 'truecolor'] as const) {
+          const config = testConfig({ style, charset, padding: 1 });
+          const styled = renderStyledSegments(segments, config, palette, mode, getSymbols(charset));
+          const aligned = renderFooterLine(segments, config, palette, mode, getSymbols(charset), 80).join('\n');
+          const truncated = renderFooterLine(segments, config, palette, mode, getSymbols(charset), 8).join('\n');
+          for (const output of [styled, aligned, truncated]) {
+            expect(output).toContain(theme.getFgAnsi('accent'));
+            expect(output).not.toMatch(/\x1b\[(?:4[0-9]|10[0-7])(?:;|m)/u);
+          }
+          expect(sanitizePlainText(styled)).toContain('warning');
+          expect(sanitizePlainText(styled)).toContain('critical');
+        }
+      }
+    }
+  });
+
   it('wraps whole left segments and keeps a right group at the terminal edge', () => {
     const wrapping = testConfig({ style: 'minimal', padding: 0, autoWrap: true });
     const wrapped = renderFooterLine(

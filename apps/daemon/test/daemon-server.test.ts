@@ -6,7 +6,7 @@ import { appendFile, chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, sta
 import { renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { JsonLineDecoder, encodeFrame, type Operation } from '@felan-ai/session-protocol';
+import { JsonLineDecoder, encodeFrame, parseServerEnvelope, type Operation } from '@felan-ai/session-protocol';
 import { SessionClient, newRequestId } from '../../felan/src/client/client.js';
 import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 import { accepted } from '../src/daemon/commands.js';
@@ -128,6 +128,43 @@ function supportedRequests(f: Awaited<ReturnType<typeof fixture>>): Array<{ op: 
 }
 
 describe('session server over private real Unix IPC with fake ownership', () => {
+
+  it('keeps attached clients connected while an explicitly modeled child execution starts and completes', async () => {
+    const hold = gate();
+    const f = await fixture({ onStream: () => hold.promise, release: hold.resolve });
+    const client = await f.client();
+    const root = f.root.sessionId;
+    await client.attach(root);
+    const statuses: string[] = [];
+    client.subscribe(() => statuses.push(client.status));
+    const host = f.registry.executionHost(root);
+    const child = await host.spawnSession({ prompt: 'work', description: 'task', label: 'general', model: { provider: 'offline', id: 'fixture' } });
+    if (!child.ok) throw new Error(child.error.message);
+    await vi.waitFor(() => expect(host.getExecution(child.value.executionId)?.status).toBe('running'));
+    await vi.waitFor(() => expect(client.getAttachment(root)?.state.snapshot?.revision).toBe(f.store.session(root).revision));
+    expect(statuses.every(status => status === 'ready')).toBe(true);
+    const attachment = await client.attach(child.value.sessionId);
+    if (attachment.outcome !== 'accepted') throw new Error('Child attachment failed');
+    const events: unknown[] = [];
+    const stop = f.registry.subscribe(child.value.sessionId, event => events.push(event));
+    cleanups.push(async () => stop());
+    hold.resolve();
+    await vi.waitFor(() => expect(host.getExecution(child.value.executionId)?.status).toBe('completed'));
+    await host.settle();
+    expect(await client.request('executions.steer', { executionId: child.value.executionId, message: 'continue' }, { session: root }))
+      .toMatchObject({ outcome: 'accepted' });
+    await vi.waitFor(() => expect(host.getExecution(child.value.executionId)?.status).toBe('completed'));
+    await host.settle();
+    await vi.waitFor(() => expect(client.getAttachment(root)?.state.snapshot?.revision).toBe(f.store.session(root).revision));
+    await vi.waitFor(() => expect(client.getAttachment(child.value.sessionId)?.state.snapshot?.revision).toBe(f.store.session(child.value.sessionId).revision));
+    let revision = attachment.result.snapshot.revision;
+    for (const event of events) {
+      const envelope = parseServerEnvelope(event);
+      if ('rev' in envelope) expect(envelope.rev).toBe(++revision);
+    }
+    expect(client.status).toBe('ready');
+    expect(statuses.every(status => status === 'ready')).toBe(true);
+  });
 
   it('lists and adopts a pre-daemon transcript recorded under a symlinked project path', async () => {
     const f = await fixture(); const client = await f.client(); const id = '019a0000-0000-7000-8000-000000000029';

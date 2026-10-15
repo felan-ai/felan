@@ -1,10 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { acquireDaemonOwnership, namespaceLockName, type DaemonOwnership } from '../src/daemon/ownership.js';
 import { realAccountLocation, resolveDaemonTarget, type DaemonTarget } from '../src/daemon/target.js';
 
@@ -114,6 +114,26 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     if (action === 'replace') { await unlink(file); await rename(`${file}.old`, file); }
     else await writeFile(file, '', { mode: 0o600 });
     expect(() => owner.assertCurrent()).toThrow(/fenced/);
+  });
+
+  it('keeps pinned lock files fresh so temp reapers cannot fence a long-lived owner', async () => {
+    const input = await target(); await (await acquireDaemonOwnership(input)).release();
+    const resolved = resolveDaemonTarget(input);
+    const namespace = join(resolved.accountDirectory, namespaceLockName(resolved)); const store = join(resolved.agentDir, '.felan-store.lock');
+    const stale = new Date(Date.now() - 10 * 86_400_000);
+    const age = async (path: string) => Date.now() - (await stat(path)).mtimeMs;
+    const tick = () => new Promise(resolve => setTimeout(resolve, 100));
+    await utimes(namespace, stale, stale); await utimes(store, stale, stale);
+    const owner = await acquire(input); await tick();
+    for (const lock of [namespace, store, join(resolved.accountDirectory, 'claims.lock')]) expect(await age(lock)).toBeLessThan(60_000);
+    await utimes(namespace, stale, stale); await utimes(store, stale, stale); await tick();
+    expect(await age(namespace)).toBeGreaterThan(86_400_000);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 2 * 60 * 60_000); await tick();
+      expect(await age(namespace)).toBeLessThan(60_000); expect(await age(store)).toBeLessThan(60_000);
+    } finally { vi.useRealTimers(); }
+    owner.assertCurrent();
   });
 
   it('refuses unsafe runtime, root permissions and symlinked lock files without altering them', async () => {

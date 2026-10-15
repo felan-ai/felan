@@ -34,6 +34,7 @@ export function createPrewalkUiHost(ui: ExtensionUi): { host: PrewalkHost; dispo
     host: {
       async confirmEntry(_context, description, signal) {
         const result = await request({
+          hint: PREWALK_FORM_HINT,
           title: 'Enter Prewalk?', description,
           fallback: 'Prewalk entry requires explicit approval.', input: { fields: [] },
           actions: [

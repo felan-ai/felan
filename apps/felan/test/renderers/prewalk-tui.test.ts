@@ -5,6 +5,8 @@ import { createUnavailableExtensionUi } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import { createPrewalkUiHost, PREWALK_FORM_HINT } from '../../../../packages/ext-prewalk/src/ui.js';
 import { presentPrewalkForm } from '../../src/tui/renderers/prewalk.js';
+import { ClientInteractionPresenters, type InteractionPresenterUi } from '../../src/client/presenters.js';
+import { parseInteraction } from '@felan-ai/session-protocol';
 
 function presenter(drive: (component: Component) => void) {
   const ui = { custom: vi.fn((factory: (...args: any[]) => Component) => new Promise(resolve => {
@@ -14,7 +16,7 @@ function presenter(drive: (component: Component) => void) {
       { getKeys: () => [], matches: (data: string, binding: string) => binding === 'tui.select.confirm' || binding === 'tui.input.submit'
         ? data === '\r' : binding === 'tui.select.down' ? data === 'j' : binding === 'tui.select.cancel' && data === '\u001b' }, resolve);
     drive(component);
-  })) } as unknown as Pick<ExtensionContext['ui'], 'custom'>;
+  })), select: vi.fn() } as unknown as Pick<ExtensionContext['ui'], 'custom' | 'select'>;
   return ui;
 }
 
@@ -30,6 +32,43 @@ async function form(plan = '# Full plan\n\nKeep all details.'): Promise<UiForm> 
 }
 
 describe('Prewalk form hint', () => {
+  it.each([
+    { selection: 'Enter Prewalk', approved: true },
+    { selection: 'Continue without Prewalk', approved: false },
+    { selection: undefined, approved: false },
+  ])('presents entry choices immediately and treats $selection as approval=$approved', async ({ selection, approved }) => {
+    const ui = { select: vi.fn(async () => selection), custom: vi.fn(), notify: vi.fn() } as unknown as InteractionPresenterUi;
+    const presenters = new ClientInteractionPresenters(ui);
+    presenters.hints.register(PREWALK_FORM_HINT, { form: (source, signal) => presentPrewalkForm(source, ui, signal) });
+    const host = createPrewalkUiHost({ ...createUnavailableExtensionUi(), request: async source => {
+      expect(source.hint).toEqual(PREWALK_FORM_HINT);
+      return presenters.present(parseInteraction({ id: 'entry', createdAt: 1, state: 'waiting',
+        scope: { kind: 'session', session: 'session', root: 'session' }, request: { kind: 'form', form: source } }), new AbortController().signal);
+    } });
+    expect(await host.host.confirmEntry({ ui: {} } as never, 'Planning requires explicit approval.')).toBe(approved);
+    expect(ui.select).toHaveBeenCalledExactlyOnceWith('Enter Prewalk?\n\nPlanning requires explicit approval.',
+      ['Enter Prewalk', 'Continue without Prewalk'], { signal: expect.any(AbortSignal) });
+    expect(ui.custom).not.toHaveBeenCalled();
+    await host.dispose();
+  });
+
+  it('does not open an aborted entry or approve a choice returned after abort', async () => {
+    let source!: UiForm;
+    const host = createPrewalkUiHost({ ...createUnavailableExtensionUi(), request: async value => {
+      source = value;
+      return { state: 'cancelled', reason: 'user' };
+    } });
+    await host.host.confirmEntry({ ui: {} } as never, 'Entry approval');
+    await host.dispose();
+    const control = new AbortController();
+    const ui = { custom: vi.fn(), select: vi.fn(async () => { control.abort(); return 'Enter Prewalk'; }) } as unknown as Pick<ExtensionContext['ui'], 'custom' | 'select'>;
+    expect(await presentPrewalkForm(source, ui, control.signal)).toBeUndefined();
+    expect(ui.select).toHaveBeenCalledOnce();
+    expect(await presentPrewalkForm(source, ui, control.signal)).toBeUndefined();
+    expect(ui.select).toHaveBeenCalledOnce();
+    expect(ui.custom).not.toHaveBeenCalled();
+  });
+
   it('renders escaped plan text and fenced code literally without double-decoding entities', async () => {
     const plan = '# Plan\n\nArray<T> and a && b\n\n```ts\nconst value = arr[0];\n```\n\nLiteral &lt;tag&gt; and &#91;';
     const source = await form(plan);
