@@ -55,6 +55,20 @@ it('updates streaming content without rebuilding retained transcript components'
   } finally { rebuild.mockRestore(); f.transcript.dispose(); }
 });
 
+it('places client notes after their anchor entry so they scroll with later messages', () => {
+  const f = fixture();
+  const user = (id: string): Message => ({ id, entryId: id, role: 'user', timestamp: 1, content: [{ type: 'text', text: `Message ${id}` }] });
+  try {
+    f.transcript.showProjection(projectTuiTranscript(f.state, [user('one'), user('two')], settings, [
+      { text: 'Before history', level: 'warning' }, { after: 'one', text: 'Model: fixture', level: 'info' }, { after: 'gone', text: 'Other branch', level: 'error' },
+    ]));
+    const frame = f.transcript.render(160).join('\n'); const plain = stripTerminalSequences(frame);
+    const order = ['Warning: Before history', 'Message one', 'Model: fixture', 'Message two'].map(text => plain.indexOf(text));
+    expect(order.every((at, index) => at >= 0 && (index === 0 || at > order[index - 1]!))).toBe(true);
+    expect(plain).not.toContain('Other branch'); expect(frame).toContain(f.theme.fg('dim', 'Model: fixture'));
+  } finally { f.transcript.dispose(); }
+});
+
 it.each(['absent', 'invalid', 'valid'] as const)('keeps thinking typed from the first partial frame with %s metadata', mode => {
   const f = fixture();
   try {

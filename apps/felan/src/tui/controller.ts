@@ -1,9 +1,14 @@
 import { LIMITS, type Message, type Operation, type OperationParams, type OperationResult, type ResponseFor, type SessionSnapshot } from '@felan-ai/session-protocol';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import type { SessionClient } from '../client/client.js';
+import { describeBlocked } from '../client/diagnostics.js';
 
 type Connection = Pick<SessionClient, 'status' | 'reconnection' | 'incompatibleActiveWork' | 'identity' | 'capabilities' | 'connect' | 'request' | 'attach' | 'retryAttach' | 'detach' | 'getAttachment' | 'getInteractions' | 'subscribe' | 'close'>;
 type SessionSummary = OperationResult<'sessions.list'>['entries'][number];
+/** A client-only line that scrolls with the transcript after its anchor entry, like Pi's chat status lines; never persisted. */
+export interface TranscriptNote { readonly after?: string; readonly text: string; readonly level: 'info' | 'warning' | 'error' }
+/** Status notes replace an immediately preceding status note, like Pi's showStatus; other notes always append. */
+type SessionNote = TranscriptNote & { readonly session?: string; readonly status: boolean };
 export interface TuiSessionOptions {
   cwd: string;
   sessionId?: string;
@@ -25,23 +30,38 @@ export class TuiSessionController {
   private selection: Promise<void> = Promise.resolve();
   private historyLoading: Promise<void> | undefined;
   private disposing: Promise<void> | undefined;
-  private connection: Connection['status'];
-  private connectedBefore = false;
-  private reconnectedNotice: ReturnType<typeof setTimeout> | undefined;
+  private sessionNotes: SessionNote[] = [];
+  private notificationSession: string | undefined;
+  private readonly seenNotifications = new Map<string, string>();
   notice = '';
 
   constructor(readonly client: Connection) {
-    this.connection = client.status; this.connectedBefore = client.status === 'ready';
-    this.unsubscribe = client.subscribe(() => { this.mergeSnapshot(); this.connectionChanged(); this.emit(); });
+    this.unsubscribe = client.subscribe(() => { this.mergeSnapshot(); this.emit(); });
   }
 
   get sessionId(): string | undefined { return this.selected; }
   get state() { return this.selected ? this.client.getAttachment(this.selected)?.state : undefined; }
+  /** Explains a blocked attachment, e.g. `Session recovery did not complete (re-attach got no answer: …).` */
+  get blockedText(): string {
+    const reason = describeBlocked(this.selected ? this.client.getAttachment(this.selected)?.blocked : undefined);
+    return `Session recovery did not complete${reason ? ` (${reason})` : ''}.`;
+  }
   get snapshot(): SessionSnapshot | undefined { return this.state?.snapshot; }
   get history(): readonly Message[] { return this.retained?.entries ?? []; }
   get busy(): boolean { return this.submitting; }
+  /** Notes for the selected session, or notes awaiting the first attachment when none is selected. */
+  get notes(): readonly TranscriptNote[] { return this.sessionNotes.filter(note => note.session === this.selected); }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  setNotice(message: string): void { if (!this.closed) { this.notice = message; this.emit(); } }
+  setNotice(message: string): void {
+    if (this.closed) return;
+    this.notice = message;
+    if (message) this.addNote(message, 'info', true);
+    this.emit();
+  }
+  announce(message: string): void {
+    if (this.closed) return;
+    this.addNote(message, 'info', false); this.emit();
+  }
 
   async start(options: TuiSessionOptions, pick?: (sessions: readonly SessionSummary[]) => Promise<string | undefined>, connected?: () => Promise<void | boolean>): Promise<void> {
     await this.client.connect();
@@ -137,7 +157,11 @@ export class TuiSessionController {
       throw Object.assign(new Error(this.notice), { code: response.error.code });
     }
     if (this.closed) return;
-    this.selected = session; this.retained = undefined; this.mergeSnapshot(); this.emit();
+    this.selected = session; this.retained = undefined; this.mergeSnapshot();
+    // Switching sessions starts a fresh transcript; notes from before the first attachment join its end.
+    const after = this.history.at(-1)?.id;
+    this.sessionNotes = this.sessionNotes.flatMap(note => note.session ? [] : [{ ...note, session, ...(after ? { after } : {}) }]);
+    this.emit();
     if (old && this.client.getAttachment(old)) await this.client.detach(old);
     await this.loadHistory();
   }
@@ -200,19 +224,36 @@ export class TuiSessionController {
 
   dispose(): Promise<void> {
     return this.disposing ??= (async () => {
-      this.closed = true; this.unsubscribe(); this.listeners.clear(); clearTimeout(this.reconnectedNotice);
+      this.closed = true; this.unsubscribe(); this.listeners.clear();
       try { if (this.selected && this.client.getAttachment(this.selected)) await this.client.detach(this.selected); }
       finally { this.client.close(); await Promise.allSettled([...this.pending]); await this.selection; if (this.historyLoading) await this.historyLoading; }
     })();
   }
 
-  private connectionChanged(): void {
-    const previous = this.connection; this.connection = this.client.status;
-    if (previous === 'ready' || this.connection !== 'ready') return;
-    if (!this.connectedBefore) { this.connectedBefore = true; return; }
-    this.notice = 'Reconnected';
-    clearTimeout(this.reconnectedNotice);
-    this.reconnectedNotice = setTimeout(() => { if (this.notice === 'Reconnected') this.setNotice(''); }, 3_000);
+  private addNote(text: string, level: TranscriptNote['level'], status: boolean): void {
+    const session = this.selected;
+    const after = session && this.retained?.session === session ? this.retained.entries.at(-1)?.id : undefined;
+    const note: SessionNote = { ...(session ? { session } : {}), ...(after ? { after } : {}), text, level, status };
+    const last = this.sessionNotes.at(-1);
+    if (last && last.session === session && last.after === after && ((status && last.status) || (last.level === level && last.text === text))) {
+      this.sessionNotes[this.sessionNotes.length - 1] = note;
+    } else this.sessionNotes.push(note);
+  }
+
+  /** Daemon notifications persist in the presentation; each new or changed one becomes a single note. */
+  private collectNotifications(): void {
+    const snapshot = this.snapshot;
+    if (!snapshot) return;
+    if (this.notificationSession !== snapshot.session) { this.notificationSession = snapshot.session; this.seenNotifications.clear(); }
+    const present = new Set<string>();
+    for (const item of snapshot.presentation) {
+      if (item.kind !== 'notification') continue;
+      present.add(item.id);
+      const key = `${item.level}\n${item.text}`;
+      if (this.seenNotifications.get(item.id) === key) continue;
+      this.seenNotifications.set(item.id, key); this.addNote(item.text, item.level, item.level === 'info');
+    }
+    for (const id of this.seenNotifications.keys()) if (!present.has(id)) this.seenNotifications.delete(id);
   }
 
   private mergeSnapshot(): void {
@@ -238,7 +279,7 @@ export class TuiSessionController {
         const status = this.client.getAttachment(session)?.state.status;
         if (this.closed || this.selected !== session) finish(new Error('Session selection changed.'));
         else if (status === 'live') finish();
-        else if (status === 'blocked') finish(new Error('Session recovery did not complete. Use /reconnect before submitting.'));
+        else if (status === 'blocked') finish(new Error(`${this.blockedText} Use /reconnect before submitting.`));
       };
       unsubscribe = this.client.subscribe(check);
       check();
@@ -270,7 +311,10 @@ export class TuiSessionController {
 
   private emit(): void {
     if (this.closed) return;
-    for (const listener of [...this.listeners]) { try { listener(); } catch (error) { this.notice = errorText(error); } }
+    this.collectNotifications();
+    for (const listener of [...this.listeners]) {
+      try { listener(); } catch (error) { this.notice = errorText(error); this.addNote(this.notice, 'error', false); }
+    }
   }
 }
 

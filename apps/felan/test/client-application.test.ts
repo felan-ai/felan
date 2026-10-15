@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import type { SessionClient, SessionClientOptions } from '../src/client/client.js';
-import { clientDaemonTarget, runDaemonFelan } from '../src/client-application.js';
+import { clientDaemonTarget, resumeCommand, runDaemonFelan } from '../src/client-application.js';
 import { resolveInstalledDaemonEntrypoint } from '../src/daemon-entrypoint.js';
 
 afterEach(() => vi.unstubAllEnvs());
@@ -103,4 +103,16 @@ it('keeps the new interactive entry path free of local runtime and session-store
   const cli = await readFile(new URL('../src/cli-main.ts', import.meta.url), 'utf8');
   expect(cli).not.toMatch(/^import .*from ['"].*(?:internal\/settings|\.\/runtime)/mu);
   expect(cli).toContain("await import('./client-application.js')");
+});
+
+it('prints the resume command after a normal quit with an attached session, like Pi, and nothing without one', async () => {
+  const client = { subscribe: () => () => {}, close() {} } as unknown as SessionClient;
+  const output: string[] = [];
+  await runDaemonFelan({ agentDir: '/agent', daemonRuntime: '/tmp/felan runtime', sessionDir: '/sessions/it\'s' }, { createClient: () => client, writeOutput: text => output.push(text),
+    runTerminal: async controller => { vi.spyOn(controller, 'sessionId', 'get').mockReturnValue('01a13dfa-c2dd'); } });
+  expect(output).toEqual([`To resume this session: felan --daemon-runtime '/tmp/felan runtime' --session-dir '/sessions/it'\\''s' --session 01a13dfa-c2dd\n`]);
+  output.length = 0;
+  await runDaemonFelan({ agentDir: '/agent' }, { createClient: () => client, writeOutput: text => output.push(text), runTerminal: async () => {} });
+  expect(output).toEqual([]);
+  expect(resumeCommand('session-id', {})).toBe('felan --session session-id');
 });

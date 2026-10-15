@@ -1,13 +1,10 @@
 import { createHash } from 'node:crypto';
 import { isAbsolute, relative, sep } from 'node:path';
 import { getLocalSkillSources } from './local-resources.js';
-import { SESSIONS_SERVICE, bindFelanExtension, type SessionsService } from '@felan-ai/agent-core';
 import type { SessionExecutionPort, SessionExtensionBindings, SessionExtensionContext, ExecutionSettings } from '@felan-ai/daemon/provider';
 import { bindExecutionSession } from './execution-binding.js';
 import { type LocalExecutionRoot, type LocalExecutionSession } from './extension-services.js';
-import { createHerdrExtension, type HerdrActivity } from './herdr.js';
 import { SavingsService, createModelPriceSource } from './savings.js';
-import { HERDR_BLOCKED_EVENT } from './herdr.js';
 import { createSavingsCommandExtension } from '../savings-command.js';
 
 export function createLocalExecutionRoots() {
@@ -52,16 +49,8 @@ const executionRoots = createLocalExecutionRoots();
 export async function createLocalExecutionSession(session: SessionExtensionContext, port: SessionExecutionPort, roots = executionRoots) {
   const root = await roots.open(session, port);
   const isRoot = port.current.id === port.current.root;
-  let attention: ((active: boolean, label?: string) => void) | undefined;
-  const notifications = bindFelanExtension('@felan-ai/local-services/notifications', pi => {
-    attention = (active, label) => pi.events.emit(HERDR_BLOCKED_EVENT, { active, label });
-    pi.on('session_shutdown', () => { attention = undefined; });
-  }, session.runtime, session.resources.agentDir);
-  if (typeof notifications !== 'function') notifications.hidden = true;
-  const state = { context: session, port, root, isRoot,
-    attention: (active, label) => attention?.(active, label),
-  } satisfies LocalExecutionSession;
-  return { session: state, inlineExtensions: [notifications, createSavingsCommandExtension(root.savings)],
+  const state = { context: session, port, root, isRoot } satisfies LocalExecutionSession;
+  return { session: state, inlineExtensions: [createSavingsCommandExtension(root.savings)],
     async dispose() { if (isRoot) await root.close(); },
   };
 }
@@ -75,7 +64,7 @@ export function createLocalExecutionServices(roots = executionRoots) {
     let releaseService: (() => void) | undefined;
     return {
       services: context.services, savings: root.savings,
-      inlineExtensions: [...local.inlineExtensions, createHerdrExtension({ activity: createSessionActivity(context.services.get(SESSIONS_SERVICE)!) })],
+      inlineExtensions: local.inlineExtensions,
       importExtension: context.importExtension,
       async onSession(session) {
         const sources = getLocalSkillSources(context.resources.cwd);
@@ -96,40 +85,5 @@ export function createLocalExecutionServices(roots = executionRoots) {
       async dispose() {},
       async disposeUi() { releaseParent?.(); await local.dispose(); releaseService?.(); },
     };
-  };
-}
-
-export function createSessionActivity(sessions: SessionsService): HerdrActivity {
-  let pending = false;
-  return {
-    hasPendingWork: () => pending,
-    subscribe(listener) {
-      let closed = false;
-      let refreshing = false;
-      let dirty = false;
-      const refresh = async () => {
-        dirty = true;
-        if (refreshing) return;
-        refreshing = true;
-        try {
-          do {
-            dirty = false;
-            let next = false;
-            let cursor: string | undefined;
-            do {
-              const page = await sessions.executions({ includeDescendants: true, ...(cursor ? { cursor } : {}) });
-              next ||= page.items.some(row => row.state === 'queued' || row.state === 'running'
-                || row.parent === sessions.current.id && row.completionPending === true);
-              cursor = page.nextCursor;
-            } while (cursor && !closed);
-            if (!closed) { pending = next; listener(); }
-          } while (dirty && !closed);
-        } catch {}
-        finally { refreshing = false; }
-      };
-      const unsubscribe = sessions.subscribe(() => { void refresh(); });
-      void refresh();
-      return () => { closed = true; unsubscribe(); };
-    },
   };
 }

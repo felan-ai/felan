@@ -99,6 +99,28 @@ it('retains a pending question when the terminal disconnects and presents it aft
   expect(await pending).toMatchObject({ state: 'answered', answer: { text: 'after reconnect' } });
 });
 
+it('keeps an open question and its draft through an automatic reconnect', async () => {
+  const f = await fixture(); const view = await f.terminal();
+  const pending = f.broker.request({ kind: 'input', title: 'Reconnect question' }, f.scope);
+  await vi.waitFor(() => expect(screenText(view.tui)).toContain('Reconnect question'));
+  view.terminal.input('retained');
+  const getAttachment = view.transport.getAttachment.bind(view.transport);
+  const lookup = vi.spyOn(view.transport, 'getAttachment').mockImplementation(session => {
+    const attachment = getAttachment(session);
+    return attachment ? { ...attachment, state: { ...attachment.state, status: 'disconnected' } } : attachment;
+  });
+  const status = vi.spyOn(view.transport, 'status', 'get').mockReturnValue('disconnected');
+  try {
+    view.controller.setNotice('');
+    await vi.waitFor(() => expect(screenText(view.tui)).toContain('Reconnect question'));
+    expect(screenText(view.tui)).toContain('retained');
+    expect(f.store.snapshot().requests.filter(row => row.op === 'interaction.answer')).toHaveLength(0);
+    lookup.mockRestore(); status.mockReturnValue('ready'); view.controller.setNotice('');
+    view.terminal.input('-answer'); view.terminal.input('\r');
+    expect(await pending).toMatchObject({ state: 'answered', answer: { kind: 'input', text: 'retained-answer' } });
+  } finally { lookup.mockRestore(); status.mockRestore(); }
+});
+
 it('keeps a question draft during snapshot recovery and waits to validate its answer', async () => {
   const f = await fixture(); const view = await f.terminal();
   const pending = f.broker.request({ kind: 'input', title: 'Recovery question' }, f.scope);

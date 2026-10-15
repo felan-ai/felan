@@ -42,7 +42,7 @@ export function createClientPowerlineFooter(
   let invalid = false;
   return new ProjectedPowerlineFooter({ ...options, subscribe: listener => client.subscribe(listener), data() {
     const attachment = client.getAttachment(session);
-    if (attachment?.state.status !== 'live') return undefined;
+    if (!attachment?.state.snapshot) return undefined;
     try {
       const presentation = attachment.state.snapshot?.presentation ?? [];
       const result = powerlineViewData(presentation);

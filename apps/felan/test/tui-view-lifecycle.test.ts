@@ -32,6 +32,7 @@ function fixture(name: typeof cases[number][0], kind: 'view' | 'document') {
     records0: JSON.stringify([{ field: 'id', value: 'T-AAAAAA' }, { field: 'title', value: 'tasks document' }]) };
   let current: SessionSnapshot = { ...snapshot(), presentation: [source], run: { state: 'waiting', id: 'run' } };
   const listeners = new Set<() => void>();
+  let clientStatus = 'ready'; let attachmentStatus = 'live';
   const emit = () => { for (const listener of listeners) listener(); };
   const panels: Component[] = [];
   const custom: ExtensionContext['ui']['custom'] = factory => new Promise(resolve => {
@@ -55,11 +56,14 @@ function fixture(name: typeof cases[number][0], kind: 'view' | 'document') {
   const controller = {
     sessionId: 'session', get snapshot() { return current; }, get state() { return { status: 'live', snapshot: current }; },
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    perform, setNotice: vi.fn(), client: { status: 'ready', capabilities: { capabilities: GENERIC_UI_CAPABILITIES, operations: ['ui.action'] }, getInteractions: () => [] },
+    perform, setNotice: vi.fn(), client: { get status() { return clientStatus; }, capabilities: { capabilities: GENERIC_UI_CAPABILITIES, operations: ['ui.action'] },
+      getAttachment: () => ({ state: { status: attachmentStatus } }), getInteractions: () => [] },
   } as unknown as TuiSessionController;
   const interactions = new TerminalInteractions(controller, { presentElement } as unknown as ClientInteractionPresenters);
   cleanups.push(() => interactions.dispose());
-  return { panels, perform, interactions, current: () => current, reopen() { current = { ...current, presentation: [source], run: { state: 'waiting', id: 'run' } }; emit(); } };
+  return { panels, perform, interactions, current: () => current,
+    setConnection(status: string, attachment: string) { clientStatus = status; attachmentStatus = attachment; emit(); },
+    reopen() { current = { ...current, presentation: [source], run: { state: 'waiting', id: 'run' } }; emit(); } };
 }
 
 it.each(cases)('%s %s Escape closes semantically, goes idle, and reopens identical data', async (name, kind) => {
@@ -73,4 +77,19 @@ it.each(cases)('%s %s Escape closes semantically, goes idle, and reopens identic
     expect(f.current().run.state).toBe('idle');
     expect(f.perform).toHaveBeenCalledTimes(index + 1);
   }
+});
+
+it('keeps an open view mounted through reconnect and delays its close action until reattachment', async () => {
+  const f = fixture('context', 'document');
+  await vi.waitFor(() => expect(f.panels).toHaveLength(1));
+  f.setConnection('disconnected', 'disconnected');
+  expect(f.panels[0]!.render(100).join('\n')).toContain('context document');
+  f.panels[0]!.handleInput!('\x1b');
+  await Promise.resolve();
+  expect(f.interactions.busy).toBe(true);
+  expect(f.perform).not.toHaveBeenCalled();
+  f.setConnection('ready', 'live');
+  await vi.waitFor(() => expect(f.interactions.busy).toBe(false));
+  expect(f.panels).toHaveLength(1);
+  expect(f.perform).toHaveBeenCalledOnce();
 });

@@ -24,6 +24,7 @@ import { clientMarkdownTheme, defaultClientTheme } from '../tui/theme.js';
 import { TranscriptAssistant, TranscriptCompaction, TranscriptTool } from './transcript-components.js';
 import { renderThinkingGroupMarkdown } from '../thinking-groups.js';
 import { clientMarkdownTransform, type MermaidMode } from '../tui/markdown.js';
+import { transcriptNoteText } from '../tui/transcript.js';
 import { ShellExecution } from '../tui/shell-execution.js';
 import { completionNotices, SubagentCompletionComponent } from './completion-presentation.js';
 import { SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE } from '../execution-completion.js';
@@ -196,6 +197,7 @@ export class AgentTranscript implements Component {
       const message = messages[item.message]; if (message) this.#projectedCompactions.set(message, item.method);
     }
     for (let index = 0; index <= messages.length; index++) {
+      for (const note of projection.notes ?? []) if (note.before === index) this.#addNote(note);
       for (const fallback of projection.fallbacks ?? []) if (fallback.before === index) this.#container.addChild(new Markdown(fallback.text, this.#outputPad, 0, this.#markdownTheme));
       if (index < messages.length) this.#replayMessage(messages[index]!, projection.runningShells?.includes(index));
     }
@@ -315,6 +317,13 @@ export class AgentTranscript implements Component {
         component.markExecutionStarted();
       }
     }
+  }
+
+  #addNote(note: NonNullable<AgentViewTranscript['notes']>[number]): void {
+    const text = transcriptNoteText(note);
+    const color = note.level === 'info' ? 'dim' : note.level;
+    this.#container.addChild(new Spacer(1));
+    this.#container.addChild({ render: width => new Text(this.#theme().fg(color, text), 1, 0).render(width), invalidate() {} });
   }
 
   #replayMessage(message: AgentMessage, runningShell = false): void {
@@ -544,7 +553,7 @@ export class AgentTranscript implements Component {
   }
 
   #assistantError(message: AssistantMessage): string {
-    if (message.stopReason === 'aborted') return message.errorMessage || 'Operation aborted';
+    if (message.stopReason === 'aborted') return 'Interrupted';
     return message.errorMessage || 'Error';
   }
 

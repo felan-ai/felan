@@ -203,6 +203,7 @@ Scenario IDs are stable across runs. Each row is implemented in `scripts/tui-par
 | A-startup | A | start, wait for header | header lines, footer three lines, editor top and bottom borders |
 | A-slash-list | A | type `/` | labels without leading slash, descriptions, ordering, skill entries (`skill:<name>`) and count |
 | A-autocomplete-filter | A | `/mo` then Esc | fuzzy filter, highlight, Esc clears |
+| A-file-autocomplete | A | type `@exa` and select a file; on a later line type `exa` then Tab; cancel with Esc | fuzzy `@` search when `fd`/`fdfind` is available, direct Tab path completion, quoted paths, multiline edits, and active-session cwd changes |
 | A-editor-clear | A | type `/hotkeys` (or `/help`), Enter | editor empties after submit, command added to history (Ctrl+R) |
 | A-streaming | A | prompt "say hi in five words" | working indicator text and timing, streamed text, footer tokens and cost update |
 | A-tool-display | A | prompt "list the files in this directory" | tool row layout, Ctrl+O toggles preview, completion line |

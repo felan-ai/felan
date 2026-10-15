@@ -43,7 +43,7 @@ export class TranscriptAssistant extends Container {
     }
     const hasTools = message.content.some(part => part.type === 'toolCall');
     const error = message.stopReason === 'length' ? 'Response was truncated before completion.' : hasTools ? undefined
-      : message.stopReason === 'aborted' ? message.errorMessage || 'Operation aborted'
+      : message.stopReason === 'aborted' ? 'Interrupted'
         : message.stopReason === 'error' ? `Error: ${message.errorMessage || 'Unknown error'}` : undefined;
     if (error) { this.addChild(new Spacer(1)); this.addChild(new Text(this.theme().fg('error', stripTerminalSequences(error)), this.padding, 0)); }
   }

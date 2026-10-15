@@ -5,10 +5,14 @@ import { ProtocolValidationError } from './limits.js';
 export const MESSAGE_DISPLAY_ID = 'felan.message-display';
 export const MESSAGE_DISPLAY_KEY = 'felanMessage';
 const CostSchema = Type.Number({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+const stopReasons = ['stop', 'length', 'toolUse', 'error', 'aborted'] as const;
+export const StopReasonSchema = enumOf(stopReasons);
+export type StopReason = (typeof stopReasons)[number];
+export function stopReasonOf(value: unknown): StopReason | undefined { return stopReasons.find(reason => reason === value); }
 export const AssistantDisplaySchema = Type.Object({
   kind: Type.Literal('assistant'), timestamp: CounterSchema,
   api: text(256, 1), provider: text(256, 1), model: text(256, 1),
-  stopReason: enumOf(['stop', 'length', 'toolUse', 'error', 'aborted'] as const),
+  stopReason: StopReasonSchema,
   errorMessage: Type.Optional(unboundedText()),
   usage: Type.Object({ input: CounterSchema, output: CounterSchema, cacheRead: CounterSchema, cacheWrite: CounterSchema,
     totalTokens: CounterSchema, cost: Type.Object({ input: CostSchema, output: CostSchema, cacheRead: CostSchema, cacheWrite: CostSchema, total: CostSchema },

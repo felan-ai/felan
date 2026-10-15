@@ -24,7 +24,7 @@ it('derives data only from versioned generic rows, leaving layout to the client'
   expect(powerlineViewData([{ ...source, hint: { id: 'felan.powerline', version: '2.0.0' } }])).toBeUndefined();
 });
 
-it('updates and clears a client-only footer across recovery, removal and disposal', () => {
+it('preserves a client-only footer across recovery and clears it on removal or disposal', () => {
   let live = true; let presentation: Presentation[] = [view()];
   const listeners = new Set<() => void>();
   const client = { getAttachment: () => ({ state: { status: live ? 'live' : 'disconnected', snapshot: { ...snapshot(), presentation } } }),
@@ -36,7 +36,7 @@ it('updates and clears a client-only footer across recovery, removal and disposa
   expect(footer.render(80).at(-1)).toBe('child rail');
   expect(footer.render(8).every(row => visibleWidth(row) <= 8)).toBe(true);
   live = false; for (const listener of listeners) listener();
-  expect(footer.render(80)).toEqual(['']);
+  expect(footer.render(80).join('\n')).toContain('Projected footer');
   live = true; for (const listener of listeners) listener();
   expect(footer.render(80).join('\n')).toContain('Projected footer');
   presentation = []; for (const listener of listeners) listener();

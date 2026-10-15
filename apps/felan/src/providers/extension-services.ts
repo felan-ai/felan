@@ -12,6 +12,5 @@ export interface LocalExecutionSession {
   readonly port: SessionExecutionPort;
   readonly root: LocalExecutionRoot;
   readonly isRoot: boolean;
-  attention(active: boolean, label?: string): void;
 }
 

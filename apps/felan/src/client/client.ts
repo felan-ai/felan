@@ -10,6 +10,7 @@ import { spawnDetachedDaemon } from '@felan-ai/daemon/client';
 import { assertTargetIdentity, protocolTarget, resolveDaemonTarget, type DaemonTarget, type ResolvedDaemonTarget } from '@felan-ai/daemon/client';
 import { waitForDaemonStop } from './daemon-stop.js';
 import { createSessionState, reduceSession, type SessionState } from './reducer.js';
+import { diagnosticText, type AttachTrigger, type BlockedReason, type ClientDiagnostic } from './diagnostics.js';
 import { localConnector, type ClientTransport, type TransportConnector } from './transport.js';
 
 export function newRequestId(now = Date.now()): string {
@@ -31,6 +32,10 @@ export interface AttachmentState {
   readonly requirePolicy?: 'acp-strict';
   readonly binding?: string;
   readonly state: SessionState;
+  /** When the latest snapshot made this attachment live. */
+  readonly liveSince?: number;
+  /** Why the attachment last became blocked. */
+  readonly blocked?: BlockedReason;
 }
 export interface SessionClientOptions {
   target: DaemonTarget;
@@ -50,6 +55,8 @@ export interface SessionClientOptions {
   /** First automatic reconnect delay; later attempts double it up to `reconnectMaxDelayMs`. */
   reconnectDelayMs?: number;
   reconnectMaxDelayMs?: number;
+  /** Receives connection and attachment transitions for troubleshooting; must not throw. */
+  diagnostics?: (event: ClientDiagnostic) => void;
 }
 interface Pending {
   envelope: ClientEnvelope;
@@ -261,14 +268,16 @@ export class SessionClient {
       this.queuedInteractions = []; this.queuedInteractionBytes = 0;
       for (const attachment of this.attachments.values()) {
         if (this.closed || epoch !== this.epoch) throw new Error('Connection was superseded');
-        await this.restore(attachment.session);
+        await this.restore(attachment.session, 'reconnect');
       }
       if (epoch !== this.epoch || this.closed) throw new Error('Connection was superseded');
       this.connectionState = 'ready'; this.established = true; this.readyAt = Date.now(); this.replacing = undefined;
+      this.diagnose({ event: 'connection.ready', daemonVersion: result.daemonVersion, instanceId: result.identity.instanceId });
       for (const record of this.records.values()) if (!record.internal && !record.response) this.transmit(record);
       this.emit();
       return structuredClone(result);
     } catch (error) {
+      this.diagnose({ event: 'connection.failed', error: diagnosticText(error) });
       const status = this.connectionState as string;
       // An established client that will retry stays disconnected so observers do not treat a daemon restart as fatal.
       if (status !== 'incompatible' && !this.closed) this.connectionState = this.established && this.reconnectCount < this.reconnectLimit ? 'disconnected' : 'blocked';
@@ -376,7 +385,7 @@ export class SessionClient {
             (message.result as OperationResult<'attach'>).snapshot.session !== record.envelope.session) throw new Error('Attachment session mismatch');
         if (record.response) return;
         if (message.outcome !== 'accepted' && message.error.code === 'resync_required' && record.envelope.session &&
-            record.localAttachmentId === this.attachments.get(record.envelope.session)?.id) this.resync(record.envelope.session);
+            record.localAttachmentId === this.attachments.get(record.envelope.session)?.id) this.resync(record.envelope.session, record.envelope.op);
         this.finish(record, message); return;
       }
       if ('interaction' in message) {
@@ -403,9 +412,10 @@ export class SessionClient {
       if (!this.negotiated) throw new Error('Session update before handshake');
       const attachment = this.attachments.get(message.session);
       if (!attachment) return;
-      this.attachments.set(message.session, { ...attachment, state: reduceSession(attachment.state, { type: 'update', update: message }) });
+      const current = this.renewRecoveryBudget(attachment);
+      this.store({ ...current, state: reduceSession(current.state, { type: 'update', update: message }) });
       this.recover(message.session); this.emit();
-    } catch { this.lost('invalid_frame'); }
+    } catch (error) { this.lost('invalid_frame', error); }
   }
 
   private acceptInteraction(interaction: Interaction): void {
@@ -423,7 +433,7 @@ export class SessionClient {
     if (this.attachments.has(session)) throw new Error('Session already attached');
     const attachment = { id: randomUUID(), session, ...policy, state: createSessionState(session) };
     this.attachments.set(session, attachment);
-    const response = await this.restore(session);
+    const response = await this.restore(session, 'attach');
     if (response.outcome === 'rejected' && this.attachments.get(session)?.id === attachment.id) this.attachments.delete(session);
     this.emit(); return response;
   }
@@ -432,29 +442,34 @@ export class SessionClient {
     if (this.connectionState !== 'ready') throw new Error('Connect before retrying an attachment');
     const attachment = this.attachments.get(session);
     if (!attachment || attachment.state.status !== 'blocked') throw new Error('No blocked attachment to retry');
-    if (attachment.state.recoveryAttempts >= 3) throw new Error('Attachment recovery limit reached');
-    this.attachments.set(session, { ...attachment, state: reduceSession({ ...attachment.state, status: 'awaiting_snapshot' }, { type: 'recovery_started' }) });
+    if (attachment.state.recoveryAttempts >= 3) throw new Error('Attachment recovery limit reached; restart this client to attach again');
+    this.store({ ...attachment, state: reduceSession({ ...attachment.state, status: 'awaiting_snapshot' }, { type: 'recovery_started' }) });
     this.emit();
-    return this.restore(session);
+    return this.restore(session, 'retry');
   }
 
-  private async restore(session: string): Promise<ResponseFor<'attach'>> {
+  private async restore(session: string, trigger: AttachTrigger): Promise<ResponseFor<'attach'>> {
     this.presentationSequences.delete(session);
     const attachment = this.attachments.get(session)!;
     const epoch = this.epoch;
     const bufferGeneration = attachment.state.bufferGeneration;
     if (attachment.state.status === 'disconnected') this.attachments.set(session, { ...attachment, state: { ...attachment.state, status: 'awaiting_snapshot' } });
+    const started = Date.now();
     const response = await this.exchange('attach', { expected: this.pinned!,
       ...(attachment.requirePolicy ? { requirePolicy: attachment.requirePolicy } : {}) }, session, undefined, true);
+    this.diagnoseAttach(session, trigger, response, Date.now() - started);
     if (this.closed || epoch !== this.epoch || this.attachments.get(session)?.id !== attachment.id) return response;
     if (response.outcome === 'accepted') {
       const current = this.attachments.get(session);
-      if (current) this.attachments.set(session, { ...current, binding: response.result.attachmentId,
-        state: reduceSession(current.state, { type: 'snapshot', snapshot: response.result.snapshot, bufferGeneration }) });
+      if (current) {
+        const state = reduceSession(current.state, { type: 'snapshot', snapshot: response.result.snapshot, bufferGeneration });
+        this.store({ ...current, binding: response.result.attachmentId, state, ...(state.status === 'live' ? { liveSince: Date.now() } : {}) }, { snapshot: true });
+      }
       this.recover(session);
     } else {
       const current = this.attachments.get(session);
-      if (current) this.attachments.set(session, { ...current, state: { ...current.state, status: 'blocked' } });
+      if (current) this.store({ ...current, state: { ...current.state, status: 'blocked' } },
+        { failure: { kind: 'attach_failed', outcome: response.outcome, code: response.error.code, message: diagnosticText(response.error.message) } });
     }
     return response;
   }
@@ -475,27 +490,72 @@ export class SessionClient {
     this.emit(); return response;
   }
 
-  private resync(session: string) {
+  private resync(session: string, op: Operation) {
     const attachment = this.attachments.get(session);
-    if (attachment) this.attachments.set(session, { ...attachment, state: reduceSession(attachment.state, { type: 'resync' }) });
+    if (attachment) {
+      const current = this.renewRecoveryBudget(attachment);
+      this.store({ ...current, state: reduceSession(current.state, { type: 'resync', cause: 'daemon_resync' }) }, { op });
+    }
     this.recover(session);
+  }
+
+  /** Updates an attachment and reports transitions into recovery or a blocked state, keeping why it blocked. A snapshot that cannot go live is a new recovery. */
+  private store(next: AttachmentState, detail: { op?: Operation; failure?: BlockedReason; snapshot?: boolean } = {}): void {
+    const previous = this.attachments.get(next.session)?.state.status;
+    const { state } = next;
+    if (state.status === 'recovering' && (previous !== 'recovering' || detail.snapshot) && state.recoveryCause) {
+      this.diagnose({ event: 'attachment.recovering', session: next.session, cause: state.recoveryCause, attempts: state.recoveryAttempts, ...(detail.op ? { op: detail.op } : {}) });
+    }
+    if (state.status === 'blocked' && previous !== 'blocked') {
+      const reason: BlockedReason = detail.failure ?? { kind: 'recovery_limit', ...(state.recoveryCause ? { cause: state.recoveryCause } : {}) };
+      this.diagnose({ event: 'attachment.blocked', session: next.session, attempts: state.recoveryAttempts, reason });
+      this.attachments.set(next.session, { ...next, blocked: reason });
+      return;
+    }
+    this.attachments.set(next.session, next);
+  }
+
+  private diagnoseAttach(session: string, trigger: AttachTrigger, response: ResponseFor<'attach'>, durationMs: number): void {
+    if (!this.options.diagnostics) return;
+    if (response.outcome !== 'accepted') {
+      this.diagnose({ event: 'attachment.attached', session, trigger, outcome: response.outcome, durationMs, code: response.error.code, message: diagnosticText(response.error.message) });
+      return;
+    }
+    const { snapshot } = response.result;
+    this.diagnose({ event: 'attachment.attached', session, trigger, outcome: 'accepted', durationMs, revision: snapshot.revision,
+      snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)),
+      counts: { history: snapshot.history.entries.length, tools: snapshot.tools.length, processes: snapshot.processes.length, children: snapshot.children.length,
+        interactions: snapshot.interactions.length, presentation: snapshot.presentation.length, activeStreams: snapshot.activeStreams.length } });
+  }
+
+  private diagnose(event: ClientDiagnostic): void {
+    try { this.options.diagnostics?.(event); } catch { /* Diagnostics never affect the protocol. */ }
+  }
+
+  /** Like connection backoff, the recovery budget renews only after the attachment stayed live longer than the longest reconnect delay, so a flapping session cannot resnapshot forever. */
+  private renewRecoveryBudget(attachment: AttachmentState): AttachmentState {
+    const { state, liveSince } = attachment;
+    if (state.status !== 'live' || state.recoveryAttempts === 0 || liveSince === undefined || Date.now() - liveSince < this.maxDelay) return attachment;
+    return { ...attachment, state: { ...state, recoveryAttempts: 0 } };
   }
   private recover(session: string) {
     const attachment = this.attachments.get(session);
     if (!attachment || attachment.state.status !== 'recovering' || this.recovering.has(session) || !this.transport) return;
     const state = reduceSession(attachment.state, { type: 'recovery_started' });
-    this.attachments.set(session, { ...attachment, state });
+    this.store({ ...attachment, state });
     if (state.status === 'blocked') return;
     this.recovering.add(session);
     const epoch = this.epoch;
-    void this.restore(session).catch(() => {
+    void this.restore(session, 'recovery').catch(error => {
       const current = this.attachments.get(session);
-      if (!this.closed && epoch === this.epoch && current?.id === attachment.id) this.attachments.set(session, { ...current, state: { ...current.state, status: 'blocked' } });
+      if (!this.closed && epoch === this.epoch && current?.id === attachment.id) this.store({ ...current, state: { ...current.state, status: 'blocked' } },
+        { failure: { kind: 'attach_failed', outcome: 'error', message: diagnosticText(error) } });
     }).finally(() => { this.recovering.delete(session); this.recover(session); this.emit(); });
   }
 
-  private lost(reason: string) {
+  private lost(reason: string, error?: unknown) {
     if (this.closed) return;
+    this.diagnose({ event: 'connection.lost', reason, ...(error === undefined ? {} : { error: diagnosticText(error) }) });
     const wasReady = this.connectionState === 'ready';
     ++this.epoch; const transport = this.transport; this.transport = undefined; transport?.close();
     this.connectionState = reason === 'invalid_frame' ? 'blocked' : 'disconnected';

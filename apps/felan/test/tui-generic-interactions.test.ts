@@ -62,12 +62,13 @@ it('holds an answer during snapshot recovery and checks it again after recovery'
   f.update('live'); await vi.waitFor(() => expect(f.perform).toHaveBeenCalledOnce());
 });
 
-it('cancels on disconnect and reopens the unresolved element after reconnect', async () => {
+it('keeps the unresolved element through disconnect and commits its current action after reconnect', async () => {
   const f = fixture(); await vi.waitFor(() => expect(f.pending).toHaveLength(1));
   f.update('disconnected', 'disconnected');
-  await vi.waitFor(() => expect(f.pending[0]?.signal.aborted).toBe(true));
-  f.update('live'); await vi.waitFor(() => expect(f.pending).toHaveLength(2));
-  f.answer(1); await vi.waitFor(() => expect(f.perform).toHaveBeenCalledOnce());
+  expect(f.pending[0]?.signal.aborted).toBe(false);
+  f.answer(0); await Promise.resolve(); expect(f.perform).not.toHaveBeenCalled();
+  f.update('live'); await vi.waitFor(() => expect(f.perform).toHaveBeenCalledOnce());
+  expect(f.pending).toHaveLength(1);
 });
 
 it('displays a read-only fallback without invoking unnegotiated actions', async () => {
@@ -84,11 +85,10 @@ it('keeps passive documents discoverable without opening recurring dialogs and r
   expect(f.interactions.elements()).toEqual([source]);
   f.interactions.showElement('doc'); await vi.waitFor(() => expect(f.pending).toHaveLength(1));
   f.update('disconnected', 'disconnected');
-  await vi.waitFor(() => expect(f.pending[0]?.signal.aborted).toBe(true));
-  f.update('live'); await vi.waitFor(() => expect(f.pending).toHaveLength(2));
-  f.pending[1]!.resolve(undefined); await vi.waitFor(() => expect(f.interactions.busy).toBe(false));
-  f.interactions.showElement('doc'); await vi.waitFor(() => expect(f.pending).toHaveLength(3));
-  f.pending[2]!.resolve(undefined); expect(f.perform).not.toHaveBeenCalled();
+  expect(f.pending[0]?.signal.aborted).toBe(false);
+  f.update('live'); f.pending[0]!.resolve(undefined); await vi.waitFor(() => expect(f.interactions.busy).toBe(false));
+  f.interactions.showElement('doc'); await vi.waitFor(() => expect(f.pending).toHaveLength(2));
+  f.pending[1]!.resolve(undefined); expect(f.perform).not.toHaveBeenCalled();
 });
 
 it('opens typed statuses for full inspection without inventing a revision or action', async () => {

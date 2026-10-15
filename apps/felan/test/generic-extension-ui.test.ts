@@ -251,10 +251,22 @@ it.each(['tui', 'acp'] as const)('fences stale and disconnected real task dialog
   expect(() => validateUiAction(current, { elementId: original.id, revision: 'revision' in original ? original.revision : 0,
     actionId: 'refresh', outcome: 'submit', values: {} })).toThrow();
   client.connection(false);
-  await vi.waitFor(() => expect(client.dialogs[1]!.signal.aborted).toBe(true));
-  client.answer({ actionId: 'refresh' }, 1); client.connection(true);
-  await vi.waitFor(() => expect(client.dialogs).toHaveLength(3));
-  client.answer({ actionId: 'close' }, 2);
+  if (kind === 'tui') {
+    expect(client.dialogs[1]!.signal.aborted).toBe(false);
+    client.connection(true);
+    client.answer({ actionId: 'refresh' }, 1);
+    await vi.waitFor(() => expect(client.pending).toHaveLength(1));
+    await client.accept(params => commitAction(row, params));
+    expect(client.pending[0]).toMatchObject({ params: { actionId: 'refresh' } });
+    await h.emit('session_shutdown');
+    await Promise.allSettled([work]);
+    return;
+  } else {
+    await vi.waitFor(() => expect(client.dialogs[1]!.signal.aborted).toBe(true));
+    client.answer({ actionId: 'refresh' }, 1); client.connection(true);
+    await vi.waitFor(() => expect(client.dialogs).toHaveLength(3));
+    client.answer({ actionId: 'close' }, 2);
+  }
   await vi.waitFor(() => expect(client.pending).toHaveLength(1));
   await client.accept(params => commitAction(row, params)); await work;
   expect(client.pending[0]).toMatchObject({ params: { actionId: 'close', revision: 'revision' in row.value ? row.value.revision : 0 } });

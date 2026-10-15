@@ -162,7 +162,7 @@ The remaining host-only presentation inventory is explicit:
 | --- | --- |
 | `thinking-groups.ts` Markdown transformer | Client presenter; preserve thinking formatting, not agent execution. |
 | `subagents/completion-presentation.ts`, `ext-background-bash/src/ui/completion-message.ts` message renderers | Client presenters keyed by the existing custom message types; stable completion data comes from daemon. |
-| `herdr.ts` pane reporting | Client-local pane integration driven by shared run/interaction/child state. Never bind all sessions to the daemon starter's pane or socket env. |
+| `herdr.ts` pane reporting | `tui/herdr.ts`: the terminal client reports its own pane from the attached session's run state, waiting interactions and subagent executions. Never bind all sessions to the daemon starter's pane or socket env. |
 | `tool-activity/{state,extension,presentation}.ts` | Execution state in daemon; Alt+T panel and call/result rendering in TUI. |
 | Deleted `startup-header.ts`, `update-notification.ts`, `tui-compatibility.ts`, `overlay-images.ts`; client themes | Replaced by `tui/run.ts`, `tui/screen.ts` and client renderers. `run.ts` checks for updates asynchronously after startup, shows `felan update` guidance and cancels the check on exit. Offline failures are silent; update checks never gate daemon readiness. |
 | `dependency-onboarding.ts`, `project-trust-prompt.ts`; deleted `extension-settings.ts` | TUI prompts/pickers with host-side authorized persistence/install; execution settings now use `tui/preferences.ts` and `config.get/set`. No hidden terminal in daemon. |

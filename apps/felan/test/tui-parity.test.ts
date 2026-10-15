@@ -28,7 +28,6 @@ function fixture() {
   const keys = createClientKeybindings(); setKeybindings(keys);
   let current: SessionSnapshot = { ...snapshot(), thinking: 'xhigh', presentation: [powerline(),
     { id: 'memory', kind: 'status', key: 'memory', value: { kind: 'text', text: 'Memory: disabled' }, fallback: 'Memory disabled' },
-    { id: 'warning', kind: 'notification', level: 'warning', text: 'Memory processing disabled for this project.' },
   ] };
   const listeners = new Set<() => void>();
   const client = { status: 'ready', reconnection: undefined as { attempt: number; retryAt: number } | undefined, capabilities: { daemonVersion: '0.2.0' },
@@ -36,6 +35,7 @@ function fixture() {
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
   const controller = { client, get snapshot() { return current; }, get state() { return client.getAttachment().state; },
     sessionId: 'session', history: [] as Message[], busy: false, notice: '', subscribe: client.subscribe,
+    notes: [{ text: 'Memory processing disabled for this project.', level: 'warning' as const }],
     cancel: vi.fn(async () => ({})), submit: vi.fn(async () => true), perform: vi.fn(async () => ({ outcome: 'accepted' })),
     setNotice(text: string) { this.notice = text; for (const listener of listeners) listener(); },
   };
@@ -143,7 +143,7 @@ it('preserves the editor borders, scrolling and footer padding below a full tran
   expect(lines.slice(-3)).toEqual(footer);
 });
 
-it('shows working state only during a run and a disconnected daemon notice', () => {
+it('shows working state only during a run and reconnecting in the activity slot', () => {
   vi.useFakeTimers();
   const f = fixture();
   expect(f.lines().join('\n')).not.toContain('Working');
@@ -164,10 +164,11 @@ it('shows working state only during a run and a disconnected daemon notice', () 
   f.client.status = 'disconnected'; f.change({});
   expect(f.lines().join('\n')).toContain('Daemon disconnected. Use /reconnect to retry.');
   f.client.reconnection = { attempt: 3, retryAt: Date.now() + 4_000 }; f.change({});
-  expect(f.lines().join('\n')).toContain('Daemon disconnected · reconnecting in 4s · /reconnect to retry now');
+  expect(f.lines().join('\n')).toContain('Reconnecting…');
+  expect(f.lines().join('\n')).not.toContain('Daemon disconnected');
   const projection = vi.spyOn(f.screen.transcript, 'showProjection');
   vi.advanceTimersByTime(1_000);
-  expect(f.lines().join('\n')).toContain('reconnecting in 3s'); expect(projection).not.toHaveBeenCalled();
+  expect(f.lines().join('\n')).toContain('Reconnecting…'); expect(projection).not.toHaveBeenCalled();
   f.client.reconnection = undefined; f.client.status = 'ready'; f.change({});
   expect(f.lines().join('\n')).not.toContain('Daemon disconnected');
 });
