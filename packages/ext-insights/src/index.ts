@@ -1,21 +1,24 @@
 import { createHash } from 'node:crypto';
 import { computeAnalytics } from './analytics.js';
-import { getInsightsArgumentCompletions, getSinceCutoff, parseInsightsArgs } from './cli.js';
+import { getInsightsArgumentCompletions, parseInsightsArgs } from './cli.js';
+import { sessionsForRange } from './dashboard.js';
+import { INSIGHTS_DEFAULT_RANGE } from './data.js';
 import { generateMarkdown } from './markdown.js';
-import { mergeParsedSessions, parseSessionTranscript } from './parser.js';
-import { sliceParsedSession } from './slicing.js';
+import { parseSessionTranscript } from './parser.js';
 import { renderReport } from './report.js';
-import type { Analytics, ParsedSession } from './types.js';
-import type { InsightsHost, InsightsSessionReference } from './contracts.js';
-import type { ExtensionUi, FelanExtension } from '@felan-ai/agent-core';
+import type { InsightsHost, InsightsLoadedSession, InsightsReport, InsightsSessionReference } from './contracts.js';
+import { SessionsServiceError, type AgentRuntime, type ExtensionUi, type FelanExtension } from '@felan-ai/agent-core';
+import type { ParsedSession } from './types.js';
 
 const CACHE_PREFIX = 'insights/session-meta/';
 const MAX_SESSION_BYTES = 64 * 1024 * 1024;
 const PARSER_VERSION = '2';
 
-export type { InsightsHost, InsightsSessionReference } from './contracts.js';
+export type { InsightsHost, InsightsLoadedSession, InsightsReport, InsightsSessionReference } from './contracts.js';
 export * from './analytics.js';
 export * from './cli.js';
+export * from './dashboard.js';
+export * from './data.js';
 export * from './markdown.js';
 export * from './parser.js';
 export * from './rage.js';
@@ -46,32 +49,41 @@ export function createInsightsExtension(host: InsightsHost, binding?: InsightsEx
           const parsed = parseInsightsArgs(args ?? '');
           if (!parsed.ok) { await notify(parsed.error, 'error'); return; }
           const options = parsed.options;
-          const cutoff = getSinceCutoff(options);
           await notify('Scanning available sessions…', 'info');
           let references: readonly InsightsSessionReference[];
           try { references = await host.listSessions(pi.runtime, signal); } catch (error) {
             signal?.throwIfAborted();
-            await notify(binding ? 'Could not list sessions.' : `Could not list sessions: ${errorMessage(error)}`, 'error'); return;
+            const reason = binding ? (error instanceof SessionsServiceError ? ` (${error.code})` : '') : `: ${errorMessage(error)}`;
+            await notify(`Could not list sessions${reason}.`, 'error'); return;
           }
-          const grouped = new Map<string, ParsedSession[]>();
+          const skipped = new Map<string, number>();
+          const skip = (reason: string) => { skipped.set(reason, (skipped.get(reason) ?? 0) + 1); };
+          const loaded: InsightsLoadedSession[] = [];
           let cacheHits = 0;
           let cacheMisses = 0;
           let cacheWrites = 0;
           for (const reference of references) {
             signal?.throwIfAborted();
-            if (reference.size !== undefined && (!Number.isSafeInteger(reference.size) || reference.size < 0 || reference.size > MAX_SESSION_BYTES)) continue;
+            if (reference.unavailable) { skip(reference.unavailable); continue; }
+            if (reference.size !== undefined && (!Number.isSafeInteger(reference.size) || reference.size < 0 || reference.size > MAX_SESSION_BYTES)) { skip('oversize'); continue; }
+            const rootId = reference.rootSessionId ?? reference.id;
             const cached = options.refresh ? undefined : await readCachedSession(pi.runtime, reference);
             signal?.throwIfAborted();
             if (cached?.activity) {
               cacheHits++;
-              const sliced = sliceParsedSession(cached, cutoff, new Date());
-              if (sliced) addGrouped(grouped, reference, sliced);
+              loaded.push({ rootId, session: cached });
               continue;
             }
             cacheMisses++;
-            const transcript = host.readSessionLines
-              ? await collectLines(host.readSessionLines(pi.runtime, reference, signal), signal)
-              : await host.readSession(pi.runtime, reference, signal);
+            let transcript: string | undefined;
+            try {
+              transcript = host.readSessionLines
+                ? await collectLines(host.readSessionLines(pi.runtime, reference, signal), signal)
+                : await host.readSession(pi.runtime, reference, signal);
+            } catch (error) {
+              signal?.throwIfAborted();
+              skip(error instanceof SessionsServiceError ? error.code : 'unreadable'); continue;
+            }
             signal?.throwIfAborted();
             if (!transcript || new TextEncoder().encode(transcript).byteLength > MAX_SESSION_BYTES) continue;
             const session = parseSessionTranscript(transcript, reference.id);
@@ -79,18 +91,20 @@ export function createInsightsExtension(host: InsightsHost, binding?: InsightsEx
             await writeCachedSession(pi.runtime, reference, session);
             signal?.throwIfAborted();
             cacheWrites++;
-            const sliced = sliceParsedSession(session, cutoff, new Date());
-            if (sliced) addGrouped(grouped, reference, sliced);
+            loaded.push({ rootId, session });
           }
-          const sessions = [...grouped.entries()].flatMap(([rootId, parts]) => {
-            const merged = mergeParsedSessions(parts, rootId);
-            return merged ? [merged] : [];
-          });
+          if (skipped.size) {
+            const total = [...skipped.values()].reduce((sum, count) => sum + count, 0);
+            const reasons = [...skipped].map(([reason, count]) => `${reason} ${count}`).join(', ');
+            await notify(`Skipped ${total} of ${references.length} sessions that could not be read (${reasons}).`, 'warning');
+          }
+          const generatedAt = new Date();
+          const sinceRange = options.sinceDays === undefined ? undefined : `${options.sinceDays}d`;
+          const sessions = sessionsForRange(loaded, sinceRange ?? 'all', generatedAt);
           if (!sessions.length) { await notify('No valid sessions found for the selected range.', 'warning'); return; }
-          let analytics = computeAnalytics(sessions);
+          const analytics = computeAnalytics(sessions);
           analytics.cache = { root: pi.runtime.storage('agent').root, refreshed: options.refresh, versions: { schema: '2', parser: PARSER_VERSION }, sessionMeta: { hits: cacheHits, misses: cacheMisses, writes: cacheWrites, errors: 0 } };
-          analytics.export = { generatedAt: new Date().toISOString(), outputFormats: options.markdown ? ['html', 'markdown'] : ['html'] };
-          if (host.enrichAnalytics) analytics = await host.enrichAnalytics(analytics, pi.runtime);
+          analytics.export = { generatedAt: generatedAt.toISOString(), outputFormats: options.markdown ? ['html', 'markdown'] : ['html'] };
           if (host.savings) analytics.savings = await host.savings(pi.runtime, analytics);
           signal?.throwIfAborted();
           const reportPath = await host.writeReport(pi.runtime, 'felan-insights.html', renderReport(analytics));
@@ -98,10 +112,11 @@ export function createInsightsExtension(host: InsightsHost, binding?: InsightsEx
           if (options.markdown && host.writeMarkdown) await host.writeMarkdown(pi.runtime, 'felan-insights.md', generateMarkdown(analytics));
           signal?.throwIfAborted();
           await notify(`Insights report ready: ${reportPath}`, 'info');
-          if (options.openReport && host.openReport) {
+          if (options.openReport && host.presentReport) {
             signal?.throwIfAborted();
-            if (signal) await host.openReport(pi.runtime, reportPath, signal);
-            else await host.openReport(pi.runtime, reportPath);
+            const report: InsightsReport = { path: reportPath, generatedAt, initialRange: sinceRange ?? INSIGHTS_DEFAULT_RANGE, loaded };
+            if (signal) await host.presentReport(pi.runtime, report, signal);
+            else await host.presentReport(pi.runtime, report);
           }
         };
         if (!binding) return execute();
@@ -119,21 +134,14 @@ async function collectLines(lines: AsyncIterable<string>, signal?: AbortSignal):
   let bytes = 0;
   for await (const line of lines) {
     signal?.throwIfAborted();
-    if (typeof line !== 'string') throw new Error('Session transcript contains invalid data.');
-    if (line.length > MAX_SESSION_BYTES) throw new Error('Session transcript exceeds the supported size.');
+    if (typeof line !== 'string') throw new SessionsServiceError('invalid', 'Session transcript contains invalid data.');
+    if (line.length > MAX_SESSION_BYTES) throw new SessionsServiceError('oversize', 'Session transcript exceeds the supported size.');
     bytes += new TextEncoder().encode(line).byteLength + (chunks.length ? 1 : 0);
-    if (bytes > MAX_SESSION_BYTES) throw new Error('Session transcript exceeds the supported size.');
+    if (bytes > MAX_SESSION_BYTES) throw new SessionsServiceError('oversize', 'Session transcript exceeds the supported size.');
     chunks.push(line);
   }
   signal?.throwIfAborted();
   return chunks.join('\n');
-}
-
-function addGrouped(groups: Map<string, ParsedSession[]>, reference: InsightsSessionReference, session: ParsedSession): void {
-  const rootId = reference.rootSessionId ?? reference.id;
-  const parts = groups.get(rootId) ?? [];
-  parts.push(session);
-  groups.set(rootId, parts);
 }
 
 export default function insightsExtension(pi: Parameters<FelanExtension>[0]): void {
@@ -143,7 +151,7 @@ export default function insightsExtension(pi: Parameters<FelanExtension>[0]): vo
   });
 }
 
-async function readCachedSession(runtime: import('@felan-ai/agent-core').AgentRuntime, reference: import('./contracts.js').InsightsSessionReference): Promise<ParsedSession | undefined> {
+async function readCachedSession(runtime: AgentRuntime, reference: InsightsSessionReference): Promise<ParsedSession | undefined> {
   try {
     const key = cacheKey(reference);
     const raw = new TextDecoder().decode(await runtime.storage('agent').readFile(`${CACHE_PREFIX}${key}.json`, { maxBytes: MAX_SESSION_BYTES }));
@@ -158,15 +166,13 @@ async function readCachedSession(runtime: import('@felan-ai/agent-core').AgentRu
   } catch { return undefined; }
 }
 
-async function writeCachedSession(runtime: import('@felan-ai/agent-core').AgentRuntime, reference: import('./contracts.js').InsightsSessionReference, session: ParsedSession): Promise<void> {
+async function writeCachedSession(runtime: AgentRuntime, reference: InsightsSessionReference, session: ParsedSession): Promise<void> {
   const storage = runtime.storage('agent');
   await storage.mkdir(CACHE_PREFIX, { recursive: true });
   await storage.writeFile(`${CACHE_PREFIX}${cacheKey(reference)}.json`, new TextEncoder().encode(JSON.stringify({ session: { ...session, startTime: session.startTime.toISOString(), endTime: session.endTime.toISOString() } })));
 }
 
-function cacheKey(reference: import('./contracts.js').InsightsSessionReference): string {
+function cacheKey(reference: InsightsSessionReference): string {
   return createHash('sha256').update(JSON.stringify({ parser: PARSER_VERSION, reference })).digest('hex');
 }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-
-export { INSIGHTS_DOCUMENT_HINT } from './ui.js';

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SESSIONS_HISTORY_SERVICE, createExtensionServiceAccess, createFelanServiceRegistry, type FelanExtensionAPI, type SessionsHistory } from '@felan-ai/agent-core';
+import { SESSIONS_HISTORY_SERVICE, SessionsServiceError, createExtensionServiceAccess, createFelanServiceRegistry, type FelanExtensionAPI, type SessionsHistory } from '@felan-ai/agent-core';
 import insightsExtension, { createInsightsExtension, type InsightsHost } from '../src/extension.js';
 
 describe('service-backed insights extension', () => {
@@ -69,7 +69,7 @@ describe('service-backed insights extension', () => {
       readSessionLines: vi.fn(async function* () { yield* transcript; }),
       writeReport: vi.fn(async () => '/reports/insights.html'),
       writeMarkdown: vi.fn(async () => '/reports/insights.md'),
-      openReport: vi.fn(async () => {}),
+      presentReport: vi.fn(async () => {}),
     };
     createInsightsExtension(host)({ runtime, registerCommand: (_name: string, definition: typeof command) => { command = definition; } } as never);
     const signal = new AbortController().signal;
@@ -79,7 +79,28 @@ describe('service-backed insights extension', () => {
     expect(host.readSession).not.toHaveBeenCalled();
     expect(host.writeReport).toHaveBeenCalledWith(runtime, 'felan-insights.html', expect.any(String));
     expect(host.writeMarkdown).toHaveBeenCalledWith(runtime, 'felan-insights.md', expect.any(String));
-    expect(host.openReport).toHaveBeenCalledExactlyOnceWith(runtime, '/reports/insights.html', signal);
+    expect(host.presentReport).toHaveBeenCalledExactlyOnceWith(runtime, expect.objectContaining({
+      path: '/reports/insights.html', initialRange: '30d', loaded: [expect.objectContaining({ rootId: 'root' })],
+    }), signal);
+  });
+
+  it('writes the HTML report without presenting the dashboard when --no-open is given', async () => {
+    let command: { handler: (args: string, ctx: unknown) => Promise<void> } | undefined;
+    const transcript = [
+      JSON.stringify({ type: 'session', id: 'root', cwd: '/workspace', timestamp: '2026-08-29T07:00:00Z' }),
+      JSON.stringify({ type: 'message', timestamp: '2026-08-29T07:01:00Z', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } }),
+    ].join('\n');
+    const runtime = { storage: () => ({ root: '/agent', readFile: vi.fn().mockRejectedValue(new Error('miss')), writeFile: vi.fn(), mkdir: vi.fn() }) };
+    const host: InsightsHost = {
+      listSessions: async () => [{ id: 'root', path: '/root.jsonl', size: transcript.length, modifiedAtMs: 1 }],
+      readSession: async () => transcript,
+      writeReport: vi.fn(async () => '/reports/insights.html'),
+      presentReport: vi.fn(async () => {}),
+    };
+    createInsightsExtension(host)({ runtime, registerCommand: (_name: string, definition: typeof command) => { command = definition; } } as never);
+    await command!.handler('--no-open', { ui: { notify: vi.fn() } });
+    expect(host.writeReport).toHaveBeenCalledOnce();
+    expect(host.presentReport).not.toHaveBeenCalled();
   });
 
   it('counts turns from resumed roots and retained agents inside --since', async () => {
@@ -137,6 +158,33 @@ describe('shared Sessions default', () => {
     await h.shutdown();
   });
 
+  it('reports sessions it could not read and still builds the report from the rest', async () => {
+    const h = defaultFixture();
+    const entry = { type: 'message', id: 'user', parentId: null, timestamp: '2026-01-01T00:00:00Z', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } };
+    const info = { cwd: '/project', title: 'Session', updatedAt: 1, state: 'open' as const };
+    h.sessions.list.mockResolvedValue({ items: [
+      { ...info, id: 'root', root: 'root' }, { ...info, id: 'missing', root: 'missing', diagnostic: 'inaccessible' }, { ...info, id: 'busy', root: 'busy' },
+    ] });
+    h.sessions.checkpoint.mockImplementation(async id => ({ sessionId: id, revision: 'journal', branch: 'user', byteLength: 1000, transcriptDigest: 'digest' }));
+    h.sessions.history.mockImplementation(async id => {
+      if (id === 'busy') throw new SessionsServiceError('stale');
+      return { sessionId: id, revision: 'journal', branch: 'user', entries: [entry] as never };
+    });
+    await h.command()('--no-open', h.context);
+    expect(h.notify).toHaveBeenCalledWith({ level: 'warning', text: 'Skipped 2 of 3 sessions that could not be read (inaccessible 1, stale 1).' });
+    expect(h.writeFile).toHaveBeenCalledWith('insights-reports/felan-insights.html', expect.any(Uint8Array));
+    await h.shutdown();
+  });
+
+  it('names the service failure when the session listing itself cannot be read', async () => {
+    const h = defaultFixture();
+    h.sessions.list.mockRejectedValue(new SessionsServiceError('inaccessible'));
+    await h.command()('', h.context);
+    expect(h.notify).toHaveBeenLastCalledWith({ level: 'error', text: 'Could not list sessions (inaccessible).' });
+    expect(h.writeFile).not.toHaveBeenCalled();
+    await h.shutdown();
+  });
+
   it('aborts and joins an active command before disposing its shared-service scope', async () => {
     const h = defaultFixture();
     let release!: () => void;
@@ -162,12 +210,14 @@ describe('incremental transcript bounds', () => {
     let closed = false;
     const line = 'x'.repeat(1024 * 1024);
     const writeReport = vi.fn(async () => 'unused');
+    const notify = vi.fn();
     createInsightsExtension({
       listSessions: async () => [{ id: 'large', path: 'large', modifiedAtMs: 1 }], readSession: async () => undefined,
       readSessionLines: async function* () { try { for (let i = 0; i < 100; i++) { pulls++; yield line; } } finally { closed = true; } },
       writeReport,
     })({ runtime: { storage: () => ({ readFile: async () => { throw new Error('miss'); } }) }, registerCommand: (_name: string, command: { handler: typeof handler }) => { handler = command.handler; } } as never);
-    await expect(handler('--no-open', { ui: { notify: vi.fn() } })).rejects.toThrow('exceeds the supported size');
+    await handler('--no-open', { ui: { notify } });
+    expect(notify).toHaveBeenCalledWith('Skipped 1 of 1 sessions that could not be read (oversize 1).', 'warning');
     expect(pulls).toBeLessThanOrEqual(64);
     expect(closed).toBe(true);
     expect(writeReport).not.toHaveBeenCalled();
