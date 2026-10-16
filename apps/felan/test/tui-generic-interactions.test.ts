@@ -32,7 +32,7 @@ function fixture(capable = true, initial: UiPresentation = document(), inPlace =
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setNotice: notice, perform,
     client: { get status() { return status; }, capabilities: { capabilities: capable ? [...GENERIC_UI_CAPABILITIES] : [], operations: capable ? ['ui.action'] : [] },
-      getInteractions: () => [], getAttachment: () => ({ state }) },
+      getInteractions: () => [], readAttachment: () => ({ state }) },
   } as unknown as TuiSessionController;
   const interactions = new TerminalInteractions(controller, { presentElement, updateElement } as unknown as ClientInteractionPresenters);
   cleanups.push(() => interactions.dispose());

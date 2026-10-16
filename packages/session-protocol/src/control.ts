@@ -1,6 +1,6 @@
 import { Type, type Static } from 'typebox';
 import { CONTROL_VERSION, ProtocolValidationError } from './limits.js';
-import { DaemonIdentitySchema, DiagnosticTextSchema, IdSchema, NameSchema, enumOf, parseSchema, text } from './schema.js';
+import { DaemonIdentitySchema, DiagnosticTextSchema, HostBlockedSchema, IdSchema, NameSchema, enumOf, parseSchema, text } from './schema.js';
 import { requestTimestamp } from './request-id.js';
 
 export const BootstrapHelloSchema = Type.Object({
@@ -15,7 +15,7 @@ export const ControlRequestSchema = Type.Union([
 ]);
 export const ControlResponseSchema = Type.Object({
   control: Type.Literal(CONTROL_VERSION), re: IdSchema, daemonVersion: text(128, 1), supportedProtocol: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }), identity: DaemonIdentitySchema,
-  state: enumOf(['starting', 'ready', 'draining', 'stopped', 'blocked'] as const),
+  state: enumOf(['starting', 'ready', 'draining', 'stopped', 'blocked'] as const), blocked: Type.Optional(HostBlockedSchema),
   outcome: enumOf(['mismatch', 'accepted', 'rejected'] as const),
   error: Type.Optional(Type.Object({ code: NameSchema, message: DiagnosticTextSchema, retryable: Type.Boolean() })),
 });

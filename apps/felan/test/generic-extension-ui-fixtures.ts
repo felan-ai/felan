@@ -138,7 +138,7 @@ export function clientRoute(kind: 'tui' | 'acp', initial: Source, capabilities: 
   });
   const daemon = { get status() { return connected ? 'ready' : 'disconnected'; },
     capabilities: { interactionKinds: [...interactionKinds], capabilities: [...capabilities], operations: capabilities.includes('ui.action') ? ['ui.action'] : [] },
-    getInteractions: () => 'kind' in source ? [] : [interaction()], getAttachment: () => ({ state: state() }), request,
+    getInteractions: () => 'kind' in source ? [] : [interaction()], getAttachment: () => ({ state: state() }), readAttachment: () => ({ state: state() }), request,
   } as unknown as SessionClient;
   const choice = async (signal: AbortSignal) => {
     const current = source; const answer = deferred<Plan>(); dialogs.push({ signal, reply: answer.resolve });

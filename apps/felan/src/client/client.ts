@@ -144,7 +144,14 @@ export class SessionClient {
     }
     return structuredClone([...items.values()]);
   }
+  /** An independent, mutable copy of the attachment; use {@link readAttachment} for frequent reads. */
   getAttachment(session: string): AttachmentState | undefined { return structuredClone(this.attachments.get(session)); }
+  /** The current attachment itself, deeply frozen and shared with every reader; it never changes, later updates replace it. */
+  readAttachment(session: string): AttachmentState | undefined {
+    const attachment = this.attachments.get(session);
+    if (attachment) deepFreeze(attachment);
+    return attachment;
+  }
   getRequest(id: string): RequestState | undefined {
     const record = this.records.get(id) ?? this.records.get(id.toLowerCase());
     return record && (record.response ? { status: record.response.outcome, id: record.envelope.id, op: record.envelope.op, attempts: record.attempts, response: structuredClone(record.response) }
@@ -635,6 +642,13 @@ export class SessionClient {
     for (const [session, attachment] of this.attachments) this.attachments.set(session, { ...attachment, state: reduceSession(attachment.state, { type: 'disconnected' }) });
     this.emit();
   }
+}
+
+/** Freezes children before parents, so a frozen object's descendants are frozen and the unchanged parts shared by successive states are skipped. */
+function deepFreeze(value: unknown): void {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return;
+  for (const child of Object.values(value)) deepFreeze(child);
+  Object.freeze(value);
 }
 
 function bounded(value: number, min: number, max: number): number {

@@ -32,8 +32,17 @@ export const DaemonIdentitySchema = Type.Object({
   namespaceId: IdSchema, instanceId: IdSchema, agentDir: AbsolutePathSchema,
   rootSet: Type.Array(AbsolutePathSchema, { minItems: 1, uniqueItems: true }),
 });
+/**
+ * Why a daemon stopped serving after an incomplete shutdown. A recoverable block can be retried with a forced stop or restart;
+ * otherwise the daemon process (`pid`) must be terminated.
+ */
+export const HostBlockedSchema = Type.Object({
+  recoverable: Type.Boolean(), since: CounterSchema, message: DiagnosticTextSchema,
+  step: Type.Optional(NameSchema), session: Type.Optional(IdSchema), pid: Type.Optional(Type.Integer({ minimum: 1, maximum: 2 ** 31 - 1 })),
+});
 export type DaemonTarget = Static<typeof DaemonTargetSchema>;
 export type DaemonIdentity = Static<typeof DaemonIdentitySchema>;
+export type HostBlocked = Static<typeof HostBlockedSchema>;
 
 export function assertJson(value: unknown, maxBytes?: number): asserts value is JsonValue {
   const ancestors = new Set<object>();

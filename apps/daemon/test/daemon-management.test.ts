@@ -11,7 +11,7 @@ afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await
 async function fixture(held = false) {
   const f = await serverFixture({ now: Date.now }); const settled = gate(); const complete = vi.fn(async () => {});
   const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity,
-    beginDrain: () => f.registry.beginDrain(), settle: async () => { if (held) await settled.promise; }, complete });
+    beginDrain: () => f.registry.beginDrain(), endDrain: () => f.registry.endDrain(), settle: async () => { if (held) await settled.promise; }, complete });
   const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture',
     configuration: new DaemonConfiguration({ definitions: [], assertCurrent: () => f.owner.assertCurrent() }),
     management: { lifecycle, logs: () => ({ entries: [{ timestamp: 1, level: 'info', message: 'Daemon ready.' }] }) } });
@@ -23,7 +23,7 @@ async function fixture(held = false) {
       clientVersion: 'fixture', kind, expected: f.owner.identity });
     clients.push(client); await client.connect(); return client;
   }
-  return { ...f, client, lifecycle, complete, settled };
+  return { ...f, client, lifecycle, complete, settled, server };
 }
 
 it('advertises management operations to every verified local client and exposes bounded log data', async () => {
@@ -65,4 +65,33 @@ it('keeps a mismatched daemon running for a client that cannot relaunch it', asy
   expect(await client.control('host.status')).toMatchObject({ outcome: 'accepted', state: 'ready' });
   await expect(client.control('host.restart')).rejects.toThrow(); expect(f.lifecycle.state).toBe('ready');
   expect(await client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
+});
+
+it('reports an unrecoverable block and rejects force and new work with process recovery guidance', async () => {
+  const f = await fixture(); const client = await f.client(); await client.attach(f.root.sessionId);
+  f.lifecycle.block(new Error('fixture ownership lost'), 'ownership-lost');
+  const blocked = f.lifecycle.blocked!;
+  expect(blocked).toMatchObject({ recoverable: false, step: 'ownership-lost', pid: process.pid });
+  expect(await client.control('host.status')).toMatchObject({ outcome: 'accepted', state: 'blocked', blocked });
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'blocked', blocked } });
+  for (const op of ['host.stop', 'host.restart'] as const) {
+    expect(await client.control(op, 'force')).toMatchObject({ outcome: 'rejected', state: 'blocked', blocked,
+      error: { code: 'host_blocked', message: expect.stringContaining(`force-terminate the daemon process ${process.pid} (${process.platform === 'win32' ? 'taskkill /F /PID' : 'kill -9'} ${process.pid})`) } });
+  }
+  expect(await client.request('sessions.create', { cwd: f.cwd, source: 'tui' })).toMatchObject({ outcome: 'rejected', error: {
+    code: 'host_blocked', message: expect.stringContaining(`terminate the daemon process ${process.pid}`),
+  } });
+  expect(await client.request('prompt', { text: 'refused' }, { session: f.root.sessionId })).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
+  expect(f.complete).not.toHaveBeenCalled(); expect(f.lifecycle.blocked).toEqual(blocked);
+});
+
+it('keeps control diagnostics and force rejection available after release has sealed commands', async () => {
+  const f = await fixture(); const client = await f.client();
+  f.complete.mockImplementation(async () => { f.server.sealCommands(); throw new Error('release failed'); });
+  expect(await client.control('host.stop', 'force')).toMatchObject({ outcome: 'accepted' });
+  await vi.waitFor(() => expect(f.lifecycle.state).toBe('blocked'));
+  expect(await client.control('host.status')).toMatchObject({ state: 'blocked', blocked: { recoverable: false, step: 'release' } });
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'blocked' } });
+  expect(await client.control('host.restart', 'force')).toMatchObject({ outcome: 'rejected', blocked: { recoverable: false }, error: { code: 'host_blocked' } });
+  expect(f.complete).toHaveBeenCalledOnce();
 });

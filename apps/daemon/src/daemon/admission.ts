@@ -155,7 +155,7 @@ export class OrderedAdmission {
     if (record.phase === 'dispatch_intent') return indeterminate(id);
     const candidate: unknown = error !== null && typeof error === 'object' ? Object.getOwnPropertyDescriptor(error, 'code')?.value : undefined;
     const code = error instanceof ProtocolValidationError || error instanceof ControlStoreError ? error.code
-      : typeof candidate === 'string' && (ERROR_CODES as readonly string[]).includes(candidate) ? candidate : 'unavailable';
+      : typeof candidate === 'string' && (candidate === 'host_blocked' || (ERROR_CODES as readonly string[]).includes(candidate)) ? candidate : 'unavailable';
     return failure(id, code, diagnosticMessage(error));
   }
 }

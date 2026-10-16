@@ -150,7 +150,7 @@ it('resumes the first session matching an ambiguous ID prefix', async () => {
     lastActivity: 1, run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 } }));
   const attach = vi.fn(async (session: string) => rows.some(row => row.session === session) ? { outcome: 'accepted' }
     : { outcome: 'rejected', error: { code: 'not_found', message: 'Session is not registered.' } });
-  const client = { status: 'ready', capabilities: { operations: ['sessions.list'] }, connect: async () => {}, subscribe: () => () => {}, getAttachment: () => undefined,
+  const client = { status: 'ready', capabilities: { operations: ['sessions.list'] }, connect: async () => {}, subscribe: () => () => {}, readAttachment: () => undefined,
     request: async () => ({ outcome: 'accepted', result: { entries: rows } }), attach, close() {} };
   const controller = new TuiSessionController(client as unknown as SessionClient);
   await controller.start({ cwd: '/fixture', sessionId: 'abc' });
@@ -160,7 +160,7 @@ it('resumes the first session matching an ambiguous ID prefix', async () => {
 it('explains a blocked attachment in the recovery notice', async () => {
   let blocked: unknown;
   const client = { status: 'ready', capabilities: { operations: [] }, connect: async () => {}, subscribe: () => () => {}, close() {},
-    getAttachment: () => ({ state: { status: 'blocked' }, blocked }), attach: async () => ({ outcome: 'accepted' }) };
+    readAttachment: () => ({ state: { status: 'blocked' }, blocked }), attach: async () => ({ outcome: 'accepted' }) };
   const controller = new TuiSessionController(client as unknown as SessionClient);
   await controller.attach('session');
   expect(controller.blockedText).toBe('Session recovery did not complete.');
@@ -240,6 +240,31 @@ it('loads local preferences without replacing input typed during startup', async
     tui.renderNow(true); expect(tui.getScreenLines().join('\n')).toContain('initial draft plus typed text');
     expect(f.root.runtime.session.messages).toHaveLength(0);
   } finally { release.resolve(); signal.abort(); await running; }
+});
+
+it('keeps a blocked-daemon startup open for recovery without attaching or submitting the initial draft', async () => {
+  const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
+  let blocked = true;
+  const request = controller.client.request.bind(controller.client);
+  const requests = vi.spyOn(controller.client, 'request').mockImplementation(async (op, params, options) => {
+    if (op === 'host.status') return { outcome: 'accepted', result: { daemonVersion: 'fixture', state: blocked ? 'blocked' : 'ready',
+      ...(blocked ? { blocked: { recoverable: true, since: 1, message: 'disposal failed', step: 'session-services' } } : {}),
+      active: { sessions: 1, runs: 0, work: 0, attachments: 0 }, setupNeeds: [] } } as never;
+    return request(op, params, options);
+  });
+  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir,
+    sessionId: f.root.sessionId, initialMessage: 'retained prompt', terminal, createTui: () => tui, signal: signal.signal });
+  try {
+    await vi.waitFor(() => expect(controller.notice).toContain('Use /daemon restart force to retry cleanup.'));
+    expect(controller.sessionId).toBeUndefined(); expect(terminal.active).toBe(true);
+    expect(screenText(tui)).toContain('retained prompt');
+    expect(requests.mock.calls.some(([op]) => op === 'attach' || op === 'sessions.create' || op === 'prompt')).toBe(false);
+    terminal.input('\x03'); terminal.input('/daemon status'); terminal.input('\r');
+    await vi.waitFor(() => expect(screenText(tui)).toContain('Incomplete shutdown'));
+    expect(screenText(tui).replace(/\s+/gu, ' ')).toContain('Use /daemon restart force to retry cleanup.');
+    terminal.input('\x1b'); blocked = false; await controller.reconnect();
+    expect(controller.notice).toBe('Daemon reconnected.');
+  } finally { signal.abort(); await running; }
 });
 
 it('exits while a local preference read remains unresolved', async () => {
@@ -417,7 +442,7 @@ it('keeps input usable with a clear notice while the daemon is disconnected with
   const listeners = new Set<() => void>();
   const client = { status: 'ready', reconnection: { attempt: 2, retryAt: Date.now() + 4_000 } as { attempt: number; retryAt: number } | undefined,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); },
-    getAttachment: () => undefined, capabilities: { operations: ['prompt'] }, request: vi.fn(), close: vi.fn() };
+    readAttachment: () => undefined, capabilities: { operations: ['prompt'] }, request: vi.fn(), close: vi.fn() };
   const emit = () => { for (const listener of listeners) listener(); };
   const controller = new TuiSessionController(client as unknown as SessionClient);
   try {
@@ -436,7 +461,7 @@ it('anchors notes to the latest entry, replaces back-to-back status lines and st
   const message = (id: string): Message => ({ id, entryId: id, role: 'user', timestamp: 1, content: [{ type: 'text', text: id }] });
   const sessions = new Map(['a', 'b'].map(session => [session, { ...snapshot(), session, root: session, history: { revision: 0, branch: 'branch', entries: [message(`${session}1`)] } }]));
   const client = { status: 'ready', subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); },
-    getAttachment: (session: string) => sessions.has(session) ? { state: { status: 'live', snapshot: sessions.get(session) } } : undefined,
+    readAttachment: (session: string) => sessions.has(session) ? { state: { status: 'live', snapshot: sessions.get(session) } } : undefined,
     attach: vi.fn(async () => ({ outcome: 'accepted' })), detach: vi.fn(async () => {}), close: vi.fn() };
   const emit = () => { for (const listener of listeners) listener(); };
   const controller = new TuiSessionController(client as unknown as SessionClient);

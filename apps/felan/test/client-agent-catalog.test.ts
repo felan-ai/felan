@@ -22,7 +22,7 @@ function fixture(withSummary = true) {
   const client = {
     get status() { return ready ? 'ready' : 'disconnected'; },
     capabilities: { operations: ['executions.list', 'executions.read', 'executions.steer', 'executions.cancel'] }, request,
-    getAttachment: () => ({ state: { status: 'live', snapshot: { ...snapshot(), executionsGeneration: generation } } }),
+    readAttachment: () => ({ state: { status: 'live', snapshot: { ...snapshot(), executionsGeneration: generation } } }),
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     attach: vi.fn(), detach: vi.fn(),
   } as unknown as ConstructorParameters<typeof ClientAgentHost>[0];

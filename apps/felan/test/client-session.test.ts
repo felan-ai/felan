@@ -66,6 +66,27 @@ describe('shared session client', () => {
     const state = client.getAttachment('session')!; state.state.snapshot!.title = 'external mutation';
     expect(client.getAttachment('session')?.state.snapshot?.title).toBe('fixture');
   });
+
+  it('shares one frozen attachment between reads until an update replaces it', async () => {
+    const { client, fake } = await fixture();
+    await client.connect();
+    const response = await client.attach('session');
+    const first = client.readAttachment('session')!;
+    expect(response.outcome).toBe('accepted');
+    if (response.outcome === 'accepted') expect(Object.isFrozen(response.result.snapshot.history.entries)).toBe(false);
+    expect(client.readAttachment('session')).toBe(first);
+    expect(() => { first.state.snapshot!.history.entries.push({} as never); }).toThrow(TypeError);
+    expect(() => { (first.state.snapshot!.model as { id: string }).id = 'external mutation'; }).toThrow(TypeError);
+    fake.frame(delta('streamed', 0));
+    const next = client.readAttachment('session')!;
+    expect(next).not.toBe(first);
+    expect(next.state.snapshot?.activeStreams[0]?.text).toBe('streamed');
+    expect(next.state.snapshot?.history).toBe(first.state.snapshot?.history);
+    expect(Object.isFrozen(next.state.snapshot?.activeStreams[0])).toBe(true);
+    expect(first.state.snapshot?.activeStreams).toEqual([]);
+    expect(client.getAttachment('session')).not.toBe(next);
+    expect(Object.isFrozen(client.getAttachment('session'))).toBe(false);
+  });
   it.each(['namespaceId', 'agentDir'] as const)('fails closed on mismatched %s', async field => {
     const { client, fake, identity } = await fixture({ reconnectAttempts: 0 });
     await client.connect(); fake.lose();

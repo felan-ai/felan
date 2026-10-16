@@ -41,12 +41,22 @@ old prompts or applying session configuration again. Local drafts remain local.
 
 Graceful shutdown rejects new work, defers eligible questions and waits for
 accepted work. Drain never escalates to force. If it fails or misses its
-deadline (30 seconds by default), the drain is abandoned: admission reopens, the
-daemon returns to `ready` and keeps serving, and the stop or restart is reported
-as failed. Only an explicit force request cancels and joins owned work, verifies
-process settlement and persists interrupted run identities before ownership
-release. A forced settlement that fails or misses its deadline reports `blocked`
-and keeps ownership.
+deadline (30 seconds by default) before registry shutdown, the daemon may abandon
+the drain, reopen admission and return to `ready`. Once cleanup prevents safe
+resumption, it reports `blocked` and keeps ownership. Only an explicit force
+request cancels and joins owned work, verifies process settlement and persists
+interrupted run identities before ownership release.
+
+While blocked, `host.status` and control responses include `blocked`: a redacted
+cause, stable step, optional session, timestamp, PID and `recoverable` flag. Drain
+stop/restart requests reject durably with `host_blocked`. A force request retries
+remaining cleanup only if settlement failed before release, ownership is current
+and the registry is unfenced. Completed sessions and services are not disposed
+again. Another failure replaces the diagnostic. Release, ownership-loss,
+idle-eviction and unjoined settlement-deadline failures require process
+termination instead. Other new work receives `host_blocked`; existing drain
+safety/management operations and retained durable outcomes remain available.
+See [ADR 0041](../decisions/0041-retry-incomplete-daemon-shutdown-explicitly.md).
 
 `host.status` reports `active.work`: busy resident sessions (including child
 executions), running background processes of resident roots, and unanswered host
@@ -75,9 +85,11 @@ is rebuilt. Control-store recovery follows
 [persistence](session-daemon-persistence.md): inconsistent rows are dropped
 individually, and only a corrupt or foreign file is quarantined.
 
-Operational logs are bounded rolling tails of fixed, sanitized events. They do
-not contain prompts, environment values, credentials or arbitrary provider
-errors. Agent log writes are tracked and joined before ownership release.
+Operational logs are bounded rolling tails of sanitized events. Shutdown failures
+include a redacted, bounded error message and step/session; stderr also includes
+a few redacted stack frames. They do not intentionally retain credentials or
+unbounded provider output. Logging is best effort if ownership or the sink has
+already been lost. Agent log writes are tracked and joined before ownership release.
 Server-owned requests, including global settings writes, are also joined.
 Final shutdown seals new commands before the control store is closed; waiting
 only for session turns is not a complete writer barrier.

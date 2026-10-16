@@ -45,6 +45,17 @@ describe('outcomes and handshake', () => {
     expect(() => parseControlResponse({ control: 1, re: 'hello', daemonVersion: '1.0', supportedProtocol: 1, identity, state: 'ready', outcome: 'rejected' })).toThrow();
     expect(() => parseSchema(ControlRequestSchema, { control: 2, id: 'q', op: 'host.status', params: { expected: identity } })).toThrow();
   });
+
+  it('reports why a blocked host refuses work and whether forcing can retry its cleanup', () => {
+    const blocked = { recoverable: true, since: now, message: 'Error: service settle failed', step: 'settle-services', session: 's', pid: 4242 };
+    const status = { control: 1, re: 'status', daemonVersion: '1.0', supportedProtocol: 1, identity, state: 'blocked', blocked, outcome: 'accepted' };
+    expect(parseControlResponse(status).blocked).toEqual(blocked);
+    expect(parseControlResponse({ ...status, blocked: { recoverable: false, since: now, message: 'Ownership was lost.' } }).blocked).toEqual({ recoverable: false, since: now, message: 'Ownership was lost.' });
+    expect(() => parseControlResponse({ ...status, blocked: { ...blocked, message: 'line\nbreak' } })).toThrow();
+    expect(() => parseControlResponse({ ...status, blocked: { ...blocked, pid: 0 } })).toThrow();
+    expect(parseOperationResult('host.status', { state: 'blocked', identity, daemonVersion: '1.0', protocol: 1,
+      active: { sessions: 0, runs: 0, work: 0, attachments: 0 }, setupNeeds: [], blocked })).toMatchObject({ blocked });
+  });
 });
 
 describe('request retry identity', () => {

@@ -32,6 +32,8 @@ export class DaemonTuiScreen {
   private inlineActive = false;
   private readonly theme: () => Theme;
   private working: Loader | undefined;
+  private workingMessage: string | undefined;
+  private stale = false;
   private lastClear = 0;
   private readonly unsubscribe: () => void;
   private readonly removeInput: () => void;
@@ -74,7 +76,9 @@ export class DaemonTuiScreen {
     const content = new Container();
     content.addChild(this.header); content.addChild(this.transcript); content.addChild(this.notices);
     this.scroll = new ScrollView(content, { follow: 'end', primary: true, scrollbar: 'auto' });
-    const stack = new VStack([{ component: this.scroll, basis: 0, grow: 1, minSize: 0 },
+    // Session updates can arrive faster than frames; the first entry applies them once per frame, before the rest render.
+    const stack = new VStack([{ component: { render: () => { if (this.stale) this.applyUpdates(); return []; }, invalidate() {} } },
+      { component: this.scroll, basis: 0, grow: 1, minSize: 0 },
       { component: this.activity, shrink: 0, visible: () => !this.inlineActive },
       { component: this.editor, shrink: 0, visible: () => !this.inlineActive },
       { component: this.inline, visible: () => this.inlineActive, shrink: 1, minSize: 1 },
@@ -143,7 +147,10 @@ export class DaemonTuiScreen {
       }
       return undefined;
     });
-    this.unsubscribe = controller.subscribe(() => this.refresh()); this.refresh();
+    this.unsubscribe = controller.subscribe(() => {
+      this.editor.disableSubmit = controller.busy; this.stale = true; tui.requestRender();
+    });
+    this.refresh();
   }
 
   focus(): void { this.tui.setFocus(this.editor); }
@@ -208,6 +215,21 @@ export class DaemonTuiScreen {
   }
 
   private refresh(): void {
+    this.update(); this.tui.requestRender();
+  }
+
+  /**
+   * An exception inside a frame would stop the terminal, so a failed update is shown instead. It is not reported through the
+   * controller, whose notes would schedule another update.
+   */
+  private applyUpdates(): void {
+    try { this.update(); }
+    catch (error) { this.notices.addChild(new Text(this.theme().fg('error', uiText(`Cannot update the screen: ${errorText(error)}`)), 1, 1)); }
+  }
+
+  /** Rebuilds the screen from the controller. It also runs inside a frame, so it requests another frame only for real changes. */
+  private update(): void {
+    this.stale = false;
     if (this.disposed) return;
     const snapshot = this.controller.snapshot; const state = this.controller.state;
     const connection = this.controller.client.status;
@@ -243,10 +265,11 @@ export class DaemonTuiScreen {
     if (reconnecting || running) {
       const status = snapshot?.presentation.find(item => item.kind === 'status' && item.id === 'working');
       const message = reconnecting ? 'Reconnecting…' : status?.kind === 'status' ? statusText(status) : 'Working';
-      this.working ??= new Loader(this.tui, text => this.editor.borderColor(text), text => this.editor.borderColor(text), message, this.workingIndicator());
-      this.working.setMessage(message);
+      if (!this.working) this.working = new Loader(this.tui, text => this.editor.borderColor(text), text => this.editor.borderColor(text), message, this.workingIndicator());
+      else if (this.workingMessage !== message) this.working.setMessage(message);
+      this.workingMessage = message;
       this.activity.addChild(this.working);
-    } else { this.working?.stop(); this.working = undefined; }
+    } else { this.working?.stop(); this.working = undefined; this.workingMessage = undefined; }
     this.editor.disableSubmit = this.controller.busy;
     if (snapshot) {
       try {
@@ -255,7 +278,6 @@ export class DaemonTuiScreen {
         }, this.controller.notes));
       } catch (error) { notice(`Cannot render transcript: ${errorText(error)}`, 'error'); }
     }
-    this.tui.requestRender();
   }
 
   private workingIndicator() {

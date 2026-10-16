@@ -35,13 +35,13 @@ export function powerlineViewData(presentation: readonly Presentation[]): Powerl
 }
 
 export function createClientPowerlineFooter(
-  client: Pick<SessionClient, 'getAttachment' | 'subscribe'>,
+  client: Pick<SessionClient, 'readAttachment' | 'subscribe'>,
   session: string,
   options: Pick<ConstructorParameters<typeof ProjectedPowerlineFooter>[0], 'theme' | 'requestRender' | 'extraRows'> & { onError?(message: string): void; preferences?(): PowerlineConfig['display'] },
 ): ProjectedPowerlineFooter {
   let invalid = false;
   return new ProjectedPowerlineFooter({ ...options, subscribe: listener => client.subscribe(listener), data() {
-    const attachment = client.getAttachment(session);
+    const attachment = client.readAttachment(session);
     if (!attachment?.state.snapshot) return undefined;
     try {
       const presentation = attachment.state.snapshot?.presentation ?? [];

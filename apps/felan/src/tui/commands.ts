@@ -5,6 +5,7 @@ import type { TuiSessionController } from './controller.js';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import { pickSession, type NavigationDialogs } from './session-navigator.js';
 import { pickTreeEntry, type TreeViewState } from './tree-navigator.js';
+import { describeHostBlocked, formatHostBlocked } from '../client/daemon-blocked.js';
 
 type ToolsManager = { getToolPath(tool: 'fd' | 'rg'): string | null };
 const toolsManager = import(new URL('./utils/tools-manager.js', import.meta.resolve('@earendil-works/pi-coding-agent')).href)
@@ -118,8 +119,9 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
         const host = response.result;
         await dialogs.select(`Daemon ${host.daemonVersion} · ${host.state}`, [
           { value: 'summary', label: `${host.active.sessions} sessions · ${host.active.runs} runs · ${host.active.work} active tasks · ${host.active.attachments} attachments` },
+          ...(host.state === 'blocked' ? [{ value: 'blocked', label: 'Incomplete shutdown', description: formatHostBlocked(host.blocked, { client: 'tui' }) }] : []),
           ...host.setupNeeds.map(need => ({ value: need.code, label: need.message })),
-        ]);
+        ], ...(host.state === 'blocked' ? [{ initialValue: 'blocked' }] as const : []));
       } else {
         const response = await controller.perform('host.logs', { limit: 64 }); if (response.outcome !== 'accepted') return false;
         await dialogs.select(`Daemon logs${response.result.cursor ? ' (first page; use felan daemon logs for all)' : ''}`,
@@ -130,6 +132,13 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     if (action !== 'stop' && action !== 'restart') throw new Error('Usage: /daemon status|logs|stop|restart [force]');
     if (!options.daemon) throw new Error('Daemon lifecycle controls are unavailable in this client.');
     const status = controller.client.capabilities?.operations.includes('host.status') ? await controller.perform('host.status', {}) : undefined;
+    if (status && status.outcome !== 'accepted') return false;
+    if (status?.result.state === 'blocked') {
+      const blocked = status.result.blocked;
+      if (blocked?.recoverable === false) { controller.setNotice(formatHostBlocked(blocked, { client: 'tui', action }), true); return false; }
+      if (mode !== 'force' && !await dialogs.confirm('Retry daemon cleanup with force?', `${describeHostBlocked(blocked)} Remaining work will be interrupted.`)) return false;
+      await options.daemon(name === 'restart' ? 'relaunch' : action, true); return true;
+    }
     const active = status?.outcome === 'accepted' ? status.result.active.work : undefined;
     // Draining never interrupts work, so stopping busy work means choosing force.
     if (active !== 0) {

@@ -27,7 +27,7 @@ it('derives data only from versioned generic rows, leaving layout to the client'
 it('preserves a client-only footer across recovery and clears it on removal or disposal', () => {
   let live = true; let presentation: Presentation[] = [view()];
   const listeners = new Set<() => void>();
-  const client = { getAttachment: () => ({ state: { status: live ? 'live' : 'disconnected', snapshot: { ...snapshot(), presentation } } }),
+  const client = { readAttachment: () => ({ state: { status: live ? 'live' : 'disconnected', snapshot: { ...snapshot(), presentation } } }),
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } } as unknown as SessionClient;
   const render = vi.fn(); const footer = createClientPowerlineFooter(client, 'session', {
     theme: () => ({ getFgAnsi: () => '', getBgAnsi: () => '' }), requestRender: render, extraRows: () => ['child rail'],
@@ -51,7 +51,7 @@ it('rejects malformed or ambiguous decorations without changing generic view dat
     ? { ...item, values: { ...item.values, color: 'untrusted-color' } } : item) };
   expect(() => powerlineViewData([bad])).toThrow();
   const report = vi.fn();
-  const client = { getAttachment: () => ({ state: { status: 'live', snapshot: { ...snapshot(), presentation: [bad] } } }),
+  const client = { readAttachment: () => ({ state: { status: 'live', snapshot: { ...snapshot(), presentation: [bad] } } }),
     subscribe: () => () => {} } as unknown as SessionClient;
   const footer = createClientPowerlineFooter(client, 'session', { theme: () => ({ getFgAnsi: () => '', getBgAnsi: () => '' }), requestRender() {}, onError: report });
   expect(footer.render(80)).toEqual(['']); expect(footer.render(80)).toEqual(['']);
@@ -74,7 +74,7 @@ it('renders hinted Powerline statuses only in their renderer and keeps unmatched
 
 it('lets clients render identical published values with different local styles and layouts', () => {
   const presentation = [view()];
-  const client = { getAttachment: () => ({ state: { status: 'live', snapshot: { ...snapshot(), presentation } } }), subscribe: () => () => {} } as unknown as SessionClient;
+  const client = { readAttachment: () => ({ state: { status: 'live', snapshot: { ...snapshot(), presentation } } }), subscribe: () => () => {} } as unknown as SessionClient;
   const footer = (style: 'minimal' | 'capsule', enabled = true) => createClientPowerlineFooter(client, 'session', {
     theme: () => ({ getFgAnsi: () => '', getBgAnsi: () => '' }), requestRender() {},
     preferences: () => ({ style, charset: 'text', autoWrap: true, padding: 0, lines: [{ segments: { directory: { enabled, style: 'full' } } }] }),
@@ -92,7 +92,7 @@ it('keeps the released default footer lines and shows the status line only when 
   data.items.push({ id: 'model', values: { segment: 'model', data: JSON.stringify({ id: 'test-model', provider: 'test', reasoning: false, providerCount: 1 }), color: 'model' }, fallback: 'Model' },
     { id: 'version', values: { segment: 'version', data: JSON.stringify({ version: '0.30.0' }), color: 'version' }, fallback: 'Version' });
   const presentation: Presentation[] = [data];
-  const client = { getAttachment: () => ({ state: { status: 'live', snapshot: { ...snapshot(), presentation } } }), subscribe: () => () => {} } as unknown as SessionClient;
+  const client = { readAttachment: () => ({ state: { status: 'live', snapshot: { ...snapshot(), presentation } } }), subscribe: () => () => {} } as unknown as SessionClient;
   const footer = createClientPowerlineFooter(client, 'session', { theme: () => ({ getFgAnsi: () => '', getBgAnsi: () => '' }), requestRender() {} });
   try {
     const rows = footer.render(80).map(stripTerminalSequences);

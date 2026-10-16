@@ -12,6 +12,12 @@ it('reconstructs native rendering messages from actual metadata without default 
     content: [{ type: 'thinking', thinking: 'Reason' }, { type: 'toolCall', id: 'call', name: 'read', arguments: { path: 'a.ts' } }] });
   const { details: _details, ...legacy } = message;
   expect(projectedNativeMessage(legacy)).toBeUndefined();
+  expect(projectedNativeMessage(message)).toBe(projectedNativeMessage(message));
+  expect(projectedNativeMessage(structuredClone(message))).not.toBe(projectedNativeMessage(message));
+  const received = structuredClone(message); Object.freeze(received.content[1]); Object.freeze((received.content[1] as { arguments: object }).arguments);
+  const call = projectedNativeMessage(received)?.content[1];
+  expect(call).toMatchObject({ type: 'toolCall', arguments: { path: 'a.ts' } });
+  expect(Object.isFrozen((call as { arguments: object }).arguments)).toBe(false);
 });
 it('retains tool identity and result details instead of deriving a name from text', () => {
   expect(projectedNativeMessage({ id: 'result', entryId: 'entry', timestamp: 99, role: 'tool',

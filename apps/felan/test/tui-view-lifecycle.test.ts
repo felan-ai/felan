@@ -57,7 +57,7 @@ function fixture(name: typeof cases[number][0], kind: 'view' | 'document') {
     sessionId: 'session', get snapshot() { return current; }, get state() { return { status: 'live', snapshot: current }; },
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     perform, setNotice: vi.fn(), client: { get status() { return clientStatus; }, capabilities: { capabilities: GENERIC_UI_CAPABILITIES, operations: ['ui.action'] },
-      getAttachment: () => ({ state: { status: attachmentStatus } }), getInteractions: () => [] },
+      readAttachment: () => ({ state: { status: attachmentStatus } }), getInteractions: () => [] },
   } as unknown as TuiSessionController;
   const interactions = new TerminalInteractions(controller, { presentElement } as unknown as ClientInteractionPresenters);
   cleanups.push(() => interactions.dispose());

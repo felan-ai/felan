@@ -5,7 +5,7 @@ import type { AgentNavigatorHost, AgentNavigatorRecord } from '../subagents/agen
 import type { SessionClient } from './client.js';
 import { projectedNativeMessage, projectedStreamingContent, projectedStreamingMessage } from './message-display.js';
 
-type Client = Pick<SessionClient, 'getAttachment' | 'subscribe' | 'attach' | 'detach' | 'request' | 'status' | 'capabilities'>;
+type Client = Pick<SessionClient, 'readAttachment' | 'subscribe' | 'attach' | 'detach' | 'request' | 'status' | 'capabilities'>;
 interface ChildAttachment { owned: boolean; id?: string; pending?: Promise<void> }
 interface History { branch: string; entries: Message[]; loaded: boolean; loading?: Promise<void> }
 type MutableRecord = { -readonly [K in keyof AgentNavigatorRecord]: AgentNavigatorRecord[K] };
@@ -110,7 +110,7 @@ export class ClientAgentHost implements AgentNavigatorHost {
     const ready = this.client.status === 'ready';
     if (!ready) { this.wasReady = false; this.status = 'Agent connection unavailable.'; this.emit(); return; }
     if (!this.wasReady) { this.wasReady = true; this.attempted = undefined; this.reconcile(); }
-    const root = this.client.getAttachment(this.parent)?.state;
+    const root = this.client.readAttachment(this.parent)?.state;
     if (root?.status === 'live') {
       const revision = root.snapshot?.executionsGeneration ?? '';
       if (revision !== this.attempted) {
@@ -127,7 +127,7 @@ export class ClientAgentHost implements AgentNavigatorHost {
     if (!this.client.capabilities?.operations.includes('executions.list')) throw new Error('This daemon does not support agent views.');
     for (let attempt = 0; attempt < 3; attempt++) {
       let cursor: string | undefined; const rows: Execution[] = []; const cursors = new Set<string>();
-      const generation = this.client.getAttachment(this.parent)?.state.snapshot?.executionsGeneration;
+      const generation = this.client.readAttachment(this.parent)?.state.snapshot?.executionsGeneration;
       let retry = false;
       do {
         const response = await this.client.request('executions.list', { limit: 100, ...(cursor === undefined ? {} : { cursor }) }, { session: this.parent });
@@ -141,7 +141,7 @@ export class ClientAgentHost implements AgentNavigatorHost {
         cursor = response.result.nextCursor;
         if (cursor) { if (cursors.has(cursor)) throw new Error('Execution catalog cursor did not advance.'); cursors.add(cursor); }
       } while (cursor);
-      if (retry || generation !== this.client.getAttachment(this.parent)?.state.snapshot?.executionsGeneration) continue;
+      if (retry || generation !== this.client.readAttachment(this.parent)?.state.snapshot?.executionsGeneration) continue;
       this.refreshPending = false;
       const old = this.records; this.records = new Map();
       for (const row of rows) this.records.set(row.id, viewRecord(row, old.get(row.id)));
@@ -174,14 +174,14 @@ export class ClientAgentHost implements AgentNavigatorHost {
     }
     for (const session of desired) {
       const previous = this.attachments.get(session);
-      if (previous && (previous.pending || this.client.getAttachment(session))) continue;
+      if (previous && (previous.pending || this.client.readAttachment(session))) continue;
       if (previous) this.attachments.delete(session);
-      const present = this.client.getAttachment(session);
+      const present = this.client.readAttachment(session);
       const entry: ChildAttachment = { owned: !present, ...(present ? { id: present.id } : {}) };
       this.attachments.set(session, entry);
       if (present) continue;
       const connecting = this.client.attach(session);
-      const localId = this.client.getAttachment(session)?.id;
+      const localId = this.client.readAttachment(session)?.id;
       if (localId !== undefined) entry.id = localId;
       entry.pending = connecting.then(async response => {
         if (response.outcome !== 'accepted') throw new Error(response.error.message);
@@ -199,13 +199,13 @@ export class ClientAgentHost implements AgentNavigatorHost {
   }
 
   private async detachOwned(session: string, entry: ChildAttachment): Promise<void> {
-    if (entry.owned && entry.id !== undefined && this.client.getAttachment(session)?.id === entry.id) await this.client.detach(session);
+    if (entry.owned && entry.id !== undefined && this.client.readAttachment(session)?.id === entry.id) await this.client.detach(session);
   }
 
   private updateViews(): void {
     if (this.closed) return;
     for (const [id, original] of this.records) {
-      const state = original.session?.id ? this.client.getAttachment(original.session?.id)?.state : undefined;
+      const state = original.session?.id ? this.client.readAttachment(original.session?.id)?.state : undefined;
       const snapshot = state?.snapshot;
       const row: MutableRecord = { ...original };
       if (snapshot && state?.status === 'live') {
@@ -264,7 +264,7 @@ export class ClientAgentHost implements AgentNavigatorHost {
 
   private async loadHistory(session: string, target: History): Promise<void> {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const snapshot = this.client.getAttachment(session)?.state.snapshot;
+      const snapshot = this.client.readAttachment(session)?.state.snapshot;
       if (!snapshot || this.closed) return;
       let cursor = snapshot.history.cursor; let entries = [...snapshot.history.entries]; const seen = new Set<string>(); let retry = false;
       while (cursor) {
@@ -274,7 +274,7 @@ export class ClientAgentHost implements AgentNavigatorHost {
         if (response.outcome !== 'accepted') { if (response.error.code === 'resync_required') { retry = true; break; } throw new Error(response.error.message); }
         entries = [...response.result.entries, ...entries]; cursor = response.result.cursor;
       }
-      if (retry || this.client.getAttachment(session)?.state.snapshot?.branch !== snapshot.branch) continue;
+      if (retry || this.client.readAttachment(session)?.state.snapshot?.branch !== snapshot.branch) continue;
       target.entries = entries; target.branch = snapshot.branch; target.loaded = true; return;
     }
     throw new Error('Transcript changed while loading older entries. Reopen to retry.');
