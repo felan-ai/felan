@@ -35,9 +35,45 @@ Connection, recovery, policy restrictions and queued work remain visible.
 `/reconnect` retries bounded client recovery; it does not authorize a different
 daemon instance or silently weaken policy.
 
+### Blocked daemon recovery
+
+`host.status` reports a daemon-wide `blocked` state separately from blocked
+session attachments. `/daemon status` presents its cleanup step, short session
+ID, failure message, and `/daemon restart force` hint. Ordinary operations
+rejected with `host_blocked` produce a retry-cleanup notice rather than a generic
+rejection; repeated rejections replace the status note instead of appending
+duplicates.
+
+For recoverable cleanup failures, `/daemon stop`, `/daemon restart`, and
+`/restart` confirm “Retry daemon cleanup with force?” and warn that remaining
+work will be interrupted. Confirmation sends a forced control operation;
+cancellation sends none. An explicit `force` skips this recovery confirmation.
+Unrecoverable failures show the manual forced-termination instruction for the
+daemon PID and send no lifecycle control. A rejected operation first shows the
+daemon's refusal, then one notice built from `host.status`, so repeated
+rejections do not add notes. Control rejections and failures while waiting for
+shutdown retain the TUI-specific recovery hint and any new failure detail.
+The daemon remains the sole owner of cleanup and process lifetime.
+Startup against a blocked daemon retains the initial draft and leaves the
+terminal open for recovery commands without trying to create or attach a session.
+
 ADR [0038](../decisions/0038-resume-transcripts-at-their-last-entry.md)
 resumes each transcript at its last entry, so Pi-durable work is always visible and
 never stale. It does not alter transcript history.
+
+## Update cost
+
+A running session sends updates continuously, and they share the event loop with
+keyboard input, so work per update must not grow with the session's size:
+
+- Frequent readers use `SessionClient.readAttachment`, which shares the current,
+  deeply frozen attachment state. `getAttachment` copies the whole attachment and
+  is only for callers that need a mutable copy.
+- The screen applies controller updates once per rendered frame, before the frame
+  draws, rather than once per update. Applying them must not request another render.
+- The transcript compares projections by identity first: unchanged messages keep
+  their projected objects, and progress from running tools updates the existing
+  transcript instead of rebuilding it.
 
 ## Configuration and resources
 

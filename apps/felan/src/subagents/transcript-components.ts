@@ -12,32 +12,45 @@ export class TranscriptAssistant extends Container {
   private message: AssistantMessage;
   private readonly thinking = new Map<number, boolean>();
   private streaming = false;
+  private textParts: Array<{ text: string; streaming: boolean; component: Markdown }> = [];
+  private thinkingParts: Array<{ text: string; hidden: boolean; component: MouseRegion }> = [];
+  private renderedTheme: Theme | undefined;
   constructor(message: AssistantMessage, private hidden: boolean, private readonly markdown: MarkdownTheme,
     private readonly padding: number, private readonly theme: () => Theme, private readonly mermaid: MermaidMode = 'streaming', isStreaming = false) {
     super(); this.message = message; this.updateContent(message, isStreaming);
   }
   setHideThinkingBlock(hidden: boolean): void { this.hidden = hidden; this.thinking.clear(); this.updateContent(this.message); }
   updateContent(message: AssistantMessage, isStreaming = this.streaming): void {
+    const theme = this.theme();
+    const previousText = this.renderedTheme === theme ? this.textParts : [];
+    const previousThinking = this.renderedTheme === theme ? this.thinkingParts : [];
+    this.textParts = []; this.thinkingParts = []; this.renderedTheme = theme;
     this.message = message; this.streaming = isStreaming; this.clear();
     if (message.content.some(part => part.type === 'text' && part.text.trim() || part.type === 'thinking' && part.thinking.trim())) this.addChild(new Spacer(1));
     let run = 0;
     for (let index = 0; index < message.content.length; index++) {
       const part = message.content[index]!;
-      if (part.type === 'text' && part.text.trim()) this.addChild(new Markdown(part.text.trim(), this.padding, 0, this.markdown, undefined,
-        { transform: clientMarkdownTransform(this.theme(), this.mermaid, this.streaming) }));
+      if (part.type === 'text' && part.text.trim()) {
+        const text = part.text.trim(); const previous = previousText[this.textParts.length];
+        const component = previous?.text === text && previous.streaming === this.streaming ? previous.component
+          : new Markdown(text, this.padding, 0, this.markdown, undefined, { transform: clientMarkdownTransform(theme, this.mermaid, this.streaming) });
+        this.textParts.push({ text, streaming: this.streaming, component }); this.addChild(component);
+      }
       else if (part.type === 'thinking') {
         const parts = [part.thinking];
         while (message.content[index + 1]?.type === 'thinking') parts.push((message.content[++index] as typeof part).thinking);
         const text = parts.filter(value => value.trim()).join('\n\n'); if (!text) continue;
         const at = run++; const hidden = this.thinking.get(at) ?? this.hidden;
-        const component = hidden ? new Text(this.theme().fg('thinkingText', this.theme().italic('Thinking...')), this.padding, 0)
+        const previous = previousThinking[at];
+        const component = previous?.text === text && previous.hidden === hidden ? previous.component : new MouseRegion(
+          hidden ? new Text(theme.fg('thinkingText', theme.italic('Thinking...')), this.padding, 0)
           : new Markdown(text, this.padding, 0, this.markdown, { color: value => this.theme().fg('thinkingText', value), italic: true }, {
             transform: (value, width) => renderThinkingGroupMarkdown(value, { messageType: 'assistant-thinking', isStreaming: false, availableWidth: width }),
-          });
-        this.addChild(new MouseRegion(component, event => {
+          }), event => {
           if (event.type !== 'click' || event.button !== 'left') return undefined;
-          this.thinking.set(at, !hidden); this.updateContent(this.message); return { handled: true };
-        }));
+          this.thinking.set(at, !(this.thinking.get(at) ?? this.hidden)); this.updateContent(this.message); return { handled: true };
+        });
+        this.thinkingParts.push({ text, hidden, component }); this.addChild(component);
         if (message.content.slice(index + 1).some(value => value.type === 'text' && value.text.trim() || value.type === 'thinking' && value.thinking.trim())) this.addChild(new Spacer(1));
       }
     }
@@ -47,7 +60,7 @@ export class TranscriptAssistant extends Container {
         : message.stopReason === 'error' ? `Error: ${message.errorMessage || 'Unknown error'}` : undefined;
     if (error) { this.addChild(new Spacer(1)); this.addChild(new Text(this.theme().fg('error', stripTerminalSequences(error)), this.padding, 0)); }
   }
-  override invalidate(): void { this.updateContent(this.message); super.invalidate(); }
+  override invalidate(): void { this.textParts = []; this.thinkingParts = []; this.updateContent(this.message); super.invalidate(); }
 }
 
 export class TranscriptCompaction extends Box {
@@ -63,6 +76,31 @@ export class TranscriptCompaction extends Box {
     this.clear(); const content = new Container();
     content.addChild(new Text(this.theme().fg('customMessageLabel', `Context compacted${this.method ? ` · ${this.method}` : ''} · ${this.hint()} ${this.expanded ? 'hide details' : 'details'}`), 0, 0));
     if (this.expanded) content.addChild(new Markdown(`**Compacted from ${this.message.tokensBefore.toLocaleString()} tokens**\n\n${this.message.summary}`, 0, 0, this.markdown));
+    this.addChild(new MouseRegion(content, event => {
+      if (event.type !== 'click' || event.button !== 'left') return undefined;
+      this.setExpanded(!this.expanded); return { handled: true };
+    }));
+  }
+}
+
+export class TranscriptSkillInvocation extends Box {
+  private expanded = false;
+  constructor(private readonly skill: { name: string; content: string }, private readonly markdown: MarkdownTheme,
+    private readonly theme: () => Theme, padding: number, private readonly hint: () => string) {
+    super(padding, 1, text => theme().bg('customMessageBg', text)); this.update();
+  }
+  setExpanded(value: boolean): void { this.expanded = value; this.update(); }
+  override invalidate(): void { this.update(); super.invalidate(); }
+  private update(): void {
+    this.clear(); const content = new Container();
+    const label = this.theme().fg('customMessageLabel', this.theme().bold('[skill]'));
+    if (this.expanded) {
+      content.addChild(new Text(label, 0, 0));
+      content.addChild(new Markdown(`**${this.skill.name}**\n\n${this.skill.content}`, 0, 0, this.markdown,
+        { color: value => this.theme().fg('customMessageText', value) }));
+    } else {
+      content.addChild(new Text(`${label} ${this.theme().fg('customMessageText', this.skill.name)}${this.theme().fg('dim', ` (${this.hint()} to expand)`)}`, 0, 0));
+    }
     this.addChild(new MouseRegion(content, event => {
       if (event.type !== 'click' || event.button !== 'left') return undefined;
       this.setExpanded(!this.expanded); return { handled: true };

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { PageRequestSchema, parseSchema, type OperationParams, type OperationResult } from '@felan-ai/session-protocol';
+import { DiagnosticTextSchema, PageRequestSchema, parseSchema, type HostBlocked, type OperationParams, type OperationResult } from '@felan-ai/session-protocol';
 import { commandError } from './commands.js';
 import { BoundedDaemonLogs } from './supervisor.js';
+import { shutdownText } from './shutdown-error.js';
 
 const messages = {
   started: 'Daemon is ready.',
@@ -15,6 +16,7 @@ const messages = {
   legacy_warmup_failed: 'Pre-daemon session titles could not be read in the background; listings read them on request.',
 } as const;
 type Entry = OperationResult<'host.logs'>['entries'][number];
+const blockedPrefix = 'Daemon shutdown failed at ';
 
 export class DaemonOperationalLog {
   constructor(private readonly sink: BoundedDaemonLogs, private readonly now: () => number = Date.now) {}
@@ -25,6 +27,11 @@ export class DaemonOperationalLog {
     this.sink.write('stdout', JSON.stringify(entry));
   }
 
+  blocked(blocked: HostBlocked): void {
+    const message = shutdownText(`${blockedPrefix}${blocked.step ?? 'settlement'}${blocked.session ? ` (session ${blocked.session})` : ''}: ${blocked.message}`, 2000);
+    this.sink.write('stdout', JSON.stringify({ timestamp: this.now(), level: 'error', message } satisfies Entry));
+  }
+
   page(input: OperationParams<'host.logs'>): OperationResult<'host.logs'> {
     const params = parseSchema(PageRequestSchema, input);
     const known = new Set<string>(Object.values(messages));
@@ -33,7 +40,12 @@ export class DaemonOperationalLog {
       let value: unknown; try { value = JSON.parse(line); } catch { continue; }
       if (value === null || typeof value !== 'object') continue;
       const row = value as Partial<Entry>;
-      if (!Number.isSafeInteger(row.timestamp) || row.timestamp! < 0 || !['info', 'warning', 'error'].includes(row.level ?? '') || !known.has(row.message ?? '')) continue;
+      if (!Number.isSafeInteger(row.timestamp) || row.timestamp! < 0 || !['info', 'warning', 'error'].includes(row.level ?? '')) continue;
+      if (!known.has(row.message ?? '')) {
+        if (row.level !== 'error' || typeof row.message !== 'string' || !row.message.startsWith(blockedPrefix) || row.message.length > 2000) continue;
+        try { parseSchema(DiagnosticTextSchema, row.message); } catch { continue; }
+        if (shutdownText(row.message, 2000) !== row.message) continue;
+      }
       entries.push({ timestamp: row.timestamp!, level: row.level!, message: row.message! });
     }
     const generation = createHash('sha256').update(JSON.stringify(entries)).digest('hex');

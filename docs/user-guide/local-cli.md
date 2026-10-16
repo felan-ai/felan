@@ -221,6 +221,20 @@ before the drain deadline, the command fails and the daemon keeps running; add
 `--force` to interrupt the work instead. Restart launches the replacement with the requesting shell
 environment; no per-session environment is transported or persisted.
 
+If cleanup fails after shutdown begins, the daemon enters `blocked` and refuses
+new work. `status` reports the failed cleanup step, session when known, error,
+and recovery command; `logs` includes the detailed shutdown error. A normal stop
+or restart does not retry blocked cleanup. For a recoverable failure, use
+`felan daemon restart --force` (or `felan daemon stop --force` to leave it stopped).
+Force retries cleanup and interrupts remaining work across all sessions. If it
+fails again, inspect the new status and logs before retrying. If status says
+cleanup cannot be retried safely, force-terminate the reported daemon PID
+(`kill -9 <pid>`, or `taskkill /F /PID <pid>` on Windows), then start Felan
+again. A blocked daemon answers a plain `kill` (SIGTERM) with a drain request,
+which it refuses, so it keeps running. When no PID is reported, identify the
+affected daemon process before terminating it; do not terminate unrelated
+instances.
+
 Use `--daemon-runtime <dir>` only for a private test/CI namespace. Headless
 completion detaches from that daemon; it does not stop it. CI must explicitly
 stop the isolated daemon it started.
@@ -233,6 +247,13 @@ no active work; otherwise the TUI shows how many active tasks a restart would
 interrupt and asks first. Ctrl+D on an empty editor
 and `/exit` detach the client. Escape interrupts the current run. `/close`
 disposes of the session. These are distinct actions.
+
+For a blocked daemon, `/daemon status` shows the failure and
+`/daemon restart force` recovery hint. `/daemon stop`, `/daemon restart`, and
+`/restart` ask before retrying recoverable cleanup with force. Explicit
+`/daemon stop force` or `/daemon restart force` skips that recovery prompt.
+If cleanup is not safely retryable, the TUI shows the manual termination
+instruction instead of attempting recovery.
 
 If the daemon connection drops, for example because the daemon restarts, the
 TUI keeps the input usable and shows `Daemon disconnected · reconnecting in Ns

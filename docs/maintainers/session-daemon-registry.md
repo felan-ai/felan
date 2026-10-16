@@ -23,6 +23,14 @@ live writer.
 - Shutdown drains bindings and writers without turning a normal detach into
   cancellation or treating a failed settlement as success.
 
+A failed shutdown leaves admission closed and ownership held. The host may retry
+with explicit force only before release and without a registry fence. Shutdown
+errors retain a typed step and session ID. Retried cleanup skips removed bindings,
+removes each service only after successful settlement/disposal, and records
+runtime disposal before later writer or projection steps. Interrupted run
+identities survive failed forced attempts. Failure in binding disposal still
+fences the registry and is not retryable; a failed shutdown never reopens it.
+
 Children use the core Sessions service and are registered before dispatch, so
 queued work is visible and cancellable. Execution metadata lives on the canonical
 child session; results and usage come from its transcript. The daemon schedules

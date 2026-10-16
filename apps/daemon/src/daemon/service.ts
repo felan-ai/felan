@@ -28,6 +28,7 @@ import { createConfiguredProviders, ProviderStartupError, type LoadedProviders }
 import { createRegistrySessionsService } from './session-services.js';
 import { createRegisteredWorkerLauncher } from './worker.js';
 import { createRuntimeDependenciesPort } from './runtime-dependencies.js';
+import { ShutdownError, shutdownStack, shutdownStep } from './shutdown-error.js';
 
 export async function startDaemonService(target: DaemonTarget, options: {
   createModelRuntime?: (agentDir: string) => Promise<ModelRuntime>;
@@ -105,9 +106,17 @@ export async function startDaemonService(target: DaemonTarget, options: {
       ...(options.drainTimeoutMs ? { timeoutMs: options.drainTimeoutMs } : {}),
       beginDrain: () => { liveSetup.beginDrain(); liveRegistry.beginDrain(); },
       endDrain: () => { liveRegistry.endDrain(); liveSetup.endDrain?.(); },
+      canRetry: () => { owner.assertCurrent(); liveStore.assertCurrent(); return !liveRegistry.fenced; },
+      onBlocked: (blocked, error) => {
+        liveSink.write('stderr', JSON.stringify({ event: 'shutdown_blocked', ...blocked, stack: shutdownStack(error) }));
+        log.blocked(blocked);
+      },
       settle: async (mode, signal) => {
-        await Promise.all([liveSetup.drain(), settleDaemonWork(liveRegistry, broker, mode, signal)]);
-        signal.throwIfAborted(); await liveServer.settleCommands(); await loadedProviders.settle(mode);
+        const results = await Promise.allSettled([shutdownStep('setup-drain', () => liveSetup.drain()), settleDaemonWork(liveRegistry, broker, mode, signal)]);
+        const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+        if (failures.length) throw new AggregateError(failures, 'Daemon settlement failed.');
+        signal.throwIfAborted(); await shutdownStep('server-commands', () => liveServer.settleCommands());
+        await shutdownStep('providers-settle', () => loadedProviders.settle(mode));
       },
       record: event => log.record(event),
       complete: async action => {
@@ -138,11 +147,11 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const liveServer = server;
     const idleTimer = setInterval(() => {
       if (lifecycle.state !== 'ready') return;
-      void liveRegistry.evictIdle().catch(() => lifecycle.block());
+      void liveRegistry.evictIdle().catch(error => lifecycle.block(error, 'idle-eviction'));
     }, 15_000);
     idleTimer.unref();
-    const removeLoss = owner.onLost(() => {
-      lifecycle.block(); clearInterval(idleTimer); warmup.abort();
+    const removeLoss = owner.onLost(error => {
+      lifecycle.block(new ShutdownError('ownership-lost', error)); clearInterval(idleTimer); warmup.abort();
       liveSetup.beginDrain();
       // An unresolved owner must not vanish and release native claims implicitly.
       hold ??= setInterval(() => {}, 60_000);
@@ -170,13 +179,13 @@ export async function startDaemonService(target: DaemonTarget, options: {
 }
 
 export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown' | 'waitForDrain'>, broker: Pick<InteractionBroker, 'drain'>, mode: HostMode, signal?: AbortSignal): Promise<void> {
-  const draining = broker.drain();
+  const draining = shutdownStep('broker-drain', () => broker.drain());
   if (mode === 'force') {
     const results = await Promise.allSettled([draining, registry.shutdown({ interrupt: true })]);
     const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     if (failures.length) throw new AggregateError(failures, 'Forced daemon settlement failed.');
   } else {
-    await draining; await registry.waitForDrain(); signal?.throwIfAborted(); await registry.shutdown();
+    await draining; await shutdownStep('drain-wait', () => registry.waitForDrain()); signal?.throwIfAborted(); await registry.shutdown();
   }
 }
 

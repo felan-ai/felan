@@ -25,7 +25,7 @@ const PROCESS_ACTION_LABELS = new Map<string, readonly [string, string, string]>
 ]);
 const SESSION_MEMORY_PATH_PATTERN = /(?:^|[\\/\s"'=])\.memory(?:[\\/]|$)/u;
 const CANONICAL_MEMORY_PATH_PATTERN = /(?:^|[\\/])memory[\\/]v1[\\/]projects[\\/][a-f0-9]{64}[\\/]current(?:[\\/]|$)/iu;
-const MEMORY_READ_COMMANDS = new Set([
+const READ_COMMANDS = new Set([
   'cat', 'find', 'grep', 'head', 'ls', 'rg', 'sed', 'stat', 'tail', 'wc',
 ]);
 const READ_COMMAND_AUXILIARIES = new Set([
@@ -45,6 +45,9 @@ class EmptyComponent implements Component {
 }
 
 class ToolActivityGroupComponent implements Component {
+  #cached: { width: number; text: string; lines: string[] } | undefined;
+  #groupCache: { callIds: string[]; calls: Array<ToolCallPresentation | undefined>; inspectorHintEnabled: boolean; text: string } | undefined;
+
   constructor(
     private readonly state: ToolActivityState,
     private readonly groupId: string,
@@ -54,15 +57,28 @@ class ToolActivityGroupComponent implements Component {
   ) {}
 
   render(width: number): string[] {
+    const callIds = this.state.group(this.groupId)?.callIds ?? [];
+    const calls = callIds.map((id) => { const call = this.state.call(id); return call ? toolCallPresentation(call) : undefined; });
+    const cache = this.#groupCache;
+    if (!cache || cache.inspectorHintEnabled !== this.state.inspectorHintEnabled || cache.callIds.length !== callIds.length
+      || callIds.some((id, index) => cache.callIds[index] !== id || cache.calls[index] !== calls[index])) {
+      this.#groupCache = { callIds: [...callIds], calls, inspectorHintEnabled: this.state.inspectorHintEnabled,
+        text: renderToolActivityGroup(this.state, this.groupId, this.theme, this.expanded) };
+    }
+    const text = this.#groupCache!.text;
+    if (this.#cached?.width === width && this.#cached.text === text) return this.#cached.lines;
     const padding = Math.min(Math.max(0, this.outputPad), Math.max(0, width - 1));
     const availableWidth = Math.max(1, width - padding * 2);
     const leftPadding = ' '.repeat(padding);
-    return renderToolActivityGroup(this.state, this.groupId, this.theme, this.expanded)
-      .split('\n')
-      .map((line) => leftPadding + truncateToWidth(line, availableWidth, '…'));
+    // Every frame renders the whole transcript; truncating each tool line again dominated frame time.
+    this.#cached = { width, text, lines: text.split('\n').map((line) => leftPadding + truncateToWidth(line, availableWidth, '…')) };
+    return this.#cached.lines;
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.#cached = undefined;
+    this.#groupCache = undefined;
+  }
 }
 
 export function createToolActivityDisplayDefinition(
@@ -109,16 +125,38 @@ export function renderToolActivityGroup(
   for (const call of calls) {
     lines.push(`  ${callStatus(call, theme)} ${toolCallLabel(call)}`);
     if (expanded) {
-      for (const preview of resultPreview(call)) lines.push(theme.fg('dim', `      ${preview}`));
+      const previews = toolCallPresentation(call).previews ??= resultPreview(call);
+      for (const preview of previews) lines.push(theme.fg('dim', `      ${preview}`));
     }
   }
   return lines.join('\n');
 }
 
 export function toolCallLabel(call: ToolActivityCall): string {
+  return toolCallPresentation(call).label;
+}
+
+interface ToolCallPresentation extends ToolActivityCall {
+  readonly label: string;
+  readonly category: ToolCategory;
+  previews?: string[];
+}
+
+const callPresentations = new WeakMap<ToolActivityCall, ToolCallPresentation>();
+
+function toolCallPresentation(call: ToolActivityCall): ToolCallPresentation {
+  const cached = callPresentations.get(call);
+  // State replaces field values in place, so call identity alone cannot validate a cached row; args and results are
+  // compared by identity, so they must be replaced rather than mutated.
+  if (cached && cached.name === call.name && cached.args === call.args && cached.status === call.status
+    && cached.isError === call.isError && cached.isPartial === call.isPartial && cached.result === call.result
+    && cached.relatedCommand === call.relatedCommand && cached.startedAt === call.startedAt
+    && cached.completedAt === call.completedAt) return cached;
   const label = callLabel(call);
   const preview = resultChoicePreview(call) ?? argumentPreview(call);
-  return preview ? `${label} · ${preview}` : label;
+  const presentation = { ...call, label: preview ? `${label} · ${preview}` : label, category: summaryCategory(call) };
+  callPresentations.set(call, presentation);
+  return presentation;
 }
 
 function resultChoicePreview(call: ToolActivityCall): string | undefined {
@@ -134,7 +172,7 @@ export function toolGroupSummary(calls: readonly ToolActivityCall[]): string {
   const running = calls.some((call) => call.status === 'pending' || call.status === 'running');
   const counts = new Map<ToolCategory, number>();
   for (const call of calls) {
-    const category = summaryCategory(call);
+    const category = toolCallPresentation(call).category;
     counts.set(category, (counts.get(category) ?? 0) + 1);
   }
   const parts = Array.from(counts, ([category, count]) => categorySummary(category, count, running));
@@ -193,6 +231,7 @@ function formatDuration(durationMs: number): string | undefined {
 }
 
 function resultPreview(call: ToolActivityCall): string[] {
+  if (call.name.toLowerCase() === 'list_subagents' && !call.isError) return [];
   const text = call.result?.content
     .filter((content) => content.type === 'text' && content.text)
     .map((content) => safeMultilineText(content.text!))
@@ -219,6 +258,7 @@ function resultPreview(call: ToolActivityCall): string[] {
 
 type ToolCategory =
   | 'memory'
+  | 'skill'
   | 'read'
   | 'search'
   | 'edit'
@@ -234,6 +274,7 @@ type ToolCategory =
 
 function summaryCategory(call: ToolActivityCall): ToolCategory {
   if (isMemoryRecall(call)) return 'memory';
+  if (skillReadReference(call)) return 'skill';
   if (!call.name.toLowerCase().includes('write_stdin')) return toolCategory(call.name);
   const chars = asRecord(call.args).chars;
   return typeof chars === 'string' && chars.length > 0 ? 'interact' : 'wait';
@@ -264,6 +305,9 @@ function categorySummary(category: ToolCategory, count: number, running: boolean
     case 'memory': return count === 1
       ? `${running ? 'recalling' : 'recalled'} memory`
       : `${running ? 'running' : 'completed'} ${count} memory recalls`;
+    case 'skill': return count === 1
+      ? `${running ? 'loading' : 'loaded'} skill`
+      : `${running ? 'loading' : 'loaded'} ${count} skill files`;
     case 'read': return `${running ? 'reading' : 'read'} ${count} file${plural}`;
     case 'search': return count === 1
       ? `${running ? 'searching' : 'searched'} code`
@@ -285,6 +329,7 @@ function callLabel(call: ToolActivityCall): string {
   const running = call.status === 'pending' || call.status === 'running';
   const normalized = call.name.toLowerCase();
   if (isMemoryRecall(call)) return running ? 'Recalling memory' : 'Memory Recall';
+  if (skillReadReference(call)) return running ? 'Loading skill' : 'Skill';
   if (normalized === 'mcp') return mcpCallLabel(call, running);
   if (normalized.startsWith('mcp__')) return running ? 'Calling MCP tool' : 'Called MCP tool';
   if (normalized === 'browser_authorize') return running ? 'Requesting browser authorization' : 'Requested browser authorization';
@@ -391,8 +436,11 @@ function codebaseMemoryArgumentPreview(args: Record<string, unknown>): string | 
 function argumentPreview(call: ToolActivityCall): string | undefined {
   const args = asRecord(call.args);
   const normalized = call.name.toLowerCase();
+  const skill = isMemoryRecall(call) ? undefined : skillReadReference(call);
   let value: string | undefined;
-  if (normalized === 'mcp') {
+  if (skill) {
+    value = joinPreview(skill.name, skill.file);
+  } else if (normalized === 'mcp') {
     value = mcpArgumentPreview(args);
   } else if (normalized === 'browser') {
     value = browserArgumentPreview(args);
@@ -461,7 +509,7 @@ function isMemoryRecall(call: ToolActivityCall): boolean {
   }
   if (normalized !== 'bash' && !normalized.includes('exec_command')) return false;
   const command = firstString(args, ['cmd', 'command']);
-  return command !== undefined && isReadOnlyMemoryCommand(command);
+  return command !== undefined && readOnlyCommandPath(command, isMemoryPath) !== undefined;
 }
 
 function isMemoryPath(value: string | undefined): boolean {
@@ -470,24 +518,55 @@ function isMemoryPath(value: string | undefined): boolean {
   return SESSION_MEMORY_PATH_PATTERN.test(normalized) || CANONICAL_MEMORY_PATH_PATTERN.test(normalized);
 }
 
+interface SkillReference {
+  readonly name: string;
+  readonly file?: string;
+}
+
+function skillReadReference(call: ToolActivityCall): SkillReference | undefined {
+  const normalized = call.name.toLowerCase();
+  const args = asRecord(call.args);
+  if (['read', 'read_file', 'grep', 'find', 'ls'].includes(normalized)) {
+    return skillReference(firstString(args, ['path', 'file_path']));
+  }
+  if (normalized !== 'bash' && !normalized.includes('exec_command')) return undefined;
+  const command = firstString(args, ['cmd', 'command']);
+  return command === undefined
+    ? undefined
+    : skillReference(readOnlyCommandPath(command, (path) => skillReference(path) !== undefined));
+}
+
+function skillReference(value: string | undefined): SkillReference | undefined {
+  if (!value) return undefined;
+  const path = (value.startsWith('@') ? value.slice(1) : value).replace(/\\/gu, '/');
+  const parts = path.split('/');
+  if (parts.includes('..')) return undefined;
+  const match = path.match(/(?:^|\/)\.agents\/skills\/([^/]+)(?:\/(.*))?$/u);
+  const name = match ? match[1] : parts.at(-1) === 'SKILL.md' ? parts.at(-2) : undefined;
+  if (!name || name === '.') return undefined;
+  const file = match?.[2];
+  return file && file !== 'SKILL.md' ? { name, file } : { name };
+}
+
 interface ParsedShellCommand {
   readonly name: string;
   readonly args: readonly string[];
 }
 
-function isReadOnlyMemoryCommand(command: string): boolean {
-  if (/`|\$\(|\$\{|\$[A-Za-z_]|[<>]\(/u.test(command)) return false;
-  const commands = shellCommands(command);
-  if (commands.length === 0) return false;
-  if (commands.some(({ name }) => !MEMORY_READ_COMMANDS.has(name) && !READ_COMMAND_AUXILIARIES.has(name))) {
-    return false;
-  }
-  if (/\bfind\b[^;&|\n]*(?:-delete|-exec(?:dir)?|-f(?:print0?|ls)|-ok(?:dir)?)/iu.test(command)) return false;
-  if (/\bsed\b[^;&|\n]*(?:\s-(?:[a-z]*i|i[a-z]*)\b|\s--in-place\b)/iu.test(command)) return false;
+function readOnlyCommandPath(command: string, isPath: (path: string) => boolean): string | undefined {
+  if (/`|\$\(|\$\{|\$[A-Za-z_]|[<>]\(/u.test(command)) return undefined;
   const withoutNullRedirects = command.replace(/(?:\d+|&)?\s*>\s*\/dev\/null\b/giu, '');
-  if (withoutNullRedirects.includes('>')) return false;
-  const reads = commands.filter(({ name }) => MEMORY_READ_COMMANDS.has(name));
-  return reads.length > 0 && reads.every(hasMemoryReadOperand);
+  if (withoutNullRedirects.includes('>')) return undefined;
+  const commands = shellCommands(withoutNullRedirects);
+  if (commands.length === 0) return undefined;
+  if (commands.some(({ name }) => !READ_COMMANDS.has(name) && !READ_COMMAND_AUXILIARIES.has(name))) {
+    return undefined;
+  }
+  if (/\bfind\b[^;&|\n]*(?:-delete|-exec(?:dir)?|-f(?:print0?|ls)|-ok(?:dir)?)/iu.test(command)) return undefined;
+  if (/\bsed\b[^;&|\n]*(?:\s-(?:[a-z]*i|i[a-z]*)\b|\s--in-place\b)/iu.test(command)) return undefined;
+  const paths = commands.filter(({ name }) => READ_COMMANDS.has(name))
+    .map((read) => readOperand(read, isPath));
+  return paths.every((path) => path !== undefined) ? paths[0] : undefined;
 }
 
 function shellCommands(command: string): ParsedShellCommand[] {
@@ -607,28 +686,31 @@ function shellWords(segment: string): string[] {
   return words;
 }
 
-function hasMemoryReadOperand(command: ParsedShellCommand): boolean {
+function readOperand(command: ParsedShellCommand, isPath: (path: string) => boolean): string | undefined {
   const positionals = command.args.filter((argument) => argument !== '--' && !argument.startsWith('-'));
   let paths: readonly string[];
   if (command.name === 'grep' || command.name === 'rg') {
     if (command.args.some((argument) => argument.startsWith('-') && !/^-[FHiLlnsvwx]+$/u.test(argument))) {
-      return false;
+      return undefined;
     }
     paths = positionals.slice(1);
   } else if (command.name === 'sed') {
     if (command.args.some((argument) => argument.startsWith('-') && !['-n', '--quiet', '--silent'].includes(argument))) {
-      return false;
+      return undefined;
     }
     const program = positionals[0];
-    if (!program || !/^(?:(?:\d+|\$)(?:,(?:\d+|\$))?)?p$/u.test(program)) return false;
+    if (!program || !/^(?:(?:\d+|\$)(?:,(?:\d+|\$))?)?p$/u.test(program)) return undefined;
     paths = positionals.slice(1);
   } else if (command.name === 'find') {
     const expression = command.args.findIndex((argument) => argument.startsWith('-') || ['!', '('].includes(argument));
     paths = command.args.slice(0, expression < 0 ? command.args.length : expression);
+  } else if (command.name === 'head' || command.name === 'tail') {
+    paths = command.args.filter((argument, index) => argument !== '--' && !argument.startsWith('-')
+      && !['-n', '-c'].includes(command.args[index - 1] ?? ''));
   } else {
     paths = positionals;
   }
-  return paths.some(isMemoryPath);
+  return paths.length > 0 && paths.every(isPath) ? paths[0] : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

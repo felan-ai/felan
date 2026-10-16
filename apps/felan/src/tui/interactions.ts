@@ -45,7 +45,7 @@ export class TerminalInteractions {
     if (this.controller.client.status !== 'ready') return [];
     const items = new Map(this.controller.client.getInteractions({ includeSessions: true }).map(item => [item.id, item]));
     return [...items.values()].filter(item => ['waiting', 'deferred'].includes(item.state)
-      && (item.scope.kind === 'host' || this.controller.client.getAttachment(item.scope.session)?.state.status === 'live'));
+      && (item.scope.kind === 'host' || this.controller.client.readAttachment(item.scope.session)?.state.status === 'live'));
   }
 
   private refresh(): void {
@@ -169,7 +169,7 @@ export class TerminalInteractions {
 
   private recovering(item: Interaction): boolean {
     if (item.scope.kind === 'host') return this.controller.client.status === 'connecting' || this.controller.client.status === 'disconnected';
-    const attachment = this.controller.client.getAttachment(item.scope.session);
+    const attachment = this.controller.client.readAttachment(item.scope.session);
     if (!attachment || attachment.state.status === 'blocked') return false;
     return this.controller.client.status === 'connecting' || this.controller.client.status === 'disconnected'
       || attachment?.state.status === 'disconnected' || attachment?.state.status === 'recovering';
@@ -177,7 +177,7 @@ export class TerminalInteractions {
 
   private recoveringSession(session: string): boolean {
     if (this.controller.sessionId !== session) return false;
-    const attachment = this.controller.client.getAttachment(session);
+    const attachment = this.controller.client.readAttachment(session);
     if (!attachment || attachment.state.status === 'blocked') return false;
     return this.controller.client.status === 'connecting' || this.controller.client.status === 'disconnected'
       || attachment?.state.status === 'disconnected' || attachment?.state.status === 'recovering';

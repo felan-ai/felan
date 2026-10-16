@@ -1,7 +1,8 @@
-import type { DaemonIdentity, OperationParams, OperationResult } from '@felan-ai/session-protocol';
+import type { DaemonIdentity, HostBlocked, OperationParams, OperationResult } from '@felan-ai/session-protocol';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
 import { accepted, commandError } from './commands.js';
 import { assertTargetIdentity, type ResolvedDaemonTarget } from './target.js';
+import { ShutdownError, shutdownDetail, shutdownMessage, type ShutdownStep } from './shutdown-error.js';
 
 export type HostState = OperationResult<'host.status'>['state'];
 export type HostAction = 'stop' | 'restart';
@@ -16,6 +17,8 @@ export interface HostLifecycleOptions {
   settle(mode: HostMode, signal: AbortSignal): Promise<void>;
   complete(action: HostAction): Promise<void>;
   timeoutMs?: number;
+  canRetry?(): boolean;
+  onBlocked?(blocked: HostBlocked, error: unknown): void;
   record?(event: 'stop_requested' | 'restart_requested' | 'drain_blocked' | 'drain_cancelled' | 'releasing'): void;
 }
 
@@ -26,6 +29,7 @@ export class HostLifecycle {
   private generation = 0;
   private completing = false;
   private pending: PendingAction | undefined;
+  private blockedRecord: HostBlocked | undefined;
   private readonly timeout: number;
 
   constructor(private readonly options: HostLifecycleOptions) {
@@ -34,25 +38,50 @@ export class HostLifecycle {
   }
 
   get state(): HostState { return this.current; }
+  get blocked(): HostBlocked | undefined { return this.current === 'blocked' && this.blockedRecord ? { ...this.blockedRecord } : undefined; }
 
-  block(): void { this.generation++; this.pending?.abort.abort(); this.pending = undefined; this.current = 'blocked'; }
+  block(error: unknown = new Error('Daemon ownership was lost.'), step: ShutdownStep = 'ownership-lost', retryable = false): void {
+    this.generation++; this.pending?.abort.abort(); this.pending = undefined;
+    let recoverable = false;
+    try { recoverable = retryable && (this.options.canRetry?.() ?? false); } catch {}
+    const detail = shutdownDetail(error);
+    this.blockedRecord = { recoverable, since: Date.now(), message: shutdownMessage(error), step: detail?.step ?? step,
+      ...(detail?.session ? { session: detail.session } : {}), pid: process.pid };
+    this.current = 'blocked';
+    try { this.options.onBlocked?.(this.blockedRecord, error); } catch {}
+    try { this.options.record?.('drain_blocked'); } catch {}
+  }
+
+  blockedError(work = false): Error & { code: string } {
+    const blocked = this.blockedRecord;
+    const recovery = blocked?.recoverable ? work ? 'Retry the stop or restart with force.' : 'Retry with force to finish cleanup.'
+      : `Cleanup cannot be retried safely; force-terminate the daemon process ${forceTermination(blocked?.pid ?? process.pid)}.`;
+    return commandError('host_blocked', work ? `The daemon is blocked after an incomplete shutdown and refuses new work. ${recovery}`
+      : `The daemon is blocked after an incomplete shutdown at ${blocked?.step ?? 'settlement'}: ${blocked?.message ?? 'Shutdown failed.'} ${recovery}`);
+  }
 
   prepare(command: AdmittedCommand): AdmissionOutcome {
     const request = command.request;
     if (request.op !== 'host.stop' && request.op !== 'host.restart') throw commandError('invalid_request');
     assertTargetIdentity(this.options.target, request.params.expected, this.options.identity);
     if (this.current === 'stopped') throw commandError('unavailable');
+    if (this.current === 'blocked' && request.params.mode === 'force' && this.blockedRecord?.recoverable) {
+      let retryable = false;
+      try { retryable = this.options.canRetry?.() ?? false; } catch {}
+      if (!retryable) this.blockedRecord = { ...this.blockedRecord, recoverable: false };
+    }
+    if (this.current === 'blocked' && (request.params.mode !== 'force' || !this.blockedRecord?.recoverable)) throw this.blockedError();
     if (this.completing) throw commandError('busy');
     const action = request.op === 'host.stop' ? 'stop' : 'restart';
     if (this.current === 'draining' && this.pending && (this.pending.action !== action || this.pending.mode === 'force' && request.params.mode !== 'force')) throw commandError('busy');
     command.dispatch(() => {
-      this.options.beginDrain();
+      try { this.options.beginDrain(); } catch (error) { this.block(error, 'begin-drain'); throw error; }
       if (this.current === 'draining' && this.pending?.action === action && this.pending.mode === request.params.mode) return;
       this.pending?.abort.abort();
       this.pending = { id: request.id, action, mode: request.params.mode, generation: ++this.generation, abort: new AbortController() };
       this.setState('draining');
       try { this.options.record?.(action === 'stop' ? 'stop_requested' : 'restart_requested'); }
-      catch (error) { this.pending = undefined; this.setState('blocked'); throw error; }
+      catch (error) { this.block(error, 'begin-drain'); throw error; }
     });
     return { response: accepted(request, { state: this.current }) };
   }
@@ -60,7 +89,7 @@ export class HostLifecycle {
   afterResponse(id: string, accepted = true): void {
     const pending = this.pending;
     if (this.current !== 'draining' || !pending || pending.id !== id) return;
-    if (!accepted) { if (!this.resume()) this.setState('blocked'); return; }
+    if (!accepted) { if (!this.resume()) this.block(new Error('Management outcome could not be committed.'), 'management-response'); return; }
     this.pending = { ...pending, id: '' };
     void this.finish(pending);
   }
@@ -74,13 +103,12 @@ export class HostLifecycle {
       this.options.record?.('releasing');
       await this.options.complete(pending.action);
       this.setState('stopped');
-    } catch {
+    } catch (error) {
       if (pending.generation !== this.generation) return;
       this.completing = false;
-      // Only an explicit force request interrupts work; a drain that cannot finish is abandoned and the daemon keeps serving.
+      // A drain can reopen admission only before registry shutdown has made resumption unsafe.
       if (!releasing && pending.mode === 'drain' && this.resume()) return;
-      this.setState('blocked');
-      try { this.options.record?.('drain_blocked'); } catch { /* Ownership and cleanup stay blocked even if diagnostics fail. */ }
+      this.block(error, releasing ? 'release' : 'settlement', !releasing && !(error instanceof ShutdownError && error.step === 'settlement-deadline'));
     }
   }
 
@@ -96,10 +124,15 @@ export class HostLifecycle {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([Promise.resolve().then(() => this.options.settle(pending.mode, pending.abort.signal)), new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => { pending.abort.abort(); reject(new Error('Settlement deadline exceeded.')); }, this.timeout);
+        timer = setTimeout(() => { pending.abort.abort(); reject(new ShutdownError('settlement-deadline', new Error('Settlement deadline exceeded.'))); }, this.timeout);
       })]);
     } finally { clearTimeout(timer); }
   }
 
-  private setState(state: HostState): void { this.current = state; }
+  private setState(state: HostState): void { this.current = state; if (state !== 'blocked') this.blockedRecord = undefined; }
+}
+
+/** A blocked daemon answers SIGTERM with a drain request, which it refuses, so only a forced termination ends it. */
+function forceTermination(pid: number): string {
+  return `${pid} (${process.platform === 'win32' ? `taskkill /F /PID ${pid}` : `kill -9 ${pid}`})`;
 }

@@ -64,6 +64,11 @@ interface BoundarySegment {
 type TranscriptSegment = AssistantSegment | BoundarySegment;
 type ActivityListener = () => void;
 type RendererInvalidator = () => void;
+interface SnapshotLive {
+  streaming?: AgentMessage | undefined;
+  trailingMessages?: readonly AgentMessage[];
+  pendingToolCalls: ReadonlySet<string>;
+}
 
 const STANDALONE_TOOLS = new Set([
   'ask_user',
@@ -92,6 +97,7 @@ export class ToolActivityState {
   #groupsById = new Map<string, ToolActivityGroup>();
   #placements = new Map<string, ToolActivityPlacement>();
   #activeAssistant: AssistantSegment | undefined;
+  #snapshotTailStart: number | undefined;
   #session: AgentSession | undefined;
   #snapshotCwd: string | undefined;
   #unsubscribe: (() => void) | undefined;
@@ -132,16 +138,19 @@ export class ToolActivityState {
     this.#unsubscribe = session.subscribe((event) => this.#handleEvent(event));
   }
 
-  showSnapshot(messages: readonly AgentMessage[], cwd: string, live?: {
-    streaming?: AgentMessage;
-    pendingToolCalls: ReadonlySet<string>;
-  }): void {
+  showSnapshot(messages: readonly AgentMessage[], cwd: string, live?: SnapshotLive): void {
     this.#unsubscribe?.();
     this.#unsubscribe = undefined;
     this.#session = undefined;
     this.#snapshotCwd = cwd;
     this.#resetTranscript();
     for (const message of messages) this.#replayMessage(message);
+    this.#finishSnapshot(live);
+  }
+
+  #finishSnapshot(live?: SnapshotLive): void {
+    this.#snapshotTailStart = this.#segments.length;
+    for (const message of live?.trailingMessages ?? []) this.#replayMessage(message);
     if (live?.streaming?.role === 'assistant') this.#activeAssistant = this.#appendAssistant(live.streaming);
     for (const call of this.#calls.values()) {
       if (call.status !== 'pending') continue;
@@ -153,6 +162,17 @@ export class ToolActivityState {
       call.result = { content: [{ type: 'text', text: 'No retained tool result.' }] };
     }
     this.#rebuildGroups();
+  }
+
+  extendSnapshot(messages: readonly AgentMessage[], live: SnapshotLive): boolean {
+    if (this.#snapshotTailStart === undefined || this.#activeAssistant
+      && (this.#activeAssistant !== this.#segments.at(-1) || this.#activeAssistant.callIds.length > 0)) return false;
+    this.#segments.length = this.#snapshotTailStart;
+    this.#activeAssistant = undefined;
+    for (const call of this.#calls.values()) if (call.status === 'running' && !call.result) call.status = 'pending';
+    for (const message of messages) this.#replayMessage(message);
+    this.#finishSnapshot(live);
+    return true;
   }
 
   projectTool(id: string, state: 'running' | 'completed' | 'failed' | 'interrupted', output: string): void {
@@ -206,6 +226,7 @@ export class ToolActivityState {
 
   #resetTranscript(): void {
     this.#activeAssistant = undefined;
+    this.#snapshotTailStart = undefined;
     this.#calls.clear();
     this.#execCommands.clear();
     this.#sessionCommands.clear();

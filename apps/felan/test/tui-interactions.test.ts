@@ -104,9 +104,9 @@ it('keeps an open question and its draft through an automatic reconnect', async 
   const pending = f.broker.request({ kind: 'input', title: 'Reconnect question' }, f.scope);
   await vi.waitFor(() => expect(screenText(view.tui)).toContain('Reconnect question'));
   view.terminal.input('retained');
-  const getAttachment = view.transport.getAttachment.bind(view.transport);
-  const lookup = vi.spyOn(view.transport, 'getAttachment').mockImplementation(session => {
-    const attachment = getAttachment(session);
+  const readAttachment = view.transport.readAttachment.bind(view.transport);
+  const lookup = vi.spyOn(view.transport, 'readAttachment').mockImplementation(session => {
+    const attachment = readAttachment(session);
     return attachment ? { ...attachment, state: { ...attachment.state, status: 'disconnected' } } : attachment;
   });
   const status = vi.spyOn(view.transport, 'status', 'get').mockReturnValue('disconnected');
@@ -126,10 +126,10 @@ it('keeps a question draft during snapshot recovery and waits to validate its an
   const pending = f.broker.request({ kind: 'input', title: 'Recovery question' }, f.scope);
   await vi.waitFor(() => expect(screenText(view.tui)).toContain('Recovery question'));
   view.terminal.input('kept');
-  const getAttachment = view.transport.getAttachment.bind(view.transport);
+  const readAttachment = view.transport.readAttachment.bind(view.transport);
   let recovering = true;
-  const lookup = vi.spyOn(view.transport, 'getAttachment').mockImplementation(session => {
-    const attachment = getAttachment(session);
+  const lookup = vi.spyOn(view.transport, 'readAttachment').mockImplementation(session => {
+    const attachment = readAttachment(session);
     return attachment && recovering ? { ...attachment, state: { ...attachment.state, status: 'recovering' } } : attachment;
   });
   try {
@@ -148,10 +148,10 @@ it('does not submit a held recovery answer after another client wins', async () 
   const f = await fixture(); const view = await f.terminal();
   const pending = f.broker.request({ kind: 'input', title: 'Recovering winner' }, f.scope);
   await vi.waitFor(() => expect(screenText(view.tui)).toContain('Recovering winner'));
-  const getAttachment = view.transport.getAttachment.bind(view.transport);
+  const readAttachment = view.transport.readAttachment.bind(view.transport);
   let recovering = true;
-  const lookup = vi.spyOn(view.transport, 'getAttachment').mockImplementation(session => {
-    const attachment = getAttachment(session);
+  const lookup = vi.spyOn(view.transport, 'readAttachment').mockImplementation(session => {
+    const attachment = readAttachment(session);
     return attachment && recovering ? { ...attachment, state: { ...attachment.state, status: 'recovering' } } : attachment;
   });
   try {
@@ -160,7 +160,7 @@ it('does not submit a held recovery answer after another client wins', async () 
     await vi.waitFor(() => expect(screenText(view.tui)).not.toContain('Recovering winner'));
     const other = f.client(); cleanup.push(async () => other.close()); await other.connect(); await other.attach(f.root.sessionId);
     const interaction = f.broker.pending()[0]!;
-    const held = () => getAttachment(f.root.sessionId)?.state.snapshot?.interactions.some(item => item.id === interaction.id);
+    const held = () => readAttachment(f.root.sessionId)?.state.snapshot?.interactions.some(item => item.id === interaction.id);
     expect(held()).toBe(true);
     await other.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'input', text: 'other client' } }, { session: f.root.sessionId });
     expect(await pending).toMatchObject({ state: 'answered', answer: { text: 'other client' } });

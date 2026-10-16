@@ -10,6 +10,7 @@ import { FELAN_VERSION } from './version.js';
 import type { TuiPresentationPreferences } from './tui/preferences-schema.js';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import { waitForDaemonStop } from './client/daemon-stop.js';
+import { hostBlockedRejection } from './client/daemon-blocked.js';
 import { clientDiagnosticsLog } from './client/diagnostics.js';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { TERMINAL_INTERACTION_KINDS, TERMINAL_UI_CAPABILITIES } from './tui/interactions.js';
@@ -100,10 +101,13 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
           const identity = client.identity;
           if (!identity) throw new Error('Connect to a verified daemon before using lifecycle controls.');
           const result = await client.control(action === 'stop' ? 'host.stop' : 'host.restart', force ? 'force' : 'drain');
-          if (result.outcome !== 'accepted') throw new Error('Daemon control was not accepted. Inspect status before retrying.');
+          const recovery = { client: 'tui' as const, action: action === 'stop' ? 'stop' as const : 'restart' as const };
+          if (result.outcome !== 'accepted') throw new Error(result.error?.code === 'host_blocked'
+            ? hostBlockedRejection(result.error.message, result.blocked, recovery)
+            : 'Daemon control was not accepted. Inspect status before retrying.');
           const inPlace = action !== 'stop' && !beforeAttachment;
           if (inPlace) controller.setNotice('Daemon restarting…');
-          await (dependencies.waitForStop ?? waitForDaemonStop)(client, options.signal);
+          await (dependencies.waitForStop ?? waitForDaemonStop)(client, options.signal, recovery);
           if (inPlace) {
             await controller.reconnect({ replacing: identity });
             if (action === 'relaunch') {

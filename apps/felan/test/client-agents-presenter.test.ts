@@ -7,7 +7,7 @@ beforeAll(() => { initTheme('dark', false); setKeybindings(new KeybindingsManage
 const settings = () => ({ hideThinking: false, showImages: false, imageWidthCells: 60, outputPad: 1, toolMode: 'grouped' as const });
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 function client() {
-  return { status: 'disconnected', getAttachment: () => undefined, subscribe: vi.fn(() => vi.fn()), request: vi.fn(), attach: vi.fn(), detach: vi.fn() };
+  return { status: 'disconnected', readAttachment: () => undefined, subscribe: vi.fn(() => vi.fn()), request: vi.fn(), attach: vi.fn(), detach: vi.fn() };
 }
 
 it('opens a client-owned navigator without a custom interaction', async () => {

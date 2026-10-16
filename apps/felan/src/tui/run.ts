@@ -18,6 +18,7 @@ import { createSetupUi } from './setup-ui.js';
 import { themedClientTerminal } from './theme.js';
 import { checkForFelanUpdate } from '../update.js';
 import { reportHerdrPane, type HerdrPane } from './herdr.js';
+import { formatHostBlocked } from '../client/daemon-blocked.js';
 
 export async function runDaemonTerminal(controller: TuiSessionController, options: TuiSessionOptions & {
   initialMessage?: string;
@@ -150,13 +151,15 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       if (!controller.client.capabilities?.operations.includes('host.status')) return;
       const response = await controller.perform('host.status', {});
       if (response.outcome !== 'accepted') throw new Error(controller.notice);
-      if (!response.result.setupNeeds.some(need => need.code === 'provider')) return;
+      const blocked = response.result.state === 'blocked';
+      if (!blocked && !response.result.setupNeeds.some(need => need.code === 'provider')) return;
       startupDeferred = true;
       const draft = screen.editor.getExpandedText();
       if (draft) screen.editor.addToHistory(draft);
       if (options.initialMessage && options.initialMessage !== draft) screen.editor.addToHistory(options.initialMessage);
       if (!draft && options.initialMessage) screen.editor.setText(options.initialMessage);
-      controller.setNotice('No model is available. Use /login, then /new. Your input is retained in the editor/history and was not sent.');
+      controller.setNotice(blocked ? formatHostBlocked(response.result.blocked, { client: 'tui' })
+        : 'No model is available. Use /login, then /new. Your input is retained in the editor/history and was not sent.', blocked);
       return false;
     }).then(async () => {
       if (stopped) return;

@@ -7,6 +7,7 @@ import { resolveClientHostComposition, resolveInstalledDaemonEntrypoint } from '
 import { FELAN_VERSION } from './version.js';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { waitForDaemonStop } from './client/daemon-stop.js';
+import { formatHostBlocked, hostBlockedRejection, type DaemonRecovery } from './client/daemon-blocked.js';
 
 const usage = 'Usage: felan daemon [status|start|foreground|stop|restart|logs] [--daemon-runtime <dir>] [--host-config <path>] [--force]';
 const absent = (error: unknown) => ['ENOENT', 'stale_endpoint', 'unavailable'].includes((error as { code?: string }).code ?? '');
@@ -57,9 +58,14 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     const active = client!;
     if (action === 'stop' || action === 'restart') {
       const identity = active.identity!;
+      const recovery: DaemonRecovery = { client: 'cli', action, ...(daemonRuntime ? { daemonRuntime } : {}) };
+      const status = await active.control('host.status');
+      if (!force && status.state === 'blocked') throw new Error(formatHostBlocked(status.blocked, recovery));
       const response = await active.control(action === 'stop' ? 'host.stop' : 'host.restart', force ? 'force' : 'drain');
-      if (response.outcome !== 'accepted') throw new Error('Daemon control was not accepted; inspect status before retrying.');
-      await waitForDaemonStop(active, lifetime.signal);
+      if (response.outcome !== 'accepted') throw new Error(response.error?.code === 'host_blocked'
+        ? hostBlockedRejection(response.error.message, response.blocked ?? status.blocked, recovery)
+        : 'Daemon control was not accepted; inspect status before retrying.');
+      await waitForDaemonStop(active, lifetime.signal, recovery);
       if (action === 'restart') { await connect(true, identity); io.writeOutput(`Daemon restarted (${client!.identity!.instanceId}).`); }
       else io.writeOutput('Daemon stopped.');
       return 0;
@@ -67,6 +73,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     if (active.status === 'incompatible') {
       const status = await active.control('host.status');
       io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}. It differs from this installation; run felan daemon restart.`);
+      if (status.state === 'blocked') io.writeOutput(formatHostBlocked(status.blocked, { client: 'cli', ...(daemonRuntime ? { daemonRuntime } : {}) }));
       return action === 'status' ? 0 : 1;
     }
     if (action === 'logs') {
@@ -83,6 +90,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     if (response.outcome !== 'accepted') throw new Error('Daemon status is unavailable.');
     const status = response.result;
     io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}\nSessions: ${status.active.sessions}; runs: ${status.active.runs}; active tasks: ${status.active.work}; attachments: ${status.active.attachments}`);
+    if (status.state === 'blocked') io.writeOutput(formatHostBlocked(status.blocked, { client: 'cli', ...(daemonRuntime ? { daemonRuntime } : {}) }));
     for (const need of status.setupNeeds) io.writeOutput(need.message);
     return 0;
   } catch (error) { io.writeError(error instanceof Error ? error.message : 'Daemon operation failed.'); return 1; }

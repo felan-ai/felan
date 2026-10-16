@@ -154,6 +154,45 @@ it('redacts credentials from startup failure diagnostics', async () => {
   expect(stderr).toContain('Model setup failed'); expect(stderr).not.toContain('pa55'); expect(stderr).not.toContain('query-secret');
 });
 
+it('reports a recoverable shutdown failure on every management surface and explicitly retries cleanup', async () => {
+  const { target: input, hostConfigPath } = await target();
+  const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: models });
+  let fail = true;
+  cleanups.push(async () => { fail = false; if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
+  const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui' }); cleanups.push(async () => client.close()); await client.connect();
+  const created = await client.request('sessions.create', { cwd: input.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
+  const id = created.result.sessionId; await client.attach(id);
+  const disposed = vi.fn(async () => {});
+  service.registry.registerService(id, { busy: () => false, settle: async mode => {
+    if (mode !== 'drain' && fail) { fail = false; throw new AggregateError([new Error('api_key=sk-test-12345678\nfixture failure')], 'service failed'); }
+  }, dispose: disposed });
+  expect(await client.control('host.stop', 'drain')).toMatchObject({ outcome: 'accepted' });
+  await vi.waitFor(() => expect(service.lifecycle.state).toBe('blocked'));
+  const blocked = service.lifecycle.blocked!;
+  expect(blocked).toMatchObject({ recoverable: true, step: 'session-services', session: id, pid: process.pid, message: expect.stringContaining('fixture failure') });
+  expect(blocked.message).not.toContain('sk-test'); expect(blocked.message).not.toContain('\n');
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'blocked', blocked } });
+  expect(await client.control('host.status')).toMatchObject({ outcome: 'accepted', state: 'blocked', blocked });
+  const logs = await client.request('host.logs', {});
+  expect(logs).toMatchObject({ outcome: 'accepted', result: { entries: expect.arrayContaining([
+    expect.objectContaining({ level: 'error', message: expect.stringContaining(`Daemon shutdown failed at session-services (session ${id}):`) }),
+  ]) } });
+  const stderr = await readFile(join(service.owner.target.runtimeDirectory, 'stderr.log'), 'utf8');
+  expect(stderr).toContain('session-services'); expect(stderr).toContain(id); expect(stderr).toContain('fixture failure'); expect(stderr).toContain('stack'); expect(stderr).not.toContain('sk-test');
+  for (const op of ['host.stop', 'host.restart'] as const) {
+    expect(await client.control(op, 'drain')).toMatchObject({ outcome: 'rejected', state: 'blocked', blocked, error: { code: 'host_blocked' } });
+    expect(await client.request(op, { expected: service.owner.identity, mode: 'drain' })).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
+  }
+  expect(service.lifecycle.blocked).toEqual(blocked);
+  expect(await client.request('sessions.create', { cwd: input.directory, source: 'tui' })).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
+  expect(await client.request('prompt', { text: 'refused' }, { session: id })).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
+  expect(disposed).not.toHaveBeenCalled(); expect(() => service.owner.assertCurrent()).not.toThrow();
+  expect(await client.control('host.stop', 'force')).toMatchObject({ outcome: 'accepted', state: 'draining' });
+  expect(await service.stopped).toBe('stop'); expect(disposed).toHaveBeenCalledOnce();
+  const next = await acquireDaemonOwnership(input); await next.release();
+});
+
 it('starts the pre-daemon transcript warm-up after startup and aborts it on shutdown', async () => {
   const { target: input, hostConfigPath } = await target();
   let signal: AbortSignal | undefined;

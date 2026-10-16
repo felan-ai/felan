@@ -184,7 +184,8 @@ export class SessionServer {
     try {
       if (frame === null || typeof frame !== 'object') throw commandError('invalid_request');
       id = parseSchema(IdSchema, 'id' in frame ? frame.id : undefined);
-      if (this.sealed && !('control' in frame && 'op' in frame && frame.op === 'host.status')) throw commandError('busy');
+      if (this.sealed && this.options.management?.lifecycle.state !== 'blocked'
+        && !('control' in frame && 'op' in frame && frame.op === 'host.status')) throw commandError('busy');
       if ('control' in frame) {
         const request = parseControlRequest(frame);
         assertTargetIdentity(this.options.registry.options.owner.target, request.params.expected, this.options.registry.options.owner.identity);
@@ -192,10 +193,12 @@ export class SessionServer {
         if (request.op !== 'host.status' && this.options.management) {
           const command = parseClientEnvelope({ v: 1, id: request.id, op: request.op, params: request.params });
           try { result = await this.admission.submit(command, this.principal, admitted => this.options.management!.lifecycle.prepare(admitted)); }
-          catch (error) { result = rejected(id, error, true); }
+          catch (error) { result = this.options.management.lifecycle.state === 'blocked'
+            ? rejected(id, this.options.management.lifecycle.blockedError()) : rejected(id, error, true); }
         }
         const response = { control: 1, re: id, identity: this.options.registry.options.owner.identity, daemonVersion: this.options.version, supportedProtocol: 1,
           state: this.options.management?.lifecycle.state ?? 'ready',
+          ...(this.options.management?.lifecycle.blocked ? { blocked: this.options.management.lifecycle.blocked } : {}),
           ...(request.op === 'host.status' || result?.outcome === 'accepted' ? { outcome: 'accepted' }
             : { outcome: 'rejected', error: result ? result.error : { code: 'unavailable', message: 'Host management is unavailable.', retryable: false } }) };
         connection.out.send(parseControlResponse(response), () => this.options.management?.lifecycle.afterResponse(request.id, result?.outcome === 'accepted')); return;
@@ -215,6 +218,10 @@ export class SessionServer {
       size = Buffer.byteLength(JSON.stringify(request));
       if (connection.pending >= LIMITS.inflightRequests - (safety ? 0 : 1) || connection.bytes + size > LIMITS.unsentBytes - (safety ? 0 : SAFETY_BYTES)) throw commandError('request_capacity');
       connection.pending++; connection.bytes += size; counted = true;
+      const durable = OPERATION_CATALOG[request.op].storage === 'durable';
+      const retained = durable && this.options.registry.options.store.request(request.id) !== undefined;
+      if (this.stopping() && !retained
+        && !['host.status', 'host.logs', 'host.stop', 'host.restart', 'cancel', 'close', 'executions.cancel', 'processes.stop', 'interaction.answer', 'detach', 'host.setup.read', 'host.setup.cancel'].includes(request.op)) throw this.stoppingError();
       if (request.op === 'attach') {
         await this.attach(connection, request); return;
       }
@@ -225,10 +232,6 @@ export class SessionServer {
         this.options.broker?.detached?.(connection.id, request.session);
         connection.out.send(accepted(request, {})); return;
       }
-      const durable = OPERATION_CATALOG[request.op].storage === 'durable';
-      const retained = durable && this.options.registry.options.store.request(request.id) !== undefined;
-      if (this.stopping() && !retained
-        && !['host.status', 'host.logs', 'host.stop', 'host.restart', 'cancel', 'close', 'executions.cancel', 'processes.stop', 'interaction.answer', 'detach', 'host.setup.read', 'host.setup.cancel'].includes(request.op)) throw commandError('busy');
       if (request.op === 'sessions.create' && !retained && this.options.prepareRoot) {
         const payload = canonicalRequestPayload(request);
         preparing = this.rootPreparations.get(request.id);
@@ -261,7 +264,7 @@ export class SessionServer {
       admissionAttempt = true;
       const response = await this.admission.submit(request, this.principal, !this.available(connection.capabilities).includes(request.op) ? undefined : command => {
         if ((request.op === 'host.stop' || request.op === 'host.restart') && this.options.management) return this.options.management.lifecycle.prepare(command);
-        if (this.stopping() && !safety) throw commandError('busy');
+        if (this.stopping() && !safety) throw this.stoppingError();
         if (request.op === 'interaction.answer') return this.options.broker!.dispatch(command, { principal: this.principal, kind: connection.kind!, attachment: connection.id,
           interactionKinds: [...connection.interactionKinds], capabilities: [...connection.capabilities] });
         return this.commands.prepare(command, { origin, signal: connection.lifetime.signal, ...(rootPreparation ? { rootPreparation } : {}), invalidateAfterResponse: revisions => deferred.push(revisions) });
@@ -281,10 +284,15 @@ export class SessionServer {
     }
   }
 
-  /** New work is refused only while the host is draining or has stopped; safety operations stay available. */
+  /** Safety operations stay available while admission is closed. */
   private stopping(): boolean {
     const state = this.options.management?.lifecycle.state;
-    return state === 'draining' || state === 'stopped';
+    return state === 'draining' || state === 'blocked' || state === 'stopped';
+  }
+
+  private stoppingError(): Error {
+    const lifecycle = this.options.management?.lifecycle;
+    return lifecycle?.state === 'blocked' ? lifecycle.blockedError(true) : commandError('busy');
   }
 
   private available(capabilities: readonly string[] = []): Operation[] {
@@ -324,6 +332,7 @@ export class SessionServer {
     const rows = this.options.registry.listed();
     const composition = await this.currentComposition();
     return accepted(request, { state: this.options.management?.lifecycle.state ?? 'ready', identity: this.options.registry.options.owner.identity, daemonVersion: this.options.version, protocol: 1,
+      ...(this.options.management?.lifecycle.blocked ? { blocked: this.options.management.lifecycle.blocked } : {}),
       ...(composition ? { composition } : {}),
       active: { sessions: rows.filter(row => row.state === 'open').length, runs: rows.filter(row => ['running', 'waiting', 'cancelling'].includes(row.run.state)).length,
         work: await this.activeWork(), attachments: [...this.connections].reduce((sum, connection) => sum + connection.attachments.size, 0) }, setupNeeds: this.options.setupNeeds?.() ?? [] });
@@ -393,7 +402,7 @@ export class SessionServer {
 
 function rejected(id: string, error: unknown, admissionAttempt = false): Response {
   const candidate: unknown = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
-  const code = typeof candidate === 'string' && (ERROR_CODES as readonly string[]).includes(candidate) ? candidate : 'unavailable';
+  const code = typeof candidate === 'string' && (candidate === 'host_blocked' || (ERROR_CODES as readonly string[]).includes(candidate)) ? candidate : 'unavailable';
   return { v: 1, re: id, outcome: admissionAttempt && !['request_conflict', 'stale_request'].includes(code) ? 'indeterminate' : 'rejected',
     error: { code, message: diagnosticMessage(error), retryable: false } };
 }

@@ -31,9 +31,9 @@ function fixture() {
   ] };
   const listeners = new Set<() => void>();
   const client = { status: 'ready', reconnection: undefined as { attempt: number; retryAt: number } | undefined, capabilities: { daemonVersion: '0.2.0' },
-    getAttachment: () => ({ state: { status: 'live', snapshot: current } }),
+    readAttachment: () => ({ state: { status: 'live', snapshot: current } }),
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
-  const controller = { client, get snapshot() { return current; }, get state() { return client.getAttachment().state; },
+  const controller = { client, get snapshot() { return current; }, get state() { return client.readAttachment().state; },
     sessionId: 'session', history: [] as Message[], busy: false, notice: '', subscribe: client.subscribe,
     notes: [{ text: 'Memory processing disabled for this project.', level: 'warning' as const }],
     cancel: vi.fn(async () => ({})), submit: vi.fn(async () => true), perform: vi.fn(async () => ({ outcome: 'accepted' })),
@@ -141,6 +141,28 @@ it('preserves the editor borders, scrolling and footer padding below a full tran
   expect(lines[working + 1]).toBe('─'.repeat(100));
   expect(lines.at(-4)).toBe('─'.repeat(100));
   expect(lines.slice(-3)).toEqual(footer);
+});
+
+it('applies session updates that arrive between frames once, when the next frame renders', () => {
+  vi.useFakeTimers();
+  const f = fixture(); f.lines();
+  const projection = vi.spyOn(f.screen.transcript, 'showProjection');
+  for (const title of ['first', 'second', 'third']) f.change({ title, run: { id: 'run', state: 'running' } });
+  expect(projection).not.toHaveBeenCalled();
+  expect(f.lines().join('\n')).toContain('Working');
+  expect(projection).toHaveBeenCalledOnce();
+  f.lines(); vi.advanceTimersByTime(1_000);
+  expect(projection).toHaveBeenCalledOnce();
+});
+
+it('shows a failed update instead of stopping the terminal, and recovers on the next update', () => {
+  const f = fixture(); f.lines();
+  let failing = true;
+  vi.spyOn(f.screen.transcript, 'toolsExpanded', 'get').mockImplementation(() => { if (failing) throw new Error('status unavailable'); return false; });
+  f.change({ title: 'failing' });
+  expect(f.lines().join('\n')).toContain('Cannot update the screen: status unavailable');
+  failing = false; f.change({ title: 'recovered' });
+  expect(f.lines().join('\n')).not.toContain('Cannot update the screen');
 });
 
 it('shows working state only during a run and reconnecting in the activity slot', () => {

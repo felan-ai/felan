@@ -7,7 +7,7 @@ import { InteractionAnswerSchema, InteractionKindSchema, UserCancellationSchema 
 import { LIMITS } from './limits.js';
 import { UiActionRequestSchema, UiCapabilitySchema } from './ui.js';
 import { SetupCatalogSchema, SetupJobSchema, SetupStartSchema } from './setup.js';
-import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, IdSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text, unboundedText } from './schema.js';
+import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, HostBlockedSchema, IdSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text, unboundedText } from './schema.js';
 
 const empty = Type.Object({});
 const identity = { expected: DaemonIdentitySchema };
@@ -19,7 +19,7 @@ export const HostCompositionSchema = Type.Object({
 });
 export const HostStatusSchema = Type.Object({
   ...lifecycle.properties, identity: DaemonIdentitySchema, daemonVersion: text(128, 1), protocol: Type.Literal(1),
-  composition: Type.Optional(HostCompositionSchema),
+  composition: Type.Optional(HostCompositionSchema), blocked: Type.Optional(HostBlockedSchema),
   active: Type.Object({ sessions: CounterSchema, runs: CounterSchema, work: CounterSchema, attachments: CounterSchema }),
   setupNeeds: Type.Array(Type.Object({ code: IdSchema, message: DiagnosticTextSchema, provisioningId: Type.Optional(IdSchema) })),
 });

@@ -11,6 +11,7 @@ async function setup(overrides: Partial<HostLifecycleOptions> = {}) {
   const f = await fixture(); const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
   const broker = createRegistryInteractionBroker(f.registry); const complete = vi.fn(async () => {});
   const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity, beginDrain: () => f.registry.beginDrain(), endDrain: () => f.registry.endDrain(),
+    canRetry: () => { f.owner.assertCurrent(); return !f.registry.fenced; },
     settle: async mode => { await broker.drain(); if (mode === 'drain') await f.registry.waitForDrain(); await f.registry.shutdown({ interrupt: mode === 'force' }); },
     complete, ...overrides });
   const admission = new OrderedAdmission(f.store, { now: () => now });
@@ -118,4 +119,107 @@ it('can finish an already-settled drain without reopening session admission', as
   const f = await setup(); f.registry.beginDrain(); await f.registry.shutdown();
   expect(() => f.registry.beginDrain()).not.toThrow();
   expect(() => f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).toThrow('not admitting');
+});
+
+it('retains per-session shutdown failures, rejects drain durably and retries only unfinished services with force', async () => {
+  const f = await setup(); const successful = { busy: () => false, settle: vi.fn(async () => {}), dispose: vi.fn(async () => {}) };
+  let fail = true;
+  const failed = { busy: () => false, settle: vi.fn(async (mode?: string) => {
+    if (mode !== 'drain' && fail) { fail = false; throw new Error('api_key=sk-test-12345678\nservice failed'); }
+  }), dispose: vi.fn(async () => {}) };
+  f.registry.registerService(f.root.sessionId, successful); f.registry.registerService(f.root.sessionId, failed);
+  await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('blocked'));
+  const blocked = f.lifecycle.blocked;
+  expect(blocked).toMatchObject({ recoverable: true, step: 'session-services', session: f.root.sessionId, pid: process.pid });
+  expect(blocked!.since).toBeGreaterThan(0); expect(blocked!.message).toContain('[redacted] service failed'); expect(blocked!.message).not.toContain('sk-test');
+  for (const op of ['host.stop', 'host.restart'] as const) {
+    const rejected = await f.request('drain', op);
+    expect(rejected.response).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked', message: expect.stringContaining('Retry with force') } });
+    expect(f.lifecycle.blocked).toEqual(blocked);
+    expect(await f.admission.submit(rejected.envelope, 'test-client', command => f.lifecycle.prepare(command))).toEqual(rejected.response);
+  }
+  expect(successful.dispose).toHaveBeenCalledOnce(); expect(failed.dispose).not.toHaveBeenCalled();
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.state).toBe('stopped'));
+  expect(f.lifecycle.blocked).toBeUndefined(); expect(f.complete).toHaveBeenCalledOnce();
+  expect(successful.dispose).toHaveBeenCalledOnce(); expect(failed.dispose).toHaveBeenCalledOnce();
+  expect(f.instances.get(f.root.sessionId)!.dispose).toHaveBeenCalledOnce();
+});
+
+it('replaces blocked diagnostics when a forced retry fails at a different step', async () => {
+  const f = await setup(); let calls = 0;
+  f.registry.registerService(f.root.sessionId, { busy: () => false, settle: async mode => {
+    if (mode !== 'drain' && calls++ === 0) throw new Error('first failure');
+  }, dispose: async () => {} });
+  const dispose = f.instances.get(f.root.sessionId)!.dispose;
+  dispose.mockRejectedValueOnce(new Error('second failure'));
+  await f.request(); await vi.waitFor(() => expect(f.lifecycle.blocked?.step).toBe('session-services'));
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.blocked?.step).toBe('session-runtime'));
+  expect(f.lifecycle.blocked).toMatchObject({ recoverable: true, message: 'Error: second failure', session: f.root.sessionId });
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.state).toBe('stopped'));
+});
+
+it('does not repeat runtime disposal after a later settlement step fails', async () => {
+  const f = await setup(); const settle = vi.spyOn(f.registry.projection(f.root.sessionId), 'settleRun');
+  f.instances.get(f.root.sessionId)!.abort.mockResolvedValue(undefined);
+  settle.mockImplementationOnce(() => { throw new Error('store failure'); });
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.blocked?.step).toBe('session-run'));
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.state).toBe('stopped'));
+  expect(f.instances.get(f.root.sessionId)!.dispose).toHaveBeenCalledOnce();
+});
+
+it('cannot retry ownership loss or a failure after release begins', async () => {
+  const complete = vi.fn(async () => { throw new Error('release failure'); }); const f = await setup({ complete });
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.state).toBe('blocked'));
+  expect(f.lifecycle.blocked).toMatchObject({ recoverable: false, step: 'release', message: 'Error: release failure' });
+  expect((await f.request('force')).response).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked', message: expect.stringContaining(`terminate the daemon process ${process.pid}`) } });
+  expect(complete).toHaveBeenCalledOnce();
+  f.lifecycle.block(new Error('owner changed'), 'ownership-lost');
+  expect(f.lifecycle.blocked).toMatchObject({ recoverable: false, step: 'ownership-lost' });
+  expect((await f.request('force')).response).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
+});
+
+it('cannot retry a fenced registry or race settlement still running after its deadline', async () => {
+  const f = await setup({ canRetry: () => false, settle: async () => { throw new Error('fenced'); } });
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.blocked).toMatchObject({ recoverable: false }));
+  expect((await f.request('force')).response).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  const timed = await setup({ settle: () => gate, timeoutMs: 5 }); timed.releases.add(release);
+  await timed.request('force'); await vi.waitFor(() => expect(timed.lifecycle.blocked).toMatchObject({ recoverable: false, step: 'settlement-deadline' }));
+  release(); await gate;
+});
+
+it('rechecks ownership and registry eligibility before accepting blocked force recovery', async () => {
+  let eligible = true; const settle = vi.fn(async () => { throw new Error('settlement failed'); });
+  const f = await setup({ canRetry: () => eligible, settle });
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.blocked?.recoverable).toBe(true));
+  const since = f.lifecycle.blocked!.since; eligible = false;
+  expect((await f.request('force')).response).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
+  expect(f.lifecycle.blocked).toMatchObject({ recoverable: false, since }); expect(settle).toHaveBeenCalledOnce();
+});
+
+it('force finishes a previously failed close without replaying its rejected attempt', async () => {
+  const f = await setup(); let fail = true;
+  const disposed = vi.fn(async () => {});
+  f.registry.registerService(f.root.sessionId, { busy: () => false, settle: async () => {
+    if (fail) { fail = false; throw new Error('close failed once'); }
+  }, dispose: disposed });
+  await expect(f.registry.close(f.root.sessionId)).rejects.toThrow('close failed once');
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.state).toBe('stopped'));
+  expect(f.store.session(f.root.sessionId).state).toBe('closed'); expect(disposed).toHaveBeenCalledOnce();
+});
+
+it('force preserves descendant close intent and closes children before their parent after a failed close', async () => {
+  const f = await setup();
+  const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, rootSessionId: f.root.sessionId, parentSessionId: f.root.sessionId });
+  const sibling = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, rootSessionId: f.root.sessionId, parentSessionId: f.root.sessionId });
+  f.instances.get(child.sessionId)!.abort.mockRejectedValueOnce(new Error('child abort failed once'));
+  await expect(f.registry.close(f.root.sessionId)).rejects.toThrow('child abort failed once');
+  await f.request('force'); await vi.waitFor(() => expect(f.lifecycle.state).toBe('stopped'));
+  for (const binding of [f.root, child, sibling]) {
+    expect(f.store.session(binding.sessionId).state).toBe('closed');
+    expect(f.instances.get(binding.sessionId)!.dispose).toHaveBeenCalledOnce();
+  }
+  const rootDisposed = f.instances.get(f.root.sessionId)!.dispose.mock.invocationCallOrder[0]!;
+  expect(f.instances.get(child.sessionId)!.dispose.mock.invocationCallOrder[0]!).toBeLessThan(rootDisposed);
+  expect(f.instances.get(sibling.sessionId)!.dispose.mock.invocationCallOrder[0]!).toBeLessThan(rootDisposed);
 });

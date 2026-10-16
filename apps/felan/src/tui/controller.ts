@@ -2,9 +2,10 @@ import { LIMITS, type Message, type Operation, type OperationParams, type Operat
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import type { SessionClient } from '../client/client.js';
 import { describeBlocked } from '../client/diagnostics.js';
+import { formatHostBlocked } from '../client/daemon-blocked.js';
 import type { SessionListing } from './session-navigator.js';
 
-type Connection = Pick<SessionClient, 'status' | 'reconnection' | 'incompatibleActiveWork' | 'identity' | 'capabilities' | 'connect' | 'request' | 'attach' | 'retryAttach' | 'detach' | 'getAttachment' | 'getInteractions' | 'subscribe' | 'close'>;
+type Connection = Pick<SessionClient, 'status' | 'reconnection' | 'incompatibleActiveWork' | 'identity' | 'capabilities' | 'connect' | 'request' | 'attach' | 'retryAttach' | 'detach' | 'readAttachment' | 'getInteractions' | 'subscribe' | 'close'>;
 type SessionSummary = OperationResult<'sessions.list'>['entries'][number];
 const PICKER_FIRST_PAGE = 20;
 /** A client-only line that scrolls with the transcript after its anchor entry, like Pi's chat status lines; never persisted. */
@@ -39,6 +40,7 @@ export class TuiSessionController {
   private sessionNotes: SessionNote[] = [];
   private notificationSession: string | undefined;
   private readonly seenNotifications = new Map<string, string>();
+  private hostBlockedNotice = false;
   notice = '';
 
   constructor(readonly client: Connection) {
@@ -57,10 +59,10 @@ export class TuiSessionController {
     if (!entries) return this.sessionEntry === 'new';
     return !entries.some(entry => entry.role === 'user' || entry.role === 'assistant' || entry.customType === 'bashExecution');
   }
-  get state() { return this.selected ? this.client.getAttachment(this.selected)?.state : undefined; }
+  get state() { return this.selected ? this.client.readAttachment(this.selected)?.state : undefined; }
   /** Explains a blocked attachment, e.g. `Session recovery did not complete (re-attach got no answer: …).` */
   get blockedText(): string {
-    const reason = describeBlocked(this.selected ? this.client.getAttachment(this.selected)?.blocked : undefined);
+    const reason = describeBlocked(this.selected ? this.client.readAttachment(this.selected)?.blocked : undefined);
     return `Session recovery did not complete${reason ? ` (${reason})` : ''}.`;
   }
   get snapshot(): SessionSnapshot | undefined { return this.state?.snapshot; }
@@ -69,8 +71,9 @@ export class TuiSessionController {
   /** Notes for the selected session, or notes awaiting the first attachment when none is selected. */
   get notes(): readonly TranscriptNote[] { return this.sessionNotes.filter(note => note.session === this.selected); }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  setNotice(message: string): void {
+  setNotice(message: string, hostBlocked = this.hostBlockedNotice && (!message || message === this.notice)): void {
     if (this.closed) return;
+    this.hostBlockedNotice = hostBlocked;
     this.notice = message;
     if (message) this.addNote(message, 'info', true);
     this.emit();
@@ -205,7 +208,7 @@ export class TuiSessionController {
     const response = await this.client.attach(session);
     if (response.outcome !== 'accepted') {
       const message = outcomeText(response);
-      if (reportMissing || response.error.code !== 'not_found') this.setNotice(message);
+      if (reportMissing || response.error.code !== 'not_found') this.reportRejection(response);
       throw Object.assign(new Error(message), { code: response.error.code });
     }
     if (this.closed) return;
@@ -214,7 +217,7 @@ export class TuiSessionController {
     const after = this.history.at(-1)?.id;
     this.sessionNotes = this.sessionNotes.flatMap(note => note.session ? [] : [{ ...note, session, ...(after ? { after } : {}) }]);
     this.emit();
-    if (old && this.client.getAttachment(old)) await this.client.detach(old);
+    if (old && this.client.readAttachment(old)) await this.client.detach(old);
     await this.loadHistory();
   }
 
@@ -239,7 +242,7 @@ export class TuiSessionController {
     if (!this.selected) return;
     const session = this.selected; const response = await this.perform('close', {}, session);
     if (response.outcome !== 'accepted') return;
-    if (this.client.getAttachment(session)) await this.client.detach(session);
+    if (this.client.readAttachment(session)) await this.client.detach(session);
     if (this.selected === session) { this.selected = undefined; this.retained = undefined; this.emit(); }
   }
 
@@ -251,6 +254,10 @@ export class TuiSessionController {
     }
     if (this.selected) await this.waitUntilLive(this.selected);
     await this.loadHistory();
+    if (this.hostBlockedNotice && this.client.capabilities?.operations.includes('host.status')) {
+      const status = await this.perform('host.status', {});
+      if (status.outcome === 'accepted' && status.result.state === 'ready' && this.hostBlockedNotice) this.setNotice('Daemon reconnected.');
+    }
   }
 
   perform<O extends Operation>(op: O, params: OperationParams<O>, session?: string): Promise<ResponseFor<O>> {
@@ -258,7 +265,7 @@ export class TuiSessionController {
     if (this.client.status !== 'ready') return Promise.reject(new Error(unavailableText(this.client)));
     if (!this.client.capabilities?.operations.includes(op)) return Promise.reject(new Error(`The daemon does not support ${op}.`));
     const work = this.client.request(op, params, session ? { session } : {}).then(response => {
-      if (response.outcome !== 'accepted') this.setNotice(outcomeText(response));
+      if (response.outcome !== 'accepted') this.reportRejection(response, op !== 'host.status');
       return response;
     });
     this.pending.add(work);
@@ -277,9 +284,26 @@ export class TuiSessionController {
   dispose(): Promise<void> {
     return this.disposing ??= (async () => {
       this.closed = true; this.unsubscribe(); this.listeners.clear();
-      try { if (this.selected && this.client.getAttachment(this.selected)) await this.client.detach(this.selected); }
+      try { if (this.selected && this.client.readAttachment(this.selected)) await this.client.detach(this.selected); }
       finally { this.client.close(); await Promise.allSettled([...this.pending]); await this.selection; if (this.historyLoading) await this.historyLoading; }
     })();
+  }
+
+  /** Every request fails while the daemon is blocked, so its refusal is reported once rather than per request. */
+  private reportRejection(response: Exclude<ResponseFor<Operation>, { outcome: 'accepted' }>, explain = true): void {
+    if (response.error.code !== 'host_blocked') { this.setNotice(outcomeText(response)); return; }
+    if (this.hostBlockedNotice) return;
+    this.setNotice(outcomeText(response), true);
+    if (explain) void this.explainHostBlocked();
+  }
+
+  /** A refusal only says that the daemon is blocked; its status says where cleanup failed and whether forcing can retry it. */
+  private async explainHostBlocked(): Promise<void> {
+    if (!this.client.capabilities?.operations.includes('host.status')) return;
+    const status = await this.perform('host.status', {}).catch(() => undefined);
+    if (status?.outcome === 'accepted' && status.result.state === 'blocked' && this.hostBlockedNotice) {
+      this.setNotice(`Daemon refuses new work. ${formatHostBlocked(status.result.blocked, { client: 'tui' })}`, true);
+    }
   }
 
   private addNote(text: string, level: TranscriptNote['level'], status: boolean): void {
@@ -328,7 +352,7 @@ export class TuiSessionController {
       let unsubscribe = () => {};
       const finish = (error?: Error) => { unsubscribe(); error ? reject(error) : resolve(); };
       const check = () => {
-        const status = this.client.getAttachment(session)?.state.status;
+        const status = this.client.readAttachment(session)?.state.status;
         if (this.closed || this.selected !== session) finish(new Error('Session selection changed.'));
         else if (status === 'live') finish();
         else if (status === 'blocked') finish(new Error(`${this.blockedText} Use /reconnect before submitting.`));
@@ -386,5 +410,6 @@ function unavailableText(client: Pick<Connection, 'status' | 'reconnection'>): s
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function outcomeText(response: Exclude<ResponseFor<Operation>, { outcome: 'accepted' }>): string {
+  if (response.error.code === 'host_blocked') return response.error.message;
   return response.outcome === 'indeterminate' ? `Outcome uncertain: ${response.error.message}` : `Rejected: ${response.error.message}`;
 }

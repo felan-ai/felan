@@ -8,9 +8,23 @@ type Assistant = Extract<NativeMessage, { role: 'assistant' }>;
 type User = Extract<NativeMessage, { role: 'user' }>;
 type Tool = Extract<NativeMessage, { role: 'toolResult' }>;
 
+const projected = new WeakMap<Message, NativeMessage | null>();
+
+/**
+ * Transcripts re-project their whole history on every update, so results are shared per received message record, which is never
+ * modified. Received records are frozen, so tool arguments and details are copied once for renderers that adjust them in place.
+ */
 export function projectedNativeMessage(message: Message): NativeMessage | undefined {
+  const cached = projected.get(message);
+  if (cached !== undefined) return cached ?? undefined;
+  const native = projectMessage(message);
+  projected.set(message, native ?? null);
+  return native;
+}
+
+function projectMessage(message: Message): NativeMessage | undefined {
   if (message.role === 'custom' && [SESSION_EXECUTION_COMPLETION_MESSAGE_TYPE, BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE].includes(message.customType ?? '')) {
-    return { role: 'custom', customType: message.customType!, timestamp: message.timestamp, display: true, details: message.details,
+    return { role: 'custom', customType: message.customType!, timestamp: message.timestamp, display: true, details: structuredClone(message.details),
       content: message.content.flatMap(part => part.type === 'text' ? [{ type: 'text' as const, text: part.text }] : []) };
   }
   if (message.role === 'custom' && message.customType === 'bashExecution') {
@@ -40,7 +54,7 @@ export function projectedNativeMessage(message: Message): NativeMessage | undefi
       if (part.type === 'text') content.push({ type: 'text', text: part.text });
       else if (part.type === 'thinking') content.push({ type: 'thinking', thinking: part.text });
       else if (part.type === 'tool_call' && part.arguments && typeof part.arguments === 'object' && !Array.isArray(part.arguments)) {
-        content.push({ type: 'toolCall', id: part.id, name: part.name, arguments: part.arguments });
+        content.push({ type: 'toolCall', id: part.id, name: part.name, arguments: structuredClone(part.arguments) });
       } else return undefined;
     }
     const { kind: _kind, ...metadata } = display;
@@ -56,7 +70,7 @@ export function projectedNativeMessage(message: Message): NativeMessage | undefi
       else return undefined;
     }
     return { role: 'toolResult', toolCallId: result.id, toolName: display.name, timestamp: display.timestamp,
-      content, isError: result.isError, ...(result.details === undefined ? {} : { details: result.details }) };
+      content, isError: result.isError, ...(result.details === undefined ? {} : { details: structuredClone(result.details) }) };
   }
   return undefined;
 }

@@ -19,6 +19,7 @@ import { isConversationEntry, prepareTranscriptDeletion } from './session-files.
 import { assertTargetIdentity, canonicalProspectivePath, pathInside } from './target.js';
 import { sessionTip } from './session-cursor.js';
 import type { createUiVocabulary } from './ui-vocabulary.js';
+import { shutdownStep } from './shutdown-error.js';
 
 export interface RegistryOpenRequest extends Omit<SessionOpenRequest, 'resources' | 'ownership' | 'services' | 'policy'> {
   cwd: string;
@@ -88,6 +89,7 @@ export class SessionRegistry {
   private readonly listeners = new Map<string, Set<(event: ProjectionOutput) => void>>();
   private readonly interactionListeners = new Set<(interaction: Interaction) => void>();
   private readonly retainedServices = new Map<string, Set<RegistryService>>();
+  private readonly shutdownInterruptions = new Map<string, string>();
   private readonly closing = new Set<string>();
   private readonly closes = new Map<string, Promise<void>>();
   private readonly now: () => number;
@@ -151,6 +153,7 @@ export class SessionRegistry {
   }
 
   failExecution(error: unknown): void { this.fence(error); }
+  get fenced(): boolean { return this.failure !== undefined; }
 
   beginDrain(): void {
     if (this.draining && this.stopping && !this.failure) { this.options.owner.assertCurrent(); this.options.store.assertCurrent(); return; }
@@ -858,44 +861,68 @@ export class SessionRegistry {
   }
 
   async shutdown(options: { interrupt?: boolean } = {}): Promise<void> {
-    const interrupted = options.interrupt ? this.list().filter(row => row.state === 'open' && ['running', 'waiting', 'cancelling'].includes(row.run.state) && row.run.id)
-      .map(row => ({ id: row.id, run: row.run.id! })) : [];
+    if (options.interrupt) for (const row of this.list()) {
+      if (row.state === 'open' && ['running', 'waiting', 'cancelling'].includes(row.run.state) && row.run.id) this.shutdownInterruptions.set(row.id, row.run.id);
+    }
     this.stopping = true;
-    if (this.failure) { await this.failureSettlement; throw new Error('Registry is fenced; verify settlement before releasing ownership.'); }
+    if (this.failure) {
+      await shutdownStep('registry-fenced', async () => { await this.failureSettlement; throw new Error('Registry is fenced; verify settlement before releasing ownership.'); });
+    }
     const cancellations = [...this.entries].map(([id, entry]) => {
-      if (!options.interrupt) return this.cancelViews(id);
+      if (!options.interrupt) return shutdownStep('session-cancel-views', () => this.cancelViews(id), id);
       this.closing.add(id);
-      this.settleInteractions(id, 'shutdown');
-      return this.join([this.cancelViews(id), entry.host?.shutdown() ?? Promise.resolve(), entry.binding.runtime.session.abort()]);
+      return (async () => {
+        await shutdownStep('session-interactions', () => this.settleInteractions(id, 'shutdown'), id);
+        await this.join([shutdownStep('session-cancel-views', () => this.cancelViews(id), id),
+          shutdownStep('session-host-shutdown', () => entry.host?.shutdown(), id),
+          shutdownStep('session-abort', () => entry.runtimeDisposed ? undefined : entry.binding.runtime.session.abort(), id)]);
+      })();
     });
-    await this.join([...cancellations, ...this.opening.values(), ...this.closes.values(), ...this.lifecycleWriters], undefined, true);
+    const closing = this.join([...this.closes.values()], undefined, true).catch(error => {
+      // Failed closes retain their intent; force retries them after in-flight closes finish.
+      if (!options.interrupt || this.failure) throw error;
+    });
+    await this.join([...cancellations, shutdownStep('registry-pending', () => this.join([...this.opening.values(), closing, ...this.lifecycleWriters], undefined, true))]);
+    if (this.failure) await shutdownStep('registry-fenced', async () => { await this.failureSettlement; throw this.failure; });
+    if (options.interrupt) {
+      const retry = [...this.closes.keys()]; this.closes.clear();
+      await this.join(retry.map(id => shutdownStep('session-close', () => this.close(id), id)));
+    }
     for (const [id, entry] of this.entries) {
       this.closing.add(id);
-      this.settleInteractions(id, 'shutdown');
+      await shutdownStep('session-interactions', () => this.settleInteractions(id, 'shutdown'), id);
       if (!options.interrupt) {
-        await this.cancelViews(id);
-        await entry.host?.shutdown();
-        await entry.cancelling;
-        await entry.binding.runtime.session.abort();
+        await shutdownStep('session-cancel-views', () => this.cancelViews(id), id);
+        await shutdownStep('session-host-shutdown', () => entry.host?.shutdown(), id);
+        await shutdownStep('session-abort', async () => { await entry.cancelling; if (!entry.runtimeDisposed) await entry.binding.runtime.session.abort(); }, id);
       }
-      await this.processes.cancelForeground(id);
-      if (!options.interrupt) await Promise.all(entry.writers);
-      await this.processes.settle(entry.binding.rootSessionId);
-      for (const service of entry.services) await this.processes.withCleanup(id, async () => { await service.settle(); await service.dispose(); });
-      entry.services.clear();
+      await shutdownStep('session-cancel-foreground', () => this.processes.cancelForeground(id), id);
+      if (!options.interrupt) await shutdownStep('session-writers', () => this.join([...entry.writers]), id);
+      await shutdownStep('session-processes', () => this.processes.settle(entry.binding.rootSessionId), id);
+      for (const service of entry.services) {
+        await shutdownStep('session-services', () => this.processes.withCleanup(id, async () => { await service.settle(); await service.dispose(); }), id);
+        entry.services.delete(service);
+      }
       if (options.interrupt) {
-        await this.processes.withCleanup(id, () => entry.binding.runtime.dispose());
-        entry.runtimeDisposed = true;
-        await entry.cancelling;
-        await Promise.all(entry.writers);
+        if (!entry.runtimeDisposed) {
+          await shutdownStep('session-runtime', () => this.processes.withCleanup(id, () => entry.binding.runtime.dispose()), id);
+          entry.runtimeDisposed = true;
+        }
+        await shutdownStep('session-writers', async () => { await entry.cancelling; await this.join([...entry.writers]); }, id);
       }
-      entry.projection.settleRun(this.options.store.session(id).run.id);
-      await this.disposeEntry(id, false);
+      await shutdownStep('session-run', () => entry.projection.settleRun(this.options.store.session(id).run.id), id);
+      await shutdownStep('session-dispose', () => this.disposeEntry(id, false), id);
     }
     // A failed reload leaves its kept PTYs without a resident root.
-    for (const root of this.processes.liveRoots()) await this.processes.settle(root);
-    for (const services of this.retainedServices.values()) for (const service of services) { await service.settle(); await service.dispose(); }
-    for (const row of interrupted) if (this.options.store.session(row.id).state === 'open') this.options.store.interruptSessionRun(row.id, row.run);
+    await shutdownStep('live-roots', async () => { for (const root of this.processes.liveRoots()) await this.processes.settle(root); });
+    for (const [id, services] of this.retainedServices) for (const service of services) {
+      await shutdownStep('retained-services', async () => { await service.settle(); await service.dispose(); }, id);
+      services.delete(service);
+    }
+    for (const [id, run] of this.shutdownInterruptions) {
+      await shutdownStep('session-run', () => { if (this.options.store.session(id).state === 'open') this.options.store.interruptSessionRun(id, run); }, id);
+      this.shutdownInterruptions.delete(id);
+    }
     this.retainedServices.clear(); this.lossUnsubscribe(); this.listeners.clear();
     // The caller closes the store/profile and releases ownership only after this resolves.
   }

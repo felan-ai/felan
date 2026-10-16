@@ -9,6 +9,8 @@ import { projectTuiTranscript } from '../src/tui/transcript.js';
 import { snapshot } from './client-fixtures.js';
 import { FELAN_THEME_PATHS, parseClientTheme } from '../src/tui/theme.js';
 import { TranscriptTool } from '../src/subagents/transcript-components.js';
+import { SubagentCompletionComponent } from '../src/subagents/completion-presentation.js';
+import { BackgroundBashCompletionComponent } from '../src/tui/renderers/processes/completion-message.js';
 
 const settings = { hideThinking: false, showImages: false, imageWidthCells: 60, outputPad: 1, toolMode: 'grouped' as const };
 it('renders unavailable assistant metadata honestly and retains readable content', () => {
@@ -45,6 +47,54 @@ it('injects client palettes into messages, thinking and compaction independently
     transcript.handleInput('\x0f'); expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('custom summary');
     theme = customTheme('second', '#abcdef'); transcript.invalidate();
     expect(transcript.render(80).join('\n')).toContain(theme.getFgAnsi('mdHeading'));
+  } finally { transcript.dispose(); }
+});
+
+it.each(['', '\n\nUse the skill on this input.'])('renders a skill invocation separately from trailing user text %j', suffix => {
+  let theme = customTheme('skill', '#123456');
+  const transcript = new AgentTranscript({ requestRender: vi.fn() } as unknown as TUI, createClientKeybindings(), undefined, () => theme);
+  const content = '<skill name="example" location="/fixture/example/SKILL.md">\nReferences are relative to /fixture/example.\n\nSkill body details.\n</skill>';
+  try {
+    transcript.showProjection({ agentId: 'root', cwd: '/fixture', pendingTools: [], settings, messages: [
+      { role: 'user', content: content + suffix, timestamp: 1 },
+    ] });
+    initTheme('light', false);
+    const collapsed = transcript.render(80).join('\n');
+    const text = stripTerminalSequences(collapsed);
+    expect(text).toContain('[skill] example'); expect(text).toContain('to expand');
+    expect(text).not.toContain('Skill body details.'); expect(text).not.toContain('<skill');
+    expect(collapsed).toContain(theme.getBgAnsi('customMessageBg'));
+    expect(collapsed).toContain(theme.getFgAnsi('customMessageLabel'));
+    expect(collapsed).toContain(theme.getFgAnsi('customMessageText'));
+    if (suffix) {
+      expect(text).toContain('Use the skill on this input.');
+      expect(collapsed).toContain(theme.getBgAnsi('userMessageBg'));
+    }
+    expect(transcript.handleInput('\x0f')).toBe(true);
+    const expanded = stripTerminalSequences(transcript.render(80).join('\n'));
+    expect(expanded).toContain('Skill body details.');
+    expect(expanded).toContain('References are relative to /fixture/example.');
+    if (suffix) expect(expanded).toContain('Use the skill on this input.');
+    theme = customTheme('updated skill', '#abcdef'); transcript.invalidate();
+    expect(transcript.render(80).join('\n')).toContain(theme.getBgAnsi('customMessageBg'));
+    transcript.handleInput('\x0f');
+    expect(stripTerminalSequences(transcript.render(80).join('\n'))).not.toContain('Skill body details.');
+  } finally { transcript.dispose(); }
+});
+
+it('retains plain user message styling and literal formatting', () => {
+  const theme = customTheme('plain user', '#123456');
+  const transcript = new AgentTranscript({ requestRender: vi.fn() } as unknown as TUI, createClientKeybindings(), undefined, () => theme);
+  try {
+    transcript.showProjection({ agentId: 'root', cwd: '/fixture', pendingTools: [], settings, messages: [
+      { role: 'user', content: '3. Plain user input with \\backslashes', timestamp: 1 },
+    ] });
+    const rendered = transcript.render(80).join('\n');
+    expect(stripTerminalSequences(rendered)).toContain('3. Plain user input with \\backslashes');
+    expect(rendered).toContain(theme.getFgAnsi('userMessageText'));
+    expect(rendered).toContain(theme.getBgAnsi('userMessageBg'));
+    expect(stripTerminalSequences(rendered)).not.toContain('[skill]');
+    transcript.handleInput('\x0f'); expect(transcript.render(80).join('\n')).toBe(rendered);
   } finally { transcript.dispose(); }
 });
 
@@ -102,13 +152,41 @@ it('applies changed thinking and output padding preferences without resetting lo
     expect(transcript.render(80).join('\n')).toContain('private thought');
     transcript.handleInput('\x14'); transcript.showProjection(structuredClone(data));
     expect(transcript.render(80).join('\n')).not.toContain('private thought');
-    data.settings.hideThinking = true; transcript.showProjection(data);
-    data.settings.hideThinking = false; data.settings.outputPad = 4; transcript.showProjection(data);
+    transcript.showProjection({ ...data, settings: { ...data.settings, hideThinking: true } });
+    transcript.showProjection({ ...data, settings: { ...data.settings, outputPad: 4 } });
     const lines = transcript.render(80).map(stripTerminalSequences);
     expect(lines.join('\n')).toContain('private thought');
     expect(lines.find(line => line.includes('assistant padding'))).toMatch(/^ assistant padding/u);
     expect(lines.find(line => line.includes('user padding'))).toMatch(/^ user padding/u);
-    data.settings.outputPad = 0; transcript.showProjection(data);
+    transcript.showProjection({ ...data, settings: { ...data.settings, outputPad: 0 } });
     expect(transcript.render(80).map(stripTerminalSequences).find(line => line.includes('assistant padding'))).toMatch(/^assistant padding/u);
   } finally { transcript.dispose(); }
+});
+
+it.each(['felan-execution-completion', 'felan-background-bash-completion'] as const)('caches %s rendering until width, expansion or theme invalidation changes', customType => {
+  const render = customType === 'felan-execution-completion'
+    ? vi.spyOn(SubagentCompletionComponent.prototype, 'render') : vi.spyOn(BackgroundBashCompletionComponent.prototype, 'render');
+  const transcript = new AgentTranscript({ requestRender: vi.fn() } as unknown as TUI, createClientKeybindings());
+  try {
+    transcript.showProjection({ agentId: 'root', cwd: '/fixture', pendingTools: [], settings, messages: [{
+      role: 'custom', timestamp: 1, customType, display: true, content: 'Fallback details', details: customType === 'felan-execution-completion'
+        ? { notice: { deliveryId: 'delivery', parentSessionId: 'parent', executionId: 'child', label: 'explore', status: 'completed', summary: 'Verified' } }
+        : { job: { id: 'job', command: 'sleep 1', status: 'completed', exitCode: 0 } },
+    }] });
+    const first = transcript.render(80); expect(transcript.render(80)).toEqual(first); expect(render).toHaveBeenCalledTimes(1);
+    transcript.render(60); transcript.render(60); expect(render).toHaveBeenCalledTimes(2);
+    transcript.handleInput('\x0f'); transcript.render(60); transcript.render(60); expect(render).toHaveBeenCalledTimes(3);
+    transcript.invalidate(); transcript.render(60); transcript.render(60); expect(render).toHaveBeenCalledTimes(4);
+  } finally { transcript.dispose(); render.mockRestore(); }
+});
+
+it('caches note rendering until width or theme invalidation changes', () => {
+  const render = vi.spyOn(Text.prototype, 'render');
+  const transcript = new AgentTranscript({ requestRender: vi.fn() } as unknown as TUI, createClientKeybindings());
+  try {
+    transcript.showProjection({ agentId: 'root', cwd: '/fixture', pendingTools: [], settings, messages: [], notes: [{ before: 0, text: 'Cached note', level: 'info' }] });
+    transcript.render(80); transcript.render(80); expect(render).toHaveBeenCalledTimes(1);
+    transcript.render(60); transcript.render(60); expect(render).toHaveBeenCalledTimes(2);
+    transcript.invalidate(); transcript.render(60); transcript.render(60); expect(render).toHaveBeenCalledTimes(3);
+  } finally { transcript.dispose(); render.mockRestore(); }
 });
