@@ -113,7 +113,7 @@ export async function fixture(options: ControlStoreOptions = {}, processAdapter:
         tools: { provenance: [], requiresApproval: policy => policy.mode === 'acp-strict' } } satisfies SessionBinding;
     }),
   };
-  const createRegistry = (current = store!) => new SessionRegistry({ owner: owner!, store: current, lifecycle: profile, idleMs: 0, now: options.now ?? (() => now), processAdapter,
+  const createRegistry = (current = store!, idleMs = 0) => new SessionRegistry({ owner: owner!, store: current, lifecycle: profile, idleMs, now: options.now ?? (() => now), processAdapter,
     services: ({ getExecutionPolicy }) => ({ getExecutionPolicy, extensions: { configuration: async () => [], bind: async () => ({ importExtension: async () => ({ default() {} }), dispose: async () => {} }) } }) });
   registry = createRegistry();
   return { directory, cwd, owner, store, registry, profile, instances, opened, releases, createRegistry,

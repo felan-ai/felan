@@ -108,9 +108,12 @@ S1.14. None may be implemented as a silently successful placeholder.
 
 Session listing returns registered daemon sessions plus unregistered pre-daemon
 transcripts discovered in owned store roots, shown as open, evicted and idle at
-revision 0 with a bounded name or first-prompt title. The `cwd` filter is
-canonicalized before matching. Attaching to a discovered ID adopts it in place under its existing ID
-and file (see [persistence](session-daemon-persistence.md#pre-daemon-files-and-downgrade)).
+revision 0 with a bounded name or first-prompt title. Rows are ordered newest
+activity first, then by ID. Drafts (new roots without a conversation message,
+ADR 0040) are not listed. The `cwd` filter is canonicalized before matching.
+Titles are read on request for the returned rows and warmed in the background
+from daemon startup. Attaching to a discovered ID adopts it in place under its
+existing ID and file (see [persistence](session-daemon-persistence.md#pre-daemon-files-and-downgrade)).
 Explicit import still creates a fresh managed identity without changing the
 source.
 

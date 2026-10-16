@@ -123,7 +123,7 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
           return true;
         },
       });
-      resumable = controller.sessionId;
+      resumable = controller.unprompted ? undefined : controller.sessionId;
     } finally { await controller.dispose(); await diagnostics.flush(); }
     if (outcome.relaunch) {
       await (dependencies.restartProcess ?? restartFelanProcess)({ ...outcome.relaunch, ...(options.restartArgs ? { restartArgs: options.restartArgs } : {}) });

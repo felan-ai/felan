@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS, SessionSnapshotSchema, classifyRevision, classifyTextDelta, parseSchema, parseServerEnvelope, parseSessionEvent, parseSessionSnapshot,
-  parseStoredEventRow } from '../src/index.js';
+  parseStoredEventRow, trimSnapshotLists } from '../src/index.js';
 import { history, interaction, message, policy, process, snapshot, tool } from './fixtures.js';
 
 describe('snapshot cutover and stream convergence', () => {
@@ -77,6 +77,16 @@ describe('durable revisions and coalesced state changes', () => {
     expect(classifyRevision(7, 6)).toBe('duplicate');
     expect(classifyRevision(7, 9)).toBe('gap');
     expect(() => classifyRevision(7, Number.MAX_SAFE_INTEGER + 1)).toThrow();
+  });
+  it('trims snapshot lists to a page, dropping the oldest finished items before running ones', () => {
+    const ids = (items: readonly { id: string }[]) => items.map(item => item.id);
+    const tools = Array.from({ length: LIMITS.pageEntries + 2 }, (_, i) => ({ ...tool, id: `t${i}`, state: i < 2 ? 'running' as const : 'completed' as const }));
+    expect(ids(trimSnapshotLists({ tools, processes: [], children: [] }).tools)).toEqual(['t0', 't1', ...ids(tools.slice(4))]);
+    const running = tools.map(item => ({ ...item, state: 'running' as const }));
+    expect(ids(trimSnapshotLists({ tools: running, processes: [], children: [] }).tools)).toEqual(ids(running.slice(2)));
+    const processes = [{ ...process, id: 'kept', state: 'exited' as const }];
+    const lists = { tools: [tool], processes, children: [] };
+    expect(trimSnapshotLists(lists)).toEqual(lists);
   });
   it('accepts large snapshot/history pages and rejects unknown or out-of-order events', () => {
     expect(parseSchema(SessionSnapshotSchema, { ...snapshot, history: { ...history, entries: Array.from({ length: 257 }, () => message) } }).history.entries).toHaveLength(257);

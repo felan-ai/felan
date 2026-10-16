@@ -120,7 +120,7 @@ export class DaemonControlStore {
       touched.add(session.id); return session;
     });
   }
-  updateSession(id: string, patch: Partial<Pick<ControlSession, 'state' | 'residency' | 'run' | 'policy' | 'title' | 'branch' | 'observedTip' | 'model' | 'thinking' | 'execution'>>): ControlCommit<ControlSession> {
+  updateSession(id: string, patch: Partial<Pick<ControlSession, 'state' | 'residency' | 'run' | 'policy' | 'title' | 'branch' | 'observedTip' | 'model' | 'thinking' | 'execution' | 'draft'>>): ControlCommit<ControlSession> {
     this.file.assertCurrent();
     const old = this.findSession(this.state, id);
     if (old.deletedAt !== undefined) throw new ControlStoreError('not_found', 'Session was deleted.');
@@ -130,6 +130,17 @@ export class DaemonControlStore {
     return this.commit((state, touched) => {
       const at = state.sessions.findIndex(item => item.id === id); state.sessions[at] = next;
       touched.add(id); return next;
+    });
+  }
+  /** Tombstones a draft that was never used. Unlike deletion, no client request backs it. */
+  discardDraft(id: string): ControlCommit<ControlSession> {
+    this.file.assertCurrent();
+    return this.commit((state, touched, now) => {
+      const session = this.findSession(state, id);
+      if (!session.draft || session.deletedAt !== undefined) throw new ControlStoreError('invalid_request', 'Only an unused draft can be discarded.');
+      const item = editSession(state, session);
+      item.deletedAt = now; item.state = 'closed'; item.residency = 'evicted'; item.run = { ...item.run, state: 'idle' }; item.projections = [];
+      touched.add(id); return item;
     });
   }
   configureSession(requestId: string, values: OperationParams<'config.set'>['values'], overrides: NonNullable<SessionProfile['extensionConfigOverrides']>): ControlCommit<ControlSession> {

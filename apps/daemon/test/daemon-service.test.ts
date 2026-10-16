@@ -6,6 +6,7 @@ import { InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStrea
 import { SessionClient } from '../../felan/src/client/client.js';
 import { settleDaemonWork, startDaemonService } from '../src/daemon/service.js';
 import { acquireDaemonOwnership } from '../src/daemon/ownership.js';
+import { LegacySessionIndex } from '../src/daemon/legacy-sessions.js';
 import { resolveDaemonTarget } from '../src/daemon/target.js';
 import { assistant, offlineModel } from './fixtures/registry.js';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
@@ -151,4 +152,21 @@ it('redacts credentials from startup failure diagnostics', async () => {
     .rejects.toThrow('Model setup failed');
   const stderr = await readFile(join(resolveDaemonTarget(input).runtimeDirectory, 'stderr.log'), 'utf8');
   expect(stderr).toContain('Model setup failed'); expect(stderr).not.toContain('pa55'); expect(stderr).not.toContain('query-secret');
+});
+
+it('starts the pre-daemon transcript warm-up after startup and aborts it on shutdown', async () => {
+  const { target: input, hostConfigPath } = await target();
+  let signal: AbortSignal | undefined;
+  const warm = vi.spyOn(LegacySessionIndex.prototype, 'warm').mockImplementation((_sessions, warmSignal) => {
+    signal = warmSignal;
+    return new Promise<void>(resolve => warmSignal.addEventListener('abort', () => resolve(), { once: true }));
+  });
+  try {
+    const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: vi.fn(models) });
+    cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
+    await vi.waitFor(() => expect(warm).toHaveBeenCalledOnce());
+    expect(signal?.aborted).toBe(false);
+    await service.requestStop('stop', 'drain'); await service.stopped;
+    expect(signal?.aborted).toBe(true);
+  } finally { warm.mockRestore(); }
 });

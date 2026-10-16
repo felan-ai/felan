@@ -7,8 +7,13 @@ behind admitted daemon operations.
 
 ## Session and input behavior
 
-- `--continue`, `--resume` and `--session` select daemon-owned sessions. A missing
-  ID starts a new session with a warning only when inventory is complete.
+- `--continue`, `--resume` and `--session` select daemon-owned sessions. `--session`
+  attaches an exact ID even when the session is an unlisted draft; a prefix is
+  matched against the listing. A missing ID starts a new session with a warning.
+  `--resume` and `/resume` open on the current folder's newest sessions and add
+  the other folders as their pages load. The terminal title is the session name,
+  or the folder name when there is none. No no-session warning is shown while the
+  first session is being created.
 - A normal Enter submits a prompt when idle and steers an active turn. Alt+Enter
   queues a follow-up. Shift+Enter keeps a newline in the editor.
 - Escape cancels the current run. Ctrl+D on an empty editor and `/exit` detach

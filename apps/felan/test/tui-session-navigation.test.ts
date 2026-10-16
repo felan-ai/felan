@@ -27,6 +27,50 @@ const tree = (): OperationResult<'session.tree'> => ({ revision: 9, branch: 'rep
 describe('session navigator (R17)', () => {
   const minutesAgo = (minutes: number) => Date.now() - minutes * 60_000;
 
+  it('adds later pages once each, keeps the selection, and reports loading until the last page', async () => {
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    async function* pages() {
+      yield [row('current', { title: 'Current', lastActivity: minutesAgo(5) })];
+      await gate;
+      yield [row('current', { title: 'Current', lastActivity: minutesAgo(5) }), row('elsewhere', { cwd: '/other', title: 'Elsewhere', lastActivity: minutesAgo(90) })];
+    }
+    const render = vi.fn();
+    const picker = new SessionNavigator([row('current', { title: 'Current', lastActivity: minutesAgo(5) })], '/fixture', undefined, () => {}, undefined, true, () => 22);
+    picker.follow(pages(), render);
+    expect(clean(picker)).toContain('(1/1, loading)');
+    release();
+    await vi.waitFor(() => expect(clean(picker)).not.toContain('loading'));
+    expect(clean(picker)).toContain('(1/1)'); expect(clean(picker)).not.toContain('Elsewhere');
+    expect(clean(picker)).toContain('› Current');
+    picker.handleInput('\t');
+    expect(clean(picker)).toContain('Elsewhere'); expect(clean(picker)).toContain('(1/2)');
+    for (const character of 'elsewhere') picker.handleInput(character);
+    expect(clean(picker)).toContain('Elsewhere'); expect(clean(picker)).not.toContain('› Current');
+    expect(render).toHaveBeenCalled();
+  });
+
+  it('shows a loading notice instead of an empty result until the first rows arrive', async () => {
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    async function* pages() { await gate; yield [row('late', { title: 'Late' })]; }
+    const picker = new SessionNavigator([], '/fixture', undefined, () => {}, undefined, true, () => 22);
+    picker.follow(pages(), () => {});
+    expect(clean(picker)).toContain('Loading sessions…'); expect(clean(picker)).not.toContain('No sessions');
+    release();
+    await vi.waitFor(() => expect(clean(picker)).toContain('Late'));
+  });
+
+  it('stops reading later pages once the picker is closed', async () => {
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    const resumed = vi.fn();
+    async function* pages() { yield [row('one', { title: 'One' })]; await gate; resumed(); yield [row('two', { title: 'Two' })]; }
+    const picker = new SessionNavigator([], '/fixture', undefined, () => {}, undefined, true, () => 22);
+    picker.follow(pages(), () => {});
+    await vi.waitFor(() => expect(clean(picker)).toContain('One'));
+    picker.dispose(); release();
+    await vi.waitFor(() => expect(resumed).toHaveBeenCalled());
+    expect(clean(picker)).not.toContain('Two');
+  });
+
   it('shows names, current folder, selected session and All scope with folders only in All', () => {
     const done = vi.fn(); const theme = defaultClientTheme();
     const picker = new SessionNavigator([row('current', { title: 'Current task', lastActivity: minutesAgo(5) }), row('other', { cwd: '/elsewhere', title: 'Elsewhere' })], '/fixture', 'current', done, () => theme);
@@ -169,12 +213,13 @@ describe('tree navigator (R18)', () => {
   });
 });
 
+const listing = (first: SessionRow[]) => ({ first, more: (async function* () {})() });
 function commandFixture(inputs: string[][] = []) {
   const current = snapshot();
   const controller = { snapshot: current, sessionId: current.session, history: [], notice: '',
     setNotice(message: string) { this.notice = message; },
     create: vi.fn(async () => {}), attach: vi.fn(async () => {}), loadHistory: vi.fn(async () => {}),
-    sessions: vi.fn(async () => [row(current.session, { title: 'Current' }), row('other', { title: 'Other', lastActivity: 0 })]),
+    sessionListing: vi.fn(async () => ({ first: [row(current.session, { title: 'Current' }), row('other', { title: 'Other', lastActivity: 0 })], more: (async function* () {})() })),
     tree: vi.fn(async () => tree()), perform: vi.fn(async () => ({ outcome: 'accepted', result: {} })),
   };
   const dialogs: NavigationDialogs = { input: vi.fn(async () => 'Renamed'), confirm: vi.fn(async () => true), select: vi.fn(async () => 'no'),
@@ -212,7 +257,7 @@ describe('session commands (R17–R19)', () => {
 
   it('deletes an open session after the inline confirmation without another dialog', async () => {
     const f = commandFixture([['\x04', '\r']]);
-    f.controller.sessions.mockResolvedValueOnce([row('open', { revision: 17 })]);
+    f.controller.sessionListing.mockResolvedValueOnce(listing([row('open', { revision: 17 })]));
     expect(await f.submit('/sessions')).toBe(true);
     expect(f.dialogs.confirm).not.toHaveBeenCalled();
     expect(f.controller.perform).toHaveBeenCalledWith('session.delete', {}, 'open');
@@ -237,7 +282,7 @@ describe('session commands (R17–R19)', () => {
 
   it('does not delete on cancelled confirmation and returns to the same tree selection on cancelled summary', async () => {
     const deletion = commandFixture([['\x04', '\x1b', '\x1b']]);
-    deletion.controller.sessions.mockResolvedValueOnce([row('open')]);
+    deletion.controller.sessionListing.mockResolvedValueOnce(listing([row('open')]));
     expect(await deletion.submit('/sessions')).toBe(false); expect(deletion.controller.perform).not.toHaveBeenCalled();
     const navigation = commandFixture([['\x1b[B', '\r'], ['\r']]);
     vi.mocked(navigation.dialogs.select).mockResolvedValueOnce(undefined).mockResolvedValueOnce('yes');
@@ -262,7 +307,7 @@ it('keeps tree and picker headings, current selection and draft usable in an 80�
     await vi.waitFor(() => expect(lines()).toContain('Session Tree'));
     expect(lines()).toContain('├─ • assistant: Hello'); expect(lines()).toContain('Footer three');
     terminal.input('\x1b'); await treeView; expect(screen.editor.getText()).toBe('retained draft');
-    f.controller.sessions.mockResolvedValueOnce([row('session', { title: 'Current' }), ...Array.from({ length: 25 }, (_, index) => row(`extra-${index}`))]);
+    f.controller.sessionListing.mockResolvedValueOnce(listing([row('session', { title: 'Current' }), ...Array.from({ length: 25 }, (_, index) => row(`extra-${index}`))]));
     const picker = screen.submit('/sessions', true);
     await vi.waitFor(() => expect(lines()).toContain('Resume Session (Current'));
     expect(lines()).toMatch(/› Current +56y\n {2}\(26\/26\)\n\n─+\nFooter one/u); terminal.input('\x10');

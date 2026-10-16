@@ -14,7 +14,7 @@ import { connectLocalIpc } from '../src/daemon/ipc.js';
 import { SessionServer, type BrokerDispatchPort } from '../src/daemon/server.js';
 import { protocolTarget } from '../src/daemon/target.js';
 import { gate, serverFixture } from './fixtures/server.js';
-import { legacySessionDirectoryName } from '../src/daemon/legacy-sessions.js';
+import { LegacySessionIndex, legacySessionDirectoryName } from '../src/daemon/legacy-sessions.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -373,6 +373,50 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     const child = await f.registry.create({ cwd: f.cwd, sessionDir: join(resources.agentStorageRoot, 'internal-child'),
       rootSessionId: f.root.sessionId, parentSessionId: f.root.sessionId, target: { kind: 'new' }, model: f.root.runtime.session.model! });
     expect(child.parentSessionId).toBe(f.root.sessionId);
+  });
+
+  it('lists the newest sessions first across registered and pre-daemon transcripts and pages them with a cursor', async () => {
+    const f = await fixture(); const client = await f.client();
+    const directory = join(f.directory, 'agent', 'sessions', legacySessionDirectoryName(f.cwd)); await mkdir(directory, { recursive: true, mode: 0o700 });
+    const now = Date.now(); const ids: string[] = [];
+    for (let index = 0; index < 25; index++) {
+      const id = `019a0000-0000-7000-8000-${String(100 + index).padStart(12, '0')}`; const path = join(directory, `legacy-${index}.jsonl`);
+      await writeFile(path, [{ type: 'session', version: 3, id, timestamp: '2026-01-01T00:00:00.000Z', cwd: f.cwd },
+        { type: 'session_info', name: `Legacy ${index}` }].map(row => JSON.stringify(row) + '\n').join(''), { mode: 0o600 });
+      const time = new Date(now - (index + 1) * 60_000); await utimes(path, time, time);
+      ids.push(id);
+    }
+    const summary = vi.spyOn(LegacySessionIndex.prototype, 'summary');
+    const listed: { session: string; title: string }[] = []; let cursor: string | undefined; let pages = 0;
+    do {
+      const response = await client.request('sessions.list', { limit: 10, ...(cursor ? { cursor } : {}) });
+      if (response.outcome !== 'accepted') throw new Error('List failed');
+      if (pages === 0) expect(summary).toHaveBeenCalledTimes(response.result.entries.filter(row => ids.includes(row.session)).length);
+      listed.push(...response.result.entries); cursor = response.result.cursor; pages++;
+    } while (cursor);
+    summary.mockRestore();
+    expect(pages).toBe(3);
+    expect(listed.map(row => row.session)).toEqual([f.root.sessionId, ...ids]);
+    expect(listed.slice(1).map(row => row.title)).toEqual(ids.map((_, index) => `Legacy ${index}`));
+    const scoped = await client.request('sessions.list', { cwd: f.cwd, limit: 3 });
+    if (scoped.outcome !== 'accepted') throw new Error('List failed');
+    expect(scoped.result.entries.map(row => row.session)).toEqual([f.root.sessionId, ids[0], ids[1]]);
+  });
+
+  it('keeps a new client session out of listings and host status until its first message', async () => {
+    const f = await fixture(); const client = await f.client();
+    const before = await client.request('host.status', {});
+    if (before.outcome !== 'accepted') throw new Error('Status failed');
+    const created = await client.request('sessions.create', { cwd: f.cwd, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+    if (created.outcome !== 'accepted') throw new Error('Create failed');
+    const id = created.result.sessionId;
+    expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { active: { sessions: before.result.active.sessions } } });
+    const listed = await client.request('sessions.list', {});
+    expect(listed.outcome === 'accepted' && listed.result.entries.map(row => row.session)).not.toContain(id);
+    expect(await client.attach(id)).toMatchObject({ outcome: 'accepted' });
+    await client.detach(id);
+    expect(await f.registry.evictIdle()).toContain(id);
+    expect(f.store.session(id).deletedAt).toBeDefined();
   });
 
   it('keeps session and process cursors stable across unrelated activity while binding their scope', async () => {

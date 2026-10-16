@@ -54,6 +54,7 @@ export const ControlSessionSchema = Type.Object({
   model: Type.Optional(ModelSchema), thinking: Type.Optional(ThinkingSchema),
   profile: Type.Optional(SessionProfileSchema), execution: Type.Optional(ExecutionMetadataSchema),
   deletedAt: Type.Optional(CounterSchema),
+  draft: Type.Optional(Type.Boolean()),
   projections: Type.Array(projection, { maxItems: CONTROL_LIMITS.projections }),
 });
 export const ControlSessionMetadataSchema = Type.Omit(ControlSessionSchema, ['projections']);

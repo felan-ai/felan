@@ -2,9 +2,11 @@ import { LIMITS, type Message, type Operation, type OperationParams, type Operat
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import type { SessionClient } from '../client/client.js';
 import { describeBlocked } from '../client/diagnostics.js';
+import type { SessionListing } from './session-navigator.js';
 
 type Connection = Pick<SessionClient, 'status' | 'reconnection' | 'incompatibleActiveWork' | 'identity' | 'capabilities' | 'connect' | 'request' | 'attach' | 'retryAttach' | 'detach' | 'getAttachment' | 'getInteractions' | 'subscribe' | 'close'>;
 type SessionSummary = OperationResult<'sessions.list'>['entries'][number];
+const PICKER_FIRST_PAGE = 20;
 /** A client-only line that scrolls with the transcript after its anchor entry, like Pi's chat status lines; never persisted. */
 export interface TranscriptNote { readonly after?: string; readonly text: string; readonly level: 'info' | 'warning' | 'error' }
 /** Status notes replace an immediately preceding status note, like Pi's showStatus; other notes always append. */
@@ -30,6 +32,7 @@ export class TuiSessionController {
   private readonly unsubscribe: () => void;
   private closed = false;
   private submitting = false;
+  private startingSession = false;
   private selection: Promise<void> = Promise.resolve();
   private historyLoading: Promise<void> | undefined;
   private disposing: Promise<void> | undefined;
@@ -45,6 +48,15 @@ export class TuiSessionController {
   get sessionId(): string | undefined { return this.selected; }
   /** How the attached session was entered, in Pi's `session_start` terms. */
   get sessionEntry(): SessionEntry { return this.entered; }
+  /**
+   * The attached session has no user, assistant or shell message, so there is nothing to resume and the daemon discards
+   * it when idle if it is a draft. Without a snapshot, only a newly created session counts.
+   */
+  get unprompted(): boolean {
+    const entries = this.snapshot?.history.entries;
+    if (!entries) return this.sessionEntry === 'new';
+    return !entries.some(entry => entry.role === 'user' || entry.role === 'assistant' || entry.customType === 'bashExecution');
+  }
   get state() { return this.selected ? this.client.getAttachment(this.selected)?.state : undefined; }
   /** Explains a blocked attachment, e.g. `Session recovery did not complete (re-attach got no answer: …).` */
   get blockedText(): string {
@@ -68,22 +80,30 @@ export class TuiSessionController {
     this.addNote(message, 'info', false); this.emit();
   }
 
-  async start(options: TuiSessionOptions, pick?: (sessions: readonly SessionSummary[]) => Promise<string | undefined>, connected?: () => Promise<void | boolean>): Promise<void> {
+  /** True while startup connects, attaches or creates the first session; the screen does not warn about a missing session then. */
+  get starting(): boolean { return this.startingSession; }
+
+  async start(options: TuiSessionOptions, pick?: (listing: SessionListing) => Promise<string | undefined>, connected?: () => Promise<void | boolean>): Promise<void> {
+    this.startingSession = true;
+    try { await this.open(options, pick, connected); }
+    finally { this.startingSession = false; this.emit(); }
+  }
+
+  private async open(options: TuiSessionOptions, pick?: (listing: SessionListing) => Promise<string | undefined>, connected?: () => Promise<void | boolean>): Promise<void> {
     await this.client.connect();
     if (this.closed) return;
     if (await connected?.() === false) return;
     if (this.closed) return;
     let id: string | undefined;
-    if (options.resume || options.continueRecent || options.sessionId) {
-      const sessions = await this.sessions(options.continueRecent ? options.cwd : undefined);
-      if (options.resume) {
-        if (!pick) throw new Error('Session selection requires an interactive picker.');
-        id = await pick(sessions);
-        if (!id) return;
-      } else if (options.sessionId) {
-        id = (sessions.find(row => row.session === options.sessionId) ?? sessions.find(row => row.session.startsWith(options.sessionId!)))?.session;
-        if (!id) this.setNotice(`Session '${options.sessionId}' was not found. Starting a new session.`);
-      } else id = sessions.filter(row => row.state === 'open').sort((a, b) => b.lastActivity - a.lastActivity)[0]?.session;
+    if (options.resume) {
+      if (!pick) throw new Error('Session selection requires an interactive picker.');
+      id = await pick(await this.sessionListing(options.cwd));
+      if (!id) return;
+    } else if (options.sessionId) {
+      id = await this.resolveSession(options.sessionId);
+      if (!id) this.setNotice(`Session '${options.sessionId}' was not found. Starting a new session.`);
+    } else if (options.continueRecent) {
+      id = (await this.sessions(options.cwd)).filter(row => row.state === 'open').sort((a, b) => b.lastActivity - a.lastActivity)[0]?.session;
     }
     if (this.closed) return;
     if (id) {
@@ -97,17 +117,42 @@ export class TuiSessionController {
     } else await this.create(options);
   }
 
+  private async resolveSession(query: string): Promise<string | undefined> {
+    // An exact ID attaches without a listing and also reaches an unlisted draft; the caller's later attach is then a no-op.
+    try { await this.attach(query, 'resume', false); return query; }
+    catch (error) { if ((error as { code?: unknown }).code !== 'not_found') throw error; }
+    for await (const page of this.sessionPages()) {
+      const match = page.find(row => row.session.startsWith(query));
+      if (match) return match.session;
+    }
+    return undefined;
+  }
+
   async sessions(cwd?: string): Promise<SessionSummary[]> {
-    const entries: SessionSummary[] = []; const seen = new Set<string>(); let cursor: string | undefined;
+    const entries: SessionSummary[] = [];
+    for await (const page of this.sessionPages(cwd)) entries.push(...page);
+    return entries;
+  }
+
+  /** The resume picker opens on the current folder's newest sessions; sessions from every folder follow as pages load. */
+  async sessionListing(cwd: string): Promise<SessionListing> {
+    const pages = this.sessionPages(cwd, PICKER_FIRST_PAGE);
+    const first = await pages.next();
+    await pages.return(undefined);
+    return { first: first.done ? [] : first.value, more: this.sessionPages() };
+  }
+
+  /** Root sessions, newest first, one page at a time. */
+  async *sessionPages(cwd?: string, limit: number = LIMITS.pageEntries): AsyncGenerator<SessionSummary[]> {
+    const seen = new Set<string>(); let cursor: string | undefined;
     do {
-      const result = await this.perform('sessions.list', { limit: LIMITS.pageEntries, ...(cwd ? { cwd } : {}), ...(cursor ? { cursor } : {}) });
+      const result = await this.perform('sessions.list', { limit, ...(cwd ? { cwd } : {}), ...(cursor ? { cursor } : {}) });
       if (result.outcome !== 'accepted') throw new Error(this.notice);
-      entries.push(...result.result.entries.filter(row => row.root === row.session));
+      yield result.result.entries.filter(row => row.root === row.session);
       cursor = result.result.cursor;
       if (cursor && seen.has(cursor)) throw new Error('Session listing cursor repeated.');
       if (cursor) seen.add(cursor);
     } while (cursor && !this.closed);
-    return entries;
   }
 
   async tree(): Promise<OperationResult<'session.tree'>> {
@@ -142,8 +187,9 @@ export class TuiSessionController {
     if (!this.closed) await this.attach(result.result.sessionId, 'new');
   }
 
-  attach(session: string, entry: SessionEntry = 'resume'): Promise<void> {
-    const operation = this.selection.then(() => this.attachSelected(session, entry));
+  /** `reportMissing: false` leaves the notice unchanged when the daemon does not know the session. */
+  attach(session: string, entry: SessionEntry = 'resume', reportMissing = true): Promise<void> {
+    const operation = this.selection.then(() => this.attachSelected(session, entry, reportMissing));
     this.selection = operation.then(() => {}, () => {});
     return operation;
   }
@@ -153,13 +199,14 @@ export class TuiSessionController {
     return accepted;
   }
 
-  private async attachSelected(session: string, entry: SessionEntry): Promise<void> {
+  private async attachSelected(session: string, entry: SessionEntry, reportMissing: boolean): Promise<void> {
     if (this.closed || session === this.selected) return;
     const old = this.selected;
     const response = await this.client.attach(session);
     if (response.outcome !== 'accepted') {
-      this.setNotice(outcomeText(response));
-      throw Object.assign(new Error(this.notice), { code: response.error.code });
+      const message = outcomeText(response);
+      if (reportMissing || response.error.code !== 'not_found') this.setNotice(message);
+      throw Object.assign(new Error(message), { code: response.error.code });
     }
     if (this.closed) return;
     this.selected = session; this.entered = entry; this.retained = undefined; this.mergeSnapshot();

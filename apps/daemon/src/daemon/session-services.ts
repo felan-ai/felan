@@ -43,7 +43,7 @@ export function createRegistrySessionsService(registry: SessionRegistry, current
     inventory: async ({ signal }) => {
       assertCurrent(); signal?.throwIfAborted();
       const rows: SessionHistorySource[] = [];
-      for (const stored of registry.list()) {
+      for (const stored of registry.listed()) {
         signal?.throwIfAborted();
         let bytes: number | undefined;
         let diagnostic: 'inaccessible' | 'oversize' | undefined;

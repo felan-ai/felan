@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isConversationEntry } from './session-files.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getSupportedThinkingLevels, type AgentSession, type AgentSessionEvent, type SessionEntry } from '@felan-ai/agent-core';
 import {
-  CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, OPERATION_CATALOG, PresentationSchema, PromptSchema, parseSchema, parseSessionSnapshot, validateBase64, validatePrompt,
+  CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, OPERATION_CATALOG, PresentationSchema, PromptSchema, parseSchema, parseSessionSnapshot, trimSnapshotLists, validateBase64, validatePrompt,
   type KnownSessionChange, type Message, type Origin, type Presentation, type SessionEvent,
   type SessionSnapshot, type TextStreamEvent,
   MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, type ActiveMessageDisplay,
@@ -119,6 +120,11 @@ export class SessionProjection {
   }
 
   /** Only a patch is durable; live views (tools, presentations, catalog, executions) take transient revisions. */
+  /** Makes a draft visible to listings. Publishing keeps the client's revision sequence contiguous. */
+  materialize(): void {
+    const stored = this.options.store.session(this.id);
+    this.publish({ type: 'metadata.updated', title: stored.title, state: stored.state, residency: stored.residency }, { draft: false });
+  }
   publish(change: KnownSessionChange, patch?: Parameters<DaemonControlStore['updateSession']>[1]): void {
     const rev = patch ? this.options.store.updateSession(this.id, patch).value.revision : this.options.store.advanceTransientRevision(this.id);
     this.options.publish({ v: 1, session: this.id, rev, change });
@@ -163,6 +169,7 @@ export class SessionProjection {
     for (const entry of manager.getEntries()) {
       if (this.entryIds.has(entry.id)) continue;
       if (!isMessageEntry(entry)) { this.entryIds.add(entry.id); continue; }
+      if (isConversationEntry(entry) && this.options.store.session(this.id).draft) this.materialize();
       if (this.origin) this.origins.set(entry.id, this.origin);
       const message = this.message(entry);
       const commit = this.options.store.project(this.id, [{ type: 'message', id: message.id, entryId: entry.id, state: 'observed' }]);
@@ -194,15 +201,15 @@ export class SessionProjection {
     const stored = this.options.store.session(this.id);
     if (!stored.model || !stored.thinking) throw new Error('Session has no selected model; select an available model before attaching.');
     const history = this.history(undefined, stored.revision);
-    return parseSessionSnapshot({
+    return parseSessionSnapshot(trimSnapshotLists({
       session: this.id, root: stored.root, ...(stored.parent ? { parent: stored.parent } : {}),
       revision: stored.revision, cwd: stored.cwd, title: stored.title, state: stored.state, residency: stored.residency,
       branch: history.branch, history, model: stored.model, thinking: stored.thinking, run: stored.run,
       queue: this.queue, policy: stored.policy, catalog: this.catalog(), ...this.options.extras(),
-      tools: [...this.tools.values()].slice(-LIMITS.pageEntries), presentation: [...this.presentation.values()],
+      tools: [...this.tools.values()], presentation: [...this.presentation.values()],
       ...(this.executionsGeneration ? { executionsGeneration: this.executionsGeneration } : {}),
       activeStreams: [...this.streams.values()], completionOnlyStreams: [...this.completionOnly.values()],
-    });
+    }));
   }
 
   history(cursor?: string, revision = this.options.store.session(this.id).revision, limit: number = LIMITS.pageEntries): SessionSnapshot['history'] {

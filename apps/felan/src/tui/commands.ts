@@ -153,21 +153,20 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     return controller.reloadSession(requireSession(controller));
   }
   if (name === 'resume' || name === 'sessions') {
-    const rows = await controller.sessions();
-    const selected = await pickSession(dialogs, rows, controller.snapshot?.cwd ?? options.cwd, controller.sessionId, options.theme);
+    const cwd = controller.snapshot?.cwd ?? options.cwd;
+    const selected = await pickSession(dialogs, await controller.sessionListing(cwd), cwd, controller.sessionId, options.theme);
     if (selected === undefined) return false;
-    const row = rows.find(row => row.session === selected.session); if (!row) throw new Error('The selected session is unavailable.');
     if (selected.action === 'delete') {
-      if ((await controller.perform('session.delete', {}, row.session)).outcome !== 'accepted') return false;
+      if ((await controller.perform('session.delete', {}, selected.session)).outcome !== 'accepted') return false;
       controller.setNotice('Session deleted'); return true;
     }
     if (selected.action === 'rename') {
-      if (row.session !== controller.sessionId) throw new Error('Attach to a session before renaming it.');
-      const title = await dialogs.input('Session name', row.title);
-      if (title === undefined || (await controller.perform('session.rename', { name: title }, row.session)).outcome !== 'accepted') return false;
+      if (selected.session !== controller.sessionId) throw new Error('Attach to a session before renaming it.');
+      const title = await dialogs.input('Session name', controller.snapshot?.title ?? '');
+      if (title === undefined || (await controller.perform('session.rename', { name: title }, selected.session)).outcome !== 'accepted') return false;
       controller.setNotice(`Session name set: ${title}`); return true;
     }
-    await controller.attach(row.session); return true;
+    await controller.attach(selected.session); return true;
   }
   const session = requireSession(controller); const snapshot = controller.snapshot!;
   switch (name) {

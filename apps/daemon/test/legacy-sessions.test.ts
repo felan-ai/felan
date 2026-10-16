@@ -1,11 +1,22 @@
-import { afterEach, expect, it } from 'vitest';
-import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { afterEach, expect, it, vi } from 'vitest';
+import { appendFile, mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverLegacySessions, legacySessionDirectoryName, readTranscriptPreview, transcriptPreview } from '../src/daemon/legacy-sessions.js';
+import { LegacySessionIndex, legacySessionDirectoryName, readTranscriptPreview, transcriptPreview } from '../src/daemon/legacy-sessions.js';
+
+const reads = vi.hoisted(() => ({ streams: 0 }));
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, open: async (...args: Parameters<typeof actual.open>) => {
+    const handle = await actual.open(...args);
+    const createReadStream = handle.createReadStream.bind(handle);
+    handle.createReadStream = (...options: Parameters<typeof createReadStream>) => { reads.streams++; return createReadStream(...options); };
+    return handle;
+  } };
+});
 
 const directories: string[] = [];
-afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { reads.streams = 0; for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }); });
 
 async function stores() {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'legacy-'))); directories.push(directory);
@@ -20,7 +31,7 @@ async function stores() {
     const time = new Date(Date.now() - 1000 * age--); await utimes(path, time, time);
     return path;
   };
-  return { directory, agentDir, custom, project, other, perCwd, owner, write };
+  return { directory, agentDir, custom, project, other, perCwd, owner, write, index: new LegacySessionIndex(owner) };
 }
 
 it('discovers per-cwd and custom-directory transcripts by header cwd, newest first', async () => {
@@ -28,9 +39,9 @@ it('discovers per-cwd and custom-directory transcripts by header cwd, newest fir
   const perCwd = await s.write(join(s.perCwd, 'a_per-cwd.jsonl'), 'per-cwd');
   const custom = await s.write(join(s.custom, 'b_custom.jsonl'), 'custom');
   await s.write(join(s.custom, 'c_elsewhere.jsonl'), 'elsewhere', s.other);
-  expect((await discoverLegacySessions(s.owner, [], s.project)).map(row => [row.id, row.path, row.cwd]))
+  expect((await s.index.discover([], { cwd: s.project })).map(row => [row.id, row.path, row.cwd]))
     .toEqual([['custom', custom, s.project], ['per-cwd', perCwd, s.project]]);
-  expect((await discoverLegacySessions(s.owner, [])).map(row => row.id)).toEqual(['elsewhere', 'custom', 'per-cwd']);
+  expect((await s.index.discover([])).map(row => row.id)).toEqual(['elsewhere', 'custom', 'per-cwd']);
 });
 
 it('skips registered, duplicate and invalid files but lists linked transcripts and deleted cwds', async () => {
@@ -51,7 +62,7 @@ it('skips registered, duplicate and invalid files but lists linked transcripts a
   await symlink(outside, join(s.perCwd, 'linked.jsonl'));
   await writeFile(join(s.perCwd, 'shared.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 'shared', cwd: s.project }) + '\n', { mode: 0o644 });
   const time = new Date(Date.now() - 1_000_000); await utimes(join(s.perCwd, 'shared.jsonl'), time, time);
-  const found = await discoverLegacySessions(s.owner, [{ id: 'other-id', piPath: registered }, { id: 'registered-id', piPath: join(s.agentDir, 'sessions', 'x.jsonl') }]);
+  const found = await s.index.discover([{ id: 'other-id', piPath: registered }, { id: 'registered-id', piPath: join(s.agentDir, 'sessions', 'x.jsonl') }]);
   expect(found.map(row => [row.id, row.path, row.cwd])).toEqual([
     ['linked', join(s.perCwd, 'linked.jsonl'), s.project],
     ['missing-cwd', join(s.custom, 'missing-cwd.jsonl'), removed],
@@ -71,12 +82,57 @@ it('reads the latest Pi name and the first user message from the whole transcrip
   await s.write(join(s.perCwd, 'empty.jsonl'), 'empty', s.project, entry({ type: 'model_change', id: 'a', parentId: null }));
   await s.write(join(s.perCwd, 'beyond.jsonl'), 'beyond', s.project, entry({ type: 'message', id: 's', parentId: null, timestamp: 't', message: { role: 'system', content: 'z'.repeat(256 * 1024) } })
     + user('after a large system prompt') + entry({ type: 'session_info', name: 'Renamed later' }));
-  const found = await discoverLegacySessions(s.owner, []);
-  expect(Object.fromEntries(found.map(row => [row.id, [row.title, row.preview]]))).toEqual({ named: ['Release plan', 'first prompt'], cleared: ['', 'Fix the build'],
+  const found = await s.index.discover([]);
+  const summaries = Object.fromEntries(await Promise.all(found.map(async row => [row.id, Object.values(await s.index.summary(row))])));
+  expect(summaries).toEqual({ named: ['Release plan', 'first prompt'], cleared: ['', 'Fix the build'],
     long: ['', `${'x'.repeat(119)}…`], empty: ['', ''], beyond: ['Renamed later', 'after a large system prompt'] });
   expect(await readTranscriptPreview(join(s.perCwd, 'cleared.jsonl'))).toBe('Fix the build');
   expect(await readTranscriptPreview(join(s.perCwd, 'beyond.jsonl'))).toBe('after a large system prompt');
   expect(await readTranscriptPreview(join(s.perCwd, 'missing.jsonl'))).toBe('');
   expect(transcriptPreview([{ type: 'session_info', name: 'Named' }, { type: 'message', message: { role: 'assistant', content: 'no' } },
     { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'live\nprompt' }] } }])).toBe('live prompt');
+});
+
+it('lists headers without reading transcript bodies and reads a summary only on request', async () => {
+  const s = await stores();
+  const body = JSON.stringify({ type: 'message', id: 'm', parentId: null, timestamp: 't', message: { role: 'user', content: 'x'.repeat(64 * 1024) } }) + '\n';
+  await s.write(join(s.perCwd, 'large.jsonl'), 'large', s.project, body.repeat(40));
+  const [row] = await s.index.discover([]);
+  expect(reads.streams).toBe(0);
+  expect((await s.index.summary(row!)).preview).toBe(`${'x'.repeat(119)}…`);
+  expect(reads.streams).toBe(1);
+});
+
+it('reads a transcript once for concurrent summaries and remembers it until the file changes', async () => {
+  const s = await stores();
+  await s.write(join(s.perCwd, 'cached.jsonl'), 'cached', s.project, JSON.stringify({ type: 'session_info', name: 'First' }) + '\n');
+  const [row] = await s.index.discover([]);
+  const [first, second] = await Promise.all([s.index.summary(row!), s.index.summary(row!)]);
+  expect(first.title).toBe('First'); expect(second).toEqual(first); expect(reads.streams).toBe(1);
+  expect((await s.index.summary(row!)).title).toBe('First'); expect(reads.streams).toBe(1);
+  await appendFile(row!.path, JSON.stringify({ type: 'session_info', name: 'Second' }) + '\n');
+  expect((await s.index.summary(row!)).title).toBe('Second'); expect(reads.streams).toBe(2);
+});
+
+it('follows a replaced transcript and drops a removed one', async () => {
+  const s = await stores();
+  const path = await s.write(join(s.perCwd, 'swap.jsonl'), 'before', s.project, JSON.stringify({ type: 'session_info', name: 'Before' }) + '\n');
+  const [before] = await s.index.discover([]);
+  expect(before?.id).toBe('before'); expect((await s.index.summary(before!)).title).toBe('Before');
+  await rm(path); await s.write(path, 'after', s.project, JSON.stringify({ type: 'session_info', name: 'After' }) + '\n');
+  expect((await s.index.discover([])).map(row => row.id)).toEqual(['after']);
+  expect(await s.index.summary(before!)).toEqual({ title: '', preview: '' });
+  await rm(path);
+  expect(await s.index.discover([])).toEqual([]);
+});
+
+it('stops warming a listed transcript once its signal is aborted', async () => {
+  const s = await stores();
+  await s.write(join(s.perCwd, 'warm.jsonl'), 'warm', s.project);
+  const rows = await s.index.discover([]);
+  const controller = new AbortController(); controller.abort();
+  await expect(s.index.warm(rows, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+  const live = new AbortController();
+  await s.index.warm(rows, live.signal);
+  expect(await s.index.summary(rows[0]!)).toEqual({ title: '', preview: '' });
 });

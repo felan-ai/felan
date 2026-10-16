@@ -1,4 +1,5 @@
 import { ProcessTerminal, TuiAltScreen, setKeybindings, type KeybindingsConfig, type Terminal, type TUI } from '@earendil-works/pi-tui';
+import { createSessionTitleSync } from '../client/session-title.js';
 import { TuiSessionController, type TuiSessionOptions } from './controller.js';
 import { DaemonTuiScreen } from './screen.js';
 import { createClientKeybindings } from './keybindings.js';
@@ -93,6 +94,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
   let interactions: TerminalInteractions | undefined;
   let footer: ReturnType<typeof createClientPowerlineFooter> | undefined;
   let unsubscribeFooter: (() => void) | undefined;
+  let unsubscribeTitle: (() => void) | undefined;
   let unsubscribeSetup: (() => void) | undefined;
   let unsubscribeColors: (() => void) | undefined;
   let unsubscribeHerdr: (() => void) | undefined;
@@ -127,6 +129,9 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       executionsChanged: executions => screen.setExecutions(executions),
       setEditorText: text => { screen.editor.setText(text); tui.requestRender(); } });
     let footerSession: string | undefined;
+    const syncTitle = createSessionTitleSync(terminal, options.cwd);
+    unsubscribeTitle = controller.subscribe(() => syncTitle(controller.snapshot));
+    syncTitle(controller.snapshot);
     unsubscribeFooter = controller.subscribe(() => {
       terminal.setProgress((preferences.values.terminalProgress ?? false) && !!controller.snapshot && !['idle', 'interrupted'].includes(controller.snapshot.run.state));
       if (footerSession === controller.sessionId) return;
@@ -139,7 +144,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
     interactions = new TerminalInteractions(controller, builtins.presenters, setup);
     const prompts = interactions;
     if (options.herdr) unsubscribeHerdr = reportHerdrPane(controller, options.herdr, () => prompts.pending());
-    const starting = controller.start(options, async sessions => (await pickSession(screen.dialogs, sessions, options.cwd, undefined, () => theme, false))?.session, async () => {
+    const starting = controller.start(options, async listing => (await pickSession(screen.dialogs, listing, options.cwd, undefined, () => theme, false))?.session, async () => {
       await loadingPreferences;
       if (stopped) return false;
       if (!controller.client.capabilities?.operations.includes('host.status')) return;
@@ -175,7 +180,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
     updateCheck.abort();
     stopped = true; preferences.dispose();
     options.signal?.removeEventListener('abort', interrupt); process.removeListener('SIGTERM', interrupt); process.removeListener('SIGHUP', interrupt); process.removeListener('SIGINT', interrupt);
-    unsubscribeColors?.(); unsubscribeSetup?.(); unsubscribeFooter?.(); unsubscribeHerdr?.(); footer?.dispose();
+    unsubscribeColors?.(); unsubscribeSetup?.(); unsubscribeFooter?.(); unsubscribeTitle?.(); unsubscribeHerdr?.(); footer?.dispose();
     const stopInteractions = interactions?.dispose();
     void stopInteractions?.catch(() => {});
     await setup?.dispose();

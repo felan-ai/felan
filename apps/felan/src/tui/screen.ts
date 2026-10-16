@@ -221,7 +221,7 @@ export class DaemonTuiScreen {
       || (connection === 'ready' && (state?.status === 'disconnected' || state?.status === 'recovering'));
     if (state?.status === 'blocked') notice(`${this.controller.blockedText} Use /reconnect to retry.`, 'warning');
     else if (!reconnecting && connection !== 'ready') notice(connectionText(this.controller.client) ?? 'Daemon connection is unavailable.', 'warning');
-    else if (!snapshot && !reconnecting) notice('No session attached. Use /new or /sessions.', 'warning');
+    else if (!snapshot && !reconnecting && !this.controller.starting) notice('No session attached. Use /new or /sessions.', 'warning');
     if (snapshot?.policy.effective === 'acp-strict') notice('Approvals required.');
     if (snapshot?.queue.length) notice(`${snapshot.queue.length} queued`);
     try {

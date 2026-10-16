@@ -84,6 +84,8 @@ instance ID. A path alone, stale readiness file or matching PID is not identity.
 | Retained active text | <=1 MiB UTF-8 per stream, <=4 MiB total and <=8 streams per session; overflow uses completion-only state below |
 | Process output read / input write | 64 KiB / 16 KiB decoded bytes per request; explicit base64 for arbitrary bytes |
 | Snapshot/history page | Default 256 entries per page, no schema cap; opaque continuation cursor |
+| Snapshot tools / processes / children | <=256 each via `trimSnapshotLists`: oldest finished first, then oldest running. Processes are ordered by last update. Clients trim live updates by the same rule and never resnapshot for list length |
+| Snapshot interactions | Waiting or deferred only; clients drop an interaction when it resolves |
 | Per-client unsent bytes / in-flight requests | 32 MiB / 64; overflow requires resnapshot or disconnect |
 | Identifiers in one catalog/page | <=1,024; page larger lists |
 
@@ -121,8 +123,8 @@ record. Do not smuggle built-ins through an unrestricted generic `command.invoke
 | Operation | Parameters / result and conditions |
 | --- | --- |
 | `hello`, `host.status` | Handshake above; status includes lifecycle, binary/root/protocol, active counts (`sessions`, `runs`, `work`, `attachments`; `work` counts everything a restart would interrupt) and setup needs, no secrets. |
-| `sessions.list` | Optional cwd/root filter + cursor; summaries include registered sessions and unregistered pre-daemon transcripts, with warm/evicted/closed, run state, title (session name), optional preview (first user message from a bounded 64 KiB transcript prefix), model, last activity, policy state. Read-only. |
-| `sessions.create` | Absolute cwd, optional configured sessionDir, model/thinking/config overrides, source kind and validated local extension paths. -> session ID. Resolve trust/setup before side effects; acquire actual-root locks first. Interactive extensions require explicit permission and a verified local console, independent of source kind. |
+| `sessions.list` | Optional cwd/root filter + cursor. Newest last activity first, then session ID; the cursor holds the last row's position, and malformed or foreign cursors return `resync_required`. Summaries include registered sessions and unregistered pre-daemon transcripts, with warm/evicted/closed, run state, title (session name), optional preview (first user message), model, last activity, policy state. Titles and previews are read only for the returned rows. Unused drafts are excluded (see ADR 0040). Read-only. |
+| `sessions.create` | Absolute cwd, optional configured sessionDir, model/thinking/config overrides, source kind and validated local extension paths. -> session ID. The root is a draft until its first user, assistant or shell message; a draft with no conversation is discarded when idle (ADR 0040). Resolve trust/setup before side effects; acquire actual-root locks first. Interactive extensions require explicit permission and a verified local console, independent of source kind. |
 | `attach` | Session ID; optional `requirePolicy:'acp-strict'` for ACP. -> attachment binding + snapshot. Unregistered IDs return `not_found`. Attaching to a registered busy session is allowed. |
 | `detach` | Attachment ID -> remove only that binding. EOF is the same operation without a required ack. |
 | `close` | Session ID -> settle the session's foreground work, child sessions and PTYs; retain history and independent detached-job records, then close. Detached jobs are not implicitly killed. Not ACP `session/close`, which maps to detach. |

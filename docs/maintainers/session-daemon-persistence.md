@@ -212,17 +212,28 @@ terminal results. Later drain orchestration must use the same durable ordering.
 ## Pre-daemon files and downgrade
 
 Unregistered Pi transcripts in pre-daemon layouts are discovered while listing
-and adopted in place when a client attaches to one. Discovery scans only
-`agentDir/sessions` (top level and its `--<encoded-cwd>--` directories; a
-cwd-filtered listing reads only that cwd's directory) and the top level of each
-other owned store root, such as a custom `--session-dir`. It reads at most a
-64 KiB first-line header from regular files, validates it with the import
-header schema and Pi's session-ID syntax, and lists it like Pi's
-`SessionManager.listAll` regardless of file mode, link count or whether its cwd
-still exists. Registered IDs and paths and duplicate IDs are skipped. A row's title is the latest Pi `session_info` name within the same
-64 KiB prefix, else a 120-character snippet of the first user message there,
-else empty (clients then show the ID). Listings reuse one discovery result for
-two seconds so pages stay consistent; adoption always rediscovers.
+and adopted in place when a client attaches to one. Discovery scans
+`agentDir/sessions` (top level and its `--<encoded-cwd>--` directories) and the
+top level of each other owned store root, such as a custom `--session-dir`. A
+cwd filter cannot narrow that scan, because a transcript written under a
+symlinked project path lives in that path's directory; it applies after the
+header reads. Discovery reads only the first line, at most 64 KiB, of each
+regular file. It validates the header with the import header schema and Pi's
+session-ID syntax, and lists it like Pi's `SessionManager.listAll` regardless of
+file mode, link count or whether its cwd still exists. Registered IDs and paths
+are skipped, and a duplicated ID keeps its newest file. Headers are cached by
+device, inode, size and mtime. A row's title is the latest Pi `session_info` name
+and its preview the first user message, both read from the whole transcript on
+request. They are cached until the file changes and dropped when it vanishes.
+The daemon warms them newest first from startup and stops that warm-up at
+shutdown. Listings reuse one discovery result for two seconds so pages stay
+consistent; adoption always rediscovers.
+
+Control rows carry an optional `draft` flag. `sessions.create` roots are drafts;
+the first user, assistant or shell message clears it. A draft with no
+conversation, children, interactions or processes, idle after `idleMs` without
+an attachment (after a restart, measured from daemon start), is tombstoned and
+its transcript removed, as deletion does. Other drafts become ordinary sessions.
 
 Adoption registers the existing ID and canonical file path in control state
 without copying, and continuation appends to that file through the normal resume

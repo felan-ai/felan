@@ -112,6 +112,25 @@ it('prints the resume command after a normal quit with an attached session, like
     runTerminal: async controller => { vi.spyOn(controller, 'sessionId', 'get').mockReturnValue('01a13dfa-c2dd'); } });
   expect(output).toEqual([`To resume this session: felan --daemon-runtime '/tmp/felan runtime' --session-dir '/sessions/it'\\''s' --session 01a13dfa-c2dd\n`]);
   output.length = 0;
+  await runDaemonFelan({ agentDir: '/agent', daemonRuntime: '/tmp/felan runtime' }, { createClient: () => client, writeOutput: text => output.push(text),
+    runTerminal: async controller => { vi.spyOn(controller, 'sessionId', 'get').mockReturnValue('01a13dfb-0000'); vi.spyOn(controller, 'sessionEntry', 'get').mockReturnValue('new'); } });
+  expect(output).toEqual([]);
+  output.length = 0;
+  await runDaemonFelan({ agentDir: '/agent', daemonRuntime: '/tmp/felan runtime' }, { createClient: () => client, writeOutput: text => output.push(text),
+    runTerminal: async controller => {
+      vi.spyOn(controller, 'sessionId', 'get').mockReturnValue('01a13dfb-0000'); vi.spyOn(controller, 'sessionEntry', 'get').mockReturnValue('new');
+      vi.spyOn(controller, 'snapshot', 'get').mockReturnValue({ history: { entries: [{ role: 'user' }] } } as never);
+    } });
+  expect(output).toEqual([`To resume this session: felan --daemon-runtime '/tmp/felan runtime' --session 01a13dfb-0000\n`]);
+  output.length = 0;
+  // A draft reattached by ID after a restart or relaunch is entered as a resume, but its history still decides.
+  await runDaemonFelan({ agentDir: '/agent', daemonRuntime: '/tmp/felan runtime' }, { createClient: () => client, writeOutput: text => output.push(text),
+    runTerminal: async controller => {
+      vi.spyOn(controller, 'sessionId', 'get').mockReturnValue('01a13dfb-0000');
+      vi.spyOn(controller, 'snapshot', 'get').mockReturnValue({ history: { entries: [{ role: 'custom', customType: 'note' }] } } as never);
+    } });
+  expect(output).toEqual([]);
+  output.length = 0;
   await runDaemonFelan({ agentDir: '/agent' }, { createClient: () => client, writeOutput: text => output.push(text), runTerminal: async () => {} });
   expect(output).toEqual([]);
   expect(resumeCommand('session-id', {})).toBe('felan --session session-id');

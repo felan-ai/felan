@@ -100,6 +100,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
     let finish!: (action: HostAction) => void;
     const stopped = new Promise<HostAction>(resolve => { finish = resolve; });
     let hold: ReturnType<typeof setInterval> | undefined;
+    const warmup = new AbortController(); let warming: Promise<void> = Promise.resolve();
     const lifecycle = new HostLifecycle({ target: owner.target, identity: owner.identity,
       ...(options.drainTimeoutMs ? { timeoutMs: options.drainTimeoutMs } : {}),
       beginDrain: () => { liveSetup.beginDrain(); liveRegistry.beginDrain(); },
@@ -111,6 +112,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
       record: event => log.record(event),
       complete: async action => {
         clearInterval(idleTimer); clearInterval(hold); removeLoss();
+        warmup.abort(); await warming;
         liveServer.sealCommands(); await liveServer.settleCommands();
         await agentLogs.close(); await liveSessionLifecycle.dispose(); await loadedProviders.dispose();
         liveServer.close(); liveStore.close(); liveSink.close(); await owner.release(); finish(action);
@@ -140,13 +142,14 @@ export async function startDaemonService(target: DaemonTarget, options: {
     }, 15_000);
     idleTimer.unref();
     const removeLoss = owner.onLost(() => {
-      lifecycle.block(); clearInterval(idleTimer);
+      lifecycle.block(); clearInterval(idleTimer); warmup.abort();
       liveSetup.beginDrain();
       // An unresolved owner must not vanish and release native claims implicitly.
       hold ??= setInterval(() => {}, 60_000);
       void liveRegistry.settleWriters().catch(() => {});
     });
     await server.start(); log.record('started');
+    warming = liveRegistry.warmLegacySessions(warmup.signal).catch(() => { if (!warmup.signal.aborted) log.record('legacy_warmup_failed'); });
     return { owner, registry: liveRegistry, server: liveServer, lifecycle, stopped,
       async requestStop(action: HostAction = 'stop', mode: HostMode = 'drain') {
         return liveServer.requestManagement({ v: 1, id: requestId(), op: action === 'stop' ? 'host.stop' : 'host.restart',

@@ -9,13 +9,13 @@ import type { ExecutionMetadata } from './control-state.js';
 import type { ProcessAdapter } from './process-adapter.js';
 import type { ControlCommit, DaemonControlStore } from './control-store.js';
 import { SessionProfileSchema, type ControlSession, type ControlSessionMetadata, type SessionProfile } from './control-state.js';
-import { discoverLegacySessions, readTranscriptPreview, transcriptPreview, type LegacySession } from './legacy-sessions.js';
+import { LegacySessionIndex, readTranscriptPreview, transcriptHasConversation, transcriptPreview, type LegacySession, type LegacySummary } from './legacy-sessions.js';
 import type { DaemonOwnership } from './ownership.js';
 import type { SessionLifecycle, DaemonSessionServices, SessionOpenRequest, SessionResources, SessionBinding, SessionTargetIdentity, SessionExecutionPolicy } from './session-lifecycle-contracts.js';
 import { profilePolicy, SessionProjection, type ProjectionOutput } from './projection.js';
 import { RegistryProcesses } from './processes.js';
 import { guardOwnedPaths, sha256 } from './persistence.js';
-import { prepareTranscriptDeletion } from './session-files.js';
+import { isConversationEntry, prepareTranscriptDeletion } from './session-files.js';
 import { assertTargetIdentity, canonicalProspectivePath, pathInside } from './target.js';
 import { sessionTip } from './session-cursor.js';
 import type { createUiVocabulary } from './ui-vocabulary.js';
@@ -91,7 +91,9 @@ export class SessionRegistry {
   private readonly closing = new Set<string>();
   private readonly closes = new Map<string, Promise<void>>();
   private readonly now: () => number;
-  private legacyListing: { cwd: string | undefined; expires: number; value: Promise<LegacySession[]> } | undefined;
+  private readonly startedAt: number;
+  private readonly legacy: LegacySessionIndex;
+  private legacyListing: { expires: number; value: Promise<LegacySession[]> } | undefined;
   private readonly previews = new Map<string, string>();
   private stopping = false;
   private draining = false;
@@ -105,6 +107,8 @@ export class SessionRegistry {
     options.owner.assertCurrent();
     if (options.store.owner !== options.owner) throw new Error('Registry and store require the same held ownership.');
     this.now = options.now ?? Date.now;
+    this.startedAt = this.now();
+    this.legacy = new LegacySessionIndex(options.owner);
     this.recovery = options.store.needsRecovery ? options.store.recover().value : undefined;
     this.processes = new RegistryProcesses({ ...(options.processAdapter ? { processAdapter: options.processAdapter } : {}), store: options.store, now: this.now, assertCurrent: () => options.owner.assertCurrent(),
       changed: (id, process, rev) => this.publish({ v: 1, session: id, rev, change: { type: 'process.updated', process } }) });
@@ -287,15 +291,23 @@ export class SessionRegistry {
   /** Unregistered pre-daemon transcripts that `adopt` can register in place. */
   async legacySessions(cwd?: string, fresh = false): Promise<LegacySession[]> {
     this.assertAdmission();
-    const sessions = this.options.store.sessionMetadatas(); const now = Date.now();
-    // Paged listings repeat discovery per page; a short-lived result keeps pages consistent and bounded.
-    if (fresh || !this.legacyListing || this.legacyListing.cwd !== cwd || this.legacyListing.expires <= now) {
-      this.legacyListing = { cwd, expires: now + 2_000, value: discoverLegacySessions(this.options.owner, sessions, cwd) };
+    const now = Date.now();
+    // Paged listings share one short-lived index pass. A scan cannot narrow by cwd, so the filter applies after it.
+    if (fresh || !this.legacyListing || this.legacyListing.expires <= now) {
+      this.legacyListing = { expires: now + 2_000, value: this.legacy.discover(this.options.store.sessionMetadatas()) };
     }
     const rows = await this.legacyListing.value;
     const current = this.options.store.sessionMetadatas();
     const ids = new Set(current.map(session => session.id)); const paths = new Set(current.map(session => session.piPath));
-    return rows.filter(row => !ids.has(row.id) && !paths.has(row.path));
+    return rows.filter(row => !ids.has(row.id) && !paths.has(row.path) && (cwd === undefined || row.cwd === cwd));
+  }
+
+  legacySummary(row: LegacySession): Promise<LegacySummary> { return this.legacy.summary(row); }
+
+  /** Reads the titles of listed pre-daemon transcripts, newest first, so the first listing rarely waits for them. */
+  async warmLegacySessions(signal: AbortSignal): Promise<void> {
+    this.assertAdmission();
+    await this.legacy.warm(await this.legacySessions(), signal);
   }
 
   /** Registers a discovered pre-daemon transcript under its existing ID and file; later turns append to that file. */
@@ -326,6 +338,8 @@ export class SessionRegistry {
   }
 
   list(): ControlSessionMetadata[] { return this.options.store.sessionMetadatas().filter(session => session.deletedAt === undefined); }
+  /** Sessions clients list and count. A draft appears with its first message. */
+  listed(): ControlSessionMetadata[] { return this.list().filter(session => !session.draft); }
   binding(id: string): SessionBinding | undefined { return this.entries.get(id)?.binding; }
   projection(id: string): SessionProjection { return this.require(id).projection; }
   async refreshModelAvailability(signal: AbortSignal): Promise<void> {
@@ -757,12 +771,45 @@ export class SessionRegistry {
   }
 
   async evictIdle(): Promise<string[]> {
-    this.assertAdmission(); const evicted: string[] = [];
+    this.assertAdmission(); const evicted: string[] = []; const idle = this.options.idleMs ?? 60_000;
     for (const [id, entry] of this.entries) {
-      if (this.closing.has(id) || entry.disposing || entry.attachments.size || this.hasWarmChildren(id) || this.now() - entry.lastDetached < (this.options.idleMs ?? 60_000) || this.busy(id)) continue;
+      if (this.closing.has(id) || entry.disposing || entry.attachments.size || this.hasWarmChildren(id) || this.now() - entry.lastDetached < idle || this.busy(id)) continue;
+      if (this.options.store.session(id).draft && await this.discardDraft(id)) { evicted.push(id); continue; }
       await this.disposeEntry(id, false); evicted.push(id);
     }
+    // A draft that was not resident at startup gets its idle window from startup, so a reconnecting client keeps it.
+    for (const row of this.list()) {
+      if (!row.draft || this.entries.has(row.id) || this.opening.has(row.id) || this.closing.has(row.id) || this.now() - Math.max(row.updatedAt, this.startedAt) < idle) continue;
+      if (await this.discardDraft(row.id)) evicted.push(row.id);
+    }
     return evicted;
+  }
+
+  /**
+   * Removes a draft with no conversation, children, pending interaction or running process. Any other draft becomes a normal session.
+   * A draft that changed during the check is left for a later pass.
+   */
+  private async discardDraft(id: string): Promise<boolean> {
+    const entry = this.entries.get(id);
+    const conversation = entry ? entry.binding.runtime.session.sessionManager.getEntries().some(isConversationEntry) : await transcriptHasConversation(this.options.store.session(id).piPath);
+    // The transcript read yields, so an attach, deletion or other lifecycle operation may have started meanwhile.
+    const stored = this.options.store.findSessionMetadata(id);
+    if (!stored?.draft || stored.deletedAt !== undefined || this.entries.get(id) !== entry || this.opening.has(id) || this.closing.has(id)
+      || this.reservations.has(stored.piPath) || this.copyClaims.has(stored.piPath)) return false;
+    const engaged = this.list().some(row => row.parent === id)
+      || this.options.store.interactions().some(item => item.scope.kind === 'session' && item.scope.session === id && (item.state === 'waiting' || item.state === 'deferred'))
+      || this.processes.blocksEviction(stored.root);
+    if (conversation || engaged) { if (entry) entry.projection.materialize(); else this.options.store.updateSession(id, { draft: false }); return false; }
+    this.closing.add(id);
+    try {
+      if (entry) await this.disposeEntry(id, false);
+      const remove = prepareTranscriptDeletion(this.options.owner, stored.piPath);
+      const commit = this.options.store.discardDraft(id);
+      this.previews.delete(id);
+      this.publishCommitted(commit.revisions);
+      remove();
+      return true;
+    } finally { this.closing.delete(id); }
   }
 
   close(id: string): Promise<void> {
@@ -957,6 +1004,7 @@ export class SessionRegistry {
       if (!restored) this.options.store.createSession({ id: binding.sessionId, root: binding.rootSessionId, ...(binding.parentSessionId ? { parent: binding.parentSessionId } : {}),
         ...(request.execution ? { execution: request.execution } : {}),
         cwd: resources.cwd, piPath: path, title: manager.getSessionName() ?? '', state: 'open', residency: 'warm', run: { state: 'idle' },
+        ...(request.clientRoot === true && request.target.kind === 'new' ? { draft: true } : {}),
         policy: { effective: effectivePolicy.mode, generation: effectivePolicy.generation },
         branch: manager.getLeafId() ?? binding.sessionId, observedTip: sessionTip(manager),
         ...(binding.runtime.session.model ? { model: { provider: binding.runtime.session.model.provider, id: binding.runtime.session.model.id } } : {}), thinking: binding.runtime.session.thinkingLevel,
@@ -1094,7 +1142,7 @@ export class SessionRegistry {
   private extras(id: string): { children: SessionSnapshot['children']; processes: SessionSnapshot['processes']; interactions: SessionSnapshot['interactions'] } {
     const sessions = this.options.store.sessionMetadatas(); const session = this.options.store.sessionMetadata(id);
     return { children: sessions.filter(item => item.parent === id && item.deletedAt === undefined).map(item => ({ session: item.id, parent: id, root: item.root, title: item.title, state: item.state, run: item.run })),
-      processes: this.processes.list(session.root).slice(0, 256), interactions: this.options.store.interactions().filter(item => item.scope.kind === 'session' && item.scope.session === id && (item.state === 'waiting' || item.state === 'deferred')) };
+      processes: this.processes.list(session.root), interactions: this.options.store.interactions().filter(item => item.scope.kind === 'session' && item.scope.session === id && (item.state === 'waiting' || item.state === 'deferred')) };
   }
   private publish(event: ProjectionOutput): void {
     if ('change' in event && 'interaction' in event.change && (event.change.type === 'interaction.requested' || event.change.type === 'interaction.resolved')) {

@@ -77,6 +77,27 @@ export function parseSessionSnapshot(value: unknown): SessionSnapshot {
   return snapshot;
 }
 
+/**
+ * Keeps snapshot tools, processes and children within `LIMITS.pageEntries`, dropping the oldest finished items first, then the oldest running ones.
+ * The daemon trims snapshots and clients trim live updates by this rule, so a live copy matches the next snapshot.
+ */
+export function trimSnapshotLists<T extends Pick<SessionSnapshot, 'tools' | 'processes' | 'children'>>(snapshot: T): T {
+  return { ...snapshot,
+    tools: retainRecent(snapshot.tools, tool => tool.state === 'running'),
+    processes: retainRecent(snapshot.processes, process => process.state === 'running'),
+    children: retainRecent(snapshot.children, child => ['running', 'waiting', 'cancelling'].includes(child.run.state)) };
+}
+
+function retainRecent<T>(items: T[], running: (item: T) => boolean): T[] {
+  let excess = items.length - LIMITS.pageEntries;
+  if (excess <= 0) return items;
+  const kept = items.filter(item => {
+    if (excess > 0 && !running(item)) { excess--; return false; }
+    return true;
+  });
+  return kept.slice(-LIMITS.pageEntries);
+}
+
 export function parseSessionEvent(value: unknown): SessionEvent {
   assertJson(value);
   let candidate = value;

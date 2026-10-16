@@ -12,6 +12,7 @@ const messages = {
   releasing: 'Owned work settled; releasing daemon ownership.',
   ownership_lost: 'Daemon ownership was lost; admission is fenced.',
   startup_failed: 'Daemon startup could not complete.',
+  legacy_warmup_failed: 'Pre-daemon session titles could not be read in the background; listings read them on request.',
 } as const;
 type Entry = OperationResult<'host.logs'>['entries'][number];
 
@@ -20,7 +21,7 @@ export class DaemonOperationalLog {
 
   record(event: keyof typeof messages): void {
     if (!Object.hasOwn(messages, event)) throw new Error('Unknown operational event.');
-    const entry: Entry = { timestamp: this.now(), level: ['drain_blocked', 'ownership_lost', 'startup_failed'].includes(event) ? 'error' : event === 'drain_cancelled' ? 'warning' : 'info', message: messages[event] };
+    const entry: Entry = { timestamp: this.now(), level: ['drain_blocked', 'ownership_lost', 'startup_failed'].includes(event) ? 'error' : event === 'drain_cancelled' || event === 'legacy_warmup_failed' ? 'warning' : 'info', message: messages[event] };
     this.sink.write('stdout', JSON.stringify(entry));
   }
 

@@ -160,9 +160,11 @@ it('does not submit a held recovery answer after another client wins', async () 
     await vi.waitFor(() => expect(screenText(view.tui)).not.toContain('Recovering winner'));
     const other = f.client(); cleanup.push(async () => other.close()); await other.connect(); await other.attach(f.root.sessionId);
     const interaction = f.broker.pending()[0]!;
+    const held = () => getAttachment(f.root.sessionId)?.state.snapshot?.interactions.some(item => item.id === interaction.id);
+    expect(held()).toBe(true);
     await other.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'input', text: 'other client' } }, { session: f.root.sessionId });
     expect(await pending).toMatchObject({ state: 'answered', answer: { text: 'other client' } });
-    await vi.waitFor(() => expect(getAttachment(f.root.sessionId)?.state.snapshot?.interactions.find(item => item.id === interaction.id)?.state).toBe('answered'));
+    await vi.waitFor(() => expect(held()).toBe(false));
     recovering = false; view.controller.setNotice('Snapshot restored');
     view.signal.abort(); await view.running;
     expect(f.store.snapshot().requests.filter(row => row.op === 'interaction.answer')).toHaveLength(1);
