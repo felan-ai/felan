@@ -1,11 +1,19 @@
 import {
-  SESSION_HISTORY_LIMITS,
-  type ExtensionUi, type SessionsHistory, type SessionCheckpointRef, type SessionHistoryInfo,
-  type UiActionContext, type UiActionRequest, type UiDocument, type UiElementHandle,
+  SESSION_HISTORY_LIMITS, SessionsServiceError,
+  type AgentRuntime, type SessionsServiceErrorCode, type ExtensionUi, type SessionsHistory, type SessionCheckpointRef, type SessionHistoryInfo,
+  type UiAction, type UiActionContext, type UiActionRequest, type UiDocument, type UiElementHandle,
 } from '@felan-ai/agent-core';
-import type { InsightsHost, InsightsSessionReference } from './contracts.js';
-import { generateMarkdown } from './markdown.js';
-import { INSIGHTS_DOCUMENT_HINT } from './ui.js';
+import { buildInsightsDashboard, insightsRangeOptions, type InsightsView } from './dashboard.js';
+import type { InsightsHost, InsightsReport, InsightsSessionReference } from './contracts.js';
+import {
+  encodeInsightsDashboard, INSIGHTS_ACTIONS, INSIGHTS_DOCUMENT_HINT, INSIGHTS_QUERY_BYTES, INSIGHTS_QUERY_FIELD,
+  INSIGHTS_RANGE_FIELD, insightsRangeLabel, type InsightsDashboard,
+} from './data.js';
+import { generateDashboardMarkdown } from './markdown.js';
+import { openReportOnHost, type OpenReportOutcome } from './open-report.js';
+
+/** Active sessions change between snapshot reads, so a stale answer is retried before the session is skipped. */
+const STALE_ATTEMPTS = 3;
 
 export function createSessionsInsights(sessions: SessionsHistory, ui: ExtensionUi, lifetime: AbortSignal): InsightsHost & { dispose(): Promise<void> } {
   const references = new WeakMap<InsightsSessionReference, { info: SessionHistoryInfo; checkpoint: SessionCheckpointRef }>();
@@ -13,9 +21,8 @@ export function createSessionsInsights(sessions: SessionsHistory, ui: ExtensionU
   const controller = new AbortController();
   const scope = AbortSignal.any([lifetime, controller.signal]);
   let disposed = false;
-  let report = '';
   let revision = 0;
-  let presentation: { handle?: UiElementHandle; document: UiDocument; closed: boolean; queue: Promise<void> } | undefined;
+  let presentation: { handle?: UiElementHandle; document: UiDocument; closed: boolean; queue: Promise<void>; lifetime: AbortController } | undefined;
   let presentationQueue = Promise.resolve();
   let cleanup: Promise<void> | undefined;
   const ensure = (signal = scope) => {
@@ -30,8 +37,53 @@ export function createSessionsInsights(sessions: SessionsHistory, ui: ExtensionU
   const run = <T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> => track((async () => {
     const active = signal ? AbortSignal.any([scope, signal]) : scope;
     try { ensure(active); const value = await operation(active); ensure(active); return value; }
-    catch { throw active.aborted ? new DOMException('Insights request cancelled.', 'AbortError') : new Error('Insights session operation failed.'); }
+    catch (error) {
+      if (active.aborted) throw new DOMException('Insights request cancelled.', 'AbortError');
+      throw error instanceof SessionsServiceError ? new SessionsServiceError(error.code) : new Error('Insights session operation failed.');
+    }
   })());
+
+  const retryStale = async <T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> => {
+    for (let attempt = 1; ; attempt++) {
+      try { return await operation(); } catch (error) {
+        ensure(signal);
+        if (attempt >= STALE_ATTEMPTS || !(error instanceof SessionsServiceError && error.code === 'stale')) throw error;
+      }
+    }
+  };
+
+  const listVisible = (signal: AbortSignal) => retryStale(async () => {
+    const items: SessionHistoryInfo[] = [];
+    const cursors = new Set<string>();
+    const ids = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      ensure(signal);
+      const page = await sessions.list({ scope: 'visible' }, { signal, limit: SESSION_HISTORY_LIMITS.pageEntries, ...(cursor === undefined ? {} : { cursor }) });
+      ensure(signal);
+      if (!Array.isArray(page.items) || page.items.length > SESSION_HISTORY_LIMITS.pageEntries) throw new Error('Invalid session page.');
+      for (const info of page.items) {
+        if (!info.id || ids.has(info.id)) throw new Error('Invalid session page.');
+        ids.add(info.id);
+        items.push({ ...info });
+      }
+      cursor = nextCursor(page.nextCursor, cursors);
+    } while (cursor !== undefined);
+    return items;
+  }, signal);
+
+  const checkpointOf = async (id: string, signal: AbortSignal): Promise<SessionCheckpointRef | SessionsServiceErrorCode> => {
+    let checkpoint: SessionCheckpointRef;
+    try { checkpoint = await retryStale(() => sessions.checkpoint(id, { signal }), signal); } catch (error) {
+      ensure(signal);
+      return error instanceof SessionsServiceError ? error.code : 'inaccessible';
+    }
+    ensure(signal);
+    if (checkpoint.sessionId !== id || typeof checkpoint.revision !== 'string' || !checkpoint.revision
+      || checkpoint.branch !== null && (typeof checkpoint.branch !== 'string' || !checkpoint.branch)
+      || !Number.isSafeInteger(checkpoint.byteLength) || checkpoint.byteLength < 0) return 'invalid';
+    return checkpoint.byteLength > SESSION_HISTORY_LIMITS.fileBytes ? 'oversize' : { ...checkpoint };
+  };
 
   async function* readLines(reference: InsightsSessionReference, signal?: AbortSignal): AsyncIterable<string> {
     const active = signal ? AbortSignal.any([scope, signal]) : scope;
@@ -80,35 +132,32 @@ export function createSessionsInsights(sessions: SessionsHistory, ui: ExtensionU
     return `${storage.root}/insights-reports/${name}`;
   });
 
+  const notice = (outcome: OpenReportOutcome, path: string): NonNullable<InsightsView['notice']> => {
+    switch (outcome) {
+      case 'opened': return { level: 'info', text: 'Opened the HTML report on this host.' };
+      case 'declined': return { level: 'info', text: 'Browser open was not confirmed. The HTML report is still saved.' };
+      case 'unavailable': return { level: 'warning', text: `Opening ${path} needs a local console on this host.` };
+      case 'failed': return { level: 'warning', text: 'The HTML report could not be opened in the browser.' };
+    }
+  };
+
   return {
     listSessions: (_runtime, signal) => run(async active => {
+      // One session that is missing, unsupported or changing must not hide the rest of the history.
       const result: InsightsSessionReference[] = [];
-      const cursors = new Set<string>();
-      const ids = new Set<string>();
-      let cursor: string | undefined;
-      do {
-        ensure(active);
-        const page = await sessions.list({ scope: 'visible' }, { signal: active, limit: SESSION_HISTORY_LIMITS.pageEntries, ...(cursor === undefined ? {} : { cursor }) });
-        ensure(active);
-        if (!Array.isArray(page.items) || page.items.length > SESSION_HISTORY_LIMITS.pageEntries) throw new Error('Invalid session page.');
-        for (const info of page.items) {
-          if (!info.id || ids.has(info.id) || info.diagnostic) throw new Error('Session history is inaccessible.');
-          ids.add(info.id);
-          const checkpoint = await sessions.checkpoint(info.id, { signal: active });
-          ensure(active);
-          if (checkpoint.sessionId !== info.id || typeof checkpoint.revision !== 'string' || !checkpoint.revision
-            || checkpoint.branch !== null && (typeof checkpoint.branch !== 'string' || !checkpoint.branch)
-            || !Number.isSafeInteger(checkpoint.byteLength) || checkpoint.byteLength < 0
-            || checkpoint.byteLength > SESSION_HISTORY_LIMITS.fileBytes) throw new Error('Session checkpoint is invalid.');
-          const reference: InsightsSessionReference = {
-            id: info.id, path: info.id, modifiedAtMs: info.updatedAt, contentVersion: checkpoint.revision, size: checkpoint.byteLength,
-            ...(info.id !== info.root ? { rootSessionId: info.root, isAgent: true } : {}),
-          };
-          references.set(reference, { info: { ...info }, checkpoint: { ...checkpoint } });
-          result.push(reference);
+      for (const info of await listVisible(active)) {
+        const checkpoint = info.diagnostic ?? await checkpointOf(info.id, active);
+        const lineage = info.id !== info.root ? { rootSessionId: info.root, isAgent: true } : {};
+        if (typeof checkpoint === 'string') {
+          result.push({ id: info.id, path: info.id, modifiedAtMs: info.updatedAt, unavailable: checkpoint, ...lineage });
+          continue;
         }
-        cursor = nextCursor(page.nextCursor, cursors);
-      } while (cursor !== undefined);
+        const reference: InsightsSessionReference = {
+          id: info.id, path: info.id, modifiedAtMs: info.updatedAt, contentVersion: checkpoint.revision, size: checkpoint.byteLength, ...lineage,
+        };
+        references.set(reference, { info, checkpoint });
+        result.push(reference);
+      }
       return result;
     }, signal),
     readSessionLines: (_runtime, reference, signal) => readLines(reference, signal),
@@ -117,51 +166,95 @@ export function createSessionsInsights(sessions: SessionsHistory, ui: ExtensionU
       for await (const line of readLines(reference, active)) lines.push(line);
       return lines.join('\n');
     }, signal),
-    enrichAnalytics: analytics => run(async () => { report = generateMarkdown(analytics); return analytics; }),
     writeReport: write,
     writeMarkdown: write,
-    openReport: (_runtime, _path, signal) => run(active => {
+    presentReport: (runtime, report, signal) => run(active => {
       const opening = presentationQueue.then(async () => {
         ensure(active);
         if (presentation) {
           presentation.closed = true;
+          presentation.lifetime.abort();
           await presentation.queue;
           await presentation.handle?.close();
         }
         ensure(active);
-        const pages = markdownPages(report || 'No report content.');
-        let page = 0;
-        const document = (index = page): UiDocument => ({
-          id: 'insights-report', kind: 'document', revision: ++revision, hint: INSIGHTS_DOCUMENT_HINT,
-          title: `Session insights (${index + 1}/${pages.length})`, fallback: `Session insights, page ${index + 1} of ${pages.length}`,
-          markdown: pages[index]!, actions: [
-            ...(index ? [{ id: 'previous', label: 'Previous', target: 'element' as const, outcome: 'submit' as const }] : []),
-            ...(index + 1 < pages.length ? [{ id: 'next', label: 'Next', target: 'element' as const, outcome: 'submit' as const }] : []),
-            { id: 'close', label: 'Close report', target: 'element' as const, outcome: 'cancel' as const },
-          ],
-        });
-        const view = { document: document(), closed: false, queue: Promise.resolve(), handle: undefined as UiElementHandle | undefined };
-        presentation = view;
-        const onAction = (action: UiActionRequest, context: UiActionContext) => run(actionSignal => {
-          const task = view.queue.then(async () => {
-            ensure(active); ensure(actionSignal);
-            if (view.closed || presentation !== view || action.elementId !== view.document.id || action.revision !== view.document.revision
-              || action.itemId !== undefined || action.outcome !== (action.actionId === 'close' ? 'cancel' : 'submit') || !action.values || typeof action.values !== 'object'
-              || Array.isArray(action.values) || Object.keys(action.values).length
-              || !view.document.actions.some(candidate => candidate.id === action.actionId)) throw new Error('Report action is unavailable.');
-            if (action.actionId === 'close') { view.closed = true; await view.handle!.close(); return; }
-            const nextPage = page + (action.actionId === 'previous' ? -1 : 1);
-            const next = document(nextPage);
-            try { await view.handle!.update(next); }
-            catch (error) { view.closed = true; throw error; }
-            page = nextPage;
-            view.document = next;
-            ensure(active); ensure(actionSignal);
-          });
-          view.queue = task.catch(() => {});
-          return task;
-        }, context.signal);
-        view.handle = await ui.present(view.document, { signal: active, onAction });
+        const rangeOptions = insightsRangeOptions(report.initialRange);
+        let view: InsightsView = { range: report.initialRange, query: '', page: 0 };
+        const dashboardDocument = (): UiDocument => {
+          const dashboard = buildInsightsDashboard(report, view);
+          const data = encodeInsightsDashboard(dashboard);
+          return {
+            id: 'insights-report', kind: 'document', revision: ++revision,
+            title: `Session insights (${dashboard.range.label})`,
+            fallback: `Session insights, ${dashboard.range.label}`,
+            markdown: generateDashboardMarkdown(dashboard),
+            ...(data === undefined ? {} : { data, hint: INSIGHTS_DOCUMENT_HINT }),
+            actions: dashboardActions(dashboard, rangeOptions),
+          };
+        };
+        const shown = {
+          document: dashboardDocument(), closed: false, queue: Promise.resolve(), lifetime: new AbortController(),
+          handle: undefined as UiElementHandle | undefined,
+        };
+        presentation = shown;
+        const enqueue = <T>(work: () => Promise<T>): Promise<T> => {
+          const result = shown.queue.then(work);
+          shown.queue = result.then(() => undefined, () => undefined);
+          return result;
+        };
+        const refresh = async () => {
+          const next = dashboardDocument();
+          try { await shown.handle!.update(next); }
+          catch (error) { shown.closed = true; throw error; }
+          shown.document = next;
+        };
+        const confirmOpen = () => {
+          const outcome = (async () => {
+            const result = await openReportOnHost({ ui, runtime, path: report.path, signal: AbortSignal.any([scope, shown.lifetime.signal]) });
+            await enqueue(async () => {
+              if (shown.closed || presentation !== shown) return;
+              view = { ...view, notice: notice(result, report.path) };
+              await refresh();
+            });
+          })();
+          void track(outcome.catch(() => {}));
+        };
+        const onAction = (action: UiActionRequest, context: UiActionContext) => run(actionSignal => enqueue(async () => {
+          ensure(active); ensure(actionSignal);
+          const declared = shown.document.actions.find(candidate => candidate.id === action.actionId);
+          if (shown.closed || presentation !== shown || action.elementId !== shown.document.id || action.revision !== shown.document.revision
+            || action.itemId !== undefined || !declared || action.outcome !== declared.outcome
+            || !action.values || typeof action.values !== 'object' || Array.isArray(action.values)) throw new Error('Insights action is unavailable.');
+          if (action.actionId === INSIGHTS_ACTIONS.close) {
+            shown.closed = true;
+            shown.lifetime.abort();
+            await shown.handle!.close();
+            return;
+          }
+          const values = action.values as Record<string, unknown>;
+          const expected = action.actionId === INSIGHTS_ACTIONS.range ? [INSIGHTS_RANGE_FIELD]
+            : action.actionId === INSIGHTS_ACTIONS.search ? [INSIGHTS_QUERY_FIELD] : [];
+          if (Object.keys(values).length !== expected.length || expected.some(key => !Object.hasOwn(values, key))) throw new Error('Insights action is unavailable.');
+          const base = { range: view.range, query: view.query, page: view.page };
+          if (action.actionId === INSIGHTS_ACTIONS.range) {
+            const range = values[INSIGHTS_RANGE_FIELD];
+            if (typeof range !== 'string' || !rangeOptions.includes(range)) throw new Error('Insights action is unavailable.');
+            view = { ...base, range, page: 0 };
+          } else if (action.actionId === INSIGHTS_ACTIONS.search) {
+            const query = values[INSIGHTS_QUERY_FIELD];
+            if (typeof query !== 'string' || new TextEncoder().encode(query).byteLength > INSIGHTS_QUERY_BYTES) throw new Error('Insights action is unavailable.');
+            view = { ...base, query, page: 0 };
+          } else if (action.actionId === INSIGHTS_ACTIONS.previous) {
+            view = { ...base, page: base.page - 1 };
+          } else if (action.actionId === INSIGHTS_ACTIONS.next) {
+            view = { ...base, page: base.page + 1 };
+          } else {
+            view = { ...base, notice: { level: 'info', text: 'Confirm on this host to open the HTML report.' } };
+          }
+          await refresh();
+          if (action.actionId === INSIGHTS_ACTIONS.openBrowser) confirmOpen();
+        }), context.signal);
+        shown.handle = await ui.present(shown.document, { signal: active, onAction });
       });
       presentationQueue = opening.catch(() => {});
       return opening;
@@ -172,7 +265,7 @@ export function createSessionsInsights(sessions: SessionsHistory, ui: ExtensionU
       cleanup ??= (async () => {
         while (pending.size) await Promise.allSettled([...pending]);
         await presentationQueue;
-        if (presentation) { presentation.closed = true; await presentation.handle?.close(); }
+        if (presentation) { presentation.closed = true; presentation.lifetime.abort(); await presentation.handle?.close(); }
       })();
       return cleanup;
     },
@@ -187,19 +280,22 @@ function nextCursor(value: string | undefined, seen: Set<string>): string | unde
   return value;
 }
 
-function markdownPages(text: string): string[] {
-  if (new TextEncoder().encode(text).byteLength > SESSION_HISTORY_LIMITS.fileBytes) throw new Error('Report exceeds the supported size.');
-  const pages: string[] = [];
-  let page = '';
-  let bytes = 0;
-  for (const char of text) {
-    const escaped = char === '&' ? '&amp;' : char === '<' ? '&lt;' : char === '>' ? '&gt;'
-      : /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u.test(char) ? `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
-        : /[\\`*_{}\[\]()#+.!|~\-]/u.test(char) ? `\\${char}` : char;
-    const size = new TextEncoder().encode(escaped).byteLength;
-    if (bytes + size > 24_000) { pages.push(page); page = ''; bytes = 0; }
-    page += escaped; bytes += size;
-  }
-  if (page || !pages.length) pages.push(page || '(empty report)');
-  return pages;
+
+function dashboardActions(dashboard: InsightsDashboard, rangeOptions: readonly string[]): UiAction[] {
+  const { page, pageCount, query } = dashboard.sessions;
+  return [
+    { id: INSIGHTS_ACTIONS.range, label: 'Range', target: 'element', outcome: 'submit', input: {
+      fields: [{ id: INSIGHTS_RANGE_FIELD, kind: 'enum', label: 'Range', required: true, options: rangeOptions.map(id => ({ id, label: insightsRangeLabel(id) })) }],
+      defaults: { [INSIGHTS_RANGE_FIELD]: dashboard.range.id },
+    } },
+    { id: INSIGHTS_ACTIONS.search, label: 'Search sessions', target: 'element', outcome: 'submit', input: {
+      fields: [{ id: INSIGHTS_QUERY_FIELD, kind: 'string', label: 'Search', required: false, maxLength: INSIGHTS_QUERY_BYTES, placeholder: 'Project, model or start date' }],
+      defaults: { [INSIGHTS_QUERY_FIELD]: query },
+    } },
+    ...(page > 0 ? [{ id: INSIGHTS_ACTIONS.previous, label: 'Previous sessions', target: 'element' as const, outcome: 'submit' as const }] : []),
+    ...(page + 1 < pageCount ? [{ id: INSIGHTS_ACTIONS.next, label: 'Next sessions', target: 'element' as const, outcome: 'submit' as const }] : []),
+    { id: INSIGHTS_ACTIONS.openBrowser, label: 'Open in browser', target: 'element', outcome: 'submit' },
+    { id: INSIGHTS_ACTIONS.close, label: 'Close', target: 'element', outcome: 'cancel' },
+  ];
 }
+

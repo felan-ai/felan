@@ -1,3 +1,4 @@
+import { INSIGHTS_MAX_RANGE_DAYS } from "./data.js";
 const SUPPORTED_FLAGS = [
   { value: "--no-open", label: "--no-open", description: "Generate the report without opening it" },
   { value: "--since", label: "--since <N>d", description: "Analyze sessions from the last N days" },
@@ -86,7 +87,7 @@ function parseSinceDays(value: string): number | undefined {
   const match = /^(\d+)d$/.exec(value);
   if (!match) return undefined;
   const days = Number(match[1]);
-  return Number.isSafeInteger(days) && days > 0 ? days : undefined;
+  return Number.isSafeInteger(days) && days > 0 && days <= INSIGHTS_MAX_RANGE_DAYS ? days : undefined;
 }
 
 function supportedUsage(): string {

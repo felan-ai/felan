@@ -117,7 +117,7 @@ tool, not a daemon connector.
 | `ext-markitdown` | `/markitdown`; conversion hooks/event | E: converter detection/process/cache and PDF bridge; I: explicit local install; P: status/diagnostics. No new converter. |
 | `ext-context` | `/progressive-context`; file-read hooks | E: scoped instruction discovery; P: status/notification. Preserve source paths after conversion. |
 | `ext-context-view` | `/context` | E: context measurements; P: custom context view. No execution in presenter. |
-| `ext-insights` | `/insights` (bound and unbound registration paths) | E: session analysis/cache/report write; P: explicit report-open result. Read-only transcript access belongs to daemon. |
+| `ext-insights` | `/insights` (bound and unbound registration paths) | E: session analysis/cache/report write; P: dashboard presentation and host-confirmed report open. Read-only transcript access belongs to daemon. |
 | `ext-memory` | No public tool/command itself; host `/memory` | E: coordinator/checkpoints/projection/standard memory sessions; P: status/history/control. Lifetime independent of attached clients. |
 | `ext-powerline` | Footer hook | P: footer/theme; E: local usage/subscription/savings data collection only. No terminal polling in daemon. |
 | `ext-output-style` | Prompt/instruction hooks | E: configured style; settings P. Preserve local file boundaries. |

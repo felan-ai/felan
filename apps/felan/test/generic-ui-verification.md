@@ -36,7 +36,7 @@ The following producer families use the same client vocabulary. The client must 
 | `packages/ext-background-bash/src/common-ui.ts` | Process list and output paging, exact stdin, stop/kill, close, and no success before the execution service settles. |
 | `packages/ext-prompt-history/src/common-ui.ts` | Query/scope, detail and complete prompt paging, cancel-search/close; no automatic prompt submission. |
 | `packages/ext-context-view/src/ui.ts` | Complete report and canonical close action, including shutdown cancellation. |
-| `packages/ext-insights/src/sessions.ts` | Complete report paging through declared actions. |
+| `packages/ext-insights/src/sessions.ts` | Dashboard range, search, session paging and host-confirmed browser open through declared actions. |
 | `packages/ext-powerline/src/generic.ts` | Generic view/status data in all modes; only the optional client footer uses `felan.powerline@2.0.0`. |
 
 Fusion, memory and browser setup publish generic forms, documents and views.

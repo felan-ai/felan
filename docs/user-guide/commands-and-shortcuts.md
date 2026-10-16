@@ -63,7 +63,7 @@ backoff until the daemon is back. Automatic retries never start a daemon;
 | `/markitdown install` | Explicitly install the managed converter |
 | `/progressive-context` | Show progressively loaded nested instructions |
 | `/context` | Show estimated current context-window usage inline (or in the configured overlay) |
-| `/insights` | Generate a local Felan Code session analytics snapshot with date/session filters, charts, calendar, and optional Savings breakdowns |
+| `/insights` | Open a local Felan Code session analytics dashboard (Overview, Models, Projects, Sessions, Rage). `o` opens the static HTML snapshot after local confirmation |
 | `/rtk` | Open interactive RTK settings |
 | `/rtk show` | Show RTK configuration and runtime status |
 | `/rtk verify` | Recheck the active runtime for RTK |
@@ -77,7 +77,7 @@ reparses new or changed files, and replaces the self-contained static HTML
 report. Opening that file later does not read live data; run `/insights` again
 to regenerate it. `--refresh` only forces unchanged files to be reparsed. Date
 ranges use event timestamps, including the start and excluding the end, and
-group retained subagent activity under its root session.
+group retained subagent activity under its root session. The dashboard's initial range is 30 days unless `--since` is given; its range keys recompute from the loaded transcripts. `--no-open` skips the dashboard, and the HTML report is still written.
 
 ## Common Pi commands
 
