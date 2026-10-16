@@ -1,51 +1,48 @@
-import { createHash } from 'node:crypto';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
+import { controlDatabasePath, execControlDatabase, readControlDatabase, writeControlDatabase, type PersistedControlState } from './fixtures/control-database.js';
 import { fixture, fixtures, requestId } from './fixtures/registry.js';
 
 afterEach(async () => { for (const dispose of fixtures.splice(0)) await dispose(); });
 
-it('persists one version-1 document and reopens it without rewriting or backing it up', async () => {
+it('persists one control database and reopens it without rewriting or backing it up', async () => {
   const f = await fixture();
   const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
   await f.registry.shutdown();
-  const state = f.store.snapshot(); const path = join(f.store.directory, 'control.json');
-  const original = await readFile(path, 'utf8');
-  expect(JSON.parse(original).data).toEqual(state);
+  const state = f.store.snapshot(); const path = controlDatabasePath(f.store.directory);
+  expect(readControlDatabase(f.store.directory)).toEqual(state);
   expect(state.version).toBe(1);
   expect(state).not.toHaveProperty('legacy');
   f.store.close();
+  const original = await readFile(path);
   const store = new DaemonControlStore(f.owner, { fault: () => { throw new Error('Unexpected write on reopen'); } });
   try {
     expect(store.snapshot()).toEqual(state);
     expect(store.needsRecovery).toBe(true);
     expect(store.session(binding.sessionId).id).toBe(binding.sessionId);
-    expect(await readFile(path, 'utf8')).toBe(original);
-    expect((await readdir(store.directory)).sort()).toEqual(['control.json', 'format.json']);
+    expect(await readFile(path)).toEqual(original);
+    expect((await readdir(store.directory)).filter(name => !name.startsWith('control.sqlite'))).toEqual([]);
   } finally { store.close(); }
 });
 
-async function expectQuarantined(f: Awaited<ReturnType<typeof fixture>>, original: string): Promise<void> {
+async function expectQuarantined(f: Awaited<ReturnType<typeof fixture>>, original: PersistedControlState): Promise<void> {
   const store = new DaemonControlStore(f.owner);
   try {
     expect(store.snapshot().sessions).toEqual([]);
     expect(store.needsRecovery).toBe(false);
     const quarantined = (await readdir(store.directory)).filter(name => name.startsWith('control-corrupt-'));
     expect(quarantined).toHaveLength(1);
-    expect(await readFile(join(store.directory, quarantined[0]!), 'utf8')).toBe(original);
+    expect(readControlDatabase(store.directory, join(store.directory, quarantined[0]!))).toEqual(original);
   } finally { store.close(); }
 }
 
-it('quarantines unknown versions and starts with an empty state', async () => {
-  const f = await fixture(); await f.registry.shutdown();
-  const path = join(f.store.directory, 'control.json'); f.store.close();
-  const envelope = JSON.parse(await readFile(path, 'utf8'));
-  envelope.data = { version: 999 };
-  envelope.digest = createHash('sha256').update(JSON.stringify(envelope.data)).digest('hex');
-  const original = JSON.stringify(envelope); await writeFile(path, original, { mode: 0o600 });
-  await expectQuarantined(f, original);
+it('quarantines unknown formats and starts with an empty state', async () => {
+  const f = await fixture(); await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } }); await f.registry.shutdown();
+  f.store.close();
+  execControlDatabase(f.store.directory, "UPDATE meta SET value = '999' WHERE key = 'format'");
+  await expectQuarantined(f, readControlDatabase(f.store.directory));
 });
 
 it('persists session configuration while a run is active without a forced reload', async () => {
@@ -71,11 +68,8 @@ it('resumes an evicted session with the current configuration after a compositio
 });
 
 it('quarantines state with unknown fields instead of dropping them', async () => {
-  const f = await fixture(); await f.registry.shutdown();
-  const state = { ...f.store.snapshot(), unknownData: { retain: true } };
-  const path = join(f.store.directory, 'control.json'); f.store.close();
-  const envelope = JSON.parse(await readFile(path, 'utf8'));
-  envelope.data = state; envelope.digest = createHash('sha256').update(JSON.stringify(state)).digest('hex');
-  const original = JSON.stringify(envelope); await writeFile(path, original, { mode: 0o600 });
-  await expectQuarantined(f, original);
+  const f = await fixture(); await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } }); await f.registry.shutdown();
+  const snapshot = f.store.snapshot(); f.store.close();
+  writeControlDatabase(f.store.directory, { ...snapshot, sessions: snapshot.sessions.map(session => ({ ...session, unknownData: { retain: true } })) } as unknown as PersistedControlState);
+  await expectQuarantined(f, readControlDatabase(f.store.directory));
 });

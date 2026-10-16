@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -9,6 +8,7 @@ import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand
 import { ControlStoreError } from '../src/daemon/control-state.js';
 import { DaemonControlStore, type ControlStoreOptions } from '../src/daemon/control-store.js';
 import type { DaemonOwnership } from '../src/daemon/ownership.js';
+import { readControlDatabase } from './fixtures/control-database.js';
 
 const now = 1_800_000_000_000;
 const cleanups: Array<() => Promise<void>> = [];
@@ -52,7 +52,7 @@ async function fixture(options: ControlStoreOptions = {}) {
   const store = open();
   for (const id of ['s', 'other']) store.createSession({ id, root: id, cwd: directory, piPath: join(directory, `${id}.jsonl`),
     state: 'open', residency: 'warm', run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 }, title: '' });
-  return { store, open, lose: () => { lost = true; }, disk: () => JSON.parse(readFileSync(join(store.directory, 'control.json'), 'utf8')).data };
+  return { store, open, lose: () => { lost = true; }, disk: () => readControlDatabase(store.directory) as unknown as { requests: any[]; sessions: any[] } };
 }
 
 describe('ordered durable admission', () => {
@@ -282,14 +282,14 @@ describe('ordered durable admission', () => {
     expect(await admission.submit(prompt('original', 's', request.id), 'owner')).toMatchObject({ outcome: 'accepted' });
   });
 
-  for (const boundary of ['before_rename', 'after_rename'] as const) {
+  for (const boundary of ['before_commit', 'after_commit'] as const) {
     it(`does not publish or dispatch after admission persistence fails ${boundary}`, async () => {
       let fail = false; const f = await fixture({ fault: at => { if (fail && at === boundary) throw new Error('synthetic disk failure'); } });
       const request = prompt(); const handler = vi.fn(); fail = true;
       await expect(new OrderedAdmission(f.store).submit(request, 'owner', handler)).rejects.toMatchObject({ code: 'storage_failure' });
       expect(handler).not.toHaveBeenCalled(); f.store.close(); fail = false;
       const store = f.open(); store.recover();
-      if (boundary === 'after_rename') expect(await new OrderedAdmission(store).submit(request, 'owner', handler)).toMatchObject({ outcome: 'rejected' });
+      if (boundary === 'after_commit') expect(await new OrderedAdmission(store).submit(request, 'owner', handler)).toMatchObject({ outcome: 'rejected' });
       expect(handler).not.toHaveBeenCalled();
     });
 
@@ -301,7 +301,7 @@ describe('ordered durable admission', () => {
       })).rejects.toMatchObject({ code: 'storage_failure' });
       expect(effect).not.toHaveBeenCalled(); f.store.close(); fail = false;
       const store = f.open(); store.recover();
-      expect(await new OrderedAdmission(store).submit(request, 'owner', vi.fn())).toMatchObject({ outcome: boundary === 'after_rename' ? 'indeterminate' : 'rejected' });
+      expect(await new OrderedAdmission(store).submit(request, 'owner', vi.fn())).toMatchObject({ outcome: boundary === 'after_commit' ? 'indeterminate' : 'rejected' });
     });
 
     it(`does not publish success or repeat an effect after outcome persistence fails ${boundary}`, async () => {
@@ -312,7 +312,7 @@ describe('ordered durable admission', () => {
       }))).rejects.toMatchObject({ code: 'storage_failure' });
       f.store.close(); fail = false; const store = f.open(); store.recover();
       const replay = vi.fn();
-      expect(await new OrderedAdmission(store).submit(request, 'owner', replay)).toMatchObject({ outcome: boundary === 'after_rename' ? 'accepted' : 'indeterminate' });
+      expect(await new OrderedAdmission(store).submit(request, 'owner', replay)).toMatchObject({ outcome: boundary === 'after_commit' ? 'accepted' : 'indeterminate' });
       expect(effect).toHaveBeenCalledOnce(); expect(replay).not.toHaveBeenCalled();
     });
   }
@@ -331,7 +331,7 @@ describe('adoption and deletion admission boundaries', () => {
 
   it('atomically clears projections on deletion, keeps the tombstone for retries and prunes it with request history', async () => {
     let clock = now; const f = await fixture({ now: () => clock });
-    f.store.project('s', [{ type: 'status', id: 'history', text: 'retained audit' }]);
+    f.store.project('s', [{ type: 'message', id: 'history', entryId: 'entry', state: 'observed' }]);
     const revision = f.store.session('s').revision;
     const request: ClientEnvelope = { v: 1, id: requestId(), op: 'session.delete', session: 's', params: {} };
     f.store.admit(request, 'owner');
@@ -340,7 +340,7 @@ describe('adoption and deletion admission boundaries', () => {
     expect(commit.revisions).toEqual({ s: revision + 1 });
     expect(commit.value.projections).toEqual([]);
     expect(f.disk().requests.find((row: { id: string }) => row.id === request.id)).toMatchObject({ phase: 'dispatch_intent' });
-    expect(f.disk().sessions.find((row: { id: string }) => row.id === 's')).toMatchObject({ deletedAt: now });
+    expect(f.disk().sessions.find((row: { id: string }) => row.id === 's')).toMatchObject({ deletedAt: now, projections: [] });
     f.store.finishRequest(request.id, empty(request.id));
     expect(() => f.store.updateSession('s', { state: 'open' })).toThrowError(/deleted/);
     expect(() => f.store.transitionSessionForSafety('s', 'idle')).toThrowError(/deleted/);

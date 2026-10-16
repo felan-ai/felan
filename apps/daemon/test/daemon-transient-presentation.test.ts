@@ -4,9 +4,9 @@ import { fixture, fixtures, supported } from './fixtures/registry.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 
-it.skipIf(!supported)('publishes transient frames and removal in revision order with one crash-safe revision reservation', async () => {
+it.skipIf(!supported)('publishes live-only frames, removal and execution changes in revision order with one crash-safe revision reservation', async () => {
   let writes = 0;
-  const f = await fixture({ fault: boundary => { if (boundary === 'before_write') writes++; } });
+  const f = await fixture({ fault: boundary => { if (boundary === 'before_commit') writes++; } });
   const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
   const projection = f.registry.projection(binding.sessionId);
   const initial = projection.snapshot();
@@ -20,11 +20,12 @@ it.skipIf(!supported)('publishes transient frames and removal in revision order 
     expect(projection.snapshot().presentation).toContainEqual(expect.objectContaining({ id: 'live', revision: 40 }));
     projection.setPresentation({ id: 'live', remove: true });
     expect(projection.snapshot().presentation).not.toContainEqual(expect.objectContaining({ id: 'live' }));
+    projection.setExecutionsGeneration('live-only generation');
     expect(writes).toBe(before + 1);
-    expect(revisions).toEqual(Array.from({ length: 41 }, (_, index) => initial.revision + index + 1));
+    expect(revisions).toEqual(Array.from({ length: 42 }, (_, index) => initial.revision + index + 1));
     projection.publish({ type: 'metadata.updated', title: 'Next durable change', state: 'open', residency: 'resident' }, { title: 'Next durable change' });
     expect(writes).toBe(before + 2);
-    expect(f.store.session(binding.sessionId).revision).toBe(initial.revision + 42);
+    expect(f.store.session(binding.sessionId).revision).toBe(initial.revision + 43);
     const reopened = new DaemonControlStore(f.owner);
     try {
       expect(reopened.session(binding.sessionId).revision).toBeGreaterThan(revisions.at(-1)!);
@@ -36,7 +37,7 @@ it.skipIf(!supported)('publishes transient frames and removal in revision order 
 
 it.skipIf(!supported)('reserves the next revision block only after exhausting the current block', async () => {
   let writes = 0;
-  const f = await fixture({ fault: boundary => { if (boundary === 'before_write') writes++; } });
+  const f = await fixture({ fault: boundary => { if (boundary === 'before_commit') writes++; } });
   const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
   const initial = f.store.session(binding.sessionId).revision;
   const before = writes;

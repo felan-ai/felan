@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { requestRetainUntil } from '@felan-ai/session-protocol';
@@ -7,6 +6,7 @@ import { ControlStateValidationError, parseControlState, type ControlState } fro
 
 import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { fixture as storeFixture, fixtures } from './fixtures/registry.js';
+import { readControlDatabase, writeControlDatabase, type PersistedControlState } from './fixtures/control-database.js';
 
 afterEach(async () => { for (const dispose of fixtures.splice(0)) await dispose(); });
 
@@ -66,22 +66,19 @@ function fixture(): ControlState {
   return state;
 }
 
-async function reopenStore(input: ControlState): Promise<{ store: DaemonControlStore; original: string; directory: string }> {
+async function reopenStore(input: ControlState): Promise<{ store: DaemonControlStore; original: PersistedControlState; directory: string }> {
   const f = await storeFixture();
   await f.registry.shutdown();
-  const path = join(f.store.directory, 'control.json');
-  const envelope = JSON.parse(await readFile(path, 'utf8'));
+  const directory = f.store.directory;
   f.store.close();
   const state = structuredClone(input);
   state.namespace = f.owner.target.namespaceId;
   state.agentDir = f.owner.target.agentDir;
   for (const session of state.sessions) session.piPath = join(state.agentDir, `${session.id}.jsonl`);
   for (const resource of state.resources) if (resource.reference) resource.reference = join(state.agentDir, resource.id);
-  envelope.data = state;
-  envelope.digest = createHash('sha256').update(JSON.stringify(state)).digest('hex');
-  const original = JSON.stringify(envelope);
-  await writeFile(path, original, { mode: 0o600 });
-  return { store: new DaemonControlStore(f.owner), original, directory: f.store.directory };
+  writeControlDatabase(directory, state as unknown as PersistedControlState);
+  const original = readControlDatabase(directory);
+  return { store: new DaemonControlStore(f.owner), original, directory };
 }
 
 async function expectQuarantinedStore(input: ControlState): Promise<void> {
@@ -91,7 +88,7 @@ async function expectQuarantinedStore(input: ControlState): Promise<void> {
   store.close();
   const quarantined = (await readdir(directory)).filter(name => name.startsWith('control-corrupt-'));
   expect(quarantined).toHaveLength(1);
-  expect(await readFile(join(directory, quarantined[0]!), 'utf8')).toBe(original);
+  expect(readControlDatabase(directory, join(directory, quarantined[0]!))).toEqual(original);
 }
 
 async function expectRepairedStore(input: ControlState): Promise<ControlState> {
@@ -162,7 +159,7 @@ describe('control-state validation', () => {
   it('rejects unknown state fields', async () => {
     const base = parseControlState(fixture());
     expect(() => parseControlState({ ...base, fabricatedOptions: {} })).toThrow(ControlStateValidationError);
-    await expectQuarantinedStore({ ...base, fabricatedOptions: {} } as ControlState);
+    await expectQuarantinedStore({ ...base, sessions: [{ ...base.sessions[0]!, fabricatedOptions: {} }, ...base.sessions.slice(1)] } as ControlState);
   });
 
   it('rejects lossy or executable non-JSON values without leaking diagnostics', () => {

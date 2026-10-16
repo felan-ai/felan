@@ -73,10 +73,7 @@ export class SessionProjection {
     if (saved.projections.some(row => row.value.type === 'queue' && row.value.ids.length > 0) && this.session.pendingMessageCount === 0) {
       this.presentation.set('interrupted-queue', { id: 'interrupted-queue', kind: 'notification', level: 'warning', text: 'Pending queued turns were interrupted. Submit them again explicitly; no queued command was replayed.' });
     }
-    for (const row of saved.projections) {
-      if (row.value.type === 'message') this.messageIds.set(row.value.entryId, row.value.id);
-      if (row.value.type === 'tool') this.tools.set(row.value.tool.id, row.value.tool);
-    }
+    for (const row of saved.projections) if (row.value.type === 'message') this.messageIds.set(row.value.entryId, row.value.id);
     // Absence is proved against all entries, not the current branch or a history page.
     const entries = this.session.sessionManager.getEntries();
     const allIds = new Set(entries.map(entry => entry.id));
@@ -121,16 +118,10 @@ export class SessionProjection {
     this.transitionForSafety('idle', expectedRunId);
   }
 
+  /** Only a patch is durable; live views (tools, presentations, catalog, executions) take transient revisions. */
   publish(change: KnownSessionChange, patch?: Parameters<DaemonControlStore['updateSession']>[1]): void {
-    if (change.type === 'presentation.updated' || change.type === 'presentation.removed') {
-      const rev = this.options.store.advanceTransientRevision(this.id);
-      this.options.publish({ v: 1, session: this.id, rev, change });
-      return;
-    }
-    const commit = patch
-      ? this.options.store.updateSession(this.id, patch)
-      : this.options.store.project(this.id, [{ type: 'status', id: `projection:${change.type}`, text: digest(change) }]);
-    this.options.publish({ v: 1, session: this.id, rev: commit.value.revision, change });
+    const rev = patch ? this.options.store.updateSession(this.id, patch).value.revision : this.options.store.advanceTransientRevision(this.id);
+    this.options.publish({ v: 1, session: this.id, rev, change });
   }
 
   setExecutionsGeneration(generation: string): void {
@@ -182,11 +173,7 @@ export class SessionProjection {
       if (this.activeDisplay?.message === message.id) { this.activeDisplay = undefined; this.displayDirty = true; }
     }
     this.flushDisplay();
-    for (const id of this.dirtyTools) {
-      const tool = this.tools.get(id)!;
-      const commit = this.options.store.project(this.id, [{ type: 'tool', tool }]);
-      this.options.publish({ v: 1, session: this.id, rev: commit.value.revision, change: { type: 'tool.updated', tool } });
-    }
+    for (const id of this.dirtyTools) this.publish({ type: 'tool.updated', tool: this.tools.get(id)! });
     this.dirtyTools.clear();
     for (const [id, tool] of this.tools) if (this.tools.size > LIMITS.pageEntries && tool.state !== 'running') this.tools.delete(id);
     this.refreshQueue();
