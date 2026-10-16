@@ -8,30 +8,42 @@ added. Windows remains unsupported by the ownership prerequisite.
 ## Files and durability
 
 `DaemonControlStore` takes an acquired `DaemonOwnership`. Its default directory is
-`<agentDir>/daemon-control-v1`, inside the canonical startup root set. Every path
+`<agentDir>/daemon-control-v2`, inside the canonical startup root set. Every path
 uses the return value of `assertOwnsPath`; every commit synchronously rechecks
 ownership and retained directory/file identities, including after fault hooks.
 The store never acquires/releases ownership for its caller. Close the store and
 settle **all** session/descendant writers before releasing the owner, including
 after fencing or a failed disk write.
 
-The primitive is an owner-private, checksummed, versioned JSON snapshot. A commit
-writes a unique 0600 no-follow temporary file, fsyncs it, atomically renames it,
-then fsyncs the containing directory. Returned revisions/outcomes may be
-published only after that sequence returns. Before first use, a separate private
+The store is an owner-private SQLite database, `control.sqlite`, opened with
+Node's built-in `node:sqlite` in WAL mode with `synchronous=FULL` and `fullfsync`
+([ADR 0039](../decisions/0039-store-daemon-control-state-in-sqlite.md)). Each session,
+request, interaction, continuation, resource and session projection is one row
+(`id`, `ord`, JSON `data`); `meta` holds the format, store ID, namespace, agent
+directory and clock. The in-memory state is the read model. Committed rows are
+frozen and shared with each commit's draft; a commit replaces the rows it changes,
+validates those rows, rechecks cross-row references for all rows, and writes only
+changed rows in one transaction; a commit that changes no row writes nothing.
+`ord` preserves each table's in-memory order.
+Returned revisions/outcomes may be published only after the transaction commits.
+Before first use, a separate private
 `<agentDir>/.control-initialized-<SHA-256-of-control-directory>.json` records the
 store identity. It is outside the control directory, is synced before control
 initialization and must be included in backups.
 
 Recovery distinguishes the file from its rows:
 
-- A missing snapshot starts an empty store without quarantine.
+- A missing database starts an empty store without quarantine.
 - Other read errors (for example `EACCES`) fail startup with a retryable
   `storage_failure` and leave the file in place.
-- Only a file that fails parsing, integrity (digest, sequence, store ID),
-  schema, or namespace/agent-directory checks, or that was replaced by a
-  symlink, is quarantined as `control-corrupt-<time>.json`; an empty store then
-  starts, and transcripts remain listable and are re-adopted on attach.
+- Only a database that is corrupt, is not a database, lacks the control tables or
+  has different columns, has another format or store ID, holds rows without its
+  state metadata, fails schema or namespace/agent-directory checks, or whose file
+  or WAL sidecar was replaced by a symlink is quarantined as
+  `control-corrupt-<time>-<id>.sqlite` (with its sidecars); an empty store then
+  starts, and transcripts remain listable and are re-adopted on attach. A WAL
+  left without its database is quarantined before a new database is created, so
+  it is never replayed into it.
 - In an otherwise valid file, inconsistent rows are dropped individually with
   the rows that depend on them (descendant sessions, requests, interactions,
   continuations and resources). A row whose transcript path no longer has the
@@ -44,27 +56,28 @@ Deleting a session tombstones it and every registered descendant and removes
 all of their transcripts.
 The control directory cannot contain the agent directory/initialization record.
 Initialization syncs created directory entries through their owned parent chain.
-Incomplete temporary snapshots are never recovery candidates. An I/O error
-permanently poisons that handle, even when the rename
-may have succeeded. Stop admission, settle writers and reopen/reconcile; never
+An uncommitted transaction is never visible after a crash. An I/O error, or a
+fault after the commit, permanently poisons that handle, even when the commit may
+have succeeded. Stop admission, settle writers and reopen/reconcile; never
 infer failure means the operation is safe to repeat.
 
-This deliberately uses built-in filesystem/crypto facilities, not another native
-database dependency. The bounded snapshot makes the atomicity boundary explicit.
-Whole-file synchronous commits trade throughput for a small, auditable primitive;
-coalesce high-volume tool/status changes before committing. This is not a general
-transcript database, platform outbox, event archive or persistence framework.
+`node:sqlite` is built into the supported Node lines, so the store adds no
+dependency; it is loaded only when the store opens, and its one-time
+`ExperimentalWarning` is suppressed. Live views (tool output, status, catalog,
+executions, presentations) are never committed; they take transient revisions.
+This is not a general transcript database, platform outbox, event archive or
+persistence framework.
 
 ## Bounds and identities
 
-The snapshot has no byte or session-count cap. Admission bounds only in-flight
+The store has no byte or session-count cap. Admission bounds only in-flight
 work (pending requests and their bytes), keeping a small reserve so cancellation,
 interaction resolution, close and drain can still be admitted under load.
 
 A protocol-valid request up to the protocol frame limit is canonicalized by the
 protocol parser, then stored as SHA-256 plus canonical encoded length. Prompt,
 image, shell/config payloads and arbitrary extra fields are not copied into the
-control snapshot. The record includes the normalized ID, stable owner principal,
+control store. The record includes the normalized ID, stable owner principal,
 operation, session, admission time, retention deadline, phase and sanitized
 terminal response. Pass a **stable retry principal**, not an ephemeral attachment
 ID. A reconnecting authorized attachment must map to that same principal.
@@ -72,19 +85,19 @@ Identical retries return the record; changed payload/principal conflicts.
 Request IDs are not rejected for age or clock skew. Terminal records are pruned
 seven days after the later of admission time and the ID's UUIDv7 timestamp.
 
-Coalesced projections are capped at 256/session. Session revision high-water
-and nonterminal records are not age-evicted.
+Durable projections (message identity references and the pending queue) are
+capped at 256/session. Session revision high-water and nonterminal records are
+not age-evicted.
 Resolved interaction/completed-continuation/exited-resource and request records
 have a minimum seven-day retention window; `compact` removes expired records and
 old terminal projections. Call it periodically from lifecycle management.
 Indeterminate continuations retain their winning answers indefinitely; unresolved
 resource identities are not age-evicted.
-Message references/tool/status projections
+Message references
 may be compacted without invalidating Pi content or retry protection. No full
-completed message, tree, raw process environment, provider credential, control
-token or command payload is stored here. Tool/status text and serializable user
-answers must already be appropriate for durable local presentation: callers
-must not pass credentials as presentation text. OAuth URL/credential interactions
+completed message, tool output, tree, raw process environment, provider
+credential, control token or command payload is stored here. Serializable user
+answers must already be appropriate for durable local presentation. OAuth URL/credential interactions
 are explicitly rejected from this store; their presentation stays transient,
 with interruption recorded on their owning operation.
 
@@ -106,10 +119,12 @@ with interruption recorded on their owning operation.
    effectful responses require dispatch intent. Pending requests are never
    transparently retried. Publication/network delivery is outside this store.
 5. `createSession`/`updateSession` persist lifecycle, model, branch and monotonic
-   policy. `project` coalesces by stable message/tool/status/queue ID and assigns
-   one session revision per batch. Commit text streams nowhere here. Registry
-   projection builds snapshots from these records plus the authoritative Pi
-   manager and in-memory text prefixes; revisions are not an event replay log.
+   policy. `project` coalesces message identity references and the queue record
+   and assigns one session revision per batch. Tool cards, status changes and text
+   streams are never committed; `advanceTransientRevision` numbers them and
+   reserves revisions in blocks of 4096 so they stay monotonic across restarts.
+   Registry projection builds snapshots from these records plus the authoritative
+   Pi manager and in-memory views; revisions are not an event replay log.
 6. `putResource` records root/session-scoped child/process identity, optional
    runner record path, PID and birth identity. It is not authority to signal a
    PID. S1.06 must verify the existing runner/process identity and reconcile,
@@ -151,7 +166,7 @@ as transient capacity pressure. Pi remains the durable content authority.
 Recovery changes intent-only requests into explicit undispatched rejections and
 `dispatch_intent` into `indeterminate`; it never invokes an effect. Already
 committed accepted outcomes stay accepted even if the run was subsequently
-interrupted. Warm sessions become evicted, running turns/tools become interrupted,
+interrupted. Warm sessions become evicted, running turns become interrupted,
 PTY/foreground references become missing and child references interrupted.
 Detached references become `reconciling` with their old runner identity intact;
 S1.06 must verify reality before enabling writes or claiming termination.
@@ -220,10 +235,20 @@ import copies history into a new daemon session without changing the source
 Older binaries must not write daemon-owned control data; use separate roots and
 verified backups when downgrading.
 
+The first start with an empty default store imports a verified version 1 snapshot
+(`daemon-control-v1/control.json` with its initialization record and format
+marker), dropping its tool and status projections, then writes
+`migrated-to-v2.json` into that directory so it is never imported again. Every
+later start rewrites a missing marker. The v1
+files are otherwise left untouched; a downgraded daemon resumes from them as they
+were at migration ([ADR 0039](../decisions/0039-store-daemon-control-state-in-sqlite.md) lists what that loses). An unverifiable v1 snapshot is not imported; an unreadable one
+fails startup retryably.
+
 ## Verification scope
 
-Deterministic disposable-root tests cover each atomic write boundary, corrupt/
-missing/versioned snapshots, count/byte reserves, retry conflicts/expiry/clock
+Deterministic disposable-root tests cover both commit boundaries, corrupt/
+missing/foreign/versioned databases, changed-row-only writes with order-preserving
+reload, version 1 import, count/byte reserves, retry conflicts/expiry/clock
 rollback, coalesced revisions, policy monotonicity, interaction winners, committed
 answers and continuation ambiguity, and explicit import boundaries. Spawned offline
 fixtures SIGKILL themselves at real intent/dispatch/effect/outcome, answer/

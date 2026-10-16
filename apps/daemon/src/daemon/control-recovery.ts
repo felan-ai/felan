@@ -33,11 +33,6 @@ export function recoverControlState(state: ControlState, now: number): RecoveryP
       if (session.run.state !== 'idle') session.run.state = 'interrupted';
       plan.changedSessions.add(session.id);
     }
-    for (const projection of session.projections) {
-      if (projection.value.type === 'tool' && projection.value.tool.state === 'running') {
-        projection.value.tool.state = 'interrupted'; projection.updatedAt = now; plan.changedSessions.add(session.id);
-      }
-    }
   }
   for (const resource of state.resources) {
     if (resource.state !== 'running' && resource.state !== 'reconciling') continue;

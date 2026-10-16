@@ -4,6 +4,7 @@ import { ControlStoreError } from '../src/daemon/control-state.js';
 import { projectPiMessage } from '../src/daemon/projection.js';
 import type { SessionEntry } from '@felan-ai/agent-core';
 import { assistant, deferred, fixture, fixtures, offlineModel, requestId, supported } from './fixtures/registry.js';
+import { readControlDatabase } from './fixtures/control-database.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 
@@ -122,19 +123,23 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     expect(projection.snapshot().presentation.some(item => item.id === 'compaction:progress')).toBe(false);
     expect(events.some(event => event.change.type === 'presentation.removed' && event.change.id === 'compaction:progress')).toBe(true);
   });
-  it('maps actual Pi entries and coalesces tool output before durable publication', async () => {
+  it('maps actual Pi entries and coalesces live-only tool output', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const runtime = f.instances.get(b.sessionId)!;
     const events: SessionEvent[] = [];
     f.registry.subscribe(b.sessionId, event => {
       if ('rev' in event) { expect(f.store.session(b.sessionId).revision).toBe(event.rev); events.push(event); }
     });
+    const project = vi.spyOn(f.store, 'project'); const update = vi.spyOn(f.store, 'updateSession');
     runtime.emit({ type: 'tool_execution_start', toolCallId: 't', toolName: 'read', args: {} });
     for (let n = 0; n < 30; n++) runtime.emit({ type: 'tool_execution_update', toolCallId: 't', toolName: 'read', args: {}, partialResult: { content: [{ type: 'text', text: `out${n}` }], details: {} } });
-    runtime.emit({ type: 'tool_execution_end', toolCallId: 't', toolName: 'read', result: { content: [{ type: 'text', text: 'done' }], details: {} }, isError: false });
+    runtime.emit({ type: 'tool_execution_end', toolCallId: 't', toolName: 'read', result: { content: [{ type: 'text', text: 'tool-only output' }], details: {} }, isError: false });
     f.registry.projection(b.sessionId).refresh();
     expect(events.filter(e => e.change.type === 'tool.updated')).toHaveLength(1);
-    expect(f.registry.projection(b.sessionId).snapshot().tools[0]).toMatchObject({ state: 'completed', output: 'done' });
+    expect(project).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
+    expect(f.registry.projection(b.sessionId).snapshot().tools[0]).toMatchObject({ state: 'completed', output: 'tool-only output' });
+    expect(JSON.stringify(readControlDatabase(f.store.directory))).not.toContain('tool-only output');
+    project.mockRestore(); update.mockRestore();
     await b.runtime.session.prompt('hello'); f.registry.projection(b.sessionId).refresh();
     const snapshot = parseSessionSnapshot(f.registry.projection(b.sessionId).snapshot());
     expect(snapshot.history.entries.map(entry => entry.role)).toEqual(['user', 'assistant']);

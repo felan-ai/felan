@@ -7,11 +7,12 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, unlink, writeFi
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, parseInteraction } from '@felan-ai/session-protocol';
 import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/ownership.js';
 import { DaemonControlStore, type ControlStoreOptions } from '../src/daemon/control-store.js';
-import type { PersistenceBoundary } from '../src/daemon/persistence.js';
+import { ControlDatabase, type ControlChanges, type PersistenceBoundary } from '../src/daemon/persistence.js';
+import { controlDatabasePath, execControlDatabase, readControlDatabase, writeControlDatabase } from './fixtures/control-database.js';
 
 const supported = ['darwin', 'linux'].includes(process.platform);
 const roots: string[] = [];
@@ -32,6 +33,10 @@ async function open(options: ControlStoreOptions = {}) {
 }
 function reopen(owner: DaemonOwnership, options: ControlStoreOptions = {}) { const store = new DaemonControlStore(owner, { now: () => now, ...options }); stores.push(store); return store; }
 const prompt = (id = requestId(), text = 'offline') => ({ v: 1, id, op: 'prompt', session: 's', params: { text } });
+/** Raw database bytes, including any not yet checkpointed WAL frames. */
+async function databaseBytes(directory: string): Promise<string> {
+  return (await Promise.all(['', '-wal'].map(suffix => readFile(`${controlDatabasePath(directory)}${suffix}`, 'latin1').catch(() => '')))).join('');
+}
 afterEach(async () => {
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; }
@@ -56,7 +61,7 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
     expect(reloaded.admit(request, 'owner').value.response).toEqual(response);
     expect(() => reloaded.markDispatched(request.id)).toThrow(/never dispatch/);
     expect(reloaded.session('s').revision).toBeGreaterThan(1);
-    const bytes = await readFile(join(store.directory, 'control.json'), 'utf8');
+    const bytes = await databaseBytes(store.directory);
     expect(bytes).not.toContain('offline'); expect(bytes).not.toContain('secret-extra');
   });
   it('stores large legal attachment identities as a digest, not unbounded copies or launch secrets', async () => {
@@ -64,12 +69,12 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
     const request = { ...prompt(), params: { text: '', attachments: [{ type: 'image', mimeType: 'image/png', data: Buffer.alloc(7 * 1024 * 1024).toString('base64') }] }, env: { SECRET: 'launch-value' } };
     const record = store.admit(request, 'owner').value;
     expect(record.identity.bytes).toBeGreaterThan(9 * 1024 * 1024);
-    expect((await readFile(join(store.directory, 'control.json'))).length).toBeLessThan(4096);
+    expect(JSON.stringify(readControlDatabase(store.directory).requests).length).toBeLessThan(4096);
     expect(JSON.stringify(store.snapshot())).not.toContain('launch-value');
   });
-  it('coalesces bounded tool/status projections, keeps revisions monotonic and advances policy generations', async () => {
+  it('coalesces message and queue projections, keeps revisions monotonic and advances policy generations', async () => {
     const { owner, store } = await open();
-    for (let i = 0; i < 10; i++) store.project('s', [{ type: 'status', id: 'status', text: String(i) }, { type: 'tool', tool: { id: 'tool', name: 'fake', message: 'm', state: 'running', output: String(i), truncated: false } }]);
+    for (let i = 0; i < 10; i++) store.project('s', [{ type: 'message', id: 'message', entryId: 'entry', state: 'observed' }, { type: 'queue', ids: [String(i)], identity: { sha256: '0'.repeat(64), bytes: i } }]);
     expect(store.session('s').projections).toHaveLength(2);
     const revision = store.session('s').revision;
     store.updateSession('s', { policy: { effective: 'acp-strict', generation: 1 } });
@@ -79,7 +84,31 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
     expect(() => reloaded.updateSession('s', { title: 'before recovery' })).toThrow(/Recover/);
     reloaded.recover(); expect(reloaded.session('s').revision).toBeGreaterThan(revision);
     expect(() => reloaded.recover()).toThrow(/only valid/);
-    expect(reloaded.session('s').projections.find(item => item.value.type === 'tool')?.value).toMatchObject({ tool: { state: 'interrupted' } });
+    expect(reloaded.session('s').projections.map(item => item.value)).toEqual([
+      { type: 'message', id: 'message', entryId: 'entry', state: 'observed' }, { type: 'queue', ids: ['9'], identity: { sha256: '0'.repeat(64), bytes: 9 } }]);
+  });
+  it('rejects live-only tool and status views as durable projections', async () => {
+    const { store } = await open(); const before = store.snapshot();
+    expect(() => store.project('s', [{ type: 'tool', tool: { id: 'tool', name: 'fake', message: 'm', state: 'running', output: 'secret output', truncated: false } } as never])).toThrow();
+    expect(() => store.project('s', [{ type: 'status', id: 'status', text: 'status' } as never])).toThrow();
+    expect(store.snapshot()).toEqual(before);
+  });
+  it('writes only changed rows and reloads every table in its in-memory order', async () => {
+    let commits = 0;
+    const { owner, store } = await open({ fault: at => { if (at === 'before_commit') commits++; } });
+    store.createSession({ id: 'other', root: 'other', cwd: '/fixture', piPath: join(owner.target.agentDir, 'other.jsonl'), state: 'open', residency: 'warm', run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 }, title: '' });
+    for (const id of ['first', 'second', 'third']) store.putResource({ id, session: 's', root: 's', kind: 'detached', state: 'running', reference: join(owner.target.agentDir, `${id}.json`), startIdentity: id, updatedAt: now });
+    store.putResource({ id: 'first', session: 's', root: 's', kind: 'detached', state: 'exited', reference: join(owner.target.agentDir, 'first.json'), startIdentity: 'first', updatedAt: now });
+    store.updateSession('s', { title: 'moved nowhere' });
+    const before = store.snapshot();
+    const write = vi.spyOn(ControlDatabase.prototype, 'write');
+    const written = commits; store.updateSession('s', { title: 'only this row' });
+    expect(commits).toBe(written + 1);
+    const changes = write.mock.calls.at(-1)![0] as ControlChanges; write.mockRestore();
+    expect(changes.upserts.map(([table, row]) => [table, row.id])).toEqual([['sessions', 's']]); expect(changes.deletes).toEqual([]);
+    expect(before.resources.map(item => item.id)).toEqual(['second', 'third', 'first']);
+    store.close(); const reloaded = reopen(owner);
+    expect(reloaded.snapshot()).toEqual({ ...before, sessions: [{ ...before.sessions[0]!, title: 'only this row', revision: before.sessions[0]!.revision + 1 }, before.sessions[1]] });
   });
   it('retains process identities but never recreates a PTY or foreground process', async () => {
     const { owner, store } = await open();
@@ -89,7 +118,7 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
     expect(reloaded.snapshot().resources.map(item => [item.id, item.state, item.pid])).toEqual([['pty', 'missing', 12345], ['foreground', 'missing', 12345], ['detached', 'reconciling', 12345]]);
     expect(() => reloaded.putResource({ ...reloaded.snapshot().resources[0], pid: 999 })).toThrow(/identity/);
   });
-  for (const boundary of ['before_write', 'after_write', 'after_file_sync', 'before_rename', 'after_rename', 'after_directory_sync'] as PersistenceBoundary[]) {
+  for (const boundary of ['before_commit', 'after_commit'] as PersistenceBoundary[]) {
     it(`fails closed and reloads an atomic snapshot when storage fails at ${boundary}`, async () => {
       let fail = false;
       const { owner, store } = await open({ fault: at => { if (fail && at === boundary) throw Object.assign(new Error('fake ENOSPC'), { code: 'ENOSPC' }); } });
@@ -97,28 +126,120 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
       expect(() => store.updateSession('s', { title: 'committed-or-not' })).toThrow(/commit failed/);
       expect(() => store.admit(prompt(), 'owner')).toThrow(/fenced/);
       store.close(); const reloaded = reopen(owner); reloaded.recover();
-      const afterRename = ['after_rename', 'after_directory_sync'].includes(boundary);
-      expect(reloaded.session('s').title).toBe(afterRename ? 'committed-or-not' : '');
+      expect(reloaded.session('s').title).toBe(boundary === 'after_commit' ? 'committed-or-not' : '');
       expect(reloaded.session('s').revision).toBeGreaterThanOrEqual(initial);
     });
   }
-  it('quarantines torn, deleted, unknown-format or replaced files and starts empty instead of restoring old revisions', async () => {
-    for (const mode of ['torn', 'delete', 'version', 'symlink']) {
-      const { owner, store } = await open(); store.close(); const path = join(store.directory, 'control.json');
-      if (mode === 'torn') await writeFile(path, '{"torn":');
+  it('discards a rejected commit and writes the next one from the committed state', async () => {
+    const { owner, store } = await open(); const revision = store.session('s').revision;
+    const valid = vi.spyOn(store as unknown as { validSession(): boolean }, 'validSession').mockReturnValueOnce(false);
+    expect(() => store.updateSession('s', { title: 'rejected' })).toThrow(/inconsistent/);
+    valid.mockRestore();
+    expect(store.session('s')).toMatchObject({ title: '', revision });
+    store.updateSession('s', { title: 'accepted' }); store.close();
+    expect(reopen(owner).session('s')).toMatchObject({ title: 'accepted', revision: revision + 1 });
+  });
+  it('quarantines a leftover WAL instead of replaying it into a new database', async () => {
+    const { owner, store } = await open(); store.updateSession('s', { title: 'only in the WAL' });
+    const path = controlDatabasePath(store.directory); const wal = await readFile(`${path}-wal`);
+    store.close(); await rm(path); await writeFile(`${path}-wal`, wal, { mode: 0o600 });
+    const reopened = reopen(owner);
+    expect(reopened.snapshot().sessions).toEqual([]);
+    expect((await readdir(reopened.directory)).some(name => name.startsWith('control-corrupt-') && name.endsWith('.sqlite-wal'))).toBe(true);
+  });
+  for (const [mode, sql] of [['another schema', 'DROP TABLE requests; CREATE TABLE requests (id TEXT PRIMARY KEY, payload TEXT)'], ['rows without state metadata', "DELETE FROM meta WHERE key IN ('namespace', 'agentDir')"]] as const) {
+    it(`quarantines a database with ${mode}`, async () => {
+      const { owner, store } = await open(); store.close();
+      execControlDatabase(store.directory, sql);
+      const reopened = reopen(owner);
+      expect(reopened.snapshot().sessions).toEqual([]);
+      expect((await readdir(reopened.directory)).some(name => name.startsWith('control-corrupt-'))).toBe(true);
+    });
+  }
+  it('quarantines torn, deleted, unknown-format, foreign or replaced files and starts empty instead of restoring old revisions', async () => {
+    for (const mode of ['torn', 'delete', 'version', 'foreign', 'symlink']) {
+      const { owner, store } = await open(); store.close(); const path = controlDatabasePath(store.directory);
+      if (mode === 'torn') await writeFile(path, 'SQLite format 3\0torn');
       if (mode === 'delete') await rm(path);
-      if (mode === 'version') { const value = JSON.parse(await readFile(path, 'utf8')); value.version = 2; await writeFile(path, JSON.stringify(value)); }
+      if (mode === 'version') execControlDatabase(store.directory, "UPDATE meta SET value = '3' WHERE key = 'format'");
+      if (mode === 'foreign') execControlDatabase(store.directory, "UPDATE meta SET value = '00000000-0000-4000-8000-000000000000' WHERE key = 'storeId'");
       if (mode === 'symlink') { await rename(path, `${path}.old`); await symlink(`${path}.old`, path); }
       const reopened = reopen(owner);
       expect(reopened.snapshot().sessions).toEqual([]); expect(reopened.needsRecovery).toBe(false);
+      expect((await readdir(reopened.directory)).some(name => name.startsWith('control-corrupt-'))).toBe(mode !== 'delete');
       reopened.close();
     }
   });
   it('rechecks ownership before writes and after injected scheduling gaps', async () => {
     let replace = false;
-    const { owner, store } = await open({ fault: boundary => { if (replace && boundary === 'before_rename') throw new Error('ownership revoked'); } });
+    const { owner, store } = await open({ fault: boundary => { if (replace && boundary === 'before_commit') throw new Error('ownership revoked'); } });
     replace = true; expect(() => store.updateSession('s', { title: 'lost' })).toThrow(/commit failed/);
     store.close(); await owner.release(); expect(() => store.snapshot()).toThrow();
+  });
+});
+
+describe.skipIf(!supported)('version 1 control snapshot import', () => {
+  async function legacyStore(mutate: { data?: (data: { namespace: string }) => void; envelope?: (envelope: { digest: string }) => void } = {}) {
+    const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
+    const agentDir = owner.target.agentDir; const directory = join(agentDir, 'daemon-control-v1'); const storeId = randomUUID();
+    const tool = { id: 'tool', name: 'read', message: 'm', state: 'completed', output: 'large tool output', truncated: false };
+    const data = { version: 1, namespace: owner.target.namespaceId, agentDir, clock: now, requests: [], interactions: [], continuations: [], resources: [],
+      sessions: [{ id: 's', root: 's', cwd: '/fixture', piPath: join(agentDir, 's.jsonl'), revision: 7, updatedAt: now, state: 'open', residency: 'warm',
+        run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 }, title: 'imported', projections: [
+          { key: 'message:m', updatedAt: now, value: { type: 'message', id: 'm', entryId: 'entry', state: 'observed' } },
+          { key: 'tool:tool', updatedAt: now, value: { type: 'tool', tool } },
+          { key: 'status:projection:catalog.updated', updatedAt: now, value: { type: 'status', id: 'projection:catalog.updated', text: 'digest' } },
+        ] }] };
+    mutate.data?.(data);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(agentDir, `.control-initialized-${createHash('sha256').update(directory).digest('hex')}.json`), JSON.stringify({ version: 1, storeId, directory }), { mode: 0o600 });
+    await writeFile(join(directory, 'format.json'), JSON.stringify({ version: 1, storeId }), { mode: 0o600 });
+    const envelope = { version: 1, storeId, sequence: 3, digest: createHash('sha256').update(JSON.stringify(data)).digest('hex'), data };
+    mutate.envelope?.(envelope);
+    await writeFile(join(directory, 'control.json'), JSON.stringify(envelope), { mode: 0o600 });
+    return { owner, directory, legacy: await readFile(join(directory, 'control.json'), 'utf8') };
+  }
+
+  it('imports sessions and message identities once, drops live-only views and leaves the old files in place', async () => {
+    const { owner, directory, legacy } = await legacyStore();
+    const store = reopen(owner);
+    expect(store.directory).toBe(join(owner.target.agentDir, 'daemon-control-v2'));
+    expect(store.needsRecovery).toBe(true);
+    expect(store.session('s')).toMatchObject({ title: 'imported', revision: 7 });
+    expect(store.session('s').projections.map(item => item.value.type)).toEqual(['message']);
+    expect(await databaseBytes(store.directory)).not.toContain('large tool output');
+    expect(await readFile(join(directory, 'control.json'), 'utf8')).toBe(legacy);
+    expect(await readdir(directory)).toContain('migrated-to-v2.json');
+    store.close(); await rm(controlDatabasePath(store.directory));
+    expect(reopen(owner).snapshot().sessions).toEqual([]);
+  });
+
+  it('does not import a version 1 snapshot that fails its integrity check', async () => {
+    const { owner, directory } = await legacyStore({ envelope: envelope => { envelope.digest = '0'.repeat(64); } });
+    expect(reopen(owner).snapshot().sessions).toEqual([]);
+    expect(await readdir(directory)).not.toContain('migrated-to-v2.json');
+  });
+
+  it('does not import a version 1 snapshot from another namespace', async () => {
+    const { owner } = await legacyStore({ data: data => { data.namespace = 'another-namespace'; } });
+    expect(reopen(owner).snapshot().sessions).toEqual([]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)('fails retryably while the version 1 snapshot cannot be read, then imports it', async () => {
+    const { owner, directory } = await legacyStore(); const path = join(directory, 'control.json');
+    await chmod(path, 0o000);
+    try { expect(() => reopen(owner)).toThrow(expect.objectContaining({ code: 'storage_failure', message: expect.stringContaining('EACCES') })); }
+    finally { await chmod(path, 0o600); }
+    expect(reopen(owner).session('s').title).toBe('imported');
+  });
+
+  it('restores a lost import marker so an emptied store never imports stale state', async () => {
+    const { owner, directory } = await legacyStore();
+    const store = reopen(owner); store.close(); await rm(join(directory, 'migrated-to-v2.json'));
+    reopen(owner).close();
+    expect(await readdir(directory)).toContain('migrated-to-v2.json');
+    await rm(controlDatabasePath(store.directory));
+    expect(reopen(owner).snapshot().sessions).toEqual([]);
   });
 });
 
@@ -183,26 +304,27 @@ describe.skipIf(!supported)('atomic interaction winners and continuation intents
     expect(reloaded.snapshot().interactions[0]).toMatchObject({ state: 'deferred', expiresAt: now + 30 * 60 * 1000 });
     expect(reloaded.snapshot().interactions[1]).toMatchObject({ state: 'cancelled', result: { reason: 'restart' } });
   });
-  for (const boundary of ['before_rename', 'after_rename'] as const) it(`preserves all-or-none answer state at ${boundary}`, async () => {
+  for (const boundary of ['before_commit', 'after_commit'] as const) it(`preserves all-or-none answer state at ${boundary}`, async () => {
     let fail = false;
     const { owner, store } = await open({ fault: at => { if (fail && at === boundary) throw new Error('disk full'); } });
     store.putInteraction(ask()); const id = requestId(); store.admit({ v: 1, id, op: 'interaction.answer', session: 's', params: { interactionId: 'ask', answer } }, 'winner');
     fail = true; expect(() => store.answerInteraction(id, answer, 'continue')).toThrow(/commit failed/); store.close();
     const reloaded = reopen(owner); const plan = reloaded.recover().value;
-    expect(plan.resumableContinuations).toEqual(boundary === 'after_rename' ? ['continue'] : []);
-    expect(reloaded.snapshot().interactions[0]?.state).toBe(boundary === 'after_rename' ? 'answered' : 'deferred');
-    expect(reloaded.snapshot().requests[0]?.response?.outcome).toBe(boundary === 'after_rename' ? 'accepted' : 'rejected');
+    expect(plan.resumableContinuations).toEqual(boundary === 'after_commit' ? ['continue'] : []);
+    expect(reloaded.snapshot().interactions[0]?.state).toBe(boundary === 'after_commit' ? 'answered' : 'deferred');
+    expect(reloaded.snapshot().requests[0]?.response?.outcome).toBe(boundary === 'after_commit' ? 'accepted' : 'rejected');
   });
 });
 
 describe.skipIf(!supported)('control retention and cancellation boundaries', () => {
   it('advances revisions when compacting visible projections but never discards revision high-water', async () => {
     let time = now; const { owner, store } = await open({ now: () => time });
-    store.project('s', [{ type: 'status', id: 'old', text: 'old status' }]);
+    store.project('s', [{ type: 'message', id: 'old', entryId: 'old-entry', state: 'observed' }]);
     const before = store.session('s').revision;
     time += LIMITS.requestRetentionMs + 1; const result = store.compact();
     expect(result.revisions.s).toBe(before + 1); expect(store.session('s').projections).toEqual([]);
     store.close(); const next = reopen(owner, { now: () => time }); next.recover(); expect(next.session('s').revision).toBeGreaterThanOrEqual(before + 1);
+    expect(next.session('s').projections).toEqual([]);
   });
   it('persists explicit unsupported/abort/drain outcomes and expires only after the deadline', async () => {
     let time = now; const { store } = await open({ now: () => time });
@@ -250,7 +372,7 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
     const revision = store.session('s').revision; expect(revision).toBeGreaterThan(1);
     store.close(); await owner.release();
     if (deletion === 'directory') await rm(store.directory, { recursive: true });
-    else { await rm(join(store.directory, 'format.json')); await rm(join(store.directory, 'control.json')); }
+    else await rm(controlDatabasePath(store.directory));
     const nextOwner = await acquireDaemonOwnership(input); owners.push(nextOwner);
     const rebuilt = reopen(nextOwner);
     expect(rebuilt.snapshot().sessions).toEqual([]); expect(rebuilt.needsRecovery).toBe(false);
@@ -320,7 +442,7 @@ describe.skipIf(!supported)('fixed safety session transitions', () => {
   it('preserves full records and makes repeated transitions revision-idempotent', async () => {
     const { store, owner } = await open();
     const request = prompt(); store.admit(request, 'owner'); store.markDispatched(request.id);
-    store.project('s', [{ type: 'status', id: 'keep', text: 'unchanged' }]);
+    store.project('s', [{ type: 'message', id: 'keep', entryId: 'keep-entry', state: 'observed' }]);
     store.putResource({ id: 'detached', session: 's', root: 's', kind: 'detached', state: 'running', reference: join(owner.target.agentDir, 'job.json'), startIdentity: 'birth', updatedAt: now });
     store.updateSession('s', { run: { state: 'running', id: 'current', origin: { kind: 'headless', attachment: 'original' } }, policy: { effective: 'acp-strict', generation: 1 }, title: 'keep title', branch: 'keep branch', model: { provider: 'offline', id: 'test' }, thinking: 'off' });
     for (const transition of ['cancelling', 'idle', 'closed', 'evicted'] as const) {
@@ -344,7 +466,7 @@ describe.skipIf(!supported)('fixed safety session transitions', () => {
     await owner.release(); expect(() => next.transitionSessionForSafety('s', 'evicted')).toThrow();
   });
 
-  for (const boundary of ['before_write', 'after_write', 'after_file_sync', 'before_rename', 'after_rename', 'after_directory_sync'] as PersistenceBoundary[]) {
+  for (const boundary of ['before_commit', 'after_commit'] as PersistenceBoundary[]) {
     it(`does not return a safety commit after a fault at ${boundary}`, async () => {
       let fail = false;
       const { owner, store } = await open({ fault: at => { if (fail && at === boundary) throw new Error('injected safety write failure'); } });
@@ -354,7 +476,7 @@ describe.skipIf(!supported)('fixed safety session transitions', () => {
       expect(() => store.transitionSessionForSafety('s', 'cancelling')).toThrow(/commit failed/);
       expect(() => store.transitionSessionForSafety('s', 'idle')).toThrow(/fenced/);
       store.close(); const next = reopen(owner);
-      expect(next.session('s').run.state).toBe(['after_rename', 'after_directory_sync'].includes(boundary) ? 'cancelling' : 'running');
+      expect(next.session('s').run.state).toBe(boundary === 'after_commit' ? 'cancelling' : 'running');
       next.recover(); expect(next.session('s').run).toMatchObject({ state: 'interrupted', id: 'original' });
       expect(next.snapshot().requests[0]?.response?.outcome).toBe('indeterminate');
     });
@@ -366,28 +488,27 @@ describe.skipIf(!supported)('control file recovery', () => {
 
   it('starts empty without quarantine when the control file is missing', async () => {
     const { owner, store } = await open(); const directory = store.directory; store.close();
-    await unlink(join(directory, 'control.json'));
+    await unlink(controlDatabasePath(directory));
     expect(reopen(owner).snapshot().sessions).toEqual([]);
     expect(await corrupt(directory)).toEqual([]);
   });
 
   it.skipIf(process.getuid?.() === 0)('fails retryably without quarantine when the control file cannot be read', async () => {
-    const { owner, store } = await open(); const directory = store.directory; const path = join(directory, 'control.json'); store.close();
-    const before = await readFile(path, 'utf8'); await chmod(path, 0o000);
+    const { owner, store } = await open(); const directory = store.directory; const path = controlDatabasePath(directory); store.close();
+    const before = await readFile(path); await chmod(path, 0o000);
     try { expect(() => reopen(owner)).toThrow(expect.objectContaining({ code: 'storage_failure', message: expect.stringContaining('EACCES') })); }
     finally { await chmod(path, 0o600); }
-    expect(await readFile(path, 'utf8')).toBe(before);
+    expect(await readFile(path)).toEqual(before);
     expect(await corrupt(directory)).toEqual([]);
   });
 
   it('keeps a row whose session directory is outside the current roots and owns that directory again', async () => {
-    const { owner, store, input } = await open(); const directory = store.directory; const path = join(directory, 'control.json'); store.close();
+    const { owner, store, input } = await open(); const directory = store.directory; store.close();
     const custom = join(await realpath(input.directory), 'custom-sessions'); await mkdir(custom);
     const piPath = join(custom, 's.jsonl');
-    const envelope = JSON.parse(await readFile(path, 'utf8')) as { data: { sessions: { piPath: string }[] }; digest: string };
-    envelope.data.sessions[0]!.piPath = piPath;
-    envelope.digest = createHash('sha256').update(JSON.stringify(envelope.data)).digest('hex');
-    await writeFile(path, JSON.stringify(envelope), { mode: 0o600 });
+    const state = readControlDatabase(directory);
+    state.sessions[0]!.piPath = piPath;
+    writeControlDatabase(directory, state);
     expect(() => owner.assertOwnsPath(piPath)).toThrow(/outside/);
     const reopened = reopen(owner);
     expect(reopened.snapshot().sessions.map(session => session.piPath)).toEqual([piPath]);

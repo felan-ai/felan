@@ -242,7 +242,8 @@ describe('daemon headless application', () => {
     await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('running'));
     f.clients.at(-1)!.close();
     expect(await running).toBe(1);
-    expect(f.errors.join('\n')).toContain('Client detached; execution may still be running');
+    // The prompt's acceptance may or may not have arrived before the disconnect; both failures are explicit.
+    expect(f.errors.join('\n')).toMatch(/Client detached; execution may still be running|Native headless JSON connection was interrupted; output cannot be replayed/);
     expect(f.store.session(f.root.sessionId).run.state).toBe('running');
     stream.resolve();
   });

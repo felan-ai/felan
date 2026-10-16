@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
-import { Type, type Static } from 'typebox';
-import { AbsolutePathSchema, ClientKindSchema, CounterSchema, IdSchema, InteractionSchema, JsonValueSchema, ModelSchema, PolicySchema, RunSchema, ThinkingSchema, ToolStateSchema, UUID_V7_PATTERN, assertJson, parseSchema, enumOf, text, unboundedText } from '@felan-ai/session-protocol';
+import { Type, type Static, type TSchema } from 'typebox';
+import { AbsolutePathSchema, ClientKindSchema, CounterSchema, IdSchema, InteractionSchema, JsonValueSchema, ModelSchema, PolicySchema, RunSchema, ThinkingSchema, UUID_V7_PATTERN, assertJson, parseSchema, enumOf, text, unboundedText } from '@felan-ai/session-protocol';
 
 export const CONTROL_LIMITS = Object.freeze({
   projections: 256,
@@ -22,12 +22,11 @@ export const SessionProfileSchema = Type.Object({
 });
 export type SessionProfile = Static<typeof SessionProfileSchema>;
 const message = Type.Object({ type: Type.Literal('message'), id: IdSchema, entryId: IdSchema, state: enumOf(['observed', 'missing'] as const) });
+/** Durable view records: message identities and the pending queue. Tool and status views are live-only. */
 const projection = Type.Object({
   key: text(256, 1), updatedAt: CounterSchema,
   value: Type.Union([
     message,
-    Type.Object({ type: Type.Literal('tool'), tool: Type.Omit(ToolStateSchema, ['details']) }),
-    Type.Object({ type: Type.Literal('status'), id: IdSchema, text: text(16_384) }),
     Type.Object({ type: Type.Literal('queue'), ids: Type.Array(IdSchema, { maxItems: 256 }), identity: IdentitySchema }),
   ]),
 });
@@ -57,6 +56,8 @@ export const ControlSessionSchema = Type.Object({
   deletedAt: Type.Optional(CounterSchema),
   projections: Type.Array(projection, { maxItems: CONTROL_LIMITS.projections }),
 });
+export const ControlSessionMetadataSchema = Type.Omit(ControlSessionSchema, ['projections']);
+export const ControlProjectionRecordSchema = projection;
 export type ControlSession = Static<typeof ControlSessionSchema>;
 export type ControlSessionMetadata = Omit<ControlSession, 'projections'>;
 export type ControlProjection = Static<typeof projection>['value'];
@@ -100,15 +101,26 @@ export function parseControlState(value: unknown): ControlState {
   try {
     checkObject(value);
     if (value.version !== 1) throw new ControlStateValidationError('unsupported_version');
-    assertJson(value);
-    checkJsonProperties(value);
-    const state = parseSchema(ControlStateSchema, value) as ControlState;
-    if (!isDeepStrictEqual(state, value)) throw new ControlStateValidationError('invalid_state');
-    return state;
+    return parseExact(ControlStateSchema, value) as ControlState;
   } catch (error) {
     if (error instanceof ControlStateValidationError) throw error;
     throw new ControlStateValidationError('invalid_state');
   }
+}
+
+const ROW_SCHEMAS = { sessions: ControlSessionMetadataSchema, requests: ControlRequestSchema, interactions: InteractionSchema, continuations: ControlContinuationSchema, resources: ControlResourceSchema, projections: ControlProjectionRecordSchema };
+/** Validates one stored record (a session without its projections, or one projection) as `parseControlState` would. */
+export function assertControlRow(table: keyof typeof ROW_SCHEMAS, value: unknown): void {
+  try { checkObject(value); parseExact(ROW_SCHEMAS[table], value); }
+  catch { throw new ControlStateValidationError('invalid_state'); }
+}
+
+function parseExact(schema: TSchema, value: unknown): unknown {
+  assertJson(value);
+  checkJsonProperties(value);
+  const parsed = parseSchema(schema, value);
+  if (!isDeepStrictEqual(parsed, value)) throw new ControlStateValidationError('invalid_state');
+  return parsed;
 }
 
 function checkObject(value: unknown): asserts value is Record<string, unknown> {

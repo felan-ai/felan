@@ -2,8 +2,8 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Type } from 'typebox';
 import { canonicalProspectivePath, pathInside } from './target.js';
-import { CONTROL_LIMITS, ControlResourceSchema, ControlSessionSchema, ControlStoreError, SessionProfileSchema, parseControlState, type ControlContinuation, type ControlProjection, type ControlRequest, type ControlResource, type ControlSession, type ControlSessionMetadata, type ControlState, type SessionProfile } from './control-state.js';
-import { AtomicControlFile, sha256, type PersistenceBoundary } from './persistence.js';
+import { CONTROL_LIMITS, ControlResourceSchema, ControlSessionMetadataSchema, ControlSessionSchema, ControlStoreError, SessionProfileSchema, assertControlRow, parseControlState, type ControlContinuation, type ControlProjection, type ControlRequest, type ControlResource, type ControlSession, type ControlSessionMetadata, type ControlState, type SessionProfile } from './control-state.js';
+import { CONTROL_TABLES, ControlDatabase, markLegacyControlStateMigrated, readLegacyControlState, sha256, type ControlChanges, type ControlRow, type ControlTable, type PersistenceBoundary, type StoredControl } from './persistence.js';
 import type { DaemonOwnership } from './ownership.js';
 import { recoverControlState, type RecoveryPlan } from './control-recovery.js';
 import { IdSchema, LIMITS, OPERATION_CATALOG, parseClientEnvelope, canonicalRequestPayload, parseInteraction, parseSchema, parseServerEnvelope, requestRetainUntil, validateInteractionAnswer, type Interaction, type InteractionAnswer, type Response, type Operation, type OperationParams } from '@felan-ai/session-protocol';
@@ -14,28 +14,58 @@ export interface ControlStoreOptions {
   fault?: (boundary: PersistenceBoundary) => void;
 }
 export interface ControlCommit<T> { value: T; revisions: Record<string, number> }
+/** A stored row and the committed object it was written from; an identical object needs no comparison. */
+interface PersistedRow { ord: number; data: string; row?: object }
+const ROW_TABLES = ['sessions', 'requests', 'interactions', 'continuations', 'resources'] as const;
+type RowTable = typeof ROW_TABLES[number];
+/** Rows by table and ID; projections by session, then key. */
+interface PersistedRows { rows: Record<RowTable, Map<string, PersistedRow>>; projections: Map<string, Map<string, PersistedRow>> }
 
 export class DaemonControlStore {
   readonly directory: string;
-  private readonly file: AtomicControlFile;
+  private readonly file: ControlDatabase;
+  /** Committed rows are deep-frozen and shared with commit drafts, which replace a row before changing it. */
   private state: ControlState;
+  /** What the database holds for each row, so a commit writes only rows whose data or order changed. */
+  private persisted: PersistedRows = emptyRows();
+  private maxOrd = 0;
+  /** Whether the database holds this store's namespace; until then even an unchanged state is written. */
+  private initialized = false;
   private readonly now: () => number;
   private recoveryRequired = false;
   private readonly unownedDirectories = new Set<string>();
   private readonly transientRevisionCeilings = new Map<string, number>();
   constructor(readonly owner: DaemonOwnership, options: ControlStoreOptions = {}) {
     this.now = options.now ?? Date.now;
-    this.file = new AtomicControlFile(owner, options.directory ?? join(owner.target.agentDir, 'daemon-control-v1'), options.fault);
+    this.file = new ControlDatabase(owner, options.directory ?? join(owner.target.agentDir, 'daemon-control-v2'), options.fault);
     this.directory = this.file.directory;
     try {
-      const raw = this.file.read();
-      const state = raw === null ? undefined : this.restore(raw);
-      if (state) { this.state = state; this.recoveryRequired = true; }
-      else {
+      const stored = this.file.read();
+      let state: ControlState | undefined;
+      if (stored) {
+        state = this.restore(assemble(stored));
         // Invalid or foreign state is moved aside; legacy discovery re-adopts the transcripts it described.
-        if (raw !== null) this.file.quarantine();
+        if (state) { this.persisted = storedRows(stored); this.maxOrd = maxOrd(stored); this.initialized = true; }
+        else this.file.quarantine();
+      }
+      if (options.directory === undefined) {
+        const legacy = join(owner.target.agentDir, 'daemon-control-v1');
+        if (!state && !stored) {
+          const raw = readLegacyControlState(owner, legacy);
+          state = raw === undefined ? undefined : this.restore(withoutLiveProjections(raw));
+          if (state) this.persist(state);
+        }
+        // Also repairs a marker lost after an import, so a later empty store cannot import stale state. The old
+        // directory is not needed to run, so a file-system error there leaves it unmarked rather than blocking startup.
+        if (this.initialized) {
+          try { markLegacyControlStateMigrated(owner, legacy); }
+          catch (error) { if (typeof (error as NodeJS.ErrnoException).errno !== 'number') throw error; }
+        }
+      }
+      if (state) { for (const table of ROW_TABLES) for (const row of state[table]) freeze(row); this.state = state; this.recoveryRequired = true; }
+      else {
         this.state = { version: 1, namespace: owner.target.namespaceId, agentDir: owner.target.agentDir, clock: this.time(0), sessions: [], requests: [], interactions: [], continuations: [], resources: [] };
-        this.file.write(this.state);
+        this.persist(this.state);
       }
     } catch (error) { this.file.close(); throw error; }
   }
@@ -64,8 +94,8 @@ export class DaemonControlStore {
     }
     this.unownedDirectories.clear();
     if (!dropped.size) return;
-    const state = this.validate(this.dropSessions(structuredClone(this.state), dropped));
-    this.file.write(this.durableState(state)); this.state = state;
+    const state = this.dropSessions(structuredClone(this.state), dropped);
+    this.persist(state); this.state = state;
   }
   close(): void { this.file.close(); }
   get needsRecovery(): boolean { return this.recoveryRequired; }
@@ -91,9 +121,11 @@ export class DaemonControlStore {
     });
   }
   updateSession(id: string, patch: Partial<Pick<ControlSession, 'state' | 'residency' | 'run' | 'policy' | 'title' | 'branch' | 'observedTip' | 'model' | 'thinking' | 'execution'>>): ControlCommit<ControlSession> {
-    const old = this.session(id);
+    this.file.assertCurrent();
+    const old = this.findSession(this.state, id);
     if (old.deletedAt !== undefined) throw new ControlStoreError('not_found', 'Session was deleted.');
-    const next = parseSchema(ControlSessionSchema, { ...old, ...patch });
+    const { projections, ...metadata } = old;
+    const next: ControlSession = { ...parseSchema(ControlSessionMetadataSchema, { ...metadata, ...structuredClone(patch) }), projections };
     if (JSON.stringify(old.policy) !== JSON.stringify(next.policy) && next.policy.generation <= old.policy.generation) throw new ControlStoreError('invalid_request', 'A policy change must advance its generation.');
     return this.commit((state, touched) => {
       const at = state.sessions.findIndex(item => item.id === id); state.sessions[at] = next;
@@ -102,9 +134,9 @@ export class DaemonControlStore {
   }
   configureSession(requestId: string, values: OperationParams<'config.set'>['values'], overrides: NonNullable<SessionProfile['extensionConfigOverrides']>): ControlCommit<ControlSession> {
     return this.commit((state, touched) => {
-      const request = this.findRequest(state, requestId);
+      const request = edit(state.requests, this.findRequest(state, requestId));
       if (request.op !== 'config.set' || request.phase !== 'intent' || !request.session) throw new ControlStoreError('invalid_request', 'Session configuration requires an undispatched session request.');
-      const session = this.findSession(state, request.session);
+      const session = editSession(state, this.findSession(state, request.session));
       const payload = canonicalRequestPayload({ v: 1, id: requestId, op: 'config.set', session: session.id, params: { scope: 'session', values } });
       if (sha256(payload) !== request.identity.sha256 || Buffer.byteLength(payload) !== request.identity.bytes) throw new ControlStoreError('request_conflict', 'Configuration differs from its admitted payload.');
       session.profile = parseSchema(SessionProfileSchema, { ...(session.profile ?? { source: 'headless' }), extensionConfigOverrides: overrides });
@@ -113,7 +145,7 @@ export class DaemonControlStore {
   }
   interruptSessionRun(id: string, runId: string): ControlCommit<ControlSession> {
     return this.commit((state, touched) => {
-      const session = this.findSession(state, id);
+      const session = editSession(state, this.findSession(state, id));
       if (session.state !== 'open' || session.deletedAt !== undefined || !runId || session.run.id !== runId) throw new ControlStoreError('request_conflict', 'Run identity changed before interruption.');
       if (session.run.state !== 'interrupted') { session.run = { ...session.run, state: 'interrupted' }; touched.add(id); }
       return session;
@@ -123,7 +155,7 @@ export class DaemonControlStore {
   transitionSessionForSafety(id: string, transition: 'cancelling' | 'idle' | 'closed' | 'evicted'): ControlCommit<ControlSession> {
     if (!['cancelling', 'idle', 'closed', 'evicted'].includes(transition)) throw new ControlStoreError('invalid_request', 'Unknown safety transition.');
     return this.commit((state, touched) => {
-      const session = this.findSession(state, id);
+      const session = editSession(state, this.findSession(state, id));
       if (session.deletedAt !== undefined) throw new ControlStoreError('not_found', 'Session was deleted.');
       const active = ['running', 'waiting', 'cancelling'].includes(session.run.state);
       if (transition === 'cancelling' && (session.state !== 'open' || !active || !session.run.id)) throw new ControlStoreError('invalid_request', 'Cancellation requires an existing active open run.');
@@ -143,26 +175,28 @@ export class DaemonControlStore {
     if (this.recoveryRequired) throw new ControlStoreError('storage_failure', 'Recover the persisted control state before publishing.');
     const session = this.findSession(this.state, id);
     if (session.deletedAt !== undefined) throw new ControlStoreError('not_found', 'Session was deleted.');
-    const revision = session.revision + 1;
-    if (revision > (this.transientRevisionCeilings.get(id) ?? session.revision)) {
-      const ceiling = revision + 4095;
-      if (!Number.isSafeInteger(ceiling)) throw new ControlStoreError('storage_failure', 'Session revision exhausted.');
-      const durable = this.durableState(this.state);
-      this.findSession(durable, id).revision = ceiling;
-      // Reserve revisions across crashes without persisting every transient frame.
-      this.file.write(durable);
-      this.transientRevisionCeilings.set(id, ceiling);
+    const revision = session.revision + 1; const ceiling = this.transientRevisionCeilings.get(id);
+    const next = { ...session, revision };
+    if (revision <= (ceiling ?? session.revision)) { this.state.sessions[this.state.sessions.indexOf(session)] = freeze(next); return revision; }
+    if (!Number.isSafeInteger(revision + 4095)) throw new ControlStoreError('storage_failure', 'Session revision exhausted.');
+    // Reserve revisions across crashes without persisting every transient frame.
+    const state = draft(this.state); state.sessions[state.sessions.indexOf(session)] = next;
+    this.transientRevisionCeilings.set(id, revision + 4095);
+    try { this.persist(state); }
+    catch (error) {
+      if (ceiling === undefined) this.transientRevisionCeilings.delete(id); else this.transientRevisionCeilings.set(id, ceiling);
+      throw error;
     }
-    session.revision = revision;
+    this.state = state;
     return revision;
   }
 
   project(id: string, values: readonly ControlProjection[]): ControlCommit<ControlSession> {
     return this.commit((state, touched, now) => {
-      const session = this.findSession(state, id);
+      const session = editSession(state, this.findSession(state, id));
       if (session.deletedAt !== undefined) throw new ControlStoreError('not_found', 'Session was deleted.');
       for (const value of values) {
-        const key = value.type === 'message' ? `message:${value.id}` : value.type === 'tool' ? `tool:${value.tool.id}` : value.type === 'queue' ? 'queue' : `status:${value.id}`;
+        const key = value.type === 'message' ? `message:${value.id}` : 'queue';
         const record = parseSchema(Type.Index(ControlSessionSchema, ['projections']), [{ key, updatedAt: now, value }])[0]!;
         const previous = session.projections.find(item => item.key === key);
         if (previous?.value.type === 'message' && record.value.type === 'message' && previous.value.entryId !== record.value.entryId) throw new ControlStoreError('request_conflict', 'A message cannot change its Pi entry identity.');
@@ -204,7 +238,7 @@ export class DaemonControlStore {
   }
   markDispatched(id: string): ControlCommit<ControlRequest> {
     return this.commit((state, touched) => {
-      const record = this.findRequest(state, id);
+      const record = edit(state.requests, this.findRequest(state, id));
       if (record.phase !== 'intent') throw new ControlStoreError('already_resolved', 'Request is already dispatched or terminal; never dispatch it twice.');
       if (record.session) { const session = this.findSession(state, record.session); if (session.state !== 'open') throw new ControlStoreError('invalid_request', 'Closed sessions cannot dispatch.'); touched.add(record.session); }
       record.phase = 'dispatch_intent'; return record;
@@ -212,24 +246,26 @@ export class DaemonControlStore {
   }
   markSessionDeleted(requestId: string): ControlCommit<ControlSession> {
     return this.commit((state, touched, now) => {
-      const request = this.findRequest(state, requestId);
+      const request = edit(state.requests, this.findRequest(state, requestId));
       if (request.op !== 'session.delete' || request.phase !== 'intent' || !request.session) throw new ControlStoreError('invalid_request', 'Deletion requires its undispatched session request.');
       const session = this.findSession(state, request.session);
       const payload = canonicalRequestPayload({ v: 1, id: request.id, op: 'session.delete', session: session.id, params: {} });
       if (sha256(payload) !== request.identity.sha256 || Buffer.byteLength(payload) !== request.identity.bytes) throw new ControlStoreError('request_conflict', 'Deletion differs from its admitted payload.');
       request.phase = 'dispatch_intent';
-      const tree = [session];
-      for (let index = 0; index < tree.length; index++) for (const item of state.sessions) if (item.parent === tree[index]!.id && !tree.includes(item)) tree.push(item);
-      for (const item of tree) if (item.deletedAt === undefined) {
+      const tree = [session.id];
+      for (let index = 0; index < tree.length; index++) for (const item of state.sessions) if (item.parent === tree[index] && !tree.includes(item.id)) tree.push(item.id);
+      for (const id of tree) if (this.findSession(state, id).deletedAt === undefined) {
+        const item = editSession(state, this.findSession(state, id));
         item.deletedAt = now; item.state = 'closed'; item.residency = 'evicted'; item.run = { ...item.run, state: 'idle' }; item.projections = [];
         touched.add(item.id);
       }
-      return session;
+      return this.findSession(state, session.id);
     });
   }
   finishRequest(id: string, response: unknown): ControlCommit<Response> {
+    response = structuredClone(response);
     return this.commit(state => {
-      const record = this.findRequest(state, id);
+      const record = edit(state.requests, this.findRequest(state, id));
       if (record.phase === 'terminal') throw new ControlStoreError('already_resolved', 'Request already has an outcome.');
       const parsed = this.parseResponse(record, response);
       if (parsed.outcome === 'accepted' && record.phase !== 'dispatch_intent') throw new ControlStoreError('invalid_request', 'An effectful request cannot succeed without a committed dispatch intent.');
@@ -237,7 +273,7 @@ export class DaemonControlStore {
     });
   }
   putInteraction(value: unknown): ControlCommit<Interaction> {
-    const interaction = parseInteraction(value);
+    const interaction = parseInteraction(structuredClone(value));
     if (interaction.state !== 'waiting') throw new ControlStoreError('invalid_request', 'New interactions must be waiting.');
     return this.commit((state, touched) => {
       if (state.interactions.some(item => item.id === interaction.id)) throw new ControlStoreError('request_conflict', 'Interaction ID already exists.');
@@ -266,6 +302,7 @@ export class DaemonControlStore {
     });
   }
   answerInteraction(requestId: string, answer: InteractionAnswer | { cancelled: true; reason: 'user' }, continuationId?: string, responder?: string): ControlCommit<Interaction> {
+    answer = structuredClone(answer);
     return this.commit((state, touched, now) => {
       const record = this.findRequest(state, requestId);
       if (record.op !== 'interaction.answer' || record.phase !== 'intent') throw new ControlStoreError('already_resolved', 'An answer requires its newly admitted request.');
@@ -286,7 +323,8 @@ export class DaemonControlStore {
         state.continuations.push({ id: continuationId, interaction: item.id, session: item.scope.session, phase: 'ready', createdAt: now, updatedAt: now });
       }
       state.interactions[state.interactions.indexOf(item)] = next;
-      record.phase = 'terminal'; record.response = { v: 1, re: record.id, outcome: 'accepted', result: {} };
+      const answered = edit(state.requests, record);
+      answered.phase = 'terminal'; answered.response = { v: 1, re: record.id, outcome: 'accepted', result: {} };
       if (item.scope.kind === 'session') touched.add(item.scope.session); return next;
     });
   }
@@ -297,7 +335,8 @@ export class DaemonControlStore {
       if ((phase === 'dispatch_intent' && item.phase !== 'ready') || (phase !== 'dispatch_intent' && item.phase !== 'dispatch_intent')) throw new ControlStoreError('already_resolved', 'Continuation cannot transition or dispatch twice.');
       const session = this.findSession(state, item.session);
       if (phase === 'dispatch_intent' && session.state !== 'open') throw new ControlStoreError('invalid_request', 'Closed sessions cannot dispatch continuations.');
-      item.phase = phase; item.updatedAt = now; touched.add(item.session); return item;
+      const next = edit(state.continuations, item);
+      next.phase = phase; next.updatedAt = now; touched.add(item.session); return next;
     });
   }
   putResource(value: unknown): ControlCommit<ControlState['resources'][number]> {
@@ -317,29 +356,101 @@ export class DaemonControlStore {
     try { return this.commit((state, touched, now) => {
       const { changedSessions, ...plan } = recoverControlState(state, now);
       for (const id of changedSessions) touched.add(id); return plan;
-    }); } catch (error) { this.recoveryRequired = true; throw error; }
+    }, true); } catch (error) { this.recoveryRequired = true; throw error; }
   }
   compact(): ControlCommit<void> { return this.commit((state, touched, now) => this.prune(state, now, touched)); }
-  private commit<T>(change: (state: ControlState, touched: Set<string>, now: number) => T): ControlCommit<T> {
+  /** `deep` gives the change a fully editable copy, for changes that update rows in place. */
+  private commit<T>(change: (state: ControlState, touched: Set<string>, now: number) => T, deep = false): ControlCommit<T> {
     this.file.assertCurrent();
     if (this.recoveryRequired) throw new ControlStoreError('storage_failure', 'Recover the persisted control state before admitting mutations.');
-    const state = structuredClone(this.state); const touched = new Set<string>(); const now = this.time(state.clock);
+    const state = deep ? structuredClone(this.state) : draft(this.state); const touched = new Set<string>(); const now = this.time(state.clock);
     const value = change(state, touched, now); const revisions: Record<string, number> = Object.create(null) as Record<string, number>;
     for (const id of touched) {
-      const session = this.findSession(state, id);
+      const session = editSession(state, this.findSession(state, id));
       session.revision++; session.updatedAt = now; revisions[id] = session.revision;
     }
     state.clock = now;
-    const parsed = this.validate(state);
-    this.file.write(this.durableState(parsed)); this.state = parsed;
+    this.persist(state); this.state = state;
     return { value: structuredClone(value), revisions };
   }
-  private durableState(state: ControlState): ControlState {
-    const durable = structuredClone(state);
-    for (const session of durable.sessions) {
-      session.revision = Math.max(session.revision, this.transientRevisionCeilings.get(session.id) ?? session.revision);
+  /**
+   * Writes the rows whose committed object, data or position changed. Changed rows are validated individually;
+   * cross-row references are rechecked for every row because a change can invalidate rows that refer to it.
+   * A session whose committed object is unchanged also has unchanged projections, which are not visited.
+   */
+  private persist(state: ControlState): void {
+    const upserts: [ControlTable, ControlRow][] = []; const deletes: [ControlTable, string][] = [];
+    const applied: (() => void)[] = []; const replaced = new Set<string>(); const installed: object[] = [];
+    let ord = this.maxOrd;
+    /** `key` indexes `previous`; `storedId` maps it to the database row ID. */
+    const visit = (table: ControlTable, key: string, storedId: (key: string) => string, row: object, previous: Map<string, PersistedRow>, last: number, value: () => object): number => {
+      const old = previous.get(key);
+      // A row keeps its position unless the array moved it ahead of a row stored after it.
+      const position = old && old.ord > last ? old.ord : ++ord;
+      if (old?.row === row && old.ord === position) return position;
+      let data = old?.data;
+      if (old?.row !== row) {
+        const stored = value(); data = JSON.stringify(stored);
+        if (data !== old?.data) assertControlRow(table, stored);
+        replaced.add(`${table}:${key}`); installed.push(row);
+      }
+      if (old?.ord !== position || data !== old.data) upserts.push([table, { id: storedId(key), ord: position, data: data! }]);
+      const entry = { ord: position, data: data!, row };
+      applied.push(() => previous.set(key, entry));
+      return position;
+    };
+    const same = (key: string) => key;
+    const sweep = (table: ControlTable, previous: Map<string, PersistedRow>, present: ReadonlySet<string>, storedId = same) => {
+      for (const key of previous.keys()) if (!present.has(key)) {
+        deletes.push([table, storedId(key)]);
+        applied.push(() => { previous.delete(key); if (table === 'sessions') this.transientRevisionCeilings.delete(key); });
+      }
+    };
+    for (const table of ROW_TABLES) {
+      const previous = this.persisted.rows[table]; const present = new Set<string>(); let last = 0;
+      for (const row of state[table] as { id: string }[]) {
+        if (present.has(row.id)) throw new ControlStoreError('storage_failure', 'Duplicate control identities.');
+        present.add(row.id);
+        last = visit(table, row.id, same, row, previous, last, () => table === 'sessions' ? this.durableSession(row as ControlSession) : row);
+      }
+      sweep(table, previous, present);
     }
-    return durable;
+    const sessions = new Map(state.sessions.map(session => [session.id, session]));
+    for (const session of state.sessions) {
+      if (this.persisted.rows.sessions.get(session.id)?.row === session) continue;
+      let previous = this.persisted.projections.get(session.id);
+      if (!previous) { const created = previous = new Map<string, PersistedRow>(); applied.push(() => this.persisted.projections.set(session.id, created)); }
+      const present = new Set<string>(); let last = 0; const storedId = (key: string) => JSON.stringify([session.id, key]);
+      for (const record of session.projections) {
+        present.add(record.key);
+        last = visit('projections', record.key, storedId, record, previous, last, () => record);
+      }
+      sweep('projections', previous, present, storedId);
+    }
+    for (const [id, previous] of this.persisted.projections) if (!sessions.has(id)) {
+      for (const key of previous.keys()) deletes.push(['projections', JSON.stringify([id, key])]);
+      applied.push(() => this.persisted.projections.delete(id));
+    }
+    const lookup = (id: string) => sessions.get(id);
+    if (state.requests.some(request => !this.validRequest(state, request, replaced.has(`requests:${request.id}`), lookup))) throw new ControlStoreError('storage_failure', 'Invalid durable request state.');
+    if (state.interactions.some(interaction => !this.validInteraction(state, interaction, replaced.has(`interactions:${interaction.id}`), lookup))) throw new ControlStoreError('storage_failure', 'Interaction scope mismatch.');
+    if (state.continuations.some(item => !this.validContinuation(state, item))) throw new ControlStoreError('storage_failure', 'Continuation lacks a committed winning answer.');
+    if (state.sessions.some(session => !this.validSession(state, session, replaced.has(`sessions:${session.id}`), lookup))) throw new ControlStoreError('storage_failure', 'Session metadata or root lineage is inconsistent.');
+    if (state.resources.some(resource => sessions.get(resource.session)?.root !== resource.root)) throw new ControlStoreError('storage_failure', 'Resource scope mismatch.');
+    // An unchanged state skips the synchronous transaction; its clock advance is never needed below a row's timestamp.
+    if (upserts.length || deletes.length || !this.initialized) {
+      this.file.write({ meta: { namespace: state.namespace, agentDir: state.agentDir, clock: state.clock }, upserts, deletes });
+      this.initialized = true;
+    }
+    for (const apply of applied) apply();
+    this.maxOrd = ord;
+    for (const row of installed) freeze(row);
+  }
+  /** The stored session row: metadata only, with any reserved transient revision ceiling. */
+  private durableSession(session: ControlSession): ControlSessionMetadata {
+    const { projections: _projections, ...metadata } = session;
+    const ceiling = this.transientRevisionCeilings.get(session.id);
+    return ceiling !== undefined && ceiling > session.revision ? { ...metadata, revision: ceiling } : metadata;
   }
 
   private parseResponse(record: ControlRequest, value: unknown): Response {
@@ -396,18 +507,20 @@ export class DaemonControlStore {
     state.resources = state.resources.filter(item => !dropped.has(item.session));
     return state;
   }
-  private validRequest(state: ControlState, request: ControlRequest): boolean {
+  /** `structural` rechecks the record itself; unchanged committed records only need their references checked. */
+  private validRequest(state: ControlState, request: ControlRequest, structural = true, lookup = (id: string) => state.sessions.find(item => item.id === id)): boolean {
     try {
-      if (!Object.hasOwn(OPERATION_CATALOG, request.op) || OPERATION_CATALOG[request.op as Operation].storage !== 'durable' || request.retainUntil < requestRetainUntil(request.id, request.admittedAt) || (request.phase === 'terminal') !== (request.response !== undefined)) return false;
-      if (request.response) this.parseResponse(request, request.response);
-      if (request.session) this.findSession(state, request.session);
-      return true;
+      if (structural) {
+        if (!Object.hasOwn(OPERATION_CATALOG, request.op) || OPERATION_CATALOG[request.op as Operation].storage !== 'durable' || request.retainUntil < requestRetainUntil(request.id, request.admittedAt) || (request.phase === 'terminal') !== (request.response !== undefined)) return false;
+        if (request.response) this.parseResponse(request, request.response);
+      }
+      return !request.session || lookup(request.session) !== undefined;
     } catch { return false; }
   }
-  private validInteraction(state: ControlState, interaction: Interaction): boolean {
+  private validInteraction(state: ControlState, interaction: Interaction, structural = true, lookup = (id: string) => state.sessions.find(item => item.id === id)): boolean {
     try {
-      parseInteraction(interaction);
-      return interaction.scope.kind !== 'session' || this.findSession(state, interaction.scope.session).root === interaction.scope.root;
+      if (structural) parseInteraction(interaction);
+      return interaction.scope.kind !== 'session' || lookup(interaction.scope.session)?.root === interaction.scope.root;
     } catch { return false; }
   }
   private validContinuation(state: ControlState, item: ControlContinuation): boolean {
@@ -415,19 +528,18 @@ export class DaemonControlStore {
     return !!interaction && interaction.state === 'answered' && !!interaction.deferrable && interaction.scope.kind === 'session' && interaction.scope.session === item.session
       && state.sessions.some(session => session.id === item.session);
   }
-  private validSession(state: ControlState, session: ControlSession): boolean {
+  private validSession(state: ControlState, session: ControlSession, structural = true, lookup = (id: string) => state.sessions.find(item => item.id === id)): boolean {
     const execution = session.execution;
     if (execution && (!session.parent || !!execution.completedAt !== !!execution.outcome || execution.completionPending && !execution.completedAt)) return false;
     if (session.deletedAt !== undefined && (session.state !== 'closed' || session.residency !== 'evicted' || session.run.state !== 'idle')) return false;
-    if (new Set(session.projections.map(item => item.key)).size !== session.projections.length) return false;
+    if (structural && (session.projections.length > CONTROL_LIMITS.projections || new Set(session.projections.map(item => item.key)).size !== session.projections.length)) return false;
     const path = new Set<string>();
     let ancestor: ControlSession | undefined = session;
     for (;;) {
       if (path.has(ancestor.id) || ancestor.root !== session.root) return false;
       path.add(ancestor.id);
       if (ancestor.parent === undefined) return ancestor.id === session.root;
-      const parent: string = ancestor.parent;
-      ancestor = state.sessions.find(item => item.id === parent);
+      ancestor = lookup(ancestor.parent);
       if (!ancestor) return false;
     }
   }
@@ -458,14 +570,14 @@ export class DaemonControlStore {
       return keep;
     });
     for (const session of state.sessions) {
-      const retained = session.projections.filter(item => item.updatedAt + CONTROL_LIMITS.projectionAgeMs >= now || (item.value.type === 'tool' && item.value.tool.state === 'running') || item.value.type === 'queue');
-      if (retained.length !== session.projections.length) touched.add(session.id);
-      session.projections = retained;
+      const retained = session.projections.filter(item => item.updatedAt + CONTROL_LIMITS.projectionAgeMs >= now || item.value.type === 'queue');
+      if (retained.length === session.projections.length) continue;
+      editSession(state, session).projections = retained; touched.add(session.id);
     }
   }
   private trimProjections(session: ControlSession): void {
     while (session.projections.length > CONTROL_LIMITS.projections) {
-      const at = session.projections.findIndex(item => item.value.type === 'message' || item.value.type === 'status' || (item.value.type === 'tool' && item.value.tool.state !== 'running'));
+      const at = session.projections.findIndex(item => item.value.type === 'message');
       if (at < 0) throw new ControlStoreError('request_capacity', 'Active projection capacity reached.');
       session.projections.splice(at, 1);
     }
@@ -485,6 +597,69 @@ export class DaemonControlStore {
   private time(previous: number): number {
     const now = this.now(); if (!Number.isSafeInteger(now) || now < 0) throw new ControlStoreError('invalid_request', 'Invalid clock.'); return Math.max(previous, now);
   }
+}
+
+function emptyRows(): PersistedRows {
+  return { rows: Object.fromEntries(ROW_TABLES.map(table => [table, new Map()])) as PersistedRows['rows'], projections: new Map() };
+}
+function storedRows(stored: StoredControl): PersistedRows {
+  const persisted = emptyRows();
+  for (const table of ROW_TABLES) for (const row of stored.rows[table]) persisted.rows[table].set(row.id, { ord: row.ord, data: row.data });
+  for (const row of stored.rows.projections) {
+    const [session, key] = JSON.parse(row.id) as [string, string];
+    const projections = persisted.projections.get(session) ?? new Map<string, PersistedRow>();
+    persisted.projections.set(session, projections.set(key, { ord: row.ord, data: row.data }));
+  }
+  return persisted;
+}
+function maxOrd(stored: StoredControl): number {
+  return CONTROL_TABLES.reduce((max, table) => stored.rows[table].reduce((value, row) => Math.max(value, row.ord), max), 0);
+}
+/** The whole-state shape `parseControlState` validates; undefined when a row is not JSON. */
+function assemble(stored: StoredControl): unknown {
+  try {
+    const projections = new Map<string, unknown[]>();
+    for (const row of stored.rows.projections) {
+      const [session] = JSON.parse(row.id) as [string, string];
+      projections.set(session, [...projections.get(session) ?? [], JSON.parse(row.data) as unknown]);
+    }
+    const rows = (table: typeof ROW_TABLES[number]) => stored.rows[table].map(row => JSON.parse(row.data) as Record<string, unknown>);
+    return { version: 1, namespace: stored.meta.namespace, agentDir: stored.meta.agentDir, clock: stored.meta.clock,
+      sessions: rows('sessions').map(session => ({ ...session, projections: projections.get(session.id as string) ?? [] })),
+      requests: rows('requests'), interactions: rows('interactions'), continuations: rows('continuations'), resources: rows('resources') };
+  } catch { return undefined; }
+}
+/** Shares every committed row with a commit; `edit` and `editSession` replace a row before it is changed. */
+function draft(state: ControlState): ControlState {
+  return { ...state, sessions: [...state.sessions], requests: [...state.requests], interactions: [...state.interactions], continuations: [...state.continuations], resources: [...state.resources] };
+}
+/** Replaces a committed (frozen) row with an editable shallow copy; nested values stay frozen and must be replaced, not mutated. */
+function edit<T extends object>(rows: T[], row: T): T {
+  if (!Object.isFrozen(row)) return row;
+  const copy = { ...row }; rows[rows.indexOf(row)] = copy; return copy;
+}
+function editSession(state: ControlState, session: ControlSession): ControlSession {
+  if (!Object.isFrozen(session)) {
+    if (Object.isFrozen(session.projections)) session.projections = [...session.projections];
+    return session;
+  }
+  const copy = { ...session, projections: [...session.projections] }; state.sessions[state.sessions.indexOf(session)] = copy; return copy;
+}
+/** Committed rows are deep-frozen; the table arrays are not, so the store can replace rows outside a commit. */
+function freeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) freeze(child);
+  }
+  return value;
+}
+/** Version 1 snapshots also stored tool output and status markers, which are now live-only views. */
+function withoutLiveProjections(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { sessions?: unknown }).sessions)) return raw;
+  return { ...raw, sessions: ((raw as { sessions: unknown[] }).sessions).map(session => {
+    const projections = (session as { projections?: unknown } | null)?.projections;
+    return Array.isArray(projections) ? { ...session as object, projections: projections.filter(row => ['message', 'queue'].includes((row as { value?: { type?: unknown } } | null)?.value?.type as string)) } : session;
+  }) };
 }
 
 function metadataCopy(session: ControlSession): ControlSessionMetadata {
