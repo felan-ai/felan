@@ -78,6 +78,12 @@ async function openLogin(f: Awaited<ReturnType<typeof fixture>>) {
   await vi.waitFor(() => expect(f.text()).toContain('Secret API key'));
 }
 
+it('shows the folder as the terminal title until a session is attached, then the session name', async () => {
+  const f = await fixture({ provider: true });
+  f.start(); await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  expect(f.terminal.titles[0]).toMatch(/^tui-startup-/); expect(f.terminal.titles.at(-1)).toBe('fixture');
+});
+
 it('applies persisted fullscreen controls and quiet startup to the active terminal', async () => {
   const scroll = vi.spyOn(ScrollView.prototype, 'setScrollbar');
   const wheel = vi.spyOn(TuiAltScreen.prototype, 'setWheelScrollLines');
@@ -200,7 +206,7 @@ it('does not start attachment onboarding while a model question is being present
 });
 
 class TestTerminal implements Terminal {
-  columns = 110; rows = 30; kittyProtocolActive = false; active = false;
+  columns = 110; rows = 30; kittyProtocolActive = false; active = false; titles: string[] = [];
   input: (data: string) => void = () => {};
   start(input: (data: string) => void): void { this.active = true; this.input = input; }
   stop(): void { this.active = false; }
@@ -212,7 +218,7 @@ class TestTerminal implements Terminal {
   clearLine(): void {}
   clearFromCursor(): void {}
   clearScreen(): void {}
-  setTitle(_title: string): void {}
+  setTitle(title: string): void { this.titles.push(title); }
   setProgress(_active: boolean): void {}
   setProgramStatus(_status: ProgramStatus): void {}
 }

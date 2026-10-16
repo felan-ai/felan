@@ -61,8 +61,42 @@ it('creates, switches and continues the most recent root through daemon operatio
   expect(controller.client.getAttachment(created)).toBeUndefined();
   expect(f.registry.binding(created)).toBeDefined();
   const other = f.controller(); await other.start({ cwd: f.cwd, continueRecent: true });
-  expect((await other.sessions(f.cwd)).map(row => row.session)).toContain(created);
-  expect(other.sessionId).toBeDefined();
+  expect((await other.sessions(f.cwd)).map(row => row.session)).not.toContain(created);
+  expect(other.sessionId).toBe(f.root.sessionId);
+});
+
+it('attaches an unlisted draft by its exact ID, and reports an unknown ID as not found', async () => {
+  const f = await fixture(); const first = f.controller(); await first.start({ cwd: f.cwd });
+  const draft = first.sessionId!;
+  expect((await first.sessions(f.cwd)).map(row => row.session)).not.toContain(draft);
+  const relaunch = f.controller(); await relaunch.start({ cwd: f.cwd, sessionId: draft });
+  expect(relaunch.sessionId).toBe(draft);
+  const missing = f.controller(); await missing.start({ cwd: f.cwd, sessionId: 'no-such-session' });
+  expect(missing.sessionId).not.toBe(draft); expect(missing.notice).toContain("Session 'no-such-session' was not found");
+});
+
+it('attaches an exact session ID without listing, and resolves a prefix without a not-found note', async () => {
+  const f = await fixture();
+  const exact = f.controller(); const perform = vi.spyOn(exact, 'perform');
+  await exact.start({ cwd: f.cwd, sessionId: f.root.sessionId });
+  expect(exact.sessionId).toBe(f.root.sessionId);
+  expect(perform.mock.calls.map(([op]) => op)).not.toContain('sessions.list');
+  const prefix = f.controller(); await prefix.start({ cwd: f.cwd, sessionId: f.root.sessionId.slice(0, 8) });
+  expect(prefix.sessionId).toBe(f.root.sessionId);
+  expect(prefix.notes.map(note => note.text).join('\n')).not.toMatch(/Rejected|not found/u);
+});
+
+it('opens the resume picker on the current folder, then streams every folder', async () => {
+  const f = await fixture(); const controller = f.controller(); await controller.client.connect();
+  const listing = await controller.sessionListing(f.cwd);
+  expect(listing.first.map(row => row.session)).toEqual([f.root.sessionId]);
+  const rest: string[] = [];
+  for await (const page of listing.more) rest.push(...page.map(row => row.session));
+  expect(rest).toContain(f.root.sessionId);
+  let shown: string[] = [];
+  await controller.start({ cwd: f.cwd, resume: true }, async picked => { shown = picked.first.map(row => row.session); return f.root.sessionId; });
+  expect(shown).toEqual([f.root.sessionId]);
+  expect(controller.sessionId).toBe(f.root.sessionId);
 });
 
 it('reloads the attached session and confirms it like Pi', async () => {
@@ -114,12 +148,13 @@ it('resumes an existing session and keeps its saved extensions when --extension 
 it('resumes the first session matching an ambiguous ID prefix', async () => {
   const rows = ['abc-1', 'abc-2'].map(session => ({ session, root: session, cwd: '/fixture', title: '', revision: 1, state: 'open', residency: 'warm',
     lastActivity: 1, run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 } }));
-  const attach = vi.fn(async () => ({ outcome: 'accepted' }));
+  const attach = vi.fn(async (session: string) => rows.some(row => row.session === session) ? { outcome: 'accepted' }
+    : { outcome: 'rejected', error: { code: 'not_found', message: 'Session is not registered.' } });
   const client = { status: 'ready', capabilities: { operations: ['sessions.list'] }, connect: async () => {}, subscribe: () => () => {}, getAttachment: () => undefined,
     request: async () => ({ outcome: 'accepted', result: { entries: rows } }), attach, close() {} };
   const controller = new TuiSessionController(client as unknown as SessionClient);
   await controller.start({ cwd: '/fixture', sessionId: 'abc' });
-  expect(attach).toHaveBeenCalledExactlyOnceWith('abc-1'); expect(controller.sessionId).toBe('abc-1');
+  expect(attach.mock.calls.map(([session]) => session)).toEqual(['abc', 'abc-1']); expect(controller.sessionId).toBe('abc-1');
 });
 
 it('explains a blocked attachment in the recovery notice', async () => {

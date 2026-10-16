@@ -132,11 +132,49 @@ describe('recovery causes', () => {
     expect(next.snapshot!.tools.map(item => item.id)).toEqual(['tool-0', ...tools.slice(2).map(item => item.id), 'new']);
   });
 
-  it('distinguishes too many tracked items from session state over the size limit', () => {
+  it('keeps only the newest 256 tools when all of them are running', () => {
     const running = Array.from({ length: LIMITS.pageEntries }, (_, index) => ({ ...tool(`tool-${index}`), state: 'running' }));
     const state = reduceSession(createSessionState('session'), { type: 'snapshot', snapshot: { ...snapshot(), tools: running } });
-    expect(reduceSession(state, { type: 'update', update: event(1, { type: 'tool.updated', tool: { ...tool('new'), state: 'running' } }) }))
-      .toMatchObject({ status: 'recovering', recoveryCause: 'collection_limit' });
+    const next = reduceSession(state, { type: 'update', update: event(1, { type: 'tool.updated', tool: { ...tool('new'), state: 'running' } }) });
+    expect(next.status).toBe('live');
+    expect(next.snapshot!.tools.map(item => item.id)).toEqual([...running.slice(1).map(item => item.id), 'new']);
+  });
+
+  it('keeps running and recently updated processes, matching the daemon\'s last-updated order', () => {
+    const process = (id: string, state = 'exited') => ({ id, session: 'session', root: 'session', kind: 'foreground', state, command: id, startedAt: 1, controllable: false, outputOffset: 0 });
+    const processes = Array.from({ length: LIMITS.pageEntries }, (_, index) => process(`process-${index}`, index === 0 ? 'running' : 'exited'));
+    let state = reduceSession(createSessionState('session'), { type: 'snapshot', snapshot: { ...snapshot(), processes } });
+    state = reduceSession(state, { type: 'update', update: event(1, { type: 'process.updated', process: process('new', 'running') }) });
+    state = reduceSession(state, { type: 'update', update: event(2, { type: 'process.updated', process: process('process-5', 'exited') }) });
+    state = reduceSession(state, { type: 'update', update: event(3, { type: 'process.updated', process: process('new') }) });
+    expect(state.status).toBe('live');
+    const ids = state.snapshot!.processes.map(item => item.id);
+    expect(ids).toHaveLength(LIMITS.pageEntries);
+    expect(ids.slice(0, 2)).toEqual(['process-0', 'process-2']);
+    expect(ids.slice(-2)).toEqual(['process-5', 'new']);
+  });
+
+  it('trims children past the limit, keeping active runs', () => {
+    const child = (index: number, run = 'idle') => ({ session: `child-${index}`, parent: 'session', root: 'session', title: '', run: { state: run }, state: 'open' });
+    const children = Array.from({ length: LIMITS.pageEntries + 2 }, (_, index) => child(index, index === 0 ? 'running' : 'idle'));
+    const state = reduceSession(createSessionState('session'), { type: 'snapshot', snapshot: { ...snapshot(), children } });
+    const next = reduceSession(state, { type: 'update', update: event(1, { type: 'run.updated', run: { state: 'idle' } }) });
+    expect(next.status).toBe('live');
+    expect(next.snapshot!.children.map(item => item.session)).toEqual(['child-0', ...children.slice(3).map(item => item.session)]);
+  });
+
+  it('drops resolved interactions like the daemon snapshot, so they never accumulate', () => {
+    const waiting = { id: 'question', scope: { kind: 'session', session: 'session', root: 'session' },
+      request: { kind: 'confirm', title: 'Continue?', message: 'Confirm' }, createdAt: 1, state: 'waiting' };
+    let state = reduceSession(live(), { type: 'update', update: event(1, { type: 'interaction.requested', interaction: waiting }) });
+    expect(state.snapshot!.interactions.map(item => item.id)).toEqual(['question']);
+    state = reduceSession(state, { type: 'update', update: event(2, { type: 'interaction.resolved',
+      interaction: { ...waiting, state: 'cancelled', resolvedAt: 2, result: { cancelled: true, reason: 'user' } } }) });
+    expect(state.status).toBe('live');
+    expect(state.snapshot!.interactions).toEqual([]);
+  });
+
+  it('recovers when session state exceeds the size limit', () => {
     const large = { ...snapshot(), tools: Array.from({ length: 200 }, (_, index) => tool(`tool-${index}`, 'x'.repeat(64 * 1024 - 16))) };
     const heavy = reduceSession(createSessionState('session'), { type: 'snapshot', snapshot: large });
     expect(reduceSession(heavy, { type: 'update', update: event(1, { type: 'run.updated', run: { state: 'idle' } }) }))

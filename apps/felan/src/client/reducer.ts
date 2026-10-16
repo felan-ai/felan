@@ -1,12 +1,12 @@
 import {
-  LIMITS, classifyRevision, classifyTextDelta, codePointLength, parseSessionSnapshot, utf8Bytes,
+  LIMITS, classifyRevision, classifyTextDelta, codePointLength, parseSessionSnapshot, trimSnapshotLists, utf8Bytes,
   type KnownSessionChange, type SessionEvent, type SessionSnapshot, type TextStreamEvent,
 } from '@felan-ai/session-protocol';
 
 type Update = SessionEvent | TextStreamEvent;
 /** Why the client discarded its live view and asked the daemon for a new snapshot. */
 export type RecoveryCause = 'revision_gap' | 'stream_mismatch' | 'stream_gap' | 'stream_limit' | 'presentation_conflict'
-  | 'collection_limit' | 'state_size_limit' | 'buffer_overflow' | 'stale_snapshot' | 'daemon_resync';
+  | 'state_size_limit' | 'buffer_overflow' | 'stale_snapshot' | 'daemon_resync';
 export interface SessionState {
   readonly session: string;
   readonly snapshot?: SessionSnapshot;
@@ -47,16 +47,6 @@ function buffer(state: SessionState, update: Update, cause?: RecoveryCause): Ses
   }
   return { ...state, status: state.status === 'awaiting_snapshot' ? state.status : 'recovering', ...(cause ? { recoveryCause: cause } : {}),
     buffered: [...state.buffered, update], bufferedBytes: state.bufferedBytes + bytes };
-}
-
-/** Mirrors the daemon projection's retention: past the page limit, the oldest finished tools are dropped first. */
-function retainRecentTools(tools: SessionSnapshot['tools']): SessionSnapshot['tools'] {
-  let excess = tools.length - LIMITS.pageEntries;
-  if (excess <= 0) return tools;
-  return tools.filter(tool => {
-    if (excess > 0 && tool.state !== 'running') { excess--; return false; }
-    return true;
-  });
 }
 
 function completionOnly(snapshot: SessionSnapshot, stream: TextStreamEvent['stream'], reason: 'lost' | 'limit' = 'lost'): SessionSnapshot {
@@ -105,17 +95,19 @@ function applyEvent(state: SessionState, event: SessionEvent): SessionState {
         completionOnlyStreams: next.completionOnlyStreams.filter(item => item.message !== change.message.id) };
       break;
     }
-    case 'tool.updated': next.tools = retainRecentTools(upsert(next.tools, change.tool, item => item.id)); break;
+    case 'tool.updated': next.tools = upsert(next.tools, change.tool, item => item.id); break;
     case 'run.updated': next.run = change.run; break;
     case 'queue.updated': next.queue = change.queue; break;
-    case 'interaction.requested': case 'interaction.resolved': next.interactions = upsert(next.interactions, change.interaction, item => item.id); break;
+    case 'interaction.requested': next.interactions = upsert(next.interactions, change.interaction, item => item.id); break;
+    case 'interaction.resolved': next.interactions = next.interactions.filter(item => item.id !== change.interaction.id); break;
     case 'metadata.updated': next = { ...next, title: change.title, state: change.state, residency: change.residency }; break;
     case 'model.updated': next = { ...next, model: change.model, thinking: change.thinking }; break;
     case 'branch.updated': next = { ...next, branch: change.branch, history: { ...change.history, revision: event.rev }, activeStreams: [], completionOnlyStreams: [] }; break;
     case 'policy.updated': next.policy = change.policy; break;
     case 'executions.changed': next.executionsGeneration = change.generation; break;
     case 'child.updated': next.children = upsert(next.children, change.child, item => item.session); break;
-    case 'process.updated': next.processes = upsert(next.processes, change.process, item => item.id); break;
+    // The daemon lists processes by last update, so trimming drops the same ones only if an update moves the process last.
+    case 'process.updated': next.processes = [...next.processes.filter(item => item.id !== change.process.id), change.process]; break;
     case 'presentation.updated': {
       const presentation = change.presentation;
       const previous = next.presentation.find(item => item.id === presentation.id);
@@ -127,7 +119,7 @@ function applyEvent(state: SessionState, event: SessionEvent): SessionState {
     case 'catalog.updated': next.catalog = change.catalog; break;
     case 'stream.completion_only': next = completionOnly(next, { ...change.stream, offset: 0 }, change.stream.reason); break;
   }
-  if ([next.tools, next.interactions, next.children, next.processes, next.presentation].some(items => items.length > LIMITS.pageEntries)) return buffer(state, event, 'collection_limit');
+  next = trimSnapshotLists(next);
   if (utf8Bytes(JSON.stringify(next)) > LIMITS.pageBytes) return buffer(state, event, 'state_size_limit');
   return { ...state, snapshot: next };
 }

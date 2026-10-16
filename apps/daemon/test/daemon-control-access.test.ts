@@ -62,7 +62,7 @@ function sessionsFixture(rows: Array<{ id: string; piPath: string; updatedAt: nu
   const current = { id: 'current', root: 'current' };
   const access = vi.fn();
   const stored = (id: string) => ({ id, root: id, cwd: '/project', piPath: rows.find(row => row.id === id)?.piPath ?? join(owner.target.agentDir, `${id}.jsonl`), title: id, updatedAt: rows.find(row => row.id === id)?.updatedAt ?? 0, state: 'closed' as const, revision: 0, residency: 'evicted' as const, run: { state: 'idle' as const }, policy: { effective: 'host-default' as const, generation: 0 }, projections: [] });
-  const registry = { assertServiceAccess: access, options: { owner, store: { sessionMetadata: stored } }, list: () => [{ ...stored('current') }, ...rows.map(row => stored(row.id))],
+  const registry = { assertServiceAccess: access, options: { owner, store: { sessionMetadata: stored } }, list: () => [{ ...stored('current') }, ...rows.map(row => stored(row.id))], listed: () => [{ ...stored('current') }, ...rows.map(row => stored(row.id))],
     subscribe: () => () => {} } as unknown as SessionRegistry;
   return { access, service: createRegistrySessionsService(registry, current, '/project') };
 }

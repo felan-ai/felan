@@ -321,7 +321,7 @@ export class SessionServer {
   }
 
   private async status(request: ClientEnvelope): Promise<Response> {
-    const rows = this.options.registry.list();
+    const rows = this.options.registry.listed();
     const composition = await this.currentComposition();
     return accepted(request, { state: this.options.management?.lifecycle.state ?? 'ready', identity: this.options.registry.options.owner.identity, daemonVersion: this.options.version, protocol: 1,
       ...(composition ? { composition } : {}),

@@ -2,6 +2,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStdioProcess } from '@felan-ai/agent-core';
+import { LIMITS } from '@felan-ai/session-protocol';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { RegistryProcesses } from '../src/daemon/processes.js';
 import type { SessionRegistry } from '../src/daemon/registry.js';
@@ -88,6 +89,16 @@ describe.skipIf(!supported)('registry process ownership', () => {
     const output = await f.registry.processes.read(b.sessionId, job.meta.id, 0, 1024);
     expect(new TextDecoder().decode(output.data)).toBe('configured output');
   });
+
+  it('snapshots running and most recently updated processes once a root has more than a page', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const total = LIMITS.pageEntries + 4;
+    for (let index = 0; index < total; index++) {
+      f.store.putResource({ id: `process-${index}`, session: b.sessionId, root: b.rootSessionId, kind: index === 0 ? 'detached' : 'foreground', state: index === 0 ? 'running' : 'exited', updatedAt: 0 });
+    }
+    const { snapshot } = await f.registry.attach(b.sessionId, { principal: 'one', kind: 'tui' });
+    expect(snapshot.processes.map(item => item.id)).toEqual(['process-0', ...Array.from({ length: total - 5 }, (_, index) => `process-${index + 5}`)]);
+  }, 15_000);
 
   it('reads and stops a detached process using only adapter-owned record metadata', async () => {
     const stopped = vi.fn(async () => {});

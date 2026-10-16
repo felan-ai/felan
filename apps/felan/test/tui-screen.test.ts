@@ -99,6 +99,19 @@ it('shows notices and notifications once as transcript lines instead of pinning 
   expect(count('Warning: A new warning')).toBe(1);
 });
 
+it('omits the no-session warning while startup creates the first session, and shows it once startup has ended without one', () => {
+  const f = fixture();
+  vi.spyOn(f.controller.client, 'status', 'get').mockReturnValue('ready');
+  vi.spyOn(f.controller, 'snapshot', 'get').mockReturnValue(undefined as never);
+  const starting = vi.spyOn(f.controller, 'starting', 'get').mockReturnValue(true);
+  const render = () => { f.tui.renderNow(true); return stripTerminalSequences(f.tui.getScreenLines().join('\n')); };
+  f.controller.setNotice('');
+  expect(render()).not.toContain('No session attached');
+  starting.mockReturnValue(false);
+  f.controller.setNotice('');
+  expect(render()).toContain('No session attached. Use /new or /sessions.');
+});
+
 it('uses the activity slot for reconnecting and retains the editor while the session snapshot stays visible', () => {
   const f = fixture();
   const state = { status: 'live', snapshot: { ...snapshot(), run: { state: 'running' as const } } } as const;

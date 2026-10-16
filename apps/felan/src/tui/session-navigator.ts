@@ -7,7 +7,9 @@ import { defaultClientTheme } from './theme.js';
 import { uiText } from '../client/ui.js';
 
 export type SessionRow = OperationResult<'sessions.list'>['entries'][number];
-export type NavigationDialogs = TuiDialogHost & Partial<Pick<TuiDialogs, 'custom' | 'viewportHeight'>>;
+export type NavigationDialogs = TuiDialogHost & Partial<Pick<TuiDialogs, 'custom' | 'viewportHeight' | 'requestRender'>>;
+/** The first page is shown at once; `more` yields the remaining pages while the picker is open. */
+export interface SessionListing { readonly first: readonly SessionRow[]; readonly more: AsyncIterable<readonly SessionRow[]> }
 export type SessionSelection = { session: string; action: 'resume' | 'rename' | 'delete' };
 
 const maxVisible = 10;
@@ -16,6 +18,10 @@ const chromeLines = 12;
 const activeStates: Partial<Record<SessionRow['run']['state'], string>> = { running: 'running', waiting: 'waiting for input', cancelling: 'cancelling' };
 
 export class SessionNavigator implements Component, Focusable {
+  private readonly sessions: SessionRow[] = [];
+  private readonly known = new Set<string>();
+  private loaded = true;
+  private closed = false;
   private readonly search = new Input();
   private scope: 'current' | 'all' = 'current';
   private recent = true;
@@ -27,11 +33,33 @@ export class SessionNavigator implements Component, Focusable {
   private deleting: string | undefined;
   private readonly theme: () => Theme;
 
-  constructor(private readonly sessions: readonly SessionRow[], private readonly cwd: string,
+  constructor(initial: readonly SessionRow[], private readonly cwd: string,
     private readonly current: string | undefined, private readonly done: (selection: SessionSelection | undefined) => void,
     theme?: () => Theme, private readonly manage = true, private readonly viewportHeight: () => number = () => chromeLines + maxVisible) {
-    const initial = theme ? undefined : defaultClientTheme(); this.theme = theme ?? (() => initial!);
+    const fallback = theme ? undefined : defaultClientTheme(); this.theme = theme ?? (() => fallback!);
+    this.add(initial);
     this.selected = current; this.focused = true;
+  }
+
+  /** Adds rows from later pages while the picker is open. A session that appears on several pages is listed once. */
+  follow(pages: AsyncIterable<readonly SessionRow[]>, render: () => void): void {
+    this.loaded = false;
+    void (async () => {
+      try {
+        for await (const page of pages) {
+          if (this.closed) break;
+          this.add(page); render();
+        }
+      } catch {
+        if (!this.closed) this.status = 'Some sessions could not be loaded.';
+      } finally { this.loaded = true; render(); }
+    })();
+  }
+
+  dispose(): void { this.closed = true; }
+
+  private add(page: readonly SessionRow[]): void {
+    for (const row of page) if (!this.known.has(row.session)) { this.known.add(row.session); this.sessions.push(row); }
   }
 
   get focused(): boolean { return this.search.focused; }
@@ -53,14 +81,14 @@ export class SessionNavigator implements Component, Focusable {
     this.selected = rows[index]?.session;
     const theme = this.theme(); const border = theme.fg('accent', '─'.repeat(Math.max(1, width)));
     const lines = ['', border, '', ...this.header(width), '', ...this.search.render(width), ''];
-    if (!rows.length) lines.push(theme.fg('muted', truncateToWidth(this.empty(), width, '…')));
+    if (!rows.length) lines.push(theme.fg('muted', truncateToWidth(this.loaded ? this.empty() : 'Loading sessions…', width, '…')));
     const count = this.visible();
     // Scroll only when the selection leaves the viewport, and never leave rows empty below the last session.
     if (index < this.offset) this.offset = index;
     else if (index >= this.offset + count) this.offset = index - count + 1;
     this.offset = Math.max(0, Math.min(this.offset, rows.length - count));
     for (let at = this.offset; at < Math.min(rows.length, this.offset + count); at++) lines.push(this.line(rows[at]!, at === index, width));
-    if (rows.length) lines.push(theme.fg('muted', truncateToWidth(`  (${index + 1}/${rows.length})`, width, '')));
+    if (rows.length) lines.push(theme.fg('muted', truncateToWidth(`  (${index + 1}/${rows.length}${this.loaded ? '' : ', loading'})`, width, '')));
     lines.push('', border);
     return lines.map(line => truncateToWidth(line, width));
   }
@@ -171,9 +199,13 @@ function sessionMatches(text: string, query: string): boolean {
   return phrases.every(match => match[1] !== undefined ? clean.includes(match[1]) : fuzzyMatch(match[2]!, clean).matches);
 }
 
-export function pickSession(dialogs: NavigationDialogs, sessions: readonly SessionRow[], cwd: string, current?: string,
+export function pickSession(dialogs: NavigationDialogs, listing: SessionListing, cwd: string, current?: string,
   theme?: () => Theme, manage = true): Promise<SessionSelection | undefined> {
   if (!dialogs.custom) throw new Error('Session navigation is unavailable in this client.');
   const height = dialogs.viewportHeight ? () => dialogs.viewportHeight!() : undefined;
-  return dialogs.custom<SessionSelection | undefined>(done => new SessionNavigator(sessions, cwd, current, done, theme, manage, height));
+  return dialogs.custom<SessionSelection | undefined>(done => {
+    const picker = new SessionNavigator(listing.first, cwd, current, done, theme, manage, height);
+    picker.follow(listing.more, () => dialogs.requestRender?.());
+    return picker;
+  });
 }

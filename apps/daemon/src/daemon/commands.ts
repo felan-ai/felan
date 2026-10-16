@@ -4,6 +4,7 @@ import { SessionsServiceError, type AgentSession, type ModelRuntime } from '@fel
 import { truncateTail } from '@earendil-works/pi-coding-agent';
 import { LIMITS, parseOperationResult, type ClientEnvelope, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
 import type { SessionRegistry } from './registry.js';
+import type { LegacySession } from './legacy-sessions.js';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
 import { boundedText, digest } from './projection.js';
 import { projectTreeEntries } from './tree.js';
@@ -65,21 +66,26 @@ export class SessionCommands {
         return accepted(request, {});
       }
       case 'sessions.list': {
-        const keys = new WeakMap<object, string>(); const previews = new Map<string, () => Promise<string>>();
+        const previews = new Map<string, () => Promise<string>>(); const legacy = new Map<string, LegacySession>();
         const cwd = request.params.cwd === undefined ? undefined : await canonicalPath(request.params.cwd).catch(() => request.params.cwd!);
-        const entries = [...registry.list().map(row => {
+        const entries = [...registry.listed().map(row => {
           const entry = { session: row.id, root: row.root, ...(row.parent ? { parent: row.parent } : {}), cwd: row.cwd,
           revision: row.revision, state: row.state, residency: row.residency, title: row.title, ...(row.model ? { model: row.model } : {}), lastActivity: row.updatedAt, run: row.run, policy: row.policy };
-          keys.set(entry, row.id); previews.set(row.id, () => registry.preview(row)); return entry;
+          previews.set(row.id, () => registry.preview(row)); return entry;
         }), ...(request.params.root ? [] : await registry.legacySessions(cwd)).map(row => {
-          const entry = { session: row.id, root: row.id, cwd: row.cwd, revision: 0, state: 'open' as const, residency: 'evicted' as const, title: row.title,
+          legacy.set(row.id, row);
+          return { session: row.id, root: row.id, cwd: row.cwd, revision: 0, state: 'open' as const, residency: 'evicted' as const, title: '',
             lastActivity: row.modifiedAt, run: { state: 'idle' as const }, policy: { effective: 'host-default' as const, generation: 0 } };
-          keys.set(entry, row.id); previews.set(row.id, async () => row.preview); return entry;
         })]
           .filter(row => (!cwd || row.cwd === cwd) && (!request.params.root || row.root === request.params.root));
-        const result = keysetPage(entries, request.params, JSON.stringify(['sessions', request.params.cwd ?? null, request.params.root ?? null]), row => keys.get(row)!);
+        const result = recentPage(entries, request.params, JSON.stringify(['sessions', request.params.cwd ?? null, request.params.root ?? null]));
         // Only the returned page pays for transcript reads.
         const page = await Promise.all(result.entries.map(async entry => {
+          const row = legacy.get(entry.session);
+          if (row) {
+            const summary = await registry.legacySummary(row);
+            return { ...entry, title: summary.title, ...(summary.preview ? { preview: summary.preview } : {}) };
+          }
           const preview = await previews.get(entry.session)!();
           return preview ? { ...entry, preview } : entry;
         }));
@@ -414,6 +420,28 @@ function preflight<T>(prepare: () => T): T {
     if (code === undefined || ['ENOENT', 'ENOTDIR', 'EISDIR', 'ELOOP', 'EACCES'].includes(String(code))) throw commandError('invalid_request', error instanceof Error ? error.message : undefined);
     throw error;
   }
+}
+
+/** Newest activity first, then session ID. The cursor holds the last row's position, so rows that vanish or move do not break paging. */
+function recentPage<T extends { session: string; lastActivity: number }>(values: readonly T[], params: { cursor?: string; limit?: number }, scope: string) {
+  const entries = [...values].sort((a, b) => b.lastActivity - a.lastActivity || (a.session < b.session ? -1 : a.session > b.session ? 1 : 0));
+  let start = 0;
+  if (params.cursor) {
+    let token: unknown;
+    try { token = JSON.parse(Buffer.from(params.cursor, 'base64url').toString('utf8')); } catch { throw commandError('resync_required'); }
+    if (!Array.isArray(token) || token.length !== 3 || token[0] !== scope || !Number.isSafeInteger(token[1]) || typeof token[2] !== 'string') throw commandError('resync_required');
+    const [, activity, session] = token as [string, number, string];
+    const at = entries.findIndex(entry => entry.lastActivity < activity || (entry.lastActivity === activity && entry.session > session));
+    start = at < 0 ? entries.length : at;
+  }
+  const result: T[] = []; let size = 0; let end = start;
+  while (end < entries.length && result.length < (params.limit ?? LIMITS.pageEntries)) {
+    const entry = entries[end]!; const bytes = Buffer.byteLength(JSON.stringify(entry));
+    if (size + bytes > LIMITS.pageBytes / 2) { if (!result.length) throw commandError('unavailable'); break; }
+    result.push(entry); size += bytes; end++;
+  }
+  const last = result[result.length - 1];
+  return { entries: result, ...(end < entries.length && last ? { cursor: Buffer.from(JSON.stringify([scope, last.lastActivity, last.session])).toString('base64url') } : {}) };
 }
 
 function keysetPage<T>(values: readonly T[], params: { cursor?: string; limit?: number }, scope: string, key: (entry: T) => string) {

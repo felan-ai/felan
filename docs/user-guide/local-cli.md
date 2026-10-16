@@ -254,11 +254,16 @@ interactive (PTY) ones, as quitting Felan Code did before the daemon.
 
 ### Resume a session
 
-`felan --resume` opens a selection-only picker. Use Tab to switch between the
-current folder and all local sessions, Ctrl+S to change sorting, Ctrl+N to show
-only named sessions, and Ctrl+P to toggle session-file paths. Escape cancels
-without creating or launching a session. `felan --continue` remains the quick
-path for the most recent session in the current directory.
+`felan --resume` opens a selection-only picker. It opens on the newest sessions
+of the current directory while older sessions and other folders load in the
+background. Use Tab to switch between the current folder and all local sessions,
+Ctrl+S to change sorting, Ctrl+N to show only named sessions, and Ctrl+P to
+toggle session-file paths. Escape cancels without creating or launching a
+session. `felan --continue` remains the quick path for the most recent session in
+the current directory.
+
+A new session appears in the picker once it has a message. A session that is
+never used is discarded after it has been idle for about a minute.
 
 For a new interactive root session, Felan Code asynchronously creates a concise
 session name from the first prompt. The name is persisted in the local session

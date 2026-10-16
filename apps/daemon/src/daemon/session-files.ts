@@ -7,6 +7,12 @@ import type { DaemonOwnership } from './ownership.js';
 import { guardOwnedPaths, prepareControlDirectory, syncOwnedDirectory } from './persistence.js';
 import { assertPathIdentity, pathIdentity, pathInside, type PathIdentity } from './target.js';
 
+/** Messages a person or the shell produced. Extension context and session metadata do not count. */
+export function isConversationEntry(entry: unknown): boolean {
+  if (!entry || typeof entry !== 'object') return false;
+  const row = entry as { type?: unknown; message?: { role?: unknown } };
+  return row.type === 'message' && typeof row.message?.role === 'string' && ['user', 'assistant', 'bashExecution'].includes(row.message.role);
+}
 export const sessionHeaderSchema = Type.Object({ type: Type.Literal('session'), version: Type.Integer({ minimum: 1, maximum: 3 }), id: IdSchema, cwd: AbsolutePathSchema });
 const error = (code: string, message: string) => Object.assign(new Error(message), { code });
 const absent = (cause: unknown) => (cause as NodeJS.ErrnoException).code === 'ENOENT';

@@ -24,7 +24,6 @@ const causes: Record<RecoveryCause, string> = {
   stream_gap: 'a gap in streamed text',
   stream_limit: 'streamed text exceeded client limits',
   presentation_conflict: 'an out-of-order presentation update',
-  collection_limit: 'more than 256 tools, processes, children, interactions or presentation items',
   state_size_limit: 'session state larger than 12 MiB',
   buffer_overflow: 'too many updates arrived during recovery',
   stale_snapshot: 'the snapshot was older than updates already received',

@@ -115,6 +115,9 @@ export class TuiDialogs implements TuiDialogHost {
     }, options);
   }
 
+  /** Redraws after a component changed outside its own input handling. */
+  requestRender(): void { this.tui.requestRender(); }
+
   custom<T>(factory: (done: (value: T) => void) => Component | Promise<Component>, options: {
     overlay?: boolean; overlayOptions?: OverlayOptions | (() => OverlayOptions); onHandle?: (handle: OverlayHandle) => void; signal?: AbortSignal;
   } = {}): Promise<T | undefined> { return this.show<T>(factory, options, options); }
