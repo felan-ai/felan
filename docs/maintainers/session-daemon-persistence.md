@@ -16,9 +16,15 @@ settle **all** session/descendant writers before releasing the owner, including
 after fencing or a failed disk write.
 
 The store is an owner-private SQLite database, `control.sqlite`, opened with
-Node's built-in `node:sqlite` in WAL mode with `synchronous=FULL` and `fullfsync`
-([ADR 0039](../decisions/0039-store-daemon-control-state-in-sqlite.md)). Each session,
-request, interaction, continuation, resource and session projection is one row
+Node's built-in `node:sqlite` in WAL mode with `synchronous=NORMAL`, `fullfsync=ON`
+and `checkpoint_fullfsync=ON`
+([ADR 0042](../decisions/0042-use-normal-synchronous-control-store-commits.md),
+superseding the durability choice in
+[ADR 0039](../decisions/0039-store-daemon-control-state-in-sqlite.md)). Commits
+survive daemon/process crashes, but an OS crash or power loss can roll back recent
+commits, including acknowledged outcomes, retry identities and revision
+reservations. Checkpoints still flush fully on macOS; individual commits do not.
+Each session, request, interaction, continuation, resource and session projection is one row
 (`id`, `ord`, JSON `data`); `meta` holds the format, store ID, namespace, agent
 directory and clock. The in-memory state is the read model. Committed rows are
 frozen and shared with each commit's draft; a commit replaces the rows it changes,
@@ -122,7 +128,10 @@ with interruption recorded on their owning operation.
    policy. `project` coalesces message identity references and the queue record
    and assigns one session revision per batch. Tool cards, status changes and text
    streams are never committed; `advanceTransientRevision` numbers them and
-   reserves revisions in blocks of 4096 so they stay monotonic across restarts.
+   reserves revisions in blocks of 4096 so they stay monotonic across
+   daemon/process restarts. An OS crash or power loss can lose a reservation and
+   expose revisions below those already published; recovery cannot restore an
+   externally observed high-water mark that was lost from the store.
    Registry projection builds snapshots from these records plus the authoritative
    Pi manager and in-memory views; revisions are not an event replay log.
 6. `putResource` records root/session-scoped child/process identity, optional
@@ -163,11 +172,14 @@ as transient capacity pressure. Pi remains the durable content authority.
 
 ## Recovery and the Pi/control split
 
-Recovery changes intent-only requests into explicit undispatched rejections and
+Recovery changes restored intent-only requests into `unavailable` rejections and
 `dispatch_intent` into `indeterminate`; it never invokes an effect. Already
 committed accepted outcomes stay accepted even if the run was subsequently
-interrupted. Warm sessions become evicted, running turns become interrupted,
-PTY/foreground references become missing and child references interrupted.
+interrupted, provided those commits survive. If an OS crash or power loss drops
+the admission record, the same request ID can be admitted again. If only dispatch
+intent is lost, an effect may already have happened despite the restored
+intent-only rejection. Warm sessions become evicted, running turns become
+interrupted, PTY/foreground references become missing and child references interrupted.
 Detached references become `reconciling` with their old runner identity intact;
 S1.06 must verify reality before enabling writes or claiming termination.
 
@@ -194,15 +206,20 @@ truncate questions/answers. The later broker
 owns authorization, subscriptions, timeouts and notification. `answerInteraction`
 checks the admitted answer identity, responder eligibility, scope, schema,
 expiry and unresolved state, then commits the winner, response, revision and
-optional ask-user continuation **together**. It returns only after durable commit.
+optional ask-user continuation **together**. It returns only after SQLite commit,
+subject to the OS-crash/power-loss durability limit above.
 A failed write must not notify a winner or resume a callback.
 
 Only answered session `ask_user` interactions may create restart-replayable
-continuations. `ready` means no dispatch intent has ever been committed;
+continuations. `ready` means the restored state has no dispatch intent;
 `transitionContinuation(..., 'dispatch_intent')` must return before dispatch.
-Recovery exposes only those proven-undispatched ready IDs, and only for an open
-session with the committed answer. It does not dispatch them. A committed
+Recovery exposes only those ready IDs without surviving dispatch intent, and only
+for an open session with the committed answer. It does not dispatch them. A committed
 `dispatch_intent` becomes `indeterminate`; the winning answer is retained.
+The broker resumes ready continuations automatically. Losing their dispatch
+intent in an OS crash or power loss can therefore repeat a continuation whose
+effect already started; the commit ordering prevents this after a process crash,
+not after loss of committed control state.
 Completed/indeterminate/cancelled continuations cannot transition again.
 `cancelInteraction` persists timeout, abort, unsupported, drain and restart outcomes without overwriting a winner. Live callbacks/tool approvals/OAuth are not rebuilt as user prompts. Restart
 cancels nonreplayable pending interactions, defers pending ask-user requests

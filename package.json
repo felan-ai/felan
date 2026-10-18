@@ -27,7 +27,10 @@
     "check:licenses": "node scripts/check-third-party-licenses.mjs",
     "check:proposed-version": "node scripts/check-proposed-version.mjs",
     "select:release-packages": "node scripts/check-proposed-version.mjs --select-unpublished",
-    "verify": "pnpm check:licenses && pnpm build && pnpm type-check && pnpm test && pnpm pack:all && pnpm test:packed-bin"
+    "verify": "pnpm check:licenses && pnpm build && pnpm type-check && pnpm test && pnpm pack:all && pnpm test:packed-bin",
+    "perf": "node perf/run.mjs",
+    "perf:compare": "node perf/compare.mjs",
+    "perf:test": "node --test perf/test/*.test.mjs"
   },
   "devDependencies": {
     "@types/node": "24.12.4",

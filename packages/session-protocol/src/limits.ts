@@ -36,10 +36,27 @@ export class ProtocolValidationError extends Error {
   }
 }
 
+const encoder = new TextEncoder();
+const byteBuffer = new Uint8Array(16 * 1024);
+
 export function utf8Bytes(text: string): number {
-  return new TextEncoder().encode(text).byteLength;
+  let bytes = 0;
+  let offset = 0;
+  while (offset < text.length) {
+    const { read, written } = encoder.encodeInto(offset === 0 ? text : text.slice(offset), byteBuffer);
+    bytes += written;
+    offset += read;
+  }
+  return bytes;
 }
 
 export function codePointLength(text: string): number {
-  return Array.from(text).length;
+  let length = text.length;
+  for (let index = 0; index < text.length - 1; index++) {
+    const first = text.charCodeAt(index);
+    if (first < 0xd800 || first > 0xdbff) continue;
+    const second = text.charCodeAt(index + 1);
+    if (second >= 0xdc00 && second <= 0xdfff) { length--; index++; }
+  }
+  return length;
 }

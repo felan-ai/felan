@@ -1,7 +1,7 @@
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import { Container, CURSOR_MARKER, Input, Key, SelectList, Text, matchesKey, stripTerminalSequences, fuzzyFilter, type SelectItem, type KeybindingsManager, type TUI } from '@earendil-works/pi-tui';
 import type { SetupJob } from '@felan-ai/session-protocol';
-import { DependencyInstallationChecklist, DependencyInstallProgressLoader, type DependencyInstallOption } from '../dependency-onboarding.js';
+import type { DependencyInstallOption } from '../dependency-onboarding.js';
 import { selectionHint, type TuiDialogHost, type TuiDialogs } from './dialogs.js';
 import { clientSelectListTheme } from './theme.js';
 
@@ -84,20 +84,28 @@ export function createSetupUi(tui: TUI, dialogs: TuiDialogs, theme: () => Theme,
         dispose: () => input.setValue(''),
       };
     }, { signal }),
-    checklist: (options, signal) => dialogs.custom<readonly string[] | undefined>(done =>
-      new DependencyInstallationChecklist(tui, theme(), keys, options, done), { signal }),
-    progress: (job, signal) => dialogs.custom<'links' | undefined>(done => {
-      const loader = new DependencyInstallProgressLoader(tui, theme(), stripTerminalSequences(job.message || 'Waiting for daemon setup…'));
-      const hint = new Text(`${job.links?.length ? 'L opens setup links · ' : ''}Escape cancels this setup job`, 1, 1);
-      return {
-        render: width => [...loader.render(width), ...hint.render(width)],
-        invalidate: () => { loader.invalidate(); hint.invalidate(); },
-        handleInput: data => {
-          if (keys.matches(data, 'tui.select.cancel') || matchesKey(data, Key.escape)) done(undefined);
-          else if (job.links?.length && data.toLowerCase() === 'l') done('links');
-        },
-        dispose: () => loader.dispose(),
-      };
-    }, { signal }),
+    checklist: async (options, signal) => {
+      const { DependencyInstallationChecklist } = await import('../dependency-onboarding.js');
+      if (signal.aborted) return undefined;
+      return dialogs.custom<readonly string[] | undefined>(done =>
+        new DependencyInstallationChecklist(tui, theme(), keys, options, done), { signal });
+    },
+    progress: async (job, signal) => {
+      const { DependencyInstallProgressLoader } = await import('../dependency-onboarding.js');
+      if (signal.aborted) return undefined;
+      return dialogs.custom<'links' | undefined>(done => {
+        const loader = new DependencyInstallProgressLoader(tui, theme(), stripTerminalSequences(job.message || 'Waiting for daemon setup…'));
+        const hint = new Text(`${job.links?.length ? 'L opens setup links · ' : ''}Escape cancels this setup job`, 1, 1);
+        return {
+          render: width => [...loader.render(width), ...hint.render(width)],
+          invalidate: () => { loader.invalidate(); hint.invalidate(); },
+          handleInput: data => {
+            if (keys.matches(data, 'tui.select.cancel') || matchesKey(data, Key.escape)) done(undefined);
+            else if (job.links?.length && data.toLowerCase() === 'l') done('links');
+          },
+          dispose: () => loader.dispose(),
+        };
+      }, { signal });
+    },
   };
 }

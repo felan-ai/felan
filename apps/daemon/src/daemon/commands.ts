@@ -99,15 +99,18 @@ export class SessionCommands {
       case 'executions.list': return accepted(request, await executionRequest(() => registrySessionExecutions(registry, request.session).executions(request.params)));
       case 'executions.read': return accepted(request, await executionRequest(() => registrySessionExecutions(registry, request.session).execution(request.params.executionId)));
       case 'session.history': {
-        const projection = registry.projection(request.session); const snapshot = projection.snapshot();
-        if (snapshot.revision !== request.params.revision || snapshot.branch !== request.params.branch) throw commandError('resync_required');
+        const projection = registry.projection(request.session); projection.refresh();
+        const revision = registry.options.store.sessionMetadata(request.session).revision;
+        const branch = registry.binding(request.session)!.runtime.session.sessionManager.getLeafId() ?? request.session;
+        if (revision !== request.params.revision || branch !== request.params.branch) throw commandError('resync_required');
         return accepted(request, projection.history(request.params.cursor, request.params.revision, request.params.limit));
       }
       case 'session.tree': {
-        const binding = registry.binding(request.session)!; const snapshot = registry.projection(request.session).snapshot(); const manager = binding.runtime.session.sessionManager;
+        const binding = registry.binding(request.session)!; registry.projection(request.session).refresh(); const manager = binding.runtime.session.sessionManager;
+        const revision = registry.options.store.sessionMetadata(request.session).revision; const branch = manager.getLeafId() ?? request.session;
         const entries = projectTreeEntries(manager);
-        return accepted(request, { revision: snapshot.revision, branch: snapshot.branch,
-          ...page(entries, request.params, `tree:${request.session}:${snapshot.revision}:${snapshot.branch}`) });
+        return accepted(request, { revision, branch,
+          ...page(entries, request.params, `tree:${request.session}:${revision}:${branch}`) });
       }
       case 'processes.list': {
         this.assertRoot(request.session, request.params.root);
@@ -308,7 +311,7 @@ export class SessionCommands {
         return this.start(request, context.origin, async session => { await session.compact(request.params.instructions); });
       }
       case 'command.invoke': {
-        const target = registry.projection(request.session).snapshot().catalog.commands.find(item => item.name === request.params.name);
+        const target = registry.projection(request.session).catalog().commands.find(item => item.name === request.params.name);
         if (!target) throw commandError('unavailable');
         const invoke = (session: AgentSession) => session.prompt(`/${request.params.name}${request.params.arguments ? ` ${request.params.arguments}` : ''}`, { source: 'rpc' });
         // Like Pi, extension commands execute immediately during an active run; skill commands still wait for it.

@@ -15,10 +15,10 @@ it('keeps local settings and credentials out of the daemon implementation', asyn
   }
 });
 
-it('publishes client and provider boundaries instead of implementation subpaths', async () => {
+it('publishes client, provider and lightweight host boundaries instead of implementation subpaths', async () => {
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   expect(Object.keys(manifest.exports).sort()).toEqual([
-    '.', './client', './daemon-bootstrap', './provider', './session-runtime',
+    '.', './client', './daemon-bootstrap', './host-config', './provider', './session-runtime', './version',
   ]);
 });
 

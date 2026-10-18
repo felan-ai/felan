@@ -3,13 +3,13 @@ import { isConversationEntry } from './session-files.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getSupportedThinkingLevels, type AgentSession, type AgentSessionEvent, type SessionEntry } from '@felan-ai/agent-core';
 import {
-  CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, OPERATION_CATALOG, PresentationSchema, PromptSchema, parseSchema, parseSessionSnapshot, trimSnapshotLists, validateBase64, validatePrompt,
+  CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, OPERATION_CATALOG, PresentationSchema, PromptSchema, parseSchema, trimSnapshotLists, validateBase64, validatePrompt,
   type KnownSessionChange, type Message, type Origin, type Presentation, type SessionEvent,
   type SessionSnapshot, type TextStreamEvent,
   MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, type ActiveMessageDisplay,
 } from '@felan-ai/session-protocol';
 import type { DaemonControlStore } from './control-store.js';
-import type { ControlSession, ControlSessionMetadata } from './control-state.js';
+import type { ControlSessionMetadata } from './control-state.js';
 import type { SessionBinding } from './session-lifecycle-contracts.js';
 import { messageDisplay } from './message-display.js';
 import { sessionTip } from './session-cursor.js';
@@ -31,17 +31,21 @@ export interface ProjectionOptions {
 type QueueItem = SessionSnapshot['queue'][number];
 type Tool = SessionSnapshot['tools'][number];
 type Stream = SessionSnapshot['activeStreams'][number];
+type StreamState = { value: Stream; bytes: number; pendingHighSurrogate: string };
 
 export class SessionProjection {
   private readonly session: AgentSession;
   private readonly id: string;
   private readonly entryIds = new Set<string>();
+  private scannedEntries = 0;
+  private lastScannedEntryId: string | undefined;
   private readonly messageIds = new Map<string, string>();
   private readonly liveIds = new WeakMap<object, string>();
   private readonly origins = new Map<string, Origin>();
   private readonly tools = new Map<string, Tool>();
   private readonly dirtyTools = new Set<string>();
-  private readonly streams = new Map<string, Stream>();
+  private readonly streams = new Map<string, StreamState>();
+  private streamsBytes = 0;
   private readonly completionOnly = new Map<string, SessionSnapshot['completionOnlyStreams'][number]>();
   private readonly dirtyCompletionOnly = new Set<string>();
   private readonly presentation = new Map<string, Presentation>();
@@ -60,6 +64,7 @@ export class SessionProjection {
   private disposed = false;
   private readonly unsubscribe: () => void;
   private catalogKey = '';
+  private cachedCatalog!: { serialized: string; key: string; value: SessionSnapshot['catalog'] };
   private executionsGeneration: string | undefined;
   private runtimeRunId: string | undefined;
   private compacting = false;
@@ -79,11 +84,13 @@ export class SessionProjection {
     const entries = this.session.sessionManager.getEntries();
     const allIds = new Set(entries.map(entry => entry.id));
     for (const entry of entries) this.entryIds.add(entry.id);
+    this.scannedEntries = entries.length;
+    this.lastScannedEntryId = entries.at(-1)?.id;
     const present = entries.filter(isMessageEntry).slice(-256).map(entry => ({ id: this.messageId(entry), entryId: entry.id }));
     const absentEntryIds = [...this.messageIds.keys()].filter(id => !allIds.has(id));
     if (absentEntryIds.length) options.store.reconcilePi(this.id, { present: [], absentEntryIds });
     if (present.length) options.store.reconcilePi(this.id, { present, absentEntryIds: [] });
-    this.catalogKey = digest(this.catalog());
+    this.catalogKey = this.refreshCatalog().key;
     this.observePublicQueue();
     this.unsubscribe = this.session.subscribe(event => {
       try { this.receive(event); } catch (error) { options.onError(error); }
@@ -103,7 +110,7 @@ export class SessionProjection {
   }
 
   transitionForSafety(transition: Parameters<DaemonControlStore['transitionSessionForSafety']>[1], expectedRunId?: string): void {
-    const previous = this.options.store.session(this.id);
+    const previous = this.options.store.sessionMetadata(this.id);
     if (expectedRunId !== undefined && previous.run.id !== expectedRunId) return;
     const commit = this.options.store.transitionSessionForSafety(this.id, transition);
     if (commit.revisions[this.id] === undefined) return;
@@ -122,7 +129,7 @@ export class SessionProjection {
   /** Only a patch is durable; live views (tools, presentations, catalog, executions) take transient revisions. */
   /** Makes a draft visible to listings. Publishing keeps the client's revision sequence contiguous. */
   materialize(): void {
-    const stored = this.options.store.session(this.id);
+    const stored = this.options.store.sessionMetadata(this.id);
     this.publish({ type: 'metadata.updated', title: stored.title, state: stored.state, residency: stored.residency }, { draft: false });
   }
   publish(change: KnownSessionChange, patch?: Parameters<DaemonControlStore['updateSession']>[1]): void {
@@ -145,7 +152,7 @@ export class SessionProjection {
 
   syncCursor(): void {
     const manager = this.session.sessionManager;
-    const stored = this.options.store.session(this.id);
+    const stored = this.options.store.sessionMetadata(this.id);
     const branch = manager.getLeafId() ?? this.id;
     const observedTip = sessionTip(manager);
     if (stored.branch === branch && stored.observedTip === observedTip) return;
@@ -166,53 +173,60 @@ export class SessionProjection {
     }
     for (const id of this.dirtyCompletionOnly) this.publishCompletionOnly(id);
     const manager = this.session.sessionManager;
-    for (const entry of manager.getEntries()) {
+    const entries = manager.getEntries();
+    const start = entries.length >= this.scannedEntries && entries[this.scannedEntries - 1]?.id === this.lastScannedEntryId ? this.scannedEntries : 0;
+    for (let index = start; index < entries.length; index++) {
+      const entry = entries[index]!;
       if (this.entryIds.has(entry.id)) continue;
       if (!isMessageEntry(entry)) { this.entryIds.add(entry.id); continue; }
-      if (isConversationEntry(entry) && this.options.store.session(this.id).draft) this.materialize();
+      if (isConversationEntry(entry) && this.options.store.sessionMetadata(this.id).draft) this.materialize();
       if (this.origin) this.origins.set(entry.id, this.origin);
       const message = this.message(entry);
       const commit = this.options.store.project(this.id, [{ type: 'message', id: message.id, entryId: entry.id, state: 'observed' }]);
       this.entryIds.add(entry.id);
-      for (const [id, stream] of this.streams) if (stream.message === message.id) this.streams.delete(id);
+      for (const [id, stream] of this.streams) if (stream.value.message === message.id) this.removeStream(id);
       for (const [id, stream] of this.completionOnly) if (stream.message === message.id) this.completionOnly.delete(id);
       this.options.publish({ v: 1, session: this.id, rev: commit.value.revision, change: { type: 'message.completed', message } });
       if (this.activeDisplay?.message === message.id) { this.activeDisplay = undefined; this.displayDirty = true; }
     }
+    this.scannedEntries = entries.length;
+    this.lastScannedEntryId = entries.at(-1)?.id;
     this.flushDisplay();
     for (const id of this.dirtyTools) this.publish({ type: 'tool.updated', tool: this.tools.get(id)! });
     this.dirtyTools.clear();
     for (const [id, tool] of this.tools) if (this.tools.size > LIMITS.pageEntries && tool.state !== 'running') this.tools.delete(id);
     this.refreshQueue();
-    const stored = this.options.store.session(this.id);
+    const stored = this.options.store.sessionMetadata(this.id);
     const title = manager.getSessionName() ?? '';
     if (stored.title !== title) this.publish({ type: 'metadata.updated', title, state: stored.state, residency: stored.residency }, { title });
     const model = this.session.model && { provider: this.session.model.provider, id: this.session.model.id };
     const thinking = this.session.thinkingLevel;
     if (model && (digest(stored.model) !== digest(model) || stored.thinking !== thinking)) this.publish({ type: 'model.updated', model, thinking }, { model, thinking });
     this.syncCursor();
-    const catalog = this.catalog();
-    if (this.catalogKey !== digest(catalog)) { this.publish({ type: 'catalog.updated', catalog }); this.catalogKey = digest(catalog); }
+    const catalog = this.refreshCatalog();
+    if (this.catalogKey !== catalog.key) { this.publish({ type: 'catalog.updated', catalog: catalog.value }); this.catalogKey = catalog.key; }
     this.options.onRefresh?.();
   }
 
+  catalog(): SessionSnapshot['catalog'] { return this.refreshCatalog().value; }
+
   snapshot(): SessionSnapshot {
     this.refresh();
-    const stored = this.options.store.session(this.id);
+    const stored = this.options.store.sessionMetadata(this.id);
     if (!stored.model || !stored.thinking) throw new Error('Session has no selected model; select an available model before attaching.');
     const history = this.history(undefined, stored.revision);
-    return parseSessionSnapshot(trimSnapshotLists({
+    return trimSnapshotLists({
       session: this.id, root: stored.root, ...(stored.parent ? { parent: stored.parent } : {}),
       revision: stored.revision, cwd: stored.cwd, title: stored.title, state: stored.state, residency: stored.residency,
       branch: history.branch, history, model: stored.model, thinking: stored.thinking, run: stored.run,
-      queue: this.queue, policy: stored.policy, catalog: this.catalog(), ...this.options.extras(),
+      queue: this.queue, policy: stored.policy, catalog: this.cachedCatalog.value, ...this.options.extras(),
       tools: [...this.tools.values()], presentation: [...this.presentation.values()],
       ...(this.executionsGeneration ? { executionsGeneration: this.executionsGeneration } : {}),
-      activeStreams: [...this.streams.values()], completionOnlyStreams: [...this.completionOnly.values()],
-    }));
+      activeStreams: [...this.streams.values()].map(stream => stream.value), completionOnlyStreams: [...this.completionOnly.values()],
+    });
   }
 
-  history(cursor?: string, revision = this.options.store.session(this.id).revision, limit: number = LIMITS.pageEntries): SessionSnapshot['history'] {
+  history(cursor?: string, revision = this.options.store.sessionMetadata(this.id).revision, limit: number = LIMITS.pageEntries): SessionSnapshot['history'] {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > LIMITS.pageEntries) throw new Error('Invalid history page limit.');
     const branch = this.session.sessionManager.getLeafId() ?? this.id;
     const entries = this.session.sessionManager.getBranch().filter(isMessageEntry);
@@ -254,7 +268,7 @@ export class SessionProjection {
     this.unsubscribe();
     for (const restore of this.restoreQueueMethods.reverse()) restore();
     this.restoreQueueMethods.length = 0; this.queued.clear();
-    this.streams.clear(); this.completionOnly.clear(); this.dirtyCompletionOnly.clear();
+    this.streams.clear(); this.streamsBytes = 0; this.completionOnly.clear(); this.dirtyCompletionOnly.clear();
   }
 
   private receive(event: AgentSessionEvent): void {
@@ -267,7 +281,7 @@ export class SessionProjection {
       if (observed) this.queued.delete(observed[0]);
     }
     if (event.type === 'agent_start') {
-      const previous = this.options.store.session(this.id).run;
+      const previous = this.options.store.sessionMetadata(this.id).run;
       const run = { state: 'running' as const, id: (previous.state === 'running' || previous.state === 'waiting') && previous.id ? previous.id : randomUUID(), ...(this.origin ? { origin: this.origin } : {}) };
       this.publish({ type: 'run.updated', run }, { run });
       this.runtimeRunId = run.id;
@@ -308,8 +322,8 @@ export class SessionProjection {
       if (tool) {
         const result = event.type === 'tool_execution_update' ? event.partialResult : event.result;
         const output = resultText(result);
-        tool.output = boundedText(output, LIMITS.statusTextBytes); tool.truncated = Buffer.byteLength(output) > LIMITS.statusTextBytes;
-        if (event.type === 'tool_execution_end') tool.state = event.isError ? 'failed' : 'completed';
+        this.tools.set(tool.id, { ...tool, output: boundedText(output, LIMITS.statusTextBytes), truncated: Buffer.byteLength(output) > LIMITS.statusTextBytes,
+          state: event.type === 'tool_execution_end' ? event.isError ? 'failed' : 'completed' : tool.state });
         this.dirtyTools.add(tool.id);
       }
     }
@@ -338,20 +352,39 @@ export class SessionProjection {
     const id = `${message}:${index}`;
     if (this.completionOnly.has(id)) return;
     const old = this.streams.get(id);
-    const prefix = (old?.text ?? '') + text;
-    if ((!old && this.streams.size + this.completionOnly.size >= LIMITS.activeStreams)
-      || Buffer.byteLength(prefix) > LIMITS.activeStreamBytes
-      || [...this.streams.values()].reduce((n, item) => n + Buffer.byteLength(item.text), 0) + Buffer.byteLength(text) > LIMITS.activeStreamsBytes) {
-      this.streams.delete(id);
+    text = (old?.pendingHighSurrogate ?? '') + text;
+    const lastCodeUnit = text.charCodeAt(text.length - 1);
+    const pendingHighSurrogate = lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff ? text.slice(-1) : '';
+    // JSON frames cannot contain half a surrogate pair; completion replaces any withheld tail.
+    if (pendingHighSurrogate) text = text.slice(0, -1);
+    const offset = old?.value.offset ?? 0;
+    let nextOffset = offset;
+    let malformed = false;
+    for (const point of text) {
+      if (point.length === 1 && point >= '\ud800' && point <= '\udfff') { malformed = true; break; }
+      nextOffset++;
+    }
+    const bytes = Buffer.byteLength(text);
+    if (malformed || (!old && this.streams.size + this.completionOnly.size >= LIMITS.activeStreams)
+      || (old?.bytes ?? 0) + bytes > LIMITS.activeStreamBytes
+      || this.streamsBytes + bytes > LIMITS.activeStreamsBytes) {
+      this.removeStream(id);
       if (this.streams.size + this.completionOnly.size >= LIMITS.activeStreams) throw new Error('Active stream capacity exceeded.');
-      const stream = { id, message, kind, reason: 'limit' as const };
+      const stream: SessionSnapshot['completionOnlyStreams'][number] = { id, message, kind, reason: malformed ? 'lost' : 'limit' };
       this.completionOnly.set(id, stream); this.dirtyCompletionOnly.add(id);
       this.publishCompletionOnly(id);
       return;
     }
-    const offset = old?.offset ?? 0;
-    this.streams.set(id, { id, message, kind, text: prefix, offset: offset + [...text].length });
-    this.options.publish({ v: 1, session: this.id, stream: { id, message, kind, offset }, text });
+    this.streams.set(id, { value: { id, message, kind, text: (old?.value.text ?? '') + text, offset: nextOffset }, bytes: (old?.bytes ?? 0) + bytes,
+      pendingHighSurrogate });
+    this.streamsBytes += bytes;
+    if (text) this.options.publish({ v: 1, session: this.id, stream: { id, message, kind, offset }, text });
+  }
+  private removeStream(id: string): void {
+    const stream = this.streams.get(id);
+    if (!stream) return;
+    this.streamsBytes -= stream.bytes;
+    this.streams.delete(id);
   }
   private publishCompletionOnly(id: string): void {
     const stream = this.completionOnly.get(id);
@@ -438,7 +471,7 @@ export class SessionProjection {
     this.queueLost = true; this.queued.clear();
     this.schedule();
   }
-  private catalog(): SessionSnapshot['catalog'] {
+  private refreshCatalog(): SessionProjection['cachedCatalog'] {
     const active = new Set(this.session.getActiveToolNames());
     const provenance = new Map(this.options.binding.tools.provenance.map(tool => [tool.name, tool]));
     const tools = this.session.getAllTools().map(tool => {
@@ -457,7 +490,11 @@ export class SessionProjection {
     const available = this.session.scopedModels.length ? this.session.scopedModels.map(({ model }) => model)
       : this.session.modelRuntime.getAvailableSnapshot();
     const models = available.map(model => ({ provider: model.provider, id: model.id, label: model.name, thinking: getSupportedThinkingLevels(model) }));
-    return parseSchema(CatalogSchema, { tools, commands, models });
+    const raw = { tools, commands, models };
+    const serialized = JSON.stringify(raw);
+    if (this.cachedCatalog?.serialized === serialized) return this.cachedCatalog;
+    const value = parseSchema(CatalogSchema, raw);
+    return this.cachedCatalog = { serialized, key: digest(value), value };
   }
   private messageId(entry: SessionEntry): string {
     let id = this.messageIds.get(entry.id);

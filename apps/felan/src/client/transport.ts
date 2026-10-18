@@ -33,10 +33,8 @@ export function socketTransport(socket: Socket, receiver: TransportReceiver): Cl
     } catch { close('invalid_frame'); }
   });
   socket.on('error', () => close('transport_lost'));
-  socket.on('end', () => {
-    try { decoder.finish(); close('transport_lost'); }
-    catch { close('invalid_frame'); }
-  });
+  // Complete frames are validated on data; an unfinished tail is a dropped connection.
+  socket.on('end', () => close('transport_lost'));
   socket.on('close', () => close('transport_lost'));
   return {
     send(value) {

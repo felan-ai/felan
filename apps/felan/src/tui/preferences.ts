@@ -7,7 +7,6 @@ import type { TuiSessionController } from './controller.js';
 import type { TuiDialogs } from './dialogs.js';
 import { parseClientKeybindings } from './keybindings.js';
 import { ClientThemes } from './theme-config.js';
-import { presentationDefinitions } from './presentation-preferences.js';
 import type { SettingsEntry } from './settings-menu.js';
 
 export type ClientTuiPreferences = TuiPreferences & { theme: string };
@@ -74,6 +73,7 @@ export class TerminalPreferences {
   async open(dialogs: Pick<TuiDialogs, 'settings'>): Promise<boolean> {
     if (!await this.load()) return false;
     try {
+      const { presentationDefinitions } = await import('./presentation-preferences.js');
       const response = await this.controller.perform('config.get', { scope: 'global' }).catch(() => undefined);
       if (this.closed) return false;
       const { values, extensions = [], writable } = response?.outcome === 'accepted'

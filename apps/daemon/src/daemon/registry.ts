@@ -195,7 +195,7 @@ export class SessionRegistry {
     if (request.parentSessionId && (this.closing.has(request.parentSessionId) || this.closing.has(request.rootSessionId!))) throw new Error('Parent session is closing.');
     if (request.target.kind === 'resume') throw new Error('Restore registered sessions by ID.');
     if (request.parentSessionId && request.rootSessionId && request.extensionConfigOverrides === undefined) {
-      const overrides = this.options.store.session(request.rootSessionId).profile?.extensionConfigOverrides;
+      const overrides = this.options.store.sessionMetadata(request.rootSessionId).profile?.extensionConfigOverrides;
       if (overrides) request = { ...request, extensionConfigOverrides: overrides };
     }
     const key = randomUUID();
@@ -207,7 +207,7 @@ export class SessionRegistry {
 
   async openWorker(parent: string, worker: import('./session-lifecycle-contracts.js').SessionWorkerConfiguration): Promise<SessionBinding> {
     this.assertNewWork(); this.assertDispatch(parent);
-    const owner = this.options.store.session(parent);
+    const owner = this.options.store.sessionMetadata(parent);
     const root = this.require(owner.root).binding;
     const manager = worker.sessionManager;
     const file = manager.getSessionFile();
@@ -365,7 +365,7 @@ export class SessionRegistry {
     const commit = this.options.store.putResource(resource);
     if (change) this.publish({ v: 1, session: commit.value.session, rev: commit.revisions[commit.value.session]!, change });
   }
-  getPolicy(id: string): SessionExecutionPolicy { return profilePolicy(this.options.store.session(id)); }
+  getPolicy(id: string): SessionExecutionPolicy { return profilePolicy(this.options.store.sessionMetadata(id)); }
 
   bindCommandDispatcher(available: (session: string, name: string) => boolean): () => void {
     if (this.commandDispatcher) throw new Error('A command dispatcher is already bound.');
@@ -387,7 +387,7 @@ export class SessionRegistry {
     if (!entry) { this.reloadAttachments.get(id)?.delete(attachment); return; }
     const kind = entry.attachments.get(attachment)?.kind;
     if (entry.attachments.delete(attachment) && !entry.attachments.size) entry.lastDetached = this.now();
-    if (kind === 'acp' && !this.stopping && !this.failure) this.relaxPolicy(this.options.store.session(id).root);
+    if (kind === 'acp' && !this.stopping && !this.failure) this.relaxPolicy(this.options.store.sessionMetadata(id).root);
   }
   attachmentCount(id: string): number { return this.entries.get(id)?.attachments.size ?? this.reloadAttachments.get(id)?.size ?? 0; }
   subscribe(id: string, listener: (event: ProjectionOutput) => void): () => void {
@@ -433,7 +433,7 @@ export class SessionRegistry {
   executionHost(id: string): ExecutionHost {
     const existing = this.entries.get(id)?.host;
     if (existing instanceof ExecutionHost) return existing;
-    const root = this.options.store.session(id).root;
+    const root = this.options.store.sessionMetadata(id).root;
     let manager = this.executionManagers.get(root);
     if (!manager) { manager = new RegistryExecutions(this, root); this.executionManagers.set(root, manager); }
     return manager.host(id);
@@ -475,7 +475,7 @@ export class SessionRegistry {
     await this.restore(id);
     this.assertDispatch(id);
     const entry = this.require(id);
-    const stored = this.options.store.session(id);
+    const stored = this.options.store.sessionMetadata(id);
     if (this.closing.has(id) || this.copyClaims.has(stored.piPath) || this.running(id)) throw registryError('busy', 'Session is busy.');
     const continuation = this.options.store.snapshot().continuations.find(item => item.id === continuationId);
     if (!continuation || continuation.session !== id || continuation.phase !== 'ready') throw registryError('already_resolved', 'Continuation is no longer ready.');
@@ -526,7 +526,7 @@ export class SessionRegistry {
       entry.dispatches.delete(requestId);
       try {
         if (!this.failure) {
-          if (!entry.cancelling) entry.projection.settleRun(this.options.store.session(id).run.id);
+          if (!entry.cancelling) entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id);
           entry.projection.refresh();
         }
       }
@@ -537,7 +537,7 @@ export class SessionRegistry {
 
   private commitDispatch(requestId: string, id: string): void {
     const commit: ControlCommit<unknown> = this.options.store.markDispatched(requestId);
-    const stored = this.options.store.session(id);
+    const stored = this.options.store.sessionMetadata(id);
     if (commit.revisions[id] !== stored.revision || Object.keys(commit.revisions).some(session => session !== id)) {
       throw new Error('Dispatch checkpoint does not match the committed session revision.');
     }
@@ -547,7 +547,7 @@ export class SessionRegistry {
 
   publishCommitted(revisions: Readonly<Record<string, number>>): void {
     for (const [id, revision] of Object.entries(revisions)) {
-      const stored = this.options.store.session(id);
+      const stored = this.options.store.sessionMetadata(id);
       if (stored.revision !== revision) throw new Error('Checkpoint differs from the committed revision.');
       if (this.entries.has(id)) this.publish({ v: 1, session: id, rev: revision, change: { type: 'run.updated', run: stored.run } });
     }
@@ -565,7 +565,7 @@ export class SessionRegistry {
     }
     const id = interaction.scope.session;
     const revision = revisions[id];
-    if (revision !== this.options.store.session(id).revision) throw new Error('Interaction differs from its committed revision.');
+    if (revision !== this.options.store.sessionMetadata(id).revision) throw new Error('Interaction differs from its committed revision.');
     this.publish({ v: 1, session: id, rev: revision, change: {
       type: interaction.state === 'waiting' || interaction.state === 'deferred' ? 'interaction.requested' : 'interaction.resolved', interaction,
     } });
@@ -578,7 +578,7 @@ export class SessionRegistry {
   /** Closes the session tree if needed, then deletes every transcript in it and records tombstones for request retries. */
   deleteAdmitted(requestId: string, id: string): Promise<void> {
     this.assertAdmission();
-    const tree = this.descendants(id).map(session => this.options.store.session(session));
+    const tree = this.descendants(id).map(session => this.options.store.sessionMetadata(session));
     const paths = tree.map(session => session.piPath);
     if (paths.some(path => this.reservations.has(path))) throw registryError('busy', 'Session has a lifecycle operation in progress.');
     const token = Symbol('deletion');
@@ -615,7 +615,7 @@ export class SessionRegistry {
   }
 
   reloadAdmitted(requestId: string, id: string, configuration?: { values: OperationParams<'config.set'>['values']; overrides: NonNullable<SessionProfile['extensionConfigOverrides']> }): Promise<SessionBinding> {
-    this.assertDispatch(id); const stored = this.options.store.session(id); const entry = this.entries.get(id);
+    this.assertDispatch(id); const stored = this.options.store.sessionMetadata(id); const entry = this.entries.get(id);
     const request = this.options.store.request(requestId);
     if (request?.op !== (configuration ? 'config.set' : 'session.reload') || request.session !== id || request.phase !== 'intent') throw registryError('request_conflict', 'Reload request differs.');
     if (stored.parent) throw registryError('unavailable', 'Only root sessions can reload.');
@@ -634,19 +634,19 @@ export class SessionRegistry {
         }
         if (entry) await this.disposeEntry(id, false, { preserveView: true, keepTerminals: true, keepExecutions: true });
         this.assertAdmission();
-        if (this.closing.has(id) || this.options.store.session(id).state !== 'open') throw new RegistryOpeningCancelled('Session closed during reload.');
+        if (this.closing.has(id) || this.options.store.sessionMetadata(id).state !== 'open') throw new RegistryOpeningCancelled('Session closed during reload.');
         this.pathClaims.add(stored.piPath);
-        const current = this.options.store.session(id);
+        const current = this.options.store.sessionMetadata(id);
         const binding = await this.open({ cwd: current.cwd, sessionDir: dirname(current.piPath), target: { kind: 'resume', sessionFile: current.piPath },
           rootSessionId: current.root, policy: profilePolicy(current), ...profileOptions(current.profile) }, current, undefined, token);
         const reloaded = this.require(id); reloaded.attachments = attachments; reloaded.host?.resumeQueued();
-        const revisions = { [id]: this.options.store.session(id).revision };
+        const revisions = { [id]: this.options.store.sessionMetadata(id).revision };
         for (const listener of this.invalidationListeners) listener(revisions);
         return binding;
       } catch (error) {
         if (!this.entries.has(id) && !this.failure) {
           try {
-            const current = this.options.store.session(id);
+            const current = this.options.store.sessionMetadata(id);
             if (current.state === 'open' && current.residency !== 'evicted') this.options.store.transitionSessionForSafety(id, 'evicted');
           } catch (cleanup) { this.fence(cleanup); throw new AggregateError([error, cleanup], 'Reload failed while restoring evicted state.'); }
         }
@@ -672,7 +672,7 @@ export class SessionRegistry {
     if (!this.entries.has(id)) throw registryError('not_found', 'Cancel session is not resident.');
     const request = this.options.store.request(requestId);
     if (request?.session !== id || request.op !== 'cancel') throw registryError('request_conflict', 'Cancel request belongs to another operation or session.');
-    if (runId && this.options.store.session(id).run.id !== runId) throw registryError('not_found', 'Run not found.');
+    if (runId && this.options.store.sessionMetadata(id).run.id !== runId) throw registryError('not_found', 'Run not found.');
     this.commitDispatch(requestId, id);
     return this.cancel(id, runId);
   }
@@ -697,7 +697,7 @@ export class SessionRegistry {
     await this.restore(id);
     this.assertDispatch(id);
     const source = this.require(id);
-    const stored = this.options.store.session(id);
+    const stored = this.options.store.sessionMetadata(id);
     const request = this.options.store.request(requestId);
     if (request?.session !== id || request.op !== (from ? 'fork' : 'session.clone')) throw new Error('Copy request belongs to another operation or session.');
     const path = this.options.owner.assertOwnsPath(stored.piPath);
@@ -732,7 +732,7 @@ export class SessionRegistry {
     this.assertAdmission();
     const entry = this.require(id);
     if (entry.disposing) throw new Error('Session runtime is being evicted.');
-    const stored = this.options.store.session(id);
+    const stored = this.options.store.sessionMetadata(id);
     if (runId && stored.run.id !== runId) throw registryError('not_found', 'Run not found.');
     if (entry.cancelling) return entry.cancelling;
     if (['idle', 'interrupted'].includes(stored.run.state) && entry.binding.runtime.session.isIdle) return;
@@ -777,7 +777,7 @@ export class SessionRegistry {
     this.assertAdmission(); const evicted: string[] = []; const idle = this.options.idleMs ?? 60_000;
     for (const [id, entry] of this.entries) {
       if (this.closing.has(id) || entry.disposing || entry.attachments.size || this.hasWarmChildren(id) || this.now() - entry.lastDetached < idle || this.busy(id)) continue;
-      if (this.options.store.session(id).draft && await this.discardDraft(id)) { evicted.push(id); continue; }
+      if (this.options.store.sessionMetadata(id).draft && await this.discardDraft(id)) { evicted.push(id); continue; }
       await this.disposeEntry(id, false); evicted.push(id);
     }
     // A draft that was not resident at startup gets its idle window from startup, so a reconnecting client keeps it.
@@ -794,7 +794,7 @@ export class SessionRegistry {
    */
   private async discardDraft(id: string): Promise<boolean> {
     const entry = this.entries.get(id);
-    const conversation = entry ? entry.binding.runtime.session.sessionManager.getEntries().some(isConversationEntry) : await transcriptHasConversation(this.options.store.session(id).piPath);
+    const conversation = entry ? entry.binding.runtime.session.sessionManager.getEntries().some(isConversationEntry) : await transcriptHasConversation(this.options.store.sessionMetadata(id).piPath);
     // The transcript read yields, so an attach, deletion or other lifecycle operation may have started meanwhile.
     const stored = this.options.store.findSessionMetadata(id);
     if (!stored?.draft || stored.deletedAt !== undefined || this.entries.get(id) !== entry || this.opening.has(id) || this.closing.has(id)
@@ -817,7 +817,7 @@ export class SessionRegistry {
 
   close(id: string): Promise<void> {
     this.options.owner.assertCurrent();
-    const stored = this.options.store.session(id);
+    const stored = this.options.store.sessionMetadata(id);
     const pending = this.closes.get(id);
     if (pending) return pending;
     if (stored.state === 'closed') return Promise.resolve();
@@ -837,7 +837,7 @@ export class SessionRegistry {
   private async performClose(id: string): Promise<void> {
     await this.join([...this.opening.values()], undefined, true);
     await this.entries.get(id)?.disposing;
-    const stored = this.options.store.session(id);
+    const stored = this.options.store.sessionMetadata(id);
     if (stored.state === 'closed') return;
     const descendants = this.list().filter(item => item.parent === id && item.state === 'open');
     // Host shutdown cancels its full descendant tree and waits beyond terminal status records.
@@ -851,7 +851,7 @@ export class SessionRegistry {
       await entry.binding.runtime.session.abort();
       await this.processes.cancelForeground(id);
       await Promise.all(entry.writers);
-      entry.projection.settleRun(this.options.store.session(id).run.id);
+      entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id);
       await this.processes.settle(stored.root, false, id === stored.root ? undefined : new Set([id]));
       for (const service of entry.services) await this.processes.withCleanup(id, () => service.settle());
       await this.disposeEntry(id, true);
@@ -910,7 +910,7 @@ export class SessionRegistry {
         }
         await shutdownStep('session-writers', async () => { await entry.cancelling; await this.join([...entry.writers]); }, id);
       }
-      await shutdownStep('session-run', () => entry.projection.settleRun(this.options.store.session(id).run.id), id);
+      await shutdownStep('session-run', () => entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id), id);
       await shutdownStep('session-dispose', () => this.disposeEntry(id, false), id);
     }
     // A failed reload leaves its kept PTYs without a resident root.
@@ -920,7 +920,7 @@ export class SessionRegistry {
       services.delete(service);
     }
     for (const [id, run] of this.shutdownInterruptions) {
-      await shutdownStep('session-run', () => { if (this.options.store.session(id).state === 'open') this.options.store.interruptSessionRun(id, run); }, id);
+      await shutdownStep('session-run', () => { if (this.options.store.sessionMetadata(id).state === 'open') this.options.store.interruptSessionRun(id, run); }, id);
       this.shutdownInterruptions.delete(id);
     }
     this.retainedServices.clear(); this.lossUnsubscribe(); this.listeners.clear();
@@ -943,7 +943,7 @@ export class SessionRegistry {
 
   private childBusy(id: string, entry: Entry): boolean {
     return this.running(id) || entry.writers.size > 0 || !!entry.host?.hasPendingWork() || !!entry.host?.hasActiveJobs()
-      || !['idle', 'interrupted'].includes(this.options.store.session(id).run.state);
+      || !['idle', 'interrupted'].includes(this.options.store.sessionMetadata(id).run.state);
   }
 
   private hasWarmChildren(id: string): boolean { return [...this.entries].some(([child, value]) => child !== id && value.binding.rootSessionId === id); }
@@ -997,28 +997,26 @@ export class SessionRegistry {
       binding = await this.runtimeOpening.run({}, () => this.options.lifecycle.openSession({ ...request, resources, ownership, policy: initialPolicy, services }));
       this.assertAdmission();
       if (restored && this.closing.has(restored.id) || request.parentSessionId && (this.closing.has(request.parentSessionId) || this.closing.has(request.rootSessionId!))) throw new RegistryOpeningCancelled('Session is closing.');
-      let manager = binding.runtime.session.sessionManager;
+      const manager = binding.runtime.session.sessionManager;
       const initialPath = manager.getSessionFile();
       if (initialPath && !existsSync(this.options.owner.assertOwnsPath(initialPath))) {
         const path = this.options.owner.assertOwnsPath(initialPath);
         const header = manager.getHeader();
         if (!header || header.id !== binding.sessionId) throw new Error('Missing Pi session header.');
-        await binding.runtime.dispose(); this.processes.revokeRuntime(binding.agentRuntime);
         this.assertAdmission();
         if (!existsSync(this.options.owner.assertOwnsPath(path))) {
-        const rows = [header, ...manager.getEntries()];
-        if (manager.getEntries().some(row => row.type === 'message' && ['user', 'assistant'].includes(row.message.role))) throw new Error('Conversation transcript was not persisted.');
-        const bytes = rows.map(row => JSON.stringify(row)).join('\n') + '\n';
-        const fd = openSync(this.options.owner.assertOwnsPath(path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-        try { this.options.owner.assertCurrent(); writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
-        const directory = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-        try { fsyncSync(directory); } finally { closeSync(directory); }
+          const rows = [header, ...manager.getEntries()];
+          if (manager.getEntries().some(row => row.type === 'message' && ['user', 'assistant'].includes(row.message.role))) throw new Error('Conversation transcript was not persisted.');
+          const bytes = rows.map(row => JSON.stringify(row)).join('\n') + '\n';
+          const fd = openSync(this.options.owner.assertOwnsPath(path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+          try { this.options.owner.assertCurrent(); writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
+          const directory = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+          try { fsyncSync(directory); } finally { closeSync(directory); }
         }
         if (claim && claim !== path) this.pathClaims.delete(claim);
         claim = path; this.pathClaims.add(path);
-        binding = await this.runtimeOpening.run({}, () => this.options.lifecycle.openSession({ ...request, resources, ownership, policy: initialPolicy, services, target: { kind: 'resume', sessionFile: path },
-          rootSessionId: binding!.rootSessionId, ...(binding!.parentSessionId ? { parentSessionId: binding!.parentSessionId } : {}) }));
-        this.assertAdmission(); manager = binding.runtime.session.sessionManager;
+        // Reload the same manager so Pi appends to the header instead of creating it again on the first message.
+        manager.setSessionFile(this.options.owner.assertOwnsPath(path));
       }
       const actualPath = manager.getSessionFile();
       if (!actualPath || manager.getSessionId() !== binding.sessionId || manager.getCwd() !== resources.cwd) throw new Error('Lifecycle returned inconsistent session identity.');
@@ -1160,7 +1158,7 @@ export class SessionRegistry {
 
   private updateCommandState(entry: Entry): void {
     if (!entry.command) return;
-    const run = this.options.store.session(entry.binding.sessionId).run;
+    const run = this.options.store.sessionMetadata(entry.binding.sessionId).run;
     if (run.id !== entry.command.runId || run.state !== 'running' && run.state !== 'waiting') return;
     const state = entry.command.views.size && entry.binding.runtime.session.isIdle ? 'waiting' : 'running';
     if (state !== run.state) entry.projection.publish({ type: 'run.updated', run: { ...run, state } }, { run: { ...run, state } });
@@ -1176,7 +1174,11 @@ export class SessionRegistry {
       const interaction = parseInteraction(event.change.interaction);
       for (const listener of this.interactionListeners) listener(structuredClone(interaction));
     }
-    for (const listener of this.listeners.get(event.session) ?? []) { try { listener(structuredClone(event)); } catch { /* A client observer does not own runtime lifetime. */ } }
+    const listeners = this.listeners.get(event.session);
+    if (listeners?.size) {
+      const shared = structuredClone(event);
+      for (const listener of listeners) { try { listener(shared); } catch { /* A client observer does not own runtime lifetime. */ } }
+    }
     const entry = this.entries.get(event.session);
     if (!entry || !('change' in event)) return;
     const change = event.change;
@@ -1221,7 +1223,7 @@ export class SessionRegistry {
       if (!entry.runtimeDisposed) await this.processes.withCleanup(id, () => entry.binding.runtime.dispose());
       this.processes.revoke(id);
       this.options.owner.assertCurrent();
-      const stored = this.options.store.session(id);
+      const stored = this.options.store.sessionMetadata(id);
       const closed = close || this.closes.has(id);
       entry.projection.transitionForSafety(closed ? 'closed' : 'evicted');
       entry.projection.dispose(); this.entries.delete(id); if (!preserveView) this.listeners.delete(id); this.pathClaims.delete(stored.piPath);

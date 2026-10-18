@@ -1,5 +1,5 @@
 import {
-  LIMITS, classifyRevision, classifyTextDelta, codePointLength, parseSessionSnapshot, trimSnapshotLists, utf8Bytes,
+  LIMITS, classifyRevision, classifyTextDelta, codePointLength, trimSnapshotLists, utf8Bytes,
   type KnownSessionChange, type SessionEvent, type SessionSnapshot, type TextStreamEvent,
 } from '@felan-ai/session-protocol';
 
@@ -10,6 +10,8 @@ export type RecoveryCause = 'revision_gap' | 'stream_mismatch' | 'stream_gap' | 
 export interface SessionState {
   readonly session: string;
   readonly snapshot?: SessionSnapshot;
+  /** Conservative serialized size, reset to the exact size at each snapshot or limit check. */
+  readonly snapshotBytes: number;
   readonly status: 'awaiting_snapshot' | 'live' | 'recovering' | 'blocked' | 'disconnected';
   readonly buffered: readonly Update[];
   readonly bufferedBytes: number;
@@ -27,7 +29,7 @@ export type SessionAction =
   | { type: 'disconnected' };
 
 export function createSessionState(session: string): SessionState {
-  return { session, status: 'awaiting_snapshot', buffered: [], bufferedBytes: 0, bufferGeneration: 0, discardedRevision: 0, recoveryAttempts: 0, recoveredStreams: [] };
+  return { session, snapshotBytes: 0, status: 'awaiting_snapshot', buffered: [], bufferedBytes: 0, bufferGeneration: 0, discardedRevision: 0, recoveryAttempts: 0, recoveredStreams: [] };
 }
 
 const MAX_RECOVERIES = 3;
@@ -54,6 +56,16 @@ function completionOnly(snapshot: SessionSnapshot, stream: TextStreamEvent['stre
     completionOnlyStreams: upsert(snapshot.completionOnlyStreams, { message: stream.message, id: stream.id, kind: stream.kind, reason }, item => item.id) };
 }
 
+function applySnapshotUpdate(state: SessionState, snapshot: SessionSnapshot, update: Update): SessionState {
+  // Payload bytes overcount replacements/removals and cover the small revision/offset growth.
+  let snapshotBytes = state.snapshotBytes + utf8Bytes(JSON.stringify('rev' in update ? update.change : update));
+  if (snapshotBytes > LIMITS.pageBytes) {
+    snapshotBytes = utf8Bytes(JSON.stringify(snapshot));
+    if (snapshotBytes > LIMITS.pageBytes) return buffer(state, update, 'state_size_limit');
+  }
+  return { ...state, snapshot, snapshotBytes };
+}
+
 function applyStream(state: SessionState, update: TextStreamEvent): SessionState {
   const snapshot = state.snapshot!;
   const { stream } = update;
@@ -68,16 +80,19 @@ function applyStream(state: SessionState, update: TextStreamEvent): SessionState
     return buffer(state, update, 'stream_mismatch');
   }
   if (kind === 'gap') {
-    if (state.recoveredStreams.includes(stream.id)) return { ...state, snapshot: completionOnly(snapshot, stream) };
+    if (state.recoveredStreams.includes(stream.id)) return applySnapshotUpdate(state, completionOnly(snapshot, stream), update);
     return buffer({ ...state, recoveredStreams: [...state.recoveredStreams, stream.id] }, update, 'stream_gap');
   }
   const text = (kind === 'append' ? prefix!.text : '') + update.text;
   const active = upsert(snapshot.activeStreams, { ...stream, text, offset: stream.offset + codePointLength(update.text) }, item => item.id);
-  if (active.length + snapshot.completionOnlyStreams.length > LIMITS.activeStreams || utf8Bytes(text) > LIMITS.activeStreamBytes ||
-      active.reduce((sum, item) => sum + utf8Bytes(item.text), 0) > LIMITS.activeStreamsBytes) {
+  // UTF-8 needs at most three bytes per UTF-16 code unit, so ordinary deltas need no prefix encoding.
+  if (active.length + snapshot.completionOnlyStreams.length > LIMITS.activeStreams ||
+      (3 * text.length > LIMITS.activeStreamBytes && utf8Bytes(text) > LIMITS.activeStreamBytes) ||
+      (3 * active.reduce((sum, item) => sum + item.text.length, 0) > LIMITS.activeStreamsBytes &&
+        active.reduce((sum, item) => sum + utf8Bytes(item.text), 0) > LIMITS.activeStreamsBytes)) {
     return buffer(state, update, 'stream_limit');
   }
-  return { ...state, snapshot: { ...snapshot, activeStreams: active } };
+  return applySnapshotUpdate(state, { ...snapshot, activeStreams: active }, update);
 }
 
 function applyEvent(state: SessionState, event: SessionEvent): SessionState {
@@ -120,8 +135,7 @@ function applyEvent(state: SessionState, event: SessionEvent): SessionState {
     case 'stream.completion_only': next = completionOnly(next, { ...change.stream, offset: 0 }, change.stream.reason); break;
   }
   next = trimSnapshotLists(next);
-  if (utf8Bytes(JSON.stringify(next)) > LIMITS.pageBytes) return buffer(state, event, 'state_size_limit');
-  return { ...state, snapshot: next };
+  return applySnapshotUpdate(state, next, event);
 }
 
 export function reduceSession(state: SessionState, action: SessionAction): SessionState {
@@ -130,10 +144,13 @@ export function reduceSession(state: SessionState, action: SessionAction): Sessi
   if (action.type === 'recovery_started') return { ...state, recoveryAttempts: state.recoveryAttempts + 1,
     status: state.recoveryAttempts >= MAX_RECOVERIES ? 'blocked' : state.status };
   if (action.type === 'snapshot') {
-    const snapshot = parseSessionSnapshot(action.snapshot);
+    const snapshot = action.snapshot;
     if (snapshot.session !== state.session) throw new Error('Snapshot session mismatch');
     if (state.snapshot && snapshot.revision < state.snapshot.revision) return reduceSession(state, { type: 'resync', cause: 'stale_snapshot' });
-    let next: SessionState = { ...state, snapshot, status: 'live', buffered: [], bufferedBytes: 0 };
+    const snapshotBytes = utf8Bytes(JSON.stringify(snapshot));
+    if (snapshotBytes > LIMITS.pageBytes) return reduceSession(state, { type: 'resync', cause: 'state_size_limit' });
+    // The attach caller retains its response; freezing the live view must not freeze that response.
+    let next: SessionState = { ...state, snapshot: structuredClone(snapshot), snapshotBytes, status: 'live', buffered: [], bufferedBytes: 0 };
     for (const update of state.buffered) next = reduceSession(next, { type: 'update', update });
     // A snapshot requested before discarded updates cannot certify their cutover, especially unrevisioned text.
     if ((action.bufferGeneration ?? 0) !== next.bufferGeneration || next.snapshot!.revision < next.discardedRevision) return reduceSession(next, { type: 'resync', cause: 'stale_snapshot' });

@@ -73,7 +73,7 @@ async function readText(ui: InteractionPresenterUi, message: string, signal: Abo
     return await ui.custom<boolean>((tui, theme, _keys, done) => {
       finish = done;
       const plain = (text: string) => theme.fg('text', text);
-      const markdownTheme: MarkdownTheme = { heading: plain, link: plain, linkUrl: plain, code: plain, codeBlock: plain,
+      const markdownTheme: MarkdownTheme = { heading: plain, link: text => theme.fg('mdLink', text), linkUrl: text => theme.fg('mdLinkUrl', text), code: plain, codeBlock: plain,
         codeBlockBorder: plain, quote: plain, quoteBorder: plain, hr: plain, listBullet: plain,
         bold: text => theme.bold(text), italic: plain, strikethrough: plain, underline: plain };
       const body = new Markdown(uiText(message), 1, 0, markdownTheme);

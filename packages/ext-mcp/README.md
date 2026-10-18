@@ -6,8 +6,8 @@ authentication, and logout. It also registers `/mcp` for interactive status,
 tool listing, reconnection, authentication, and logout. The command remains
 available with an empty config so consumers can show setup guidance. The
 default entry loads configuration through Runtime files and persists OAuth
-credentials through Core Secrets. It never launches a browser or accesses a
-native credential store directly.
+credentials through Core Secrets. It never launches a browser itself or accesses
+a native credential store directly.
 
 The model-facing gateway exposes `status`, `reconnect`, `list`, `search`,
 `describe`, `call`, `authenticate`, and `logout`. Its capability and tool
@@ -46,16 +46,19 @@ extension I/O. Configured client secrets are not copied into the token store.
 
 Local sign-in additionally uses optional `MCP_OAUTH_CALLBACK_SERVICE`
 (`felan.mcp.oauth-callback@1`) from `@felan-ai/ext-mcp/service`. This is a narrow
-host exception because Runtime does not expose inbound HTTP listeners. It only
-reserves an HTTP loopback callback and returns its result; it does not read
-configuration, store tokens, or implement authorization UI. The local provider
-owns listener activation, cancellation and cleanup.
+host exception because Runtime does not expose inbound HTTP listeners. It
+reserves an HTTP loopback callback and returns its result, and may implement
+`openAuthorizationUrl` to open the authorization URL in the host browser. It
+does not read configuration, store tokens, or implement authorization UI. The
+local provider owns listener activation, browser launch, cancellation and
+cleanup.
 
 The authorization URL appears in a nondeferrable, transient `pi.ui.request` form
 with `audience: 'host'`. Its presentation is never stored in the control snapshot.
 Only an eligible local console may present it; no client-kind
-claim or ordinary session form grants authority. The user opens the URL locally,
-and the form closes when the callback finishes. There is no browser launcher or
+claim or ordinary session form grants authority. When the callback service can
+open the URL, the browser opens before the form appears; otherwise the user opens
+the form's link locally. The form closes when the callback finishes. There is no
 extension-specific presenter. Without a callback provider, sign-in is unavailable;
 existing credentials can still be used, including credentials provisioned by a
 cloud host through Secrets and config sync.
@@ -108,8 +111,8 @@ included in tool results or details.
 The package owns Runtime-backed configuration, OAuth orchestration, credential
 serialization, the gateway, transport lifecycle and bounded untrusted results.
 Hosts provide Secrets, UI authorization policy, and optionally the loopback
-callback primitive. Native filesystem access, credential storage, callback
-listeners and browser launchers do not belong in this package.
+callback and browser-opening primitive. Native filesystem access, credential
+storage, callback listeners and browser launchers do not belong in this package.
 
 It requires a compatible `@felan-ai/agent-core` peer, MCP SDK client, and
 TypeBox. Only explicit remote HTTP servers with `auth: 'oauth'` are accepted;

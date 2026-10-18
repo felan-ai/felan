@@ -4,7 +4,6 @@ import { TuiSessionController, type TuiSessionOptions } from './controller.js';
 import { DaemonTuiScreen } from './screen.js';
 import { createClientKeybindings } from './keybindings.js';
 import type { DaemonAction } from './commands.js';
-import { pickSession } from './session-navigator.js';
 import { TerminalInteractions } from './interactions.js';
 import { createPresentationUi } from './presentation-ui.js';
 import { ClientThemes } from './theme-config.js';
@@ -16,7 +15,6 @@ import { createClientPowerlineFooter, isPowerlinePresentation } from '../client/
 import { TerminalSetup } from './setup.js';
 import { createSetupUi } from './setup-ui.js';
 import { themedClientTerminal } from './theme.js';
-import { checkForFelanUpdate } from '../update.js';
 import { reportHerdrPane, type HerdrPane } from './herdr.js';
 import { formatHostBlocked } from '../client/daemon-blocked.js';
 
@@ -145,7 +143,10 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
     interactions = new TerminalInteractions(controller, builtins.presenters, setup);
     const prompts = interactions;
     if (options.herdr) unsubscribeHerdr = reportHerdrPane(controller, options.herdr, () => prompts.pending());
-    const starting = controller.start(options, async listing => (await pickSession(screen.dialogs, listing, options.cwd, undefined, () => theme, false))?.session, async () => {
+    const starting = controller.start(options, async listing => {
+      const { pickSession } = await import('./session-navigator.js');
+      return (await pickSession(screen.dialogs, listing, options.cwd, undefined, () => theme, false))?.session;
+    }, async () => {
       await loadingPreferences;
       if (stopped) return false;
       if (!controller.client.capabilities?.operations.includes('host.status')) return;
@@ -163,9 +164,9 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       return false;
     }).then(async () => {
       if (stopped) return;
-      void checkForFelanUpdate({ signal: updateCheck.signal }).then(version => {
+      void import('../update.js').then(({ checkForFelanUpdate }) => checkForFelanUpdate({ signal: updateCheck.signal })).then(version => {
         if (version && !stopped) controller.announce(`Felan ${version} is available. Run felan update to upgrade.`);
-      });
+      }).catch(() => {});
       if (startupDeferred) return;
       if (options.verbose) controller.setNotice(`Daemon ${controller.client.capabilities?.daemonVersion ?? 'unavailable'} · ${controller.sessionId ?? 'no session'}`);
       if (options.resume && !controller.sessionId) exit();

@@ -97,13 +97,16 @@ async function listExecutions(controller: TuiSessionController, session: string)
 }
 
 /**
- * A prompt waiting for the user blocks the session. Queued or running executions anywhere below it, and direct
- * children whose result it has not consumed yet, keep it working, so a delegated workflow ends with one completion
- * rather than one per child.
+ * A prompt waiting for the user blocks the session. Host prompts without a recipient are broadcast to every local
+ * console and name no session, so they do not block this pane; otherwise every pane would flip to blocked and back,
+ * clearing Herdr's unseen-completion markers. Queued or running executions anywhere below it, and direct children
+ * whose result it has not consumed yet, keep it working, so a delegated workflow ends with one completion rather
+ * than one per child.
  */
 export function herdrStatus(snapshot: SessionSnapshot | undefined, prompts: readonly Interaction[], executions: readonly Execution[]): HerdrStatus {
   if (!snapshot) return { state: 'idle' };
-  const waiting = prompts.find(item => item.state === 'waiting' || item.state === 'deferred');
+  const waiting = prompts.find(item => (item.state === 'waiting' || item.state === 'deferred')
+    && (item.scope.kind === 'session' || item.scope.recipient !== undefined));
   if (waiting) {
     const message = interactionLabel(waiting.request);
     return { session: snapshot.session, state: 'blocked', ...(message === undefined ? {} : { message }) };

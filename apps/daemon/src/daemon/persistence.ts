@@ -75,8 +75,8 @@ export interface ControlChanges {
 const DATABASE = 'control.sqlite';
 const FORMAT = '2';
 const SIDECARS = ['-wal', '-shm', '-journal'] as const;
-// fullfsync keeps the darwin F_FULLFSYNC flush that Node's fsync used; a busy file fails fast instead of stalling the daemon.
-const PRAGMAS = 'PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON; PRAGMA busy_timeout = 1000';
+// NORMAL avoids per-commit flushes; remaining syncs, including checkpoints, retain macOS F_FULLFSYNC.
+const PRAGMAS = 'PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON; PRAGMA busy_timeout = 1000';
 /** SQLite primary result codes that describe the environment, not the file's contents. */
 const SQLITE_TRANSIENT = new Set([3 /* PERM */, 5 /* BUSY */, 6 /* LOCKED */, 7 /* NOMEM */, 8 /* READONLY */, 10 /* IOERR */, 13 /* FULL */, 14 /* CANTOPEN */]);
 const LEGACY_MIGRATED = 'migrated-to-v2.json';
@@ -100,7 +100,7 @@ function loadSqlite(): typeof import('node:sqlite') {
 
 /**
  * The control store's SQLite database. A commit writes only the rows that changed, in one
- * synchronous-FULL WAL transaction, after rechecking ownership and the pinned file identities.
+ * synchronous-NORMAL WAL transaction, after rechecking ownership and the pinned file identities.
  */
 export class ControlDatabase {
   readonly directory: string;

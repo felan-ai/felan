@@ -1,8 +1,8 @@
 import { closeSync, lstatSync, unlinkSync } from 'node:fs';
-import type { Socket } from 'node:net';
+import { createServer, type Server, type Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { CONTROL_VERSION, PROTOCOL_VERSION, JsonLineDecoder, encodeFrame, parseControlRequest, parseControlResponse, type ControlResponse, type DaemonIdentity } from '@felan-ai/session-protocol';
-import { acceptUnix, connectUnix, DaemonSecurityError, listenUnix, protectSocket } from './native-ownership.js';
+import { connectUnix, DaemonSecurityError, listenUnix, peerUid, protectSocket } from './native-ownership.js';
 import { assertPathIdentity, assertTargetIdentity, pathIdentity, pinPathChain, type ResolvedDaemonTarget } from './target.js';
 import type { DaemonOwnership } from './ownership.js';
 
@@ -34,13 +34,16 @@ export async function listenLocalIpc(owner: DaemonOwnership, onConnection: (sock
   let closed = false;
   const connections = new Set<Socket>();
   let pin: ReturnType<typeof pathIdentity> | undefined;
-  let timer: NodeJS.Timeout | undefined;
+  let server: Server | undefined;
+  let transferred = false;
   let unwatch = () => {};
   let unsubscribe = () => {};
   function close() {
     unsubscribe();
     if (closed) { unwatch(); return; }
-    closed = true; clearInterval(timer); closeSync(fd);
+    closed = true;
+    // Once listen({ fd }) adopts the descriptor, only libuv may close it.
+    if (transferred) server!.close(); else closeSync(fd);
     for (const socket of connections) socket.destroy();
     connections.clear();
     try {
@@ -49,27 +52,34 @@ export async function listenLocalIpc(owner: DaemonOwnership, onConnection: (sock
     } catch { /* Never remove a replacement endpoint or clean up after ownership loss. */ }
     finally { unwatch(); }
   }
-  function acceptConnections() {
+  function acceptConnection(socket: Socket) {
+    socket.on('error', () => {}); socket.once('close', () => connections.delete(socket));
+    if (closed) { socket.destroy(); return; }
     try {
       owner.assertCurrent();
-      for (let i = 0; i < 32; i++) {
-        let socket: Socket | undefined;
-        try { socket = acceptUnix(fd, target.uid); }
-        catch (error) { if (error instanceof DaemonSecurityError && error.code === 'forbidden') continue; throw error; }
-        if (!socket) break;
-        connections.add(socket); socket.on('error', () => {}); socket.once('close', () => connections.delete(socket!));
-        owner.assertCurrent();
-        if (connections.size > 64) { socket.destroy(); continue; }
-        onConnection(socket);
-      }
-    } catch { close(); }
+      // libuv's uv__accept sets O_NONBLOCK and FD_CLOEXEC before Node emits a connection.
+      const peerFd = (socket as Socket & { _handle?: { fd?: number } })._handle?.fd;
+      if (typeof peerFd !== 'number' || !Number.isInteger(peerFd) || peerFd < 0) { socket.destroy(); return; }
+      try { if (peerUid(peerFd) !== target.uid) { socket.destroy(); return; } }
+      catch { socket.destroy(); return; }
+      owner.assertCurrent();
+      if (connections.size >= 64) { socket.destroy(); return; }
+      connections.add(socket);
+      onConnection(socket);
+    } catch { socket.destroy(); close(); }
   }
   try {
     protectSocket(target.endpoint); pin = validateSocket(target);
     unwatch = owner.watchPath(target.endpoint);
     unsubscribe = owner.onLost(close);
     owner.assertCurrent(); assertPathIdentity(pin);
-    timer = setInterval(acceptConnections, 5);
+    await new Promise<void>((resolve, reject) => {
+      server = createServer(acceptConnection);
+      server.on('error', error => { reject(error); close(); });
+      server.listen({ fd, exclusive: true, backlog: 64 }, resolve);
+      transferred = true;
+    });
+    owner.assertCurrent(); assertPathIdentity(pin);
     return { close };
   } catch (error) { close(); throw error; }
 }

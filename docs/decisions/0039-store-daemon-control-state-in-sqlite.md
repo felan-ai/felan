@@ -4,6 +4,8 @@
 
 Accepted. Replaces the whole-file control snapshot described in
 [session daemon persistence](../maintainers/session-daemon-persistence.md).
+The per-commit durability choice is superseded by
+[ADR 0042](0042-use-normal-synchronous-control-store-commits.md).
 
 ## Context
 

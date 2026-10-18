@@ -12,6 +12,25 @@ function hasChangeType<T extends KnownSessionChange['type']>(change: SessionEven
 }
 
 describe.skipIf(!supported)('daemon session registry', () => {
+  it('persists a new header without replacing its prepared runtime and appends the first turn once', async () => {
+    const f = await fixture();
+    const open = vi.mocked(f.profile.openSession).getMockImplementation()!;
+    vi.mocked(f.profile.openSession).mockImplementation(async request => {
+      const binding = await open(request);
+      binding.runtime.session.sessionManager.appendModelChange('offline', 'fixture');
+      return binding;
+    });
+    const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    expect(f.profile.openSession).toHaveBeenCalledOnce();
+    expect(f.instances.get(binding.sessionId)!.dispose).not.toHaveBeenCalled();
+    const manager = binding.runtime.session.sessionManager;
+    const entries = () => readFile(manager.getSessionFile()!, 'utf8').then(text => text.trim().split('\n').map(line => JSON.parse(line)));
+    expect(await entries()).toEqual([manager.getHeader(), ...manager.getEntries()]);
+    await binding.runtime.session.prompt('first turn');
+    expect(await entries()).toEqual([manager.getHeader(), ...manager.getEntries()]);
+    expect(manager.getEntries().map(entry => entry.type)).toEqual(['model_change', 'message', 'message']);
+  });
+
   it('detach changes only attachment metadata, not runtime or services', async () => {
     const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const service = { busy: () => false, settle: vi.fn(async () => {}), dispose: vi.fn(async () => {}) };
@@ -37,7 +56,7 @@ describe.skipIf(!supported)('daemon session registry', () => {
     const [a, b] = await Promise.all([f.registry.restore(binding.sessionId), f.registry.restore(binding.sessionId)]);
     expect(a).toBe(b); expect(a.sessionId).toBe(binding.sessionId); expect(a.agentRuntime).toBeDefined();
     expect(a.resources.cwd).toBe(f.cwd); expect(f.store.session(a.sessionId).branch).toBe(before.branch);
-    expect(await readFile(before.piPath)).toEqual(bytes); expect(f.opened).toHaveLength(3);
+    expect(await readFile(before.piPath)).toEqual(bytes); expect(f.opened).toHaveLength(2);
   });
 
   it('previews the first user message from a live runtime or an evicted transcript', async () => {
@@ -101,7 +120,7 @@ describe.skipIf(!supported)('daemon session registry', () => {
     f.store.close(); const nextStore = new DaemonControlStore(f.owner, { now: () => now });
     const next = f.createRegistry(nextStore); f.replaceRegistry(next, nextStore);
     expect(next.recovery).toBeDefined();
-    await next.restore(b.sessionId); expect(f.opened).toHaveLength(3);
+    await next.restore(b.sessionId); expect(f.opened).toHaveLength(2);
   });
   it('restores the transcript tip after eviction, even if an older branch was selected, and refuses duplicate dispatched work', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });

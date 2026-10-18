@@ -41,10 +41,47 @@ describe('MCP host authorization form', () => {
       server: 'docs', url: 'https://auth.example.test/authorize?state=fixture', signal,
     });
     expect(request).toHaveBeenCalledWith(expect.objectContaining({
-      description: expect.stringContaining('https://auth.example.test/authorize?state=fixture'),
+      description: expect.stringContaining('Open the authorization page in a browser on this machine'),
+      markdown: '[Open the authorization page](https://auth.example.test/authorize?state=fixture)',
       input: { fields: [] },
       actions: [{ id: 'cancel', label: 'Cancel authorization', target: 'element', outcome: 'cancel' }],
     }), { audience: 'host', signal, deferrable: false, transient: true });
+  });
+
+  it('opens the authorization URL on the host before showing the waiting form', async () => {
+    const calls: string[] = [];
+    const request = vi.fn<ExtensionUi['request']>(async () => { calls.push('request'); return { state: 'cancelled', reason: 'abort' }; });
+    const openUrl = vi.fn(async () => { calls.push('open'); });
+    const signal = new AbortController().signal;
+    const url = 'https://auth.example.test/authorize?redirect=(x)&state=a\\b_';
+    await createAuthorizationPresenter({ request } as unknown as ExtensionUi, openUrl)({ server: 'docs', url, signal });
+    expect(openUrl).toHaveBeenCalledWith(url, signal);
+    expect(calls).toEqual(['open', 'request']);
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
+      description: expect.stringContaining('Your browser was opened to authorize the docs MCP server.'),
+      markdown: '[Open the authorization page](https://auth.example.test/authorize?redirect=\\(x\\)&state=a\\\\b_)',
+    }), expect.anything());
+  });
+
+  it('falls back to manual opening when the host cannot open a browser', async () => {
+    const request = vi.fn<ExtensionUi['request']>(async () => ({ state: 'cancelled', reason: 'abort' }));
+    const openUrl = vi.fn(async () => { throw new Error('No browser'); });
+    await createAuthorizationPresenter({ request } as unknown as ExtensionUi, openUrl)({
+      server: 'docs', url: 'https://auth.example.test/authorize', signal: new AbortController().signal,
+    });
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
+      description: expect.stringContaining('Open the authorization page in a browser on this machine'),
+      markdown: '[Open the authorization page](https://auth.example.test/authorize)',
+    }), expect.anything());
+  });
+
+  it('keeps bracketed URLs as plain text because UI markdown links cannot carry them', async () => {
+    const request = vi.fn<ExtensionUi['request']>(async () => ({ state: 'cancelled', reason: 'abort' }));
+    const url = 'http://[::1]:3118/authorize';
+    await createAuthorizationPresenter({ request } as unknown as ExtensionUi)({ server: 'docs', url, signal: new AbortController().signal });
+    const form = request.mock.calls[0]![0];
+    expect(form.description).toContain(url);
+    expect(form).not.toHaveProperty('markdown');
   });
 
   it('does not silently accept an unavailable local console', async () => {

@@ -1,6 +1,6 @@
-import {
-  type ExtensionContext,
-  type FelanExtensionAPI,
+import type {
+  ExtensionContext,
+  FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import {
   CustomEditor,

@@ -275,7 +275,7 @@ export class DaemonTuiScreen {
       try {
         this.transcript.showProjection(projectTuiTranscript(snapshot, this.controller.history, this.options.settings?.() ?? {
           hideThinking: false, showImages: true, imageWidthCells: 60, outputPad: 1, toolMode: 'grouped',
-        }, this.controller.notes));
+        }, this.controller.notes, this.controller.promptEchoes));
       } catch (error) { notice(`Cannot render transcript: ${errorText(error)}`, 'error'); }
     }
   }

@@ -1,8 +1,9 @@
 import { Type, type Static } from 'typebox';
 import { CatalogSchema, ChildSchema, HistoryPageSchema, MessageSchema, PolicySchema, PresentationSchema, ProcessSchema, QueueItemSchema, RunSchema, ToolStateSchema, parsePresentation, validatePrompt } from './data.js';
 import { InteractionSchema, parseInteraction } from './interactions.js';
-import { LIMITS, PROTOCOL_VERSION, ROW_SCHEMA_VERSION, ProtocolValidationError, codePointLength, utf8Bytes } from './limits.js';
+import { LIMITS, PROTOCOL_VERSION, ROW_SCHEMA_VERSION, ProtocolValidationError, codePointLength } from './limits.js';
 import { AbsolutePathSchema, CounterSchema, CursorSchema, IdSchema, JsonValueSchema, ModelSchema, RevisionSchema, ThinkingSchema, assertJson, enumOf, parseSchema, text, unboundedText } from './schema.js';
+import { validateSnapshotInvariants } from './snapshot-invariants.js';
 
 export const ActiveStreamSchema = Type.Object({ message: IdSchema, id: IdSchema, kind: enumOf(['assistant', 'thinking'] as const), text: text(LIMITS.activeStreamBytes), offset: CounterSchema });
 export const CompletionOnlyStreamSchema = Type.Object({ message: IdSchema, id: IdSchema, kind: enumOf(['assistant', 'thinking'] as const), reason: enumOf(['limit', 'lost'] as const) });
@@ -65,15 +66,7 @@ export function parseSessionSnapshot(value: unknown): SessionSnapshot {
     if (Array.isArray(rows)) candidate = { ...candidate, presentation: rows.map(parsePresentation) };
   }
   const snapshot = parseSchema(SessionSnapshotSchema, candidate);
-  if (snapshot.history.revision !== snapshot.revision || snapshot.history.branch !== snapshot.branch) throw new ProtocolValidationError('invalid_request', 'Snapshot history cutover mismatch');
-  const streams = [...snapshot.activeStreams, ...snapshot.completionOnlyStreams];
-  if (streams.length > LIMITS.activeStreams || new Set(streams.map(stream => stream.id)).size !== streams.length) throw new ProtocolValidationError('invalid_request', 'Invalid snapshot stream identities');
-  if (snapshot.activeStreams.reduce((sum, stream) => sum + utf8Bytes(stream.text), 0) > LIMITS.activeStreamsBytes) throw new ProtocolValidationError('invalid_request', 'Active stream aggregate limit exceeded');
-  for (const stream of snapshot.activeStreams) if (codePointLength(stream.text) !== stream.offset) throw new ProtocolValidationError('invalid_request', 'Snapshot stream is not a complete prefix');
-  for (const interaction of snapshot.interactions) parseInteraction(interaction);
-  for (const presentation of snapshot.presentation) parsePresentation(presentation);
-  for (const item of snapshot.queue) validatePrompt(item.prompt);
-  if (new Set(snapshot.queue.map(item => item.id)).size !== snapshot.queue.length) throw new ProtocolValidationError('invalid_request', 'Duplicate queue item');
+  validateSnapshotInvariants(snapshot);
   return snapshot;
 }
 

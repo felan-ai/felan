@@ -40,9 +40,12 @@ describe('bounded local frame transport', () => {
     const { wire, frame, closed } = fixture(); wire.emit('data', bytes); wire.emit('end');
     expect(frame).not.toHaveBeenCalled(); expect(closed).toHaveBeenCalledExactlyOnceWith('invalid_frame'); expect(wire.destroyed).toBe(true);
   });
-  it('rejects a partial frame at EOF', () => {
-    const { wire, closed } = fixture(); wire.emit('data', Buffer.from('{')); wire.emit('end');
-    expect(closed).toHaveBeenCalledExactlyOnceWith('invalid_frame');
+  it.each(['end', 'close'])('treats a partial frame on %s as connection loss', event => {
+    const { wire, frame, closed } = fixture();
+    wire.emit('data', Buffer.concat([encodeFrame({ complete: true }), Buffer.from('{"partial":')]));
+    wire.emit(event);
+    expect(frame).toHaveBeenCalledExactlyOnceWith({ complete: true });
+    expect(closed).toHaveBeenCalledExactlyOnceWith('transport_lost');
   });
   it('bounds outbound backpressure without interpreting disconnect as cancellation', () => {
     const { wire, transport, closed } = fixture(); wire.writableLength = LIMITS.unsentBytes;
@@ -59,6 +62,25 @@ describe('bounded local frame transport', () => {
         void localConnector(owner.target)({ frame: resolve, closed: () => {} }).then(connection => { transport = connection; connection.send({ fixture: true }); }, reject);
       });
       expect(await received).toEqual({ fixture: true });
+    } finally { transport?.close(); listener.close(); await owner.release(); await rm(directory, { recursive: true, force: true }); }
+  });
+  it.skipIf(!['darwin', 'linux'].includes(process.platform))('reports connection loss when the server closes halfway through a frame', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'partial-ipc-'));
+    const owner = await acquireDaemonOwnership({ kind: 'isolated', directory, namespaceId: 'client-wire' });
+    const listener = await listenLocalIpc(owner, socket => { socket.on('data', () => {
+      const frame = encodeFrame({ text: 'unfinished' });
+      socket.end(frame.subarray(0, frame.byteLength / 2));
+    }); });
+    let transport: ReturnType<typeof socketTransport> | undefined;
+    const frame = vi.fn();
+    try {
+      const closed = new Promise<string>((resolve, reject) => {
+        void localConnector(owner.target)({ frame, closed: resolve }).then(connection => {
+          transport = connection; connection.send({ fixture: true });
+        }, reject);
+      });
+      expect(await closed).toBe('transport_lost');
+      expect(frame).not.toHaveBeenCalled();
     } finally { transport?.close(); listener.close(); await owner.release(); await rm(directory, { recursive: true, force: true }); }
   });
 });

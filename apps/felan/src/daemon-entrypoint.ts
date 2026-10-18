@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
-import { loadHostConfig, resolveHostComposition, type HostCompositionInfo } from '@felan-ai/daemon/daemon-bootstrap';
+import type { HostCompositionInfo } from '@felan-ai/daemon/host-config';
 import type { DaemonTarget } from '@felan-ai/daemon/client';
 import { FELAN_VERSION } from './version.js';
 
@@ -9,6 +9,7 @@ export function resolveInstalledDaemonEntrypoint(): string {
 }
 
 export async function resolveClientHostComposition(target: DaemonTarget, hostConfigPath?: string): Promise<HostCompositionInfo> {
+  const { loadHostConfig, resolveHostComposition } = await import('@felan-ai/daemon/host-config');
   const agentDir = target.kind === 'production' ? resolve(target.agentDir) : join(resolve(target.directory), 'agent');
   const manager = { packageName: '@felan-ai/felan', version: FELAN_VERSION, resolveFrom: import.meta.url,
     resolveProvider: (specifier: string) => import.meta.resolve(specifier),

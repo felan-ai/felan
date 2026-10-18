@@ -83,8 +83,19 @@ consumers cannot assume every accepted input contains `itemId`.
 
 Each connection owns a bounded outbox. Held cutover events, queued frames and
 writes still buffered by the transport all count until their write callbacks
-complete. Backpressure preserves FIFO order; overflow closes only that connection
-with `resync_required`, so a fresh attachment must capture a new snapshot.
+complete. One `setImmediate` flush batches all queued frames into one transport
+write per event-loop turn. Adjacent, unsent text deltas for the same session,
+stream, message and kind merge when their code-point offsets are contiguous and
+the combined text fits `LIMITS.activeStreamBytes`. Revisioned events never merge.
+Merged deltas count as one frame; encoded bytes remain bounded by
+`LIMITS.unsentBytes`. Backpressure preserves FIFO order; overflow closes only that
+connection with `resync_required`, so a fresh attachment must capture a new snapshot.
+
+Closing stops admission and drops frames not yet handed to the transport.
+`closed` and `resync_required` end the socket gracefully so submitted frames
+finish writing, with a one-second destroy fallback for a peer that does not
+drain. Transport errors may destroy immediately. Each after-send callback runs
+once when its write completes or the connection closes.
 
 Install the subscription before capturing the snapshot. Send the snapshot first,
 discard events and exact text duplicates covered by its revision/prefixes, then

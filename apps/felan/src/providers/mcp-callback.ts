@@ -1,6 +1,7 @@
 import { defineServiceProvider } from '@felan-ai/daemon/provider';
 import { MCP_OAUTH_CALLBACK_SERVICE, type McpOAuthCallbackService, type OAuthCallbackReservation } from '@felan-ai/ext-mcp/service';
 import { reserveOAuthCallback } from './mcp/callback-server.js';
+import { openHostUrl } from './setup-open.js';
 
 export default defineServiceProvider({
   scope: 'session',
@@ -25,6 +26,13 @@ export default defineServiceProvider({
           void reservation.wait().then(release, release);
           return { ...reservation, release };
         } finally { pending.delete(operation); }
+      },
+      async openAuthorizationUrl(url, signal) {
+        if (!active) throw new Error('MCP callback service is unavailable.');
+        if (context.runtime.kind !== 'host') throw new Error('Opening a browser requires a host runtime.');
+        const operation = openHostUrl(context.runtime, url, AbortSignal.any([context.signal, lifetime.signal, signal]));
+        pending.add(operation);
+        try { await operation; } finally { pending.delete(operation); }
       },
     };
     const close = async () => {

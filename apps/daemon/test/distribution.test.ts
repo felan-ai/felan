@@ -28,6 +28,22 @@ describe('daemon distribution boundary', () => {
     expect(manifest.exports).not.toHaveProperty('./daemon-profile');
   });
 
+  it('publishes lightweight version and host configuration entrypoints with matching types', async () => {
+    expect(manifest.exports['./version']).toEqual({
+      types: './dist/version.d.ts', import: './dist/version.js',
+    });
+    expect(manifest.exports['./host-config']).toEqual({
+      types: './dist/daemon/host-config.d.ts', import: './dist/daemon/host-config.js',
+    });
+    expect(import.meta.resolve('@felan-ai/daemon/version')).toBe(new URL('../dist/version.js', import.meta.url).href);
+    expect(import.meta.resolve('@felan-ai/daemon/host-config')).toBe(new URL('../dist/daemon/host-config.js', import.meta.url).href);
+    const version = await import('@felan-ai/daemon/version');
+    const config = await import('@felan-ai/daemon/host-config');
+    expect(version.DAEMON_VERSION).toBe(manifest.version);
+    expect(config.loadHostConfig).toBeTypeOf('function');
+    expect(config.resolveHostComposition).toBeTypeOf('function');
+  });
+
   it('has no dependency or source import back into the client application', () => {
     for (const dependencies of [manifest.dependencies, manifest.devDependencies, manifest.peerDependencies]) {
       expect(dependencies ?? {}).not.toHaveProperty('@felan-ai/felan');

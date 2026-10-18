@@ -13,3 +13,5 @@ apps/felan/.pc-*/
 .parity/
 
 tmp/
+# Local performance artifacts
+perf/results/

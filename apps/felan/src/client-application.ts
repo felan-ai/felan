@@ -5,17 +5,16 @@ import type { DaemonTarget } from '@felan-ai/daemon/client';
 import { SessionClient, type SessionClientOptions } from './client/client.js';
 import { resolveClientHostComposition, resolveInstalledDaemonEntrypoint } from './daemon-entrypoint.js';
 import { TuiSessionController, type TuiSessionOptions } from './tui/controller.js';
-import { runDaemonTerminal } from './tui/run.js';
+import type { runDaemonTerminal } from './tui/run.js';
 import { FELAN_VERSION } from './version.js';
 import type { TuiPresentationPreferences } from './tui/preferences-schema.js';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import { waitForDaemonStop } from './client/daemon-stop.js';
 import { hostBlockedRejection } from './client/daemon-blocked.js';
 import { clientDiagnosticsLog } from './client/diagnostics.js';
-import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { TERMINAL_INTERACTION_KINDS, TERMINAL_UI_CAPABILITIES } from './tui/interactions.js';
 import { createHerdrPane } from './tui/herdr.js';
-import { restartFelanProcess, type RestartProcess } from './process-restart.js';
+import type { RestartProcess } from './process-restart.js';
 
 export interface RunDaemonFelanOptions extends Omit<TuiSessionOptions, 'cwd' | 'extensions'> {
   cwd?: string;
@@ -72,6 +71,7 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
   restartProcess?: RestartProcess;
   writeOutput?: (text: string) => void;
 } = {}): Promise<void> {
+  const { DAEMON_VERSION } = await import('@felan-ai/daemon/version');
   let replacing: DaemonIdentity | undefined;
   let selected = options.sessionId;
   let cwd = resolve(options.cwd ?? process.cwd());
@@ -89,7 +89,8 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
     const outcome: { restart?: { identity: DaemonIdentity; sessionId?: string; cwd: string; draft: string; keepStartup: boolean }; relaunch?: { sessionId?: string; cwd: string } } = {};
     let resumable: string | undefined;
     try {
-      await (dependencies.runTerminal ?? runDaemonTerminal)(controller, { cwd, clientConfigDir: clientConfigurationRoot(options),
+      const runTerminal = dependencies.runTerminal ?? (await import('./tui/run.js')).runDaemonTerminal;
+      await runTerminal(controller, { cwd, clientConfigDir: clientConfigurationRoot(options),
         ...(selected ? { sessionId: selected } : {}), ...(options.sessionDir ? { sessionDir: resolve(options.sessionDir) } : {}),
         ...(first && options.continueRecent ? { continueRecent: true } : {}), ...(first && options.resume ? { resume: true } : {}),
         ...(first && options.extensionPaths?.length ? { extensions: options.extensionPaths.map(path => resolve(path)) } : {}),
@@ -130,7 +131,8 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
       resumable = controller.unprompted ? undefined : controller.sessionId;
     } finally { await controller.dispose(); await diagnostics.flush(); }
     if (outcome.relaunch) {
-      await (dependencies.restartProcess ?? restartFelanProcess)({ ...outcome.relaunch, ...(options.restartArgs ? { restartArgs: options.restartArgs } : {}) });
+      const restart = dependencies.restartProcess ?? (await import('./process-restart.js')).restartFelanProcess;
+      await restart({ ...outcome.relaunch, ...(options.restartArgs ? { restartArgs: options.restartArgs } : {}) });
       return;
     }
     const restart = outcome.restart;

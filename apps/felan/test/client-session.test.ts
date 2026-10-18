@@ -2,10 +2,13 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Socket } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LIMITS } from '@felan-ai/session-protocol';
+import { JsonLineDecoder, LIMITS, encodeFrame, parseClientEnvelope } from '@felan-ai/session-protocol';
 import { SessionClient, newRequestId } from '../src/client/client.js';
 import { identityFor } from '../../daemon/src/daemon/target.js';
+import { acquireDaemonOwnership } from '../../daemon/src/daemon/ownership.js';
+import { listenLocalIpc } from '../../daemon/src/daemon/ipc.js';
 import type { ClientTransport, TransportConnector } from '../src/client/transport.js';
 import * as supervisor from '@felan-ai/daemon/client';
 import { FakeTransport, delta, snapshot } from './client-fixtures.js';
@@ -145,6 +148,46 @@ describe('shared session client', () => {
     expect(fake.requests.filter(request => request.op === 'attach').at(-1)).toMatchObject({ params: { expected: restarted } });
     expect(launch).not.toHaveBeenCalled();
     expect(statuses).toContain('connecting'); expect(statuses).not.toContain('blocked');
+  });
+  it.skipIf(!['darwin', 'linux'].includes(process.platform))('reconnects and resnapshots after the daemon closes mid-frame', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'partial-session-')); roots.push(directory);
+    const target = { kind: 'isolated', directory, namespaceId: 'partial-session' } as const;
+    const owner = await acquireDaemonOwnership(target);
+    let serverSocket: Socket | undefined;
+    let attaches = 0;
+    const listener = await listenLocalIpc(owner, socket => {
+      serverSocket = socket;
+      const decoder = new JsonLineDecoder();
+      socket.on('data', bytes => {
+        for (const value of decoder.push(bytes)) {
+          const request = parseClientEnvelope(value);
+          const result = request.op === 'hello'
+            ? { attachmentId: 'hello', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
+              identity: owner.identity, operations: ['attach'], interactionKinds: [] }
+            : { attachmentId: `binding-${++attaches}`, snapshot: snapshot(attaches - 1) };
+          socket.write(encodeFrame({ v: 1, re: request.id, outcome: 'accepted', result }));
+        }
+      });
+    });
+    const diagnostics: ClientDiagnostic[] = [];
+    const client = new SessionClient({ target, kind: 'tui', clientVersion: 'fixture', requestTimeoutMs: 1000, reconnectDelayMs: 250,
+      diagnostics: event => diagnostics.push(event) });
+    clients.push(client);
+    const statuses: string[] = [];
+    client.subscribe(() => statuses.push(client.status));
+    try {
+      await client.connect(); await client.attach('session');
+      const partial = encodeFrame({ v: 1, session: 'session', rev: 1, change: { type: 'run.updated', run: { state: 'idle' } } });
+      serverSocket!.end(partial.subarray(0, partial.byteLength / 2));
+      await vi.waitFor(() => expect(client.status).toBe('disconnected'));
+      expect(client.reconnection?.attempt).toBe(1);
+      expect(client.getAttachment('session')?.state.status).toBe('disconnected');
+      expect(diagnostics).toContainEqual({ event: 'connection.lost', reason: 'transport_lost' });
+      await vi.waitFor(() => expect(client.status).toBe('ready'));
+      expect(attaches).toBe(2);
+      expect(client.getAttachment('session')?.state).toMatchObject({ status: 'live', snapshot: { revision: 1 } });
+      expect(statuses).not.toContain('blocked');
+    } finally { client.close(); listener.close(); await owner.release(); }
   });
   it('starts an absent daemon on an explicit reconnect while automatic attempts only probe', async () => {
     let delegate!: TransportConnector;

@@ -1,18 +1,19 @@
 import { spawn } from 'node:child_process';
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
-import { closeSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
+import { closeSync, fstatSync, mkdirSync, openSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { createServer, Server } from 'node:net';
 import type { Socket } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import koffi from 'koffi';
 import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/ownership.js';
 import { connectLocalIpc, listenLocalIpc, probeDaemon, serveReadiness, type LocalIpcListener } from '../src/daemon/ipc.js';
 import { BoundedDaemonLogs, spawnDetachedDaemon } from '../src/daemon/supervisor.js';
 import { resolveDaemonTarget, type DaemonTarget } from '../src/daemon/target.js';
-import { acceptUnix, connectUnix, listenUnix, protectSocket, socketPathLimit } from '../src/daemon/native-ownership.js';
+import { connectUnix, listenUnix, protectSocket, socketPathLimit } from '../src/daemon/native-ownership.js';
 import * as nativeOwnership from '../src/daemon/native-ownership.js';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 
@@ -47,6 +48,7 @@ async function serve(owner: DaemonOwnership) {
   const listener = await listenLocalIpc(owner, socket => serveReadiness(owner, '0.0.0-fixture', socket)); listeners.push(listener); return listener;
 }
 function descriptorCount() { return readdirSync(process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd').length; }
+function socketFd(socket: Socket) { return (socket as Socket & { _handle: { fd: number } })._handle.fd; }
 function replaceOwnedRoot(owner: DaemonOwnership) {
   renameSync(owner.target.agentDir, `${owner.target.agentDir}.old`);
   mkdirSync(owner.target.agentDir, { mode: 0o700 });
@@ -69,19 +71,99 @@ describe.skipIf(!supported)('owner-only local daemon IPC and startup', () => {
     expect(descriptorCount()).toBe(before);
   });
 
+  it('replaces a stale endpoint and removes only its owned endpoint when closed', async () => {
+    const { owner } = await fixture();
+    const fd = listenUnix(owner.target.endpoint); protectSocket(owner.target.endpoint); closeSync(fd);
+    const listener = await serve(owner);
+    expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
+    listener.close();
+    await expect(lstat(owner.target.endpoint)).rejects.toMatchObject({ code: 'ENOENT' });
+    await new Promise(resolve => setImmediate(resolve));
+    const replacement = openSync(join(owner.target.runtimeDirectory, 'replacement'), 'w', 0o600);
+    try { listener.close(); expect(fstatSync(replacement).isFile()).toBe(true); }
+    finally { closeSync(replacement); }
+  });
+
+  it('limits admission to 64 live connections and reuses capacity after a close', async () => {
+    const { owner } = await fixture(); const delivered: Socket[] = []; const clients: Socket[] = [];
+    listeners.push(await listenLocalIpc(owner, socket => delivered.push(socket)));
+    try {
+      for (let i = 0; i < 64; i++) { const client = await connectLocalIpc(owner.target); client.on('error', () => {}); clients.push(client); }
+      await vi.waitFor(() => expect(delivered).toHaveLength(64));
+      const rejected = await connectLocalIpc(owner.target); rejected.on('error', () => {}); clients.push(rejected);
+      await new Promise<void>(resolve => rejected.once('close', () => resolve()));
+      expect(delivered).toHaveLength(64);
+      clients[0]!.destroy();
+      await vi.waitFor(() => expect(delivered[0]!.destroyed).toBe(true));
+      const replacement = await connectLocalIpc(owner.target); replacement.on('error', () => {}); clients.push(replacement);
+      await vi.waitFor(() => expect(delivered).toHaveLength(65));
+    } finally { for (const client of clients) client.destroy(); }
+  });
+
+  it.each(['mismatch', 'failure'] as const)('rejects a peer UID %s without closing the listener', async reason => {
+    const { owner } = await fixture(); await serve(owner);
+    const check = vi.spyOn(nativeOwnership, 'peerUid').mockImplementationOnce(() => {
+      if (reason === 'failure') throw new Error('peer lookup failed');
+      return owner.target.uid + 1;
+    });
+    const client = await connectLocalIpc(owner.target); client.on('error', () => {});
+    try {
+      await new Promise<void>(resolve => client.once('close', () => resolve()));
+      expect(check).toHaveBeenCalledOnce();
+      expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
+    } finally { client.destroy(); }
+  });
+
+  it('fails closed when an accepted socket has no native descriptor', async () => {
+    const { owner } = await fixture(); let delivered = 0;
+    const emit = Server.prototype.emit;
+    const intercept = vi.spyOn(Server.prototype, 'emit').mockImplementation(function (this: Server, event, ...args) {
+      if (event === 'connection') {
+        const socket = args[0] as Socket;
+        Object.defineProperty((socket as Socket & { _handle: object })._handle, 'fd', { value: undefined });
+      }
+      return emit.call(this, event, ...args);
+    });
+    listeners.push(await listenLocalIpc(owner, () => delivered++));
+    const client = await connectLocalIpc(owner.target); client.on('error', () => {});
+    try {
+      await new Promise<void>(resolve => client.once('close', () => resolve()));
+      expect(delivered).toBe(0);
+    } finally { client.destroy(); intercept.mockRestore(); }
+  });
+
+  it('receives non-blocking, close-on-exec descriptors from libuv', async () => {
+    const { owner } = await fixture();
+    let resolveAccepted!: (socket: Socket) => void;
+    const accepted = new Promise<Socket>(resolve => { resolveAccepted = resolve; });
+    listeners.push(await listenLocalIpc(owner, resolveAccepted));
+    const client = await connectLocalIpc(owner.target);
+    try {
+      const fd = socketFd(await accepted);
+      const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
+      const fcntl = libc.func('int fcntl(int fd, int command, ...)');
+      expect(fcntl(fd, 1) & 1).toBe(1);
+      expect(fcntl(fd, 3) & (process.platform === 'darwin' ? 4 : 2048)).not.toBe(0);
+    } finally { client.destroy(); }
+  });
+
   it.each(['replace', 'delete'] as const)('stops admission and drops existing connections on endpoint %s', async action => {
-    const { owner } = await fixture(); await serve(owner); const socket = await connectLocalIpc(owner.target);
+    const { owner } = await fixture(); let accepted: Socket | undefined;
+    listeners.push(await listenLocalIpc(owner, socket => { accepted = socket; }));
+    const socket = await connectLocalIpc(owner.target);
     let tearingDown = false;
     const errors: { error: NodeJS.ErrnoException; duringTeardown: boolean }[] = [];
     socket.on('error', error => errors.push({ error, duringTeardown: tearingDown }));
     const closed = new Promise<void>(resolve => socket.once('close', () => resolve()));
     try {
+      await vi.waitFor(() => expect(accepted).toBeDefined());
       tearingDown = true;
       if (action === 'replace') { await rename(owner.target.endpoint, `${owner.target.endpoint}.old`); await writeFile(owner.target.endpoint, 'replacement', { mode: 0o600 }); }
       else await unlink(owner.target.endpoint);
       expect(() => owner.assertCurrent()).toThrow(/fenced/);
       await closed;
       expect(socket.destroyed).toBe(true);
+      expect(accepted!.destroyed).toBe(true);
       for (const { error, duringTeardown } of errors) {
         expect(duringTeardown).toBe(true);
         expect(error.code).toBe('ECONNRESET');
@@ -117,32 +199,19 @@ describe.skipIf(!supported)('owner-only local daemon IPC and startup', () => {
   it('closes an accepted socket if ownership is lost before connection delivery', async () => {
     const { owner } = await fixture(); let delivered = 0;
     listeners.push(await listenLocalIpc(owner, () => delivered++));
-    const accept = nativeOwnership.acceptUnix;
-    const current = owner.assertCurrent.bind(owner);
-    let accepted = false;
-    let resolveAccepted: ((value: { socket: Socket; closed: Promise<void> }) => void) | undefined;
-    const acceptedSocket = new Promise<{ socket: Socket; closed: Promise<void> }>(resolve => { resolveAccepted = resolve; });
-    vi.spyOn(nativeOwnership, 'acceptUnix').mockImplementation((fd, uid) => {
-      const socket = accept(fd, uid);
-      if (socket) {
-        accepted = true;
-        resolveAccepted!({ socket, closed: new Promise<void>(resolve => socket.once('close', () => resolve())) });
-      }
-      return socket;
-    });
-    vi.spyOn(owner, 'assertCurrent').mockImplementation(() => {
-      if (accepted) { accepted = false; replaceOwnedRoot(owner); }
-      current();
+    const peerUid = nativeOwnership.peerUid;
+    const check = vi.spyOn(nativeOwnership, 'peerUid').mockImplementation(fd => {
+      replaceOwnedRoot(owner);
+      return peerUid(fd);
     });
     const before = descriptorCount();
     const client = await connectLocalIpc(owner.target);
     const errors: NodeJS.ErrnoException[] = []; client.on('error', error => errors.push(error));
     const clientClosed = new Promise<void>(resolve => client.once('close', () => resolve()));
     try {
-      const server = await acceptedSocket;
-      await Promise.all([clientClosed, server.closed]);
+      await clientClosed;
+      expect(check).toHaveBeenCalledOnce();
       expect(delivered).toBe(0);
-      expect(server.socket.destroyed).toBe(true);
       expect(client.destroyed).toBe(true);
       expect(descriptorCount()).toBe(before - 1);
       for (const error of errors) expect(error.code).toBe('ECONNRESET');
@@ -173,12 +242,14 @@ describe.skipIf(!supported)('owner-only local daemon IPC and startup', () => {
     expect(Buffer.byteLength(path)).toBe(socketPathLimit());
     expect(() => listenUnix(`${path}s`)).toThrow(/platform limit/);
     const fd = listenUnix(path); protectSocket(path);
+    const server = createServer(socket => socket.end());
+    await new Promise<void>(resolve => server.listen({ fd, exclusive: true }, resolve));
     try {
       const client = await connectUnix(path, process.getuid!());
-      try { expect(() => acceptUnix(fd, process.getuid!() + 1)).toThrow(/another OS account/); }
+      try { expect(nativeOwnership.peerUid(socketFd(client))).toBe(process.getuid!()); }
       finally { client.destroy(); }
       expect((await lstat(path)).mode & 0o777).toBe(0o600);
-    } finally { closeSync(fd); await unlink(path); }
+    } finally { await new Promise<void>(resolve => server.close(() => resolve())); await unlink(path); }
   });
 
   it('keeps separate diagnostic files bounded', async () => {

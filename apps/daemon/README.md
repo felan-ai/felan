@@ -12,6 +12,9 @@ that installation, never from the working directory or project content.
 ## Contracts and configuration
 
 - `.` exports `DAEMON_VERSION` and the configured `SESSION_RUNTIME_SERVICE`.
+- `./version` exports `DAEMON_VERSION` without loading session runtime contracts.
+- `./host-config` exposes host configuration schemas, loading and trusted
+  provider resolution for managing packages.
 - `./session-runtime` describes session composition and host operations for
   configuration, preferences, setup and root preparation. Providers supply
   these operations and credential storage; the daemon retains admission and
@@ -20,9 +23,8 @@ that installation, never from the working directory or project content.
   ports, process adapters and shared storage/locking helpers.
 - `./client` exposes authenticated local transport, target resolution and
   managed daemon launch. `./daemon-bootstrap` supports managing entrypoints.
-- The only internal subpath, `./internal/daemon/ui-vocabulary`, supports the
-  runtime UI translator. Registry, stores and persistence implementations are
-  not exported.
+- Internal subpaths, including registry, stores, persistence and the runtime
+  UI translator, are not exported.
 
 Local settings parsing, keychain credentials, model defaults, HTTP bootstrap,
 system prompt loading, folder trust and authentication workers belong to

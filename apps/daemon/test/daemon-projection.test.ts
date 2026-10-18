@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, parseSessionSnapshot, readMessageDisplay, type SessionEvent, type TextStreamEvent } from '@felan-ai/session-protocol';
+import { LIMITS, MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, codePointLength, encodeFrame, parseOperationResult, parseSessionSnapshot, readMessageDisplay, type SessionEvent, type TextStreamEvent } from '@felan-ai/session-protocol';
 import { ControlStoreError } from '../src/daemon/control-state.js';
-import { projectPiMessage } from '../src/daemon/projection.js';
+import { projectPiMessage, SessionProjection } from '../src/daemon/projection.js';
 import type { SessionEntry } from '@felan-ai/agent-core';
 import { assistant, deferred, fixture, fixtures, offlineModel, requestId, supported } from './fixtures/registry.js';
 import { readControlDatabase } from './fixtures/control-database.js';
@@ -51,6 +51,68 @@ it('projects compaction summaries without interpreting feature-specific details'
 });
 
 describe.skipIf(!supported)('Pi protocol projection', () => {
+  it.runIf(process.env.FELAN_ATTACH_BENCHMARK === '1')('benchmarks attach snapshot validation at five MiB', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const projection = f.registry.projection(b.sessionId); const runtime = f.instances.get(b.sessionId)!;
+    const text = 'x'.repeat(1024 * 1024);
+    b.runtime.session.sessionManager.appendMessage({ role: 'user', content: text, timestamp: 0 });
+    const message = assistant('Pending'); runtime.emit({ type: 'message_start', message });
+    for (let contentIndex = 0; contentIndex < 4; contentIndex++) runtime.emit({ type: 'message_update', message,
+      assistantMessageEvent: { type: 'text_delta', contentIndex, delta: text, partial: message } });
+    const snapshot = projection.snapshot();
+    const bytes = Buffer.byteLength(JSON.stringify(snapshot));
+    expect(bytes).toBeGreaterThanOrEqual(5 * 1024 * 1024);
+    expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
+    for (const [name, parse] of [
+      ['parseSessionSnapshot', () => parseSessionSnapshot(snapshot)],
+      ['parseOperationResult(attach)', () => parseOperationResult('attach', { attachmentId: 'attachment', snapshot })],
+    ] as const) {
+      for (let warmup = 0; warmup < 20; warmup++) parse();
+      const samples: number[] = [];
+      for (let sample = 0; sample < 50; sample++) {
+        const start = performance.now(); parse(); samples.push(performance.now() - start);
+      }
+      samples.sort((a, b) => a - b);
+      console.log(JSON.stringify({ validator: name, attachSnapshotBytes: bytes, validationSamples: samples.length,
+        validationMedianMs: samples[25], validationP95Ms: samples[47] }));
+    }
+  });
+
+  it.runIf(process.env.FELAN_PROJECTION_BENCHMARK === '1')('benchmarks unchanged catalog refreshes and incremental streaming', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const session = b.runtime.session; const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    const parameters = { type: 'object', properties: Object.fromEntries(Array.from({ length: 12 }, (_, index) => [
+      `option${index}`, { type: 'string', description: `Tool option ${index}`, enum: ['first', 'second', 'third'] },
+    ])), required: ['option0'] };
+    Object.assign(session, { getAllTools: () => Array.from({ length: 60 }, (_, index) => ({ name: `tool${index}`, description: `Tool ${index}`, parameters })) });
+    for (let index = 0; index < 256; index++) session.sessionManager.appendMessage({ role: 'user', content: `Message ${index}`, timestamp: index });
+    projection.refresh();
+    for (let index = 0; index < 100; index++) projection.refresh();
+    const median = (times: number[]) => times.sort((a, b) => a - b)[Math.floor(times.length / 2)]!;
+    const refreshTimes: number[] = [];
+    for (let sample = 0; sample < 5; sample++) {
+      const start = performance.now();
+      for (let index = 0; index < 500; index++) projection.refresh();
+      refreshTimes.push((performance.now() - start) / 500);
+    }
+    const deltaTimes: Record<string, number> = {};
+    for (const size of [100, 200, 400]) {
+      const times: number[] = [];
+      const text = 'x'.repeat(size * 1024); const delta = 'x'.repeat(25);
+      for (let sample = 0; sample < 5; sample++) {
+        const message = assistant(text); runtime.emit({ type: 'message_start', message });
+        const start = performance.now();
+        for (let index = 0; index < text.length; index += delta.length) runtime.emit({ type: 'message_update', message,
+          assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: text.slice(index, index + delta.length), partial: message } });
+        times.push(performance.now() - start);
+        expect(projection.snapshot().activeStreams[0]?.text).toBe(text);
+        runtime.emit({ type: 'message_end', message }); session.sessionManager.appendMessage(message); projection.refresh();
+      }
+      deltaTimes[`${size}KiB`] = median(times);
+    }
+    console.log(JSON.stringify({ refreshMedianMs: median(refreshTimes), deltaMedianMs: deltaTimes }));
+  }, 60_000);
+
   it('preserves configured compaction metadata while the provider keeps implementation details private', async () => {
     const f = await fixture();
     const open = vi.mocked(f.profile.openSession).getMockImplementation()!;
@@ -88,6 +150,85 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     Object.assign(session, { scopedModels: [{ model: offlineModel }],
       modelRuntime: { getAvailableSnapshot: () => [{ ...offlineModel, id: 'outside-scope' }] } });
     expect(f.registry.projection(binding.sessionId).snapshot().catalog.models.map(model => model.id)).toEqual(['fixture']);
+  });
+  it('publishes catalog changes only when tool, command, skill or model content changes', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const session = b.runtime.session; const projection = f.registry.projection(b.sessionId);
+    const tools = [{ name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } }];
+    const active = ['read'];
+    const commands = [{ name: 'fixture', description: 'Fixture command', sourceInfo: { path: '/fixture', scope: 'project' } }];
+    const skills = [{ name: 'review', description: 'Review code', filePath: '/review', sourceInfo: { scope: 'project' } }];
+    const models = [offlineModel];
+    let enabled = true;
+    Object.assign(session, { getAllTools: () => tools, getActiveToolNames: () => active,
+      extensionRunner: { getRegisteredCommands: () => commands }, resourceLoader: { getSkills: () => ({ skills }) },
+      modelRuntime: { getAvailableSnapshot: () => models } });
+    const stop = f.registry.bindCommandDispatcher(() => enabled);
+    const events: SessionEvent[] = [];
+    f.registry.subscribe(b.sessionId, event => { if ('change' in event && event.change.type === 'catalog.updated') events.push(event); });
+    const initial = projection.snapshot();
+    projection.refresh();
+    expect(projection.snapshot().catalog).toBe(initial.catalog);
+    expect(events).toHaveLength(0);
+    tools[0]!.parameters.properties.path.type = 'number'; projection.refresh();
+    expect(events).toHaveLength(1);
+    active.length = 0; projection.refresh();
+    expect(events).toHaveLength(2);
+    commands[0]!.description = 'Changed command';
+    const catalog = projection.catalog();
+    expect(catalog.commands[0]?.description).toBe('Changed command');
+    expect(projection.catalog()).toBe(catalog);
+    expect(events).toHaveLength(2);
+    projection.refresh();
+    expect(events).toHaveLength(3);
+    skills[0]!.description = 'Changed skill'; projection.refresh();
+    expect(events).toHaveLength(4);
+    models.push({ ...offlineModel, id: 'another' }); projection.refresh();
+    expect(events).toHaveLength(5);
+    enabled = false; projection.refresh();
+    expect(events).toHaveLength(6);
+    const final = projection.snapshot();
+    expect(final.catalog).toMatchObject({ tools: [{ active: false, parameters: { properties: { path: { type: 'number' } } } }], commands: [] });
+    expect(final.catalog.models.map(model => model.id)).toEqual(['fixture', 'another']);
+    expect(final.revision).toBe(initial.revision + events.length);
+    expect(parseSessionSnapshot(final)).toEqual(final);
+    projection.refresh(); expect(events).toHaveLength(6);
+    stop();
+  });
+  it('returns valid snapshots without full session reads and keeps previous tool snapshots stable', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    const read = vi.spyOn(f.store, 'session');
+    try {
+      await b.runtime.session.prompt('hello');
+      const message = assistant('A😀'); runtime.emit({ type: 'message_start', message });
+      runtime.emit({ type: 'message_update', message, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'A😀', partial: message } });
+      runtime.emit({ type: 'tool_execution_start', toolCallId: 'read', toolName: 'read', args: {} });
+      projection.setPresentation({ id: 'notice', kind: 'notification', level: 'info', text: 'Ready' });
+      const snapshot = projection.snapshot();
+      expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
+      runtime.emit({ type: 'tool_execution_end', toolCallId: 'read', toolName: 'read', result: { content: [{ type: 'text', text: 'Output' }], details: {} }, isError: false });
+      const completed = projection.snapshot();
+      expect(parseSessionSnapshot(completed)).toEqual(completed);
+      expect(snapshot.tools[0]).toMatchObject({ state: 'running', output: '' });
+      expect(completed.tools[0]).toMatchObject({ state: 'completed', output: 'Output' });
+      expect(read).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
+  });
+  it('shares one detached event clone between read-only registry observers', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const first: SessionEvent[] = []; const second: SessionEvent[] = [];
+    f.registry.subscribe(b.sessionId, event => { if ('change' in event) first.push(event); });
+    f.registry.subscribe(b.sessionId, event => { if ('change' in event) second.push(event); });
+    const change = { type: 'metadata.updated' as const, title: 'Before', state: 'open' as const, residency: 'warm' as const };
+    const projection = f.registry.projection(b.sessionId); projection.publish(change);
+    expect(first[0]).toBe(second[0]);
+    expect(first[0]!.change).not.toBe(change);
+    change.title = 'After'; projection.publish(change);
+    expect(first[0]!.change).toMatchObject({ title: 'Before' });
+    expect(first[1]).toBe(second[1]);
+    expect(first[1]).not.toBe(first[0]);
+    expect(first[1]!.change).toMatchObject({ title: 'After' });
   });
   it('publishes streaming metadata without durable capacity and removes it only after message completion', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
@@ -162,6 +303,160 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     expect(f.registry.projection(b.sessionId).snapshot().activeStreams).toEqual([]);
   });
 
+  it.each(['text_delta', 'thinking_delta'] as const)('holds split surrogate pairs in %s until their code point is complete', async type => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    const deltas: TextStreamEvent[] = [];
+    f.registry.subscribe(b.sessionId, event => { if ('stream' in event) { expect(() => encodeFrame(event)).not.toThrow(); deltas.push(event); } });
+    const chunks = ['A\ud83d', '', '\ude00B', '\ud83d', '\ude03'];
+    const message = assistant(chunks.join('')); runtime.emit({ type: 'message_start', message });
+    for (const delta of chunks) {
+      runtime.emit({ type: 'message_update', message, assistantMessageEvent: { type, contentIndex: 0, delta, partial: message } });
+      const snapshot = projection.snapshot();
+      expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
+      const stream = snapshot.activeStreams[0]!;
+      expect(stream.offset).toBe(codePointLength(stream.text));
+      expect(stream.text).toBe(deltas.map(event => event.text).join(''));
+    }
+    expect(deltas.map(event => event.text)).toEqual(['A', '😀B', '😃']);
+    expect(deltas.map(event => event.stream.offset)).toEqual([0, 1, 3]);
+    expect(deltas.map(event => event.text).join('')).toBe(chunks.join(''));
+  });
+
+  it('discards a withheld high surrogate when the completed message replaces its stream', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    const events: Array<SessionEvent | TextStreamEvent> = [];
+    f.registry.subscribe(b.sessionId, event => { expect(() => encodeFrame(event)).not.toThrow(); events.push(event); });
+    const message = assistant('Authoritative completion'); runtime.emit({ type: 'message_start', message });
+    runtime.emit({ type: 'message_update', message,
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Prefix\ud83d', partial: message } });
+    expect(projection.snapshot().activeStreams[0]).toMatchObject({ text: 'Prefix', offset: 6 });
+    runtime.emit({ type: 'message_end', message });
+    expect(parseSessionSnapshot(projection.snapshot()).activeStreams[0]).toMatchObject({ text: 'Prefix', offset: 6 });
+    b.runtime.session.sessionManager.appendMessage(message); projection.refresh();
+    const snapshot = projection.snapshot();
+    expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
+    expect(snapshot.activeStreams).toEqual([]);
+    expect(snapshot.history.entries.at(-1)?.content).toEqual([{ type: 'text', text: 'Authoritative completion' }]);
+    expect(events.filter(event => 'stream' in event).map(event => event.text)).toEqual(['Prefix']);
+    expect(events.some(event => 'change' in event && event.change.type === 'message.completed')).toBe(true);
+  });
+
+  it.each([
+    { type: 'text_delta', label: 'lone low surrogate', text: '\udc00' },
+    { type: 'text_delta', label: 'unpaired high surrogate inside text', text: 'a\ud800b' },
+    { type: 'thinking_delta', label: 'lone low surrogate', text: '\udc00' },
+    { type: 'thinking_delta', label: 'unpaired high surrogate inside text', text: 'a\ud800b' },
+  ] as const)('makes $type with a $label completion-only without fencing other sessions', async ({ type, text }) => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = f.instances.get(b.sessionId)!; const otherRuntime = f.instances.get(other.sessionId)!;
+    const projection = f.registry.projection(b.sessionId); const otherProjection = f.registry.projection(other.sessionId);
+    const events: Array<SessionEvent | TextStreamEvent> = [];
+    f.registry.subscribe(b.sessionId, event => { events.push(event); });
+    const message = assistant('Authoritative completion'); const otherMessage = assistant('Other session');
+    runtime.emit({ type: 'message_start', message }); otherRuntime.emit({ type: 'message_start', message: otherMessage });
+    const delta = (contentIndex: number, value: string) => runtime.emit({ type: 'message_update', message,
+      assistantMessageEvent: { type, contentIndex, delta: value, partial: message } });
+    delta(0, 'Retained prefix');
+    delta(0, text);
+    expect(() => f.registry.assertAdmission()).not.toThrow();
+    expect(runtime.dispose).not.toHaveBeenCalled(); expect(otherRuntime.dispose).not.toHaveBeenCalled();
+    const snapshot = projection.snapshot();
+    expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
+    expect(snapshot.activeStreams).toEqual([]);
+    expect(snapshot.completionOnlyStreams).toEqual([{ id: expect.any(String), message: expect.any(String),
+      kind: type === 'text_delta' ? 'assistant' : 'thinking', reason: 'lost' }]);
+    expect(events.filter(event => 'change' in event && event.change.type === 'stream.completion_only')).toHaveLength(1);
+    const eventCount = events.length;
+    delta(0, 'Ignored later delta'); projection.refresh();
+    expect(events).toHaveLength(eventCount);
+    const prefix = 'x'.repeat(LIMITS.activeStreamBytes);
+    for (let index = 1; index <= LIMITS.activeStreamsBytes / LIMITS.activeStreamBytes; index++) delta(index, prefix);
+    expect(projection.snapshot().activeStreams).toHaveLength(4);
+    expect(projection.snapshot().completionOnlyStreams).toEqual(snapshot.completionOnlyStreams);
+    otherRuntime.emit({ type: 'message_update', message: otherMessage,
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Unaffected', partial: otherMessage } });
+    expect(otherProjection.snapshot().activeStreams[0]?.text).toBe('Unaffected');
+    runtime.emit({ type: 'message_end', message }); b.runtime.session.sessionManager.appendMessage(message); projection.refresh();
+    const completed = projection.snapshot();
+    expect(completed.activeStreams).toEqual([]); expect(completed.completionOnlyStreams).toEqual([]);
+    expect(events.some(event => 'change' in event && event.change.type === 'message.completed'
+      && event.change.message.content.some(part => part.type === 'text' && part.text === 'Authoritative completion'))).toBe(true);
+    for (const event of events) expect(() => encodeFrame(event)).not.toThrow();
+    expect(() => f.registry.assertAdmission()).not.toThrow();
+  });
+
+  it('counts a split surrogate pair once at both stream byte limits', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    const message = assistant('Pending'); runtime.emit({ type: 'message_start', message });
+    const delta = (contentIndex: number, text: string) => runtime.emit({ type: 'message_update', message,
+      assistantMessageEvent: { type: 'text_delta', contentIndex, delta: text, partial: message } });
+    for (let index = 0; index < 3; index++) delta(index, 'x'.repeat(LIMITS.activeStreamBytes));
+    delta(3, 'x'.repeat(LIMITS.activeStreamBytes - 4) + '\ud83d');
+    delta(3, '\ude00');
+    const snapshot = projection.snapshot();
+    expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
+    expect(snapshot.activeStreams).toHaveLength(4);
+    expect(snapshot.completionOnlyStreams).toEqual([]);
+    expect(snapshot.activeStreams[3]?.offset).toBe(LIMITS.activeStreamBytes - 3);
+    delta(3, 'x');
+    expect(projection.snapshot().completionOnlyStreams).toHaveLength(1);
+    delta(4, 'x'.repeat(LIMITS.activeStreamBytes));
+    expect(projection.snapshot().activeStreams).toHaveLength(4);
+  });
+
+  it('enforces UTF-8 stream limits and releases the bytes of completed messages', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    const message = assistant('done'); runtime.emit({ type: 'message_start', message });
+    const delta = (index: number, text: string) => runtime.emit({ type: 'message_update', message,
+      assistantMessageEvent: { type: 'text_delta', contentIndex: index, delta: text, partial: message } });
+    const prefix = '😀'.repeat(LIMITS.activeStreamBytes / 4);
+    for (let index = 0; index < LIMITS.activeStreamsBytes / LIMITS.activeStreamBytes; index++) delta(index, prefix);
+    let snapshot = projection.snapshot();
+    expect(snapshot.activeStreams).toHaveLength(4);
+    expect(snapshot.activeStreams.every(stream => stream.offset === prefix.length / 2)).toBe(true);
+    delta(0, 'x');
+    delta(4, prefix);
+    delta(5, 'x');
+    snapshot = projection.snapshot();
+    expect(snapshot.activeStreams.map(stream => stream.id.split(':').at(-1))).toEqual(['1', '2', '3', '4']);
+    expect(snapshot.completionOnlyStreams.map(stream => stream.id.split(':').at(-1))).toEqual(['0', '5']);
+    const before = snapshot.revision;
+    delta(0, 'ignored'); delta(5, 'ignored');
+    expect(projection.snapshot().revision).toBe(before);
+    runtime.emit({ type: 'message_end', message }); b.runtime.session.sessionManager.appendMessage(message); projection.refresh();
+    const next = assistant('next'); runtime.emit({ type: 'message_start', message: next });
+    for (let index = 0; index < 4; index++) runtime.emit({ type: 'message_update', message: next,
+      assistantMessageEvent: { type: 'text_delta', contentIndex: index, delta: prefix, partial: next } });
+    snapshot = projection.snapshot();
+    expect(snapshot.activeStreams).toHaveLength(4);
+    expect(snapshot.completionOnlyStreams).toEqual([]);
+  });
+
+  it('counts completion-only streams toward the active stream capacity', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    f.registry.projection(b.sessionId).dispose();
+    const errors: unknown[] = [];
+    const projection = new SessionProjection({ binding: b, store: f.store, extras: () => ({ children: [], processes: [], interactions: [] }),
+      publish() {}, onError: error => errors.push(error) });
+    try {
+      const runtime = f.instances.get(b.sessionId)!; const message = assistant(); runtime.emit({ type: 'message_start', message });
+      for (let index = 0; index < LIMITS.activeStreams; index++) runtime.emit({ type: 'message_update', message,
+        assistantMessageEvent: { type: 'text_delta', contentIndex: index, delta: index ? '' : 'x'.repeat(LIMITS.activeStreamBytes + 1), partial: message } });
+      expect(projection.snapshot().activeStreams).toHaveLength(LIMITS.activeStreams - 1);
+      expect(projection.snapshot().completionOnlyStreams).toHaveLength(1);
+      expect(errors).toEqual([]);
+      runtime.emit({ type: 'message_update', message,
+        assistantMessageEvent: { type: 'text_delta', contentIndex: LIMITS.activeStreams, delta: 'x', partial: message } });
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ message: 'Active stream capacity exceeded.' });
+    } finally { projection.dispose(); }
+  });
+
   it('publishes the prompt cursor before the first response delta so a delayed refresh cannot clear it', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
@@ -188,6 +483,46 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     await b.runtime.session.prompt('branch two'); f.registry.projection(b.sessionId).refresh();
     expect(await f.registry.evictIdle()).toEqual([b.sessionId]); await f.registry.restore(b.sessionId);
     expect(f.store.session(b.sessionId).projections.some(row => row.value.type === 'message' && row.value.entryId === original && row.value.state === 'observed')).toBe(true);
+  });
+  it('projects newly appended entries after branch navigation and compaction exactly once', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const manager = b.runtime.session.sessionManager; const projection = f.registry.projection(b.sessionId);
+    const events: SessionEvent[] = []; f.registry.subscribe(b.sessionId, event => { if ('change' in event) events.push(event); });
+    const first = manager.appendMessage({ role: 'user', content: 'First', timestamp: 0 });
+    const second = manager.appendMessage(assistant('Second')); projection.refresh();
+    manager.branch(first);
+    const branch = manager.appendMessage(assistant('Another branch')); projection.refresh();
+    const compact = manager.appendCompaction('Retained summary', first, 1024); projection.refresh();
+    const after = manager.appendMessage({ role: 'user', content: 'After compaction', timestamp: 0 }); projection.refresh();
+    manager.branch(second); projection.refresh(); projection.refresh();
+    expect(events.flatMap(event => event.change.type === 'message.completed' ? [event.change.message.entryId] : [])).toEqual([first, second, branch, compact, after]);
+    expect(projection.snapshot().history.entries.map(entry => entry.entryId)).toEqual([first, second]);
+  });
+  it('skips scanned entry ids until the entry list shrinks or the checkpoint changes', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const manager = b.runtime.session.sessionManager; const projection = f.registry.projection(b.sessionId);
+    manager.appendMessage({ role: 'user', content: 'First', timestamp: 0 });
+    manager.appendMessage(assistant('Second')); projection.refresh();
+    const entries = manager.getEntries(); let idReads = 0;
+    const first = new Proxy(entries[0]!, { get(target, key, receiver) { if (key === 'id') idReads++; return Reflect.get(target, key, receiver); } });
+    const getEntries = vi.spyOn(manager, 'getEntries').mockReturnValue([first, ...entries.slice(1)]);
+    const events: SessionEvent[] = []; f.registry.subscribe(b.sessionId, event => { if ('change' in event) events.push(event); });
+    try {
+      projection.refresh(); expect(idReads).toBe(0);
+      manager.appendMessage(assistant('Appended'));
+      const appended = manager.getLeafEntry()!;
+      getEntries.mockReturnValue([first, ...entries.slice(1), appended]);
+      projection.refresh(); expect(idReads).toBe(0);
+      manager.appendMessage(assistant('After shrink'));
+      const shrunk = manager.getLeafEntry()!;
+      getEntries.mockReturnValue([first, shrunk]);
+      projection.refresh(); expect(idReads).toBeGreaterThan(0);
+      manager.appendMessage(assistant('Replaced checkpoint'));
+      const replaced = manager.getLeafEntry()!;
+      getEntries.mockReturnValue([first, replaced]);
+      projection.refresh();
+      expect(events.flatMap(event => event.change.type === 'message.completed' ? [event.change.message.entryId] : [])).toEqual([appended.id, shrunk.id, replaced.id]);
+    } finally { getEntries.mockRestore(); }
   });
   it('drops an over-limit prefix until completion and rejects stale history cursors', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } }); const runtime = f.instances.get(b.sessionId)!;

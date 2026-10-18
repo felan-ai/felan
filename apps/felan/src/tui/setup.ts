@@ -1,7 +1,6 @@
 import { SetupCatalogSchema, SetupJobSchema, parseSchema, type Operation, type OperationParams, type OperationResult, type SetupCatalog, type SetupJob, type SetupStart } from '@felan-ai/session-protocol';
 import type { TuiSessionController } from './controller.js';
 import type { TerminalSetupUi } from './setup-ui.js';
-import open from 'open';
 
 const REQUIRED = ['host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel'] as const;
 const POLL_MS = 500;
@@ -21,7 +20,7 @@ export class TerminalSetup {
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly controller: TuiSessionController, private readonly ui: TerminalSetupUi,
-    private readonly openBrowser: (url: string) => Promise<unknown> = url => open(url)) {}
+    private readonly openBrowser: (url: string) => Promise<unknown> = async url => (await import('open')).default(url)) {}
 
   login(provider?: string): Promise<boolean> { return this.run(false, flow => this.loginFlow(flow, provider)); }
   logout(): Promise<boolean> { return this.run(false, flow => this.logoutFlow(flow)); }

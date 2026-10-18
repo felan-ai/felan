@@ -3,13 +3,11 @@ import { CombinedAutocompleteProvider, type AutocompleteProvider, type SlashComm
 import { ThinkingSchema, parseSchema, parseOperationResult } from '@felan-ai/session-protocol';
 import type { TuiSessionController } from './controller.js';
 import type { Theme } from '@earendil-works/pi-coding-agent';
-import { pickSession, type NavigationDialogs } from './session-navigator.js';
-import { pickTreeEntry, type TreeViewState } from './tree-navigator.js';
+import type { NavigationDialogs } from './session-navigator.js';
+import type { TreeViewState } from './tree-navigator.js';
 import { describeHostBlocked, formatHostBlocked } from '../client/daemon-blocked.js';
 
 type ToolsManager = { getToolPath(tool: 'fd' | 'rg'): string | null };
-const toolsManager = import(new URL('./utils/tools-manager.js', import.meta.resolve('@earendil-works/pi-coding-agent')).href)
-  .catch(() => undefined) as Promise<ToolsManager | undefined>;
 
 /** `relaunch` restarts the daemon in place and then re-executes this client on the same session. */
 export type DaemonAction = 'stop' | 'restart' | 'relaunch';
@@ -56,7 +54,8 @@ export function tuiCommands(controller: TuiSessionController): SlashCommand[] {
 export function createCommandAutocomplete(controller: TuiSessionController, fallbackCwd = process.cwd()): AutocompleteProvider {
   let fdPath: Promise<string | null> | undefined;
   const provider = async () => {
-    fdPath ??= toolsManager.then(manager => manager?.getToolPath('fd') ?? null);
+    fdPath ??= (import(new URL('./utils/tools-manager.js', import.meta.resolve('@earendil-works/pi-coding-agent')).href)
+      .catch(() => undefined) as Promise<ToolsManager | undefined>).then(manager => manager?.getToolPath('fd') ?? null);
     return new CombinedAutocompleteProvider(tuiCommands(controller), controller.snapshot?.cwd ?? fallbackCwd, await fdPath);
   };
   return {
@@ -162,6 +161,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     return controller.reloadSession(requireSession(controller));
   }
   if (name === 'resume' || name === 'sessions') {
+    const { pickSession } = await import('./session-navigator.js');
     const cwd = controller.snapshot?.cwd ?? options.cwd;
     const selected = await pickSession(dialogs, await controller.sessionListing(cwd), cwd, controller.sessionId, options.theme);
     if (selected === undefined) return false;
@@ -278,6 +278,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       return true;
     }
     case 'tree': {
+      const { pickTreeEntry } = await import('./tree-navigator.js');
       let selected: string | undefined; let view: TreeViewState | undefined;
       while (controller.sessionId === session) {
         const tree = await controller.tree();

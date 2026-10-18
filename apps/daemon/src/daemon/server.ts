@@ -144,14 +144,20 @@ export class SessionServer {
   private acceptLocalConsole(socket: Socket): void {
     if (this.stopped) { socket.destroy(); return; }
     const connection: Connection = { id: randomUUID(), socket, closed: false, pending: 0, bytes: 0, attachments: new Map(), interactionKinds: [], capabilities: [], lifetime: new AbortController(),
-      out: new SessionFanout({ write: (data, done) => socket.write(data, done), close: () => {
+      out: new SessionFanout({ write: (data, done) => socket.write(data, done), close: reason => {
         if (connection.closed) return;
         connection.closed = true;
         connection.lifetime.abort();
         this.options.setup?.disconnected(connection.id);
         for (const attachment of connection.attachments.values()) attachment.detach();
         this.options.broker?.disconnected?.(connection.id);
-        connection.attachments.clear(); this.connections.delete(connection); socket.destroy();
+        connection.attachments.clear(); this.connections.delete(connection);
+        if (reason === 'transport_error') socket.destroy();
+        else {
+          const timeout = setTimeout(() => socket.destroy(), 1_000);
+          timeout.unref(); socket.once('close', () => clearTimeout(timeout));
+          socket.end();
+        }
       } }) };
     this.connections.add(connection);
     const decoder = new JsonLineDecoder();
@@ -377,7 +383,10 @@ export class SessionServer {
     this.options.broker?.attached?.(connection.id, request.session);
     try {
       unsubscribe = connection.out.attach({ subscribe: listener => registry.subscribe(request.session, listener), snapshot: () => registry.projection(request.session).snapshot() },
-        snapshot => accepted(request, { attachmentId: binding.attachment, snapshot }));
+        snapshot => {
+          try { return accepted(request, { attachmentId: binding.attachment, snapshot }); }
+          catch (error) { throw commandError('unavailable', `Invalid attach snapshot: ${diagnosticMessage(error)}`); }
+        });
       if (!connection.closed && connection.capabilities.includes('native.events')) {
         const session = registry.binding(request.session)!.runtime.session; let sequence = 0;
         const publish = (value: unknown) => {

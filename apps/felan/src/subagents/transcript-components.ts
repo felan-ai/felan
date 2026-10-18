@@ -2,6 +2,7 @@ import { convertToPng, type AgentSession, type Theme, type ToolDefinition } from
 import { Box, Container, Image, Markdown, MouseRegion, Spacer, Text, getCapabilities, stripTerminalSequences, type Component, type MarkdownTheme, type TUI } from '@earendil-works/pi-tui';
 import { renderThinkingGroupMarkdown } from '../thinking-groups.js';
 import { clientMarkdownTransform, type MermaidMode } from '../tui/markdown.js';
+import { StreamingMarkdown } from '../tui/streaming-markdown.js';
 
 type AssistantMessage = Extract<AgentSession['messages'][number], { role: 'assistant' }>;
 type CompactionMessage = Extract<AgentSession['messages'][number], { role: 'compactionSummary' }>;
@@ -12,7 +13,7 @@ export class TranscriptAssistant extends Container {
   private message: AssistantMessage;
   private readonly thinking = new Map<number, boolean>();
   private streaming = false;
-  private textParts: Array<{ text: string; streaming: boolean; component: Markdown }> = [];
+  private textParts: Array<{ text: string; streaming: boolean; component: Markdown | StreamingMarkdown }> = [];
   private thinkingParts: Array<{ text: string; hidden: boolean; component: MouseRegion }> = [];
   private renderedTheme: Theme | undefined;
   constructor(message: AssistantMessage, private hidden: boolean, private readonly markdown: MarkdownTheme,
@@ -32,8 +33,15 @@ export class TranscriptAssistant extends Container {
       const part = message.content[index]!;
       if (part.type === 'text' && part.text.trim()) {
         const text = part.text.trim(); const previous = previousText[this.textParts.length];
-        const component = previous?.text === text && previous.streaming === this.streaming ? previous.component
-          : new Markdown(text, this.padding, 0, this.markdown, undefined, { transform: clientMarkdownTransform(theme, this.mermaid, this.streaming) });
+        let component: Markdown | StreamingMarkdown;
+        if (previous?.streaming === this.streaming && (previous.text === text || previous.component instanceof StreamingMarkdown)) {
+          component = previous.component;
+          if (previous.text !== text) component.setText(text);
+        } else {
+          const transform = clientMarkdownTransform(theme, this.mermaid, this.streaming);
+          component = this.streaming ? new StreamingMarkdown(text, this.padding, this.markdown, transform)
+            : new Markdown(text, this.padding, 0, this.markdown, undefined, { transform });
+        }
         this.textParts.push({ text, streaming: this.streaming, component }); this.addChild(component);
       }
       else if (part.type === 'thinking') {

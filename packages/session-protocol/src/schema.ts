@@ -76,7 +76,7 @@ export function assertJson(value: unknown, maxBytes?: number): asserts value is 
 }
 
 function wellFormed(value: string): boolean {
-  return !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value);
+  return (value as string & { isWellFormed(): boolean }).isWellFormed();
 }
 
 type SchemaNode = TSchema & {
@@ -87,6 +87,32 @@ type SchemaNode = TSchema & {
 };
 
 const patterns = new Map<string, RegExp>();
+
+const customSerialization = Symbol('customSerialization');
+
+function copyJson(value: JsonValue): JsonValue {
+  if (value === null || typeof value !== 'object') return value === 0 ? 0 : value;
+  if ('toJSON' in value) throw customSerialization;
+  const keys = Object.keys(value);
+  if (Array.isArray(value)) {
+    if (keys.length !== value.length || keys.length > 0 && keys[keys.length - 1] !== String(value.length - 1)) throw customSerialization;
+    const result: JsonValue[] = [];
+    for (let index = 0; index < value.length; index++) result.push(copyJson(value[index]!));
+    return result;
+  }
+  const result: Record<string, JsonValue> = {};
+  for (const key of keys) result[key] = copyJson(value[key]!);
+  return result;
+}
+
+function cloneJson(value: JsonValue): JsonValue {
+  try { return copyJson(value); }
+  catch (error) {
+    if (error !== customSerialization) throw error;
+    // Sparse arrays and serialization hooks retain JSON.stringify's special handling.
+    return JSON.parse(JSON.stringify(value)) as JsonValue;
+  }
+}
 
 function matchesDiscriminants(schema: SchemaNode, value: unknown): boolean {
   if (schema.anyOf && !schema.anyOf.some(branch => matchesDiscriminants(branch, value))) return false;
@@ -125,23 +151,25 @@ function enforceLimits(schema: SchemaNode, value: unknown): void {
 
 function normalize(schema: SchemaNode, value: unknown): unknown {
   enforceLimits(schema, value);
-  if (schema['x-jsonValue']) return JSON.parse(JSON.stringify(value));
+  if (schema['x-jsonValue']) return cloneJson(value as JsonValue);
   if (schema.anyOf) return normalize(selectBranch(schema, value, true), value);
   if (Array.isArray(value) && schema.items) return value.map(item => normalize(schema.items!, item));
   if (schema.type === 'object' && value !== null && typeof value === 'object') {
-    const entries: [string, unknown][] = [];
-    for (const [key, child] of Object.entries(value)) {
+    const result: Record<string, unknown> = {};
+    const patternProperties = Object.entries(schema.patternProperties ?? {});
+    for (const key of Object.keys(value)) {
+      const child = (value as Record<string, unknown>)[key];
       let childSchema = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : undefined;
-      for (const [pattern, candidate] of Object.entries(schema.patternProperties ?? {})) {
+      for (const [pattern, candidate] of patternProperties) {
         let regex = patterns.get(pattern);
         if (!regex) { regex = new RegExp(pattern); patterns.set(pattern, regex); }
         if (regex.test(key)) { childSchema = candidate; break; }
       }
-      if (childSchema) entries.push([key, normalize(childSchema, child)]);
-      else if (typeof schema.additionalProperties === 'object') entries.push([key, normalize(schema.additionalProperties, child)]);
-      else if (schema.additionalProperties === true) entries.push([key, JSON.parse(JSON.stringify(child))]);
+      if (childSchema) result[key] = normalize(childSchema, child);
+      else if (typeof schema.additionalProperties === 'object') result[key] = normalize(schema.additionalProperties, child);
+      else if (schema.additionalProperties === true) result[key] = cloneJson(child as JsonValue);
     }
-    return Object.fromEntries(entries);
+    return result;
   }
   return value;
 }

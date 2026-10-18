@@ -1,26 +1,42 @@
 import { ProtocolValidationError } from './limits.js';
 import { assertJson, type JsonValue } from './schema.js';
 
+const encoder = new TextEncoder();
+
 export function encodeFrame(value: unknown): Uint8Array {
   assertJson(value);
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ProtocolValidationError('invalid_request', 'Frame must contain one JSON object');
-  return new TextEncoder().encode(`${JSON.stringify(value)}\n`);
+  return encoder.encode(`${JSON.stringify(value)}\n`);
 }
 
 export class JsonLineDecoder {
   #buffer = new Uint8Array(1024);
   #length = 0;
   #failed = false;
+  #decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
   push(chunk: Uint8Array): JsonValue[] {
     if (this.#failed) throw new ProtocolValidationError('invalid_request', 'Decoder is closed after invalid input');
     try {
       const result: JsonValue[] = [];
       let start = 0;
-      for (let end = 0; end < chunk.length; end++) {
-        if (chunk[end] !== 10) continue;
-        this.#append(chunk.subarray(start, end));
-        result.push(this.#decode());
+      if (this.#length === 0 && chunk[chunk.length - 1] === 10) {
+        const text = this.#decodeText(chunk);
+        for (let end = text.indexOf('\n', start); end !== -1; end = text.indexOf('\n', start)) {
+          result.push(this.#parse(text.slice(start, end)));
+          start = end + 1;
+        }
+        return result;
+      }
+      for (let end = chunk.indexOf(10, start); end !== -1; end = chunk.indexOf(10, start)) {
+        const line = chunk.subarray(start, end);
+        if (this.#length === 0) result.push(this.#parse(this.#decodeText(line)));
+        else {
+          this.#append(line);
+          const bytes = this.#buffer.subarray(0, this.#length);
+          this.#length = 0;
+          result.push(this.#parse(this.#decodeText(bytes)));
+        }
         start = end + 1;
       }
       this.#append(chunk.subarray(start));
@@ -41,6 +57,7 @@ export class JsonLineDecoder {
   }
 
   #append(bytes: Uint8Array): void {
+    if (bytes.length === 0) return;
     if (this.#length + bytes.length > this.#buffer.length) {
       const buffer = new Uint8Array(Math.max(this.#length + bytes.length, this.#buffer.length * 2));
       buffer.set(this.#buffer.subarray(0, this.#length));
@@ -50,11 +67,14 @@ export class JsonLineDecoder {
     this.#length += bytes.length;
   }
 
-  #decode(): JsonValue {
-    const bytes = this.#buffer.subarray(0, this.#length);
-    this.#length = 0;
+  #decodeText(bytes: Uint8Array): string {
+    try { return this.#decoder.decode(bytes); }
+    catch { throw new ProtocolValidationError('invalid_request', 'Invalid UTF-8 or JSON frame'); }
+  }
+
+  #parse(text: string): JsonValue {
     let value: unknown;
-    try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)); }
+    try { value = JSON.parse(text); }
     catch { throw new ProtocolValidationError('invalid_request', 'Invalid UTF-8 or JSON frame'); }
     assertJson(value);
     if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ProtocolValidationError('invalid_request', 'Frame must contain one JSON object');

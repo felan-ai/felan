@@ -20,9 +20,11 @@ it('uses the unchecked dependency checklist and returns skip selections only on 
   const f = fixture(); const signal = new AbortController();
   try {
     const result = f.ui.checklist([{ id: 'first', label: 'install: First', description: 'Reviewed dependency' }], signal.signal);
+    await vi.dynamicImportSettled();
     expect(f.render()).toContain('[ ]'); expect(f.render()).not.toContain('[✓]');
     f.input('\r'); expect(await result).toEqual([]); expect(f.hide).toHaveBeenCalledOnce();
     const cancelled = f.ui.checklist([{ id: 'first', label: 'install: First', description: '' }], signal.signal);
+    await vi.dynamicImportSettled();
     f.input(' '); expect(f.render()).toContain('[✓]'); signal.abort(); expect(await cancelled).toBeUndefined();
   } finally { f.dialogs.dispose(); }
 });
@@ -31,6 +33,7 @@ it('stops the existing progress loader when a job completes or its view is repla
   const f = fixture(); const abort = new AbortController();
   try {
     const result = f.ui.progress({ id: 'job', kind: 'dependencies', state: 'running', message: 'Installing reviewed dependency' }, abort.signal);
+    await vi.dynamicImportSettled();
     expect(f.render()).toContain('Installing reviewed dependency'); expect(vi.getTimerCount()).toBeGreaterThan(0);
     abort.abort(); expect(await result).toBeUndefined(); expect(vi.getTimerCount()).toBe(0);
   } finally { f.dialogs.dispose(); }
@@ -40,7 +43,19 @@ it('opens a dependency link picker only on explicit input and stops its loader',
   const f = fixture(); const abort = new AbortController();
   try {
     const result = f.ui.progress({ id: 'job', kind: 'dependencies', state: 'running', message: 'Authorize', links: [{ label: 'Login', url: 'https://example.test' }] }, abort.signal);
+    await vi.dynamicImportSettled();
     expect(f.render()).toContain('L opens setup links'); f.input('l'); expect(await result).toBe('links'); expect(vi.getTimerCount()).toBe(0);
+  } finally { f.dialogs.dispose(); }
+});
+
+it('does not open dependency dialogs when cancelled while their renderer loads', async () => {
+  const f = fixture(); const abort = new AbortController();
+  try {
+    const checklist = f.ui.checklist([{ id: 'first', label: 'First', description: '' }], abort.signal);
+    const progress = f.ui.progress({ id: 'job', kind: 'dependencies', state: 'running', message: 'Installing' }, abort.signal);
+    abort.abort();
+    expect(await checklist).toBeUndefined(); expect(await progress).toBeUndefined();
+    expect(f.hide).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
   } finally { f.dialogs.dispose(); }
 });
 

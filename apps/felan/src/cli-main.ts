@@ -1,8 +1,6 @@
 import type { RunLocalFelanHeadlessOptions } from './headless.js';
 import type { RunDaemonFelanOptions } from './client-application.js';
-import { ConfigValuesSchema, parseSchema } from '@felan-ai/session-protocol';
-import { cliConfigOptions, parseCliConfigValue, type CliConfigOption } from './cli-config.js';
-import { runFelanUpdate } from './update.js';
+import type { CliConfigOption } from './cli-config.js';
 import { FELAN_VERSION } from './version.js';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -55,7 +53,9 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       writeError('Usage: felan update');
       return 1;
     }
-    return dependencies.update?.() ?? runFelanUpdate({ writeOutput, writeError });
+    if (dependencies.update) return dependencies.update();
+    const { runFelanUpdate } = await import('./update.js');
+    return runFelanUpdate({ writeOutput, writeError });
   }
   if (args[0] === 'savings') {
     return runSavingsCommand(args.slice(1), writeOutput, writeError);
@@ -100,8 +100,16 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
   let positionalOnly = false;
   const cliValues: Record<string, Record<string, unknown>> = {};
   const presentation: Record<string, Record<string, unknown>> = {};
-  const configOptions = await cliConfigOptions();
-  const configByName = new Map(configOptions.map((option) => [option.name, option]));
+  let configOptions: readonly CliConfigOption[] | undefined;
+  const configByName = new Map<string, CliConfigOption>();
+  const loadConfigOptions = async () => {
+    if (!configOptions) {
+      const { cliConfigOptions } = await import('./cli-config.js');
+      configOptions = await cliConfigOptions();
+      for (const option of configOptions) configByName.set(option.name, option);
+    }
+    return configOptions;
+  };
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -171,7 +179,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     } else if (argument === '--verbose') {
       verbose = true;
     } else if (argument === '-h' || argument === '--help') {
-      writeOutput(help(configOptions));
+      writeOutput(help(await loadConfigOptions()));
       return 0;
     } else if (argument === '-v' || argument === '--version') {
       writeOutput(FELAN_VERSION);
@@ -189,11 +197,13 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       writeOutput('Credentials: local');
       return 0;
     } else if (argument.startsWith('--no-')) {
+      await loadConfigOptions();
       const option = configByName.get(argument.slice('--no-'.length));
       if (!option || option.configField.type !== 'boolean') { writeError(`Unknown option: ${argument}`); return 1; }
       const target = option.presentation ? presentation : cliValues;
       (target[option.extensionId] ??= {})[option.field] = false;
     } else if (argument.startsWith('--')) {
+      await loadConfigOptions();
       const equals = argument.indexOf('=');
       const name = argument.slice(2, equals === -1 ? undefined : equals);
       const option = configByName.get(name);
@@ -211,6 +221,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
           index += 1;
         }
         try {
+          const { parseCliConfigValue } = await import('./cli-config.js');
           const target = option.presentation ? presentation : cliValues;
           (target[option.extensionId] ??= {})[option.field] = parseCliConfigValue(option, raw);
         } catch (error) {
@@ -263,6 +274,10 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     writeError('--provider, --model, and --thinking require --mode text or --mode json');
     return 1;
   }
+  const loadConfigValues = async () => {
+    const { ConfigValuesSchema, parseSchema } = await import('@felan-ai/session-protocol');
+    return parseSchema(ConfigValuesSchema, { extensionConfig: cliValues });
+  };
   if (mode !== undefined) {
     const launchHeadless = dependencies.launchHeadless ?? (async (options: RunLocalFelanHeadlessOptions) => {
       const { runLocalFelanHeadless } = await import('./headless.js');
@@ -278,7 +293,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       ...(sessionId === undefined ? {} : { sessionId }),
       ...(sessionDir === undefined ? {} : { sessionDir }),
       ...(daemonRuntime === undefined ? {} : { daemonRuntime }),
-      ...(Object.keys(cliValues).length ? { config: parseSchema(ConfigValuesSchema, { extensionConfig: cliValues }) } : {}),
+      ...(Object.keys(cliValues).length ? { config: await loadConfigValues() } : {}),
     });
   }
 
@@ -293,7 +308,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
       ...(resume ? { resume } : {}), ...(sessionId ? { sessionId } : {}), ...(sessionDir ? { sessionDir } : {}),
       ...(daemonRuntime ? { daemonRuntime } : {}),
       ...(messageParts.length ? { initialMessage: messageParts.join(' ') } : {}),
-      ...(Object.keys(cliValues).length ? { config: parseSchema(ConfigValuesSchema, { extensionConfig: cliValues }) } : {}),
+      ...(Object.keys(cliValues).length ? { config: await loadConfigValues() } : {}),
       ...(extensionPaths.length ? { extensionPaths } : {}),
     });
     return 0;

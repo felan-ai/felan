@@ -31,7 +31,6 @@ function loadApi() {
     socket: libc.func('int socket(int domain, int type, int protocol)'),
     bind: libc.func('int bind(int fd, const void *address, uint32_t length)'),
     listen: libc.func('int listen(int fd, int backlog)'),
-    accept: libc.func('int accept(int fd, void *address, void *length)'),
     connect: libc.func('int connect(int fd, const void *address, uint32_t length)'),
     fcntl: libc.func('int fcntl(int fd, int command, ...)'),
     getpeereid: platform === 'darwin' ? libc.func('int getpeereid(int fd, _Out_ uint32_t *uid, _Out_ uint32_t *gid)') : undefined,
@@ -105,19 +104,6 @@ export function peerUid(fd: number): number {
   const value = Buffer.alloc(12); const length = Buffer.alloc(4); length.writeUInt32LE(12);
   if (n.getsockopt(fd, 1, 17, value, length) !== 0 || length.readUInt32LE() !== 12) failure('SO_PEERCRED');
   return value.readUInt32LE(4);
-}
-
-export function acceptUnix(listener: number, uid: number): Socket | undefined {
-  const fd: number = native().accept(listener, null, null);
-  if (fd < 0) {
-    if ([koffi.os.errno.EAGAIN, koffi.os.errno.EWOULDBLOCK, koffi.os.errno.EINTR].includes(koffi.errno())) return undefined;
-    failure('accept');
-  }
-  try {
-    configure(fd);
-    if (peerUid(fd) !== uid) throw new DaemonSecurityError('forbidden', 'Unix peer belongs to another OS account.');
-    return new Socket({ fd, readable: true, writable: true });
-  } catch (error) { closeSync(fd); throw error; }
 }
 
 export async function connectUnix(path: string, uid: number, timeoutMs = 2_000): Promise<Socket> {

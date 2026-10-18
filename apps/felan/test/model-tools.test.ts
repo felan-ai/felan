@@ -171,20 +171,20 @@ describe('model-tools session lifecycle', () => {
       await client({ name: 'offline-model-tools' }).connectWith(fixture.service.app, async (connection) => {
         await connection.request(methods.agent.initialize, { protocolVersion: 1, clientCapabilities: {} });
         const { sessionId } = await connection.request(methods.agent.session.new, { cwd: fixture.cwd, mcpServers: [] });
-        expect(fixture.openSession.mock.calls.map(([request]) => request.target.kind)).toEqual(['new', 'resume']);
-        expect(fixture.openSession.mock.calls[1]![0].target).toEqual({ kind: 'resume', sessionFile: fixture.store.session(sessionId).piPath });
+        expect(fixture.openSession.mock.calls.map(([request]) => request.target.kind)).toEqual(['new']);
         expect(fixture.sessions).toHaveLength(1);
         expect(fixture.sessions[0]).toBe(fixture.registry.binding(sessionId)!.runtime.session);
         expect(fixture.sessions[0]!.sessionManager.getSessionId()).toBe(sessionId);
-        expect(fixture.sessions[0]!.modelRuntime).toBe(fixture.models[1]);
+        expect(fixture.sessions[0]!.sessionManager.getSessionFile()).toBe(fixture.store.session(sessionId).piPath);
+        expect(fixture.sessions[0]!.modelRuntime).toBe(fixture.models[0]);
         expect(fixture.sessions[0]!.getToolDefinition('classify')).toBeDefined();
         expect(fixture.sessions[0]!.getToolDefinition('generate_images')).toBeDefined();
         expect(fixture.clients).toHaveLength(1);
         expect(fixture.clients[0]!.getAttachment(sessionId)?.state.status).toBe('live');
         expect(fixture.store.session(sessionId).policy.effective).toBe('acp-strict');
       });
-      expect(fixture.models).toHaveLength(2);
-      expect(fixture.models[0]).not.toBe(fixture.models[1]);
+      expect(fixture.models).toHaveLength(1);
+      expect(fixture.models[0]).not.toBe(fixture.catalog);
       for (const models of fixture.models) expect(vi.mocked(models.getAvailableOfType).mock.calls.some(call => call[0] === 'image')).toBe(true);
       for (const models of [fixture.catalog, ...fixture.models]) {
         expect(models.generateImages).not.toHaveBeenCalled();

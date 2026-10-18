@@ -16,7 +16,8 @@ const extension = Object.assign(async (pi: FelanExtensionAPI) => {
     oauthHost: createLocalMcpOAuthHost(pi.agentDir, local.oauth, {
       secrets, canAuthorize: () => canAuthorize(pi.ui),
       ...(pi.runtime.getEnvironmentVariable ? { getEnvironmentVariable: pi.runtime.getEnvironmentVariable.bind(pi.runtime) } : {}),
-      ...(callback ? { reserveCallback: callback.reserve.bind(callback), presentAuthorization: createAuthorizationPresenter(pi.ui) } : {}),
+      ...(callback ? { reserveCallback: callback.reserve.bind(callback),
+        presentAuthorization: createAuthorizationPresenter(pi.ui, callback.openAuthorizationUrl?.bind(callback)) } : {}),
     }),
   })(pi);
   if (local.warnings.length > 0) pi.on('session_start', async () => {

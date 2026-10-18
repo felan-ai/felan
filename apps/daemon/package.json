@@ -40,6 +40,14 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./version": {
+      "types": "./dist/version.d.ts",
+      "import": "./dist/version.js"
+    },
+    "./host-config": {
+      "types": "./dist/daemon/host-config.d.ts",
+      "import": "./dist/daemon/host-config.js"
+    },
     "./session-runtime": {
       "types": "./dist/daemon/session-runtime.d.ts",
       "import": "./dist/daemon/session-runtime.js"

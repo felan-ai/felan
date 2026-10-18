@@ -1,12 +1,13 @@
 import { Type, type Static } from 'typebox';
 import { OPERATION_CATALOG, OperationSchemas, ResultSchemas, type Operation, type OperationParams, type OperationResult } from './commands.js';
-import { validateBase64, validatePrompt } from './data.js';
-import { SessionEventSchema, TextStreamEventSchema, parseSessionEvent, parseSessionSnapshot } from './events.js';
+import { parsePresentation, validateBase64, validatePrompt } from './data.js';
+import { SessionEventSchema, TextStreamEventSchema, parseSessionEvent } from './events.js';
 import { InteractionSchema, parseInteraction } from './interactions.js';
 import { LIMITS, PROTOCOL_VERSION, ProtocolValidationError } from './limits.js';
 import { CounterSchema, DiagnosticTextSchema, IdSchema, NameSchema, assertJson, enumOf, parseSchema } from './schema.js';
 import { requestTimestamp, UUID_V7_PATTERN } from './request-id.js';
 import { PresentationEventSchema } from './presentation.js';
+import { validateSnapshotInvariants } from './snapshot-invariants.js';
 
 export const ERROR_CODES = Object.freeze(['invalid_request', 'unsupported_operation', 'protocol_mismatch', 'unavailable', 'authentication_required', 'busy',
   'request_conflict', 'stale_request', 'expired', 'not_found', 'forbidden', 'already_resolved', 'storage_failure',
@@ -87,7 +88,11 @@ function assertEnumerableData(value: unknown, seen = new Set<object>(), depth = 
 
 export function parseOperationResult<O extends Operation>(operation: O, value: unknown): OperationResult<O> {
   const result = parseSchema(ResultSchemas[operation], value);
-  if (operation === 'attach') parseSessionSnapshot((result as OperationResult<'attach'>).snapshot);
+  if (operation === 'attach') {
+    const { snapshot } = result as OperationResult<'attach'>;
+    validateSnapshotInvariants(snapshot);
+    for (const presentation of snapshot.presentation) parsePresentation(presentation);
+  }
   if (operation === 'processes.read') {
     const read = result as OperationResult<'processes.read'>;
     const bytes = validateBase64(read.data, LIMITS.processReadBytes);

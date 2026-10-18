@@ -8,8 +8,14 @@ import type { SessionListing } from './session-navigator.js';
 type Connection = Pick<SessionClient, 'status' | 'reconnection' | 'incompatibleActiveWork' | 'identity' | 'capabilities' | 'connect' | 'request' | 'attach' | 'retryAttach' | 'detach' | 'readAttachment' | 'getInteractions' | 'subscribe' | 'close'>;
 type SessionSummary = OperationResult<'sessions.list'>['entries'][number];
 const PICKER_FIRST_PAGE = 20;
+const RETAINED_PROMPT_ECHOES = 32;
 /** A client-only line that scrolls with the transcript after its anchor entry, like Pi's chat status lines; never persisted. */
 export interface TranscriptNote { readonly after?: string; readonly text: string; readonly level: 'info' | 'warning' | 'error' }
+export interface PromptEcho { readonly text: string; readonly timestamp: number; readonly message?: string }
+type SessionPromptEcho = {
+  after: string | undefined; previousRun: string | undefined; run: string | undefined; running: boolean; settled: boolean; accepted: boolean;
+  echo: { text: string; timestamp: number; message?: string };
+};
 /** Status notes replace an immediately preceding status note, like Pi's showStatus; other notes always append. */
 type SessionNote = TranscriptNote & { readonly session?: string; readonly status: boolean };
 export interface TuiSessionOptions {
@@ -38,6 +44,7 @@ export class TuiSessionController {
   private historyLoading: Promise<void> | undefined;
   private disposing: Promise<void> | undefined;
   private sessionNotes: SessionNote[] = [];
+  private sessionPromptEchoes: SessionPromptEcho[] = [];
   private notificationSession: string | undefined;
   private readonly seenNotifications = new Map<string, string>();
   private hostBlockedNotice = false;
@@ -70,6 +77,7 @@ export class TuiSessionController {
   get busy(): boolean { return this.submitting; }
   /** Notes for the selected session, or notes awaiting the first attachment when none is selected. */
   get notes(): readonly TranscriptNote[] { return this.sessionNotes.filter(note => note.session === this.selected); }
+  get promptEchoes(): readonly PromptEcho[] { return this.sessionPromptEchoes.map(pending => pending.echo); }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   setNotice(message: string, hostBlocked = this.hostBlockedNotice && (!message || message === this.notice)): void {
     if (this.closed) return;
@@ -212,7 +220,7 @@ export class TuiSessionController {
       throw Object.assign(new Error(message), { code: response.error.code });
     }
     if (this.closed) return;
-    this.selected = session; this.entered = entry; this.retained = undefined; this.mergeSnapshot();
+    this.selected = session; this.entered = entry; this.retained = undefined; this.sessionPromptEchoes = []; this.mergeSnapshot();
     // Switching sessions starts a fresh transcript; notes from before the first attachment join its end.
     const after = this.history.at(-1)?.id;
     this.sessionNotes = this.sessionNotes.flatMap(note => note.session ? [] : [{ ...note, session, ...(after ? { after } : {}) }]);
@@ -227,10 +235,24 @@ export class TuiSessionController {
     if (this.client.status !== 'ready') { this.setNotice(`${unavailableText(this.client)} The input remains in the editor.`); return false; }
     if (!snapshot || this.state?.status !== 'live') { this.setNotice('Session is not ready. The input remains in the editor.'); return false; }
     const kind = requested === 'auto' ? (snapshot.run.state === 'idle' || snapshot.run.state === 'interrupted' ? 'prompt' : 'steer') : requested;
+    const pending: SessionPromptEcho | undefined = kind === 'prompt' ? { after: this.history.at(-1)?.id, previousRun: snapshot.run.id, run: undefined,
+      running: false, settled: false, accepted: false, echo: { text, timestamp: Date.now() } } : undefined;
+    if (pending) this.sessionPromptEchoes.push(pending);
     this.submitting = true; this.emit();
+    let accepted = false;
     try {
-      return (await this.perform(kind, { text }, snapshot.session)).outcome === 'accepted';
-    } finally { this.submitting = false; this.emit(); }
+      const response = await this.perform(kind, { text }, snapshot.session);
+      accepted = response.outcome === 'accepted';
+      if (response.outcome === 'accepted' && pending) {
+        pending.accepted = true;
+        if ('runId' in response.result) pending.run = response.result.runId;
+        this.reconcilePromptEchoes();
+      }
+      return accepted;
+    } finally {
+      if (!accepted && pending) this.sessionPromptEchoes = this.sessionPromptEchoes.filter(item => item !== pending);
+      this.submitting = false; this.emit();
+    }
   }
 
   cancel(): Promise<ResponseFor<'cancel'>> {
@@ -243,7 +265,7 @@ export class TuiSessionController {
     const session = this.selected; const response = await this.perform('close', {}, session);
     if (response.outcome !== 'accepted') return;
     if (this.client.readAttachment(session)) await this.client.detach(session);
-    if (this.selected === session) { this.selected = undefined; this.retained = undefined; this.emit(); }
+    if (this.selected === session) { this.selected = undefined; this.retained = undefined; this.sessionPromptEchoes = []; this.emit(); }
   }
 
   async reconnect(options: { replacing?: DaemonIdentity } = {}): Promise<void> {
@@ -337,7 +359,10 @@ export class TuiSessionController {
     if (!snapshot) return;
     const previous = this.retained;
     const last = previous?.entries.at(-1)?.id;
-    if (previous?.branch === snapshot.branch && last === snapshot.history.entries.at(-1)?.id) return;
+    if (previous?.branch === snapshot.branch && last === snapshot.history.entries.at(-1)?.id) {
+      if (this.sessionPromptEchoes.some(pending => !pending.echo.message)) this.reconcilePromptEchoes();
+      return;
+    }
     if (!previous || previous.session !== snapshot.session || (previous.branch !== snapshot.branch && last && !snapshot.history.entries.some(row => row.id === last))) {
       this.retained = { session: snapshot.session, branch: snapshot.branch, entries: snapshot.history.entries };
     } else {
@@ -345,6 +370,33 @@ export class TuiSessionController {
       for (const row of snapshot.history.entries) entries.set(row.id, row);
       this.retained = { session: snapshot.session, branch: snapshot.branch, entries: [...entries.values()] };
     }
+    this.reconcilePromptEchoes();
+  }
+
+  private reconcilePromptEchoes(): void {
+    if (!this.sessionPromptEchoes.length) return;
+    const run = this.snapshot?.run;
+    const active = run !== undefined && run.state !== 'idle' && run.state !== 'interrupted';
+    const retained = new Set(this.history.map(message => message.id));
+    const confirmed = new Set(this.sessionPromptEchoes.flatMap(({ echo }) => echo.message ? [echo.message] : []));
+    this.sessionPromptEchoes = this.sessionPromptEchoes.filter(pending => {
+      const { after, accepted, echo } = pending;
+      if (echo.message) return retained.has(echo.message);
+      const anchor = after === undefined ? -1 : this.history.findIndex(message => message.id === after);
+      if (after !== undefined && anchor < 0) return false;
+      if (active && (!pending.run || pending.run === run.id)) { pending.run = run.id; pending.running = true; }
+      if (pending.run && run?.id && pending.run !== run.id && pending.previousRun !== run.id) pending.settled = true;
+      if (pending.settled) return !accepted;
+      const candidates = this.history.slice(anchor + 1).filter(message => !confirmed.has(message.id) && message.role === 'user');
+      // Input hooks can rewrite prompts, but only their active run can supply a fallback match.
+      const message = candidates.find(message => message.content.length === 1 && message.content[0]?.type === 'text' && message.content[0].text === echo.text)
+        ?? (accepted && active && pending.run === run.id ? candidates[0] : undefined);
+      if (message) { echo.message = message.id; confirmed.add(message.id); }
+      else if (!active && (pending.running || pending.run !== undefined && pending.run === run?.id)) pending.settled = true;
+      return !!message || !accepted || !pending.settled;
+    });
+    let remaining = this.sessionPromptEchoes.filter(pending => pending.echo.message).length;
+    this.sessionPromptEchoes = this.sessionPromptEchoes.filter(pending => !pending.echo.message || remaining-- <= RETAINED_PROMPT_ECHOES);
   }
 
   private waitUntilLive(session: string): Promise<void> {
@@ -380,7 +432,7 @@ export class TuiSessionController {
       }
       if (this.closed || session !== this.selected) return;
       if (retry || this.snapshot?.branch !== snapshot.branch || this.snapshot.revision !== snapshot.revision) continue;
-      this.retained = { session: snapshot.session, branch: snapshot.branch, entries }; this.emit(); return;
+      this.retained = { session: snapshot.session, branch: snapshot.branch, entries }; this.reconcilePromptEchoes(); this.emit(); return;
     }
     if (!this.closed) this.setNotice('Session history changed while loading. Retry history after the current turn settles.');
   }

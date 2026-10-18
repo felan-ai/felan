@@ -47,6 +47,13 @@ describe('Herdr pane reporting', () => {
     expect(herdrStatus(session(), [{ ...interaction({ kind: 'input', title: 'Name' }), state: 'cancelled', resolvedAt: 2, result: { cancelled: true, reason: 'user' } } as Interaction], []).state).toBe('idle');
   });
 
+  it('does not let a broadcast host prompt block every pane, but honors one addressed to this client', () => {
+    const form = interaction({ kind: 'form', form: { title: 'Authorize docs' } } as never);
+    expect(herdrStatus(session(), [{ ...form, scope: { kind: 'host' } }], [])).toEqual({ session: 'session', state: 'idle' });
+    expect(herdrStatus(session(), [{ ...form, scope: { kind: 'host', recipient: 'attachment' } }], []))
+      .toEqual({ session: 'session', state: 'blocked', message: 'Authorize docs' });
+  });
+
   it('follows the attached session, listing descendant executions again whenever the execution generation changes', async () => {
     const herdr = recorder(); const listeners = new Set<() => void>();
     let rows: Execution[] = [execution({ id: 'grandchild', parent: 'child', state: 'running' })];

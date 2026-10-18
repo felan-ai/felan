@@ -14,7 +14,8 @@ it('projects tree roles, parents, labels, leaf and readable custom/compaction su
   const compaction = manager.appendCompaction('Retained conversation summary', user, 100);
   const registry = {
     binding: () => ({ runtime: { session: { sessionManager: manager } } }),
-    projection: () => ({ snapshot: () => ({ revision: 7, branch: compaction }) }),
+    projection: () => ({ refresh() {} }),
+    options: { store: { sessionMetadata: () => ({ revision: 7 }) } },
   } as unknown as SessionRegistry;
   const commands = new SessionCommands({ registry, configuration: {} as never, models: { getAvailable: () => [] }, invalidated() {} });
   const response = await commands.read({ v: 1, id: 'request', op: 'session.tree', session: 'session', params: {} });
@@ -34,7 +35,8 @@ it('bounds custom text previews without serializing custom state or image payloa
   ], true);
   const registry = {
     binding: () => ({ runtime: { session: { sessionManager: manager } } }),
-    projection: () => ({ snapshot: () => ({ revision: 1, branch: manager.getLeafId() }) }),
+    projection: () => ({ refresh() {} }),
+    options: { store: { sessionMetadata: () => ({ revision: 1 }) } },
   } as unknown as SessionRegistry;
   const commands = new SessionCommands({ registry, configuration: {} as never, models: { getAvailable: () => [] }, invalidated() {} });
   const response = await commands.read({ v: 1, id: 'request', op: 'session.tree', session: 'session', params: {} });
@@ -61,7 +63,8 @@ it('projects Pi tool labels, assistant failures, label times and bookkeeping row
   manager.appendModelChange('fixture', 'model-b');
   const registry = {
     binding: () => ({ runtime: { session: { sessionManager: manager } } }),
-    projection: () => ({ snapshot: () => ({ revision: 1, branch: compaction }) }),
+    projection: () => ({ refresh() {} }),
+    options: { store: { sessionMetadata: () => ({ revision: 1 }) } },
   } as unknown as SessionRegistry;
   const commands = new SessionCommands({ registry, configuration: {} as never, models: { getAvailable: () => [] }, invalidated() {} });
   const response = await commands.read({ v: 1, id: 'request', op: 'session.tree', session: 'session', params: {} });
@@ -103,7 +106,8 @@ it('labels every built-in tool call like Pi, bounds long text and keeps multiple
   const second = manager.appendMessage({ role: 'user', content: 'second root', timestamp: 6 });
   const registry = {
     binding: () => ({ runtime: { session: { sessionManager: manager } } }),
-    projection: () => ({ snapshot: () => ({ revision: 2, branch: second }) }),
+    projection: () => ({ refresh() {} }),
+    options: { store: { sessionMetadata: () => ({ revision: 2 }) } },
   } as unknown as SessionRegistry;
   const commands = new SessionCommands({ registry, configuration: {} as never, models: { getAvailable: () => [] }, invalidated() {} });
   const response = await commands.read({ v: 1, id: 'request', op: 'session.tree', session: 'session', params: {} });
